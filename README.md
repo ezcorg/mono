@@ -2,8 +2,6 @@
 
 Polyrepo containing all of the organization's projects and code.
 
-Until such a time that security or other needs require it, this repository is visible to anyone internally, and we should prefer to adopt a "public by default" policy for all code and data.
-
 # Development
 
 ## Clone the repository
