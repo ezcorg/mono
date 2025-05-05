@@ -6,10 +6,18 @@ Until such a time that security or other needs require it, this repository is vi
 
 # Development
 
+## Clone the repository
+
 ```sh
 git clone --recursive https://github.com/ezcodelol/dev
 # or if you've already cloned it, but are missing submodules
 git submodule update --init --recursive
+```
+
+## Getting started
+
+```sh
+pnpm -r i && pnpm dev # recursive install and run packages in dev mode
 ```
 
 ## Pushing changes

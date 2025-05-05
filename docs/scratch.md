@@ -1,5 +1,10 @@
 # Scratch
 
+# Projects
+- `@eznode`: the cloud computing platform
+- `@ezprose`: the rich-text editor
+- `@ezcode`: the code editor
+
 ## High-level implementation plan
 
 1. Create a rich-text editor which allows both writing notes using Markdown (rendered live), as well as writing code (with LSP-based features like semantic highlighting, smart autocomplete, etc.)
@@ -57,11 +62,11 @@ await send({ event: 'foo' })
 ### Pages
 
 1. Main page - an empty default template. It should be clean and practically empty, with subtle controls to allow exposing further information and settings.
-2. # todo
+2. `TODO`
 
 ## Helpful links
 
-### `ezprose`: React full-text editor component
+### `richtext`: React full-text editor component
 
 (ideally this would be framework-agnostic)
 
