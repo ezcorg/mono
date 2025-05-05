@@ -1,0 +1,91 @@
+{
+  "name": "@ezcodelol/codeblock",
+  "version": "0.0.5",
+  "type": "module",
+  "module": "dist/index.js",
+  "main": "dist/index.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc",
+    "preview": "vite preview"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "@codemirror/autocomplete": "^6.0.0",
+    "@codemirror/commands": "^6.0.0",
+    "@codemirror/lang-javascript": "^6.0.0",
+    "@codemirror/lang-python": "^6.0.0",
+    "@codemirror/lang-rust": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/lint": "^6.0.0",
+    "@codemirror/search": "^6.0.0",
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.18.6",
+    "@codemirror/commands": "^6.8.1",
+    "@codemirror/lang-javascript": "^6.2.3",
+    "@codemirror/lang-python": "^6.2.0",
+    "@codemirror/lang-rust": "^6.0.1",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/lint": "^6.8.5",
+    "@codemirror/search": "^6.5.10",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.36.7",
+    "@playwright/test": "^1.52.0",
+    "@types/lodash": "^4.17.16",
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.15.3",
+    "@types/parse-gitignore": "^1.0.2",
+    "@types/sharedworker": "^0.0.150",
+    "multimatch": "^7.0.0",
+    "tsx": "^4.19.4",
+    "vite": "^6.3.4"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.27.1",
+    "@lezer/highlight": "^1.2.1",
+    "@marimo-team/codemirror-languageserver": "link:../codemirror-languageserver",
+    "@open-rpc/client-js": "^1.8.1",
+    "@typescript/vfs": "^1.6.1",
+    "@uiw/codemirror-theme-vscode": "^4.23.12",
+    "@volar/language-server": "^2.4.13",
+    "@volar/language-service": "^2.4.13",
+    "@volar/typescript": "^2.4.13",
+    "@zenfs/core": "^2.2.0",
+    "@zenfs/dom": "^1.1.7",
+    "comlink": "^4.4.2",
+    "events": "^3.3.0",
+    "ignore": "^7.0.4",
+    "lodash": "^4.17.21",
+    "lz-string": "^1.5.0",
+    "markdown-it": "^14.1.0",
+    "minisearch": "^7.1.2",
+    "parse-gitignore": "^2.0.0",
+    "typescript": "~5.7.3",
+    "vite-plugin-node-polyfills": "^0.23.0",
+    "volar-service-typescript": "^0.0.62",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-protocol": "^3.17.5",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "vscode-uri": "^3.1.0"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@zenfs/core": "patches/@zenfs__core.patch"
+    }
+  }
+}
