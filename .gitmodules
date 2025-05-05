@@ -1,6 +1,3 @@
 [submodule "src/typescript/packages/codemirror-languageserver"]
 	path = src/typescript/packages/codemirror-languageserver
 	url = https://github.com/tbrockman/codemirror-languageserver
-[submodule "src/typescript/packages/codeblock"]
-	path = src/typescript/packages/codeblock
-	url = https://github.com/tbrockman/codeblock
