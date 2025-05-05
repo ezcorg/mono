@@ -76,12 +76,11 @@ li[data-checked="true"]>div>p {
     border-collapse: collapse;
     width: 100%;
     margin: 1rem 0;
-    border: 1px solid #ccc;
 }
 
 .ProseMirror th,
 .ProseMirror td {
-    border: 1px solid #ccc;
+    border: 1px solid #00000024;
     padding: 0.5rem;
     vertical-align: top;
     position: relative;

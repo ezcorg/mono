@@ -1,2 +1,4 @@
 packages:
-  - 'src/typescript/packages/*'
+  - src/typescript/packages/*
+patchedDependencies:
+  '@zenfs/core': patches/@zenfs__core.patch
