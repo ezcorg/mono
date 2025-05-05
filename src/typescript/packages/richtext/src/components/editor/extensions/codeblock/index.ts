@@ -55,7 +55,7 @@ export const CodeblockExtension = Node.create({
     },
 
     // How to render this node back to HTML
-    renderHTML({ node, HTMLAttributes }) {
+    renderHTML({ HTMLAttributes }) {
         // mergeAttributes correctly handles the language attribute rendering defined above
         // It renders a <pre> tag, and inside it a <code> tag with the language class
         return ['pre', ['code', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0]];
