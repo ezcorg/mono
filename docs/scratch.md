@@ -61,7 +61,7 @@ await send({ event: 'foo' })
 
 ## Helpful links
 
-### `richtext`: React full-text editor component
+### `ezprose`: React full-text editor component
 
 (ideally this would be framework-agnostic)
 

@@ -3,7 +3,6 @@ import { getGitignored, takeSnapshot } from './src/utils/snapshot';
 import fs from 'node:fs/promises';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import multimatch from 'multimatch';
-import path from 'node:path';
 
 const viteDefaults = {
     root: process.cwd(),
@@ -79,20 +78,6 @@ export default async function getConfig() {
                 ]
             }
         },
-        // resolve: {
-        //     alias: {
-        //         '@codemirror/state': require.resolve('@codemirror/state'),
-        //         '@codemirror/view': require.resolve('@codemirror/view'),
-        //         '@codemirror/language': require.resolve('@codemirror/language'),
-        //     }
-        // },
-        // optimizeDeps: {
-        //     include: [
-        //         '@codemirror/state',
-        //         '@codemirror/view',
-        //         '@codemirror/language',
-        //     ]
-        // },
         plugins: [
             snapshot({
                 gitignore: false,

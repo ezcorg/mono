@@ -26,7 +26,7 @@ export namespace LSP {
                 worker = lspWorkers.get('javascript')
 
                 if (!create) {
-                    worker = new SharedWorker(new URL('../workers/javascript.worker.ts', import.meta.url), { type: 'module' });
+                    worker = new SharedWorker(new URL('../workers/javascript.worker.js', import.meta.url), { type: 'module' });
                     worker.port.start();
                     lspWorkers.set('javascript', worker)
                     const { createLanguageServer } = Comlink.wrap<{ createLanguageServer: (args: { fs: Fs }) => Promise<{ server: LanguageServer }> }>(worker.port);

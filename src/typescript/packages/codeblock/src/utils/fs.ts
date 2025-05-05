@@ -82,7 +82,7 @@ export namespace CodeblockFS {
     }
 
     export const fromSnapshot = async (snapshot: ArrayBuffer): Promise<Fs> => {
-        const url = new URL('../workers/fs.worker.ts', import.meta.url)
+        const url = new URL('../workers/fs.worker.js', import.meta.url)
         const worker = new SharedWorker(url, { type: 'module' });
         worker.port.start()
         const proxy = Comlink.wrap<FsMountOptions>(worker.port);

@@ -7,8 +7,9 @@ import { configureSingle, promises as fs } from "@zenfs/core"
 import { WebStorage } from '@zenfs/dom';
 import { exitCode } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history"
+import { MarkdownNodeSpec } from 'tiptap-markdown';
 
-await configureSingle({ backend: WebStorage })
+configureSingle({ backend: WebStorage })
 
 export const CodeblockExtension = Node.create({
     name: 'ezcodeBlock', // Unique name for your node
@@ -68,7 +69,7 @@ export const CodeblockExtension = Node.create({
                         element.innerHTML = element.innerHTML.replace(/\n<\/code><\/pre>/g, '</code></pre>')
                     },
                 },
-            }
+            } as MarkdownNodeSpec
         }
     },
 

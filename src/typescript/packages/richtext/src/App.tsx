@@ -2,7 +2,7 @@ import { useState } from 'react';
 import MarkdownEditor from './components/editor'; // Adjust path
 
 const initialMarkdown = `
-# Welcome to TipTap with Markdown!
+# @ezcodelol/richtext
 
 This editor supports **Markdown** syntax.
 
