@@ -9,6 +9,7 @@ import { exitCode } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history"
 import { MarkdownNodeSpec } from 'tiptap-markdown';
 
+// TODO: configure a filesystem worker which is used by both the editor and the codeblock extension
 configureSingle({ backend: WebStorage })
 
 export const CodeblockExtension = Node.create({
@@ -126,32 +127,16 @@ export const CodeblockExtension = Node.create({
         ];
     },
 
-    // Register keyboard shortcuts (e.g., Tab for indentation - complex to get right)
-    addKeyboardShortcuts() {
-        return {
-            // Example: Exit code block with Ctrl+Enter
-            // 'Mod-Enter': () => this.editor.commands.exitCode(),
-            // Example: Prevent leaving block with arrow keys if needed
-            // 'ArrowUp': () => {/* custom logic */},
-            // 'ArrowDown': () => {/* custom logic */}
-        };
-    },
-
-
-    // Connect the React component
     addNodeView() {
-        return ({ editor, node, getPos, HTMLAttributes: attr }: any) => {
+        return ({ editor, node, getPos }: any) => {
             const { view, schema } = editor;
             let updating = false;
-
-            console.log('adding node view', { nodeAttrs: node.attrs, attr, })
 
             const forwardUpdate = (cm: EditorView, update: ViewUpdate) => {
                 if (updating || !cm.hasFocus) return
                 let offset = getPos() + 1, { main } = update.state.selection
                 let selFrom = offset + main.from, selTo = offset + main.to
                 let pmSel = view.state.selection
-                console.log('forward update', { offset, selFrom, selTo, pmSel, cm, update, hasFocus: cm.hasFocus, changed: update.docChanged, tr: view.state.tr })
 
                 if (update.docChanged || pmSel.from != selFrom || pmSel.to != selTo) {
                     let tr = view.state.tr
@@ -170,7 +155,6 @@ export const CodeblockExtension = Node.create({
             }
 
             const maybeEscape = (unit: any, dir: any) => {
-                console.log('maybe escape', unit, dir)
                 let { state } = cm, { main }: any = state.selection
                 if (!main.empty) return false
                 if (unit == "line") main = state.doc.lineAt(main.head)
@@ -191,8 +175,7 @@ export const CodeblockExtension = Node.create({
             }
 
             const maybeDelete = () => {
-                console.debug('delete?', { length: node.textContent.length, node })
-                // if the codeblock is empty, delete it
+                // if the codeblock is empty, delete it and move our cursor to the previous position
                 if (node.textContent.length == 0) {
                     const pos = getPos();
 
