@@ -1,3 +1,16 @@
+# Guiding philosophies
+1. Keep it simple, stupid
+    * Minimize complexity
+    * Use sensible defaults
+2. Show, don't tell
+    * Usage should be intuitive and self-explanatory (and not require excess documentation)
+3. Keyboard navigation first
+    * When writing, switching to using the mouse is a loss of momentum and productivity
+    * Will also help accessibility
+4. No moats
+    * No vendor lock-in
+    * No closed-source protocols/formats
+    * No reliance on others which would compromise the above
 
 # Testing + CI/CD
 

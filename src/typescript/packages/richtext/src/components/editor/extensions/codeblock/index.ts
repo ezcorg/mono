@@ -1,4 +1,4 @@
-import { Plugin, PluginKey, Selection, TextSelection } from '@tiptap/pm/state';
+import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
 import { basicSetup, codeblock, CodeblockFS, extToLanguageMap } from '@ezcodelol/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
@@ -11,7 +11,7 @@ import { redo, undo } from "prosemirror-history"
 await configureSingle({ backend: WebStorage })
 
 export const CodeblockExtension = Node.create({
-    name: 'ezCodeblock', // Unique name for your node
+    name: 'ezcodeBlock', // Unique name for your node
     group: 'block', // Belongs to the 'block' group (like paragraph, heading)
     content: 'text*', // Can contain text content
     marks: '', // No marks (like bold, italic) allowed inside

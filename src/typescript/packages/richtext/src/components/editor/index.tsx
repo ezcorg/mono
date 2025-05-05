@@ -12,7 +12,7 @@ import { CodeblockExtension } from './extensions/codeblock';
 // Basic Editor Styling (add more in your CSS file)
 import './styles.css'; // Create a styles.css file for editor styling
 
-const TipTapMarkdownEditor = ({ initialContent = '', onChange }: any) => {
+const MarkdownEditor = ({ initialContent = '', onChange }: any) => {
     const editor = useEditor({
         extensions: [
             // Use StarterKit but disable its default CodeBlock because we have a custom one
@@ -75,4 +75,4 @@ const TipTapMarkdownEditor = ({ initialContent = '', onChange }: any) => {
     return <EditorContent editor={editor} />
 };
 
-export default TipTapMarkdownEditor;
+export default MarkdownEditor;

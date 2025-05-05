@@ -53,7 +53,11 @@ await send({ event: 'foo' })
 - [ ] alt+/ offers contextual dropdown based on where the cursor is and whats been selected (try out: pressing slash within existing text without prior escaping opens slash command dropdown)
 - [ ] /slash commands function as expected (shortcuts for predefined and user-defined commands?)
 - [ ] ```sh blocks which execute entire blocks or selected lines (these include a functional xtermjs terminal)
-- [ ] 
+
+### Pages
+
+1. Main page - an empty default template. It should be clean and practically empty, with subtle controls to allow exposing further information and settings.
+2. # todo
 
 ## Helpful links
 
@@ -71,6 +75,12 @@ await send({ event: 'foo' })
 
 ### `<to be named>`: Cross-platform application combining the above
 * [`tauri`](https://tauri.app/), Rust-based cross-platform app framework (uses WebView for rendering, may eventually target other platforms)
+
+### Inspiration: projects in a similar space
+* [`acreom`](https://github.com/acreom/app) open-source Obsidian alternative
+* [`outline`](https://github.com/outline/outline) similar to the above, but closer to Notion
+* [`onyx`](https://www.onyx.app/) open-source LLM driven knowledge base
+
 
 ### WASM
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import TipTapMarkdownEditor from './components/editor'; // Adjust path
+import MarkdownEditor from './components/editor'; // Adjust path
 
 const initialMarkdown = `
 # Welcome to TipTap with Markdown!
@@ -60,8 +60,7 @@ function App() {
 
   return (
     <div style={{ padding: '20px', maxWidth: '800px', margin: 'auto' }}>
-      <h1>TipTap Markdown Editor</h1>
-      <TipTapMarkdownEditor
+      <MarkdownEditor
         initialContent={markdownContent}
         onChange={handleContentChange}
       />
