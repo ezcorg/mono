@@ -1,17 +1,17 @@
-// markdown-editor.ts
 import { Editor, EditorOptions, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import Link from '@tiptap/extension-link'
 import TaskList from '@tiptap/extension-task-list';
 import Table from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import { Markdown, MarkdownStorage } from 'tiptap-markdown';
-import { CodeblockExtension } from './extensions/codeblock';
-
-// You can optionally import styles globally from styles.css
-import './styles.css';
+import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
+
+import './styles.css';
+import { ExtendedLink } from './extensions/link';
 
 export type MarkdownEditorOptions = Partial<EditorOptions> & {
     extensions?: Extension[];
@@ -32,6 +32,7 @@ export type MarkdownEditor = Editor & {
 export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEditor {
     const editor = new Editor({
         extensions: [
+            ExtendedLink.configure({}),
             StarterKit.configure({
                 codeBlock: false,
                 bulletList: false, // As Markdown handles bullet lists and allows us to configure the marker to prevent task item conflicts
@@ -46,7 +47,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 transformPastedText: true,
                 transformCopiedText: true,
             }),
-            CodeblockExtension,
+            ExtendedCodeblock,
             TaskList,
             ExtendedTaskItem.configure({
                 nested: true,

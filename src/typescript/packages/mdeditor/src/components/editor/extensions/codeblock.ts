@@ -12,7 +12,7 @@ import { MarkdownNodeSpec } from 'tiptap-markdown';
 // TODO: configure a filesystem worker which is used by both the editor and the codeblock extension
 configureSingle({ backend: WebStorage })
 
-export const CodeblockExtension = Node.create({
+export const ExtendedCodeblock = Node.create({
     name: 'ezcodeBlock', // Unique name for your node
     group: 'block', // Belongs to the 'block' group (like paragraph, heading)
     content: 'text*', // Can contain text content
