@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import MarkdownEditor from './components/editor'; // Adjust path
+import { useEffect, useRef, useState } from 'react';
+import { createEditor, MarkdownEditor } from './components/editor';
 
 const initialMarkdown = `
-# @ezcodelol/richtext
+# @ezcodelol/mdeditor
 
 This editor supports **Markdown** syntax.
 
@@ -51,19 +51,45 @@ Try editing the content!
 
 function App() {
   const [markdownContent, setMarkdownContent] = useState(initialMarkdown);
+  const [editor, setEditor] = useState<MarkdownEditor | null>(null);
+  const ref = useRef(null);
 
-  const handleContentChange = (newMarkdown: string) => {
-    setMarkdownContent(newMarkdown);
-    // You can now save this markdown content, send it to an API, etc.
-    console.log("Markdown updated in App:", newMarkdown);
-  };
+  useEffect(() => {
+
+    let newEditor: MarkdownEditor | null = null;
+
+    if (ref.current && !editor) {
+      newEditor = createEditor({
+        element: ref.current,
+        content: initialMarkdown,
+        onUpdate: ({ editor }) => {
+          const json = editor.getJSON();
+          const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();
+          setMarkdownContent(markdown);
+          console.log("Editor JSON:", json);
+          console.log("Editor Markdown:", markdown);
+        },
+      });
+      setEditor(newEditor);
+    }
+
+    return () => {
+      if (ref.current) {
+        newEditor?.destroy();
+      }
+    };
+
+  }, [ref.current])
+
 
   return (
     <div style={{ padding: '20px', maxWidth: '800px', margin: 'auto' }}>
-      <MarkdownEditor
+      <div id='md-editor' ref={ref}></div>
+      {/* <MarkdownEditor
+
         initialContent={markdownContent}
         onChange={handleContentChange}
-      />
+      /> */}
       <hr style={{ margin: '20px 0' }} />
       <h2>Live Markdown Output:</h2>
       <pre style={{ whiteSpace: 'pre-wrap', background: '#eee', padding: '10px', border: '1px solid #ccc' }}>

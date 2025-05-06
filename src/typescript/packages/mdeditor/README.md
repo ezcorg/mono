@@ -1,4 +1,4 @@
-# `ezprose`
+# `mdeditor`
 
 A (currently React-only) component for rendering and writing Markdown (based on TipTap).
 

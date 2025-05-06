@@ -1,5 +1,5 @@
 {
-  "name": "@ezcodelol/richtext",
+  "name": "@ezcodelol/mdeditor",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -31,7 +31,7 @@
     "@tiptap/pm": "^2.11.9",
     "@tiptap/react": "^2.11.7",
     "@tiptap/starter-kit": "^2.11.7",
-    "@zenfs/core": "^2.2.0",
+    "@zenfs/core": "^2.2.1",
     "@zenfs/dom": "^1.1.7",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-history": "^1.4.1",

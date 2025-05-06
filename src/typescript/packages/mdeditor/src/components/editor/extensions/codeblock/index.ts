@@ -215,8 +215,6 @@ export const CodeblockExtension = Node.create({
                 ] as KeyBinding[]
             }
 
-            console.log({ basicSetup })
-
             const state = EditorState.create({
                 doc: node.textContent || '',
                 extensions: [
@@ -227,29 +225,24 @@ export const CodeblockExtension = Node.create({
                 ]
             });
 
-            const container = document.createElement('div')
-            container.classList.add('codeblock-container')
-
             const cm = new EditorView({ state });
             const dom = cm.dom;
 
             return {
                 dom,
-                setSelection(anchor, head, root) {
-                    console.log('setting selection', { anchor, head, root, updating })
+                setSelection(anchor, head) {
                     cm.focus()
                     updating = true
                     cm.dispatch({ selection: { anchor, head } })
                     updating = false
                 },
                 destroy() {
-                    console.log('destroying codeblock', { node, cm })
                     cm.destroy();
                 },
                 selectNode() { cm.focus() },
-                stopEvent(e) { console.log('would be preventing e', e); return true },
+                stopEvent() { return true },
                 update(updated) {
-                    console.log('updated', { updatedType: updated.type, nodeType: node.type, equal: updated.type == node.type, updating })
+                    console.debug('updated', { updatedType: updated.type, nodeType: node.type, equal: updated.type == node.type, updating })
                     if (updated.type != node.type) return false
                     node = updated
                     if (updating) return true

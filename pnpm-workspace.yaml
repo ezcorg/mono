@@ -1,4 +1,6 @@
 packages:
-  - src/typescript/packages/*
+    - src/typescript/packages/*
+    - src/tauri/*
 patchedDependencies:
-  '@zenfs/core': patches/@zenfs__core.patch
+    '@zenfs/core': patches/@zenfs__core.patch
+allowUnusedPatches: true
