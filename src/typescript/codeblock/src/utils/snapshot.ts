@@ -120,8 +120,7 @@ export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
         const used = size - free;
         return used * bsize;
     }
-    // const buffer = new ArrayBuffer((await estimateUsed(root)) * 100000);
-    const buffer = new ArrayBuffer(1024 * 1024 * 1024 / 4);
+    const buffer = new ArrayBuffer((await estimateUsed(root)) * 1024); // ???
     console.debug('buffer', { size: buffer.byteLength });
 
     try {
