@@ -18,9 +18,9 @@ git submodule update --init --recursive
 pnpm -r i && pnpm dev # recursive install and run packages in dev mode
 ```
 
-## Pushing changes
+## Shipping changes
 
-Clone the repo, make your changes on a branch, and then submit a pull request.
+Push your changes to a separate branch, then submit a pull request to `main`.
 
 ## On `git` submodules
 
