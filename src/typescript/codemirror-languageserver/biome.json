@@ -1,0 +1,68 @@
+{
+    "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+    "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+    "files": { "ignoreUnknown": true, "ignore": [] },
+    "formatter": {
+        "enabled": true,
+        "useEditorconfig": true,
+        "formatWithErrors": false,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineEnding": "lf",
+        "lineWidth": 80,
+        "attributePosition": "auto",
+        "bracketSpacing": true
+    },
+    "organizeImports": {
+        "enabled": true
+    },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": true,
+            "complexity": {
+                "noForEach": "error",
+                "useSimplifiedLogicExpression": "error",
+                "noStaticOnlyClass": "error",
+                "noUselessFragments": "error",
+                "noBannedTypes": "error"
+            },
+            "correctness": {
+                "noUnreachable": "error",
+                "noUnusedVariables": "error",
+                "useExhaustiveDependencies": "error",
+                "noConstantCondition": "error"
+            },
+            "performance": {
+                "noDelete": "error"
+            },
+            "style": {
+                "noNonNullAssertion": "error",
+                "useConst": "error",
+                "useEnumInitializers": "error",
+                "useImportType": "error",
+                "useSelfClosingElements": "error"
+            },
+            "suspicious": {
+                "noConsoleLog": "error",
+                "noDebugger": "error",
+                "noEmptyInterface": "error",
+                "noExplicitAny": "error",
+                "noRedundantUseStrict": "error"
+            }
+        }
+    },
+    "javascript": {
+        "formatter": {
+            "jsxQuoteStyle": "double",
+            "quoteProperties": "asNeeded",
+            "trailingCommas": "all",
+            "semicolons": "always",
+            "arrowParentheses": "always",
+            "bracketSameLine": false,
+            "quoteStyle": "double",
+            "attributePosition": "auto",
+            "bracketSpacing": true
+        }
+    }
+}

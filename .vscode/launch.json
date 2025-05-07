@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node", // "pwa-node" is the newer alias and also works
+            "request": "launch",
+            "name": "Debug Vite Build",
+            "runtimeExecutable": "vite",
+            "console": "integratedTerminal",
+            "sourceMaps": true, // Helps if source maps are available for the modules
+            "cwd": "${workspaceFolder}/src/typescript/codeblock", // Ensures it runs in your project root
+            "skipFiles": [
+                "<node_internals>/**", // Skips stepping into Node.js internal code
+            ]
+        }
+        // ... any other configurations ...
+    ]
+}
