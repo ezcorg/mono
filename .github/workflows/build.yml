@@ -22,6 +22,8 @@ jobs:
 
             - name: Install pnpm
               uses: pnpm/action-setup@v2
+              with:
+                  version: '*'
 
             - name: Install dependencies (recursive)
               run: pnpm install -r
