@@ -20,7 +20,7 @@ pnpm -r i && pnpm dev # recursive install and run packages in dev mode
 
 ## Pushing changes
 
-Fork the repository, make your changes on a branch, and then submit a pull request.
+Clone the repo, make your changes on a branch, and then submit a pull request.
 
 ## On `git` submodules
 
