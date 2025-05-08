@@ -13,7 +13,7 @@ git submodule update --init --recursive
 ```
 
 ## Getting started
-First, install [pnpm](https://pnpm.io/). Then:
+First, install [pnpm](https://pnpm.io/) (or, install it through [volta](https://docs.volta.sh/guide/getting-started)). Then:
 
 ```sh
 pnpm -r i && pnpm build && pnpm dev # recursive install and run packages in dev mode
