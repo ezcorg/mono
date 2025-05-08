@@ -13,9 +13,10 @@ git submodule update --init --recursive
 ```
 
 ## Getting started
+First, install [pnpm](https://pnpm.io/). Then:
 
 ```sh
-pnpm -r i && pnpm dev # recursive install and run packages in dev mode
+pnpm -r i && pnpm build && pnpm dev # recursive install and run packages in dev mode
 ```
 
 ## Shipping changes
