@@ -89,5 +89,6 @@ await send({ event: 'foo' })
 
 ### WASM
 
-* https://www.youtube.com/watch?v=mQ58pLT8YQ4 - Building a WebAssembly-first OS – An Adventure Into the Unorthodox - Dan Phillips, Loophole Labs
-* https://github.com/container2wasm/container2wasm - A tool to convert Docker images to WebAssembly
+* [Building a WebAssembly-first OS – An Adventure Into the Unorthodox - Dan Phillips, Loophole Labs](https://www.youtube.com/watch?v=mQ58pLT8YQ4)
+* [A tool to convert Docker images to WebAssembly](https://github.com/container2wasm/container2wasm)
+* [The WebAssembly component model](https://component-model.bytecodealliance.org/introduction.html)
