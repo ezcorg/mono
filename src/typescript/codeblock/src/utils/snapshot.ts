@@ -48,7 +48,6 @@ export const copyDir = async (fs: typeof _fs, source: string, dest: string, filt
             }
         } catch (e) {
             console.error(`Failed to copy ${src} to ${dest}:`, e);
-            throw e;
         }
     }
 
