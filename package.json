@@ -18,7 +18,10 @@
     "overrides": {
       "@codemirror/state": "6.5.2",
       "@codemirror/view": "6.36.7",
-      "@zenfs/core": "2.0.0"
+      "@zenfs/core": "catalog:"
     }
+  },
+  "dependencies": {
+    "@zenfs/core": "catalog:"
   }
 }

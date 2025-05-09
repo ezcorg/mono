@@ -1,6 +1,7 @@
 import path from 'node:path';
 import parse from 'parse-gitignore';
 import nodeFs from 'node:fs';
+import nodePromises from 'node:fs/promises';
 import { promises as _fs, mount, Passthrough, resolveMountConfig, SingleBuffer } from "@zenfs/core";
 import multimatch from 'multimatch';
 
@@ -8,11 +9,14 @@ export const copyDir = async (fs: typeof _fs, source: string, dest: string, filt
     const symlinkQueue: { src: string; dest: string }[] = [];
 
     async function copyRecursive(src: string, dst: string) {
+
         try {
             const entries = await fs.readdir(src, { withFileTypes: true });
             await fs.mkdir(dst, { recursive: true });
 
             for (const entry of entries) {
+
+
                 const srcPath = path.join(src, entry.name);
                 const srcRelPath = path.relative(source, srcPath);
                 const dstPath = path.join(dst, entry.name);
@@ -21,15 +25,20 @@ export const copyDir = async (fs: typeof _fs, source: string, dest: string, filt
                     continue;
                 }
 
+                // console.debug('copying', { srcPath, dstPath })
+
                 if (entry.isDirectory()) {
                     await copyRecursive(srcPath, dstPath);
                 } else if (entry.isFile()) {
-                    const data = nodeFs.readFileSync(srcRelPath);
-                    const stats = nodeFs.statSync(srcRelPath);
-
-                    await fs.writeFile(dstPath, data, { encoding: 'utf-8' });
+                    const data = await nodePromises.readFile(srcRelPath);
+                    const stats = await nodePromises.stat(srcRelPath);
+                    try {
+                        await fs.writeFile(dstPath, data);
+                    } catch(e) {
+                        console.debug('failed to write', { stats, data: new TextDecoder().decode(data), src: srcRelPath, dst: dstPath, })
+                        throw e;                        
+                    }
                     // Copy file metadata
-                    // console.log('stats', stats)
                     await fs.chown(dstPath, stats.uid, stats.gid);
                     await fs.chmod(dstPath, stats.mode);
                     await fs.utimes(dstPath, stats.atime, stats.mtime);
@@ -113,30 +122,41 @@ export const snapshotDefaults: TakeSnapshotProps = {
 export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     let { root, filter } = { ...snapshotDefaults, ...props };
 
-    const estimateUsed = async (path: string) => {
-        const { bsize, blocks, bfree } = await _fs.statfs(path);
-        const size = blocks;
-        const free = bfree;
-        const used = size - free;
-        return used * bsize;
-    }
-    const buffer = new ArrayBuffer((await estimateUsed(root)) * 1024); // ???
-    console.debug('buffer', { size: buffer.byteLength });
+    const estimateUsed = async (folderPath: string) => {
+        let total = 0;
+    
+        const walk = async (dir: string) => {
+            const entries = await nodePromises.readdir(dir, { withFileTypes: true })
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                const stats = await nodePromises.lstat(fullPath);
+    
+                if (entry.isDirectory()) {
+                    await walk(fullPath);
+                } else {
+                    total += stats.blocks * 512;
+                }
+            }
+        };
+    
+        await walk(folderPath);
+        return total;
+    };
+    
 
-    try {
-        const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: root });
-        const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
-        // TODO: there's probably a better way to do this
-        const hostPath = '/mnt/host';
-        const snapshotPath = '/mnt/snapshot';
-        mount(hostPath, readable);
-        mount(snapshotPath, writable);
-        await readable.ready()
-        await writable.ready()
-        await copyDir(_fs, hostPath, snapshotPath, filter)
-    } catch (e) {
-        console.error('got error', e)
-    }
+    const buffer = new ArrayBuffer((await estimateUsed(root)));
+    console.debug('buffer', { size: buffer.byteLength, root });
+
+    const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: root });
+    const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
+    // TODO: there's probably a better way to do this
+    const hostPath = '/mnt/host';
+    const snapshotPath = '/mnt/snapshot';
+    mount(hostPath, readable);
+    mount(snapshotPath, writable);
+    await readable.ready()
+    await writable.ready()
+    await copyDir(_fs, hostPath, snapshotPath, filter)
 
     return buffer;
 };

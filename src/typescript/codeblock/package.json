@@ -65,7 +65,7 @@
     "@volar/language-server": "^2.4.13",
     "@volar/language-service": "^2.4.13",
     "@volar/typescript": "^2.4.13",
-    "@zenfs/core": " 2.0.0",
+    "@zenfs/core": "catalog:",
     "@zenfs/dom": "^1.1.7",
     "comlink": "^4.4.2",
     "events": "^3.3.0",

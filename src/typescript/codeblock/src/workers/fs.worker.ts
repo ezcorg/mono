@@ -28,7 +28,7 @@ const mount = async ({ buffer = new ArrayBuffer(0x100000), mountPoint = '/' }: M
                 console.error('Error removing directory:', removeErr);
                 // Continue anyway, this might not be critical
             }
-            console.log(`Mounting filesystem at [${mountPoint}]...`);
+            console.log(`Mounting filesystem at [${mountPoint}]...`, buffer);
             const readable = await resolveMountConfig({
                 backend: SingleBuffer,
                 buffer,
@@ -41,7 +41,8 @@ const mount = async ({ buffer = new ArrayBuffer(0x100000), mountPoint = '/' }: M
             _mount('/mnt/snapshot', readable);
             _mount('/', writable);
             await readable.ready()
-            await writable.ready()
+            await writable.sync()
+
             await fs.cp('/mnt/snapshot', '/', { recursive: true, force: true })
             umount('/mnt/snapshot')
             console.log('Returning proxy from worker', fs);

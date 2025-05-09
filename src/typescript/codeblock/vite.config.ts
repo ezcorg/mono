@@ -50,11 +50,13 @@ export const snapshot = async (props: SnapshotProps = {}) => {
     if (exists) {
         return
     }
-    debugger;
     const filter = await buildPathFilter({ include, exclude, gitignore });
-    const snapshot = await takeSnapshot({ root, filter })
-    const fsBuffer = await transform?.(snapshot) || snapshot;
-    await fs.writeFile(output, Buffer.from(fsBuffer));
+    
+    try {
+        const snapshot = await takeSnapshot({ root, filter })
+        const fsBuffer = await transform?.(snapshot) || snapshot;
+        await fs.writeFile(output, Buffer.from(fsBuffer));
+    } catch (e) { console.error(e) }
 
     return {
         name: '@ezcodelol/snapshot'
@@ -82,7 +84,7 @@ export default async function getConfig() {
         plugins: [
             snapshot({
                 gitignore: false,
-                include: ['example.ts', 'src/**/*', 'index.html', 'vite.config.ts', 'node_modules/@types/**/*', 'node_modules/typescript/**/*', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', '.gitignore'],
+                include: ['node_modules/@types/**/*'],
                 output: './public/snapshot.bin'
             }),
             nodePolyfills({

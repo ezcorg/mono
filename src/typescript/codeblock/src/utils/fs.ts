@@ -86,7 +86,8 @@ export namespace CodeblockFS {
         const worker = new SharedWorker(url, { type: 'module' });
         worker.port.start()
         const proxy = Comlink.wrap<FsMountOptions>(worker.port);
-        let { fs }: MountResult = await proxy.mount({ fsBuffer: snapshot });
+        console.debug('mounting', { snapshot })
+        let { fs }: MountResult = await proxy.mount({ buffer: snapshot });
         return CodeblockFS.fromNodelike(Comlink.proxy(fs))
     }
 

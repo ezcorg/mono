@@ -2,3 +2,5 @@ packages:
     - src/typescript/*
     - src/tauri/*
 allowUnusedPatches: true
+catalog:
+    "@zenfs/core": 2.2.2

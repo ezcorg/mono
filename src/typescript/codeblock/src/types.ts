@@ -64,7 +64,7 @@ export interface Fs {
 }
 
 export type FsMountOptions = {
-    mount: (args: { fsBuffer: ArrayBuffer }) => Promise<MountResult>;
+    mount: (args: { buffer: ArrayBuffer }) => Promise<MountResult>;
 }
 
 export type MountArgs = {
