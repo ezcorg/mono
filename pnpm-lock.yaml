@@ -24,7 +24,7 @@ importers:
   src/apps/ezprose:
     dependencies:
       '@ezcodelol/markdown-editor':
-        specifier: link:../../typescript/markdown-editor
+        specifier: workspace:*
         version: link:../../typescript/markdown-editor
       '@tauri-apps/api':
         specifier: ^2

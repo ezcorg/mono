@@ -12,7 +12,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@ezcodelol/markdown-editor": "link:../../typescript/markdown-editor",
+    "@ezcodelol/markdown-editor": "workspace:*",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "solid-js": "^1.9.3"
