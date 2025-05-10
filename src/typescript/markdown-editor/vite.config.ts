@@ -11,6 +11,13 @@ export default defineConfig({
       '@codemirror/language': path.resolve(__dirname, './node_modules/@codemirror/language'),
     }
   },
+  build: {
+    lib: {
+      entry: path.resolve(__dirname, './src/components/editor/index.tsx'),
+      name: 'MarkdownEditor',
+      fileName: (format) => `markdown-editor.${format}.js`,
+    },
+  },
   plugins: [
     react()
   ],
