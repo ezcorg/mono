@@ -67,7 +67,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             ...(options.editorProps || {}),
         },
         content: options.content || '',
-        onUpdate: options.onUpdate,
+        onUpdate: options.onUpdate || (() => { }),
         autofocus: options.autofocus,
         editable: options.editable,
         injectCSS: options.injectCSS,

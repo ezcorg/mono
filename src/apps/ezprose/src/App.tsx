@@ -5,11 +5,12 @@ import "./App.css";
 function App() {
   const [editor, setEditor] = createSignal<MarkdownEditor | null>(null);
 
-  console.debug({editor})
+  console.debug({ editor })
 
   createEffect(() => {
     const editor = createEditor({
-      element: document.getElementById("editor")!
+      element: document.getElementById("editor")!,
+      onUpdate: () => { },
     });
     setEditor(editor);
   });
