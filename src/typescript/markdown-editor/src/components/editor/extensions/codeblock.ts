@@ -3,14 +3,11 @@ import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
 import { basicSetup, codeblock, CodeblockFS, extToLanguageMap } from '@ezcodelol/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
-import { configureSingle, promises as fs } from "@zenfs/core"
-import { WebStorage } from '@zenfs/dom';
 import { exitCode } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history"
 import { MarkdownNodeSpec } from 'tiptap-markdown';
 
 // TODO: configure a filesystem worker which is used by both the editor and the codeblock extension
-configureSingle({ backend: WebStorage })
 
 export const ExtendedCodeblock = Node.create({
     name: 'ezcodeBlock', // Unique name for your node

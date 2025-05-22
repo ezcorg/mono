@@ -1,77 +1,11 @@
-import path from 'node:path';
-import parse from 'parse-gitignore';
-import nodeFs from 'node:fs';
-import nodePromises from 'node:fs/promises';
-import { promises as _fs, mount, Passthrough, resolveMountConfig, SingleBuffer } from "@zenfs/core";
+import fsPromises from 'fs/promises';
 import multimatch from 'multimatch';
-
-export const copyDir = async (fs: typeof _fs, source: string, dest: string, filter: (path: string) => boolean = () => true) => {
-    const symlinkQueue: { src: string; dest: string }[] = [];
-
-    async function copyRecursive(src: string, dst: string) {
-
-        try {
-            const entries = await fs.readdir(src, { withFileTypes: true });
-            await fs.mkdir(dst, { recursive: true });
-
-            for (const entry of entries) {
-
-
-                const srcPath = path.join(src, entry.name);
-                const srcRelPath = path.relative(source, srcPath);
-                const dstPath = path.join(dst, entry.name);
-
-                if (!filter(srcRelPath)) {
-                    continue;
-                }
-
-                // console.debug('copying', { srcPath, dstPath })
-
-                if (entry.isDirectory()) {
-                    await copyRecursive(srcPath, dstPath);
-                } else if (entry.isFile()) {
-                    const data = await nodePromises.readFile(srcRelPath);
-                    const stats = await nodePromises.stat(srcRelPath);
-                    try {
-                        await fs.writeFile(dstPath, data);
-                    } catch(e) {
-                        console.debug('failed to write', { stats, data: new TextDecoder().decode(data), src: srcRelPath, dst: dstPath, })
-                        throw e;                        
-                    }
-                    // Copy file metadata
-                    await fs.chown(dstPath, stats.uid, stats.gid);
-                    await fs.chmod(dstPath, stats.mode);
-                    await fs.utimes(dstPath, stats.atime, stats.mtime);
-                } else if (entry.isSymbolicLink()) {
-                    symlinkQueue.push({ src: srcPath, dest: dstPath });
-                }
-            }
-        } catch (e) {
-            console.error(`Failed to copy ${src} to ${dest}:`, e);
-        }
-    }
-
-    async function resolveSymlinks() {
-        for (const { src, dest } of symlinkQueue) {
-            try {
-                const target = await fs.readlink(src);
-                const absoluteTarget = path.resolve(path.dirname(src), target);
-
-                try {
-                    await fs.stat(absoluteTarget);
-                    await fs.symlink(target, dest);
-                } catch {
-                    await fs.copyFile(absoluteTarget, dest);
-                }
-            } catch (err) {
-                console.error(`Failed to copy symlink ${src}:`, err);
-            }
-        }
-    }
-
-    await copyRecursive(source, dest);
-    await resolveSymlinks();
-}
+import { SnapshotNode } from 'memfs/lib/snapshot';
+import { CborEncoder } from '@jsonjoy.com/json-pack/lib/cbor/CborEncoder';
+import { CborDecoder } from '@jsonjoy.com/json-pack/lib/cbor/CborDecoder';
+import { Writer } from '@jsonjoy.com/util/lib/buffers/Writer';
+import { CborUint8Array } from '@jsonjoy.com/json-pack/lib/cbor/types';
+import { FsApi } from 'memfs/lib/node/types';
 
 export type BuildPathFilterArgs = {
     include?: string[],
@@ -85,77 +19,137 @@ export const buildFilter = ({ include, exclude }: BuildPathFilterArgs) => {
 
         const included = include ? !!multimatch(path, include, { partial: true }).length : true;
         const excluded = exclude ? !!multimatch(path, exclude).length : false;
+
         return included && !excluded;
     }
 }
 
 export type IgnoreArgs = {
-    fs: typeof _fs,
+    fs: typeof fsPromises,
     root: string,
     exclude: string[],
     gitignore: string | null
 }
 
-export const getGitignored = async (path: string, fs = _fs) => {
+export const getGitignored = async (path: string, fs = typeof fsPromises) => {
+    // @ts-expect-error
     const content = await fs.readFile(path, 'utf-8')
     // @ts-ignore
     return parse(content).patterns;
 };
 
-export type SnapshotProps<T> = {
-    transform?: (fs: typeof _fs) => Promise<typeof _fs>;
-} & Partial<TakeSnapshotProps> & T;
 export type TakeSnapshotProps = {
     root: string;
     filter: (path: string) => boolean;
 };
+
 export const snapshotDefaults: TakeSnapshotProps = {
     root: typeof process !== 'undefined' ? process.cwd() : './',
     filter: () => true,
 };
+
+export const writer = new Writer(1024 * 32);
+const encoder = new CborEncoder(writer);
+const decoder = new CborDecoder();
 /**
  * Takes a snapshot of the file system based on the provided properties.
  *
  * @param props - The properties to configure the snapshot.
  */
 export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
-    let { root, filter } = { ...snapshotDefaults, ...props };
+    const { root, filter } = { ...snapshotDefaults, ...props };
 
-    const estimateUsed = async (folderPath: string) => {
-        let total = 0;
-    
-        const walk = async (dir: string) => {
-            const entries = await nodePromises.readdir(dir, { withFileTypes: true })
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                const stats = await nodePromises.lstat(fullPath);
-    
-                if (entry.isDirectory()) {
-                    await walk(fullPath);
-                } else {
-                    total += stats.blocks * 512;
-                }
+    console.log('Taking snapshot of filesystem', { root, filter });
+
+    const snapshot = await
+
+        Snapshot
+            .take({ fs: fsPromises, path: root, filter })
+            .then((snapshot) => encoder.encode(snapshot));
+    return snapshot;
+};
+
+export type SnapshotOptions = {
+    fs: FsApi,
+    path?: string,
+    separator?: string,
+}
+
+export namespace Snapshot {
+    // TODO: refactor `from` here
+
+    export const take = async ({ fs, path, filter, separator = '/' }: {
+        fs: typeof fsPromises,
+        path: TakeSnapshotProps['root'],
+        filter?: TakeSnapshotProps['filter'],
+        separator?: string,
+    }): Promise<CborUint8Array<SnapshotNode>> => {
+
+        if (filter && !filter(path)) return null;
+
+        const stats = await fs.lstat(path);
+        if (stats.isDirectory()) {
+            const list = await fs.readdir(path);
+            const entries: { [child: string]: SnapshotNode } = {};
+            const dir = path.endsWith(separator) ? path : path + separator;
+            for (const child of list) {
+                const childSnapshot = await Snapshot.take({ fs, path: `${dir}${child}`, separator, filter });
+                // @ts-expect-error
+                if (childSnapshot) entries['' + child] = childSnapshot;
             }
-        };
-    
-        await walk(folderPath);
-        return total;
-    };
-    
+            // @ts-expect-error
+            return [0 /* Folder */, {}, entries];
+        } else if (stats.isFile()) {
+            const buf = (await fs.readFile(path)) as Buffer;
+            const uint8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+            // @ts-expect-error
+            return [1 /* File */, {}, uint8];
+        } else if (stats.isSymbolicLink()) {
+            // TODO: if symlink target isn't included in the snapshot, 
+            // we have to resolve it, and include it in the snapshot
+            return [
+                2 /* Symlink */,
+                // @ts-expect-error
+                {
+                    target: (await fs.readlink(path, { encoding: 'utf8' })) as string,
+                },
+            ];
+        }
+        return null;
+    }
 
-    const buffer = new ArrayBuffer((await estimateUsed(root)));
-    console.debug('buffer', { size: buffer.byteLength, root });
+    export const mount = async (buffer: CborUint8Array<SnapshotNode>, { fs, path = '/', separator = '/' }: SnapshotOptions): Promise<void> => {
+        const snapshot = await decoder.decode(new Uint8Array(buffer)) as SnapshotNode;
+        if (snapshot) {
+            await fromSnapshot(snapshot, { fs, path, separator });
+        }
+    }
+}
 
-    const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: root });
-    const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
-    // TODO: there's probably a better way to do this
-    const hostPath = '/mnt/host';
-    const snapshotPath = '/mnt/snapshot';
-    mount(hostPath, readable);
-    mount(snapshotPath, writable);
-    await readable.ready()
-    await writable.ready()
-    await copyDir(_fs, hostPath, snapshotPath, filter)
-
-    return buffer;
+export const fromSnapshot = async (
+    snapshot: SnapshotNode,
+    { fs, path = '/', separator = '/' }: SnapshotOptions,
+): Promise<void> => {
+    if (!snapshot) return;
+    switch (snapshot[0]) {
+        case 0: {
+            if (!path.endsWith(separator)) path = path + separator;
+            const [, , entries] = snapshot;
+            console.debug('have fs', { fs })
+            fs.mkdirSync(path, { recursive: true });
+            for (const [name, child] of Object.entries(entries))
+                await fromSnapshot(child, { fs, path: `${path}${name}`, separator });
+            break;
+        }
+        case 1: {
+            const [, , data] = snapshot;
+            fs.writeFileSync(path, data);
+            break;
+        }
+        case 2: {
+            const [, { target }] = snapshot;
+            fs.symlinkSync(target, path);
+            break;
+        }
+    }
 };

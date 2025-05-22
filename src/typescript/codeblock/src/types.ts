@@ -1,5 +1,7 @@
+import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { FileType } from "@volar/language-service";
-import type { promises as fs } from "@zenfs/core";
+import { SnapshotNode } from "memfs/lib/snapshot";
+import { FsApi } from "memfs/lib/node/types";
 
 // TODO: consider changing interface to allow writes at specific offsets within files
 export interface Fs {
@@ -68,10 +70,10 @@ export type FsMountOptions = {
 }
 
 export type MountArgs = {
-    buffer?: ArrayBuffer;
+    buffer?: CborUint8Array<SnapshotNode>;
     mountPoint?: string;
 }
 
 export type MountResult = {
-    fs: typeof fs;
+    fs: FsApi;
 }

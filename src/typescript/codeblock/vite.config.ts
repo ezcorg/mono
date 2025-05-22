@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import { getGitignored, takeSnapshot } from './src/utils/snapshot';
+// @ts-ignore
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import multimatch from 'multimatch';
 
@@ -33,27 +35,27 @@ export const buildPathFilter = async ({ include, exclude, gitignore }: BuildPath
     exclude = exclude ? exclude.concat(ignored) : [];
     include = include ? include : ['**/*'];
 
-    return (path: string) => {
+    return (filepath: string) => {
+
         if (!(include || exclude)) return true;
 
-        const included = include ? !!multimatch(path, include, { partial: true }).length : true;
-        const excluded = exclude ? !!multimatch(path, exclude).length : false;
+        const relativePath = path.relative(process.cwd(), filepath);
+
+        const included = include ? !!multimatch(relativePath, include, { partial: true }).length : true;
+        const excluded = exclude ? !!multimatch(relativePath, exclude).length : false;
+
         return included && !excluded;
     };
 }
 
 export const snapshot = async (props: SnapshotProps = {}) => {
     const { root, include, exclude, gitignore, transform, output } = { ...viteDefaults, ...props };
-
-    const exists = await fs.stat(output).catch(() => false);
-
-    if (exists) {
-        return
-    }
     const filter = await buildPathFilter({ include, exclude, gitignore });
-    
+
     try {
+        console.log('Taking snapshot of filesystem', { root, filter });
         const snapshot = await takeSnapshot({ root, filter })
+        console.log('Snapshot created', snapshot);
         const fsBuffer = await transform?.(snapshot) || snapshot;
         await fs.writeFile(output, Buffer.from(fsBuffer));
     } catch (e) { console.error(e) }
@@ -65,6 +67,12 @@ export const snapshot = async (props: SnapshotProps = {}) => {
 
 export default async function getConfig() {
     return defineConfig({
+        resolve: {
+            alias: {
+                path: 'path-browserify',
+
+            }
+        },
         build: {
             rollupOptions: {
                 external: [
@@ -84,7 +92,7 @@ export default async function getConfig() {
         plugins: [
             snapshot({
                 gitignore: false,
-                include: ['node_modules/@types/**/*'],
+                exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'public/snapshot.bin', '.vite', '.turbo'],
                 output: './public/snapshot.bin'
             }),
             nodePolyfills({

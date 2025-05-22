@@ -92,7 +92,10 @@ export class SearchIndex {
             if (!filter(path)) {
                 continue;
             }
-            index.add({ path: path.slice(1) })
+
+            if (!index.has(path.slice(1))) {
+                index.add({ path: path.slice(1) })
+            }
         }
         return new SearchIndex(index)
     }
