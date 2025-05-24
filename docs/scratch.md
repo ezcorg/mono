@@ -76,7 +76,7 @@ await send({ event: 'foo' })
 ### `codeblock`: Framework-agnostic code editor component
 * [`CodeMirror`](https://codemirror.net/), lightweight JS library for building code editors.
 * [`codemirror-languageserver`](https://github.com/marimo-team/codemirror-languageserver), extension to provide CM editor features through a LSP-client (forked by https://marimo.io/, needs help developing, open to contributions, have contributed in the past)
-* [`@zenfs`](https://github.com/zen-fs), JS library supporting a single interface over various filesystems (indexdb, webstorage, local, etc.)
+* [`memfs`](https://github.com/streamich/memfs) JS filesystem
 
 ### `<to be named>`: Cross-platform application combining the above
 * [`tauri`](https://tauri.app/), Rust-based cross-platform app framework (uses WebView for rendering, may eventually target other platforms)

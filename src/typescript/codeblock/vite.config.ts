@@ -1,8 +1,7 @@
 import { defineConfig } from 'vite'
 import { getGitignored, takeSnapshot } from './src/utils/snapshot';
-// @ts-ignore
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import fs from 'fs/promises';
+import path from 'path';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import multimatch from 'multimatch';
 

@@ -82,7 +82,7 @@ const toolbarPanel = (view: EditorView): Panel => {
         selectedIndex = 0;
 
         // Perform search
-        const results = index?.search(query, { fuzzy: true, prefix: true }) || [];
+        const results = (index?.search(query, { fuzzy: true, prefix: true }) || []).slice(0, 1000);
 
         // Dispatch update to searchResultsField
         view.dispatch({ effects: setSearchResults.of(results) });

@@ -7,6 +7,10 @@ import { Writer } from '@jsonjoy.com/util/lib/buffers/Writer';
 import { CborUint8Array } from '@jsonjoy.com/json-pack/lib/cbor/types';
 import { FsApi } from 'memfs/lib/node/types';
 
+export const writer = new Writer(1024 * 32);
+const encoder = new CborEncoder(writer);
+const decoder = new CborDecoder();
+
 export type BuildPathFilterArgs = {
     include?: string[],
     exclude?: string[]
@@ -48,9 +52,6 @@ export const snapshotDefaults: TakeSnapshotProps = {
     filter: () => true,
 };
 
-export const writer = new Writer(1024 * 32);
-const encoder = new CborEncoder(writer);
-const decoder = new CborDecoder();
 /**
  * Takes a snapshot of the file system based on the provided properties.
  *
@@ -61,11 +62,9 @@ export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
 
     console.log('Taking snapshot of filesystem', { root, filter });
 
-    const snapshot = await
-
-        Snapshot
-            .take({ fs: fsPromises, path: root, filter })
-            .then((snapshot) => encoder.encode(snapshot));
+    const snapshot = await Snapshot
+        .take({ fs: fsPromises, path: root, filter })
+        .then((snapshot) => encoder.encode(snapshot));
     return snapshot;
 };
 
@@ -83,33 +82,31 @@ export namespace Snapshot {
         path: TakeSnapshotProps['root'],
         filter?: TakeSnapshotProps['filter'],
         separator?: string,
-    }): Promise<CborUint8Array<SnapshotNode>> => {
+    }): Promise<SnapshotNode> => {
 
         if (filter && !filter(path)) return null;
 
-        const stats = await fs.lstat(path);
+        // TODO: think about handling snapshotting symlinks better
+        // for now we just resolve and include
+        const stats = await fs.stat(path);
+
         if (stats.isDirectory()) {
             const list = await fs.readdir(path);
             const entries: { [child: string]: SnapshotNode } = {};
             const dir = path.endsWith(separator) ? path : path + separator;
             for (const child of list) {
                 const childSnapshot = await Snapshot.take({ fs, path: `${dir}${child}`, separator, filter });
-                // @ts-expect-error
-                if (childSnapshot) entries['' + child] = childSnapshot;
+                if (childSnapshot) entries[child] = childSnapshot;
             }
-            // @ts-expect-error
             return [0 /* Folder */, {}, entries];
         } else if (stats.isFile()) {
             const buf = (await fs.readFile(path)) as Buffer;
             const uint8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-            // @ts-expect-error
-            return [1 /* File */, {}, uint8];
+            return [1 /* File */, stats, uint8];
         } else if (stats.isSymbolicLink()) {
-            // TODO: if symlink target isn't included in the snapshot, 
-            // we have to resolve it, and include it in the snapshot
+            // TODO: branch never actually reached as `fs.stat` doesn't return symlinks
             return [
                 2 /* Symlink */,
-                // @ts-expect-error
                 {
                     target: (await fs.readlink(path, { encoding: 'utf8' })) as string,
                 },
@@ -135,7 +132,6 @@ export const fromSnapshot = async (
         case 0: {
             if (!path.endsWith(separator)) path = path + separator;
             const [, , entries] = snapshot;
-            console.debug('have fs', { fs })
             fs.mkdirSync(path, { recursive: true });
             for (const [name, child] of Object.entries(entries))
                 await fromSnapshot(child, { fs, path: `${path}${name}`, separator });

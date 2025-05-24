@@ -9,24 +9,6 @@ import { Snapshot } from "../utils";
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
 
-// function promisify(fn: Function) {
-//     return (...args: any[]) => new Promise((resolve, reject) => {
-//         fn(...args, (err: any, result: any) => {
-//             if (err) return reject(err);
-//             resolve(result);
-//         });
-//     });
-// }
-
-// const memfsPromises = {
-//     lstat: promisify(fs.lstat.bind(fs)),
-//     readdir: promisify(fs.readdir.bind(fs)),
-//     readFile: promisify(fs.readFile.bind(fs)),
-//     mkdir: promisify(fs.mkdir.bind(fs)),
-//     writeFile: promisify(fs.writeFile.bind(fs)),
-//     symlink: promisify(fs.symlink.bind(fs)),
-// };
-
 let filesystems = [];
 
 export const mount = async ({ buffer, mountPoint = '/' }: MountArgs): Promise<MountResult> => {
@@ -35,7 +17,6 @@ export const mount = async ({ buffer, mountPoint = '/' }: MountArgs): Promise<Mo
     let filesystem;
 
     try {
-
         if (buffer) {
             console.log(`Mounting filesystem snapshot at [${mountPoint}]...`, buffer);
             // Convert Node Buffer to ArrayBuffer if needed

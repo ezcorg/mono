@@ -1,4 +1,3 @@
-import type { Dirent } from "@zenfs/core";
 import { Fs } from "../types";
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from "../rpc/serde";
@@ -9,14 +8,13 @@ import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { SnapshotNode } from "memfs/lib/snapshot";
 import { promises } from "node:fs";
 import { FsApi } from "memfs/lib/node/types";
-import { IDirent, TDataOut } from "memfs/lib/node/types/misc";
-import { TData } from "memfs/lib/volume";
 
 Comlink.transferHandlers.set("asyncGenerator", asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set("watchOptions", watchOptionsTransferHandler);
 
 export namespace CodeblockFS {
 
+    // TODO: this is incorrect, fs is a Comlink proxy
     export const fromMemfs = (fs: FsApi): Fs => {
         return {
             async readFile(path: string): Promise<string> {
@@ -112,10 +110,9 @@ export namespace CodeblockFS {
             },
 
             async readDir(path: string): Promise<[string, FileType][]> {
-                const files = await fs.readdir(path, { withFileTypes: true, encoding: "utf-8" }) as Dirent[];
-                return files.map((ent: Dirent) => {
+                const files = await fs.readdir(path, { withFileTypes: true, encoding: "utf-8" });
+                return files.map((ent) => {
                     let type = FileType.File;
-                    // @ts-expect-error
                     switch ((ent.stats.mode as number) & 0o170000) {
                         case 0o040000:
                             type = FileType.Directory;
@@ -166,11 +163,7 @@ export namespace CodeblockFS {
         const worker = new SharedWorker(url, { type: 'module' });
         worker.port.start()
         const proxy = Comlink.wrap<{ mount: typeof mount }>(worker.port);
-        console.debug('mounting', { buffer })
-
         let { fs } = await proxy.mount(Comlink.transfer({ buffer, mountPoint: "/" }, [buffer]));
-        console.debug('mounted', { fs })
-
         return Comlink.proxy(CodeblockFS.fromMemfs(fs))
     }
 

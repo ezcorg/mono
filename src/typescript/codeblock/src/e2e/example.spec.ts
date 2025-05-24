@@ -1,14 +1,13 @@
 import { test } from '@playwright/test';
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../rpc/serde';
-import fs from '@zenfs/core';
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler);
 
 declare global {
   interface Window {
-    fs: typeof fs;
+    // fs: typeof fs;
   }
 }
 
