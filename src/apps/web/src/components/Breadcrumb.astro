@@ -1,0 +1,27 @@
+---
+export interface Crumb {
+	label: string;
+	href: string;
+}
+
+export interface Props {
+	breadcrumbs?: Crumb[];
+}
+
+const { breadcrumbs } = Astro.props;
+---
+
+{
+	breadcrumbs && breadcrumbs.length > 0 && (
+		<nav class="flex items-center gap-2 text-[#F5F5F5]">
+			{breadcrumbs.map((breadcrumb: Crumb) => (
+				<span class="text-[32px]">
+					<span class="text-[24px] m-[0.75rem]">/</span>
+					<a href={breadcrumb.href} class="hover:underline">
+						{breadcrumb.label}
+					</a>
+				</span>
+			))}
+		</nav>
+	)
+}

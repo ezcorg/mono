@@ -1,0 +1,809 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Navbar from '../components/Navbar.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<Layout
+	title="Start a Project | ez dev"
+	description="Ready to start your next project? Let us know how we can help."
+>
+	<section
+		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-6 pb-12 md:px-8 md:pb-16"
+	>
+		<div class="w-full mx-auto flex flex-col gap-8">
+			<Navbar currentPath="/project" />
+			<form class="space-y-6 max-w-2xl" id="contact-form">
+				<div>
+					<label for="name" class="block text-[#F5F5F5] mb-2">Name *</label>
+					<input
+						type="text"
+						id="name"
+						name="name"
+						required
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
+					/>
+				</div>
+				<div>
+					<label for="email" class="block text-[#F5F5F5] mb-2">Email *</label>
+					<input
+						type="email"
+						id="email"
+						name="email"
+						required
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
+					/>
+				</div>
+
+				<div>
+					<label for="date-range" class="block text-[#F5F5F5] mb-2"
+						>Timeline</label
+					>
+					<input
+						type="text"
+						id="date-range"
+						name="dateRange"
+						placeholder="Select date range"
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] placeholder-gray-400 px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
+					/>
+				</div>
+
+				<div>
+					<label
+						for="minBudget"
+						class="flex items-center gap-[1rem] text-[#F5F5F5] mb-2"
+						>Budget *
+					</label>
+					<div class="relative mt-4 h-[7rem]" id="budgetSectionContainer">
+						<div
+							class="relative z-10 w-full mb-8 flex justify-between items-start"
+						>
+							<div
+								class="absolute flex flex-col z-20 transition-all duration-300 ease-in-out"
+								id="minBudgetWrapper"
+							>
+								<div class="relative">
+									<span
+										class="absolute left-3 top-1/2 -translate-y-1/2 text-white pointer-events-none"
+										id="minCurrencySymbol">$</span
+									>
+									<input
+										type="number"
+										id="minBudget"
+										name="minBudget"
+										min="1000"
+										required
+										value="1000"
+										class="pl-[calc(1.5em+0.5rem)] bg-transparent border-2 border-[#333333] text-[#F5F5F5] py-2 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 text-center px-2"
+									/>
+								</div>
+								<small class="text-[#AAAAAA] text-center w-full">Min</small>
+							</div>
+
+							<div
+								class="absolute flex flex-col z-20 transition-all duration-300 ease-in-out"
+								id="maxBudgetWrapper"
+							>
+								<div class="relative">
+									<span
+										class="absolute left-3 top-1/2 -translate-y-1/2 text-white pointer-events-none"
+										id="maxCurrencySymbol">$</span
+									>
+									<input
+										type="number"
+										id="maxBudget"
+										name="maxBudget"
+										required
+										value="10000"
+										class="pl-[calc(1.5em+0.5rem)] bg-transparent border-2 border-[#333333] text-[#F5F5F5] py-2 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 text-center px-2"
+									/>
+								</div>
+								<small class="text-[#AAAAAA] text-center w-full">Max</small>
+							</div>
+
+							<select
+								id="currencySelect"
+								name="currency"
+								class="absolute right-0 bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-3 py-2 focus:border-[#F5F5F5] focus:outline-none appearance-none leading-none z-30"
+								aria-label="Currency select"></select>
+						</div>
+						<range-slider
+							id="budgetSlider"
+							class="w-full h-6 absolute bottom-0"
+							min="3"
+							max="6"
+							step="0.01"
+							value="3,6"
+						>
+							<div data-track></div>
+							<div data-track-fill></div>
+							<div data-runnable-track>
+								<div data-thumb aria-label="Minimum Price"></div>
+								<div data-thumb aria-label="Maximum Price"></div>
+							</div>
+						</range-slider>
+					</div>
+				</div>
+
+				<div>
+					<label for="message" class="block text-[#F5F5F5] mb-2"
+						>Message *</label
+					>
+					<textarea
+						id="message"
+						name="message"
+						required
+						rows="6"
+						minlength="50"
+						oninput="checkMessageLength(this)"
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 resize-vertical"
+					></textarea>
+					<small id="message-warning" class="text-red-500 hidden"
+						>Minimum 50 characters required.</small
+					>
+				</div>
+
+				<button
+					type="submit"
+					class="bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
+				>
+					Send Message
+				</button>
+			</form>
+		</div>
+	</section>
+
+	<Footer slot="footer" />
+</Layout>
+
+<script
+	type="module"
+	src="https://cdn.jsdelivr.net/npm/range-slider-element@2/+esm"></script>
+<link
+	rel="stylesheet"
+	href="https://cdn.jsdelivr.net/npm/range-slider-element@2/dist/range-slider-element.css"
+/>
+<link
+	rel="stylesheet"
+	href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css"
+/>
+<link
+	rel="stylesheet"
+	type="text/css"
+	href="https://npmcdn.com/flatpickr/dist/themes/dark.css"
+/>
+
+<style>
+	.flatpickr-calendar {
+		background-color: white !important;
+		color: black !important;
+		border-color: #ccc !important;
+	}
+	.flatpickr-day,
+	.flatpickr-month,
+	.flatpickr-weekday {
+		color: #333 !important;
+		background: transparent !important;
+	}
+	.flatpickr-day.selected,
+	.flatpickr-day.startRange,
+	.flatpickr-day.endRange {
+		background: #eee !important;
+		color: black !important;
+	}
+	.flatpickr-input::placeholder {
+		color: #aaa !important;
+	}
+
+	range-slider [data-track] {
+		background-color: var(--range-slider-track-bg);
+	}
+
+	range-slider [data-track-fill] {
+		background-color: var(--range-slider-track-fill-bg);
+	}
+
+	range-slider [data-thumb] {
+		border-radius: 0px;
+		background-color: var(--range-slider-track-fill-bg);
+	}
+
+	/* Custom styles for the range slider */
+	range-slider {
+		--range-slider-track-bg: #555555; /* Gray background for the track */
+		--range-slider-track-fill-bg: white;
+		--range-slider-thumb-size: 20px; /* Size of the thumb */
+		--range-slider-thumb-bg: #f5f5f5; /* White color for the thumb */
+		--range-slider-thumb-border: none; /* No border for the thumb */
+		--range-slider-thumb-radius: 0; /* Square shape */
+		--range-slider-thumb-shadow: none; /* No shadow */
+	}
+
+	/* Ensure inputs are on top */
+	#minBudgetWrapper,
+	#maxBudgetWrapper {
+		/* Tailwind's absolute and z-index classes handle this */
+	}
+
+	/* Adjust specific input styling to prevent shrinking too much */
+	#minBudget,
+	#maxBudget {
+		min-width: 9ch; /* Adjusted min-width for better appearance */
+		text-align: center;
+		width: fit-content; /* Allow width to adjust to content */
+	}
+
+	#currencySelect {
+		min-width: 6ch; /* Ensure currency select has enough space */
+		height: 44px;
+	}
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/cleave.js@1.6.0/dist/cleave.min.js"
+></script>
+<script>
+	document.addEventListener('DOMContentLoaded', async () => {
+		const minInput = document.getElementById('minBudget');
+		const maxInput = document.getElementById('maxBudget');
+		const currencySelect = document.getElementById('currencySelect');
+		const minSymbol = document.getElementById('minCurrencySymbol');
+		const maxSymbol = document.getElementById('maxCurrencySymbol');
+		const slider = document.getElementById('budgetSlider');
+		const budgetSectionContainer = document.getElementById(
+			'budgetSectionContainer',
+		); // Renamed for clarity
+		const minBudgetWrapper = document.getElementById('minBudgetWrapper');
+		const maxBudgetWrapper = document.getElementById('maxBudgetWrapper');
+
+		let baseCurrency = 'USD';
+		let exchangeRates = {};
+		let currentCurrency = 'USD';
+		let isLoading = false; // New loading state
+
+		// Define min/max USD values for the slider
+		const MIN_USD_VALUE = 1000;
+		const MAX_USD_VALUE = 1000000;
+
+		const currencySymbols = {
+			USD: '$',
+			EUR: '€',
+			GBP: '£',
+			JPY: '¥',
+			CAD: '$',
+			AUD: '$',
+			INR: '₹',
+			CHF: 'Fr',
+			CNY: '¥',
+			SEK: 'kr',
+			NOK: 'kr',
+			BRL: 'R$',
+			MXN: '$',
+			PLN: 'zł',
+			CZK: 'Kč',
+			HUF: 'Ft',
+			DKK: 'kr',
+			SGD: '$',
+			NZD: '$',
+			TRY: '₺',
+			THB: '฿',
+			HKD: 'HK$',
+			IDR: 'Rp', // Indonesian Rupiah
+			MYR: 'RM', // Malaysian Ringgit
+			PHP: '₱', // Philippine Peso
+			ZAR: 'R', // South African Rand
+			KRW: '₩', // South Korean Won
+			EGP: 'E£', // Egyptian Pound
+			SAR: '﷼', // Saudi Riyal
+			AED: 'د.إ', // UAE Dirham
+			ILS: '₪', // Israeli New Shekel
+			NPR: 'रू', // Nepalese Rupee
+			PKR: '₨', // Pakistani Rupee
+			BDT: '৳', // Bangladeshi Taka
+			VND: '₫', // Vietnamese Dong
+			NGN: '₦', // Nigerian Naira
+			UAH: '₴', // Ukrainian Hryvnia
+			CLP: '$', // Chilean Peso
+			COP: '$', // Colombian Peso
+			ARS: '$', // Argentine Peso
+			PER: 'S/', // Peruvian Sol
+			DZD: 'د.ج', // Algerian Dinar
+			MAD: 'د.م.', // Moroccan Dirham
+			TUN: 'د.ت', // Tunisian Dinar
+			ISK: 'kr', // Icelandic Króna
+			LKR: '₨', // Sri Lankan Rupee
+			RSD: 'дин.', // Serbian Dinar
+			GEL: '₾', // Georgian Lari
+			AZN: '₼', // Azerbaijani Manat
+			KZT: '₸', // Kazakhstani Tenge
+			BYN: 'Br', // Belarusian Ruble
+			MDL: 'L', // Moldovan Leu
+			AMD: '֏', // Armenian Dram
+			BGN: 'лв', // Bulgarian Lev
+			HRK: 'kn', // Croatian Kuna (Though now EUR)
+			RON: 'lei', // Romanian Leu
+		};
+
+		const flags = {
+			USD: '🇺🇸',
+			EUR: '🇪🇺',
+			GBP: '🇬🇧',
+			JPY: '🇯🇵',
+			CAD: '🇨🇦',
+			AUD: '🇦🇺',
+			INR: '🇮🇳',
+			CHF: '🇨🇭',
+			CNY: '🇨🇳',
+			SEK: '🇸🇪',
+			NOK: '🇳🇴',
+			BRL: '🇧🇷',
+			MXN: '🇲🇽',
+			PLN: '🇵🇱',
+			CZK: '🇨🇿',
+			HUF: '🇭🇺',
+			DKK: '🇩🇰',
+			SGD: '🇸🇬',
+			NZD: '🇳🇿',
+			TRY: '🇹🇷',
+			THB: '🇹🇭',
+			HKD: '🇭🇰',
+			IDR: '🇮🇩', // Indonesian Rupiah
+			MYR: '🇲🇾', // Malaysian Ringgit
+			PHP: '🇵🇭', // Philippine Peso
+			ZAR: '🇿🇦', // South African Rand
+			KRW: '🇰🇷', // South Korean Won
+			EGP: '🇪🇬', // Egyptian Pound
+			SAR: '🇸🇦', // Saudi Riyal
+			AED: '🇦🇪', // UAE Dirham
+			ILS: '🇮🇱', // Israeli New Shekel
+			NPR: '🇳🇵', // Nepalese Rupee
+			PKR: '🇵🇰', // Pakistani Rupee
+			BDT: '🇧🇩', // Bangladeshi Taka
+			VND: '🇻🇳', // Vietnamese Dong
+			NGN: '🇳🇬', // Nigerian Naira
+			UAH: '🇺🇦', // Ukrainian Hryvnia
+			CLP: '🇨🇱', // Chilean Peso
+			COP: '🇨🇴', // Colombian Peso
+			ARS: '🇦🇷', // Argentine Peso
+			PER: '🇵🇪', // Peruvian Sol
+			DZD: '🇩🇿', // Algerian Dinar
+			MAD: '🇲🇦', // Moroccan Dirham
+			TUN: '🇹🇳', // Tunisian Dinar
+			ISK: '🇮🇸', // Icelandic Króna
+			LKR: '🇱🇰', // Sri Lankan Rupee
+			RSD: '🇷🇸', // Serbian Dinar
+			GEL: '🇬🇪', // Georgian Lari
+			AZN: '🇦🇿', // Azerbaijani Manat
+			KZT: '🇰🇿', // Kazakhstani Tenge
+			BYN: '🇧🇾', // Belarusian Ruble
+			MDL: '🇲🇩', // Moldovan Leu
+			AMD: '🇦🇲', // Armenian Dram
+			BGN: '🇧🇬', // Bulgarian Lev
+			HRK: '🇭🇷', // Croatian Kuna
+			RON: '🇷🇴', // Romanian Leu
+		};
+
+		function getCurrencySymbol(code) {
+			return currencySymbols[code] || code;
+		}
+
+		function updateCurrencySymbols(code) {
+			const symbol = getCurrencySymbol(code);
+			minSymbol.textContent = symbol;
+			maxSymbol.textContent = symbol;
+		}
+
+		// Function to set loading state
+		function setLoading(loading) {
+			isLoading = loading;
+			if (isLoading) {
+				budgetSectionContainer.classList.add(
+					'pointer-events-none',
+					'opacity-50',
+				);
+			} else {
+				budgetSectionContainer.classList.remove(
+					'pointer-events-none',
+					'opacity-50',
+				);
+			}
+		}
+
+		async function fetchRates(base = 'USD') {
+			setLoading(true);
+			try {
+				const res = await fetch(
+					`https://api.frankfurter.app/latest?from=${base}`,
+				);
+				if (!res.ok) {
+					throw new Error(`HTTP error! status: ${res.status}`);
+				}
+				const data = await res.json();
+				exchangeRates = data.rates;
+				exchangeRates[base] = 1; // Ensure the base currency itself has a rate of 1
+				baseCurrency = base; // Update baseCurrency after successful fetch
+				populateCurrencySelect();
+			} catch (error) {
+				console.error('Failed to fetch exchange rates:', error);
+				// Fallback to hardcoded rates or a default if API fails
+				exchangeRates = {
+					USD: 1,
+					EUR: 0.92,
+					GBP: 0.79,
+					JPY: 158.2,
+					CAD: 1.37,
+					AUD: 1.5,
+					INR: 83.56,
+					CHF: 0.89,
+					CNY: 7.26,
+					SEK: 10.51,
+					NOK: 10.51,
+					BRL: 5.43,
+					MXN: 18.25,
+					PLN: 4.02,
+					CZK: 23.23,
+					HUF: 369.34,
+					DKK: 6.86,
+					SGD: 1.35,
+					NZD: 1.63,
+					TRY: 32.55,
+					THB: 36.68,
+					HKD: 7.8,
+					IDR: 16223.7,
+					MYR: 4.71,
+					PHP: 58.74,
+					ZAR: 18.26,
+					KRW: 1386.41,
+					EGP: 47.7,
+					SAR: 3.75,
+					AED: 3.67,
+					ILS: 3.73,
+					NPR: 133.7,
+					PKR: 278.43,
+					BDT: 109.61,
+					VND: 25447.8,
+					NGN: 1494.5,
+					UAH: 40.54,
+					CLP: 935.25,
+					COP: 4101.4,
+					ARS: 908.7,
+					PER: 3.7,
+					DZD: 134.46,
+					MAD: 10.01,
+					TUN: 3.12,
+					ISK: 138.8,
+					LKR: 300.99,
+					RSD: 107.41,
+					GEL: 2.78,
+					AZN: 1.7,
+					KZT: 472.93,
+					BYN: 3.26,
+					MDL: 17.85,
+					AMD: 387.6,
+					BGN: 1.8,
+					HRK: 7.53,
+					RON: 4.97,
+				};
+				baseCurrency = 'USD'; // Set fallback base currency
+				populateCurrencySelect();
+			} finally {
+				setLoading(false);
+			}
+		}
+
+		function populateCurrencySelect() {
+			currencySelect.innerHTML = '';
+			Object.keys(exchangeRates)
+				.sort()
+				.forEach((code) => {
+					const option = document.createElement('option');
+					option.value = code;
+					option.textContent = `${flags[code] || ''} ${code}`;
+					currencySelect.appendChild(option);
+				});
+			// Set the select value after populating options, using currentCurrency
+			currencySelect.value = currentCurrency;
+			updateCurrencySymbols(currentCurrency);
+		}
+
+		function convertCurrency(amount, from, to) {
+			if (from === to) return amount;
+			const rateFrom = exchangeRates[from];
+			const rateTo = exchangeRates[to];
+			if (!rateFrom || !rateTo) {
+				console.warn(
+					`Missing exchange rate for ${from} or ${to}. Cannot convert.`,
+				);
+				return amount;
+			}
+			return (amount / rateFrom) * rateTo;
+		}
+
+		currencySelect.addEventListener('change', async () => {
+			const newCurrency = currencySelect.value;
+			const minVal = parseFloat(minInput.value);
+			const maxVal = parseFloat(maxInput.value);
+
+			// Convert current values to USD first, then to the new currency
+			const minValInUSD = convertCurrency(minVal, currentCurrency, 'USD');
+			const maxValInUSD = convertCurrency(maxVal, currentCurrency, 'USD');
+
+			// Set currentCurrency to the new one immediately to ensure correct conversions
+			currentCurrency = newCurrency;
+
+			// Fetch rates based on the *newly selected* currency as the base
+			// This is important because the API returns rates *from* the base currency.
+			// If the newCurrency is already the baseCurrency, no new fetch is needed.
+			if (newCurrency !== baseCurrency) {
+				await fetchRates(newCurrency); // Update exchangeRates with new base
+			}
+
+			const newMin = convertCurrency(minValInUSD, 'USD', newCurrency);
+			const newMax = convertCurrency(maxValInUSD, 'USD', newCurrency);
+
+			minInput.value = Math.round(newMin);
+			maxInput.value = Math.round(newMax);
+
+			updateCurrencySymbols(newCurrency);
+
+			// Also update slider min/max based on the new currency's conversion of MIN_USD_VALUE and MAX_USD_VALUE
+			const sliderMinConverted = convertCurrency(
+				MIN_USD_VALUE,
+				'USD',
+				newCurrency,
+			);
+			const sliderMaxConverted = convertCurrency(
+				MAX_USD_VALUE,
+				'USD',
+				newCurrency,
+			);
+
+			slider.setAttribute('min', Math.log10(sliderMinConverted).toFixed(2));
+			slider.setAttribute('max', Math.log10(sliderMaxConverted).toFixed(2));
+
+			updateSliderFromInputs();
+			updateInputPositions();
+		});
+
+		// Logarithmic slider sync logic
+		function updateSliderFromInputs() {
+			let minVal = parseFloat(minInput.value);
+			let maxVal = parseFloat(maxInput.value);
+
+			// Convert current input values to USD for consistent min/max limits
+			const minValInUSD = convertCurrency(minVal, currentCurrency, 'USD');
+			const maxValInUSD = convertCurrency(maxVal, currentCurrency, 'USD');
+
+			// Apply global min/max constraints in USD before converting back for slider
+			minVal = convertCurrency(
+				Math.max(MIN_USD_VALUE, minValInUSD),
+				'USD',
+				currentCurrency,
+			);
+			maxVal = convertCurrency(
+				Math.min(MAX_USD_VALUE, Math.max(minValInUSD, maxValInUSD)),
+				'USD',
+				currentCurrency,
+			);
+
+			// Ensure input values reflect the constrained values
+			minInput.value = Math.round(minVal);
+			maxInput.value = Math.round(maxVal);
+
+			const minLog = Math.log10(minVal).toFixed(2);
+			const maxLog = Math.log10(maxVal).toFixed(2);
+
+			slider.value = `${minLog},${maxLog}`;
+		}
+
+		function updateInputsFromSlider() {
+			const [low, high] = slider.value.split(',').map(parseFloat);
+			minInput.value = Math.round(Math.pow(10, low));
+			maxInput.value = Math.round(Math.pow(10, high));
+
+			minInput.setAttribute('max', maxInput.value);
+			maxInput.setAttribute('min', minInput.value);
+		}
+
+		// Initial setup
+		await fetchRates(); // Fetch initial rates (default USD)
+
+		// Set initial slider min/max based on USD values
+		const initialSliderMinConverted = convertCurrency(
+			MIN_USD_VALUE,
+			'USD',
+			currentCurrency,
+		);
+		const initialSliderMaxConverted = convertCurrency(
+			MAX_USD_VALUE,
+			'USD',
+			currentCurrency,
+		);
+		slider.setAttribute(
+			'min',
+			Math.log10(initialSliderMinConverted).toFixed(2),
+		);
+		slider.setAttribute(
+			'max',
+			Math.log10(initialSliderMaxConverted).toFixed(2),
+		);
+
+		// Set initial input values to converted USD min/max
+		minInput.value = Math.round(
+			convertCurrency(MIN_USD_VALUE, 'USD', currentCurrency),
+		);
+		maxInput.value = Math.round(convertCurrency(10000, 'USD', currentCurrency)); // Or a reasonable default within the max range
+
+		updateSliderFromInputs(); // Sync slider to initial input values
+		updateInputPositions();
+
+		function updateInputPositions() {
+			const thumbs = slider.querySelectorAll('[data-thumb]');
+			const sliderRect = slider.getBoundingClientRect();
+			const containerRect = budgetSectionContainer.getBoundingClientRect(); // The parent container
+
+			const minThumb = thumbs[0];
+			const maxThumb = thumbs[1];
+
+			const minThumbRect = minThumb.getBoundingClientRect();
+			const maxThumbRect = maxThumb.getBoundingClientRect();
+
+			const minSymbolWidth = minSymbol.offsetWidth; // Width of the currency symbol
+			const maxSymbolWidth = maxSymbol.offsetWidth; // Width of the currency symbol
+			const currencySelectRect = currencySelect.getBoundingClientRect();
+
+			// Calculate desired left for min input (its border aligned with thumb center)
+			let minInputDesiredLeft =
+				minThumbRect.left +
+				minThumbRect.width / 2 -
+				containerRect.left -
+				minBudgetWrapper.offsetWidth / 2;
+			// Calculate desired left for max input (its border aligned with thumb center)
+			let maxInputDesiredLeft =
+				maxThumbRect.left +
+				maxThumbRect.width / 2 -
+				containerRect.left -
+				maxBudgetWrapper.offsetWidth / 2;
+
+			// Adjust for currency symbol to align the input's content area (after symbol)
+			minInputDesiredLeft += minSymbolWidth / 2;
+			maxInputDesiredLeft += maxSymbolWidth / 2;
+
+			// Apply horizontal constraints for min input within the container
+			minInputDesiredLeft = Math.max(0, minInputDesiredLeft);
+			minInputDesiredLeft = Math.min(
+				currencySelectRect.left -
+					containerRect.left -
+					minBudgetWrapper.offsetWidth -
+					10, // 10px buffer from currency select
+				minInputDesiredLeft,
+			);
+
+			// Apply horizontal constraints for max input within the container
+			maxInputDesiredLeft = Math.max(0, maxInputDesiredLeft);
+			maxInputDesiredLeft = Math.min(
+				currencySelectRect.left -
+					containerRect.left -
+					maxBudgetWrapper.offsetWidth -
+					10, // 10px buffer from currency select
+				maxInputDesiredLeft,
+			);
+
+			// Prevent overlap between min and max inputs
+			const minRightEdge = minInputDesiredLeft + minBudgetWrapper.offsetWidth;
+			const overlapBuffer = 20; // Space between inputs
+
+			if (minRightEdge > maxInputDesiredLeft - overlapBuffer) {
+				maxInputDesiredLeft = minRightEdge + overlapBuffer;
+				// Re-constrain maxInputDesiredLeft if it goes beyond currencySelect
+				maxInputDesiredLeft = Math.min(
+					currencySelectRect.left -
+						containerRect.left -
+						maxBudgetWrapper.offsetWidth -
+						10,
+					maxInputDesiredLeft,
+				);
+			}
+
+			minBudgetWrapper.style.left = `${minInputDesiredLeft}px`;
+			maxBudgetWrapper.style.left = `${maxInputDesiredLeft}px`;
+		}
+
+		// Event listeners for synchronization
+		slider.addEventListener('input', () => {
+			updateInputsFromSlider();
+			updateInputPositions();
+		});
+
+		minInput.addEventListener('input', () => {
+			// Convert current input values to USD for comparison
+			const minValInUSD = convertCurrency(
+				parseFloat(minInput.value),
+				currentCurrency,
+				'USD',
+			);
+			const maxValInUSD = convertCurrency(
+				parseFloat(maxInput.value),
+				currentCurrency,
+				'USD',
+			);
+
+			// Apply global USD min/max constraints
+			let newMinValInUSD = Math.max(MIN_USD_VALUE, minValInUSD);
+			if (newMinValInUSD > maxValInUSD) {
+				newMinValInUSD = maxValInUSD; // Don't let min exceed max
+			}
+			minInput.value = Math.round(
+				convertCurrency(newMinValInUSD, 'USD', currentCurrency),
+			);
+
+			// Re-convert max value to match current currency after min update
+			const newMaxValInUSD = convertCurrency(
+				parseFloat(maxInput.value),
+				currentCurrency,
+				'USD',
+			);
+			minInput.setAttribute('max', maxInput.value); // Set native attribute for HTML5 validation
+
+			updateSliderFromInputs();
+			updateInputPositions();
+		});
+
+		maxInput.addEventListener('input', () => {
+			// Convert current input values to USD for comparison
+			const minValInUSD = convertCurrency(
+				parseFloat(minInput.value),
+				currentCurrency,
+				'USD',
+			);
+			const maxValInUSD = convertCurrency(
+				parseFloat(maxInput.value),
+				currentCurrency,
+				'USD',
+			);
+
+			// Apply global USD min/max constraints
+			let newMaxValInUSD = Math.min(MAX_USD_VALUE, maxValInUSD);
+			if (newMaxValInUSD < minValInUSD) {
+				newMaxValInUSD = minValInUSD; // Don't let max go below min
+			}
+			maxInput.value = Math.round(
+				convertCurrency(newMaxValInUSD, 'USD', currentCurrency),
+			);
+
+			// Re-convert min value to match current currency after max update
+			const newMinValInUSD = convertCurrency(
+				parseFloat(minInput.value),
+				currentCurrency,
+				'USD',
+			);
+			minInput.setAttribute('max', maxInput.value); // Set native attribute for HTML5 validation
+
+			updateSliderFromInputs();
+			updateInputPositions();
+		});
+
+		minInput.setAttribute('max', maxInput.value);
+		maxInput.setAttribute('min', minInput.value);
+
+		window.addEventListener('resize', updateInputPositions);
+		updateInputPositions();
+
+		flatpickr('#date-range', {
+			mode: 'range',
+			dateFormat: 'Y-m-d',
+			altInput: true,
+			altFormat: 'F j, Y',
+			theme: 'dark',
+		});
+
+		window.checkMessageLength = function (textarea) {
+			const warning = document.getElementById('message-warning');
+			if (textarea.value.length < 50) {
+				warning.classList.remove('hidden');
+			} else {
+				warning.classList.add('hidden');
+			}
+		};
+	});
+</script>

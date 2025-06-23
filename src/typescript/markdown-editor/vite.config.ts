@@ -4,6 +4,7 @@ import path from 'path';
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {},
   resolve: {
     alias: {
       '@codemirror/state': path.resolve(__dirname, './node_modules/@codemirror/state'),

@@ -1,0 +1,29 @@
+---
+export interface Props {
+	size?: number;
+}
+
+const { size = 60 } = Astro.props;
+---
+
+<a href="/" class="flex items-center gap-3">
+	<div class="relative" style={`width: ${size}px; height: ${size}px;`}>
+		<div
+			class="absolute inset-0 border-2 border-[#F5F5F5]"
+			style={`width: ${size}px; height: ${size}px;`}
+		>
+		</div>
+		<div
+			class="absolute inset-0 flex items-center justify-center"
+			style={`font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500;`}
+		>
+			<span class="text-[#F5F5F5]">ez</span>
+		</div>
+	</div>
+	<span
+		class="text-[#F5F5F5]"
+		style={`font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500;`}
+	>
+		dev
+	</span>
+</a>

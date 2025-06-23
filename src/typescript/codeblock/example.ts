@@ -2,7 +2,7 @@ import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { createCodeblock } from "./src/editor";
 import { CodeblockFS } from "./src/utils/fs";
 import { SearchIndex } from "./src/utils/search";
-import { SnapshotNode } from "memfs/lib/snapshot";
+import { SnapshotNode } from "memfs/snapshot";
 
 async function loadFs() {
     const response = await fetch('/snapshot.bin');

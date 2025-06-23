@@ -7,6 +7,8 @@ import { exitCode } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history"
 import { MarkdownNodeSpec } from 'tiptap-markdown';
 
+const fs = await CodeblockFS.worker()
+
 // TODO: configure a filesystem worker which is used by both the editor and the codeblock extension
 
 export const ExtendedCodeblock = Node.create({
@@ -217,7 +219,7 @@ export const ExtendedCodeblock = Node.create({
                 extensions: [
                     keymap.of(codemirrorKeymap()),
                     basicSetup,
-                    codeblock({ content: node.textContent, fs: CodeblockFS.fromNodelike(fs), language: node.attrs.language, file: node.attrs.file, toolbar: !!node.attrs.file, cwd: '/' }),
+                    codeblock({ content: node.textContent, fs, language: node.attrs.language, file: node.attrs.file, toolbar: !!node.attrs.file, cwd: '/' }),
                     EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
                 ]
             });

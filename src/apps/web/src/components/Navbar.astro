@@ -1,0 +1,38 @@
+---
+import Logo from './Logo.astro';
+import Breadcrumb, { type Crumb } from './Breadcrumb.astro';
+
+export interface Props {
+	size?: number;
+	currentPath?: string;
+}
+
+const { size = 80, currentPath = '/' } = Astro.props;
+
+const pathSegmentToLabelMap: Record<string, string> = {
+	'': 'home',
+	about: 'about',
+	contact: 'contact',
+	project: 'new project',
+	services: 'services',
+	work: 'our work',
+};
+
+const pathSegmentToLabel = (segment: string): Crumb[] => {
+	const segments = segment.split('/').filter(Boolean);
+	return segments.map((seg, index) => {
+		const label = pathSegmentToLabelMap[seg] || seg;
+		return {
+			label,
+			href: `/${segments.slice(0, index + 1).join('/')}`,
+		};
+	});
+};
+
+const breadcrumbs = pathSegmentToLabel(currentPath);
+---
+
+<div class="flex">
+	<Logo size={size} />
+	<Breadcrumb breadcrumbs={breadcrumbs} />
+</div>

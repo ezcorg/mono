@@ -144,6 +144,7 @@ export class LanguageServerClient {
             // https://github.com/FurqanSoftware/codemirror-languageserver/issues/9
             webSocketTransport.connection.addEventListener(
                 "message",
+                // @ts-expect-error
                 (message: { data: string }) => {
                     const data = JSON.parse(message.data);
                     if (data.method && data.id) {
@@ -559,7 +560,7 @@ export class LanguageServerPlugin implements PluginValue {
         const token = match
             ? context.matchBefore(match)
             : // Fallback to matching any character
-              context.matchBefore(/[a-zA-Z0-9]+/);
+            context.matchBefore(/[a-zA-Z0-9]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
@@ -679,12 +680,12 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         const severityMap: Record<DiagnosticSeverity, Diagnostic["severity"]> =
-            {
-                [DiagnosticSeverity.Error]: "error",
-                [DiagnosticSeverity.Warning]: "warning",
-                [DiagnosticSeverity.Information]: "info",
-                [DiagnosticSeverity.Hint]: "info",
-            };
+        {
+            [DiagnosticSeverity.Error]: "error",
+            [DiagnosticSeverity.Warning]: "warning",
+            [DiagnosticSeverity.Information]: "info",
+            [DiagnosticSeverity.Hint]: "info",
+        };
 
         const diagnostics = params.diagnostics.map(
             async ({ range, message, severity, code }) => {
@@ -696,7 +697,7 @@ export class LanguageServerPlugin implements PluginValue {
                     (action): Action => ({
                         name:
                             "command" in action &&
-                            typeof action.command === "object"
+                                typeof action.command === "object"
                                 ? action.command?.title || action.title
                                 : action.title,
                         apply: async () => {
@@ -1385,10 +1386,10 @@ interface LanguageServerClientOptions {
      * Can be an object or a function that modifies the default capabilities.
      */
     capabilities?:
-        | LSP.InitializeParams["capabilities"]
-        | ((
-              defaultCapabilities: LSP.InitializeParams["capabilities"],
-          ) => LSP.InitializeParams["capabilities"]);
+    | LSP.InitializeParams["capabilities"]
+    | ((
+        defaultCapabilities: LSP.InitializeParams["capabilities"],
+    ) => LSP.InitializeParams["capabilities"]);
     /** Additional initialization options to send to the language server */
     initializationOptions?: LSP.InitializeParams["initializationOptions"];
 }
@@ -1482,7 +1483,7 @@ interface LanguageServerOptions extends FeatureOptions {
  */
 interface LanguageServerWebsocketOptions
     extends Omit<LanguageServerOptions, "client">,
-        Omit<LanguageServerClientOptions, "transport"> {
+    Omit<LanguageServerClientOptions, "transport"> {
     /** WebSocket URI for connecting to the language server */
     serverUri: `ws://${string}` | `wss://${string}`;
 }

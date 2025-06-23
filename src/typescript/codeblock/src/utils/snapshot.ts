@@ -1,11 +1,11 @@
 import fsPromises from 'fs/promises';
 import multimatch from 'multimatch';
-import { SnapshotNode } from 'memfs/lib/snapshot';
+import { SnapshotNode } from 'memfs/snapshot';
 import { CborEncoder } from '@jsonjoy.com/json-pack/lib/cbor/CborEncoder';
 import { CborDecoder } from '@jsonjoy.com/json-pack/lib/cbor/CborDecoder';
 import { Writer } from '@jsonjoy.com/util/lib/buffers/Writer';
 import { CborUint8Array } from '@jsonjoy.com/json-pack/lib/cbor/types';
-import { FsApi } from 'memfs/lib/node/types';
+import { FsApi } from 'memfs/node/types';
 
 export const writer = new Writer(1024 * 32);
 const encoder = new CborEncoder(writer);

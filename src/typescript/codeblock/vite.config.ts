@@ -69,7 +69,6 @@ export default async function getConfig() {
         resolve: {
             alias: {
                 path: 'path-browserify',
-
             }
         },
         build: {

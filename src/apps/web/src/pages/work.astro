@@ -1,0 +1,88 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Footer from '../components/Footer.astro';
+import Navbar from '../components/Navbar.astro';
+
+const projects = [
+	{
+		title: 'eznote',
+		description: 'A cross-platform Markdown note-taking application',
+		tags: ['Rust', 'Tauri', 'TypeScript'],
+		image: '',
+		social: [
+			{
+				icon: '',
+				link: '',
+			},
+		],
+		link: '#',
+	},
+	{
+		title: 'codeblock',
+		description:
+			'A lightweight embeddable code block editor (based on CodeMirror)',
+		tags: ['TypeScript', 'Web Component'],
+		image: '',
+		social: [],
+		link: '#',
+	},
+	{
+		title: 'htmlsnap',
+		description:
+			'A devtool extension for snapshotting HTML elements (and applicable CSS)',
+		tags: ['Javascript', 'Web Extension'],
+		image: '',
+		social: [],
+		link: '#',
+	},
+];
+---
+
+<Layout
+	title="Work | ez dev"
+	description="A showcase of projects we've built for clients around the world."
+>
+	<section
+		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-6 md:px-8"
+	>
+		<div class="w-full mx-auto flex flex-col gap-8">
+			<Navbar currentPath="/work" />
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16">
+				{
+					projects.map((project, index) => (
+						<div class="border-2 border-[#333333] overflow-hidden transition-all duration-300 hover:border-[#F5F5F5]">
+							<div class="p-6">
+								<h3 class="text-2xl font-bold text-[#F5F5F5] mb-3">
+									{project.title}
+								</h3>
+								<p class="text-[#F5F5F5] opacity-80 mb-4">
+									{project.description}
+								</p>
+								<div class="flex flex-wrap gap-2 mb-4">
+									{project.tags.map((tech) => (
+										<span class="px-3 py-1 text-sm border border-[#333333] text-[#F5F5F5] opacity-70">
+											{tech}
+										</span>
+									))}
+								</div>
+							</div>
+						</div>
+					))
+				}
+			</div>
+			<div>
+				<p class="text-lg text-[#F5F5F5] opacity-70 mb-8">
+					Like what you see? Let's work together.
+				</p>
+				<a
+					href="/project"
+					class="inline-block bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
+				>
+					Start a project
+				</a>
+			</div>
+		</div>
+	</section>
+
+	<Footer slot="footer" />
+</Layout>

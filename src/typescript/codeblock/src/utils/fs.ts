@@ -5,9 +5,9 @@ import { FileSystem, FileType } from '@volar/language-service';
 import { URI } from 'vscode-uri'
 import type { mount } from '../workers/fs.worker';
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
-import { SnapshotNode } from "memfs/lib/snapshot";
+import { SnapshotNode } from "memfs/snapshot";
 import { promises } from "node:fs";
-import { FsApi } from "memfs/lib/node/types";
+import { FsApi } from "memfs/node/types";
 
 Comlink.transferHandlers.set("asyncGenerator", asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set("watchOptions", watchOptionsTransferHandler);
@@ -158,12 +158,20 @@ export namespace CodeblockFS {
         }
     }
 
-    export const worker = async (buffer: CborUint8Array<SnapshotNode>): Promise<Fs> => {
+    export const worker = async (buffer?: CborUint8Array<SnapshotNode>): Promise<Fs> => {
         const url = new URL('../workers/fs.worker.js', import.meta.url)
+        console.log('Loading fs worker', url.href);
         const worker = new SharedWorker(url, { type: 'module' });
         worker.port.start()
         const proxy = Comlink.wrap<{ mount: typeof mount }>(worker.port);
-        let { fs } = await proxy.mount(Comlink.transfer({ buffer, mountPoint: "/" }, [buffer]));
+
+        let fs;
+
+        if (!buffer) {
+            ({ fs } = await proxy.mount({ mountPoint: '/' }));
+        } else {
+            ({ fs } = await proxy.mount(Comlink.transfer({ buffer, mountPoint: "/" }, [buffer])));
+        }
         return Comlink.proxy(CodeblockFS.fromMemfs(fs))
     }
 

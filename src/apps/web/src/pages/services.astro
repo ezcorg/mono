@@ -1,0 +1,125 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Logo from '../components/Logo.astro';
+import Footer from '../components/Footer.astro';
+
+const services = [
+	{
+		title: 'Web Development',
+		description:
+			'Modern, responsive websites built with the latest technologies and best practices.',
+		features: [
+			'React & TypeScript',
+			'Responsive Design',
+			'Performance Optimization',
+			'SEO Ready',
+		],
+	},
+	{
+		title: 'Mobile Apps',
+		description:
+			'Native and cross-platform mobile applications that deliver exceptional user experiences.',
+		features: [
+			'iOS & Android',
+			'React Native',
+			'Native Performance',
+			'App Store Ready',
+		],
+	},
+	{
+		title: 'Backend Systems',
+		description:
+			'Scalable server-side solutions and APIs that power your applications.',
+		features: [
+			'RESTful APIs',
+			'Database Design',
+			'Cloud Infrastructure',
+			'Security First',
+		],
+	},
+	{
+		title: 'Consulting',
+		description:
+			'Technical guidance and strategic planning to help your projects succeed.',
+		features: [
+			'Architecture Review',
+			'Code Audits',
+			'Technology Strategy',
+			'Team Training',
+		],
+	},
+];
+---
+
+<Layout
+	title="Services | ez dev"
+	description="We build digital solutions that are simple, elegant, and effective."
+>
+	<div class="min-w-[min(80ch,100vw)] min-h-screen py-16 px-6 md:px-8">
+		<div class="max-w-7xl mx-auto">
+			<!-- Header Section -->
+			<div class="flex flex-col items-center text-center mb-16">
+				<Logo size={60} />
+
+				<h1
+					class="text-4xl md:text-6xl lg:text-7xl font-light text-[#F5F5F5] mt-8 mb-6 opacity-0 translate-y-4 transition-all duration-700 ease-out animate-fade-in"
+					style="line-height: 1.2; letter-spacing: -0.02em;"
+				>
+					our{' '}
+					<span class="font-bold">services</span>
+				</h1>
+
+				<p
+					class="text-xl md:text-2xl text-[#F5F5F5] opacity-80 max-w-2xl opacity-0 translate-y-4 transition-all duration-700 ease-out"
+					style="animation-delay: 200ms; animation-fill-mode: forwards;"
+				>
+					We build digital solutions that are simple, elegant, and effective.
+				</p>
+			</div>
+
+			<!-- Services Grid -->
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16">
+				{
+					services.map((service, index) => (
+						<div
+							class="border border-[#333333] p-8 transition-all duration-300 hover:border-[#F5F5F5] opacity-0 translate-y-8 animate-fade-in"
+							style={`animation-delay: ${index * 200}ms; animation-fill-mode: forwards;`}
+						>
+							<h3 class="text-2xl font-bold text-[#F5F5F5] mb-4">
+								{service.title}
+							</h3>
+							<p class="text-[#F5F5F5] opacity-80 mb-6">
+								{service.description}
+							</p>
+							<ul class="space-y-2">
+								{service.features.map((feature) => (
+									<li class="text-[#F5F5F5] opacity-70 flex items-center">
+										<span class="w-2 h-2 bg-[#F5F5F5] rounded-full mr-3" />
+										{feature}
+									</li>
+								))}
+							</ul>
+						</div>
+					))
+				}
+			</div>
+
+			<!-- Call to Action -->
+			<div class="text-center">
+				<p class="text-lg text-[#F5F5F5] opacity-70 mb-8">
+					Ready to start your project?
+				</p>
+				<a
+					href="/project"
+					class="inline-block bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
+				>
+					Get in touch
+				</a>
+			</div>
+		</div>
+	</div>
+
+	<Footer slot="footer" />
+</Layout>
+
+<script></script>

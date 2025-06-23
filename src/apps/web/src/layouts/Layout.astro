@@ -1,0 +1,81 @@
+---
+export interface Props {
+	title: string;
+	description?: string;
+}
+
+const {
+	title,
+	description = 'ez dev is a software development company focused on creating elegant, minimalist solutions to complex problems.',
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="description" content={description} />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<title>{title}</title>
+	</head>
+	<body>
+		<div
+			class="min-h-screen w-full items-center bg-black text-[#F5F5F5] flex flex-col"
+		>
+			<main class="flex-grow">
+				<slot />
+			</main>
+			<footer>
+				<slot name="footer" />
+			</footer>
+		</div>
+	</body>
+</html>
+
+<style is:global>
+	@tailwind base;
+	@tailwind components;
+	@tailwind utilities;
+
+	@layer base {
+		html {
+			font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
+			scroll-behavior: smooth;
+		}
+
+		body {
+			@apply bg-black text-[#F5F5F5];
+			margin: 0;
+			padding: 0;
+			min-height: 100vh;
+		}
+
+		::selection {
+			@apply bg-[#F5F5F5] text-black;
+		}
+	}
+
+	@keyframes blink {
+		0%,
+		49% {
+			opacity: 1;
+		}
+		50%,
+		100% {
+			opacity: 0;
+		}
+	}
+
+	.animate-blink {
+		animation: blink 1s step-start infinite;
+	}
+
+	.page-content {
+		top: 0;
+		left: 0;
+		right: 0;
+		width: min(60rem, 100vw);
+		min-height: 100vh;
+	}
+</style>
