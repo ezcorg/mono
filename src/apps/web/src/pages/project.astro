@@ -54,12 +54,16 @@ import Footer from '../components/Footer.astro';
 						class="flex items-center gap-[1rem] text-[#F5F5F5] mb-2"
 						>Budget *
 					</label>
-					<div class="relative mt-4 h-[7rem]" id="budgetSectionContainer">
+					<div
+						class="relative mt-4 h-[7rem] opacity-0 pointer-events-none transition-opacity duration-300"
+						id="budgetSectionContainer"
+					>
 						<div
-							class="relative z-10 w-full mb-8 flex justify-between items-start"
+							class="flex flex-wrap justify-center sm:justify-start items-start gap-4 mb-8 relative"
+							id="budgetInputsContainer"
 						>
 							<div
-								class="absolute flex flex-col z-20 transition-all duration-300 ease-in-out"
+								class="flex flex-col items-center absolute z-20"
 								id="minBudgetWrapper"
 							>
 								<div class="relative">
@@ -81,7 +85,7 @@ import Footer from '../components/Footer.astro';
 							</div>
 
 							<div
-								class="absolute flex flex-col z-20 transition-all duration-300 ease-in-out"
+								class="flex flex-col items-center absolute z-20"
 								id="maxBudgetWrapper"
 							>
 								<div class="relative">
@@ -104,7 +108,7 @@ import Footer from '../components/Footer.astro';
 							<select
 								id="currencySelect"
 								name="currency"
-								class="absolute right-0 bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-3 py-2 focus:border-[#F5F5F5] focus:outline-none appearance-none leading-none z-30"
+								class="bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-3 py-2 focus:border-[#F5F5F5] focus:outline-none appearance-none leading-none z-30"
 								aria-label="Currency select"></select>
 						</div>
 						<range-slider
@@ -219,23 +223,25 @@ import Footer from '../components/Footer.astro';
 		--range-slider-thumb-shadow: none; /* No shadow */
 	}
 
-	/* Ensure inputs are on top */
-	#minBudgetWrapper,
-	#maxBudgetWrapper {
-		/* Tailwind's absolute and z-index classes handle this */
-	}
-
 	/* Adjust specific input styling to prevent shrinking too much */
 	#minBudget,
 	#maxBudget {
 		min-width: 9ch; /* Adjusted min-width for better appearance */
+		width: min-content; /* Allow width to adjust to content */
 		text-align: center;
-		width: fit-content; /* Allow width to adjust to content */
 	}
 
 	#currencySelect {
 		min-width: 6ch; /* Ensure currency select has enough space */
 		height: 44px;
+		position: static; /* Ensure it stays within flow */
+	}
+
+	/* Make min/max budget wrappers absolutely positioned within their relative parent */
+	#minBudgetWrapper,
+	#maxBudgetWrapper {
+		position: absolute;
+		top: 0; /* Initially align to the top of the container */
 	}
 </style>
 
@@ -252,16 +258,18 @@ import Footer from '../components/Footer.astro';
 		const slider = document.getElementById('budgetSlider');
 		const budgetSectionContainer = document.getElementById(
 			'budgetSectionContainer',
-		); // Renamed for clarity
+		);
 		const minBudgetWrapper = document.getElementById('minBudgetWrapper');
 		const maxBudgetWrapper = document.getElementById('maxBudgetWrapper');
+		const budgetInputsContainer = document.getElementById(
+			'budgetInputsContainer',
+		);
 
 		let baseCurrency = 'USD';
 		let exchangeRates = {};
 		let currentCurrency = 'USD';
-		let isLoading = false; // New loading state
+		let isLoading = false;
 
-		// Define min/max USD values for the slider
 		const MIN_USD_VALUE = 1000;
 		const MAX_USD_VALUE = 1000000;
 
@@ -288,40 +296,40 @@ import Footer from '../components/Footer.astro';
 			TRY: '₺',
 			THB: '฿',
 			HKD: 'HK$',
-			IDR: 'Rp', // Indonesian Rupiah
-			MYR: 'RM', // Malaysian Ringgit
-			PHP: '₱', // Philippine Peso
-			ZAR: 'R', // South African Rand
-			KRW: '₩', // South Korean Won
-			EGP: 'E£', // Egyptian Pound
-			SAR: '﷼', // Saudi Riyal
-			AED: 'د.إ', // UAE Dirham
-			ILS: '₪', // Israeli New Shekel
-			NPR: 'रू', // Nepalese Rupee
-			PKR: '₨', // Pakistani Rupee
-			BDT: '৳', // Bangladeshi Taka
-			VND: '₫', // Vietnamese Dong
-			NGN: '₦', // Nigerian Naira
-			UAH: '₴', // Ukrainian Hryvnia
-			CLP: '$', // Chilean Peso
-			COP: '$', // Colombian Peso
-			ARS: '$', // Argentine Peso
-			PER: 'S/', // Peruvian Sol
-			DZD: 'د.ج', // Algerian Dinar
-			MAD: 'د.م.', // Moroccan Dirham
-			TUN: 'د.ت', // Tunisian Dinar
-			ISK: 'kr', // Icelandic Króna
-			LKR: '₨', // Sri Lankan Rupee
-			RSD: 'дин.', // Serbian Dinar
-			GEL: '₾', // Georgian Lari
-			AZN: '₼', // Azerbaijani Manat
-			KZT: '₸', // Kazakhstani Tenge
-			BYN: 'Br', // Belarusian Ruble
-			MDL: 'L', // Moldovan Leu
-			AMD: '֏', // Armenian Dram
-			BGN: 'лв', // Bulgarian Lev
-			HRK: 'kn', // Croatian Kuna (Though now EUR)
-			RON: 'lei', // Romanian Leu
+			IDR: 'Rp',
+			MYR: 'RM',
+			PHP: '₱',
+			ZAR: 'R',
+			KRW: '₩',
+			EGP: 'E£',
+			SAR: '﷼',
+			AED: 'د.إ',
+			ILS: '₪',
+			NPR: 'रू',
+			PKR: '₨',
+			BDT: '৳',
+			VND: '₫',
+			NGN: '₦',
+			UAH: '₴',
+			CLP: '$',
+			COP: '$',
+			ARS: '$',
+			PER: 'S/',
+			DZD: 'د.ج',
+			MAD: 'د.م.',
+			TUN: 'د.ت',
+			ISK: 'kr',
+			LKR: '₨',
+			RSD: 'дин.',
+			GEL: '₾',
+			AZN: '₼',
+			KZT: '₸',
+			BYN: 'Br',
+			MDL: 'L',
+			AMD: '֏',
+			BGN: 'лв',
+			HRK: 'kn',
+			RON: 'lei',
 		};
 
 		const flags = {
@@ -347,40 +355,40 @@ import Footer from '../components/Footer.astro';
 			TRY: '🇹🇷',
 			THB: '🇹🇭',
 			HKD: '🇭🇰',
-			IDR: '🇮🇩', // Indonesian Rupiah
-			MYR: '🇲🇾', // Malaysian Ringgit
-			PHP: '🇵🇭', // Philippine Peso
-			ZAR: '🇿🇦', // South African Rand
-			KRW: '🇰🇷', // South Korean Won
-			EGP: '🇪🇬', // Egyptian Pound
-			SAR: '🇸🇦', // Saudi Riyal
-			AED: '🇦🇪', // UAE Dirham
-			ILS: '🇮🇱', // Israeli New Shekel
-			NPR: '🇳🇵', // Nepalese Rupee
-			PKR: '🇵🇰', // Pakistani Rupee
-			BDT: '🇧🇩', // Bangladeshi Taka
-			VND: '🇻🇳', // Vietnamese Dong
-			NGN: '🇳🇬', // Nigerian Naira
-			UAH: '🇺🇦', // Ukrainian Hryvnia
-			CLP: '🇨🇱', // Chilean Peso
-			COP: '🇨🇴', // Colombian Peso
-			ARS: '🇦🇷', // Argentine Peso
-			PER: '🇵🇪', // Peruvian Sol
-			DZD: '🇩🇿', // Algerian Dinar
-			MAD: '🇲🇦', // Moroccan Dirham
-			TUN: '🇹🇳', // Tunisian Dinar
-			ISK: '🇮🇸', // Icelandic Króna
-			LKR: '🇱🇰', // Sri Lankan Rupee
-			RSD: '🇷🇸', // Serbian Dinar
-			GEL: '🇬🇪', // Georgian Lari
-			AZN: '🇦🇿', // Azerbaijani Manat
-			KZT: '🇰🇿', // Kazakhstani Tenge
-			BYN: '🇧🇾', // Belarusian Ruble
-			MDL: '🇲🇩', // Moldovan Leu
-			AMD: '🇦🇲', // Armenian Dram
-			BGN: '🇧🇬', // Bulgarian Lev
-			HRK: '🇭🇷', // Croatian Kuna
-			RON: '🇷🇴', // Romanian Leu
+			IDR: '🇮🇩',
+			MYR: '🇲🇾',
+			PHP: '🇵🇭',
+			ZAR: '🇿🇦',
+			KRW: '🇰🇷',
+			EGP: '🇪🇬',
+			SAR: '🇸🇦',
+			AED: '🇦🇪',
+			ILS: '🇮🇱',
+			NPR: '🇳🇵',
+			PKR: '🇵🇰',
+			BDT: '🇧🇩',
+			VND: '🇻🇳',
+			NGN: '🇳🇬',
+			UAH: '🇺🇦',
+			CLP: '🇨🇱',
+			COP: '🇨🇴',
+			ARS: '🇦🇷',
+			PER: '🇵🇪',
+			DZD: '🇩🇿',
+			MAD: '🇩🇿',
+			TUN: '🇹🇳',
+			ISK: '🇮🇸',
+			LKR: '🇱🇰',
+			RSD: '🇷🇸',
+			GEL: '🇬🇪',
+			AZN: '🇦🇿',
+			KZT: '₸',
+			BYN: '🇧🇾',
+			MDL: '🇲🇩',
+			AMD: '🇦🇲',
+			BGN: '🇧🇬',
+			HRK: '🇭🇷',
+			RON: '🇷🇴',
 		};
 
 		function getCurrencySymbol(code) {
@@ -393,7 +401,15 @@ import Footer from '../components/Footer.astro';
 			maxSymbol.textContent = symbol;
 		}
 
-		// Function to set loading state
+		function debounce(func, delay) {
+			let timeout;
+			return function (...args) {
+				const context = this;
+				clearTimeout(timeout);
+				timeout = setTimeout(() => func.apply(context, args), delay);
+			};
+		}
+
 		function setLoading(loading) {
 			isLoading = loading;
 			if (isLoading) {
@@ -420,12 +436,11 @@ import Footer from '../components/Footer.astro';
 				}
 				const data = await res.json();
 				exchangeRates = data.rates;
-				exchangeRates[base] = 1; // Ensure the base currency itself has a rate of 1
-				baseCurrency = base; // Update baseCurrency after successful fetch
+				exchangeRates[base] = 1;
+				baseCurrency = base;
 				populateCurrencySelect();
 			} catch (error) {
 				console.error('Failed to fetch exchange rates:', error);
-				// Fallback to hardcoded rates or a default if API fails
 				exchangeRates = {
 					USD: 1,
 					EUR: 0.92,
@@ -484,7 +499,7 @@ import Footer from '../components/Footer.astro';
 					HRK: 7.53,
 					RON: 4.97,
 				};
-				baseCurrency = 'USD'; // Set fallback base currency
+				baseCurrency = 'USD';
 				populateCurrencySelect();
 			} finally {
 				setLoading(false);
@@ -501,7 +516,6 @@ import Footer from '../components/Footer.astro';
 					option.textContent = `${flags[code] || ''} ${code}`;
 					currencySelect.appendChild(option);
 				});
-			// Set the select value after populating options, using currentCurrency
 			currencySelect.value = currentCurrency;
 			updateCurrencySymbols(currentCurrency);
 		}
@@ -524,18 +538,13 @@ import Footer from '../components/Footer.astro';
 			const minVal = parseFloat(minInput.value);
 			const maxVal = parseFloat(maxInput.value);
 
-			// Convert current values to USD first, then to the new currency
 			const minValInUSD = convertCurrency(minVal, currentCurrency, 'USD');
 			const maxValInUSD = convertCurrency(maxVal, currentCurrency, 'USD');
 
-			// Set currentCurrency to the new one immediately to ensure correct conversions
 			currentCurrency = newCurrency;
 
-			// Fetch rates based on the *newly selected* currency as the base
-			// This is important because the API returns rates *from* the base currency.
-			// If the newCurrency is already the baseCurrency, no new fetch is needed.
 			if (newCurrency !== baseCurrency) {
-				await fetchRates(newCurrency); // Update exchangeRates with new base
+				await fetchRates(newCurrency);
 			}
 
 			const newMin = convertCurrency(minValInUSD, 'USD', newCurrency);
@@ -546,7 +555,6 @@ import Footer from '../components/Footer.astro';
 
 			updateCurrencySymbols(newCurrency);
 
-			// Also update slider min/max based on the new currency's conversion of MIN_USD_VALUE and MAX_USD_VALUE
 			const sliderMinConverted = convertCurrency(
 				MIN_USD_VALUE,
 				'USD',
@@ -562,19 +570,16 @@ import Footer from '../components/Footer.astro';
 			slider.setAttribute('max', Math.log10(sliderMaxConverted).toFixed(2));
 
 			updateSliderFromInputs();
-			updateInputPositions();
+			alignInputsAndAdjustHeight();
 		});
 
-		// Logarithmic slider sync logic
 		function updateSliderFromInputs() {
 			let minVal = parseFloat(minInput.value);
 			let maxVal = parseFloat(maxInput.value);
 
-			// Convert current input values to USD for consistent min/max limits
 			const minValInUSD = convertCurrency(minVal, currentCurrency, 'USD');
 			const maxValInUSD = convertCurrency(maxVal, currentCurrency, 'USD');
 
-			// Apply global min/max constraints in USD before converting back for slider
 			minVal = convertCurrency(
 				Math.max(MIN_USD_VALUE, minValInUSD),
 				'USD',
@@ -586,7 +591,6 @@ import Footer from '../components/Footer.astro';
 				currentCurrency,
 			);
 
-			// Ensure input values reflect the constrained values
 			minInput.value = Math.round(minVal);
 			maxInput.value = Math.round(maxVal);
 
@@ -605,10 +609,175 @@ import Footer from '../components/Footer.astro';
 			maxInput.setAttribute('min', minInput.value);
 		}
 
-		// Initial setup
-		await fetchRates(); // Fetch initial rates (default USD)
+		const alignInputsAndAdjustHeight = () => {
+			requestAnimationFrame(() => {
+				const thumbs = slider.querySelectorAll('[data-thumb]');
+				if (!thumbs || thumbs.length < 2) return;
 
-		// Set initial slider min/max based on USD values
+				const minThumb = thumbs[0];
+				const maxThumb = thumbs[1];
+
+				const sliderRect = slider.getBoundingClientRect();
+				const minThumbRect = minThumb.getBoundingClientRect();
+				const maxThumbRect = maxThumb.getBoundingClientRect();
+
+				const minInputRect = minInput.getBoundingClientRect();
+				const maxInputRect = maxInput.getBoundingClientRect();
+				const currencySelectRect = currencySelect.getBoundingClientRect();
+
+				const containerRect = budgetInputsContainer.getBoundingClientRect();
+
+				let minLeft =
+					minThumbRect.left +
+					minThumbRect.width / 2 -
+					minInputRect.width / 2 -
+					containerRect.left;
+				let maxLeft =
+					maxThumbRect.left +
+					maxThumbRect.width / 2 -
+					maxInputRect.width / 2 -
+					containerRect.left;
+
+				// Clamp input positions to slider bounds
+				const sliderWidth = sliderRect.width;
+				minLeft = Math.max(
+					0,
+					Math.min(minLeft, sliderWidth - minInputRect.width),
+				);
+				maxLeft = Math.max(
+					0,
+					Math.min(maxLeft, sliderWidth - maxInputRect.width),
+				);
+
+				// Initialize positions
+				minBudgetWrapper.style.left = `${minLeft}px`;
+				maxBudgetWrapper.style.left = `${maxLeft}px`;
+				minBudgetWrapper.style.top = `0px`;
+				maxBudgetWrapper.style.top = `0px`;
+				currencySelect.style.position = 'static'; // Ensure it's in flow for initial measurement
+
+				const inputVerticalSpacing = 10; // Space between stacked inputs
+				const subtitleHeight =
+					minBudgetWrapper.querySelector('small').offsetHeight; // Height of "Min" / "Max" subtitle
+				const minComponentHeight = minInputRect.height + subtitleHeight;
+				const maxComponentHeight = maxInputRect.height + subtitleHeight;
+
+				// Initialize input positions
+				let minTop = 0;
+				let maxTop = 0;
+
+				const overlapThreshold = -4; // Pixels to consider for overlap
+
+				// Currency selector positioning - prioritize top position
+				const currencySelectTop = 0; // Always keep currency selector at the top
+				const currencySelectHeight = currencySelectRect.height;
+
+				// Apply currency select position first (at the top)
+				currencySelect.style.position = 'absolute';
+				currencySelect.style.right = '0';
+				currencySelect.style.top = `${currencySelectTop}px`;
+
+				// Check if currency select overlaps with minBudgetWrapper or maxBudgetWrapper
+				const currencySelectLeft = currencySelectRect.left - containerRect.left;
+				const currencySelectRight =
+					currencySelectLeft + currencySelectRect.width;
+				const minWrapperRight = minLeft + minInputRect.width;
+				const maxWrapperRight = maxLeft + maxInputRect.width;
+
+				const currencyOverlapWithMin =
+					currencySelectRight > minLeft + overlapThreshold &&
+					currencySelectLeft < minWrapperRight - overlapThreshold;
+
+				const currencyOverlapWithMax =
+					currencySelectRight > maxLeft + overlapThreshold &&
+					currencySelectLeft < maxWrapperRight - overlapThreshold;
+
+				// If currency selector overlaps with inputs, move the inputs down first
+				if (currencyOverlapWithMin || currencyOverlapWithMax) {
+					const currencyPushDownOffset =
+						currencySelectHeight + inputVerticalSpacing;
+
+					if (currencyOverlapWithMin) {
+						minTop += currencyPushDownOffset;
+					}
+					if (currencyOverlapWithMax) {
+						maxTop += currencyPushDownOffset;
+					}
+				}
+
+				// Now handle min/max input overlaps (after currency selector adjustments)
+				const minInputRightEdge = minLeft + minInputRect.width;
+				const maxInputRightEdge = maxLeft + maxInputRect.width;
+
+				const inputsOverlapHorizontal =
+					minInputRightEdge > maxLeft + overlapThreshold &&
+					maxInputRightEdge > minLeft + overlapThreshold;
+
+				if (inputsOverlapHorizontal) {
+					// If they overlap, stack them vertically
+					if (minLeft < maxLeft) {
+						// Min is generally to the left, max goes below
+						maxTop = Math.max(
+							maxTop,
+							minTop + minComponentHeight + inputVerticalSpacing,
+						);
+					} else {
+						// Max is generally to the left, min goes below
+						minTop = Math.max(
+							minTop,
+							maxTop + maxComponentHeight + inputVerticalSpacing,
+						);
+					}
+				}
+
+				// Apply final input positions
+				minBudgetWrapper.style.top = `${minTop}px`;
+				maxBudgetWrapper.style.top = `${maxTop}px`;
+
+				// Calculate final max bottom for inputs
+				const finalMinWrapperBottom = minTop + minComponentHeight;
+				const finalMaxWrapperBottom = maxTop + maxComponentHeight;
+				const finalMaxInputsBottom = Math.max(
+					finalMinWrapperBottom,
+					finalMaxWrapperBottom,
+				);
+
+				// Adjust the height of budgetInputsContainer
+				const currencySelectBottom = currencySelectTop + currencySelectHeight;
+				const calculatedInputsContainerHeight = Math.max(
+					finalMaxInputsBottom,
+					currencySelectBottom,
+				);
+
+				budgetInputsContainer.style.height = `${calculatedInputsContainerHeight}px`;
+
+				const sliderHeight = 24; // h-6 = 24px
+				const bottomPadding = 16; // from mb-8 on budgetInputsContainer
+				const buffer = 10; // Extra buffer
+
+				budgetSectionContainer.style.height = `${
+					calculatedInputsContainerHeight +
+					sliderHeight +
+					bottomPadding +
+					buffer
+				}px`;
+			});
+		};
+
+		const debouncedAlignInputsAndAdjustHeight = debounce(
+			alignInputsAndAdjustHeight,
+			1,
+		);
+
+		// Use a single, comprehensive ResizeObserver
+		const resizeObserver = new ResizeObserver((entries) => {
+			// Trigger on any relevant element's resize
+			debouncedAlignInputsAndAdjustHeight();
+		});
+
+		// Fetch rates and set up initial values
+		await fetchRates();
+
 		const initialSliderMinConverted = convertCurrency(
 			MIN_USD_VALUE,
 			'USD',
@@ -628,95 +797,38 @@ import Footer from '../components/Footer.astro';
 			Math.log10(initialSliderMaxConverted).toFixed(2),
 		);
 
-		// Set initial input values to converted USD min/max
 		minInput.value = Math.round(
 			convertCurrency(MIN_USD_VALUE, 'USD', currentCurrency),
 		);
-		maxInput.value = Math.round(convertCurrency(10000, 'USD', currentCurrency)); // Or a reasonable default within the max range
+		maxInput.value = Math.round(convertCurrency(10000, 'USD', currentCurrency));
 
-		updateSliderFromInputs(); // Sync slider to initial input values
-		updateInputPositions();
+		updateSliderFromInputs();
 
-		function updateInputPositions() {
-			const thumbs = slider.querySelectorAll('[data-thumb]');
-			const sliderRect = slider.getBoundingClientRect();
-			const containerRect = budgetSectionContainer.getBoundingClientRect(); // The parent container
-
-			const minThumb = thumbs[0];
-			const maxThumb = thumbs[1];
-
-			const minThumbRect = minThumb.getBoundingClientRect();
-			const maxThumbRect = maxThumb.getBoundingClientRect();
-
-			const minSymbolWidth = minSymbol.offsetWidth; // Width of the currency symbol
-			const maxSymbolWidth = maxSymbol.offsetWidth; // Width of the currency symbol
-			const currencySelectRect = currencySelect.getBoundingClientRect();
-
-			// Calculate desired left for min input (its border aligned with thumb center)
-			let minInputDesiredLeft =
-				minThumbRect.left +
-				minThumbRect.width / 2 -
-				containerRect.left -
-				minBudgetWrapper.offsetWidth / 2;
-			// Calculate desired left for max input (its border aligned with thumb center)
-			let maxInputDesiredLeft =
-				maxThumbRect.left +
-				maxThumbRect.width / 2 -
-				containerRect.left -
-				maxBudgetWrapper.offsetWidth / 2;
-
-			// Adjust for currency symbol to align the input's content area (after symbol)
-			minInputDesiredLeft += minSymbolWidth / 2;
-			maxInputDesiredLeft += maxSymbolWidth / 2;
-
-			// Apply horizontal constraints for min input within the container
-			minInputDesiredLeft = Math.max(0, minInputDesiredLeft);
-			minInputDesiredLeft = Math.min(
-				currencySelectRect.left -
-					containerRect.left -
-					minBudgetWrapper.offsetWidth -
-					10, // 10px buffer from currency select
-				minInputDesiredLeft,
+		// Initial render to ensure elements are positioned correctly before user interaction
+		requestAnimationFrame(() => {
+			alignInputsAndAdjustHeight();
+			budgetSectionContainer.classList.remove(
+				'opacity-0',
+				'pointer-events-none',
 			);
+		});
 
-			// Apply horizontal constraints for max input within the container
-			maxInputDesiredLeft = Math.max(0, maxInputDesiredLeft);
-			maxInputDesiredLeft = Math.min(
-				currencySelectRect.left -
-					containerRect.left -
-					maxBudgetWrapper.offsetWidth -
-					10, // 10px buffer from currency select
-				maxInputDesiredLeft,
-			);
-
-			// Prevent overlap between min and max inputs
-			const minRightEdge = minInputDesiredLeft + minBudgetWrapper.offsetWidth;
-			const overlapBuffer = 20; // Space between inputs
-
-			if (minRightEdge > maxInputDesiredLeft - overlapBuffer) {
-				maxInputDesiredLeft = minRightEdge + overlapBuffer;
-				// Re-constrain maxInputDesiredLeft if it goes beyond currencySelect
-				maxInputDesiredLeft = Math.min(
-					currencySelectRect.left -
-						containerRect.left -
-						maxBudgetWrapper.offsetWidth -
-						10,
-					maxInputDesiredLeft,
-				);
-			}
-
-			minBudgetWrapper.style.left = `${minInputDesiredLeft}px`;
-			maxBudgetWrapper.style.left = `${maxInputDesiredLeft}px`;
-		}
+		// Observe all relevant elements for layout changes
+		resizeObserver.observe(budgetInputsContainer);
+		resizeObserver.observe(slider);
+		resizeObserver.observe(minInput);
+		resizeObserver.observe(maxInput);
+		resizeObserver.observe(currencySelect);
+		resizeObserver.observe(minBudgetWrapper); // Observe wrappers to detect subtitle height changes
+		resizeObserver.observe(maxBudgetWrapper);
 
 		// Event listeners for synchronization
 		slider.addEventListener('input', () => {
-			updateInputsFromSlider();
-			updateInputPositions();
+			updateInputsFromSlider(); // Update inputs immediately on drag
+			debouncedAlignInputsAndAdjustHeight();
 		});
 
 		minInput.addEventListener('input', () => {
-			// Convert current input values to USD for comparison
 			const minValInUSD = convertCurrency(
 				parseFloat(minInput.value),
 				currentCurrency,
@@ -728,29 +840,21 @@ import Footer from '../components/Footer.astro';
 				'USD',
 			);
 
-			// Apply global USD min/max constraints
 			let newMinValInUSD = Math.max(MIN_USD_VALUE, minValInUSD);
 			if (newMinValInUSD > maxValInUSD) {
-				newMinValInUSD = maxValInUSD; // Don't let min exceed max
+				newMinValInUSD = maxValInUSD;
 			}
 			minInput.value = Math.round(
 				convertCurrency(newMinValInUSD, 'USD', currentCurrency),
 			);
 
-			// Re-convert max value to match current currency after min update
-			const newMaxValInUSD = convertCurrency(
-				parseFloat(maxInput.value),
-				currentCurrency,
-				'USD',
-			);
-			minInput.setAttribute('max', maxInput.value); // Set native attribute for HTML5 validation
+			minInput.setAttribute('max', maxInput.value);
 
 			updateSliderFromInputs();
-			updateInputPositions();
+			debouncedAlignInputsAndAdjustHeight();
 		});
 
 		maxInput.addEventListener('input', () => {
-			// Convert current input values to USD for comparison
 			const minValInUSD = convertCurrency(
 				parseFloat(minInput.value),
 				currentCurrency,
@@ -762,32 +866,23 @@ import Footer from '../components/Footer.astro';
 				'USD',
 			);
 
-			// Apply global USD min/max constraints
 			let newMaxValInUSD = Math.min(MAX_USD_VALUE, maxValInUSD);
 			if (newMaxValInUSD < minValInUSD) {
-				newMaxValInUSD = minValInUSD; // Don't let max go below min
+				newMaxValInUSD = minValInUSD;
 			}
 			maxInput.value = Math.round(
 				convertCurrency(newMaxValInUSD, 'USD', currentCurrency),
 			);
 
-			// Re-convert min value to match current currency after max update
-			const newMinValInUSD = convertCurrency(
-				parseFloat(minInput.value),
-				currentCurrency,
-				'USD',
-			);
-			minInput.setAttribute('max', maxInput.value); // Set native attribute for HTML5 validation
+			minInput.setAttribute('max', maxInput.value);
 
 			updateSliderFromInputs();
-			updateInputPositions();
+			debouncedAlignInputsAndAdjustHeight();
 		});
 
+		// Set initial min/max attributes for HTML5 validation
 		minInput.setAttribute('max', maxInput.value);
 		maxInput.setAttribute('min', minInput.value);
-
-		window.addEventListener('resize', updateInputPositions);
-		updateInputPositions();
 
 		flatpickr('#date-range', {
 			mode: 'range',
