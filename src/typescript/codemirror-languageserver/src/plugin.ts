@@ -144,7 +144,7 @@ export class LanguageServerClient {
             // https://github.com/FurqanSoftware/codemirror-languageserver/issues/9
             webSocketTransport.connection.addEventListener(
                 "message",
-                // @ts-expect-error
+                // @ts-ignore
                 (message: { data: string }) => {
                     const data = JSON.parse(message.data);
                     if (data.method && data.id) {
