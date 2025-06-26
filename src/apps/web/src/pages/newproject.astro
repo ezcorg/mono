@@ -81,16 +81,17 @@ import Footer from '../components/Footer.astro';
 						>Budget *
 					</label>
 					<div
-						class="relative mt-4 h-[7rem] opacity-0 pointer-events-none transition-opacity duration-300"
+						class="relative mt-4 h-[7rem] transition-opacity duration-300"
 						id="budgetSectionContainer"
 					>
 						<div
-							class="flex flex-wrap justify-center sm:justify-start items-start gap-4 mb-8 relative"
+							class="flex flex-wrap justify-between items-start gap-4 mb-8 relative"
 							id="budgetInputsContainer"
 						>
 							<div
-								class="flex flex-col items-center absolute z-20"
+								class="flex flex-col items-center z-20"
 								id="minBudgetWrapper"
+								style="position: static;"
 							>
 								<div class="relative">
 									<span
@@ -102,6 +103,7 @@ import Footer from '../components/Footer.astro';
 										id="minBudget"
 										name="minBudget"
 										min="1000"
+										max="10000"
 										required
 										value="1000"
 										class="pl-[calc(1.5em+0.5rem)] bg-transparent border-2 border-[#333333] text-[#F5F5F5] py-2 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 text-center px-2"
@@ -111,8 +113,9 @@ import Footer from '../components/Footer.astro';
 							</div>
 
 							<div
-								class="flex flex-col items-center absolute z-20"
+								class="flex flex-col items-center z-20"
 								id="maxBudgetWrapper"
+								style="position: static;"
 							>
 								<div class="relative">
 									<span
@@ -123,6 +126,7 @@ import Footer from '../components/Footer.astro';
 										type="number"
 										id="maxBudget"
 										name="maxBudget"
+										min="1000"
 										required
 										value="10000"
 										class="pl-[calc(1.5em+0.5rem)] bg-transparent border-2 border-[#333333] text-[#F5F5F5] py-2 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 text-center px-2"
@@ -135,13 +139,17 @@ import Footer from '../components/Footer.astro';
 								id="currencySelect"
 								name="currency"
 								class="bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-3 py-2 focus:border-[#F5F5F5] focus:outline-none appearance-none leading-none z-30"
-								aria-label="Currency select"></select>
+								aria-label="Currency select"
+								style="position: static; margin-left: auto;"
+							>
+								<option value="USD" selected>🇺🇸 USD</option>
+							</select>
 						</div>
 						<range-slider
 							id="budgetSlider"
 							class="w-full h-6 absolute bottom-0"
-							min="3"
-							max="6"
+							min="1000"
+							max="1000000"
 							step="0.01"
 							value="3,6"
 						>
@@ -236,11 +244,15 @@ import Footer from '../components/Footer.astro';
 		position: static; /* Ensure it stays within flow */
 	}
 
-	/* Make min/max budget wrappers absolutely positioned within their relative parent */
+	/* Initial static positioning to prevent overlap before JavaScript loads */
 	#minBudgetWrapper,
 	#maxBudgetWrapper {
-		position: absolute;
-		top: 0; /* Initially align to the top of the container */
+		/* JavaScript will set position: absolute and positioning later */
+	}
+
+	/* Ensure currency select starts in normal flow */
+	#currencySelect {
+		/* JavaScript will set position: absolute later if needed */
 	}
 </style>
 
@@ -401,21 +413,33 @@ import Footer from '../components/Footer.astro';
 ></script>
 <script>
 	document.addEventListener('DOMContentLoaded', async () => {
-		const minInput = document.getElementById('minBudget');
-		const maxInput = document.getElementById('maxBudget');
-		const currencySelect = document.getElementById('currencySelect');
-		const minSymbol = document.getElementById('minCurrencySymbol');
-		const maxSymbol = document.getElementById('maxCurrencySymbol');
-		const slider = document.getElementById('budgetSlider');
+		const minInput = document.getElementById('minBudget') as HTMLInputElement;
+		const maxInput = document.getElementById('maxBudget') as HTMLInputElement;
+		const currencySelect = document.getElementById(
+			'currencySelect',
+		) as HTMLSelectElement;
+		const minSymbol = document.getElementById(
+			'minCurrencySymbol',
+		) as HTMLSpanElement;
+		const maxSymbol = document.getElementById(
+			'maxCurrencySymbol',
+		) as HTMLSpanElement;
+		const slider = document.getElementById('budgetSlider') as any; // range-slider custom element
 		const budgetSectionContainer = document.getElementById(
 			'budgetSectionContainer',
-		);
-		const minBudgetWrapper = document.getElementById('minBudgetWrapper');
-		const maxBudgetWrapper = document.getElementById('maxBudgetWrapper');
+		) as HTMLDivElement;
+		const minBudgetWrapper = document.getElementById(
+			'minBudgetWrapper',
+		) as HTMLDivElement;
+		const maxBudgetWrapper = document.getElementById(
+			'maxBudgetWrapper',
+		) as HTMLDivElement;
 		const budgetInputsContainer = document.getElementById(
 			'budgetInputsContainer',
-		);
-		const serviceSelect = document.getElementById('service');
+		) as HTMLDivElement;
+		const serviceSelect = document.getElementById(
+			'service',
+		) as HTMLSelectElement;
 
 		// Service selector URL synchronization
 		function getUrlParams() {
@@ -432,17 +456,17 @@ import Footer from '../components/Footer.astro';
 			window.history.replaceState({}, '', url.toString());
 		}
 
-		// Initialize service selector from URL
+		// Initialize service selector from URL parameter
 		const urlParams = getUrlParams();
 		const serviceParam = urlParams.get('service');
 		if (serviceParam && serviceSelect) {
-			(serviceSelect as HTMLSelectElement).value = serviceParam;
+			serviceSelect.value = serviceParam;
 		}
 
 		// Listen for service selector changes
 		if (serviceSelect) {
 			serviceSelect.addEventListener('change', () => {
-				updateUrlParam('service', (serviceSelect as HTMLSelectElement).value);
+				updateUrlParam('service', serviceSelect.value);
 			});
 		}
 
@@ -731,8 +755,8 @@ import Footer from '../components/Footer.astro';
 			const newMin = convertCurrency(minValInUSD, 'USD', newCurrency);
 			const newMax = convertCurrency(maxValInUSD, 'USD', newCurrency);
 
-			minInput.value = Math.round(newMin);
-			maxInput.value = Math.round(newMax);
+			minInput.value = Math.round(newMin).toString();
+			maxInput.value = Math.round(newMax).toString();
 
 			updateCurrencySymbols(newCurrency);
 
@@ -772,8 +796,8 @@ import Footer from '../components/Footer.astro';
 				currentCurrency,
 			);
 
-			minInput.value = Math.round(minVal);
-			maxInput.value = Math.round(maxVal);
+			minInput.value = Math.round(minVal).toString();
+			maxInput.value = Math.round(maxVal).toString();
 
 			const minLog = Math.log10(minVal).toFixed(2);
 			const maxLog = Math.log10(maxVal).toFixed(2);
@@ -783,8 +807,8 @@ import Footer from '../components/Footer.astro';
 
 		function updateInputsFromSlider() {
 			const [low, high] = slider.value.split(',').map(parseFloat);
-			minInput.value = Math.round(Math.pow(10, low));
-			maxInput.value = Math.round(Math.pow(10, high));
+			minInput.value = Math.round(Math.pow(10, low)).toString();
+			maxInput.value = Math.round(Math.pow(10, high)).toString();
 
 			minInput.setAttribute('max', maxInput.value);
 			maxInput.setAttribute('min', minInput.value);
@@ -830,7 +854,9 @@ import Footer from '../components/Footer.astro';
 					Math.min(maxLeft, sliderWidth - maxInputRect.width),
 				);
 
-				// Initialize positions
+				// Set absolute positioning and initialize positions
+				minBudgetWrapper.style.position = 'absolute';
+				maxBudgetWrapper.style.position = 'absolute';
 				minBudgetWrapper.style.left = `${minLeft}px`;
 				maxBudgetWrapper.style.left = `${maxLeft}px`;
 				minBudgetWrapper.style.top = `0px`;
@@ -839,7 +865,7 @@ import Footer from '../components/Footer.astro';
 
 				const inputVerticalSpacing = 10; // Space between stacked inputs
 				const subtitleHeight =
-					minBudgetWrapper.querySelector('small').offsetHeight; // Height of "Min" / "Max" subtitle
+					minBudgetWrapper.querySelector('small')?.offsetHeight || 0; // Height of "Min" / "Max" subtitle
 				const minComponentHeight = minInputRect.height + subtitleHeight;
 				const maxComponentHeight = maxInputRect.height + subtitleHeight;
 
@@ -980,28 +1006,76 @@ import Footer from '../components/Footer.astro';
 
 		minInput.value = Math.round(
 			convertCurrency(MIN_USD_VALUE, 'USD', currentCurrency),
-		);
-		maxInput.value = Math.round(convertCurrency(10000, 'USD', currentCurrency));
+		).toString();
+		maxInput.value = Math.round(
+			convertCurrency(10000, 'USD', currentCurrency),
+		).toString();
 
 		updateSliderFromInputs();
 
 		// Initial render to ensure elements are positioned correctly before user interaction
 		requestAnimationFrame(() => {
 			alignInputsAndAdjustHeight();
-			budgetSectionContainer.classList.remove(
-				'opacity-0',
-				'pointer-events-none',
-			);
 		});
 
 		// Observe all relevant elements for layout changes
-		resizeObserver.observe(budgetInputsContainer);
-		resizeObserver.observe(slider);
-		resizeObserver.observe(minInput);
-		resizeObserver.observe(maxInput);
-		resizeObserver.observe(currencySelect);
-		resizeObserver.observe(minBudgetWrapper); // Observe wrappers to detect subtitle height changes
-		resizeObserver.observe(maxBudgetWrapper);
+		if (budgetInputsContainer) resizeObserver.observe(budgetInputsContainer);
+		if (slider) resizeObserver.observe(slider);
+		if (minInput) resizeObserver.observe(minInput);
+		if (maxInput) resizeObserver.observe(maxInput);
+		if (currencySelect) resizeObserver.observe(currencySelect);
+		if (minBudgetWrapper) resizeObserver.observe(minBudgetWrapper); // Observe wrappers to detect subtitle height changes
+		if (maxBudgetWrapper) resizeObserver.observe(maxBudgetWrapper);
+
+		// Validation function for inputs
+		function validateAndUpdateInput(input: HTMLInputElement, isMin: boolean) {
+			let inputVal = parseFloat(input.value) || 0;
+			let otherVal = parseFloat((isMin ? maxInput : minInput).value) || 0;
+
+			// Apply constraints
+			if (isMin) {
+				// Ensure min doesn't exceed max
+				if (inputVal > otherVal && otherVal > 0) {
+					inputVal = otherVal;
+				}
+			} else {
+				// Ensure max doesn't go below min
+				if (inputVal < otherVal && otherVal > 0) {
+					inputVal = otherVal;
+				}
+			}
+
+			const inputValInUSD = convertCurrency(inputVal, currentCurrency, 'USD');
+			const otherValInUSD = convertCurrency(otherVal, currentCurrency, 'USD');
+
+			let newInputValInUSD = isMin
+				? Math.max(MIN_USD_VALUE, inputValInUSD)
+				: Math.min(MAX_USD_VALUE, inputValInUSD);
+
+			if (isMin && newInputValInUSD > otherValInUSD && otherValInUSD > 0) {
+				newInputValInUSD = otherValInUSD;
+			} else if (
+				!isMin &&
+				newInputValInUSD < otherValInUSD &&
+				otherValInUSD > 0
+			) {
+				newInputValInUSD = otherValInUSD;
+			}
+
+			const finalVal = Math.round(
+				convertCurrency(newInputValInUSD, 'USD', currentCurrency),
+			);
+
+			if (input.value !== finalVal.toString()) {
+				input.value = finalVal.toString();
+			}
+
+			minInput.setAttribute('max', maxInput.value);
+			maxInput.setAttribute('min', minInput.value);
+
+			updateSliderFromInputs();
+			debouncedAlignInputsAndAdjustHeight();
+		}
 
 		// Event listeners for synchronization
 		slider.addEventListener('input', () => {
@@ -1009,75 +1083,52 @@ import Footer from '../components/Footer.astro';
 			debouncedAlignInputsAndAdjustHeight();
 		});
 
-		minInput.addEventListener('input', () => {
-			const minValInUSD = convertCurrency(
-				parseFloat(minInput.value),
-				currentCurrency,
-				'USD',
-			);
-			const maxValInUSD = convertCurrency(
-				parseFloat(maxInput.value),
-				currentCurrency,
-				'USD',
-			);
-
-			let newMinValInUSD = Math.max(MIN_USD_VALUE, minValInUSD);
-			if (newMinValInUSD > maxValInUSD) {
-				newMinValInUSD = maxValInUSD;
+		// Validate only on Enter key and blur (focus loss)
+		minInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault(); // Prevent form submission
+				validateAndUpdateInput(minInput, true);
+				minInput.blur(); // Remove focus to show the updated value
 			}
-			minInput.value = Math.round(
-				convertCurrency(newMinValInUSD, 'USD', currentCurrency),
-			);
-
-			minInput.setAttribute('max', maxInput.value);
-
-			updateSliderFromInputs();
-			debouncedAlignInputsAndAdjustHeight();
 		});
 
-		maxInput.addEventListener('input', () => {
-			const minValInUSD = convertCurrency(
-				parseFloat(minInput.value),
-				currentCurrency,
-				'USD',
-			);
-			const maxValInUSD = convertCurrency(
-				parseFloat(maxInput.value),
-				currentCurrency,
-				'USD',
-			);
+		minInput.addEventListener('blur', () => {
+			validateAndUpdateInput(minInput, true);
+		});
 
-			let newMaxValInUSD = Math.min(MAX_USD_VALUE, maxValInUSD);
-			if (newMaxValInUSD < minValInUSD) {
-				newMaxValInUSD = minValInUSD;
+		maxInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault(); // Prevent form submission
+				validateAndUpdateInput(maxInput, false);
+				maxInput.blur(); // Remove focus to show the updated value
 			}
-			maxInput.value = Math.round(
-				convertCurrency(newMaxValInUSD, 'USD', currentCurrency),
-			);
+		});
 
-			minInput.setAttribute('max', maxInput.value);
-
-			updateSliderFromInputs();
-			debouncedAlignInputsAndAdjustHeight();
+		maxInput.addEventListener('blur', () => {
+			validateAndUpdateInput(maxInput, false);
 		});
 
 		// Set initial min/max attributes for HTML5 validation
 		minInput.setAttribute('max', maxInput.value);
 		maxInput.setAttribute('min', minInput.value);
 
-		flatpickr('#date-range', {
+		(window as any).flatpickr('#date-range', {
 			mode: 'range',
 			dateFormat: 'Y-m-d',
 			altInput: true,
 			altFormat: 'F j, Y',
 		});
 
-		window.checkMessageLength = function (textarea) {
+		(window as any).checkMessageLength = function (
+			textarea: HTMLTextAreaElement,
+		) {
 			const warning = document.getElementById('message-warning');
-			if (textarea.value.length < 50) {
-				warning.classList.remove('hidden');
-			} else {
-				warning.classList.add('hidden');
+			if (warning) {
+				if (textarea.value.length < 50) {
+					warning.classList.remove('hidden');
+				} else {
+					warning.classList.add('hidden');
+				}
 			}
 		};
 	});
