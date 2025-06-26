@@ -3,4 +3,4 @@
 	url = https://github.com/tbrockman/codemirror-languageserver
 [submodule "src/typescript/memfs"]
 	path = src/typescript/memfs
-	url = https://github.com/ezcodelol/memfs
+	url = https://github.com/ezdevlol/memfs
