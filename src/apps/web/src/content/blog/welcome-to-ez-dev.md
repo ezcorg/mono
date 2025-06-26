@@ -59,6 +59,4 @@ In upcoming posts, we'll be diving into:
 - Open source tools we're building and contributing to
 - Thoughts on the current state of the software industry
 
-Make sure to subscribe to our [RSS feed](/blog/rss.xml) to stay updated with our latest posts.
-
 Welcome to the journey. Let's build something amazing together.

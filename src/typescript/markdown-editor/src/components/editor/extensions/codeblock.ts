@@ -7,9 +7,16 @@ import { exitCode } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history"
 import { MarkdownNodeSpec } from 'tiptap-markdown';
 
-const fs = await CodeblockFS.worker()
-
 // TODO: configure a filesystem worker which is used by both the editor and the codeblock extension
+// Initialize filesystem worker lazily to avoid top-level await
+let fsWorkerPromise: Promise<any> | null = null;
+
+function getFileSystemWorker() {
+    if (!fsWorkerPromise) {
+        fsWorkerPromise = CodeblockFS.worker();
+    }
+    return fsWorkerPromise;
+}
 
 export const ExtendedCodeblock = Node.create({
     name: 'ezcodeBlock', // Unique name for your node
@@ -130,9 +137,11 @@ export const ExtendedCodeblock = Node.create({
         return ({ editor, node, getPos }: any) => {
             const { view, schema } = editor;
             let updating = false;
+            let cm: EditorView;
+            let fsWorker: any = null;
 
-            const forwardUpdate = (cm: EditorView, update: ViewUpdate) => {
-                if (updating || !cm.hasFocus) return
+            const forwardUpdate = (cmView: EditorView, update: ViewUpdate) => {
+                if (updating || !cmView.hasFocus) return
                 let offset = getPos() + 1, { main } = update.state.selection
                 let selFrom = offset + main.from, selTo = offset + main.to
                 let pmSel = view.state.selection
@@ -214,18 +223,36 @@ export const ExtendedCodeblock = Node.create({
                 ] as KeyBinding[]
             }
 
-            const state = EditorState.create({
+            // Create initial state without codeblock extension
+            const initialState = EditorState.create({
                 doc: node.textContent || '',
                 extensions: [
                     keymap.of(codemirrorKeymap()),
                     basicSetup,
-                    codeblock({ content: node.textContent, fs, language: node.attrs.language, file: node.attrs.file, toolbar: !!node.attrs.file, cwd: '/' }),
                     EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
                 ]
             });
 
-            const cm = new EditorView({ state });
+            cm = new EditorView({ state: initialState });
             const dom = cm.dom;
+
+            // Initialize filesystem worker and update extensions asynchronously
+            getFileSystemWorker().then(fs => {
+                fsWorker = fs;
+                // Reconfigure with codeblock extension once fs is ready
+                const newState = EditorState.create({
+                    doc: node.textContent || '',
+                    extensions: [
+                        keymap.of(codemirrorKeymap()),
+                        basicSetup,
+                        codeblock({ content: node.textContent, fs: fsWorker, language: node.attrs.language, file: node.attrs.file, toolbar: !!node.attrs.file, cwd: '/' }),
+                        EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
+                    ]
+                });
+                cm.setState(newState);
+            }).catch(error => {
+                console.error('Failed to initialize filesystem worker:', error);
+            });
 
             return {
                 dom,
