@@ -93,70 +93,11 @@ const {
 			Consolas, Liberation Mono, monospace;
 		--fgColor-accent: Highlight;
 	}
-	@media() {
-		.markdown-body,
-		[data-theme='dark'] {
-			/* dark */
-			color-scheme: dark;
-			--focus-outlineColor: #1f6feb;
-			--fgColor-default: #f0f6fc;
-			--fgColor-muted: #9198a1;
-			--fgColor-accent: #4493f8;
-			--fgColor-success: #3fb950;
-			--fgColor-attention: #d29922;
-			--fgColor-danger: #f85149;
-			--fgColor-done: #ab7df8;
-			--bgColor-default: #0d1117;
-			--bgColor-muted: #151b23;
-			--bgColor-neutral-muted: #656c7633;
-			--bgColor-attention-muted: #bb800926;
-			--borderColor-default: #3d444d;
-			--borderColor-muted: #3d444db3;
-			--borderColor-neutral-muted: #3d444db3;
-			--borderColor-accent-emphasis: #1f6feb;
-			--borderColor-success-emphasis: #238636;
-			--borderColor-attention-emphasis: #9e6a03;
-			--borderColor-danger-emphasis: #da3633;
-			--borderColor-done-emphasis: #8957e5;
-			--color-prettylights-syntax-comment: #9198a1;
-			--color-prettylights-syntax-constant: #79c0ff;
-			--color-prettylights-syntax-constant-other-reference-link: #a5d6ff;
-			--color-prettylights-syntax-entity: #d2a8ff;
-			--color-prettylights-syntax-storage-modifier-import: #f0f6fc;
-			--color-prettylights-syntax-entity-tag: #7ee787;
-			--color-prettylights-syntax-keyword: #ff7b72;
-			--color-prettylights-syntax-string: #a5d6ff;
-			--color-prettylights-syntax-variable: #ffa657;
-			--color-prettylights-syntax-brackethighlighter-unmatched: #f85149;
-			--color-prettylights-syntax-brackethighlighter-angle: #9198a1;
-			--color-prettylights-syntax-invalid-illegal-text: #f0f6fc;
-			--color-prettylights-syntax-invalid-illegal-bg: #8e1519;
-			--color-prettylights-syntax-carriage-return-text: #f0f6fc;
-			--color-prettylights-syntax-carriage-return-bg: #b62324;
-			--color-prettylights-syntax-string-regexp: #7ee787;
-			--color-prettylights-syntax-markup-list: #f2cc60;
-			--color-prettylights-syntax-markup-heading: #1f6feb;
-			--color-prettylights-syntax-markup-italic: #f0f6fc;
-			--color-prettylights-syntax-markup-bold: #f0f6fc;
-			--color-prettylights-syntax-markup-deleted-text: #ffdcd7;
-			--color-prettylights-syntax-markup-deleted-bg: #67060c;
-			--color-prettylights-syntax-markup-inserted-text: #aff5b4;
-			--color-prettylights-syntax-markup-inserted-bg: #033a16;
-			--color-prettylights-syntax-markup-changed-text: #ffdfb6;
-			--color-prettylights-syntax-markup-changed-bg: #5a1e02;
-			--color-prettylights-syntax-markup-ignored-text: #f0f6fc;
-			--color-prettylights-syntax-markup-ignored-bg: #1158c7;
-			--color-prettylights-syntax-meta-diff-range: #d2a8ff;
-			--color-prettylights-syntax-sublimelinter-gutter-mark: #3d444d;
-		}
-	}
 
 	.markdown-body {
 		-ms-text-size-adjust: 100%;
 		-webkit-text-size-adjust: 100%;
 		margin: 0;
-		color: var(--fgColor-default);
-		background-color: var(--bgColor-default);
 		font-family: Times;
 		font-size: 20px;
 		line-height: 1.5;
@@ -220,16 +161,13 @@ const {
 	}
 
 	.markdown-body h1 {
-		margin: 0.67em 0;
+		margin: var(--base-size-40) 0 var(--base-size-24) 0;
 		font-weight: var(--base-text-weight-semibold, 600);
 		padding-bottom: 0.3em;
 		font-size: 2em;
-		border-bottom: 1px solid var(--borderColor-muted);
 	}
 
 	.markdown-body mark {
-		background-color: var(--bgColor-attention-muted);
-		color: var(--fgColor-default);
 	}
 
 	.markdown-body small {
@@ -274,11 +212,9 @@ const {
 		box-sizing: content-box;
 		overflow: hidden;
 		background: transparent;
-		border-bottom: 1px solid var(--borderColor-muted);
 		height: 0.25em;
 		padding: 0;
 		margin: var(--base-size-24) 0;
-		background-color: var(--borderColor-default);
 		border: 0;
 	}
 
@@ -414,13 +350,8 @@ const {
 				monospace
 			);
 		line-height: 10px;
-		color: var(--fgColor-default);
 		vertical-align: middle;
-		background-color: var(--bgColor-muted);
-		border: solid 1px var(--borderColor-neutral-muted);
-		border-bottom-color: var(--borderColor-neutral-muted);
 		border-radius: 6px;
-		box-shadow: inset 0 -1px 0 var(--borderColor-neutral-muted);
 	}
 
 	.markdown-body h1,
@@ -429,50 +360,55 @@ const {
 	.markdown-body h4,
 	.markdown-body h5,
 	.markdown-body h6 {
-		margin-top: var(--base-size-24);
-		margin-bottom: var(--base-size-16);
-		font-weight: var(--base-text-weight-semibold, 600);
+		margin-top: var(--base-size-40);
+		margin-bottom: var(--base-size-24);
+		font-weight: var(--base-text-weight-normal);
 		line-height: 1.25;
 	}
 
 	.markdown-body h2 {
-		font-weight: var(--base-text-weight-semibold, 600);
 		padding-bottom: 0.3em;
-		font-size: 1.5em;
-		border-bottom: 1px solid var(--borderColor-muted);
+		font-size: 2em;
 	}
 
 	.markdown-body h3 {
-		font-weight: var(--base-text-weight-semibold, 600);
-		font-size: 1.25em;
+		font-size: 1.75em;
 	}
 
 	.markdown-body h4 {
-		font-weight: var(--base-text-weight-semibold, 600);
-		font-size: 1em;
+		font-size: 1.5em;
 	}
 
 	.markdown-body h5 {
-		font-weight: var(--base-text-weight-semibold, 600);
-		font-size: 0.875em;
+		font-size: 1.375em;
 	}
 
 	.markdown-body h6 {
-		font-weight: var(--base-text-weight-semibold, 600);
-		font-size: 0.85em;
-		color: var(--fgColor-muted);
+		font-size: 1.35em;
 	}
 
 	.markdown-body p {
 		margin-top: 0;
-		margin-bottom: 10px;
+		margin-bottom: var(--base-size-16);
 	}
 
 	.markdown-body blockquote {
+		margin: var(--base-size-24) 0;
+		padding: var(--base-size-16) var(--base-size-24);
+		border-left: 4px solid #f5f5f5;
+		border-radius: 0;
+		font-style: italic;
+		position: relative;
+	}
+
+	.markdown-body blockquote p {
 		margin: 0;
-		padding: 0 1em;
-		color: var(--fgColor-muted);
-		border-left: 0.25em solid var(--borderColor-default);
+		position: relative;
+		z-index: 1;
+	}
+
+	.markdown-body blockquote p:not(:last-child) {
+		margin-bottom: var(--base-size-16);
 	}
 
 	.markdown-body ul {
@@ -604,7 +540,7 @@ const {
 	.markdown-body pre,
 	.markdown-body details {
 		margin-top: 0;
-		margin-bottom: var(--base-size-16);
+		margin-bottom: var(--base-size-24);
 	}
 
 	.markdown-body blockquote > :first-child {
@@ -754,7 +690,6 @@ const {
 	.markdown-body table th,
 	.markdown-body table td {
 		padding: 6px 13px;
-		border: 1px solid var(--borderColor-default);
 	}
 
 	.markdown-body table td > :last-child {
@@ -762,12 +697,9 @@ const {
 	}
 
 	.markdown-body table tr {
-		background-color: var(--bgColor-default);
-		border-top: 1px solid var(--borderColor-muted);
 	}
 
 	.markdown-body table tr:nth-child(2n) {
-		background-color: var(--bgColor-muted);
 	}
 
 	.markdown-body table img {
@@ -800,7 +732,6 @@ const {
 		padding: 7px;
 		margin: 13px 0 0;
 		overflow: hidden;
-		border: 1px solid var(--borderColor-default);
 	}
 
 	.markdown-body span.frame span img {
@@ -812,7 +743,6 @@ const {
 		display: block;
 		padding: 5px 0 0;
 		clear: both;
-		color: var(--fgColor-default);
 	}
 
 	.markdown-body span.align-center {
@@ -882,7 +812,6 @@ const {
 		margin: 0;
 		font-size: 85%;
 		white-space: break-spaces;
-		background-color: var(--bgColor-neutral-muted);
 		border-radius: 6px;
 	}
 
@@ -927,8 +856,6 @@ const {
 		overflow: auto;
 		font-size: 85%;
 		line-height: 1.45;
-		color: var(--fgColor-default);
-		background-color: var(--bgColor-muted);
 		border-radius: 6px;
 	}
 
@@ -958,7 +885,6 @@ const {
 	.markdown-body .csv-data .blob-num {
 		padding: 10px var(--base-size-8) 9px;
 		text-align: right;
-		background: var(--bgColor-default);
 		border: 0;
 	}
 
@@ -968,7 +894,6 @@ const {
 
 	.markdown-body .csv-data th {
 		font-weight: var(--base-text-weight-semibold, 600);
-		background: var(--bgColor-muted);
 		border-top: 0;
 	}
 
@@ -982,8 +907,6 @@ const {
 
 	.markdown-body .footnotes {
 		font-size: 12px;
-		color: var(--fgColor-muted);
-		border-top: 1px solid var(--borderColor-default);
 	}
 
 	.markdown-body .footnotes ol {
@@ -1008,7 +931,6 @@ const {
 		left: calc(var(--base-size-24) * -1);
 		pointer-events: none;
 		content: '';
-		border: 2px solid var(--borderColor-accent-emphasis);
 		border-radius: 6px;
 	}
 
@@ -1021,34 +943,27 @@ const {
 	}
 
 	.markdown-body body:has(:modal) {
-		padding-right: var(--dialog-scrollgutter) !important;
 	}
 
 	.markdown-body .pl-c {
-		color: var(--color-prettylights-syntax-comment);
 	}
 
 	.markdown-body .pl-c1,
 	.markdown-body .pl-s .pl-v {
-		color: var(--color-prettylights-syntax-constant);
 	}
 
 	.markdown-body .pl-e,
 	.markdown-body .pl-en {
-		color: var(--color-prettylights-syntax-entity);
 	}
 
 	.markdown-body .pl-smi,
 	.markdown-body .pl-s .pl-s1 {
-		color: var(--color-prettylights-syntax-storage-modifier-import);
 	}
 
 	.markdown-body .pl-ent {
-		color: var(--color-prettylights-syntax-entity-tag);
 	}
 
 	.markdown-body .pl-k {
-		color: var(--color-prettylights-syntax-keyword);
 	}
 
 	.markdown-body .pl-s,
@@ -1058,90 +973,66 @@ const {
 	.markdown-body .pl-sr .pl-cce,
 	.markdown-body .pl-sr .pl-sre,
 	.markdown-body .pl-sr .pl-sra {
-		color: var(--color-prettylights-syntax-string);
 	}
 
 	.markdown-body .pl-v,
 	.markdown-body .pl-smw {
-		color: var(--color-prettylights-syntax-variable);
 	}
 
 	.markdown-body .pl-bu {
-		color: var(--color-prettylights-syntax-brackethighlighter-unmatched);
 	}
 
 	.markdown-body .pl-ii {
-		color: var(--color-prettylights-syntax-invalid-illegal-text);
-		background-color: var(--color-prettylights-syntax-invalid-illegal-bg);
 	}
 
 	.markdown-body .pl-c2 {
-		color: var(--color-prettylights-syntax-carriage-return-text);
-		background-color: var(--color-prettylights-syntax-carriage-return-bg);
 	}
 
 	.markdown-body .pl-sr .pl-cce {
 		font-weight: bold;
-		color: var(--color-prettylights-syntax-string-regexp);
 	}
 
 	.markdown-body .pl-ml {
-		color: var(--color-prettylights-syntax-markup-list);
 	}
 
 	.markdown-body .pl-mh,
 	.markdown-body .pl-mh .pl-en,
 	.markdown-body .pl-ms {
 		font-weight: bold;
-		color: var(--color-prettylights-syntax-markup-heading);
 	}
 
 	.markdown-body .pl-mi {
 		font-style: italic;
-		color: var(--color-prettylights-syntax-markup-italic);
 	}
 
 	.markdown-body .pl-mb {
 		font-weight: bold;
-		color: var(--color-prettylights-syntax-markup-bold);
 	}
 
 	.markdown-body .pl-md {
-		color: var(--color-prettylights-syntax-markup-deleted-text);
-		background-color: var(--color-prettylights-syntax-markup-deleted-bg);
 	}
 
 	.markdown-body .pl-mi1 {
-		color: var(--color-prettylights-syntax-markup-inserted-text);
-		background-color: var(--color-prettylights-syntax-markup-inserted-bg);
 	}
 
 	.markdown-body .pl-mc {
-		color: var(--color-prettylights-syntax-markup-changed-text);
-		background-color: var(--color-prettylights-syntax-markup-changed-bg);
 	}
 
 	.markdown-body .pl-mi2 {
-		color: var(--color-prettylights-syntax-markup-ignored-text);
-		background-color: var(--color-prettylights-syntax-markup-ignored-bg);
 	}
 
 	.markdown-body .pl-mdr {
 		font-weight: bold;
-		color: var(--color-prettylights-syntax-meta-diff-range);
 	}
 
 	.markdown-body .pl-ba {
-		color: var(--color-prettylights-syntax-brackethighlighter-angle);
 	}
 
 	.markdown-body .pl-sg {
-		color: var(--color-prettylights-syntax-sublimelinter-gutter-mark);
 	}
 
 	.markdown-body .pl-corl {
 		text-decoration: underline;
-		color: var(--color-prettylights-syntax-constant-other-reference-link);
 	}
 
 	.markdown-body [role='button']:focus:not(:focus-visible),
@@ -1226,7 +1117,6 @@ const {
 		padding: var(--base-size-8) var(--base-size-16);
 		margin-bottom: var(--base-size-16);
 		color: inherit;
-		border-left: 0.25em solid var(--borderColor-default);
 	}
 
 	.markdown-body .markdown-alert > :first-child {
@@ -1245,45 +1135,35 @@ const {
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-note {
-		border-left-color: var(--borderColor-accent-emphasis);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-note .markdown-alert-title {
-		color: var(--fgColor-accent);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-important {
-		border-left-color: var(--borderColor-done-emphasis);
 	}
 
 	.markdown-body
 		.markdown-alert.markdown-alert-important
 		.markdown-alert-title {
-		color: var(--fgColor-done);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-warning {
-		border-left-color: var(--borderColor-attention-emphasis);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-warning .markdown-alert-title {
-		color: var(--fgColor-attention);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-tip {
-		border-left-color: var(--borderColor-success-emphasis);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-tip .markdown-alert-title {
-		color: var(--fgColor-success);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-caution {
-		border-left-color: var(--borderColor-danger-emphasis);
 	}
 
 	.markdown-body .markdown-alert.markdown-alert-caution .markdown-alert-title {
-		color: var(--fgColor-danger);
 	}
 
 	.markdown-body > *:first-child > .heading-element:first-child {

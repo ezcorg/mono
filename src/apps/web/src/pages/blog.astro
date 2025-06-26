@@ -20,34 +20,16 @@ const allTags = [
 	...new Set(posts.flatMap((post) => post.frontmatter.tags || [])),
 ].sort();
 
-// Get search and tag from URL params
-const searchQuery = Astro.url.searchParams.get('search')?.toLowerCase() || '';
-const selectedTag = Astro.url.searchParams.get('tag');
-
-// Filter posts by search query and tag
-let filteredPosts = posts;
-
-if (searchQuery) {
-	filteredPosts = filteredPosts.filter((post) => {
-		const title = post.frontmatter.title?.toLowerCase() || '';
-		const description = post.frontmatter.description?.toLowerCase() || '';
-		const content = post.compiledContent?.()?.toLowerCase() || '';
-		const tags = (post.frontmatter.tags || []).join(' ').toLowerCase();
-
-		return (
-			title.includes(searchQuery) ||
-			description.includes(searchQuery) ||
-			content.includes(searchQuery) ||
-			tags.includes(searchQuery)
-		);
-	});
-}
-
-if (selectedTag) {
-	filteredPosts = filteredPosts.filter((post) =>
-		post.frontmatter.tags?.includes(selectedTag),
-	);
-}
+// All posts will be available to client-side JavaScript for filtering
+const allPostsData = posts.map((post) => ({
+	title: post.frontmatter.title || '',
+	description: post.frontmatter.description || '',
+	content: post.compiledContent?.() || '',
+	tags: post.frontmatter.tags || [],
+	date: post.frontmatter.date,
+	slug: post.file?.split('/').pop()?.replace('.md', '') || '',
+	url: `/blog/${post.file?.split('/').pop()?.replace('.md', '') || ''}/`,
+}));
 
 const formatDate = (date: string) => {
 	return new Date(date).toLocaleDateString('en-US', {
@@ -58,12 +40,13 @@ const formatDate = (date: string) => {
 };
 ---
 
-<style>
+<style is:global>
 	.blog-content {
 		h2,
 		h3,
 		p {
 			font-family: 'Times New Roman', Times, serif;
+			font-weight: normal;
 		}
 	}
 
@@ -95,9 +78,14 @@ const formatDate = (date: string) => {
 		opacity: 1;
 	}
 
+	.blog-post-tag {
+		background: rgba(245, 245, 245, 0.1);
+		border: 1px solid rgba(245, 245, 245, 0.2);
+		transition: all 0.3s ease;
+	}
+
 	.blog-post-card:hover .blog-post-tag {
 		color: #000000;
-		background-color: #f0f0f0;
 		border-color: #cccccc;
 		opacity: 1;
 	}
@@ -123,17 +111,42 @@ const formatDate = (date: string) => {
 		border-color: #f5f5f5;
 	}
 
+	.search-form {
+		display: inline-block;
+		position: relative;
+		min-width: 120px;
+		max-width: 100%;
+		transition: all 0.3s ease;
+	}
+
 	.search-input {
 		background: rgba(245, 245, 245, 0.05);
 		border: 2px solid rgba(245, 245, 245, 0.1);
 		color: #f5f5f5;
 		transition: all 0.3s ease;
+		width: 100%;
+		min-width: 120px;
 	}
 
 	.search-input:focus {
 		outline: none;
 		border-color: white;
 		background: rgba(245, 245, 245, 0.08);
+	}
+
+	.search-sizer {
+		position: absolute;
+		top: -9999px;
+		left: -9999px;
+		visibility: hidden;
+		white-space: pre;
+		font-family: inherit;
+		font-size: 1.125rem;
+		font-weight: inherit;
+		letter-spacing: inherit;
+		padding: 0.75rem 3rem 0.75rem 1rem;
+		border: 2px solid transparent;
+		line-height: 1.75rem;
 	}
 
 	.search-input::placeholder {
@@ -152,19 +165,14 @@ const formatDate = (date: string) => {
 			<Navbar currentPath="/blog" />
 			<!-- Search Input -->
 			<div>
-				<form method="GET" action="/blog" class="relative">
+				<form method="GET" action="/blog" class="search-form relative">
+					<span class="search-sizer px-4 py-3 text-lg">Search</span>
 					<input
 						type="text"
 						name="search"
 						placeholder="Search"
-						value={searchQuery}
-						class="search-input w-full px-4 py-3 text-lg"
+						class="search-input px-4 py-3 text-lg pr-12"
 					/>
-					{
-						selectedTag && (
-							<input type="hidden" name="tag" value={selectedTag} />
-						)
-					}
 					<button
 						type="submit"
 						class="absolute right-3 top-1/2 transform -translate-y-1/2 text-[#F5F5F5] opacity-60 hover:opacity-100 transition-opacity"
@@ -185,103 +193,236 @@ const formatDate = (date: string) => {
 			</div>
 
 			<!-- Blog Posts -->
-			<div class="space-y-8 mb-24">
-				{
-					filteredPosts.length === 0 ? (
-						<div class="blog-post-card p-8 text-center">
-							<p class="text-lg text-[#F5F5F5] opacity-60">
-								{searchQuery && selectedTag
-									? `No posts found for "${searchQuery}" with tag "${selectedTag}"`
-									: searchQuery
-										? `No posts found for "${searchQuery}"`
-										: selectedTag
-											? `No posts found with tag "${selectedTag}"`
-											: 'No blog posts yet. Check back soon!'}
-							</p>
-						</div>
-					) : (
-						filteredPosts.map((post) => {
-							// Generate blog post URL from file path (same as RSS feed)
-							const slug =
-								post.file?.split('/').pop()?.replace('.md', '') || '';
-							const blogUrl = `/blog/${slug}/`;
-
-							return (
-								<a href={blogUrl} class="block">
-									<article class="blog-post-card p-6 md:p-8">
-										<div class="flex flex-col gap-4">
-											<h3 class="blog-post-title text-2xl md:text-3xl font-bold text-[#F5F5F5] leading-tight">
-												{post.frontmatter.title}
-											</h3>
-											<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-												<time class="blog-post-meta text-[#F5F5F5] opacity-60 text-sm">
-													{formatDate(post.frontmatter.date)}
-												</time>
-												{post.frontmatter.tags && (
-													<div class="flex flex-wrap gap-2">
-														{(post.frontmatter.tags as string[]).map(
-															(tag: string) => (
-																<span class="blog-post-tag px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70">
-																	{tag}
-																</span>
-															),
-														)}
-													</div>
-												)}
-											</div>
-											{post.frontmatter.description && (
-												<p
-													class="blog-post-description text-lg text-[#F5F5F5] opacity-80 leading-relaxed"
-													style="font-family: Times"
-												>
-													{post.frontmatter.description}
-												</p>
-											)}
-										</div>
-									</article>
-								</a>
-							);
-						})
-					)
-				}
+			<div id="blog-posts-container" class="space-y-8 mb-24">
+				<!-- Posts will be rendered by JavaScript -->
 			</div>
 		</div>
 	</section>
 
 	<Footer slot="footer" />
 
-	<script>
+	<script define:vars={{ allPostsData }}>
 		document.addEventListener('DOMContentLoaded', function () {
-			const searchForm = document.querySelector(
-				'form[action="/blog"]',
-			) as HTMLFormElement;
-			const searchInput = document.querySelector(
-				'input[name="search"]',
-			) as HTMLInputElement;
+			const searchForm = document.querySelector('form[action="/blog"]');
+			const searchInput = document.querySelector('input[name="search"]');
+			const postsContainer = document.getElementById('blog-posts-container');
+
+			// Get URL parameters
+			const urlParams = new URLSearchParams(window.location.search);
+			let currentSearchQuery = urlParams.get('search') || '';
+			let currentSelectedTag = urlParams.get('tag') || '';
+
+			// Set initial search input value from URL
+			if (searchInput && currentSearchQuery) {
+				searchInput.value = currentSearchQuery;
+			}
+
+			// Format date function
+			function formatDateClient(dateString) {
+				return new Date(dateString).toLocaleDateString('en-US', {
+					year: 'numeric',
+					month: 'long',
+					day: 'numeric',
+				});
+			}
+
+			// Filter and render posts
+			function filterAndRenderPosts() {
+				const searchQuery = currentSearchQuery.toLowerCase();
+				let filteredPosts = allPostsData;
+
+				// Filter by search query
+				if (searchQuery) {
+					filteredPosts = filteredPosts.filter((post) => {
+						const title = post.title.toLowerCase();
+						const description = post.description.toLowerCase();
+						const content = post.content.toLowerCase();
+						const tags = post.tags.join(' ').toLowerCase();
+
+						return (
+							title.includes(searchQuery) ||
+							description.includes(searchQuery) ||
+							content.includes(searchQuery) ||
+							tags.includes(searchQuery)
+						);
+					});
+				}
+
+				// Filter by tag
+				if (currentSelectedTag) {
+					filteredPosts = filteredPosts.filter((post) =>
+						post.tags.includes(currentSelectedTag),
+					);
+				}
+
+				// Render posts
+				if (postsContainer) {
+					if (filteredPosts.length === 0) {
+						postsContainer.innerHTML = `
+							<div class="blog-post-card p-8 text-center">
+								<p class="text-lg text-[#F5F5F5] opacity-60">
+									${
+										currentSearchQuery && currentSelectedTag
+											? `No posts found for "${currentSearchQuery}" with tag "${currentSelectedTag}"`
+											: currentSearchQuery
+												? `No posts found for "${currentSearchQuery}"`
+												: currentSelectedTag
+													? `No posts found with tag "${currentSelectedTag}"`
+													: 'No blog posts yet. Check back soon!'
+									}
+								</p>
+							</div>
+						`;
+					} else {
+						postsContainer.innerHTML = filteredPosts
+							.map(
+								(post) => `
+							<a href="${post.url}" class="block">
+								<article class="blog-post-card p-6 md:p-8">
+									<div class="flex flex-col gap-4">
+										<h3 class="blog-post-title text-3xl md:text-4xl font-bold text-[#F5F5F5] leading-tight">
+											${post.title}
+										</h3>
+										<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+											<time class="blog-post-meta text-[#F5F5F5] opacity-60 text-sm">
+												${formatDateClient(post.date)}
+											</time>
+											${
+												post.tags.length > 0
+													? `
+												<div class="flex flex-wrap gap-2">
+													${post.tags
+														.map(
+															(tag) => `
+														<span class="blog-post-tag px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70">
+															${tag}
+														</span>
+													`,
+														)
+														.join('')}
+												</div>
+											`
+													: ''
+											}
+										</div>
+										${
+											post.description
+												? `
+											<p class="blog-post-description text-lg text-[#F5F5F5] opacity-80 leading-relaxed" style="font-family: Times">
+												${post.description}
+											</p>
+										`
+												: ''
+										}
+									</div>
+								</article>
+							</a>
+						`,
+							)
+							.join('');
+					}
+				}
+			}
+
+			// Initial render
+			filterAndRenderPosts();
 
 			if (searchForm && searchInput) {
-				// Auto-submit on input with debounce
-				let debounceTimer: number;
+				const searchSizer = document.querySelector('.search-sizer');
 
+				function updateInputWidth(predictiveText) {
+					const text =
+						predictiveText || searchInput.value || searchInput.placeholder;
+					if (searchSizer) {
+						searchSizer.textContent = text;
+						// Add generous padding to prevent overflow and ensure comfortable typing space
+						const width = Math.max(140, searchSizer.offsetWidth + 40);
+						searchForm.style.width = width + 'px';
+					}
+				}
+
+				// Set initial width
+				updateInputWidth();
+
+				// Update search results on input
 				searchInput.addEventListener('input', function () {
-					clearTimeout(debounceTimer);
-					debounceTimer = window.setTimeout(() => {
-						if (
-							searchInput.value.length >= 2 ||
-							searchInput.value.length === 0
-						) {
-							searchForm.submit();
-						}
-					}, 500);
+					currentSearchQuery = searchInput.value;
+					filterAndRenderPosts();
+					updateInputWidth();
+
+					// Update URL without page reload
+					const newUrl = new URL(window.location.href);
+					if (currentSearchQuery) {
+						newUrl.searchParams.set('search', currentSearchQuery);
+					} else {
+						newUrl.searchParams.delete('search');
+					}
+					window.history.replaceState({}, '', newUrl.toString());
 				});
 
-				// Handle Enter key
+				// Predictive width expansion on keydown (before character is added)
 				searchInput.addEventListener('keydown', function (e) {
 					if (e.key === 'Enter') {
 						e.preventDefault();
-						clearTimeout(debounceTimer);
-						searchForm.submit();
+						// Form submission is handled by input event
+						return;
 					}
+
+					// Predict the text after this keystroke for width calculation
+					if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+						const currentValue = searchInput.value;
+						const selectionStart = searchInput.selectionStart || 0;
+						const selectionEnd = searchInput.selectionEnd || 0;
+						const predictedText =
+							currentValue.slice(0, selectionStart) +
+							e.key +
+							currentValue.slice(selectionEnd);
+						updateInputWidth(predictedText);
+					} else if (e.key === 'Backspace' || e.key === 'Delete') {
+						// Handle deletion
+						const currentValue = searchInput.value;
+						const selectionStart = searchInput.selectionStart || 0;
+						const selectionEnd = searchInput.selectionEnd || 0;
+						let predictedText;
+
+						if (selectionStart !== selectionEnd) {
+							// Text is selected, will be deleted
+							predictedText =
+								currentValue.slice(0, selectionStart) +
+								currentValue.slice(selectionEnd);
+						} else if (e.key === 'Backspace' && selectionStart > 0) {
+							// Backspace with cursor
+							predictedText =
+								currentValue.slice(0, selectionStart - 1) +
+								currentValue.slice(selectionStart);
+						} else if (
+							e.key === 'Delete' &&
+							selectionStart < currentValue.length
+						) {
+							// Delete with cursor
+							predictedText =
+								currentValue.slice(0, selectionStart) +
+								currentValue.slice(selectionStart + 1);
+						} else {
+							predictedText = currentValue;
+						}
+
+						updateInputWidth(predictedText);
+					}
+				});
+
+				// Handle focus events
+				searchInput.addEventListener('focus', function () {
+					updateInputWidth();
+				});
+
+				searchInput.addEventListener('blur', function () {
+					updateInputWidth();
+				});
+
+				// Handle window resize
+				window.addEventListener('resize', function () {
+					updateInputWidth();
 				});
 			}
 		});
