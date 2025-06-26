@@ -80,27 +80,44 @@ const services = [
 			<!-- Services Grid -->
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16">
 				{
-					services.map((service, index) => (
-						<div
-							class="border border-[#333333] p-8 transition-all duration-300 hover:border-[#F5F5F5] opacity-0 translate-y-8 animate-fade-in"
-							style={`animation-delay: ${index * 200}ms; animation-fill-mode: forwards;`}
-						>
-							<h3 class="text-2xl font-bold text-[#F5F5F5] mb-4">
-								{service.title}
-							</h3>
-							<p class="text-[#F5F5F5] opacity-80 mb-6">
-								{service.description}
-							</p>
-							<ul class="space-y-2">
-								{service.features.map((feature) => (
-									<li class="text-[#F5F5F5] opacity-70 flex items-center">
-										<span class="w-2 h-2 bg-[#F5F5F5] rounded-full mr-3" />
-										{feature}
-									</li>
-								))}
-							</ul>
-						</div>
-					))
+					services.map((service, index) => {
+						// Map service titles to URL parameter values
+						const serviceParamMap = {
+							'Web Development': 'software-development',
+							'Mobile Apps': 'software-development',
+							'Backend Systems': 'software-development',
+							Consulting: 'consulting',
+						};
+						const serviceParam = serviceParamMap[service.title] || 'other';
+
+						return (
+							<div
+								class="border border-[#333333] p-8 transition-all duration-300 hover:border-[#F5F5F5] opacity-0 translate-y-8 animate-fade-in group"
+								style={`animation-delay: ${index * 200}ms; animation-fill-mode: forwards;`}
+							>
+								<h3 class="text-2xl font-bold text-[#F5F5F5] mb-4">
+									{service.title}
+								</h3>
+								<p class="text-[#F5F5F5] opacity-80 mb-6">
+									{service.description}
+								</p>
+								<ul class="space-y-2 mb-6">
+									{service.features.map((feature) => (
+										<li class="text-[#F5F5F5] opacity-70 flex items-center">
+											<span class="w-2 h-2 bg-[#F5F5F5] rounded-full mr-3" />
+											{feature}
+										</li>
+									))}
+								</ul>
+								<a
+									href={`/newproject?service=${serviceParam}`}
+									class="inline-block bg-transparent border border-[#F5F5F5] text-[#F5F5F5] px-6 py-2 text-sm transition-all duration-300 hover:bg-[#F5F5F5] hover:text-black"
+								>
+									Start Project
+								</a>
+							</div>
+						);
+					})
 				}
 			</div>
 
@@ -110,7 +127,7 @@ const services = [
 					Ready to start your project?
 				</p>
 				<a
-					href="/project"
+					href="/newproject"
 					class="inline-block bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
 				>
 					Get in touch

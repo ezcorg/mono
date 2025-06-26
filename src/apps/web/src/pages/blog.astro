@@ -1,0 +1,289 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Footer from '../components/Footer.astro';
+import Navbar from '../components/Navbar.astro';
+
+// Get all blog posts
+const allPosts = await Astro.glob('../content/blog/*.md');
+
+// Sort posts by date (newest first)
+const posts = allPosts
+	.filter((post) => !post.frontmatter.draft)
+	.sort(
+		(a, b) =>
+			new Date(b.frontmatter.date).getTime() -
+			new Date(a.frontmatter.date).getTime(),
+	);
+
+// Get all unique tags
+const allTags = [
+	...new Set(posts.flatMap((post) => post.frontmatter.tags || [])),
+].sort();
+
+// Get search and tag from URL params
+const searchQuery = Astro.url.searchParams.get('search')?.toLowerCase() || '';
+const selectedTag = Astro.url.searchParams.get('tag');
+
+// Filter posts by search query and tag
+let filteredPosts = posts;
+
+if (searchQuery) {
+	filteredPosts = filteredPosts.filter((post) => {
+		const title = post.frontmatter.title?.toLowerCase() || '';
+		const description = post.frontmatter.description?.toLowerCase() || '';
+		const content = post.compiledContent?.()?.toLowerCase() || '';
+		const tags = (post.frontmatter.tags || []).join(' ').toLowerCase();
+
+		return (
+			title.includes(searchQuery) ||
+			description.includes(searchQuery) ||
+			content.includes(searchQuery) ||
+			tags.includes(searchQuery)
+		);
+	});
+}
+
+if (selectedTag) {
+	filteredPosts = filteredPosts.filter((post) =>
+		post.frontmatter.tags?.includes(selectedTag),
+	);
+}
+
+const formatDate = (date: string) => {
+	return new Date(date).toLocaleDateString('en-US', {
+		year: 'numeric',
+		month: 'long',
+		day: 'numeric',
+	});
+};
+---
+
+<style>
+	.blog-content {
+		h2,
+		h3,
+		p {
+			font-family: 'Times New Roman', Times, serif;
+		}
+	}
+
+	.blog-post-card {
+		border: 2px solid #333333;
+		background: transparent;
+		transition: all 0.3s ease;
+		cursor: pointer;
+		box-shadow: 0 0 0 rgba(255, 255, 255, 0);
+	}
+
+	.blog-post-card:hover {
+		border-color: #ffffff;
+		background: #ffffff;
+		box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
+	}
+
+	.blog-post-card:hover .blog-post-title {
+		color: #000000;
+	}
+
+	.blog-post-card:hover .blog-post-description {
+		color: #000000;
+		opacity: 1;
+	}
+
+	.blog-post-card:hover .blog-post-meta {
+		color: #000000;
+		opacity: 1;
+	}
+
+	.blog-post-card:hover .blog-post-tag {
+		color: #000000;
+		background-color: #f0f0f0;
+		border-color: #cccccc;
+		opacity: 1;
+	}
+
+	.blog-post-card:hover .blog-post-link {
+		color: #000000;
+	}
+
+	.tag {
+		background: rgba(245, 245, 245, 0.1);
+		border: 1px solid rgba(245, 245, 245, 0.2);
+		transition: all 0.3s ease;
+	}
+
+	.tag:hover {
+		background: rgba(245, 245, 245, 0.2);
+		border-color: rgba(245, 245, 245, 0.4);
+	}
+
+	.tag.active {
+		background: #f5f5f5;
+		color: #000;
+		border-color: #f5f5f5;
+	}
+
+	.search-input {
+		background: rgba(245, 245, 245, 0.05);
+		border: 2px solid rgba(245, 245, 245, 0.1);
+		color: #f5f5f5;
+		transition: all 0.3s ease;
+	}
+
+	.search-input:focus {
+		outline: none;
+		border-color: white;
+		background: rgba(245, 245, 245, 0.08);
+	}
+
+	.search-input::placeholder {
+		color: rgba(245, 245, 245, 0.6);
+	}
+</style>
+
+<Layout
+	title="Blog | ez dev"
+	description="Thoughts, insights, and updates from the ez dev team on software development, open source, and building better technology."
+>
+	<section
+		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-6 md:px-8"
+	>
+		<div class="w-full mx-auto flex flex-col gap-8 blog-content">
+			<Navbar currentPath="/blog" />
+			<!-- Search Input -->
+			<div>
+				<form method="GET" action="/blog" class="relative">
+					<input
+						type="text"
+						name="search"
+						placeholder="Search"
+						value={searchQuery}
+						class="search-input w-full px-4 py-3 text-lg"
+					/>
+					{
+						selectedTag && (
+							<input type="hidden" name="tag" value={selectedTag} />
+						)
+					}
+					<button
+						type="submit"
+						class="absolute right-3 top-1/2 transform -translate-y-1/2 text-[#F5F5F5] opacity-60 hover:opacity-100 transition-opacity"
+					>
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<circle cx="11" cy="11" r="8"></circle>
+							<path d="m21 21-4.35-4.35"></path>
+						</svg>
+					</button>
+				</form>
+			</div>
+
+			<!-- Blog Posts -->
+			<div class="space-y-8 mb-24">
+				{
+					filteredPosts.length === 0 ? (
+						<div class="blog-post-card p-8 text-center">
+							<p class="text-lg text-[#F5F5F5] opacity-60">
+								{searchQuery && selectedTag
+									? `No posts found for "${searchQuery}" with tag "${selectedTag}"`
+									: searchQuery
+										? `No posts found for "${searchQuery}"`
+										: selectedTag
+											? `No posts found with tag "${selectedTag}"`
+											: 'No blog posts yet. Check back soon!'}
+							</p>
+						</div>
+					) : (
+						filteredPosts.map((post) => {
+							// Generate blog post URL from file path (same as RSS feed)
+							const slug =
+								post.file?.split('/').pop()?.replace('.md', '') || '';
+							const blogUrl = `/blog/${slug}/`;
+
+							return (
+								<a href={blogUrl} class="block">
+									<article class="blog-post-card p-6 md:p-8">
+										<div class="flex flex-col gap-4">
+											<h3 class="blog-post-title text-2xl md:text-3xl font-bold text-[#F5F5F5] leading-tight">
+												{post.frontmatter.title}
+											</h3>
+											<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+												<time class="blog-post-meta text-[#F5F5F5] opacity-60 text-sm">
+													{formatDate(post.frontmatter.date)}
+												</time>
+												{post.frontmatter.tags && (
+													<div class="flex flex-wrap gap-2">
+														{(post.frontmatter.tags as string[]).map(
+															(tag: string) => (
+																<span class="blog-post-tag px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70">
+																	{tag}
+																</span>
+															),
+														)}
+													</div>
+												)}
+											</div>
+											{post.frontmatter.description && (
+												<p
+													class="blog-post-description text-lg text-[#F5F5F5] opacity-80 leading-relaxed"
+													style="font-family: Times"
+												>
+													{post.frontmatter.description}
+												</p>
+											)}
+										</div>
+									</article>
+								</a>
+							);
+						})
+					)
+				}
+			</div>
+		</div>
+	</section>
+
+	<Footer slot="footer" />
+
+	<script>
+		document.addEventListener('DOMContentLoaded', function () {
+			const searchForm = document.querySelector(
+				'form[action="/blog"]',
+			) as HTMLFormElement;
+			const searchInput = document.querySelector(
+				'input[name="search"]',
+			) as HTMLInputElement;
+
+			if (searchForm && searchInput) {
+				// Auto-submit on input with debounce
+				let debounceTimer: number;
+
+				searchInput.addEventListener('input', function () {
+					clearTimeout(debounceTimer);
+					debounceTimer = window.setTimeout(() => {
+						if (
+							searchInput.value.length >= 2 ||
+							searchInput.value.length === 0
+						) {
+							searchForm.submit();
+						}
+					}, 500);
+				});
+
+				// Handle Enter key
+				searchInput.addEventListener('keydown', function (e) {
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						clearTimeout(debounceTimer);
+						searchForm.submit();
+					}
+				});
+			}
+		});
+	</script>
+</Layout>

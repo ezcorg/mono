@@ -67,7 +67,7 @@ The site will be available at: `https://[username].github.io/ezdev-web`
 - **About** (`/about`) - Team information
 - **Services** (`/services`) - Service offerings
 - **Work** (`/work`) - Portfolio showcase
-- **Project** (`/project`) - Contact form
+- **Project** (`/newproject`) - Contact form
 
 ## 🔧 Customization
 

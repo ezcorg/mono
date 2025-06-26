@@ -1,0 +1,65 @@
+---
+// Get all blog posts
+const posts = await Astro.glob('../../content/blog/*.md');
+
+// Filter out drafts and sort by date
+const publishedPosts = posts
+	.filter((post) => !post.frontmatter.draft)
+	.sort(
+		(a, b) =>
+			new Date(b.frontmatter.date).getTime() -
+			new Date(a.frontmatter.date).getTime(),
+	);
+
+const siteUrl = Astro.site?.toString() || 'https://ezdev.com';
+
+// Set response headers
+Astro.response.headers.set(
+	'Content-Type',
+	'application/rss+xml; charset=utf-8',
+);
+---
+
+?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+	<channel>
+		<title>ez dev Blog</title>
+		<description
+			>Thoughts, insights, and updates from the ez dev team on software
+			development, open source, and building better technology.</description
+		>
+		<link />{siteUrl}blog/</channel
+	>
+	<atom:link href="{siteUrl}blog/rss.xml" rel="self" type="application/rss+xml"
+	></atom:link>
+	<language>en-us</language>
+	<managingEditor>hello@ezdev.com (ez dev team)</managingEditor>
+	<webMaster>hello@ezdev.com (ez dev team)</webMaster>
+	<copyright
+		>Copyright {new Date().getFullYear()} ez dev inc. All rights reserved.</copyright
+	>
+	<category>Technology</category>
+	<category>Software Development</category>
+	<category>Open Source</category>
+	<lastBuildDate>{new Date().toUTCString()}</lastBuildDate>
+	<generator>Astro</generator>
+	{
+		publishedPosts
+			.map((post) => {
+				const slug = post.file.split('/').pop()?.replace('.md', '') || '';
+				const postUrl = `${siteUrl}blog/${slug}/`;
+
+				return `
+    <item>
+      <title><![CDATA[${post.frontmatter.title}]]></title>
+      <description><![CDATA[${post.frontmatter.description || ''}]]></description>
+      <link>${postUrl}</link>
+      <guid>${postUrl}</guid>
+      <pubDate>${new Date(post.frontmatter.date).toUTCString()}</pubDate>
+      ${post.frontmatter.author ? `<author>hello@ezdev.com (${post.frontmatter.author})</author>` : ''}
+      ${post.frontmatter.tags ? post.frontmatter.tags.map((tag: string) => `<category>${tag}</category>`).join('\n      ') : ''}
+    </item>`;
+			})
+			.join('')
+	}
+</rss>

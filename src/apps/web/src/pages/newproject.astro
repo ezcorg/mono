@@ -12,7 +12,7 @@ import Footer from '../components/Footer.astro';
 		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-6 pb-12 md:px-8 md:pb-16"
 	>
 		<div class="w-full mx-auto flex flex-col gap-8">
-			<Navbar currentPath="/project" />
+			<Navbar currentPath="/newproject" />
 			<form class="space-y-6 max-w-2xl" id="contact-form">
 				<div>
 					<label for="name" class="block text-[#F5F5F5] mb-2">Name *</label>
@@ -33,6 +33,32 @@ import Footer from '../components/Footer.astro';
 						required
 						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
 					/>
+				</div>
+
+				<div>
+					<label for="service" class="block text-[#F5F5F5] mb-2"
+						>Service *</label
+					>
+					<select
+						id="service"
+						name="service"
+						required
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 appearance-none"
+					>
+						<option value="" disabled selected class="bg-black text-[#F5F5F5]"
+							>What can we help you with?</option
+						>
+						<option value="open-source" class="bg-black text-[#F5F5F5]"
+							>Open source</option
+						>
+						<option value="software-development" class="bg-black text-[#F5F5F5]"
+							>Software development</option
+						>
+						<option value="consulting" class="bg-black text-[#F5F5F5]"
+							>Consulting</option
+						>
+						<option value="other" class="bg-black text-[#F5F5F5]">Other</option>
+					</select>
 				</div>
 
 				<div>
@@ -151,7 +177,7 @@ import Footer from '../components/Footer.astro';
 					type="submit"
 					class="bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
 				>
-					Send Message
+					Send message
 				</button>
 			</form>
 		</div>
@@ -219,6 +245,11 @@ import Footer from '../components/Footer.astro';
 </style>
 
 <style is:global>
+	:root {
+		--flatpickr-day-bg: #dfdfdf;
+		--flatpickr-day-bg-end: #f5f5f5;
+	}
+
 	/* Custom flatpickr styles to match app theme - using higher specificity */
 	.flatpickr-calendar {
 		background: #000000 !important;
@@ -307,22 +338,22 @@ import Footer from '../components/Footer.astro';
 	}
 
 	.flatpickr-calendar .flatpickr-day.inRange {
-		background: #b9b9b9 !important;
-		background-color: #b9b9b9 !important;
+		background: var(--flatpickr-day-bg) !important;
+		background-color: var(--flatpickr-day-bg) !important;
 		color: #000000 !important;
 		box-shadow:
-			-5px 0 0 #b9b9b9,
-			5px 0 0 #b9b9b9;
+			-5px 0 0 var(--flatpickr-day-bg),
+			5px 0 0 var(--flatpickr-day-bg);
 	}
 
 	.flatpickr-calendar .flatpickr-day.endRange {
-		box-shadow: -5px 0 0 #b9b9b9 !important;
+		box-shadow: -5px 0 0 var(--flatpickr-day-bg) !important;
 	}
 
 	.flatpickr-calendar .flatpickr-day.startRange,
 	.flatpickr-calendar .flatpickr-day.endRange {
-		background: #f5f5f5 !important;
-		background-color: #f5f5f5 !important;
+		background: var(--flatpickr-day-bg-end) !important;
+		background-color: var(--flatpickr-day-bg-end) !important;
 		color: #000000 !important;
 	}
 
@@ -384,6 +415,36 @@ import Footer from '../components/Footer.astro';
 		const budgetInputsContainer = document.getElementById(
 			'budgetInputsContainer',
 		);
+		const serviceSelect = document.getElementById('service');
+
+		// Service selector URL synchronization
+		function getUrlParams() {
+			return new URLSearchParams(window.location.search);
+		}
+
+		function updateUrlParam(key, value) {
+			const url = new URL(window.location.href);
+			if (value) {
+				url.searchParams.set(key, value);
+			} else {
+				url.searchParams.delete(key);
+			}
+			window.history.replaceState({}, '', url.toString());
+		}
+
+		// Initialize service selector from URL
+		const urlParams = getUrlParams();
+		const serviceParam = urlParams.get('service');
+		if (serviceParam && serviceSelect) {
+			(serviceSelect as HTMLSelectElement).value = serviceParam;
+		}
+
+		// Listen for service selector changes
+		if (serviceSelect) {
+			serviceSelect.addEventListener('change', () => {
+				updateUrlParam('service', (serviceSelect as HTMLSelectElement).value);
+			});
+		}
 
 		let baseCurrency = 'USD';
 		let exchangeRates = {};
