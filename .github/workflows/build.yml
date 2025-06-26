@@ -1,32 +1,34 @@
 name: Install and Build with pnpm
 
 on:
-    push:
-        branches:
-            - main
-    pull_request:
+  push:
+    branches:
+      - main
+  pull_request:
 
 jobs:
-    build:
-        runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-latest
 
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-            - name: Install pnpm
-              uses: pnpm/action-setup@v2
-              with:
-                  version: '*'
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '*'
 
-            - name: Setup Node.js
-              uses: actions/setup-node@v4
-              with:
-                  node-version: '22.15.0'
-                  cache: 'pnpm'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.15.0'
+          cache: 'pnpm'
 
-            - name: Install dependencies (recursive)
-              run: pnpm install -r
+      - name: Install dependencies (recursive)
+        run: pnpm install -r
 
-            - name: Build project
-              run: pnpm build
+      - name: Build project
+        run: pnpm build
