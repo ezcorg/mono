@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd src/apps/web
-          pnpm ci
+          pnpm i
 
       - name: Build with Astro
         run: |
