@@ -21,21 +21,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '*'
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: '22.15.0'
+          cache: 'pnpm'
 
       - name: Install dependencies
         run: |
           cd src/apps/web
-          npm ci
+          pnpm ci
 
       - name: Build with Astro
         run: |
           cd src/apps/web
-          npm run build
+          pnpm run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
