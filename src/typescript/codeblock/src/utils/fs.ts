@@ -111,7 +111,7 @@ export namespace CodeblockFS {
 
             async readDir(path: string): Promise<[string, FileType][]> {
                 const files = await fs.readdir(path, { withFileTypes: true, encoding: "utf-8" });
-                return files.map((ent) => {
+                return files.map((ent: any) => {
                     let type = FileType.File;
                     switch ((ent.stats.mode as number) & 0o170000) {
                         case 0o040000:
@@ -126,7 +126,12 @@ export namespace CodeblockFS {
             },
 
             async exists(path: string): Promise<boolean> {
-                return await fs.exists(path);
+                try {
+                    await fs.access(path);
+                    return true;
+                } catch {
+                    return false;
+                }
             },
 
             async stat(path: string) {
