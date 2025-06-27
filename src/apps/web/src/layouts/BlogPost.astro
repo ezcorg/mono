@@ -25,7 +25,7 @@ const formatDate = (date: string) => {
 };
 ---
 
-<style>
+<style is:global>
 	.tag {
 		background: rgba(245, 245, 245, 0.1);
 		border: 1px solid rgba(245, 245, 245, 0.2);
@@ -35,6 +35,11 @@ const formatDate = (date: string) => {
 	.tag:hover {
 		background: rgba(245, 245, 245, 0.2);
 		border-color: rgba(245, 245, 245, 0.4);
+	}
+
+	article.markdown-body {
+		padding: 2rem;
+		border: 2px solid #2d2d2d;
 	}
 
 	/* Enhanced typography for blog content */

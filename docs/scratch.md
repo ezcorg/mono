@@ -2,7 +2,7 @@
 
 # Projects
 - `@eznode`: the cloud computing platform
-- `@ezprose`: the rich-text editor
+- `@eznote`: the rich-text editor
 - `@ezcode`: the code editor
 
 ## High-level implementation plan
