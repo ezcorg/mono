@@ -1,6 +1,6 @@
-# dev
+# mono
 
-Polyrepo containing all of the organization's projects and code.
+Monorepo containing all of the organization's projects and code.
 
 # Development
 
