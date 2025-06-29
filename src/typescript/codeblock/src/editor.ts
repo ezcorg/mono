@@ -11,7 +11,7 @@ import { searchKeymap, highlightSelectionMatches } from "@codemirror/search"
 import { Fs } from "./types";
 import { extToLanguageMap } from "./constants";
 import { getLanguageSupport } from "./servers";
-// import { LanguageServerClientImpl, languageServerWithTransport } from '@ezcodelol/codemirror-languageserver';
+// import { LanguageServerClientImpl, languageServerWithTransport } from '@ezdevlol/codemirror-languageserver';
 import { documentUri, languageId } from '@marimo-team/codemirror-languageserver';
 import { lintKeymap } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";

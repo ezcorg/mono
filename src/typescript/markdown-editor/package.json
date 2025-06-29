@@ -1,5 +1,5 @@
 {
-  "name": "@ezcodelol/markdown-editor",
+  "name": "@ezdevlol/markdown-editor",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -23,7 +23,7 @@
     "@codemirror/search": "^6.5.10",
     "@codemirror/state": "6.5.2",
     "@codemirror/view": "6.36.7",
-    "@ezcodelol/codeblock": "workspace:*",
+    "@ezdevlol/codeblock": "workspace:*",
     "@tiptap/core": "^2.11.9",
     "@tiptap/extension-link": "^2.12.0",
     "@tiptap/extension-table": "^2.11.7",

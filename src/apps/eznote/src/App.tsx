@@ -1,5 +1,5 @@
 import { createEffect, createSignal } from "solid-js";
-import { createEditor, MarkdownEditor } from "@ezcodelol/markdown-editor";
+import { createEditor, MarkdownEditor } from "@ezdevlol/markdown-editor";
 import "./App.css";
 
 function App() {

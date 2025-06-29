@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './components/editor';
 
 const initialMarkdown = `
-# @ezcodelol/markdown-editor
+# @ezdevlol/markdown-editor
 
 This editor supports **Markdown** syntax.
 

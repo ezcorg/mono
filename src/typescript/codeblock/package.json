@@ -1,5 +1,5 @@
 {
-  "name": "@ezcodelol/codeblock",
+  "name": "@ezdevlol/codeblock",
   "version": "0.0.5",
   "type": "module",
   "module": "dist/index.js",

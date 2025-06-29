@@ -1,5 +1,5 @@
 import { Extension } from '@tiptap/core'
-import { Fs } from '@ezcodelol/codeblock'
+import { Fs } from '@ezdevlol/codeblock'
 
 export interface FileSystemOptions {
     fs?: Fs
