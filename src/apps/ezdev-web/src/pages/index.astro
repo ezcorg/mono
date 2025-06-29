@@ -1,0 +1,144 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Navbar from '../components/Navbar.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<Layout title="ez dev | software development, only easier">
+	<section
+		class="w-[min(80ch,100vw)] min-h-screen mt-[6rem] md:mt-[8rem] flex items-start justify-center px-4 md:px-6 lg:px-8"
+	>
+		<div class="w-full mx-auto flex flex-col gap-6 md:gap-8">
+			<Navbar currentPath="/" />
+			<h1
+				class="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-light text-[#F5F5F5] mb-6 md:mb-8 lg:mb-12"
+				style="font-family: Times; line-height: 1.2; letter-spacing: -0.02em;"
+			>
+				<br />
+				build{' '}
+				<span
+					class="inline-block font-bold relative text-[#F5F5F5]"
+					id="dynamic-text"
+				>
+					<span class="inline-block" id="text-content">{''}</span>
+					<span
+						class="absolute top-0 ml-[2px] md:ml-[4px] w-[1.5px] md:w-[2px] h-[1em] bg-[#F5F5F5] animate-blink"
+						id="cursor"></span>
+				</span>
+			</h1>
+			<p
+				class="text-lg sm:text-xl md:text-2xl text-[#F5F5F5] max-w-2xl mb-8 md:mb-12"
+				style="font-family: Times;"
+			>
+				For those seeking simple, open, user-friendly solutions.
+			</p>
+			<div class="flex flex-col sm:flex-row gap-3 md:gap-4">
+				<a
+					href="/newproject"
+					class="inline-block bg-[#F5F5F5] text-black px-6 md:px-8 py-3 md:py-4 text-base md:text-lg transition-all duration-300 hover:bg-opacity-90 text-center sm:text-left"
+				>
+					Start a project
+				</a>
+				<a
+					href="/work"
+					class="inline-block border border-[#F5F5F5] text-[#F5F5F5] px-6 md:px-8 py-3 md:py-4 text-base md:text-lg transition-all duration-300 hover:bg-[#F5F5F5] hover:text-black text-center sm:text-left"
+				>
+					View our work
+				</a>
+			</div>
+		</div>
+	</section>
+
+	<Footer slot="footer" />
+</Layout>
+
+<script>
+	// Dynamic text animation
+	const words = ['easier', 'smarter', 'minimal', 'in the open', 'the future'];
+	let currentIndex = 0;
+
+	const dynamicTextElement = document.getElementById(
+		'dynamic-text',
+	) as HTMLElement | null;
+	const textSpan = document.getElementById(
+		'text-content',
+	) as HTMLElement | null;
+	const cursor = document.getElementById('cursor') as HTMLElement | null;
+
+	if (textSpan && cursor && dynamicTextElement) {
+		// Calculate the minimum width needed for the longest word to prevent layout shifts
+		const longestWord = words.reduce((a, b) => (a.length > b.length ? a : b));
+
+		// Create invisible placeholder element to reserve space for longest word
+		const placeholder = document.createElement('span');
+		placeholder.style.visibility = 'hidden';
+		placeholder.style.position = 'absolute';
+		placeholder.style.pointerEvents = 'none';
+		placeholder.style.fontSize = getComputedStyle(textSpan).fontSize;
+		placeholder.style.fontFamily = getComputedStyle(textSpan).fontFamily;
+		placeholder.style.fontWeight = getComputedStyle(textSpan).fontWeight;
+		placeholder.textContent = longestWord;
+		dynamicTextElement.appendChild(placeholder);
+
+		// Function to update cursor position based on text content
+		const updateCursorPosition = () => {
+			if (textSpan && cursor) {
+				const textWidth = textSpan.offsetWidth;
+				cursor.style.left = `${textWidth}px`;
+			}
+		};
+
+		const typeWord = async (word: string) => {
+			textSpan.textContent = '';
+			updateCursorPosition();
+
+			for (let i = 0; i < word.length; i++) {
+				await new Promise((resolve) =>
+					setTimeout(resolve, 10 + Math.random() * 100),
+				);
+				if (textSpan) {
+					textSpan.textContent += word[i];
+					updateCursorPosition();
+				}
+			}
+		};
+
+		const clearWord = async () => {
+			if (dynamicTextElement && cursor) {
+				dynamicTextElement.classList.add('bg-[#F5F5F5]', 'text-black');
+				cursor.style.display = 'none';
+
+				await new Promise((resolve) =>
+					setTimeout(resolve, 300 + Math.random() * 100),
+				);
+
+				if (textSpan) {
+					textSpan.textContent = '';
+					updateCursorPosition();
+				}
+				dynamicTextElement.classList.remove('bg-[#F5F5F5]', 'text-black');
+				cursor.style.display = 'block';
+			}
+		};
+
+		const startAnimation = async () => {
+			while (true) {
+				const word = words[currentIndex];
+				await typeWord(word);
+
+				await new Promise((resolve) =>
+					setTimeout(resolve, 2000 + Math.random() * 1000),
+				);
+
+				await clearWord();
+
+				await new Promise((resolve) => setTimeout(resolve, 200));
+
+				currentIndex = (currentIndex + 1) % words.length;
+			}
+		};
+
+		// Start animation after page load
+		setTimeout(startAnimation, 1000);
+	}
+</script>

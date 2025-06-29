@@ -1,0 +1,246 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Footer from '../components/Footer.astro';
+import Navbar from '../components/Navbar.astro';
+
+const projects = [
+	{
+		title: 'eznote',
+		description: 'A cross-platform Markdown note-taking application',
+		tags: ['Rust', 'Tauri', 'TypeScript'],
+		image: '',
+		social: [
+			{
+				icon: '',
+				link: '',
+			},
+		],
+		link: '#',
+	},
+	{
+		title: 'codeblock',
+		description: 'A lightweight embeddable code block editor',
+		tags: ['CodeMirror', 'TypeScript', 'Web Component'],
+		image: '',
+		social: [],
+		link: '#',
+	},
+	{
+		title: 'htmlsnap',
+		description:
+			'A browser extension devtool for snapshotting HTML elements (and applicable CSS)',
+		tags: ['Javascript', 'Web Extension'],
+		image: '',
+		social: [],
+		link: '#',
+	},
+];
+---
+
+<Layout
+	title="Work | ez dev"
+	description="A showcase of projects we've built for clients around the world."
+>
+	<section
+		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-6 md:px-8"
+	>
+		<div class="w-full mx-auto flex flex-col gap-8">
+			<Navbar currentPath="/work" />
+			<div
+				id="masonry-container"
+				class="mb-16 opacity-0 transition-opacity duration-300 mb-[-2rem]"
+			>
+				{
+					projects.map((project, index) => (
+						<div class="masonry-item w-full md:w-[calc(50%-1rem)] mb-8 border-2 border-[#333333] overflow-hidden transition-all duration-300 hover:border-[#ffffff] hover:bg-[#ffffff] work-item-card">
+							<div class="p-6">
+								<h3 class="text-2xl font-bold text-[#F5F5F5] mb-3 work-item-title">
+									{project.title}
+								</h3>
+								<p
+									style="font-family: Times"
+									class="text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description"
+								>
+									{project.description}
+								</p>
+								<div class="flex flex-wrap gap-2 mb-4">
+									{project.tags.map((tech) => (
+										<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+											{tech}
+										</span>
+									))}
+								</div>
+							</div>
+						</div>
+					))
+				}
+			</div>
+
+			<div class="mb-24">
+				<p class="text-lg text-[#F5F5F5] opacity-70 mb-8">
+					Want to see yours here?
+				</p>
+				<a
+					href="/newproject"
+					class="inline-block bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
+				>
+					Start a project
+				</a>
+			</div>
+		</div>
+	</section>
+
+	<Footer slot="footer" />
+
+	<!-- Masonry.js CDN -->
+	<script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"
+	></script>
+
+	<script>
+		document.addEventListener('DOMContentLoaded', function () {
+			const container = document.querySelector(
+				'#masonry-container',
+			) as HTMLElement;
+
+			if (container && typeof (window as any).Masonry !== 'undefined') {
+				// Handle responsive behavior
+				function handleResize() {
+					if (!container) return;
+
+					const items = container.querySelectorAll(
+						'.masonry-item',
+					) as NodeListOf<HTMLElement>;
+					const isDesktop = window.innerWidth >= 768; // md breakpoint
+
+					items.forEach((item: HTMLElement) => {
+						if (isDesktop) {
+							item.style.width = 'calc(50% - 1rem)';
+						} else {
+							item.style.width = '100%';
+						}
+					});
+				}
+
+				// Set initial widths before Masonry initialization
+				handleResize();
+
+				// Wait for images and content to load, then initialize Masonry
+				const initializeMasonry = () => {
+					// Initialize Masonry
+					const masonry = new (window as any).Masonry(container, {
+						itemSelector: '.masonry-item',
+						columnWidth: '.masonry-item',
+						gutter: 32, // 2rem gap
+						percentPosition: true,
+						horizontalOrder: true,
+						transitionDuration: 0, // Disable initial transition to prevent jumping
+					});
+
+					// Show the container with a smooth fade-in after layout is complete
+					setTimeout(() => {
+						container.style.opacity = '1';
+						// Re-enable transitions after initial layout
+						masonry.options.transitionDuration = '0.3s';
+					}, 50);
+
+					// Listen for window resize
+					window.addEventListener('resize', () => {
+						handleResize();
+						masonry.layout();
+					});
+				};
+
+				// Check if all images are loaded
+				const images = container.querySelectorAll('img');
+				if (images.length === 0) {
+					// No images, initialize immediately
+					initializeMasonry();
+				} else {
+					// Wait for images to load
+					let loadedImages = 0;
+					const totalImages = images.length;
+
+					const checkAllImagesLoaded = () => {
+						loadedImages++;
+						if (loadedImages === totalImages) {
+							initializeMasonry();
+						}
+					};
+
+					images.forEach((img: HTMLImageElement) => {
+						if (img.complete) {
+							checkAllImagesLoaded();
+						} else {
+							img.addEventListener('load', checkAllImagesLoaded);
+							img.addEventListener('error', checkAllImagesLoaded); // Handle broken images
+						}
+					});
+
+					// Fallback: initialize after a short delay even if images haven't loaded
+					setTimeout(() => {
+						if (container.style.opacity === '0') {
+							initializeMasonry();
+						}
+					}, 1000);
+				}
+			}
+		});
+	</script>
+
+	<style>
+		/* Ensure masonry container has proper positioning */
+		#masonry-container {
+			position: relative;
+			min-height: 200px; /* Prevent layout shift by reserving space */
+		}
+
+		/* Masonry items positioning */
+		.masonry-item {
+			position: relative;
+		}
+
+		/* Smooth transitions for masonry items after initial load */
+		.masonry-item {
+			transition: all 0.3s ease;
+		}
+
+		/* Prevent flash of unstyled content */
+		#masonry-container.loading .masonry-item {
+			visibility: hidden;
+		}
+
+		/* Ensure smooth fade-in */
+		#masonry-container {
+			transition: opacity 0.3s ease-in-out;
+		}
+
+		/* Work item hover effects */
+		.work-item-card {
+			cursor: pointer;
+		}
+
+		.work-item-card:hover .work-item-title {
+			color: #000000;
+		}
+
+		.work-item-card:hover .work-item-description {
+			color: #000000;
+			opacity: 1;
+		}
+
+		.work-item-card:hover .work-item-tag {
+			color: #000000;
+			background-color: #f0f0f0;
+			border-color: #cccccc;
+			opacity: 1;
+		}
+
+		.work-item-card {
+			box-shadow: 0 0 0 rgba(255, 255, 255, 0);
+		}
+
+		.work-item-card:hover {
+			box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
+		}
+	</style>
+</Layout>

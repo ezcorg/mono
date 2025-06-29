@@ -1,0 +1,62 @@
+---
+export interface Props {
+	size?: number;
+}
+
+const { size = 60 } = Astro.props;
+---
+
+<a href="/" class="flex items-center gap-3 logo-link">
+	<div
+		class="relative logo-container"
+		style={`width: ${size}px; height: ${size}px;`}
+	>
+		<div
+			class="absolute inset-0 border-2 border-[#F5F5F5] logo-border"
+			style={`width: ${size}px; height: ${size}px;`}
+		>
+		</div>
+		<div
+			class="absolute inset-0 flex items-center justify-center logo-text"
+			style={`font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500;`}
+		>
+			<span class="text-[#F5F5F5]">ez</span>
+		</div>
+	</div>
+	<span
+		class="text-[#F5F5F5] logo-dev-text"
+		style={`font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500;`}
+	>
+		dev
+	</span>
+</a>
+
+<style>
+	.logo-link {
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		cursor: pointer;
+	}
+
+	.logo-link:hover .logo-border {
+		border-color: #ffffff;
+		background-color: #ffffff;
+		box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+	}
+
+	.logo-link:hover .logo-text span {
+		color: #000000;
+	}
+
+	.logo-link:hover .logo-dev-text {
+		color: #ffffff;
+	}
+
+	.logo-border {
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.logo-text span,
+	.logo-dev-text {
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+</style>
