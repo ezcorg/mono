@@ -7,7 +7,7 @@ tags: ["ezdev", "hello-world", "introduction", "tech"]
 draft: false
 ---
 
-If you're someone who has worked in the tech industry (or really, corporate America), you've probably borne witness to the many ways in which the products you've built can be harmful. 
+If you're someone who has worked in the tech industry (or any industry, really), you've probably borne witness to the many ways in which the products you've built can be harmful. 
 
 Worse still, you've probably seen that harm be *intentional*, often driven by decisions to prioritize profit over people (i.e., someone decides human suffering isn't worth that much).
 
