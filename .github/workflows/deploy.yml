@@ -34,18 +34,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd src/apps/web
+          cd src/apps/ezdev-web
           pnpm i
 
       - name: Build with Astro
         run: |
-          cd src/apps/web
+          cd src/apps/ezdev-web
           pnpm run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./src/apps/web/dist
+          path: ./src/apps/ezdev-web/dist
 
   deploy:
     environment:
