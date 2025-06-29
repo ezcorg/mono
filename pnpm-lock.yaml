@@ -28,7 +28,7 @@ importers:
         specifier: ^0.344.0
         version: 0.344.0(astro@4.16.18(@types/node@22.15.3)(rollup@4.40.1)(terser@5.39.2)(typescript@5.7.3))
       memfs:
-        specifier: link:../../typescript/memfs
+        specifier: workspace:*
         version: link:../../typescript/memfs
       tailwindcss:
         specifier: ^3.0.0
@@ -123,7 +123,7 @@ importers:
         specifier: ^14.1.0
         version: 14.1.0
       memfs:
-        specifier: link:../memfs
+        specifier: workspace:*
         version: link:../memfs
       minisearch:
         specifier: ^7.1.2

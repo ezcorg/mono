@@ -73,7 +73,7 @@
     "lodash": "^4.17.21",
     "lz-string": "^1.5.0",
     "markdown-it": "^14.1.0",
-    "memfs": "link:../memfs",
+    "memfs": "workspace:*",
     "minisearch": "^7.1.2",
     "parse-gitignore": "^2.0.0",
     "path-browserify": "^1.0.1",
