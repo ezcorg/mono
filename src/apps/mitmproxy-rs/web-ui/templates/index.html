@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}MITM Proxy Certificate Installation{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>🔒 MITM Proxy Certificate</h1>
+        <p>Install the root certificate to enable HTTPS traffic interception</p>
+    </div>
+
+    <div class="platform-info">
+        <strong>Detected Platform:</strong> {{ platform_name }} <br>
+        <strong>Recommended Format:</strong> {{ format_name }}
+    </div>
+
+    <div class="alert warning">
+        <strong>⚠️ Security Notice:</strong> Only install this certificate if you trust this proxy server.
+        This certificate allows the proxy to decrypt your HTTPS traffic.
+    </div>
+
+    <div class="download-section">
+        <a href="/cert?download=true" class="btn btn-primary btn-large" id="download-btn">
+            📥 Download Certificate ({{ format_name }})
+        </a>
+        <br>
+        <a href="/cert" class="btn btn-success btn-large" id="instructions-btn">
+            📋 View Installation Instructions
+        </a>
+    </div>
+
+    <div class="alternative-formats">
+        <h3>Alternative Formats:</h3>
+        <div class="format-links">
+            <a href="/cert?format=pem&download=true" class="format-link">PEM</a>
+            <a href="/cert?format=der&download=true" class="format-link">DER/CRT</a>
+            <a href="/cert?format=p12&download=true" class="format-link">PKCS#12</a>
+            <a href="/cert?format=mobileconfig&download=true" class="format-link">Mobile Config</a>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>MITM Proxy Server • <a href="/api/cert-info">API Info</a> • <a href="/dashboard">Dashboard</a></p>
+    </div>
+</div>
+{% endblock %}

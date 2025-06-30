@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Certificate Installation Instructions{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>📋 Installation Instructions</h1>
+    <p><strong>Certificate Format:</strong> {{ bundle_format }} ({{ bundle_filename }})</p>
+
+    <div class="download-section">
+        <p>First, download the certificate file:</p>
+        <a href="/cert?format={{ bundle_format }}&download=true" class="btn btn-primary btn-large">
+            📥 Download {{ bundle_format|upper }} Certificate
+        </a>
+    </div>
+
+    <div class="instructions">
+        <h4>Installation Steps:</h4>
+        {{ bundle_instructions }}
+    </div>
+
+    <a href="/" class="back-link">Back to main page</a>
+</div>
+{% endblock %}

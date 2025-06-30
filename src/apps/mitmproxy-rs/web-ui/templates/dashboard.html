@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}MITM Proxy Dashboard{% endblock %}
+
+{% block content %}
+<div class="container wide" id="dashboard">
+    <div class="header">
+        <h1>🔒 MITM Proxy Dashboard</h1>
+        <div class="nav">
+            <a href="/">Certificate Download</a>
+            <a href="/api/health">Health Check</a>
+            <a href="/api/cert-info">Certificate Info</a>
+            <a href="/api/stats">Statistics</a>
+            <button id="refresh-btn" class="btn btn-primary">🔄 Refresh</button>
+        </div>
+        <p class="text-muted">Last updated: <span id="last-refresh" class="loading">Loading...</span></p>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>📊 Proxy Statistics</h3>
+            <div class="stat">
+                <span>Active Connections:</span>
+                <span id="active-connections" class="stat-value loading">Loading...</span>
+            </div>
+            <div class="stat">
+                <span>Total Requests:</span>
+                <span id="total-requests" class="stat-value loading">Loading...</span>
+            </div>
+            <div class="stat">
+                <span>Certificate Cache:</span>
+                <span id="cert-cache" class="stat-value loading">Loading...</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>🔧 System Status</h3>
+            <div class="stat">
+                <span>Server Status:</span>
+                <span id="server-status" class="stat-value loading">Loading...</span>
+            </div>
+            <div class="stat">
+                <span>Uptime:</span>
+                <span id="uptime" class="stat-value loading">Loading...</span>
+            </div>
+            <div class="stat">
+                <span>Version:</span>
+                <span id="version" class="stat-value loading">Loading...</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>🧩 Plugins</h3>
+            <div id="plugins-list">
+                <p class="loading">Loading plugin information...</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📝 Recent Logs</h3>
+            <div id="logs-list">
+                <p class="loading">Loading logs...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

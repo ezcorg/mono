@@ -1,0 +1,26 @@
+# MITM Proxy Configuration File
+
+[proxy]
+max_connections = 1000
+connection_timeout_secs = 30
+buffer_size = 8192
+upstream_timeout_secs = 30
+
+[tls]
+cert_validity_days = 365
+key_size = 2048
+cache_size = 1000
+
+[plugins]
+enabled = true
+timeout_ms = 5000
+max_memory_mb = 64
+
+# Plugin-specific settings can be added here
+[plugins.plugin_settings]
+# Example: logger_plugin = { level = "info", output = "stdout" }
+
+[web]
+enable_dashboard = true
+static_dir = "./web-ui/static"
+template_dir = "./web-ui/templates"

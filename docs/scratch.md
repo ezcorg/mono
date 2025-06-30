@@ -16,10 +16,20 @@ import { Database } from '@eznode/sdk'
 
 // a database which only runs so long as it has connections
 // and automatically scales (CPU, RAM, disk) based on utilization
-const db = await Database.auto('main')
+const db = await Database.auto()
 
 // a database which is created and runs until stopped
-const db = await Database.static('static')
+const db = await Database.static()
+
+// which are all shorthands for something like
+const db = await Database.new('mydb', {
+  autoscale: true,
+  type: 'postgres', // or 'mysql', 'sqlite', etc.
+  memory: '2GB',
+  cpu: '4',
+  disk: '10GB',
+  // other options...
+})
 ```
 
 or ...
