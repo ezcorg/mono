@@ -1,17 +1,16 @@
-use super::{AppState, cert_info, download_ca_crt, download_ca_pem, download_certificate, index_page};
 use super::templates::DashboardTemplate;
-use crate::cert::CertificateAuthority;
-use askama_axum::IntoResponse;
-use anyhow::Result;
-use axum::{
-    routing::get,
-    Router,
+use super::{
+    cert_info, download_ca_crt, download_ca_pem, download_certificate, index_page, AppState,
 };
+use crate::cert::CertificateAuthority;
+use anyhow::Result;
+use askama_axum::IntoResponse;
+use axum::{routing::get, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::{info, error};
+use tracing::info;
 
 #[derive(Debug)]
 pub struct WebServer {
@@ -23,48 +22,43 @@ impl WebServer {
     pub fn new(listen_addr: SocketAddr, ca: CertificateAuthority) -> Self {
         Self { listen_addr, ca }
     }
-    
+
     pub async fn start(self) -> Result<()> {
         let state = Arc::new(AppState { ca: self.ca });
-        
+
         let app = Router::new()
             // Main certificate endpoints
             .route("/", get(index_page))
             .route("/cert", get(download_certificate))
-            
             // Legacy compatibility endpoints
             .route("/ca.crt", get(download_ca_crt))
             .route("/ca.pem", get(download_ca_pem))
             .route("/mitm-proxy-ca.crt", get(download_ca_crt))
             .route("/mitm-proxy-ca.pem", get(download_ca_pem))
-            
             // API endpoints
             .route("/api/cert-info", get(cert_info))
             .route("/api/health", get(health_check))
             .route("/api/stats", get(proxy_stats))
-            
             // Plugin management endpoints (if dashboard is enabled)
             .route("/api/plugins", get(list_plugins))
             .route("/api/plugins/:name", get(get_plugin_info))
             .route("/api/plugins/:name/enable", get(enable_plugin))
             .route("/api/plugins/:name/disable", get(disable_plugin))
             .route("/api/plugins/logs", get(get_plugin_logs))
-            
             // Static files and dashboard
-            .nest_service("/static", tower_http::services::ServeDir::new("web-ui/static"))
-            .route("/dashboard", get(dashboard_page))
-            
-            .layer(
-                ServiceBuilder::new()
-                    .layer(CorsLayer::permissive())
+            .nest_service(
+                "/static",
+                tower_http::services::ServeDir::new("web-ui/static"),
             )
+            .route("/dashboard", get(dashboard_page))
+            .layer(ServiceBuilder::new().layer(CorsLayer::permissive()))
             .with_state(state);
-        
+
         info!("Web server starting on {}", self.listen_addr);
-        
+
         let listener = tokio::net::TcpListener::bind(self.listen_addr).await?;
         axum::serve(listener, app).await?;
-        
+
         Ok(())
     }
 }
@@ -83,7 +77,7 @@ async fn proxy_stats(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
 ) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
     let (cache_size, cache_max) = state.ca.cache_stats().await;
-    
+
     Ok(axum::Json(serde_json::json!({
         "certificate_cache": {
             "size": cache_size,
@@ -134,7 +128,7 @@ async fn disable_plugin(
     // This would disable the plugin
     Ok(axum::Json(serde_json::json!({
         "plugin": name,
-        "action": "disable", 
+        "action": "disable",
         "status": "not_implemented"
     })))
 }

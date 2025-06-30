@@ -1,7 +1,6 @@
 use crate::cert::generator::{CertificateBundle, DeviceInfo, Platform};
 use crate::cert::CertificateFormat;
 use askama::Template;
-use askama_axum::IntoResponse;
 
 #[derive(Template)]
 #[template(path = "index.html")]
