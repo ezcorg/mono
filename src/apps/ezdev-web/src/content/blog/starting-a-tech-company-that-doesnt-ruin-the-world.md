@@ -19,7 +19,7 @@ In the current meta where executives and majority share holders rule with little
 
 Network effects and lack of competition (due to ineffective and previously unenforced US antitrust law) make it difficult for consumers to vote with their wallets.
 
-Over-representation of psychopathic traits in leadership roles means that the people who are in charge of making these decisions are more often less empathetic, i.e, assign a lower cost to human suffering or a high value to risk/profit. Naturally, this leads to larger amounts of human suffering than there might be with more empathetic decision makers. Maximizing profit at any cost eventually leads to a pretty large tab for society.
+Over-representation of psychopathic traits in leadership roles means that the people who are in charge of making these decisions are more often less empathetic, i.e, assign a lower cost to human suffering or a higher value to risk/profit. Naturally, this leads to larger amounts of suffering than there might be with more empathetic decision makers. Maximizing profit at any cost eventually leads to a pretty large tab for society to pay.
 
 Even with the best of intentions, the pressure to perform, meet targets, or satisfy fiduciary duties can lead to decisions that prioritize local profits over global well-being.
 
