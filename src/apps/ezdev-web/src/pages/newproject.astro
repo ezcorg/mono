@@ -13,7 +13,12 @@ import Footer from '../components/Footer.astro';
 	>
 		<div class="w-full mx-auto flex flex-col gap-8">
 			<Navbar currentPath="/newproject" />
-			<form class="space-y-6 max-w-2xl" id="contact-form">
+			<form
+				class="space-y-6 max-w-2xl"
+				id="contact-form"
+				action="https://contact-form-worker.your-subdomain.workers.dev"
+				method="POST"
+			>
 				<div>
 					<label for="name" class="block text-[#F5F5F5] mb-2">Name *</label>
 					<input
@@ -1129,5 +1134,68 @@ import Footer from '../components/Footer.astro';
 				}
 			}
 		};
+
+		// Handle form submission
+		const contactForm = document.getElementById(
+			'contact-form',
+		) as HTMLFormElement;
+		const submitButton = contactForm.querySelector(
+			'button[type="submit"]',
+		) as HTMLButtonElement;
+		const originalButtonText = submitButton.textContent;
+
+		contactForm.addEventListener('submit', async (e) => {
+			e.preventDefault();
+
+			// Disable submit button and show loading state
+			submitButton.disabled = true;
+			submitButton.textContent = 'Sending...';
+			submitButton.classList.add('opacity-50');
+
+			try {
+				const formData = new FormData(contactForm);
+
+				// Submit to Cloudflare Worker
+				const response = await fetch(contactForm.action, {
+					method: 'POST',
+					body: formData,
+				});
+
+				const result = await response.json();
+
+				if (result.success) {
+					// Show success message
+					contactForm.innerHTML = `
+						<div class="text-center py-8">
+							<div class="text-[#F5F5F5] text-xl mb-4">✓ Message sent successfully!</div>
+							<p class="text-[#AAAAAA]">Thank you for your inquiry. We'll get back to you soon.</p>
+						</div>
+					`;
+				} else {
+					throw new Error(result.error || 'Failed to send message');
+				}
+			} catch (error) {
+				console.error('Form submission error:', error);
+
+				// Show error message
+				const errorDiv = document.createElement('div');
+				errorDiv.className =
+					'bg-red-900/20 border border-red-500 text-red-300 px-4 py-3 rounded mb-4';
+				errorDiv.textContent = `Error: ${error.message || 'Failed to send message. Please try again.'}`;
+
+				// Insert error message at the top of the form
+				contactForm.insertBefore(errorDiv, contactForm.firstChild);
+
+				// Re-enable submit button
+				submitButton.disabled = false;
+				submitButton.textContent = originalButtonText;
+				submitButton.classList.remove('opacity-50');
+
+				// Remove error message after 5 seconds
+				setTimeout(() => {
+					errorDiv.remove();
+				}, 5000);
+			}
+		});
 	});
 </script>

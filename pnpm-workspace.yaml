@@ -1,5 +1,6 @@
 packages:
   - src/typescript/*
   - src/apps/*
+  - src/apps/workers/*
 allowUnusedPatches: true
 catalog:

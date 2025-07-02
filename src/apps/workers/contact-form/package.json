@@ -1,0 +1,16 @@
+{
+    "name": "contact-form-worker",
+    "version": "1.0.0",
+    "description": "Cloudflare Worker for handling contact form submissions",
+    "main": "src/index.ts",
+    "scripts": {
+        "dev": "wrangler dev",
+        "deploy": "wrangler deploy",
+        "tail": "wrangler tail"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20231218.0",
+        "typescript": "^5.0.0",
+        "wrangler": "^4.22.0"
+    }
+}
