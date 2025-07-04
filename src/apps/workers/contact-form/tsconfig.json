@@ -15,7 +15,9 @@
         "noEmit": true,
         "skipLibCheck": true,
         "types": [
-            "@cloudflare/workers-types"
+            "@cloudflare/workers-types",
+            "vitest/globals",
+            "@cloudflare/vitest-pool-workers"
         ]
     }
 }

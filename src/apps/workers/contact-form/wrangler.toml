@@ -8,6 +8,13 @@ name = "contact-form-worker"
 [vars]
 ENVIRONMENT = "production"
 
-# Add your email service API key as a secret:
-# wrangler secret put EMAIL_API_KEY
-# wrangler secret put RECIPIENT_EMAIL
+# Rate limiting bindings
+[[unsafe.bindings]]
+name = "IP_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 1, period = 60 }
+
+# Add your Mailgun credentials as secrets:
+# wrangler secret put MAILGUN_API_TOKEN
+# wrangler secret put RECIPIENT_EMAIL (optional)

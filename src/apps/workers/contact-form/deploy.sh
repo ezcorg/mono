@@ -7,7 +7,7 @@ echo "🚀 Deploying Contact Form Worker..."
 # Check if wrangler is installed
 if ! command -v wrangler &> /dev/null; then
     echo "❌ Wrangler CLI not found. Please install it first:"
-    echo "npm install -g wrangler"
+    echo "pnpm install -g wrangler"
     exit 1
 fi
 
@@ -21,33 +21,23 @@ fi
 # Install dependencies if node_modules doesn't exist
 if [ ! -d "node_modules" ]; then
     echo "📦 Installing dependencies..."
-    npm install
+    pnpm install
 fi
 
 # Check if secrets are set
 echo "🔍 Checking required secrets..."
 
-# Check EMAIL_API_KEY
-if ! wrangler secret list | grep -q "EMAIL_API_KEY"; then
-    echo "⚠️  EMAIL_API_KEY secret not found."
-    echo "Please set it with: wrangler secret put EMAIL_API_KEY"
+# Check MAILGUN_API_TOKEN
+if ! wrangler secret list | grep -q "MAILGUN_API_TOKEN"; then
+    echo "⚠️  MAILGUN_API_TOKEN secret not found."
+    echo "Please set it with: wrangler secret put MAILGUN_API_TOKEN"
     read -p "Do you want to set it now? (y/n): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        wrangler secret put EMAIL_API_KEY
+        wrangler secret put MAILGUN_API_TOKEN
     else
-        echo "❌ EMAIL_API_KEY is required for the worker to function."
+        echo "❌ MAILGUN_API_TOKEN is required for the worker to function."
         exit 1
-    fi
-fi
-
-# Check RECIPIENT_EMAIL (optional)
-if ! wrangler secret list | grep -q "RECIPIENT_EMAIL"; then
-    echo "ℹ️  RECIPIENT_EMAIL secret not found (optional - defaults to theo@ezdev.lol)."
-    read -p "Do you want to set a custom recipient email? (y/n): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        wrangler secret put RECIPIENT_EMAIL
     fi
 fi
 

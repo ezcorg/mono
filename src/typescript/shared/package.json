@@ -1,0 +1,25 @@
+{
+    "name": "@ezdev/shared",
+    "version": "1.0.0",
+    "description": "Shared validation schemas and utilities for ezdev projects",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "typecheck": "tsc --noEmit",
+        "fetch-rates": "node scripts/fetch-rates.js",
+        "prebuild": "pnpm run fetch-rates"
+    },
+    "devDependencies": {
+        "typescript": "^5.0.0",
+        "@types/node": "^20.0.0"
+    },
+    "dependencies": {
+        "zod": "^3.22.0"
+    },
+    "files": [
+        "dist/**/*"
+    ]
+}
