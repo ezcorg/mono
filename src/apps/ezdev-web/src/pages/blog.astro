@@ -121,7 +121,7 @@ const formatDate = (date: string) => {
 
 	.search-input {
 		background: rgba(245, 245, 245, 0.05);
-		border: 2px solid rgba(245, 245, 245, 0.1);
+		border: 2px solid #333333;
 		color: #f5f5f5;
 		transition: all 0.3s ease;
 		width: 100%;
@@ -205,7 +205,9 @@ const formatDate = (date: string) => {
 		document.addEventListener('DOMContentLoaded', function () {
 			const searchForm = document.querySelector('form[action="/blog"]');
 			const searchInput = document.querySelector('input[name="search"]');
-			const postsContainer = document.getElementById('blog-posts-container');
+			const postsContainer = document.getElementById(
+				'blog-posts-container',
+			);
 
 			// Get URL parameters
 			const urlParams = new URLSearchParams(window.location.search);
@@ -332,11 +334,16 @@ const formatDate = (date: string) => {
 
 				function updateInputWidth(predictiveText) {
 					const text =
-						predictiveText || searchInput.value || searchInput.placeholder;
+						predictiveText ||
+						searchInput.value ||
+						searchInput.placeholder;
 					if (searchSizer) {
 						searchSizer.textContent = text;
 						// Add generous padding to prevent overflow and ensure comfortable typing space
-						const width = Math.max(140, searchSizer.offsetWidth + 40);
+						const width = Math.max(
+							140,
+							searchSizer.offsetWidth + 40,
+						);
 						searchForm.style.width = width + 'px';
 					}
 				}
@@ -369,7 +376,12 @@ const formatDate = (date: string) => {
 					}
 
 					// Predict the text after this keystroke for width calculation
-					if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+					if (
+						e.key.length === 1 &&
+						!e.ctrlKey &&
+						!e.metaKey &&
+						!e.altKey
+					) {
 						const currentValue = searchInput.value;
 						const selectionStart = searchInput.selectionStart || 0;
 						const selectionEnd = searchInput.selectionEnd || 0;
@@ -390,7 +402,10 @@ const formatDate = (date: string) => {
 							predictedText =
 								currentValue.slice(0, selectionStart) +
 								currentValue.slice(selectionEnd);
-						} else if (e.key === 'Backspace' && selectionStart > 0) {
+						} else if (
+							e.key === 'Backspace' &&
+							selectionStart > 0
+						) {
 							// Backspace with cursor
 							predictedText =
 								currentValue.slice(0, selectionStart - 1) +
