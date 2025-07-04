@@ -1,5 +1,5 @@
 // Static exchange rates (fetched at build time)
-// Last updated: 2025-07-03T21:35:17.923Z
+// Last updated: 2025-07-04T01:41:25.945Z
 export const EXCHANGE_RATES = {
   "USD": 1,
   "AUD": 1.5216,
