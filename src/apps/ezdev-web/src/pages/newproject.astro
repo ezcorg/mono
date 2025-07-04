@@ -214,9 +214,7 @@ import Footer from '../components/Footer.astro';
 	<Footer slot="footer" />
 </Layout>
 
-<script
-	type="module"
-	src="https://cdn.jsdelivr.net/npm/range-slider-element@2/+esm"></script>
+<script src="https://cdn.jsdelivr.net/npm/range-slider-element@2/+esm"></script>
 <link
 	rel="stylesheet"
 	href="https://cdn.jsdelivr.net/npm/range-slider-element@2/dist/range-slider-element.css"
@@ -441,6 +439,7 @@ import Footer from '../components/Footer.astro';
 		MIN_USD_VALUE,
 		MAX_USD_VALUE,
 	} from '@ezdev/shared';
+	import { ValidationError } from '@ezdev/shared';
 
 	document.addEventListener('DOMContentLoaded', () => {
 		const minInput = document.getElementById(
@@ -971,7 +970,7 @@ import Footer from '../components/Footer.astro';
 			dateFormat: 'Y-m-d',
 			altInput: true,
 			altFormat: 'F j, Y',
-		});
+		}) as flatpickr.Instance;
 
 		(window as any).checkMessageLength = function (
 			textarea: HTMLTextAreaElement,
@@ -1021,7 +1020,11 @@ import Footer from '../components/Footer.astro';
 				const validation = validateContactForm(formDataObject);
 
 				if (!validation.success) {
-					throw new Error(getValidationErrorMessage(validation));
+					throw new Error(
+						getValidationErrorMessage(
+							validation as ValidationError,
+						),
+					);
 				}
 
 				// Submit to Cloudflare Worker
