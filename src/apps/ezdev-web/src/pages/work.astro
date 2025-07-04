@@ -95,7 +95,23 @@ const projects = [
 			) as HTMLElement;
 
 			if (container && typeof (window as any).Masonry !== 'undefined') {
-				// Handle responsive behavior
+				let masonry: any = null;
+				let resizeTimeout: number | null = null;
+				let currentBreakpoint: string = '';
+
+				// Debounced resize handler
+				function debounce(func: Function, wait: number) {
+					return function executedFunction(...args: any[]) {
+						const later = () => {
+							if (resizeTimeout) clearTimeout(resizeTimeout);
+							func(...args);
+						};
+						if (resizeTimeout) clearTimeout(resizeTimeout);
+						resizeTimeout = setTimeout(later, wait) as any;
+					};
+				}
+
+				// Handle responsive behavior and reinitialize if needed
 				function handleResize() {
 					if (!container) return;
 
@@ -103,7 +119,9 @@ const projects = [
 						'.masonry-item',
 					) as NodeListOf<HTMLElement>;
 					const isDesktop = window.innerWidth >= 768; // md breakpoint
+					const newBreakpoint = isDesktop ? 'desktop' : 'mobile';
 
+					// Update item widths
 					items.forEach((item: HTMLElement) => {
 						if (isDesktop) {
 							item.style.width = 'calc(50% - 1rem)';
@@ -111,19 +129,58 @@ const projects = [
 							item.style.width = '100%';
 						}
 					});
+
+					// If breakpoint changed, reinitialize Masonry for better layout
+					if (newBreakpoint !== currentBreakpoint) {
+						currentBreakpoint = newBreakpoint;
+
+						if (masonry) {
+							masonry.destroy();
+						}
+
+						// Small delay to ensure DOM updates are complete
+						setTimeout(() => {
+							initializeMasonry();
+						}, 10);
+					} else if (masonry) {
+						// Just relayout if same breakpoint
+						masonry.layout();
+					}
 				}
 
-				// Set initial widths before Masonry initialization
-				handleResize();
+				// Debounced resize handler
+				const debouncedResize = debounce(handleResize, 150);
 
-				// Wait for images and content to load, then initialize Masonry
+				// Set initial widths and breakpoint
+				const isDesktop = window.innerWidth >= 768;
+				currentBreakpoint = isDesktop ? 'desktop' : 'mobile';
+
+				const items = container.querySelectorAll(
+					'.masonry-item',
+				) as NodeListOf<HTMLElement>;
+				items.forEach((item: HTMLElement) => {
+					if (isDesktop) {
+						item.style.width = 'calc(50% - 1rem)';
+					} else {
+						item.style.width = '100%';
+					}
+				});
+
+				// Initialize Masonry
 				const initializeMasonry = () => {
-					// Initialize Masonry
-					const masonry = new (window as any).Masonry(container, {
+					// Calculate column width based on current breakpoint
+					const isDesktop = window.innerWidth >= 768;
+					const containerWidth = container.offsetWidth;
+					const columnWidth = isDesktop
+						? (containerWidth - 32) / 2
+						: containerWidth;
+
+					// Initialize Masonry with fixed column width
+					masonry = new (window as any).Masonry(container, {
 						itemSelector: '.masonry-item',
-						columnWidth: '.masonry-item',
+						columnWidth: columnWidth,
 						gutter: 32, // 2rem gap
-						percentPosition: true,
+						percentPosition: false, // Use fixed positioning for better control
 						horizontalOrder: true,
 						transitionDuration: 0, // Disable initial transition to prevent jumping
 					});
@@ -132,15 +189,34 @@ const projects = [
 					setTimeout(() => {
 						container.style.opacity = '1';
 						// Re-enable transitions after initial layout
-						masonry.options.transitionDuration = '0.3s';
+						if (masonry && masonry.options) {
+							masonry.options.transitionDuration = '0.3s';
+						}
 					}, 50);
-
-					// Listen for window resize
-					window.addEventListener('resize', () => {
-						handleResize();
-						masonry.layout();
-					});
 				};
+
+				// Set up resize handling
+				if ('ResizeObserver' in window) {
+					const resizeObserver = new ResizeObserver(
+						debounce((entries: any[]) => {
+							for (const entry of entries) {
+								// Only trigger if there's a meaningful size change
+								if (
+									entry.contentBoxSize ||
+									entry.borderBoxSize
+								) {
+									handleResize();
+								}
+							}
+						}, 100),
+					);
+
+					// Observe the container
+					resizeObserver.observe(container);
+				} else {
+					// Fallback to window resize for older browsers
+					(window as any).addEventListener('resize', debouncedResize);
+				}
 
 				// Check if all images are loaded
 				const images = container.querySelectorAll('img');
