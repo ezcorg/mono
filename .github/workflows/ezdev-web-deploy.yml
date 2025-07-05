@@ -6,6 +6,8 @@ on:
     paths:
       - 'src/apps/ezdev-web/**'
       - 'src/typescript/shared/**'
+      - 'src/apps/ezdev-web/.github/deploy.yml'
+      - '.github/workflows/ezdev-web-deploy.yml'
   workflow_dispatch:
 
 permissions:

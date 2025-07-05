@@ -6,6 +6,8 @@ on:
     paths:
       - 'src/apps/contact-form-worker/**'
       - 'src/typescript/shared/**'
+      - 'src/apps/contact-form-worker/.github/deploy.yml'
+      - '.github/workflows/contact-form-worker-deploy.yml'
 
 jobs:
   deploy:
