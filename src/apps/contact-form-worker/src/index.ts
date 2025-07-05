@@ -4,12 +4,35 @@ interface Env {
     MAILGUN_API_TOKEN: string;
     RECIPIENT_EMAIL?: string;
     IP_RATE_LIMITER: any;
+    TURNSTILE_SECRET_KEY: string;
+    ALLOWED_ORIGINS?: string;
 }
 
-const allowedOrigins = ['https://ezdev.lol', 'https://www.ezdev.lol'].join(', ');
+async function verifyTurnstile(token: string, secretKey: string, remoteIP?: string): Promise<boolean> {
+    const formData = new FormData();
+    formData.append('secret', secretKey);
+    formData.append('response', token);
+    if (remoteIP) {
+        formData.append('remoteip', remoteIP);
+    }
+
+    try {
+        const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json() as { success: boolean; 'error-codes'?: string[] };
+        return result.success;
+    } catch (error) {
+        console.error('Turnstile verification error:', error);
+        return false;
+    }
+}
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+        const allowedOrigins = env.ALLOWED_ORIGINS || 'https://ezdev.lol, https://www.ezdev.lol';
 
         // Handle CORS preflight requests
         if (request.method === 'OPTIONS') {
@@ -60,7 +83,7 @@ export default {
 
             const contactData = validationResult.data;
 
-            // Get client IP for rate limiting
+            // Get client IP for rate limiting and Turnstile verification
             const clientIP = request.headers.get('CF-Connecting-IP') ||
                 request.headers.get('X-Forwarded-For') ||
                 'unknown';
@@ -72,6 +95,34 @@ export default {
                     error: 'Rate limit exceeded. Please try again later.'
                 }), {
                     status: 429,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': allowedOrigins,
+                    },
+                });
+            }
+
+            // Verify Turnstile token
+            const turnstileToken = jsonData.turnstileToken;
+            if (!turnstileToken) {
+                return new Response(JSON.stringify({
+                    success: false,
+                    error: 'Captcha verification required'
+                }), {
+                    status: 400,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': allowedOrigins,
+                    },
+                });
+            }
+            const turnstileValid = await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY, clientIP);
+            if (!turnstileValid) {
+                return new Response(JSON.stringify({
+                    success: false,
+                    error: 'Captcha verification failed'
+                }), {
+                    status: 400,
                     headers: {
                         'Content-Type': 'application/json',
                         'Access-Control-Allow-Origin': allowedOrigins,

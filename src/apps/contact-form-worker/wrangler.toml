@@ -15,6 +15,7 @@ type = "ratelimit"
 namespace_id = "1001"
 simple = { limit = 1, period = 60 }
 
-# Add your Mailgun credentials as secrets:
+# Add your secrets:
 # wrangler secret put MAILGUN_API_TOKEN
+# wrangler secret put TURNSTILE_SECRET_KEY
 # wrangler secret put RECIPIENT_EMAIL (optional)

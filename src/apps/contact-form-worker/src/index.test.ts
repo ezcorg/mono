@@ -1,23 +1,12 @@
+import { fetchMock } from "cloudflare:test";
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import worker from './index';
-
-// Mock the shared validation functions
-vi.mock('@ezdev/shared', () => ({
-    validateContactForm: vi.fn(),
-    getValidationErrorMessage: vi.fn(),
-}));
-
-// Import the mocked functions
-import { validateContactForm, getValidationErrorMessage } from '@ezdev/shared';
-
-// Mock fetch for Mailgun API calls
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
 
 // Mock environment
 const mockEnv = {
     MAILGUN_API_TOKEN: 'test-token',
     RECIPIENT_EMAIL: 'test@example.com',
+    TURNSTILE_SECRET_KEY: 'test-turnstile-key',
     IP_RATE_LIMITER: {
         limit: vi.fn(),
     },
@@ -32,12 +21,15 @@ const mockCtx = {
 
 describe('Contact Form Worker', () => {
     beforeEach(() => {
+        fetchMock.activate();
+        fetchMock.disableNetConnect();
         vi.clearAllMocks();
         // Default rate limiter responses (success)
         mockEnv.IP_RATE_LIMITER.limit.mockResolvedValue({ success: true });
     });
 
     afterEach(() => {
+        fetchMock.deactivate();
         vi.restoreAllMocks();
     });
 
@@ -77,8 +69,8 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'invalid-email',
                 service: 'software-development',
-                minBudget: '1000',
-                maxBudget: '5000',
+                minBudget: 1000,
+                maxBudget: 5000,
                 currency: 'USD',
                 message: 'This is a test message that is long enough to meet the minimum requirements for the message field.'
             };
@@ -90,16 +82,6 @@ describe('Contact Form Worker', () => {
                 },
                 body: JSON.stringify(jsonData),
             });
-
-            // Mock validation failure
-            (validateContactForm as any).mockReturnValue({
-                success: false,
-                fieldErrors: {
-                    email: ['Please enter a valid email address']
-                }
-            });
-
-            (getValidationErrorMessage as any).mockReturnValue('Please enter a valid email address');
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
@@ -130,19 +112,6 @@ describe('Contact Form Worker', () => {
                 body: JSON.stringify(jsonData),
             });
 
-            // Mock validation failure for multiple fields
-            (validateContactForm as any).mockReturnValue({
-                success: false,
-                fieldErrors: {
-                    name: ['Name is required'],
-                    email: ['Email is required'],
-                    service: ['Please select a valid service type'],
-                    message: ['Message must be at least 50 characters long']
-                }
-            });
-
-            (getValidationErrorMessage as any).mockReturnValue('Name is required');
-
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
             expect(response.status).toBe(400);
@@ -161,8 +130,8 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: '100', // Too low
-                maxBudget: '50', // Less than min
+                minBudget: 100, // Too low
+                maxBudget: 50, // Less than min
                 currency: 'USD',
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
             };
@@ -174,16 +143,6 @@ describe('Contact Form Worker', () => {
                 },
                 body: JSON.stringify(jsonData),
             });
-
-            (validateContactForm as any).mockReturnValue({
-                success: false,
-                fieldErrors: {
-                    minBudget: ['Minimum budget must be at least $1,000 USD equivalent'],
-                    maxBudget: ['Maximum budget must be greater than or equal to minimum budget']
-                }
-            });
-
-            (getValidationErrorMessage as any).mockReturnValue('Minimum budget must be at least $1,000 USD equivalent');
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
@@ -204,9 +163,10 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: '1000',
-                maxBudget: '5000',
+                minBudget: 1000,
+                maxBudget: 5000,
                 currency: 'USD',
+                turnstileToken: 'test-token',
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
             };
 
@@ -217,20 +177,6 @@ describe('Contact Form Worker', () => {
                     'CF-Connecting-IP': '192.168.1.1'
                 },
                 body: JSON.stringify(jsonData),
-            });
-
-            // Mock successful validation
-            (validateContactForm as any).mockReturnValue({
-                success: true,
-                data: {
-                    name: 'John Doe',
-                    email: 'john@example.com',
-                    service: 'software-development',
-                    minBudget: 1000,
-                    maxBudget: 5000,
-                    currency: 'USD',
-                    message: 'This is a test message that is long enough to meet the minimum requirements.'
-                }
             });
 
             // Mock IP rate limit exceeded
@@ -248,17 +194,17 @@ describe('Contact Form Worker', () => {
         });
     });
 
-    describe('Email Sending', () => {
-        it('should successfully send email and return success response', async () => {
+    describe('Turnstile Verification', () => {
+        it('should reject requests with invalid Turnstile token', async () => {
             const jsonData = {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: '1000',
-                maxBudget: '5000',
+                minBudget: 1000,
+                maxBudget: 5000,
                 currency: 'USD',
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
-                dateRange: ['2024-01-01T00:00:00.000Z', '2024-03-31T23:59:59.999Z']
+                turnstileToken: 'invalid-token'
             };
 
             const request = new Request('https://example.com', {
@@ -269,26 +215,88 @@ describe('Contact Form Worker', () => {
                 body: JSON.stringify(jsonData),
             });
 
-            // Mock successful validation
-            (validateContactForm as any).mockReturnValue({
-                success: true,
-                data: {
-                    name: 'John Doe',
-                    email: 'john@example.com',
-                    service: 'software-development',
-                    minBudget: 1000,
-                    maxBudget: 5000,
-                    currency: 'USD',
-                    message: 'This is a test message that is long enough to meet the minimum requirements.',
-                    dateRange: [new Date('2024-01-01T00:00:00.000Z'), new Date('2024-03-31T23:59:59.999Z')]
-                }
+            // Mock failed Turnstile verification
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: false });
+
+            const response = await worker.fetch(request, mockEnv, mockCtx);
+
+            expect(response.status).toBe(400);
+            const responseData = await response.json();
+            expect(responseData).toEqual({
+                success: false,
+                error: 'Captcha verification failed'
+            });
+        });
+
+        it('should handle Turnstile API errors gracefully', async () => {
+            const jsonData = {
+                name: 'John Doe',
+                email: 'john@example.com',
+                service: 'software-development',
+                minBudget: 1000,
+                maxBudget: 5000,
+                currency: 'USD',
+                message: 'This is a test message that is long enough to meet the minimum requirements.',
+                turnstileToken: 'test-token'
+            };
+
+            const request = new Request('https://example.com', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(jsonData),
             });
 
-            // Mock successful Mailgun response
-            mockFetch.mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({ id: 'test-message-id' })
+            // Mock Turnstile API error
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(500, 'Internal Server Error');
+
+            const response = await worker.fetch(request, mockEnv, mockCtx);
+
+            expect(response.status).toBe(400);
+            const responseData = await response.json();
+            expect(responseData).toEqual({
+                success: false,
+                error: 'Captcha verification failed'
             });
+        });
+    });
+
+    describe('Email Sending', () => {
+        it('should successfully send email and return success response', async () => {
+            const jsonData = {
+                name: 'John Doe',
+                email: 'john@example.com',
+                service: 'software-development',
+                minBudget: 1000,
+                maxBudget: 5000,
+                currency: 'USD',
+                message: 'This is a test message that is long enough to meet the minimum requirements.',
+                turnstileToken: 'test-token',
+                dateRange: ['2024-01-01T00:00:00.000Z', '2024-03-31T23:59:59.999Z'],
+            };
+
+            const request = new Request('https://example.com', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(jsonData),
+            });
+
+            // Mock successful Turnstile verification
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: true });
+
+            // Mock successful Mailgun response
+            fetchMock.get('https://api.mailgun.net')
+                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .reply(200, { id: 'test-message-id' });
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
@@ -299,17 +307,8 @@ describe('Contact Form Worker', () => {
                 message: 'Form submitted successfully'
             });
 
-            // Verify Mailgun API was called correctly
-            expect(mockFetch).toHaveBeenCalledWith(
-                'https://api.mailgun.net/v3/mail.ezdev.lol/messages',
-                expect.objectContaining({
-                    method: 'POST',
-                    headers: expect.objectContaining({
-                        'Authorization': `Basic ${btoa('api:test-token')}`
-                    }),
-                    body: expect.any(FormData)
-                })
-            );
+            // Verify the response was successful
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol, https://www.ezdev.lol');
         });
 
         it('should handle Mailgun API errors gracefully', async () => {
@@ -317,10 +316,11 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: '1000',
-                maxBudget: '5000',
+                minBudget: 1000,
+                maxBudget: 5000,
                 currency: 'USD',
-                message: 'This is a test message that is long enough to meet the minimum requirements.'
+                turnstileToken: 'test-token',
+                message: 'This is a test message that is long enough to meet the minimum requirements.',
             };
 
             const request = new Request('https://example.com', {
@@ -331,26 +331,15 @@ describe('Contact Form Worker', () => {
                 body: JSON.stringify(jsonData),
             });
 
-            // Mock successful validation
-            (validateContactForm as any).mockReturnValue({
-                success: true,
-                data: {
-                    name: 'John Doe',
-                    email: 'john@example.com',
-                    service: 'software-development',
-                    minBudget: 1000,
-                    maxBudget: 5000,
-                    currency: 'USD',
-                    message: 'This is a test message that is long enough to meet the minimum requirements.'
-                }
-            });
+            // Mock successful Turnstile verification
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: true });
 
             // Mock Mailgun API error
-            mockFetch.mockResolvedValue({
-                ok: false,
-                status: 400,
-                text: () => Promise.resolve('Bad Request')
-            });
+            fetchMock.get('https://api.mailgun.net')
+                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .reply(400, 'Bad Request');
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
@@ -372,10 +361,11 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: '1000',
-                maxBudget: '5000',
+                minBudget: 1000,
+                maxBudget: 5000,
                 currency: 'USD',
-                message: 'This is a test message that is long enough to meet the minimum requirements.'
+                turnstileToken: 'test-token',
+                message: 'This is a test message that is long enough to meet the minimum requirements.',
             };
 
             const request = new Request('https://example.com', {
@@ -386,35 +376,24 @@ describe('Contact Form Worker', () => {
                 body: JSON.stringify(jsonData),
             });
 
-            // Mock successful validation
-            (validateContactForm as any).mockReturnValue({
-                success: true,
-                data: {
-                    name: 'John Doe',
-                    email: 'john@example.com',
-                    service: 'software-development',
-                    minBudget: 1000,
-                    maxBudget: 5000,
-                    currency: 'USD',
-                    message: 'This is a test message that is long enough to meet the minimum requirements.'
-                }
-            });
+            // Mock successful Turnstile verification
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: true });
 
             // Mock successful Mailgun response
-            mockFetch.mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({ id: 'test-message-id' })
-            });
+            fetchMock.get('https://api.mailgun.net')
+                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .reply(200, { id: 'test-message-id', ok: true });
 
             const response = await worker.fetch(request, envWithoutRecipient, mockCtx);
 
             expect(response.status).toBe(200);
-            expect(mockFetch).toHaveBeenCalled();
-
-            // Verify the email was sent to the default recipient
-            const callArgs = mockFetch.mock.calls[0];
-            const formDataSent = callArgs[1].body;
-            expect(formDataSent).toBeInstanceOf(FormData);
+            const responseData = await response.json();
+            expect(responseData).toEqual({
+                success: true,
+                message: 'Form submitted successfully'
+            });
         });
     });
 
@@ -423,11 +402,6 @@ describe('Contact Form Worker', () => {
             const request = new Request('https://example.com', {
                 method: 'POST',
                 body: 'invalid-form-data',
-            });
-
-            // Mock validation to throw an error
-            (validateContactForm as any).mockImplementation(() => {
-                throw new Error('Unexpected error');
             });
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
@@ -465,11 +439,12 @@ describe('Contact Form Worker', () => {
                 name: 'Jane Smith',
                 email: 'jane@example.com',
                 service: 'consulting',
-                minBudget: '2000',
-                maxBudget: '10000',
+                minBudget: 2000,
+                maxBudget: 10000,
                 currency: 'EUR',
                 message: 'I need help with my project. This is a detailed message about what I need.',
-                dateRange: ['2024-04-01T00:00:00.000Z', '2024-06-30T23:59:59.999Z']
+                dateRange: ['2024-04-01T00:00:00.000Z', '2024-06-30T23:59:59.999Z'],
+                turnstileToken: 'test-token'
             };
 
             const request = new Request('https://example.com', {
@@ -480,42 +455,25 @@ describe('Contact Form Worker', () => {
                 body: JSON.stringify(jsonData),
             });
 
-            // Mock successful validation
-            (validateContactForm as any).mockReturnValue({
-                success: true,
-                data: {
-                    name: 'Jane Smith',
-                    email: 'jane@example.com',
-                    service: 'consulting',
-                    minBudget: 2000,
-                    maxBudget: 10000,
-                    currency: 'EUR',
-                    message: 'I need help with my project. This is a detailed message about what I need.',
-                    dateRange: [new Date('2024-04-01T00:00:00.000Z'), new Date('2024-06-30T23:59:59.999Z')]
-                }
-            });
+            // Mock successful Turnstile verification
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: true });
 
             // Mock successful Mailgun response
-            mockFetch.mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({ id: 'test-message-id' })
-            });
+            fetchMock.get('https://api.mailgun.net')
+                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .reply(200, { id: 'test-message-id' });
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
+            const responseData = await response.json();
 
             expect(response.status).toBe(200);
-            expect(mockFetch).toHaveBeenCalled();
 
-            // Verify the email content structure
-            const callArgs = mockFetch.mock.calls[0];
-            const formDataSent = callArgs[1].body;
-            expect(formDataSent).toBeInstanceOf(FormData);
-
-            // The actual email content validation would require inspecting the FormData,
-            // but we can verify the API call was made with correct structure
-            expect(callArgs[0]).toBe('https://api.mailgun.net/v3/mail.ezdev.lol/messages');
-            expect(callArgs[1].method).toBe('POST');
-            expect(callArgs[1].headers.Authorization).toBe(`Basic ${btoa('api:test-token')}`);
+            expect(responseData).toEqual({
+                success: true,
+                message: 'Form submitted successfully'
+            });
         });
     });
 });

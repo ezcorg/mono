@@ -39,23 +39,9 @@ export const ContactFormSchema = z.object({
         })
         .optional(),
 
-    minBudget: z
-        .string()
-        .transform((val: string) => {
-            const num = parseFloat(val);
-            if (isNaN(num)) throw new Error('Invalid minimum budget');
-            return num;
-        })
-        .pipe(z.number().positive('Minimum budget must be positive')),
+    minBudget: z.number().positive('Minimum budget must be positive'),
 
-    maxBudget: z
-        .string()
-        .transform((val: string) => {
-            const num = parseFloat(val);
-            if (isNaN(num)) throw new Error('Invalid maximum budget');
-            return num;
-        })
-        .pipe(z.number().positive('Maximum budget must be positive')),
+    maxBudget: z.number().positive('Maximum budget must be positive'),
 
     currency: z
         .string()
@@ -70,7 +56,11 @@ export const ContactFormSchema = z.object({
         .string()
         .min(50, 'Message must be at least 50 characters long')
         .max(2000, 'Message must be less than 2000 characters')
-        .trim()
+        .trim(),
+
+    turnstileToken: z
+        .string()
+        .optional()
 }).refine(
     (data: any) => {
         // Ensure maxBudget >= minBudget

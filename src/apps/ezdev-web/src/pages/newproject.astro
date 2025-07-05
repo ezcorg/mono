@@ -201,6 +201,14 @@ import Footer from '../components/Footer.astro';
 					>
 				</div>
 
+				<!-- Cloudflare Turnstile -->
+				<div
+					class="cf-turnstile"
+					data-sitekey=`${import.meta.env.DEV ? '1x00000000000000000000AA' : '0x4AAAAAABjl6CJ20hxOvkB9'}`
+					data-theme="dark"
+				>
+				</div>
+
 				<button
 					type="submit"
 					class="bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
@@ -215,6 +223,8 @@ import Footer from '../components/Footer.astro';
 </Layout>
 
 <script src="https://cdn.jsdelivr.net/npm/range-slider-element@2/+esm"></script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer
+></script>
 <link
 	rel="stylesheet"
 	href="https://cdn.jsdelivr.net/npm/range-slider-element@2/dist/range-slider-element.css"
@@ -1004,6 +1014,14 @@ import Footer from '../components/Footer.astro';
 			try {
 				const formData = new FormData(contactForm);
 
+				// Get Turnstile token
+				const turnstileResponse = formData.get(
+					'cf-turnstile-response',
+				) as string;
+				if (!turnstileResponse) {
+					throw new Error('Please complete the captcha verification');
+				}
+
 				// Extract form fields manually into an object
 				const formDataObject = {
 					name: formData.get('name') as string,
@@ -1014,6 +1032,7 @@ import Footer from '../components/Footer.astro';
 					maxBudget: formData.get('maxBudget') as string,
 					currency: formData.get('currency') as string,
 					message: formData.get('message') as string,
+					turnstileToken: turnstileResponse,
 				};
 
 				// Validate using shared validation library
@@ -1027,9 +1046,10 @@ import Footer from '../components/Footer.astro';
 					);
 				}
 
-				// Submit to Cloudflare Worker
 				const response = await fetch(
-					'https://contact-form.ezdev.workers.dev/',
+					import.meta.env.DEV
+						? 'http://localhost:8787'
+						: 'https://newproject.ezdev.lol',
 					{
 						method: 'POST',
 						headers: {
