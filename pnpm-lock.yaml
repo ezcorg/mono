@@ -19,8 +19,8 @@ importers:
   src/apps/contact-form-worker:
     dependencies:
       '@ezdevlol/shared':
-        specifier: workspace:*
-        version: link:../../typescript/shared
+        specifier: ^0.0.3
+        version: 0.0.3
       zod:
         specifier: ^3.22.0
         version: 3.24.4
@@ -50,8 +50,8 @@ importers:
         specifier: ^5.0.0
         version: 5.1.5(astro@4.16.18(@types/node@22.15.3)(rollup@4.40.1)(terser@5.39.2)(typescript@5.7.3))(tailwindcss@3.4.17(ts-node@10.9.2(@swc/core@1.11.24)(@types/node@22.15.3)(typescript@5.7.3)))(ts-node@10.9.2(@swc/core@1.11.24)(@types/node@22.15.3)(typescript@5.7.3))
       '@ezdevlol/shared':
-        specifier: workspace:*
-        version: link:../../typescript/shared
+        specifier: ^0.0.3
+        version: 0.0.3
       astro:
         specifier: ^4.0.0
         version: 4.16.18(@types/node@22.15.3)(rollup@4.40.1)(terser@5.39.2)(typescript@5.7.3)
@@ -1464,6 +1464,9 @@ packages:
   '@eslint/plugin-kit@0.2.8':
     resolution: {integrity: sha512-ZAoA40rNMPwSm+AeHpCq8STiNAwzWLJuP8Xv4CHIc9wv/PSuExjMrmjfYNj682vW0OOiZ1HKxzvjQr9XZIisQA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@ezdevlol/shared@0.0.3':
+    resolution: {integrity: sha512-Bc2aDSJzArTujV9m9a8GHf6gujEwQts8DMdNF5ijaU1lSCpnBzWGi0Cp78xkJ8VyHq30UvbTOaGz5IBIgKTdpQ==}
 
   '@fastify/busboy@2.1.1':
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
@@ -8591,6 +8594,10 @@ snapshots:
     dependencies:
       '@eslint/core': 0.13.0
       levn: 0.4.1
+
+  '@ezdevlol/shared@0.0.3':
+    dependencies:
+      zod: 3.24.4
 
   '@fastify/busboy@2.1.1': {}
 
