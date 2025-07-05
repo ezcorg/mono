@@ -6,16 +6,41 @@ on:
     paths:
       - 'src/apps/contact-form-worker/**'
       - 'src/typescript/shared/**'
-      - 'src/apps/contact-form-worker/.github/test.yml'
       - '.github/workflows/contact-form-worker-test.yml'
   pull_request:
     branches: [main]
     paths:
       - 'src/apps/contact-form-worker/**'
       - 'src/typescript/shared/**'
-      - 'src/apps/contact-form-worker/.github/test.yml'
       - '.github/workflows/contact-form-worker-test.yml'
 
 jobs:
   test:
-    uses: ./src/apps/contact-form-worker/.github/test.yml@main
+    runs-on: ubuntu-latest
+    name: Test Contact Form Worker
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '10.10.0'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        working-directory: src/apps/contact-form-worker
+        run: pnpm typecheck
+
+      - name: Run tests
+        working-directory: src/apps/contact-form-worker
+        run: pnpm test:run

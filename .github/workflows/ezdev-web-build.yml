@@ -7,15 +7,36 @@ on:
     paths:
       - 'src/apps/ezdev-web/**'
       - 'src/typescript/shared/**'
-      - 'src/apps/ezdev-web/.github/build.yml'
       - '.github/workflows/ezdev-web-build.yml'
   pull_request:
     paths:
       - 'src/apps/ezdev-web/**'
       - 'src/typescript/shared/**'
-      - 'src/apps/ezdev-web/.github/build.yml'
       - '.github/workflows/ezdev-web-build.yml'
 
 jobs:
   build:
-    uses: ./src/apps/ezdev-web/.github/build.yml@main
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '*'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.15.0'
+          cache: 'pnpm'
+
+      - name: Install dependencies (recursive)
+        run: pnpm install -r
+
+      - name: Build project
+        run: pnpm build

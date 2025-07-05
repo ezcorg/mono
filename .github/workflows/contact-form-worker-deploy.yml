@@ -6,10 +6,31 @@ on:
     paths:
       - 'src/apps/contact-form-worker/**'
       - 'src/typescript/shared/**'
-      - 'src/apps/contact-form-worker/.github/deploy.yml'
       - '.github/workflows/contact-form-worker-deploy.yml'
 
 jobs:
   deploy:
-    uses: ./src/apps/contact-form-worker/.github/deploy.yml@main
-    secrets: inherit
+    runs-on: ubuntu-latest
+    name: Deploy Contact Form Worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.15.0'
+          cache: 'pnpm'
+          cache-dependency-path: 'src/apps/contact-form-worker/pnpm-lock.yaml'
+
+      - name: Install dependencies
+        working-directory: src/apps/contact-form-worker
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: src/apps/contact-form-worker
+          command: deploy
