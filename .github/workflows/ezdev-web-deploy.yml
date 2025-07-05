@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   deploy:
-    uses: ./src/apps/ezdev-web/.github/deploy.yml
+    uses: ./src/apps/ezdev-web/.github/deploy.yml@main
     permissions:
       contents: read
       pages: write

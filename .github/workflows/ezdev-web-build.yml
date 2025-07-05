@@ -18,4 +18,4 @@ on:
 
 jobs:
   build:
-    uses: ./src/apps/ezdev-web/.github/build.yml
+    uses: ./src/apps/ezdev-web/.github/build.yml@main
