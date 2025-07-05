@@ -8,7 +8,6 @@
         "deploy": "wrangler deploy",
         "tail": "wrangler tail",
         "typecheck": "tsc --noEmit",
-        "secrets:setup": "echo 'Run: wrangler secret put MAILGUN_API_TOKEN'",
         "test": "vitest",
         "test:ui": "vitest --ui",
         "test:run": "vitest run"
