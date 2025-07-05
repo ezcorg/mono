@@ -33,13 +33,21 @@ async function verifyTurnstile(token: string, secretKey: string, remoteIP?: stri
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const allowedOrigins = env.ALLOWED_ORIGINS || 'https://ezdev.lol, https://www.ezdev.lol';
+        const allowedOriginsList = allowedOrigins.split(',').map(origin => origin.trim());
+
+        // Get the client's origin
+        const clientOrigin = request.headers.get('Origin');
+
+        // Check if the client origin is allowed
+        const isOriginAllowed = clientOrigin && allowedOriginsList.includes(clientOrigin);
+        const corsOrigin = isOriginAllowed ? clientOrigin : allowedOriginsList[0]; // Default to first allowed origin
 
         // Handle CORS preflight requests
         if (request.method === 'OPTIONS') {
             return new Response(null, {
                 status: 200,
                 headers: {
-                    'Access-Control-Allow-Origin': allowedOrigins,
+                    'Access-Control-Allow-Origin': corsOrigin,
                     'Access-Control-Allow-Methods': 'POST, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type',
                 },
@@ -51,7 +59,7 @@ export default {
             return new Response('Method not allowed', {
                 status: 405,
                 headers: {
-                    'Access-Control-Allow-Origin': 'ezdev.lol',
+                    'Access-Control-Allow-Origin': corsOrigin,
                 },
             });
         }
@@ -76,7 +84,7 @@ export default {
                     status: 400,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': allowedOrigins,
+                        'Access-Control-Allow-Origin': corsOrigin,
                     },
                 });
             }
@@ -97,7 +105,7 @@ export default {
                     status: 429,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': allowedOrigins,
+                        'Access-Control-Allow-Origin': corsOrigin,
                     },
                 });
             }
@@ -112,7 +120,7 @@ export default {
                     status: 400,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': allowedOrigins,
+                        'Access-Control-Allow-Origin': corsOrigin,
                     },
                 });
             }
@@ -125,7 +133,7 @@ export default {
                     status: 400,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': allowedOrigins,
+                        'Access-Control-Allow-Origin': corsOrigin,
                     },
                 });
             }
@@ -139,7 +147,7 @@ export default {
                     status: 200,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': allowedOrigins,
+                        'Access-Control-Allow-Origin': corsOrigin,
                     },
                 });
             } catch (emailError) {
@@ -151,7 +159,7 @@ export default {
                     status: 500,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': allowedOrigins,
+                        'Access-Control-Allow-Origin': corsOrigin,
                     },
                 });
             }
@@ -164,7 +172,7 @@ export default {
                 status: 500,
                 headers: {
                     'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': allowedOrigins,
+                    'Access-Control-Allow-Origin': corsOrigin,
                 },
             });
         }
