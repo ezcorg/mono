@@ -1,16 +1,7 @@
-name: Install and Build with pnpm
+name: Build ezdev-web
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/apps/ezdev-web/**'
-      - 'src/typescript/shared/**'
-  pull_request:
-    paths:
-      - 'src/apps/ezdev-web/**'
-      - 'src/typescript/shared/**'
+  workflow_call:
 
 jobs:
   build:

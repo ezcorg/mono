@@ -1,0 +1,26 @@
+name: Deploy ezdev-web to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/apps/ezdev-web/**'
+      - 'src/typescript/shared/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'pages'
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    uses: ./src/apps/ezdev-web/.github/deploy.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

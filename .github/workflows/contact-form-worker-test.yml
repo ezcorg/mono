@@ -1,0 +1,17 @@
+name: Test Contact Form Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/apps/contact-form-worker/**'
+      - 'src/typescript/shared/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/apps/contact-form-worker/**'
+      - 'src/typescript/shared/**'
+
+jobs:
+  test:
+    uses: ./src/apps/contact-form-worker/.github/test.yml

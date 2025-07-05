@@ -1,11 +1,7 @@
 name: Deploy Contact Form Worker
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/apps/contact-form-worker/**'
-      - 'src/typescript/shared/**'
+  workflow_call:
 
 jobs:
   deploy:

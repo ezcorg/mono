@@ -1,0 +1,13 @@
+name: Deploy Contact Form Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/apps/contact-form-worker/**'
+      - 'src/typescript/shared/**'
+
+jobs:
+  deploy:
+    uses: ./src/apps/contact-form-worker/.github/deploy.yml
+    secrets: inherit
