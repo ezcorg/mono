@@ -59,13 +59,13 @@ jobs:
         if: github.event_name == 'push'
         run: |
           cd src/typescript/shared
-          npm version ${{ env.VERSION }} --no-git-tag-version
+          npm version ${{ env.VERSION }} --no-git-tag-version || true
           
       - name: Update version (if manual trigger)
         if: github.event_name == 'workflow_dispatch'
         run: |
           cd src/typescript/shared
-          npm version ${{ github.event.inputs.version }} --no-git-tag-version
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version || true
           
       - name: Build shared library
         run: pnpm --filter @ezdev/shared build
