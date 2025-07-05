@@ -1,6 +1,6 @@
 {
     "name": "@ezdev/shared",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "description": "Shared validation schemas and utilities for ezdev projects",
     "type": "module",
     "main": "dist/index.js",
