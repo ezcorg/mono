@@ -1,4 +1,4 @@
-name: Build @ezdev/shared
+name: Build @ezdevlol/shared
 
 on:
   push:
@@ -47,10 +47,10 @@ jobs:
         run: pnpm install --frozen-lockfile
         
       - name: Build shared library
-        run: pnpm --filter @ezdev/shared build
+        run: pnpm --filter @ezdevlol/shared build
         
       - name: Type check
-        run: pnpm --filter @ezdev/shared typecheck
+        run: pnpm --filter @ezdevlol/shared typecheck
         
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

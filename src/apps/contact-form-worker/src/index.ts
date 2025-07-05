@@ -1,4 +1,4 @@
-import { validateContactForm, getValidationErrorMessage, type ContactFormData } from '@ezdev/shared';
+import { validateContactForm, getValidationErrorMessage, type ContactFormData } from '@ezdevlol/shared';
 
 interface Env {
     MAILGUN_API_TOKEN: string;

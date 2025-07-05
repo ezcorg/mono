@@ -13,7 +13,7 @@
         "test:run": "vitest run"
     },
     "dependencies": {
-        "@ezdev/shared": "workspace:*",
+        "@ezdevlol/shared": "workspace:*",
         "zod": "^3.22.0"
     },
     "devDependencies": {

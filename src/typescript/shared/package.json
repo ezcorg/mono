@@ -1,5 +1,5 @@
 {
-    "name": "@ezdev/shared",
+    "name": "@ezdevlol/shared",
     "version": "0.0.3",
     "description": "Shared validation schemas and utilities for ezdev projects",
     "type": "module",

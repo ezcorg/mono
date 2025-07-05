@@ -5,14 +5,14 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "prebuild": "pnpm --filter @ezdev/shared build",
+    "prebuild": "pnpm --filter @ezdevlol/shared build",
     "build": "astro check && astro build",
     "preview": "astro preview",
     "astro": "astro"
   },
   "dependencies": {
     "@astrojs/tailwind": "^5.0.0",
-    "@ezdev/shared": "workspace:*",
+    "@ezdevlol/shared": "workspace:*",
     "astro": "^4.0.0",
     "flatpickr": "^4.6.13",
     "lucide-astro": "^0.344.0",

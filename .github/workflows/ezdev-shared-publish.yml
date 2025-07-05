@@ -1,4 +1,4 @@
-name: Publish @ezdev/shared to NPM
+name: Publish @ezdevlol/shared to NPM
 
 on:
   push:
@@ -68,10 +68,10 @@ jobs:
           npm version ${{ github.event.inputs.version }} --no-git-tag-version || true
           
       - name: Build shared library
-        run: pnpm --filter @ezdev/shared build
+        run: pnpm --filter @ezdevlol/shared build
         
       - name: Type check
-        run: pnpm --filter @ezdev/shared typecheck
+        run: pnpm --filter @ezdevlol/shared typecheck
         
       - name: Publish to NPM
         run: |
