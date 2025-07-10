@@ -11,11 +11,9 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
-use crate::cert::CertificateAuthority;
-use crate::config::Config;
-use crate::wasm::{EventType, HttpRequest, HttpResponse, PluginManager, RequestContext};
+use crate::wasm::{EventType, HttpRequest, PluginManager, RequestContext};
 
 #[derive(Debug)]
 pub struct Connection {
@@ -65,58 +63,207 @@ pub enum ProxyError {
 
 pub type ProxyResult<T> = Result<T, ProxyError>;
 
-// Simple DNS resolver using tokio's built-in functionality
-pub struct DnsResolver;
+// DNS resolver with caching using standard library functions
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+
+#[derive(Clone, Debug)]
+struct DnsCacheEntry {
+    addresses: Vec<SocketAddr>,
+    expires_at: Instant,
+}
+
+pub struct DnsResolver {
+    cache: Arc<RwLock<HashMap<String, DnsCacheEntry>>>,
+    cache_ttl: Duration,
+}
 
 impl DnsResolver {
     pub async fn new() -> Result<Self> {
-        Ok(Self)
+        Ok(Self {
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            cache_ttl: Duration::from_secs(300), // 5 minutes cache
+        })
     }
 
     pub async fn resolve(&self, hostname: &str) -> ProxyResult<Vec<SocketAddr>> {
-        // Validate hostname before attempting resolution
+        self.resolve_with_port(hostname, 443).await
+    }
+
+    pub async fn resolve_with_port(
+        &self,
+        hostname: &str,
+        default_port: u16,
+    ) -> ProxyResult<Vec<SocketAddr>> {
+        // Basic validation - let standard library handle the rest
+        let hostname = hostname.trim();
         if hostname.is_empty() {
             return Err(ProxyError::DnsResolution(
                 "Empty hostname provided".to_string(),
             ));
         }
 
-        // Trim whitespace and validate hostname format
-        let hostname = hostname.trim();
-        if hostname.is_empty() {
-            return Err(ProxyError::DnsResolution(
-                "Hostname is empty after trimming".to_string(),
-            ));
+        // Handle IP addresses directly for efficiency
+        // Check for IPv6 with brackets and port: [::1]:8080
+        if hostname.starts_with('[') {
+            if let Some(bracket_end) = hostname.find(']') {
+                let ipv6_part = &hostname[1..bracket_end];
+                if let Ok(ip) = ipv6_part.parse::<std::net::IpAddr>() {
+                    let port = if hostname.len() > bracket_end + 1
+                        && hostname.chars().nth(bracket_end + 1) == Some(':')
+                    {
+                        hostname[bracket_end + 2..]
+                            .parse::<u16>()
+                            .unwrap_or(default_port)
+                    } else {
+                        default_port
+                    };
+                    let addr = SocketAddr::new(ip, port);
+                    debug!("Direct IPv6 address resolution: {} -> {}", hostname, addr);
+                    return Ok(vec![addr]);
+                }
+            }
         }
 
-        // Basic hostname validation - check for invalid characters
-        if hostname.contains(' ')
-            || hostname.contains('\t')
-            || hostname.contains('\n')
-            || hostname.contains('\r')
+        // Check if it's a plain IP address (IPv4 or IPv6 without brackets)
+        if let Ok(ip) = hostname.parse::<std::net::IpAddr>() {
+            let addr = SocketAddr::new(ip, default_port);
+            debug!("Direct IP address resolution: {} -> {}", hostname, addr);
+            return Ok(vec![addr]);
+        }
+
+        // Check for IPv4 with port: 192.168.1.1:3000
+        if !hostname.contains("::") && hostname.matches(':').count() == 1 {
+            if let Some(colon_pos) = hostname.rfind(':') {
+                let host_part = &hostname[..colon_pos];
+                let port_str = &hostname[colon_pos + 1..];
+
+                if let (Ok(ip), Ok(port)) = (
+                    host_part.parse::<std::net::IpAddr>(),
+                    port_str.parse::<u16>(),
+                ) {
+                    let addr = SocketAddr::new(ip, port);
+                    debug!(
+                        "Direct IPv4 address resolution with port: {} -> {}",
+                        hostname, addr
+                    );
+                    return Ok(vec![addr]);
+                }
+            }
+        }
+
+        // Prepare the lookup target - if hostname doesn't contain a port, add the default
+        let lookup_target =
+            if hostname.contains(':') && !hostname.parse::<std::net::IpAddr>().is_ok() {
+                // Hostname already contains port (and it's not an IPv6 address)
+                hostname.to_string()
+            } else {
+                // Add default port
+                format!("{}:{}", hostname, default_port)
+            };
+
+        // Create cache key
+        let cache_key = lookup_target.clone();
+
+        // Check cache first
         {
-            return Err(ProxyError::DnsResolution(format!(
-                "Invalid hostname format: '{}'",
-                hostname
-            )));
+            let cache = self.cache.read().await;
+            if let Some(entry) = cache.get(&cache_key) {
+                if entry.expires_at > Instant::now() {
+                    debug!("DNS cache hit for {}", cache_key);
+                    return Ok(entry.addresses.clone());
+                }
+            }
         }
 
-        // Use tokio's built-in DNS resolution
-        let addrs: Vec<SocketAddr> = tokio::net::lookup_host(format!("{}:443", hostname))
-            .await
-            .map_err(|e| {
-                ProxyError::DnsResolution(format!("Failed to resolve '{}': {}", hostname, e))
-            })?
-            .collect();
+        debug!("DNS cache miss for {}, resolving...", cache_key);
 
-        if addrs.is_empty() {
-            return Err(ProxyError::DnsResolution(format!(
-                "No addresses found for '{}'",
-                hostname
-            )));
+        // Perform DNS resolution using standard library with retry logic
+        let mut last_error = None;
+
+        // Try resolution with exponential backoff
+        for attempt in 0..3 {
+            match tokio::net::lookup_host(&lookup_target).await {
+                Ok(addrs) => {
+                    let addresses: Vec<SocketAddr> = addrs.collect();
+
+                    if addresses.is_empty() {
+                        return Err(ProxyError::DnsResolution(format!(
+                            "No addresses found for '{}'",
+                            hostname
+                        )));
+                    }
+
+                    // Cache the result
+                    let entry = DnsCacheEntry {
+                        addresses: addresses.clone(),
+                        expires_at: Instant::now() + self.cache_ttl,
+                    };
+
+                    {
+                        let mut cache = self.cache.write().await;
+                        cache.insert(cache_key.clone(), entry);
+
+                        // Clean up expired entries periodically
+                        if cache.len() > 1000 {
+                            let now = Instant::now();
+                            cache.retain(|_, entry| entry.expires_at > now);
+                        }
+                    }
+
+                    debug!(
+                        "DNS resolved {} to {} addresses",
+                        cache_key,
+                        addresses.len()
+                    );
+                    return Ok(addresses);
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < 2 {
+                        // Exponential backoff: 100ms, 200ms
+                        let delay = Duration::from_millis(100 * (1 << attempt));
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+            }
         }
 
-        Ok(addrs)
+        Err(ProxyError::DnsResolution(format!(
+            "Failed to resolve '{}' after 3 attempts: {}",
+            hostname,
+            last_error.unwrap()
+        )))
+    }
+
+    pub async fn resolve_with_fallback(
+        &self,
+        hostname: &str,
+        default_port: u16,
+    ) -> ProxyResult<SocketAddr> {
+        let addresses = self.resolve_with_port(hostname, default_port).await?;
+
+        // Try to connect to each address to find a working one
+        for addr in &addresses {
+            match tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr)).await {
+                Ok(Ok(_)) => {
+                    debug!("Successfully connected to {} for {}", addr, hostname);
+                    return Ok(*addr);
+                }
+                Ok(Err(_)) | Err(_) => {
+                    debug!(
+                        "Failed to connect to {} for {}, trying next",
+                        addr, hostname
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // If no address worked, return the first one anyway
+        Ok(addresses[0])
     }
 }
 
@@ -188,7 +335,7 @@ pub async fn establish_upstream_connection(target_addr: SocketAddr) -> ProxyResu
 
 // Bidirectional data forwarding
 pub async fn forward_data(
-    mut client: tokio::net::tcp::OwnedReadHalf,
+    client: tokio::net::tcp::OwnedReadHalf,
     mut upstream: tokio::net::tcp::OwnedWriteHalf,
 ) -> ProxyResult<()> {
     let mut buffer = vec![0u8; 8192];

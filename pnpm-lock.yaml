@@ -72,6 +72,53 @@ importers:
         specifier: ^5.0.0
         version: 5.7.3
 
+  src/apps/ezfilter-client:
+    dependencies:
+      '@tauri-apps/api':
+        specifier: ^2
+        version: 2.5.0
+      '@tauri-apps/plugin-opener':
+        specifier: ^2
+        version: 2.2.6
+      solid-js:
+        specifier: ^1.9.3
+        version: 1.9.6
+    devDependencies:
+      '@tauri-apps/cli':
+        specifier: ^2
+        version: 2.5.0
+      typescript:
+        specifier: ~5.6.2
+        version: 5.6.3
+      vite:
+        specifier: ^6.0.3
+        version: 6.3.4(@types/node@22.15.3)(jiti@1.21.7)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0)
+      vite-plugin-solid:
+        specifier: ^2.11.0
+        version: 2.11.6(solid-js@1.9.6)(vite@6.3.4(@types/node@22.15.3)(jiti@1.21.7)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
+
+  src/apps/ezfilter-web:
+    dependencies:
+      '@astrojs/tailwind':
+        specifier: ^5.0.0
+        version: 5.1.5(astro@4.16.18(@types/node@22.15.3)(rollup@4.40.1)(terser@5.39.2)(typescript@5.7.3))(tailwindcss@3.4.17(ts-node@10.9.2(@swc/core@1.11.24)(@types/node@22.15.3)(typescript@5.7.3)))(ts-node@10.9.2(@swc/core@1.11.24)(@types/node@22.15.3)(typescript@5.7.3))
+      astro:
+        specifier: ^4.0.0
+        version: 4.16.18(@types/node@22.15.3)(rollup@4.40.1)(terser@5.39.2)(typescript@5.7.3)
+      lucide-astro:
+        specifier: ^0.344.0
+        version: 0.344.0(astro@4.16.18(@types/node@22.15.3)(rollup@4.40.1)(terser@5.39.2)(typescript@5.7.3))
+      tailwindcss:
+        specifier: ^3.0.0
+        version: 3.4.17(ts-node@10.9.2(@swc/core@1.11.24)(@types/node@22.15.3)(typescript@5.7.3))
+    devDependencies:
+      '@astrojs/check':
+        specifier: ^0.3.0
+        version: 0.3.4(prettier@3.5.3)(typescript@5.7.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.7.3
+
   src/apps/eznote:
     dependencies:
       '@ezdevlol/markdown-editor':

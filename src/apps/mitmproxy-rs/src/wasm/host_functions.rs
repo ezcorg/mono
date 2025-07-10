@@ -1,4 +1,4 @@
-use super::{LogLevel, PluginState, RequestContext, WasmError, WasmResult};
+use super::{PluginState, RequestContext, WasmResult};
 use std::sync::Arc;
 use wasmtime::*;
 
@@ -29,12 +29,12 @@ pub fn add_to_linker(linker: &mut Linker<WasmState>) -> WasmResult<()> {
                 .map_err(|e| wasmtime::Error::msg(format!("Memory read error: {}", e)))?;
 
             let message = String::from_utf8_lossy(&message_bytes);
-            let log_level = match level {
-                0 => LogLevel::Error,
-                1 => LogLevel::Warn,
-                2 => LogLevel::Info,
-                3 => LogLevel::Debug,
-                _ => LogLevel::Trace,
+            let _log_level = match level {
+                0 => "Error",
+                1 => "Warn",
+                2 => "Info",
+                3 => "Debug",
+                _ => "Trace",
             };
 
             // Note: This is a simplified sync version - in production you'd want async
@@ -48,7 +48,7 @@ pub fn add_to_linker(linker: &mut Linker<WasmState>) -> WasmResult<()> {
     linker.func_wrap(
         "env",
         "host_storage_set",
-        |caller: Caller<'_, WasmState>,
+        |_caller: Caller<'_, WasmState>,
          _key_ptr: i32,
          _key_len: i32,
          _value_ptr: i32,
@@ -63,7 +63,7 @@ pub fn add_to_linker(linker: &mut Linker<WasmState>) -> WasmResult<()> {
     linker.func_wrap(
         "env",
         "host_storage_get",
-        |caller: Caller<'_, WasmState>,
+        |_caller: Caller<'_, WasmState>,
          _key_ptr: i32,
          _key_len: i32|
          -> Result<i32, wasmtime::Error> {

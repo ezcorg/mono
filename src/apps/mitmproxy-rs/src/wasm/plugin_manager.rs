@@ -1,7 +1,8 @@
 use super::{
-    EventType, PluginAction, PluginConfig, PluginMetadata, PluginState, RequestContext,
-    WasmError, WasmResult, WasmPlugin,
+    EventType, PluginAction, PluginConfig, PluginMetadata, PluginState, RequestContext, WasmError,
+    WasmPlugin, WasmResult,
 };
+use crate::content::{detect_content_type, ContentHandlerManager};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ pub struct PluginManager {
     plugins: Arc<RwLock<HashMap<String, LoadedPlugin>>>,
     plugin_dir: PathBuf,
     state: Arc<PluginState>,
+    content_handler_manager: Arc<ContentHandlerManager>,
 }
 
 struct LoadedPlugin {
@@ -37,29 +39,30 @@ impl std::fmt::Debug for LoadedPlugin {
 impl PluginManager {
     pub async fn new<P: AsRef<Path>>(plugin_dir: P) -> Result<Self> {
         let plugin_dir = plugin_dir.as_ref().to_path_buf();
-        
+
         // Create plugin directory if it doesn't exist
         fs::create_dir_all(&plugin_dir).await?;
-        
+
         let manager = Self {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             plugin_dir,
             state: Arc::new(PluginState::new()),
+            content_handler_manager: Arc::new(ContentHandlerManager::new()),
         };
-        
+
         // Load all plugins from directory
         manager.load_plugins().await?;
-        
+
         Ok(manager)
     }
-    
+
     async fn load_plugins(&self) -> Result<()> {
         let mut entries = fs::read_dir(&self.plugin_dir).await?;
         let mut loaded_count = 0;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().map_or(false, |ext| ext == "wasm") {
                 match self.load_plugin(&path).await {
                     Ok(plugin_name) => {
@@ -72,15 +75,15 @@ impl PluginManager {
                 }
             }
         }
-        
+
         info!("Loaded {} plugins from {:?}", loaded_count, self.plugin_dir);
         Ok(())
     }
-    
+
     async fn load_plugin(&self, path: &Path) -> WasmResult<String> {
         let wasm_bytes = fs::read(path).await?;
         let plugin = WasmPlugin::new(&wasm_bytes, self.state.clone()).await?;
-        
+
         // Try to get plugin metadata
         let metadata = match plugin.get_metadata().await {
             Ok(meta) => meta,
@@ -91,7 +94,7 @@ impl PluginManager {
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown")
                     .to_string();
-                
+
                 PluginMetadata {
                     name: name.clone(),
                     version: "1.0.0".to_string(),
@@ -102,7 +105,7 @@ impl PluginManager {
                 }
             }
         };
-        
+
         // Load plugin configuration if it exists
         let config_path = path.with_extension("toml");
         let config = if config_path.exists() {
@@ -111,7 +114,7 @@ impl PluginManager {
         } else {
             PluginConfig::default()
         };
-        
+
         let plugin_name = metadata.name.clone();
         let loaded_plugin = LoadedPlugin {
             plugin,
@@ -119,41 +122,48 @@ impl PluginManager {
             config: config.clone(),
             enabled: config.enabled,
         };
-        
+
         let mut plugins = self.plugins.write().await;
         plugins.insert(plugin_name.clone(), loaded_plugin);
-        
+
         Ok(plugin_name)
     }
-    
+
     pub async fn execute_event(
         &self,
         event_type: EventType,
         context: &mut RequestContext,
     ) -> WasmResult<Vec<PluginAction>> {
-        let plugins = self.plugins.read().await;
         let mut actions = Vec::new();
-        
+
+        // First, check if we should process content with specialized handlers
+        if matches!(event_type, EventType::RequestBody | EventType::ResponseBody) {
+            if let Some(content_actions) = self
+                .process_content_handlers(event_type.clone(), context)
+                .await?
+            {
+                actions.extend(content_actions);
+            }
+        }
+
+        // Then execute regular WASM plugins
+        let plugins = self.plugins.read().await;
+
         // Get plugins that handle this event type, sorted by priority
         let mut event_plugins: Vec<_> = plugins
             .values()
-            .filter(|p| {
-                p.enabled
-                    && p.metadata
-                        .events
-                        .contains(&event_type.as_str().to_string())
-            })
+            .filter(|p| p.enabled && p.metadata.events.contains(&event_type.as_str().to_string()))
             .collect();
-        
+
         event_plugins.sort_by_key(|p| p.config.priority);
-        
+
         for loaded_plugin in event_plugins {
             debug!(
                 "Executing plugin {} for event {}",
                 loaded_plugin.metadata.name,
                 event_type.as_str()
             );
-            
+
             match loaded_plugin
                 .plugin
                 .execute_event(event_type.clone(), context)
@@ -169,7 +179,7 @@ impl PluginManager {
                         event_type.as_str(),
                         e
                     );
-                    
+
                     // Log the error to plugin state
                     self.state
                         .log(
@@ -181,33 +191,86 @@ impl PluginManager {
                 }
             }
         }
-        
+
         Ok(actions)
     }
-    
+
+    /// Process content with specialized handlers based on content type
+    async fn process_content_handlers(
+        &self,
+        event_type: EventType,
+        context: &RequestContext,
+    ) -> WasmResult<Option<Vec<PluginAction>>> {
+        let (headers, body) = match event_type {
+            EventType::RequestBody => (&context.request.headers, &context.request.body),
+            EventType::ResponseBody => {
+                if let Some(ref response) = context.response {
+                    (&response.headers, &response.body)
+                } else {
+                    return Ok(None);
+                }
+            }
+            _ => return Ok(None),
+        };
+
+        // Detect content type
+        if let Some(content_type) = detect_content_type(headers) {
+            // Check if we have handlers for this content type
+            if self
+                .content_handler_manager
+                .has_handlers_for_content_type(&content_type)
+                .await
+            {
+                debug!(
+                    "Processing {} content with specialized handlers",
+                    content_type
+                );
+
+                match self
+                    .content_handler_manager
+                    .process_content(context, &content_type, body, event_type)
+                    .await
+                {
+                    Ok(handler_results) => {
+                        let actions: Vec<PluginAction> = handler_results
+                            .into_iter()
+                            .map(|result| result.into())
+                            .collect();
+                        return Ok(Some(actions));
+                    }
+                    Err(e) => {
+                        error!("Content handler processing failed: {}", e);
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     pub async fn reload_plugin(&self, plugin_name: &str) -> WasmResult<()> {
         let plugin_path = self.plugin_dir.join(format!("{}.wasm", plugin_name));
-        
+
         if !plugin_path.exists() {
             return Err(WasmError::NotFound(plugin_name.to_string()));
         }
-        
+
         // Remove existing plugin
         {
             let mut plugins = self.plugins.write().await;
             plugins.remove(plugin_name);
         }
-        
+
         // Reload plugin
         self.load_plugin(&plugin_path).await?;
         info!("Reloaded plugin: {}", plugin_name);
-        
+
         Ok(())
     }
-    
+
     pub async fn enable_plugin(&self, plugin_name: &str) -> WasmResult<()> {
         let mut plugins = self.plugins.write().await;
-        
+
         if let Some(plugin) = plugins.get_mut(plugin_name) {
             plugin.enabled = true;
             plugin.config.enabled = true;
@@ -217,10 +280,10 @@ impl PluginManager {
             Err(WasmError::NotFound(plugin_name.to_string()))
         }
     }
-    
+
     pub async fn disable_plugin(&self, plugin_name: &str) -> WasmResult<()> {
         let mut plugins = self.plugins.write().await;
-        
+
         if let Some(plugin) = plugins.get_mut(plugin_name) {
             plugin.enabled = false;
             plugin.config.enabled = false;
@@ -230,10 +293,10 @@ impl PluginManager {
             Err(WasmError::NotFound(plugin_name.to_string()))
         }
     }
-    
+
     pub async fn get_plugin_list(&self) -> Vec<PluginInfo> {
         let plugins = self.plugins.read().await;
-        
+
         plugins
             .values()
             .map(|p| PluginInfo {
@@ -246,49 +309,54 @@ impl PluginManager {
             })
             .collect()
     }
-    
+
     pub async fn get_plugin_config(&self, plugin_name: &str) -> Option<PluginConfig> {
         let plugins = self.plugins.read().await;
         plugins.get(plugin_name).map(|p| p.config.clone())
     }
-    
+
     pub async fn update_plugin_config(
         &self,
         plugin_name: &str,
         config: PluginConfig,
     ) -> WasmResult<()> {
         let mut plugins = self.plugins.write().await;
-        
+
         if let Some(plugin) = plugins.get_mut(plugin_name) {
             plugin.config = config.clone();
             plugin.enabled = config.enabled;
-            
+
             // Save config to file
             let config_path = self.plugin_dir.join(format!("{}.toml", plugin_name));
             let config_content = toml::to_string_pretty(&config)
                 .map_err(|e| WasmError::InvalidFormat(e.to_string()))?;
-            
+
             fs::write(&config_path, config_content).await?;
-            
+
             info!("Updated config for plugin: {}", plugin_name);
             Ok(())
         } else {
             Err(WasmError::NotFound(plugin_name.to_string()))
         }
     }
-    
+
     pub async fn plugin_count(&self) -> usize {
         let plugins = self.plugins.read().await;
         plugins.len()
     }
-    
+
     pub async fn get_plugin_logs(&self) -> Vec<super::LogEntry> {
         self.state.get_logs().await
     }
-    
+
     pub async fn clear_plugin_logs(&self) {
         let mut logs = self.state.logs.write().await;
         logs.clear();
+    }
+
+    /// Get access to the content handler manager for registering handlers
+    pub fn content_handler_manager(&self) -> Arc<ContentHandlerManager> {
+        self.content_handler_manager.clone()
     }
 }
 

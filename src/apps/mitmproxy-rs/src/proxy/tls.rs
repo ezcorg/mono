@@ -1,5 +1,5 @@
 use crate::cert::{CertError, Certificate};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, ServerConfig};
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ pub fn create_server_config(cert: Certificate) -> Result<ServerConfig, CertError
     let config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(cert_chain, private_key)
-        .map_err(|e| CertError::InvalidFormat)?;
+        .map_err(|_e| CertError::InvalidFormat)?;
 
     Ok(config)
 }

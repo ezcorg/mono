@@ -5,6 +5,7 @@ use crate::wasm::PluginManager;
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, error, info, warn};
@@ -42,6 +43,7 @@ impl ProxyServer {
         loop {
             match listener.accept().await {
                 Ok((stream, client_addr)) => {
+                    info!("New connection from {}", client_addr);
                     debug!("New connection from {}", client_addr);
 
                     let connection = Connection::new(client_addr);
@@ -101,79 +103,150 @@ impl ProxyServer {
         config: Config,
         dns_resolver: Arc<DnsResolver>,
     ) -> ProxyResult<()> {
-        // Read initial request
         let mut buffer = vec![0u8; config.proxy.buffer_size];
-        let n = stream.read(&mut buffer).await?;
 
-        if n == 0 {
-            return Err(ProxyError::InvalidRequest("Empty request".to_string()));
-        }
+        // Handle multiple requests on the same connection (HTTP/1.1 keep-alive)
+        let mut request_count = 0;
+        loop {
+            request_count += 1;
+            // Read request with timeout to avoid hanging on keep-alive connections
+            info!("Reading request #{} from client...", request_count);
+            let read_result =
+                tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buffer)).await;
 
-        let request_data = &buffer[..n];
-        let (method, url, headers) = super::parse_http_request(request_data)?;
-
-        debug!("Received {} request for {}", method, url);
-
-        // Execute plugin event: request_start
-        let mut context = super::create_request_context(
-            &connection,
-            &method,
-            &url,
-            &headers,
-            request_data.to_vec(),
-        )
-        .await;
-
-        let actions = super::execute_plugin_event(
-            &plugin_manager,
-            crate::wasm::EventType::RequestStart,
-            &mut context,
-        )
-        .await?;
-
-        // Check if any plugin wants to block or redirect
-        for action in &actions {
-            match action {
-                crate::wasm::PluginAction::Block(reason) => {
-                    Self::send_blocked_response(&mut stream, reason).await?;
-                    return Ok(());
+            let n = match read_result {
+                Ok(Ok(n)) => {
+                    info!("Read operation completed with {} bytes", n);
+                    n
                 }
-                crate::wasm::PluginAction::Redirect(url) => {
-                    Self::send_redirect_response(&mut stream, url).await?;
-                    return Ok(());
+                Ok(Err(e)) => {
+                    if Self::is_connection_closed_error(&e) {
+                        info!("Client connection closed during read: {}", e);
+                        break;
+                    }
+                    error!("IO error during read: {}", e);
+                    return Err(ProxyError::Io(e));
                 }
-                _ => {}
+                Err(_) => {
+                    // Timeout - this is normal for keep-alive connections
+                    info!(
+                        "Connection timeout after 10 seconds waiting for request #{}, closing",
+                        request_count
+                    );
+                    break;
+                }
+            };
+
+            if n == 0 {
+                info!(
+                    "Client closed connection (EOF) on request #{}",
+                    request_count
+                );
+                break;
+            }
+
+            info!("Read {} bytes from client", n);
+            let request_data = &buffer[..n];
+
+            // Try to parse the HTTP request
+            let (method, url, headers) = match super::parse_http_request(request_data) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    warn!("Failed to parse HTTP request: {}", e);
+                    break;
+                }
+            };
+
+            info!("Received {} request for {}", method, url);
+            info!("Request headers: {:?}", headers);
+            info!(
+                "Raw request data: {}",
+                String::from_utf8_lossy(request_data)
+            );
+
+            // Execute plugin event: request_start
+            let mut context = super::create_request_context(
+                &connection,
+                &method,
+                &url,
+                &headers,
+                request_data.to_vec(),
+            )
+            .await;
+
+            let actions = super::execute_plugin_event(
+                &plugin_manager,
+                crate::wasm::EventType::RequestStart,
+                &mut context,
+            )
+            .await?;
+
+            // Check if any plugin wants to block or redirect
+            let mut should_continue = true;
+            for action in &actions {
+                match action {
+                    crate::wasm::PluginAction::Block(reason) => {
+                        Self::send_blocked_response(&mut stream, reason).await?;
+                        should_continue = false;
+                        break;
+                    }
+                    crate::wasm::PluginAction::Redirect(url) => {
+                        Self::send_redirect_response(&mut stream, url).await?;
+                        should_continue = false;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            if !should_continue {
+                break;
+            }
+
+            if super::is_connect_request(&method) {
+                // Handle HTTPS CONNECT request - this ends the connection handling
+                connection.is_https = true;
+                return Self::handle_connect_request(
+                    stream,
+                    connection,
+                    &url,
+                    ca,
+                    plugin_manager,
+                    config,
+                    dns_resolver,
+                )
+                .await;
+            } else {
+                // Handle regular HTTP request and continue the loop for keep-alive
+                info!("About to call handle_http_request_keepalive...");
+                match Self::handle_http_request_keepalive(
+                    &mut stream,
+                    &connection,
+                    method,
+                    url,
+                    headers,
+                    request_data.to_vec(),
+                    &plugin_manager,
+                    &config,
+                    &dns_resolver,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        info!("handle_http_request_keepalive completed successfully");
+                    }
+                    Err(e) => {
+                        error!("Error handling HTTP request: {}", e);
+                        break;
+                    }
+                }
+
+                info!("HTTP request completed, continuing to next request...");
             }
         }
 
-        if super::is_connect_request(&method) {
-            // Handle HTTPS CONNECT request
-            connection.is_https = true;
-            Self::handle_connect_request(
-                stream,
-                connection,
-                &url,
-                ca,
-                plugin_manager,
-                config,
-                dns_resolver,
-            )
-            .await
-        } else {
-            // Handle regular HTTP request
-            Self::handle_http_request(
-                stream,
-                connection,
-                method,
-                url,
-                headers,
-                request_data.to_vec(),
-                plugin_manager,
-                config,
-                dns_resolver,
-            )
-            .await
-        }
+        info!("Connection handling completed");
+        Ok(())
     }
 
     async fn handle_connect_request(
@@ -268,11 +341,8 @@ impl ProxyServer {
 
         debug!("Established TLS connection with client for {}", host);
 
-        // Resolve target server address
-        let target_addrs = dns_resolver.resolve(&host).await?;
-        let target_addr = target_addrs[0]; // Use first address
-
-        // TODO: handle potential failure and multiple addresses?
+        // Resolve target server address with proper port (443 for HTTPS)
+        let target_addr = dns_resolver.resolve_with_fallback(&host, 443).await?;
         // Connect to target server
         let upstream_stream = super::establish_upstream_connection(target_addr).await?;
 
@@ -425,6 +495,232 @@ impl ProxyServer {
         Ok(())
     }
 
+    async fn handle_http_request_keepalive(
+        client_stream: &mut TcpStream,
+        connection: &Connection,
+        method: String,
+        url: String,
+        headers: std::collections::HashMap<String, String>,
+        body: Vec<u8>,
+        plugin_manager: &PluginManager,
+        config: &Config,
+        dns_resolver: &Arc<DnsResolver>,
+    ) -> ProxyResult<()> {
+        // Extract host and port from headers or URL
+        let (host, port) = if let Some(host_header) = super::extract_host_from_headers(&headers) {
+            // Parse host:port from Host header
+            if let Some(colon_pos) = host_header.find(':') {
+                let host = host_header[..colon_pos].to_string();
+                let port = host_header[colon_pos + 1..].parse::<u16>().unwrap_or(80);
+                (host, port)
+            } else {
+                (host_header, 80)
+            }
+        } else if url.starts_with("http://") {
+            // Extract from URL
+            if let Ok(parsed_url) = url::Url::parse(&url) {
+                let host = parsed_url.host_str().unwrap_or("").to_string();
+                let port = parsed_url.port().unwrap_or(80);
+                (host, port)
+            } else {
+                return Err(ProxyError::InvalidRequest("Invalid URL".to_string()));
+            }
+        } else {
+            return Err(ProxyError::InvalidRequest("No host specified".to_string()));
+        };
+
+        // Validate extracted host
+        if host.trim().is_empty() {
+            return Err(ProxyError::InvalidRequest(
+                "Empty host extracted from request".to_string(),
+            ));
+        }
+
+        info!("Extracted host for HTTP request: '{}:{}'", host, port);
+
+        // Resolve target server with extracted port
+        let target_addr = dns_resolver.resolve_with_fallback(&host, port).await?;
+        info!("Resolved target address: {}", target_addr);
+
+        // Connect to target server
+        let mut upstream_stream = super::establish_upstream_connection(target_addr).await?;
+        info!("Connected to upstream server");
+
+        // Execute plugin events
+        let mut context =
+            super::create_request_context(connection, &method, &url, &headers, body).await;
+
+        let _actions = super::execute_plugin_event(
+            plugin_manager,
+            crate::wasm::EventType::RequestHeaders,
+            &mut context,
+        )
+        .await?;
+
+        // Reconstruct and forward the HTTP request to upstream
+        // Convert absolute URL to relative path for upstream server
+        let path = if url.starts_with("http://") || url.starts_with("https://") {
+            if let Ok(parsed_url) = url::Url::parse(&url) {
+                let mut path = parsed_url.path().to_string();
+                if let Some(query) = parsed_url.query() {
+                    path.push('?');
+                    path.push_str(query);
+                }
+                path
+            } else {
+                url.clone()
+            }
+        } else {
+            url.clone()
+        };
+
+        let request_line = format!("{} {} HTTP/1.1\r\n", method, path);
+        info!("Sending request line: {}", request_line.trim());
+        upstream_stream.write_all(request_line.as_bytes()).await?;
+
+        // Forward headers
+        for (key, value) in &headers {
+            let header_line = format!("{}: {}\r\n", key, value);
+            upstream_stream.write_all(header_line.as_bytes()).await?;
+        }
+
+        // End headers
+        upstream_stream.write_all(b"\r\n").await?;
+        info!("Finished sending request to upstream");
+
+        // Forward body if present (extract from original request)
+        if let Some(body_start) = context
+            .request
+            .body
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+        {
+            let body = &context.request.body[body_start + 4..];
+            if !body.is_empty() {
+                upstream_stream.write_all(body).await?;
+            }
+        }
+
+        // Forward response back to client with timeout
+        let mut buffer = vec![0u8; config.proxy.buffer_size];
+        let mut response_data = Vec::new();
+        let mut headers_complete = false;
+        let mut content_length: Option<usize> = None;
+        let mut connection_close = false;
+        let mut bytes_read_after_headers = 0;
+
+        info!("Starting to read response from upstream");
+        loop {
+            // Add timeout to prevent hanging
+            let read_result =
+                tokio::time::timeout(Duration::from_secs(30), upstream_stream.read(&mut buffer))
+                    .await;
+
+            match read_result {
+                Ok(Ok(0)) => {
+                    // Upstream closed connection
+                    info!("Upstream closed connection");
+                    break;
+                }
+                Ok(Ok(n)) => {
+                    // Successfully read data, forward to client
+                    info!("Read {} bytes from upstream, forwarding to client", n);
+
+                    // Add to response data for header parsing
+                    response_data.extend_from_slice(&buffer[..n]);
+
+                    // Parse headers if not done yet
+                    if !headers_complete {
+                        if let Some(header_end) =
+                            response_data.windows(4).position(|w| w == b"\r\n\r\n")
+                        {
+                            headers_complete = true;
+                            let headers_str = String::from_utf8_lossy(&response_data[..header_end]);
+                            info!("Response headers: {}", headers_str);
+
+                            // Parse Content-Length and Connection headers
+                            for line in headers_str.lines() {
+                                if let Some(colon_pos) = line.find(':') {
+                                    let key = line[..colon_pos].trim().to_lowercase();
+                                    let value = line[colon_pos + 1..].trim();
+
+                                    if key == "content-length" {
+                                        content_length = value.parse().ok();
+                                        info!("Found Content-Length: {:?}", content_length);
+                                    } else if key == "connection" && value.to_lowercase() == "close"
+                                    {
+                                        connection_close = true;
+                                        info!("Found Connection: close");
+                                    }
+                                }
+                            }
+
+                            bytes_read_after_headers = response_data.len() - header_end - 4;
+                            info!(
+                                "Headers complete, {} bytes of body already read",
+                                bytes_read_after_headers
+                            );
+                        }
+                    } else {
+                        bytes_read_after_headers += n;
+                    }
+
+                    // Forward to client
+                    if let Err(e) = client_stream.write_all(&buffer[..n]).await {
+                        if Self::is_connection_closed_error(&e) {
+                            info!("Client connection closed during write");
+                            break;
+                        }
+                        return Err(ProxyError::Io(e));
+                    }
+                    info!("Successfully forwarded {} bytes to client", n);
+
+                    // Check if we've read the complete response
+                    if headers_complete {
+                        if let Some(expected_length) = content_length {
+                            if bytes_read_after_headers >= expected_length {
+                                info!(
+                                    "Read complete response based on Content-Length ({})",
+                                    expected_length
+                                );
+                                break;
+                            }
+                        } else if connection_close {
+                            // Continue reading until connection closes
+                            info!("Waiting for connection close...");
+                        } else {
+                            // No Content-Length and no Connection: close, assume chunked or connection will close
+                            // For HTTP/1.1 keep-alive, we need to be more careful here
+                            // For now, let's add a small timeout to avoid hanging
+                            info!("No Content-Length header, checking for more data...");
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    if Self::is_connection_closed_error(&e) {
+                        info!("Upstream connection closed during read: {}", e);
+                        break;
+                    }
+                    error!("Error reading from upstream: {}", e);
+                    return Err(ProxyError::Io(e));
+                }
+                Err(_) => {
+                    // Timeout occurred
+                    if headers_complete && content_length.is_some() {
+                        error!("Timeout reading from upstream server");
+                        return Err(ProxyError::Timeout);
+                    } else {
+                        info!("Timeout waiting for more data, assuming response complete");
+                        break;
+                    }
+                }
+            }
+        }
+
+        info!("HTTP request forwarding completed successfully");
+        Ok(())
+    }
+
     async fn handle_http_request(
         mut client_stream: TcpStream,
         connection: Connection,
@@ -436,19 +732,28 @@ impl ProxyServer {
         config: Config,
         dns_resolver: Arc<DnsResolver>,
     ) -> ProxyResult<()> {
-        // Extract host from headers or URL
-        let host = super::extract_host_from_headers(&headers)
-            .or_else(|| {
-                if url.starts_with("http://") {
-                    url::Url::parse(&url)
-                        .ok()?
-                        .host_str()
-                        .map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| ProxyError::InvalidRequest("No host specified".to_string()))?;
+        // Extract host and port from headers or URL
+        let (host, port) = if let Some(host_header) = super::extract_host_from_headers(&headers) {
+            // Parse host:port from Host header
+            if let Some(colon_pos) = host_header.find(':') {
+                let host = host_header[..colon_pos].to_string();
+                let port = host_header[colon_pos + 1..].parse::<u16>().unwrap_or(80);
+                (host, port)
+            } else {
+                (host_header, 80)
+            }
+        } else if url.starts_with("http://") {
+            // Extract from URL
+            if let Ok(parsed_url) = url::Url::parse(&url) {
+                let host = parsed_url.host_str().unwrap_or("").to_string();
+                let port = parsed_url.port().unwrap_or(80);
+                (host, port)
+            } else {
+                return Err(ProxyError::InvalidRequest("Invalid URL".to_string()));
+            }
+        } else {
+            return Err(ProxyError::InvalidRequest("No host specified".to_string()));
+        };
 
         // Validate extracted host
         if host.trim().is_empty() {
@@ -457,14 +762,15 @@ impl ProxyServer {
             ));
         }
 
-        debug!("Extracted host for HTTP request: '{}'", host);
+        info!("Extracted host for HTTP request: '{}:{}'", host, port);
 
-        // Resolve target server
-        let target_addrs = dns_resolver.resolve(&host).await?;
-        let target_addr = SocketAddr::new(target_addrs[0].ip(), 80); // HTTP port
+        // Resolve target server with extracted port
+        let target_addr = dns_resolver.resolve_with_fallback(&host, port).await?;
+        info!("Resolved target address: {}", target_addr);
 
         // Connect to target server
         let mut upstream_stream = super::establish_upstream_connection(target_addr).await?;
+        info!("Connected to upstream server");
 
         // Execute plugin events
         let mut context =
@@ -477,20 +783,94 @@ impl ProxyServer {
         )
         .await?;
 
-        // Forward the request to upstream
-        upstream_stream.write_all(&context.request.body).await?;
-
-        // Forward response back to client
-        let mut buffer = vec![0u8; config.proxy.buffer_size];
-        loop {
-            let n = upstream_stream.read(&mut buffer).await?;
-            if n == 0 {
-                break;
+        // Reconstruct and forward the HTTP request to upstream
+        // Convert absolute URL to relative path for upstream server
+        let path = if url.starts_with("http://") || url.starts_with("https://") {
+            if let Ok(parsed_url) = url::Url::parse(&url) {
+                let mut path = parsed_url.path().to_string();
+                if let Some(query) = parsed_url.query() {
+                    path.push('?');
+                    path.push_str(query);
+                }
+                path
+            } else {
+                url.clone()
             }
+        } else {
+            url.clone()
+        };
 
-            client_stream.write_all(&buffer[..n]).await?;
+        let request_line = format!("{} {} HTTP/1.1\r\n", method, path);
+        info!("Sending request line: {}", request_line.trim());
+        upstream_stream.write_all(request_line.as_bytes()).await?;
+
+        // Forward headers
+        for (key, value) in &headers {
+            let header_line = format!("{}: {}\r\n", key, value);
+            upstream_stream.write_all(header_line.as_bytes()).await?;
         }
 
+        // End headers
+        upstream_stream.write_all(b"\r\n").await?;
+        info!("Finished sending request to upstream");
+
+        // Forward body if present (extract from original request)
+        if let Some(body_start) = context
+            .request
+            .body
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+        {
+            let body = &context.request.body[body_start + 4..];
+            if !body.is_empty() {
+                upstream_stream.write_all(body).await?;
+            }
+        }
+
+        // Forward response back to client with timeout
+        let mut buffer = vec![0u8; config.proxy.buffer_size];
+        info!("Starting to read response from upstream");
+        loop {
+            // Add timeout to prevent hanging
+            let read_result =
+                tokio::time::timeout(Duration::from_secs(30), upstream_stream.read(&mut buffer))
+                    .await;
+
+            match read_result {
+                Ok(Ok(0)) => {
+                    // Upstream closed connection
+                    info!("Upstream closed connection");
+                    break;
+                }
+                Ok(Ok(n)) => {
+                    // Successfully read data, forward to client
+                    info!("Read {} bytes from upstream, forwarding to client", n);
+                    if let Err(e) = client_stream.write_all(&buffer[..n]).await {
+                        if Self::is_connection_closed_error(&e) {
+                            info!("Client connection closed during write");
+                            break;
+                        }
+                        return Err(ProxyError::Io(e));
+                    }
+                    info!("Successfully forwarded {} bytes to client", n);
+                }
+                Ok(Err(e)) => {
+                    if Self::is_connection_closed_error(&e) {
+                        info!("Upstream connection closed during read: {}", e);
+                        break;
+                    }
+                    error!("Error reading from upstream: {}", e);
+                    return Err(ProxyError::Io(e));
+                }
+                Err(_) => {
+                    // Timeout occurred
+                    error!("Timeout reading from upstream server");
+                    return Err(ProxyError::Timeout);
+                }
+            }
+        }
+
+        debug!("HTTP request forwarding completed");
         Ok(())
     }
 
@@ -500,9 +880,8 @@ impl ProxyServer {
         port: u16,
         dns_resolver: Arc<DnsResolver>,
     ) -> ProxyResult<()> {
-        // Resolve target address
-        let target_addrs = dns_resolver.resolve(host).await?;
-        let target_addr = SocketAddr::new(target_addrs[0].ip(), port);
+        // Resolve target address with proper port
+        let target_addr = dns_resolver.resolve_with_fallback(host, port).await?;
 
         // Connect to target
         let upstream_stream = super::establish_upstream_connection(target_addr).await?;

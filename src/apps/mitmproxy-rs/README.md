@@ -105,7 +105,7 @@ cd my-plugin
 crate-type = ["cdylib"]
 
 [dependencies]
-mitm-plugin-sdk = { path = "../path/to/sdk" }
+mitm_plugin_sdk = { path = "../path/to/sdk" }
 paste = "1.0"
 ```
 
@@ -218,10 +218,6 @@ The plugin SDK provides these APIs:
 3. Make your changes
 4. Add tests
 5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgments
 

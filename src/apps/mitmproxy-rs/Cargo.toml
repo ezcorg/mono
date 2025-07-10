@@ -2,7 +2,7 @@
 name = "mitmproxy-rs"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A Rust-based MITM proxy with WASM plugin system"
 license = "MIT"
 
@@ -62,23 +62,27 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 
+# HTML parsing
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
+
 # Template engine
 askama = "0.12"
 askama_axum = "0.4"
 
 # Configuration
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.5.41", features = ["derive"] }
+markup5ever = "0.35.0"
 
-[workspace]
-members = [
-    "plugins/sdk",
-    "plugins/examples/logger",
-]
+[lib]
+name = "mitmproxy_rs"
+path = "src/lib.rs"
+
+[dev-dependencies]
+# Test dependencies
+tokio-test = "0.4"
 
 [[bin]]
 name = "mitm-proxy"
 path = "src/main.rs"
 
-[profile.release]
-opt-level = "s"
-lto = true

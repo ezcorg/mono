@@ -1,8 +1,6 @@
 use super::{CertError, CertResult};
-use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum CertificateFormat {
@@ -118,7 +116,7 @@ impl CertificateGenerator {
             .map_err(|_| CertError::InvalidFormat)
     }
 
-    fn create_mobileconfig_xml(cert_base64: &str, device_info: &DeviceInfo) -> String {
+    fn create_mobileconfig_xml(cert_base64: &str, _device_info: &DeviceInfo) -> String {
         let uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
         let payload_uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
 
@@ -218,7 +216,7 @@ pub struct DeviceInfo {
 
 #[derive(Debug, Clone)]
 pub enum Platform {
-    iOS,
+    IOs,
     Android,
     Windows,
     MacOS,
@@ -240,7 +238,7 @@ impl DeviceInfo {
         let ua = user_agent.to_lowercase();
 
         let platform = if ua.contains("iphone") || ua.contains("ipad") {
-            Platform::iOS
+            Platform::IOs
         } else if ua.contains("android") {
             Platform::Android
         } else if ua.contains("windows") {
@@ -274,7 +272,7 @@ impl DeviceInfo {
 
     pub fn recommended_format(&self) -> CertificateFormat {
         match self.platform {
-            Platform::iOS => CertificateFormat::MobileConfig,
+            Platform::IOs => CertificateFormat::MobileConfig,
             Platform::Android => CertificateFormat::Der,
             Platform::Windows => CertificateFormat::P12,
             Platform::MacOS | Platform::Linux => CertificateFormat::Pem,

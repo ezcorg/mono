@@ -12,7 +12,7 @@ pub struct IndexTemplate {
 impl IndexTemplate {
     pub fn new(device_info: &DeviceInfo) -> Self {
         let platform_name = match device_info.platform {
-            Platform::iOS => "iOS",
+            Platform::IOs => "iOS",
             Platform::Android => "Android",
             Platform::Windows => "Windows",
             Platform::MacOS => "macOS",

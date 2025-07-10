@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use wasmtime::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpRequest {
@@ -50,22 +49,22 @@ pub enum PluginAction {
 pub enum WasmError {
     #[error("Plugin execution failed: {0}")]
     Execution(#[from] wasmtime::Error),
-    
+
     #[error("Plugin timeout")]
     Timeout,
-    
+
     #[error("Plugin not found: {0}")]
     NotFound(String),
-    
+
     #[error("Invalid plugin format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("Memory limit exceeded")]
     MemoryLimit,
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Memory access error: {0}")]
     MemoryAccess(String),
 }
@@ -133,7 +132,7 @@ impl EventType {
             EventType::ConnectionClose => "connection_close",
         }
     }
-    
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "request_start" => Some(EventType::RequestStart),
@@ -180,7 +179,7 @@ impl PluginState {
             logs: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     pub async fn log(&self, level: LogLevel, plugin: &str, message: &str) {
         let entry = LogEntry {
             timestamp: chrono::Utc::now(),
@@ -188,27 +187,27 @@ impl PluginState {
             plugin: plugin.to_string(),
             message: message.to_string(),
         };
-        
+
         let mut logs = self.logs.write().await;
         logs.push(entry);
-        
+
         // Keep only last 1000 log entries
         if logs.len() > 1000 {
             let excess = logs.len() - 1000;
             logs.drain(0..excess);
         }
     }
-    
+
     pub async fn get_logs(&self) -> Vec<LogEntry> {
         let logs = self.logs.read().await;
         logs.clone()
     }
-    
+
     pub async fn set_storage(&self, key: &str, value: serde_json::Value) {
         let mut storage = self.storage.write().await;
         storage.insert(key.to_string(), value);
     }
-    
+
     pub async fn get_storage(&self, key: &str) -> Option<serde_json::Value> {
         let storage = self.storage.read().await;
         storage.get(key).cloned()

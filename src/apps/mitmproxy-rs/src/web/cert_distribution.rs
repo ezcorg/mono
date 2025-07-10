@@ -1,5 +1,5 @@
-use crate::cert::{CertificateAuthority, CertificateGenerator, CertificateFormat};
-use crate::cert::generator::{DeviceInfo, CertificateBundle};
+use crate::cert::generator::{CertificateBundle, DeviceInfo};
+use crate::cert::{CertificateAuthority, CertificateFormat, CertificateGenerator};
 use anyhow::Result;
 use axum::{
     extract::{Query, State},
@@ -22,11 +22,12 @@ pub async fn handle_cert_download(
     device_info: DeviceInfo,
 ) -> Result<Response, StatusCode> {
     debug!("Certificate download request: {:?}", query);
-    
+
     // Get root certificate
-    let cert_pem = ca.get_root_certificate_pem()
+    let cert_pem = ca
+        .get_root_certificate_pem()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+
     // Determine format
     let format = if let Some(fmt) = query.format {
         match fmt.as_str() {
@@ -39,11 +40,11 @@ pub async fn handle_cert_download(
     } else {
         device_info.recommended_format()
     };
-    
+
     // Generate certificate bundle
     let bundle = CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+
     // Return file download
     if query.download.unwrap_or(false) {
         Ok((
@@ -56,19 +57,16 @@ pub async fn handle_cert_download(
                 ),
             ],
             bundle.data,
-        ).into_response())
+        )
+            .into_response())
     } else {
         // Return instructions page
         let html = generate_instructions_html(&bundle, &device_info);
-        Ok((
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "text/html")],
-            html,
-        ).into_response())
+        Ok((StatusCode::OK, [(header::CONTENT_TYPE, "text/html")], html).into_response())
     }
 }
 
-fn generate_instructions_html(bundle: &CertificateBundle, device_info: &DeviceInfo) -> String {
+fn generate_instructions_html(bundle: &CertificateBundle, _device_info: &DeviceInfo) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">

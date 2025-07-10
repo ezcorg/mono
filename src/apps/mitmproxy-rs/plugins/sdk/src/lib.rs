@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Re-export for convenience
+pub use paste;
 pub use serde_json;
 
 // Memory allocator for WASM
@@ -52,6 +53,48 @@ pub enum PluginResult {
     Block(String),
     Redirect(String),
     ModifyData(Vec<u8>),
+}
+
+/// Represents different types of parsed content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ParsedContent {
+    Json(serde_json::Value),
+    Html(HtmlDocument),
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+/// Simplified HTML document representation for plugins
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlDocument {
+    pub title: Option<String>,
+    pub meta: HashMap<String, String>,
+    pub links: Vec<HtmlLink>,
+    pub forms: Vec<HtmlForm>,
+    pub scripts: Vec<String>,
+    pub text_content: String,
+    pub raw_html: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlLink {
+    pub href: String,
+    pub rel: Option<String>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlForm {
+    pub action: Option<String>,
+    pub method: String,
+    pub inputs: Vec<HtmlInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtmlInput {
+    pub name: Option<String>,
+    pub input_type: String,
+    pub value: Option<String>,
 }
 
 // Log levels
@@ -269,7 +312,7 @@ macro_rules! plugin_metadata {
 #[macro_export]
 macro_rules! plugin_event_handler {
     ($event:expr, $handler:expr) => {
-        paste::paste! {
+        $crate::paste::paste! {
             #[no_mangle]
             pub extern "C" fn [<on_ $event>](context_ptr: i32, context_len: i32) -> i32 {
                 let context_bytes = unsafe {
@@ -327,5 +370,88 @@ macro_rules! log_info {
 macro_rules! log_debug {
     ($($arg:tt)*) => {
         $crate::PluginApi::log($crate::LogLevel::Debug, &format!($($arg)*));
+    };
+}
+
+// Convenience macros for JSON and HTML content handlers
+#[macro_export]
+macro_rules! json_handler {
+    ($export_name:expr, $handler_fn:ident) => {
+        $crate::paste::paste! {
+            #[no_mangle]
+            pub extern "C" fn [<$export_name>](context_ptr: i32, context_len: i32, json_ptr: i32, json_len: i32) -> i32 {
+                let context_bytes = unsafe {
+                    std::slice::from_raw_parts(context_ptr as *const u8, context_len as usize)
+                };
+
+                let json_bytes = unsafe {
+                    std::slice::from_raw_parts(json_ptr as *const u8, json_len as usize)
+                };
+
+                let context: $crate::RequestContext = match $crate::serde_json::from_slice(context_bytes) {
+                    Ok(ctx) => ctx,
+                    Err(_) => return 0,
+                };
+
+                let json_value: $crate::serde_json::Value = match $crate::serde_json::from_slice(json_bytes) {
+                    Ok(val) => val,
+                    Err(_) => return 0,
+                };
+
+                let result = $handler_fn(context, json_value);
+                let json = $crate::serde_json::to_vec(&result).unwrap_or_default();
+                let total_len = json.len() + 4;
+                let ptr = $crate::alloc(total_len as i32);
+
+                unsafe {
+                    let len_bytes = (json.len() as u32).to_le_bytes();
+                    std::ptr::copy_nonoverlapping(len_bytes.as_ptr(), ptr, 4);
+                    std::ptr::copy_nonoverlapping(json.as_ptr(), ptr.add(4), json.len());
+                }
+
+                ptr as i32
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! html_handler {
+    ($export_name:expr, $handler_fn:ident) => {
+        $crate::paste::paste! {
+            #[no_mangle]
+            pub extern "C" fn [<$export_name>](context_ptr: i32, context_len: i32, html_ptr: i32, html_len: i32) -> i32 {
+                let context_bytes = unsafe {
+                    std::slice::from_raw_parts(context_ptr as *const u8, context_len as usize)
+                };
+
+                let html_bytes = unsafe {
+                    std::slice::from_raw_parts(html_ptr as *const u8, html_len as usize)
+                };
+
+                let context: $crate::RequestContext = match $crate::serde_json::from_slice(context_bytes) {
+                    Ok(ctx) => ctx,
+                    Err(_) => return 0,
+                };
+
+                let html_doc: $crate::HtmlDocument = match $crate::serde_json::from_slice(html_bytes) {
+                    Ok(doc) => doc,
+                    Err(_) => return 0,
+                };
+
+                let result = $handler_fn(context, html_doc);
+                let json = $crate::serde_json::to_vec(&result).unwrap_or_default();
+                let total_len = json.len() + 4;
+                let ptr = $crate::alloc(total_len as i32);
+
+                unsafe {
+                    let len_bytes = (json.len() as u32).to_le_bytes();
+                    std::ptr::copy_nonoverlapping(len_bytes.as_ptr(), ptr, 4);
+                    std::ptr::copy_nonoverlapping(json.as_ptr(), ptr.add(4), json.len());
+                }
+
+                ptr as i32
+            }
+        }
     };
 }

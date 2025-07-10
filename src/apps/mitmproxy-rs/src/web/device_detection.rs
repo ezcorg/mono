@@ -6,7 +6,7 @@ pub fn detect_device_from_user_agent(user_agent: &str) -> DeviceInfo {
 
 pub fn get_platform_name(platform: &Platform) -> &'static str {
     match platform {
-        Platform::iOS => "iOS",
+        Platform::IOs => "iOS",
         Platform::Android => "Android",
         Platform::Windows => "Windows",
         Platform::MacOS => "macOS",
@@ -26,9 +26,9 @@ pub fn get_browser_name(browser: &Browser) -> &'static str {
 }
 
 pub fn is_mobile_device(platform: &Platform) -> bool {
-    matches!(platform, Platform::iOS | Platform::Android)
+    matches!(platform, Platform::IOs | Platform::Android)
 }
 
 pub fn supports_mobileconfig(platform: &Platform) -> bool {
-    matches!(platform, Platform::iOS | Platform::MacOS)
+    matches!(platform, Platform::IOs | Platform::MacOS)
 }

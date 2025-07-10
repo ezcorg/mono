@@ -6,6 +6,7 @@ use tracing::{info, warn};
 
 mod cert;
 mod config;
+mod content;
 mod proxy;
 mod wasm;
 mod web;
