@@ -1,0 +1,10 @@
+package component:simple-handler;
+
+world imports {
+    include wasi:http/imports@0.2.6;
+}
+
+world http-proxy {
+    export wasi:http/incoming-handler;
+    import wasi:http/outgoing-handler;
+}

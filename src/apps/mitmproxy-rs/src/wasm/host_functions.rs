@@ -1,11 +1,27 @@
 use super::{PluginState, RequestContext, WasmResult};
 use std::sync::Arc;
+use wasmtime::component::ResourceTable;
 use wasmtime::*;
+use wasmtime_wasi::p2::{IoView, WasiCtx, WasiView};
 
 // Host state that plugins can access
 pub struct WasmState {
     pub plugin_state: Arc<PluginState>,
     pub context: RequestContext,
+    pub wasi: WasiCtx,
+    pub table: ResourceTable,
+}
+
+impl IoView for WasmState {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+}
+
+impl WasiView for WasmState {
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.wasi
+    }
 }
 
 pub fn add_to_linker(linker: &mut Linker<WasmState>) -> WasmResult<()> {

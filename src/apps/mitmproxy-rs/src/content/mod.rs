@@ -1,7 +1,7 @@
 pub mod handlers;
 pub mod parser;
 
-pub use handlers::{ContentHandler, ContentHandlerManager, HandlerResult};
+pub use handlers::{ContentHandlerManager};
 pub use parser::ContentParser;
 
 use serde::{Deserialize, Serialize};

@@ -1,0 +1,21 @@
+[package]
+name = "simple-handler"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.43.0", features = ["async"] }
+wasi = "0.13.0"
+
+
+[package.metadata.component]
+package = "component:simple-handler"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = "0.2.6"
+

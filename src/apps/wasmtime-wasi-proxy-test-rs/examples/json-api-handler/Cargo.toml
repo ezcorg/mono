@@ -1,0 +1,21 @@
+[package]
+name = "json-api-handler"
+edition = "2021"
+version = "0.1.0"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.43.0"
+
+[build-dependencies]
+wit-bindgen = "0.43.0"
+
+[package.metadata.component]
+package = "component:json-api-handler"
+
+[package.metadata.component.dependencies]
+"wasi:http" = { path = "wit" }

@@ -1,0 +1,14 @@
+[package]
+name = "wasmtime-wasi-proxy-test-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+hyper = { version = "1", features = ["http1", "server"] }
+tokio = { version = "1", features = ["full"] }
+wasmtime = { version = "34.0.1", features = ["component-model-async", "async", "component-model"] }
+wasmtime-wasi = { version = "34.0.1" }
+wasmtime-wasi-http = { version = "34.0.1" }
+http-body-util = "0.1"
+futures-util = "0.3"

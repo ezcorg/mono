@@ -12,7 +12,34 @@
             "skipFiles": [
                 "<node_internals>/**", // Skips stepping into Node.js internal code
             ]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Wasmtime WASI Proxy (LLDB)",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=wasmtime-wasi-proxy-test-rs",
+                    "--package=wasmtime-wasi-proxy-test-rs"
+                ],
+                "filter": {
+                    "name": "wasmtime-wasi-proxy-test-rs",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "${workspaceFolder}/src/apps/wasi-proxy-test-rs/components/proxy/target/wasm32-wasip2/release/proxy.wasm"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_LOG": "debug",
+                "RUST_BACKTRACE": "full"
+            },
+            "sourceLanguages": [
+                "rust"
+            ],
+            "terminal": "integrated"
         }
-        // ... any other configurations ...
     ]
 }

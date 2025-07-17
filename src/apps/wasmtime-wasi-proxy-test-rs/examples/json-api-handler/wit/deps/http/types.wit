@@ -1,0 +1,167 @@
+package wasi:http@0.2.0;
+
+interface types {
+  variant method {
+    get,
+    head,
+    post,
+    put,
+    delete,
+    connect,
+    options,
+    trace,
+    patch,
+    other(string),
+  }
+
+  variant scheme {
+    http,
+    https,
+    other(string),
+  }
+
+  type headers = list<tuple<string, list<u8>>>;
+
+  resource fields {
+    constructor();
+    static from-list: func(entries: headers) -> fields;
+    get: func(name: string) -> list<list<u8>>;
+    has: func(name: string) -> bool;
+    set: func(name: string, value: list<list<u8>>);
+    delete: func(name: string);
+    append: func(name: string, value: list<u8>);
+    entries: func() -> headers;
+    clone: func() -> fields;
+  }
+
+  resource incoming-request {
+    method: func() -> method;
+    path-with-query: func() -> option<string>;
+    scheme: func() -> option<scheme>;
+    authority: func() -> option<string>;
+    headers: func() -> fields;
+    consume: func() -> result<incoming-body>;
+  }
+
+  resource outgoing-request {
+    constructor(headers: fields);
+    body: func() -> result<outgoing-body>;
+    method: func() -> method;
+    set-method: func(method: method) -> result<_, error-code>;
+    path-with-query: func() -> option<string>;
+    set-path-with-query: func(path-with-query: option<string>) -> result<_, error-code>;
+    scheme: func() -> option<scheme>;
+    set-scheme: func(scheme: option<scheme>) -> result<_, error-code>;
+    authority: func() -> option<string>;
+    set-authority: func(authority: option<string>) -> result<_, error-code>;
+    headers: func() -> fields;
+  }
+
+  resource request-options {
+    constructor();
+    connect-timeout: func() -> option<duration>;
+    set-connect-timeout: func(duration: option<duration>) -> result<_, error-code>;
+    first-byte-timeout: func() -> option<duration>;
+    set-first-byte-timeout: func(duration: option<duration>) -> result<_, error-code>;
+    between-bytes-timeout: func() -> option<duration>;
+    set-between-bytes-timeout: func(duration: option<duration>) -> result<_, error-code>;
+  }
+
+  resource response-outparam {
+    set: func(response: result<outgoing-response, error-code>);
+  }
+
+  type status-code = u16;
+
+  resource incoming-response {
+    status: func() -> status-code;
+    headers: func() -> fields;
+    consume: func() -> result<incoming-body>;
+  }
+
+  resource incoming-body {
+    stream: func() -> result<input-stream>;
+    static finish: func(this: incoming-body) -> future-trailers;
+  }
+
+  resource future-trailers {
+    subscribe: func() -> pollable;
+    get: func() -> option<result<option<trailers>, error-code>>;
+  }
+
+  resource outgoing-response {
+    constructor(headers: fields);
+    status-code: func() -> status-code;
+    set-status-code: func(status-code: status-code) -> result<_, error-code>;
+    headers: func() -> fields;
+    body: func() -> result<outgoing-body>;
+  }
+
+  resource outgoing-body {
+    write: func() -> result<output-stream>;
+    static finish: func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+  }
+
+  type trailers = fields;
+  type input-stream = wasi:io/streams@0.2.0.input-stream;
+  type output-stream = wasi:io/streams@0.2.0.output-stream;
+  type pollable = wasi:io/poll@0.2.0.pollable;
+  type duration = wasi:clocks/monotonic-clock@0.2.0.duration;
+
+  variant error-code {
+    dns-timeout,
+    dns-error(dns-error-payload),
+    destination-not-found,
+    destination-unavailable,
+    destination-ip-prohibited,
+    destination-ip-unroutable,
+    connection-refused,
+    connection-terminated,
+    connection-timeout,
+    connection-read-timeout,
+    connection-write-timeout,
+    connection-limit-reached,
+    tls-protocol-error,
+    tls-certificate-error,
+    tls-alert-received(tls-alert-received-payload),
+    http-request-denied,
+    http-request-length-required,
+    http-request-body-size(option<u64>),
+    http-request-method-invalid,
+    http-request-uri-invalid,
+    http-request-uri-too-long,
+    http-request-header-section-size(option<u32>),
+    http-request-header-size(option<field-size-payload>),
+    http-request-trailer-section-size(option<u32>),
+    http-request-trailer-size(field-size-payload),
+    http-response-incomplete,
+    http-response-header-section-size(option<u32>),
+    http-response-header-size(field-size-payload),
+    http-response-body-size(option<u64>),
+    http-response-trailer-section-size(option<u32>),
+    http-response-trailer-size(field-size-payload),
+    http-response-transfer-coding(option<string>),
+    http-response-content-coding(option<string>),
+    http-response-timeout,
+    http-upgrade-failed,
+    http-protocol-error,
+    loop-detected,
+    configuration-error,
+    internal-error(option<string>),
+  }
+
+  record dns-error-payload {
+    rcode: option<string>,
+    info-code: option<u16>,
+  }
+
+  record tls-alert-received-payload {
+    alert-id: option<u8>,
+    alert-message: option<string>,
+  }
+
+  record field-size-payload {
+    field-name: option<string>,
+    field-size: option<u32>,
+  }
+}

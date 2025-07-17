@@ -1,9 +1,10 @@
+pub mod bindings;
 pub mod host_functions;
 pub mod plugin_manager;
 pub mod runtime;
 
 pub use plugin_manager::PluginManager;
-pub use runtime::{PluginContext, PluginEvent, PluginResult, WasmPlugin};
+pub use runtime::WasmPlugin;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

@@ -1,0 +1,7 @@
+package component:minimal-wasi-plugin;
+
+world plugin {
+    export get-metadata: func() -> string;
+    export on-request: func(request: string) -> string;
+    export on-response: func(response: string) -> string;
+}

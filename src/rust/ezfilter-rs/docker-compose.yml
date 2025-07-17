@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  ollama:
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama.yml  # or just Dockerfile if you name it that
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "ollama serve & pid=$$!; until curl -f http://localhost:11434 > /dev/null 2>&1; do sleep 1; done; ollama pull llama3; wait $$pid"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags | grep -q 'llama3:latest'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  tester:
+    build: .
+    container_name: ezfilter-tester
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - API_ENDPOINT=http://ollama:11434/v1/chat/completions
+      - MODEL=llama3
+    command: tester
+
+volumes:
+  ollama-data:

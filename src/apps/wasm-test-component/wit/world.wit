@@ -1,0 +1,5 @@
+package component:wasm-test-component;
+
+world example {
+    include wasi:http/proxy@0.2.6;
+}

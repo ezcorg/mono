@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    html {
+        font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
+        scroll-behavior: smooth;
+    }
+
+    body {
+        @apply bg-black text-off-white;
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+    }
+
+    ::selection {
+        @apply bg-off-white text-black;
+    }
+}
+
+@layer components {}
+
+@layer utilities {}
