@@ -1,6 +1,6 @@
 {
   "name": "@ezdevlol/codeblock",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "type": "module",
   "module": "dist/index.js",
   "main": "dist/index.js",
@@ -52,6 +52,7 @@
     "@types/parse-gitignore": "^1.0.2",
     "@types/sharedworker": "^0.0.150",
     "multimatch": "^7.0.0",
+    "process": "^0.11.10",
     "tsx": "^4.19.4",
     "vite": "^6.3.4"
   },

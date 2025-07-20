@@ -38,6 +38,7 @@ export const configCompartment = new Compartment();
 export const languageSupportCompartment = new Compartment();
 export const languageServerCompartment = new Compartment();
 export const indentationCompartment = new Compartment();
+export const readOnlyCompartment = new Compartment();
 
 // Effect to update search results
 const setSearchResults = StateEffect.define<HighlightedSearch[]>();
@@ -63,11 +64,75 @@ const toolbarPanel = (view: EditorView): Panel => {
     const dom = document.createElement("div");
     dom.className = "cm-toolbar-panel";
 
+    // Container for input and loading indicator
+    const inputContainer = document.createElement("div");
+    inputContainer.className = "cm-toolbar-input-container";
+    inputContainer.style.cssText = "position: relative; display: flex; align-items: center;";
+
     const input = document.createElement("input");
     input.type = "text";
     input.value = file;
     input.className = "cm-toolbar-input";
-    dom.appendChild(input)
+    inputContainer.appendChild(input);
+
+    // Loading spinner element
+    const loadingSpinner = document.createElement("div");
+    loadingSpinner.className = "cm-loading-spinner";
+    loadingSpinner.style.cssText = `
+        display: none;
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        border-width: 2px;
+        border-style: solid;
+        border-color: rgb(42, 42, 47) rgb(243, 243, 243) rgb(243, 243, 243);
+        border-image: none;
+        border-radius: 50%;
+        animation: 1s linear infinite spin;
+        z-index: 10;
+    `;
+
+    // Function to position spinner next to text content
+    const positionSpinner = () => {
+        const value = input.value || '';
+        // Create a temporary span to measure text width
+        const span = document.createElement('span');
+        span.style.cssText = `
+            position: absolute;
+            visibility: hidden;
+            white-space: nowrap;
+            font-family: monospace;
+            font-size: 16px;
+            padding: 0;
+        `;
+        span.textContent = value;
+        document.body.appendChild(span);
+        const textWidth = span.offsetWidth;
+        document.body.removeChild(span);
+
+        // Position spinner right after the text content
+        loadingSpinner.style.left = (15 + textWidth + 4) + 'px'; // 15px padding + text width + 4px gap
+    };
+
+    // Position spinner initially
+    positionSpinner();
+
+    inputContainer.appendChild(loadingSpinner);
+
+    // Add CSS animation for spinner
+    if (!document.querySelector('#cm-spinner-styles')) {
+        const style = document.createElement('style');
+        style.id = 'cm-spinner-styles';
+        style.textContent = `
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    dom.appendChild(inputContainer);
 
     // Dropdown for search results
     const resultsList = document.createElement("ul");
@@ -76,13 +141,17 @@ const toolbarPanel = (view: EditorView): Panel => {
 
     let selectedIndex = 0;
 
-    // Handle input changes
+    // Handle input changes - combined positioning and search
     input.addEventListener("input", async (event) => {
         const query = (event.target as HTMLInputElement).value;
         selectedIndex = 0;
 
+        // Position spinner after text changes
+        positionSpinner();
+
         // Perform search
         const results = (index?.search(query, { fuzzy: true, prefix: true }) || []).slice(0, 1000);
+        console.log('performing search', { results, query })
 
         // Dispatch update to searchResultsField
         view.dispatch({ effects: setSearchResults.of(results) });
@@ -123,9 +192,13 @@ const toolbarPanel = (view: EditorView): Panel => {
 
     function selectResult(result: HighlightedSearch) {
         input.value = result.id;
+        positionSpinner(); // Reposition spinner after setting new value
         view.dispatch({
             effects: setSearchResults.of([]) // Clear search results
         });
+
+        // Show loading spinner
+        loadingSpinner.style.display = 'block';
 
         // Update the facet with the selected file
         view.dispatch({
@@ -135,6 +208,20 @@ const toolbarPanel = (view: EditorView): Panel => {
             }))
         });
     }
+
+    // Function to show/hide loading spinner and disable/enable editor
+    function setLoading(isLoading: boolean) {
+        loadingSpinner.style.display = isLoading ? 'block' : 'none';
+        // Defer the readOnly state change to avoid conflicts with ongoing updates
+        setTimeout(() => {
+            view.dispatch({
+                effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(isLoading))
+            });
+        }, 0);
+    }
+
+    // Expose setLoading function to the view for external access
+    (view as any)._toolbarSetLoading = setLoading;
 
     return {
         dom,
@@ -193,6 +280,7 @@ export const codeblock = ({ content, fs, cwd, file, language, toolbar = true, in
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
+        readOnlyCompartment.of(EditorState.readOnly.of(false)),
         tooltips({
             position: "fixed",
         }),
@@ -265,6 +353,11 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
 
         console.debug('opening: ', path);
 
+        // Show loading spinner if toolbar is available
+        if ((view as any)._toolbarSetLoading) {
+            (view as any)._toolbarSetLoading(true);
+        }
+
         try {
             const content = await fs.readFile(path);
             console.debug('file content', { content });
@@ -298,6 +391,11 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             console.log('after watch call');
         } catch (error) {
             console.error("Failed to initialize codeblock:", error);
+        } finally {
+            // Hide loading spinner
+            if ((view as any)._toolbarSetLoading) {
+                (view as any)._toolbarSetLoading(false);
+            }
         }
     }
 

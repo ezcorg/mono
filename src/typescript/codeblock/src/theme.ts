@@ -4,13 +4,20 @@ export const codeblockTheme = EditorView.theme({
     '.cm-toolbar-input': {
         fontFamily: 'monospace',
         lineHeight: 1.4,
-        flex: 1,
         border: 'none',
         background: 'transparent',
         outline: 'none',
         fontSize: '16px',
         color: 'white',
-        padding: '0 0 0 15px'
+        padding: '0 30px 0 15px',
+        width: '100%',
+        flex: 1
+    },
+    '.cm-toolbar-input-container': {
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        flex: 1
     },
     '.cm-toolbar-panel': {
         padding: '0',

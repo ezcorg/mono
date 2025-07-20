@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './components/editor';
+import { CodeblockFS, SearchIndex } from '@ezdevlol/codeblock';
+import { CborUint8Array } from '@jsonjoy.com/json-pack/lib/cbor/types';
+import { SnapshotNode } from 'memfs/snapshot';
 
 const initialMarkdown = `
 # @ezdevlol/markdown-editor
@@ -54,23 +57,51 @@ function App() {
   const [editor, setEditor] = useState<MarkdownEditor | null>(null);
   const ref = useRef(null);
 
+  async function loadFs() {
+    const response = await fetch('/snapshot.bin');
+    if (!response.ok) {
+      throw new Error(`Failed to load snapshot: ${response.statusText}`);
+    }
+    const buffer = await response.arrayBuffer();
+    console.debug('Got snapshot', buffer);
+
+    const fs = await CodeblockFS.worker(buffer as CborUint8Array<SnapshotNode>);
+
+    // Generate or load search index
+    try {
+      const index = await SearchIndex.get(fs, '.codeblock/index.json');
+      console.log('Search index ready with', index, 'documents');
+      // Attach the search index to the filesystem object so it can be accessed by the codeblock extension
+      (fs as any).searchIndex = index;
+    } catch (error) {
+      console.warn('Failed to create search index:', error);
+      // Set a null search index if creation fails
+      (fs as any).searchIndex = null;
+    }
+
+    return fs;
+  }
+
   useEffect(() => {
 
     let newEditor: MarkdownEditor | null = null;
 
     if (ref.current && !editor) {
-      newEditor = createEditor({
-        element: ref.current,
-        content: initialMarkdown,
-        onUpdate: ({ editor }) => {
-          const json = editor.getJSON();
-          const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();
-          setMarkdownContent(markdown);
-          console.log("Editor JSON:", json);
-          console.log("Editor Markdown:", markdown);
-        },
+      loadFs().then(fs => {
+        console.debug('Loaded filesystem', fs);
+        newEditor = createEditor({
+          element: ref.current!,
+          content: initialMarkdown,
+          onUpdate: ({ editor }) => {
+            const json = editor.getJSON();
+            const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();
+            setMarkdownContent(markdown);
+            console.log("Editor JSON:", json);
+            console.log("Editor Markdown:", markdown);
+          },
+        });
+        setEditor(newEditor);
       });
-      setEditor(newEditor);
     }
 
     return () => {

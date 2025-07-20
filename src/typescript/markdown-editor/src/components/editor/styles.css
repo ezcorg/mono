@@ -113,7 +113,7 @@ li[data-checked="true"]>div>p {
 }
 
 /* Code Block Styling (Unchanged) */
-.ProseMirror pre {
+.ProseMirror> :not(.cm-editor) pre {
     background: #f4f4f4;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -123,14 +123,14 @@ li[data-checked="true"]>div>p {
     word-wrap: break-word;
 }
 
-.ProseMirror code {
+.ProseMirror> :not(.cm-editor) code {
     font-family: monospace;
     background: #f4f4f4;
     padding: 0.1em 0.3em;
     border-radius: 3px;
 }
 
-.ProseMirror pre>code {
+.ProseMirror> :not(.cm-editor) pre>code {
     background: none;
     padding: 0;
     border-radius: 0;

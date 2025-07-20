@@ -1,6 +1,6 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
-import { basicSetup, codeblock, CodeblockFS, extToLanguageMap } from '@ezdevlol/codeblock'
+import { basicSetup, codeblock, CodeblockFS, extToLanguageMap, SearchIndex } from '@ezdevlol/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
@@ -239,17 +239,27 @@ export const ExtendedCodeblock = Node.create({
             // Initialize filesystem worker and update extensions asynchronously
             getFileSystemWorker().then(fs => {
                 fsWorker = fs;
-                // Reconfigure with codeblock extension once fs is ready
-                const newState = EditorState.create({
-                    doc: node.textContent || '',
-                    extensions: [
-                        keymap.of(codemirrorKeymap()),
-                        basicSetup,
-                        codeblock({ content: node.textContent, fs: fsWorker, language: node.attrs.language, file: node.attrs.file, toolbar: !!node.attrs.file, cwd: '/' }),
-                        EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
-                    ]
-                });
-                cm.setState(newState);
+                SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
+                    // Reconfigure with codeblock extension once fs is ready
+                    const newState = EditorState.create({
+                        doc: node.textContent || '',
+                        extensions: [
+                            keymap.of(codemirrorKeymap()),
+                            basicSetup,
+                            codeblock({
+                                content: node.textContent,
+                                fs: fsWorker,
+                                language: node.attrs.language,
+                                file: node.attrs.file,
+                                toolbar: !!node.attrs.file,
+                                cwd: '/',
+                                index
+                            }),
+                            EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
+                        ]
+                    });
+                    cm.setState(newState);
+                })
             }).catch(error => {
                 console.error('Failed to initialize filesystem worker:', error);
             });

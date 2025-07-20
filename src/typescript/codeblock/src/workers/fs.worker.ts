@@ -1,8 +1,8 @@
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../rpc/serde';
 import { MountArgs, MountResult } from "../types";
-import { SnapshotNode } from 'memfs/snapshot';
-import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
+import type { SnapshotNode } from 'memfs/snapshot';
+import type { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { Snapshot } from "../utils";
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)

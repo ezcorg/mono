@@ -65,11 +65,19 @@ export class SearchIndex {
 
     async save(fs: Fs, path: string) {
         try {
-            await fs.mkdir(path, { recursive: true })
-            await fs.writeFile(path, JSON.stringify(this.index))
+            // Extract directory from the file path and create it
+            const dir = path.substring(0, path.lastIndexOf('/'));
+            if (dir) {
+                await fs.mkdir(dir, { recursive: true });
+            }
+            await fs.writeFile(path, JSON.stringify(this.index));
         }
-        catch { console.error }
-        finally { return this; }
+        catch (error) {
+            console.error('Failed to save search index:', error);
+        }
+        finally {
+            return this;
+        }
     }
 
     static from(fs: string, fields: IndexFields) {
@@ -78,8 +86,8 @@ export class SearchIndex {
     }
 
     static async get(fs: Fs, path: string, fields: IndexFields = defaultFields): Promise<SearchIndex> {
-        // const index = await fs.exists(path) ? await fs.readFile(path) : null
-        const index = null;
+        const index = await fs.exists(path) ? await fs.readFile(path) : null
+        // const index = null;
         return index ?
             SearchIndex.from(index, fields) :
             SearchIndex.build(fs, { fields, idField: 'path' }).then(index => index.save(fs, path))
@@ -89,6 +97,7 @@ export class SearchIndex {
         const index = new MiniSearch({ ...rest })
 
         for await (const path of CodeblockFS.walk(fs, '/')) {
+            console.log('building search index: ', path);
             if (!filter(path)) {
                 continue;
             }

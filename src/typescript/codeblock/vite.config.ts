@@ -69,6 +69,7 @@ export default async function getConfig() {
         resolve: {
             alias: {
                 path: 'path-browserify',
+                process: 'process/browser'
             }
         },
         build: {
@@ -94,7 +95,7 @@ export default async function getConfig() {
                 output: './public/snapshot.bin'
             }),
             nodePolyfills({
-                include: ['events']
+                include: ['events', 'process']
             }),
         ],
         server: {
