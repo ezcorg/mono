@@ -1,6 +1,3 @@
-[submodule "src/typescript/codemirror-languageserver"]
-	path = src/typescript/codemirror-languageserver
-	url = https://github.com/ezdevlol/codemirror-languageserver
 [submodule "src/typescript/memfs"]
 	path = src/typescript/memfs
 	url = https://github.com/ezdevlol/memfs
