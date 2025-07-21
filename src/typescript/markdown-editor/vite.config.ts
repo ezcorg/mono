@@ -107,7 +107,7 @@ export default async function getConfig() {
     plugins: [
       snapshot({
         gitignore: false,
-        exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'public/snapshot.bin', '.vite', '.turbo'],
+        exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo'],
         output: './public/snapshot.bin'
       }),
       nodePolyfills({

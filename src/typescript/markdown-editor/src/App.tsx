@@ -58,14 +58,7 @@ function App() {
   const ref = useRef(null);
 
   async function loadFs() {
-    const response = await fetch('/snapshot.bin');
-    if (!response.ok) {
-      throw new Error(`Failed to load snapshot: ${response.statusText}`);
-    }
-    const buffer = await response.arrayBuffer();
-    console.debug('Got snapshot', buffer);
-
-    const fs = await CodeblockFS.worker(buffer as CborUint8Array<SnapshotNode>);
+    const fs = await CodeblockFS.worker('/snapshot.bin');
 
     // Generate or load search index
     try {

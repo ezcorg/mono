@@ -3,7 +3,7 @@ import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from "../rpc/serde";
 import { FileSystem, FileType } from '@volar/language-service';
 import { URI } from 'vscode-uri'
-import type { mount } from '../workers/fs.worker';
+import type { mount, mountFromUrl } from '../workers/fs.worker';
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { SnapshotNode } from "memfs/snapshot";
 import { promises } from "node:fs";
@@ -163,19 +163,35 @@ export namespace CodeblockFS {
         }
     }
 
-    export const worker = async (buffer?: CborUint8Array<SnapshotNode>): Promise<Fs> => {
+    /**
+     * Create a filesystem worker with optional snapshot data.
+     *
+     * @param bufferOrUrl - Either a snapshot buffer or URL to a snapshot file.
+     *                     If a URL is provided, it will be loaded directly in the worker
+     *                     for better performance with large files.
+     */
+    export const worker = async (bufferOrUrl?: CborUint8Array<SnapshotNode> | string): Promise<Fs> => {
         const url = new URL('../workers/fs.worker.js', import.meta.url)
         console.log('Loading fs worker', url.href);
         const worker = new SharedWorker(url, { type: 'module' });
         worker.port.start()
-        const proxy = Comlink.wrap<{ mount: typeof mount }>(worker.port);
+        const proxy = Comlink.wrap<{ mount: typeof mount; mountFromUrl: typeof mountFromUrl }>(worker.port);
 
         let fs;
 
-        if (!buffer) {
+        if (!bufferOrUrl) {
+            // No buffer or URL provided - create empty filesystem
             ({ fs } = await proxy.mount({ mountPoint: '/' }));
+        } else if (typeof bufferOrUrl === 'string') {
+            // URL provided - use optimized mountFromUrl for better performance
+            ({ fs } = await proxy.mountFromUrl({
+                url: bufferOrUrl,
+                mountPoint: '/',
+                useStreaming: true
+            }));
         } else {
-            ({ fs } = await proxy.mount(Comlink.transfer({ buffer, mountPoint: "/" }, [buffer])));
+            // Buffer provided - use traditional mount method
+            ({ fs } = await proxy.mount(Comlink.transfer({ buffer: bufferOrUrl, mountPoint: "/" }, [bufferOrUrl])));
         }
         return Comlink.proxy(CodeblockFS.fromMemfs(fs))
     }

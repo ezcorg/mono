@@ -60,11 +60,58 @@ export const mount = async ({ buffer, mountPoint = '/' }: MountArgs): Promise<Mo
     return filesystem;
 }
 
+/**
+ * Optimized mount function that loads snapshots directly from URLs.
+ * This is much more efficient for large snapshots as it avoids transferring
+ * data through the main thread.
+ */
+export const mountFromUrl = async ({ url, mountPoint = '/', useStreaming = true }: {
+    url: string;
+    mountPoint?: string;
+    useStreaming?: boolean;
+}): Promise<MountResult> => {
+    let filesystem;
+
+    try {
+        const { fs } = await import('memfs');
+
+        console.log(`Loading and mounting filesystem snapshot from URL: ${url} at [${mountPoint}]...`);
+        const startTime = performance.now();
+
+        if (useStreaming) {
+            await Snapshot.loadAndMountStreaming(url, {
+                // @ts-ignore
+                fs,
+                path: mountPoint
+            });
+        } else {
+            await Snapshot.loadAndMount(url, {
+                // @ts-ignore
+                fs,
+                path: mountPoint
+            });
+        }
+
+        const endTime = performance.now();
+        console.log(`Snapshot loaded and mounted in ${Math.round(endTime - startTime)}ms`);
+
+        console.log('Returning proxy from worker', fs);
+        filesystem = Comlink.proxy({ fs });
+        filesystems.push(filesystem);
+
+    } catch (e) {
+        console.error('Error loading snapshot from URL:', e);
+        throw e;
+    }
+
+    return filesystem;
+}
+
 onconnect = async function (event) {
     const [port] = event.ports;
     console.log('workers/fs connected on port: ', port);
     port.addEventListener('close', () => {
         console.log('fs port closed')
     });
-    Comlink.expose({ mount }, port);
+    Comlink.expose({ mount, mountFromUrl }, port);
 }

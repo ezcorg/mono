@@ -10,3 +10,6 @@
 [submodule "src/apps/wasip3-prototyping"]
 	path = src/apps/wasip3-prototyping
 	url = https://github.com/ezdevlol/wasip3-prototyping
+[submodule "src/typescript/codemirror-languageserver"]
+	path = src/typescript/codemirror-languageserver
+	url = https://github.com/ezdevlol/codemirror-languageserver

@@ -18,7 +18,7 @@ const isNode = typeof process !== 'undefined' && process.versions?.node;
  * Compress data using gzip compression.
  * Uses Node.js zlib in Node.js environment, browser CompressionStream in browser.
  */
-const compressData = async (data: Uint8Array): Promise<Uint8Array> => {
+const compress = async (data: Uint8Array): Promise<Uint8Array> => {
     if (isNode) {
         // Node.js environment
         try {
@@ -83,7 +83,7 @@ const isGzipCompressed = (data: Uint8Array): boolean => {
     return data.length >= 2 && data[0] === 0x1f && data[1] === 0x8b;
 };
 
-const decompressData = async (data: Uint8Array): Promise<Uint8Array> => {
+const decompress = async (data: Uint8Array): Promise<Uint8Array> => {
     console.log('decompressData: Starting decompression, data length:', data.length);
     console.log('decompressData: First few bytes:', Array.from(data.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
 
@@ -209,7 +209,7 @@ export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     const snapshot = await Snapshot
         .take({ fs: fsPromises, path: root, filter })
         .then((snapshot) => encoder.encode(snapshot))
-        .then((encoded) => compressData(encoded));
+        .then((encoded) => compress(encoded));
     return snapshot;
 };
 
@@ -278,7 +278,7 @@ export namespace Snapshot {
             // Try to decompress the buffer first, then decode
             let decompressed: Uint8Array;
             try {
-                decompressed = await decompressData(uint8Buffer);
+                decompressed = await decompress(uint8Buffer);
                 console.log('Snapshot.mount: Successfully processed buffer, decompressed length:', decompressed.length);
             } catch (decompressError) {
                 console.warn('Snapshot.mount: Decompression failed, using original buffer:', decompressError);
@@ -301,6 +301,98 @@ export namespace Snapshot {
         } catch (error) {
             console.error('Snapshot.mount: Failed to mount snapshot:', error);
             console.error('Snapshot.mount: Error stack:', error.stack);
+            throw error;
+        }
+    }
+    /**
+     * Load and mount a snapshot directly from a URL in a web worker environment.
+     * This is more efficient for large snapshots as it avoids transferring data through the main thread.
+     */
+    export const loadAndMount = async (url: string, { fs, path = '/', separator = '/' }: SnapshotOptions): Promise<void> => {
+        try {
+            console.log('Snapshot.loadAndMount: Starting direct load from URL:', url);
+
+            // Fetch the snapshot data directly in the worker
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch snapshot: ${response.status} ${response.statusText}`);
+            }
+
+            console.log('Snapshot.loadAndMount: Response received, content-length:', response.headers.get('content-length'));
+
+            // Get the response as ArrayBuffer for better performance
+            const arrayBuffer = await response.arrayBuffer();
+            const uint8Buffer = new Uint8Array(arrayBuffer);
+
+            console.log('Snapshot.loadAndMount: Downloaded buffer length:', uint8Buffer.length);
+
+            // Use the existing mount logic
+            await Snapshot.mount(uint8Buffer as CborUint8Array<SnapshotNode>, { fs, path, separator });
+
+        } catch (error) {
+            console.error('Snapshot.loadAndMount: Failed to load and mount snapshot:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Load and mount a snapshot with streaming support for better performance with large files.
+     * This version processes the data in chunks as it arrives.
+     */
+    export const loadAndMountStreaming = async (url: string, { fs, path = '/', separator = '/' }: SnapshotOptions): Promise<void> => {
+        try {
+            console.log('Snapshot.loadAndMountStreaming: Starting streaming load from URL:', url);
+
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch snapshot: ${response.status} ${response.statusText}`);
+            }
+
+            if (!response.body) {
+                throw new Error('Response body is not available for streaming');
+            }
+
+            console.log('Snapshot.loadAndMountStreaming: Starting streaming download...');
+
+            // Collect all chunks
+            const chunks: Uint8Array[] = [];
+            const reader = response.body.getReader();
+            let totalLength = 0;
+
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    chunks.push(value);
+                    totalLength += value.length;
+
+                    // Log progress for large files
+                    if (totalLength % (5 * 1024 * 1024) === 0) {
+                        console.log(`Snapshot.loadAndMountStreaming: Downloaded ${Math.round(totalLength / (1024 * 1024))}MB`);
+                    }
+                }
+            } finally {
+                reader.releaseLock();
+            }
+
+            console.log('Snapshot.loadAndMountStreaming: Download complete, total length:', totalLength);
+
+            // Combine all chunks into a single buffer
+            const uint8Buffer = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+                uint8Buffer.set(chunk, offset);
+                offset += chunk.length;
+            }
+
+            console.log('Snapshot.loadAndMountStreaming: Combined buffer created, mounting...');
+
+            // Use the existing mount logic
+            await Snapshot.mount(uint8Buffer as CborUint8Array<SnapshotNode>, { fs, path, separator });
+
+        } catch (error) {
+            console.error('Snapshot.loadAndMountStreaming: Failed to load and mount snapshot:', error);
             throw error;
         }
     }

@@ -67,11 +67,18 @@ export interface Fs {
 
 export type FsMountOptions = {
     mount: (args: { buffer: ArrayBuffer }) => Promise<MountResult>;
+    mountFromUrl?: (args: { url: string; mountPoint?: string; useStreaming?: boolean }) => Promise<MountResult>;
 }
 
 export type MountArgs = {
     buffer?: CborUint8Array<SnapshotNode>;
     mountPoint?: string;
+}
+
+export type MountFromUrlArgs = {
+    url: string;
+    mountPoint?: string;
+    useStreaming?: boolean;
 }
 
 export type MountResult = {
