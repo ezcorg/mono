@@ -18,4 +18,4 @@ const fs = await loadFs()
 const parent = document.getElementById('editor') as HTMLDivElement;
 const path = '.codeblock/index.json'
 const index = await SearchIndex.get(fs, path)
-createCodeblock({ parent, fs, file: 'example.ts', language: 'javascript', toolbar: true, index });
+createCodeblock({ parent, fs, file: 'example.ts', toolbar: true, index });
