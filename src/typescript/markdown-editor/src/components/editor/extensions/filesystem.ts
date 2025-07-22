@@ -19,8 +19,17 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         }
     },
 
+    addStorage() {
+        return {
+            options: this.options,
+        }
+    },
+
     onCreate() {
         const { fs, filepath } = this.options
+
+        // Store options in editor storage for access by other components
+        this.storage.options = this.options
 
         if (fs && filepath) {
             fs.readFile(filepath)

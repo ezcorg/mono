@@ -362,23 +362,26 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             const content = await fs.readFile(path);
             console.debug('file content', { content });
             const ext = path.split('.').pop()?.toLowerCase();
-            const languageOrFromExt = language || languageFromExt(ext || '');
+            const languageOrFromExt = ext ? languageFromExt(ext) : (language || 'plaintext');
             const uri = `file:///${path}`
 
             let languageSupport = null;
             let lspExtension: LSPClientExtension = null;
+            const lspCompartment = [documentUri.of(uri), languageId.of(languageOrFromExt)]
+
             if (languageOrFromExt) {
                 languageSupport = await getLanguageSupport(languageOrFromExt);
                 lspExtension = await LSP.client(languageOrFromExt, path, fs);
+                if (lspExtension) lspCompartment.push(lspExtension);
             }
 
             const unit = getIndentationUnit(content);
-            // Step 3: Compose all changes into a single transaction
+            // Compose all changes into a single transaction
             view.dispatch({
                 changes: { from: 0, to: view.state.doc.length, insert: content },
                 effects: [
                     languageSupportCompartment.reconfigure(languageSupport || []),
-                    languageServerCompartment.reconfigure([lspExtension, documentUri.of(uri), languageId.of(languageOrFromExt)]),
+                    languageServerCompartment.reconfigure(lspCompartment),
                     indentationCompartment.reconfigure(indentUnit.of(unit)),
                 ]
             });

@@ -36,6 +36,8 @@
     "@tiptap/pm": "^2.11.9",
     "@tiptap/react": "^2.11.7",
     "@tiptap/starter-kit": "^2.11.7",
+    "buffer": "^6.0.3",
+    "memfs": "workspace:*",
     "multimatch": "^7.0.0",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-history": "^1.4.1",
@@ -43,15 +45,15 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-syntax-highlighter": "^15.6.1",
+    "tippy.js": "^6.3.7",
     "tiptap-markdown": "^0.8.10",
-    "vite-plugin-node-polyfills": "^0.23.0",
-    "buffer": "^6.0.3",
-    "memfs": "workspace:*"
+    "vite-plugin-node-polyfills": "^0.23.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
+    "@types/tippy.js": "^6.3.0",
     "@vitejs/plugin-react-swc": "^3.8.0",
     "eslint": "^9.22.0",
     "eslint-plugin-react-hooks": "^5.2.0",

@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './components/editor';
 import { CodeblockFS, SearchIndex } from '@ezdevlol/codeblock';
-import { CborUint8Array } from '@jsonjoy.com/json-pack/lib/cbor/types';
-import { SnapshotNode } from 'memfs/snapshot';
 
 const initialMarkdown = `
 # @ezdevlol/markdown-editor
@@ -85,6 +83,11 @@ function App() {
         newEditor = createEditor({
           element: ref.current!,
           content: initialMarkdown,
+          fs: {
+            fs: fs,
+            filepath: undefined,
+            autoSave: false,
+          },
           onUpdate: ({ editor }) => {
             const json = editor.getJSON();
             const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();

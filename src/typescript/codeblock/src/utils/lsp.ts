@@ -47,6 +47,11 @@ export namespace LSP {
 
         if (!ext) {
             const { worker } = await LSP.worker(language, fs)
+
+            if (!worker) {
+                return null
+            }
+
             console.debug('got worker', { worker })
             const transport = new MessagePortTransport(worker.port);
             const client = new LanguageServerClient({

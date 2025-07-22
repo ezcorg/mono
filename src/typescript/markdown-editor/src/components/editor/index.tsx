@@ -12,6 +12,8 @@ import { FileSystem, FileSystemOptions } from './extensions/filesystem';
 
 import './styles.css';
 import { ExtendedLink } from './extensions/link';
+import { SlashCommands } from './extensions/slash-commands';
+import { defaultSlashCommands } from './commands';
 
 export type MarkdownEditorOptions = Partial<EditorOptions> & {
     extensions?: Extension[];
@@ -60,6 +62,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             TableRow,
             TableHeader,
             TableCell,
+            SlashCommands.configure({
+                commands: defaultSlashCommands,
+            }),
             ...(options.extensions || []),
         ],
         editorProps: {
