@@ -3,7 +3,7 @@ import { createEditor, MarkdownEditor } from './components/editor';
 import { CodeblockFS, SearchIndex } from '@ezdevlol/codeblock';
 
 const initialMarkdown = `
-# @ezdevlol/markdown-editor
+# \`@ezdevlol/markdown-editor\`
 
 This editor supports **Markdown** syntax.
 
