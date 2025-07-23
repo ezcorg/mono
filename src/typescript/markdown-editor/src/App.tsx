@@ -29,6 +29,8 @@ This editor supports **Markdown** syntax.
 | Cell 1   | Cell 2   | Cell 3   |
 | Cell 4   | Cell 5   | Cell 6   |
 
+ - [ ] \`TODO: fix pasting typical md syntax not producing tables\`
+
 ### Codeblocks
 
 \`\`\`javascript
@@ -38,6 +40,8 @@ function greet(name) {
 
 greet('World');
 \`\`\`
+
+- [ ] \`TODO: support registering/calling execution handlers for each file extension/mime\` (e.g. allowing to run files)
 
 #### Language server support
 
@@ -50,6 +54,18 @@ def add(a, b):
 
 print(add(5, 3))
 \`\`\`
+
+
+* [ ] \`TODO: support LSPs\`
+
+  * [x] \`js/ts\`
+
+  * [ ] \`python\`
+
+  * [ ] \`rust\`
+
+  * [ ] \`go\`
+
 
 #### Virtual filesystem
 
