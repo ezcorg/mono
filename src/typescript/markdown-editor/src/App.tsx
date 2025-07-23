@@ -9,6 +9,14 @@ This editor supports **Markdown** syntax.
 
 ## Features
 
+### Bring-your-own-LLM
+
+Use \`/settings\` to configure, \`ctrl + enter\` to trigger a completion
+
+* [ ] \`TODO: actually use settings\`
+* [ ] \`TODO: actually use llms\`
+
+### The basics
 - Paragraphs
 - Headings
 - *Italic* and **Bold** text
