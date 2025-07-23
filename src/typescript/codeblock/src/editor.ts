@@ -197,6 +197,13 @@ const toolbarPanel = (view: EditorView): Panel => {
             effects: setSearchResults.of([]) // Clear search results
         });
 
+        // Check if the file is already open
+        const currentConfig = view.state.facet(CodeblockFacet);
+        if (currentConfig.file === result.id) {
+            console.debug('file already open, skipping reload');
+            return;
+        }
+
         // Show loading spinner
         loadingSpinner.style.display = 'block';
 
@@ -362,7 +369,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             const content = await fs.readFile(path);
             console.debug('file content', { content });
             const ext = path.split('.').pop()?.toLowerCase();
-            const languageOrFromExt = ext ? languageFromExt(ext) : (language || 'plaintext');
+            const languageOrFromExt = ext ? languageFromExt(ext) : (language || 'markdown');
             const uri = `file:///${path}`
 
             let languageSupport = null;
@@ -377,6 +384,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
 
             const unit = getIndentationUnit(content);
             // Compose all changes into a single transaction
+            console.log('dispatching', { content, languageSupport, lspCompartment, unit });
             view.dispatch({
                 changes: { from: 0, to: view.state.doc.length, insert: content },
                 effects: [
@@ -402,8 +410,29 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
         }
     }
 
+    // Auto-load file content if file is specified but content is empty
+    const shouldAutoLoadFile = file && (!content || content.trim() === '');
+
     if (file) {
-        openFile(file);
+        if (shouldAutoLoadFile) {
+            // Check if file exists and load its content automatically
+            fs.exists(file).then(exists => {
+                if (exists) {
+                    console.debug('Auto-loading file content for:', file);
+                    openFile(file)
+                } else {
+                    console.debug('File does not exist, proceeding with empty content:', file);
+                    // Still open the file interface even if file doesn't exist
+                    openFile(file)
+                }
+            }).catch(error => {
+                console.warn('Failed to check file existence:', error);
+                // Proceed with opening the file interface anyway
+                openFile(file)
+            });
+        } else {
+            openFile(file)
+        }
     } else if (language) {
         getLanguageSupport(language).then((languageSupport) => {
             if (languageSupport) {

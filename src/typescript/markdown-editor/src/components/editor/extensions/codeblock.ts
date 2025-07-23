@@ -32,9 +32,24 @@ export const ExtendedCodeblock = Node.create({
             language: {
                 default: 'markdown', // Default language
                 // Parse language from HTML structure if available
-                parseHTML: element => element.querySelector('code')?.getAttribute('class')?.replace('language-', ''),
+                parseHTML: element => {
+                    const className = element.querySelector('code')?.getAttribute('class');
+                    const extracted = className?.replace('language-', '');
+
+                    // If the extracted value looks like a filename (contains a dot),
+                    // we'll handle this in the file attribute parseHTML instead
+                    if (extracted && extracted.includes('.')) {
+                        const ext = extracted.split('.').pop()?.toLowerCase() || '';
+                        return extToLanguageMap[ext] || 'markdown';
+                    }
+
+                    return extracted;
+                },
                 // Render language back to HTML structure
                 renderHTML: attributes => {
+
+                    console.log('renderHTML attributes', { attributes });
+
                     if (!attributes.language || attributes.language === 'plaintext') {
                         return {}; // No class needed for plaintext
                     }
@@ -46,6 +61,18 @@ export const ExtendedCodeblock = Node.create({
             },
             file: {
                 default: null,
+                // Parse filename from HTML class if it looks like a filename
+                parseHTML: element => {
+                    const className = element.querySelector('code')?.getAttribute('class');
+                    const extracted = className?.replace('language-', '');
+
+                    // If the extracted value contains a dot, treat it as a filename
+                    if (extracted && extracted.includes('.')) {
+                        return extracted;
+                    }
+
+                    return null;
+                },
             },
         };
     },
@@ -108,13 +135,12 @@ export const ExtendedCodeblock = Node.create({
                 type: this.type,
                 getAttributes: match => {
                     const input = match[1]?.trim();
+                    console.log('input', { input });
+
                     if (!input) return { language: 'markdown' };
 
-                    const matchingLanguage = Object.entries(extToLanguageMap).find(([ext, lang]) => {
-                        return lang.includes(input) || ext === input;
-                    })
-
-                    if (!matchingLanguage) {
+                    // If input contains a dot, treat it as a filename
+                    if (input.includes('.')) {
                         const ext = input.split('.').pop()?.toLowerCase() || '';
                         const lang = extToLanguageMap[ext] || 'markdown'
                         return {
@@ -123,11 +149,20 @@ export const ExtendedCodeblock = Node.create({
                         };
                     }
 
-                    // Otherwise, treat as language name
-                    return {
-                        language: matchingLanguage[1],
-                        file: null,
-                    };
+                    // Otherwise, check if it's a language name
+                    const matchingLanguage = Object.entries(extToLanguageMap).find(([ext, lang]) => {
+                        return lang.includes(input) || ext === input;
+                    })
+
+                    if (matchingLanguage) {
+                        return {
+                            language: matchingLanguage[1],
+                            file: null,
+                        };
+                    }
+
+                    // If no language match found, default to markdown
+                    return { language: 'markdown' };
                 },
             }),
         ];
@@ -141,23 +176,52 @@ export const ExtendedCodeblock = Node.create({
             let fsWorker: any = null;
 
             const forwardUpdate = (cmView: EditorView, update: ViewUpdate) => {
-                if (updating || !cmView.hasFocus) return
-                let offset = getPos() + 1, { main } = update.state.selection
+                if (updating) return
+
+                // Allow forwarding updates even when not focused during initial file loading
+                // This ensures that asynchronously loaded file content gets propagated to ProseMirror
+                const pos = getPos()
+                if (pos === undefined) return
+
+                let offset = pos + 1, { main } = update.state.selection
                 let selFrom = offset + main.from, selTo = offset + main.to
                 let pmSel = view.state.selection
 
                 if (update.docChanged || pmSel.from != selFrom || pmSel.to != selTo) {
                     let tr = view.state.tr
 
+                    // Ensure we're working within valid document bounds
+                    const docLength = tr.doc.length
+
                     update.changes.iterChanges((fromA, toA, fromB, toB, text) => {
+                        const replaceFrom = offset + fromA
+                        const replaceTo = offset + toA
+
+                        // Validate positions are within bounds
+                        if (replaceFrom < 0 || replaceTo > docLength || replaceFrom > replaceTo) {
+                            console.warn('Invalid position range, skipping change:', { replaceFrom, replaceTo, docLength })
+                            return
+                        }
+
                         if (text.length)
-                            tr.replaceWith(offset + fromA, offset + toA,
-                                schema.text(text.toString()))
+                            tr.replaceWith(replaceFrom, replaceTo, schema.text(text.toString()))
                         else
-                            tr.delete(offset + fromA, offset + toA)
+                            tr.delete(replaceFrom, replaceTo)
                         offset += (toB - fromB) - (toA - fromA)
                     })
-                    tr.setSelection(TextSelection.create(tr.doc, selFrom, selTo))
+
+                    // Only set selection if the editor has focus or if this is a document change without focus
+                    // (which happens during initial file loading)
+                    if (cmView.hasFocus || update.docChanged) {
+                        const finalDocLength = tr.doc.length
+                        const clampedSelFrom = Math.max(0, Math.min(selFrom, finalDocLength))
+                        const clampedSelTo = Math.max(0, Math.min(selTo, finalDocLength))
+
+                        if (clampedSelFrom <= finalDocLength && clampedSelTo <= finalDocLength) {
+                            tr.setSelection(TextSelection.create(tr.doc, clampedSelFrom, clampedSelTo))
+                        }
+                    }
+
                     view.dispatch(tr)
                 }
             }
@@ -240,12 +304,14 @@ export const ExtendedCodeblock = Node.create({
             getFileSystemWorker().then(fs => {
                 fsWorker = fs;
                 SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
+                    console.log('creating extended codeblock', { node, index });
                     // Reconfigure with codeblock extension once fs is ready
-                    const newState = EditorState.create({
+                    cm.setState(EditorState.create({
                         doc: node.textContent || '',
                         extensions: [
                             keymap.of(codemirrorKeymap()),
                             basicSetup,
+                            EditorView.updateListener.of((update) => forwardUpdate(cm, update)),
                             codeblock({
                                 content: node.textContent,
                                 fs: fsWorker,
@@ -253,12 +319,10 @@ export const ExtendedCodeblock = Node.create({
                                 file: node.attrs.file,
                                 toolbar: !!node.attrs.file,
                                 cwd: '/',
-                                index
+                                index,
                             }),
-                            EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
                         ]
-                    });
-                    cm.setState(newState);
+                    }));
                 })
             }).catch(error => {
                 console.error('Failed to initialize filesystem worker:', error);

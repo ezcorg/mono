@@ -29,7 +29,7 @@ This editor supports **Markdown** syntax.
 | Cell 1   | Cell 2   | Cell 3   |
 | Cell 4   | Cell 5   | Cell 6   |
 
-### Custom Code Block
+### Codeblocks
 
 \`\`\`javascript
 function greet(name) {
@@ -39,12 +39,23 @@ function greet(name) {
 greet('World');
 \`\`\`
 
+#### Language server support
+
+Lazily-loaded language server support for Typescript/Javascript, Python, Rust, and Go.
+
 \`\`\`python
 def add(a, b):
   """Adds two numbers."""
   return a + b
 
 print(add(5, 3))
+\`\`\`
+
+#### Virtual filesystem
+
+Reference and change files in a document-local filesystem.
+
+\`\`\`README.md
 \`\`\`
 
 Try editing the content!

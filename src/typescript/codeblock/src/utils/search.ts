@@ -97,7 +97,6 @@ export class SearchIndex {
         const index = new MiniSearch({ ...rest })
 
         for await (const path of CodeblockFS.walk(fs, '/')) {
-            console.log('building search index: ', path);
             if (!filter(path)) {
                 continue;
             }

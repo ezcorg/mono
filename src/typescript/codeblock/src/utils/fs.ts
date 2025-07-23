@@ -37,12 +37,9 @@ export namespace CodeblockFS {
 
             async readDir(path: string): Promise<[string, FileType][]> {
                 const files = await fs.readdirSync(path, { withFileTypes: true, encoding: "utf-8" });
-
-                console.log('readDir', { files })
                 // @ts-expect-error
 
                 return files.map((ent) => {
-                    console.debug('readDir', { ent })
                     let type = FileType.File;
                     switch ((ent.mode as number) & 0o170000) {
                         case 0o040000:
@@ -199,12 +196,9 @@ export namespace CodeblockFS {
     export async function* walk(fs: Fs, path: string): AsyncIterable<string> {
         const files = await fs.readDir(path);
 
-        console.debug('walking', { path, files })
-
         for (const [filename, type] of files) {
             const joined = `${path === '/' ? '' : path}/${filename}`
 
-            console.debug('walking', { joined, type })
 
             if (type === FileType.Directory) {
                 yield* walk(fs, joined);

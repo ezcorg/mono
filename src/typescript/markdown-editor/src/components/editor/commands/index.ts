@@ -344,114 +344,114 @@ const openSettingsModal = (editor: any) => {
 
 
 export const defaultSlashCommands: SlashCommand[] = [
-    {
-        title: 'Code',
-        description: 'Create or edit a file with syntax highlighting',
-        icon: '📝',
-        command: async ({ editor, range }) => {
-            try {
-                // Remove the slash command text
-                editor.chain().focus().deleteRange(range).run()
+    // {
+    //     title: 'Code',
+    //     description: 'Create or edit a file with syntax highlighting',
+    //     icon: '📝',
+    //     command: async ({ editor, range }) => {
+    //         try {
+    //             // Remove the slash command text
+    //             editor.chain().focus().deleteRange(range).run()
 
-                // Get filesystem instance from editor storage
-                const fs = editor.storage.persistence?.options?.fs
-                console.log('About to call openFilePickerModal with fs:', fs)
-                // Use the new file picker modal
-                let modalResult = await openFilePickerModal(fs)
+    //             // Get filesystem instance from editor storage
+    //             const fs = editor.storage.persistence?.options?.fs
+    //             console.log('About to call openFilePickerModal with fs:', fs)
+    //             // Use the new file picker modal
+    //             let modalResult = await openFilePickerModal(fs)
 
-                console.log('File picker modal result:', modalResult)
+    //             console.log('File picker modal result:', modalResult)
 
-                if (modalResult === null) {
-                    // User cancelled
-                    return
-                }
+    //             if (modalResult === null) {
+    //                 // User cancelled
+    //                 return
+    //             }
 
-                let filename: string
-                let fileContent = ''
+    //             let filename: string
+    //             let fileContent = ''
 
-                // Check if modalResult is a file object (from browse button) or just a filename string
-                if (typeof modalResult === 'object' && modalResult.filename) {
-                    // Result from browse button - already has filename and content
-                    filename = String(modalResult.filename)
-                    fileContent = String(modalResult.content)
-                    console.log('Using file from browse button:', filename, 'with', fileContent.length, 'characters')
-                } else if (typeof modalResult === 'string') {
-                    // Result from manual input
-                    if (!modalResult || modalResult.trim() === '') {
-                        // Empty filename - open file picker and get both filename and content
-                        const fileResult = await openFilePicker(fs)
-                        console.log('File picker returned:', fileResult)
+    //             // Check if modalResult is a file object (from browse button) or just a filename string
+    //             if (typeof modalResult === 'object' && modalResult.filename) {
+    //                 // Result from browse button - already has filename and content
+    //                 filename = String(modalResult.filename)
+    //                 fileContent = String(modalResult.content)
+    //                 console.log('Using file from browse button:', filename, 'with', fileContent.length, 'characters')
+    //             } else if (typeof modalResult === 'string') {
+    //                 // Result from manual input
+    //                 if (!modalResult || modalResult.trim() === '') {
+    //                     // Empty filename - open file picker and get both filename and content
+    //                     const fileResult = await openFilePicker(fs)
+    //                     console.log('File picker returned:', fileResult)
 
-                        if (!fileResult) {
-                            console.log('No file selected')
-                            return
-                        }
+    //                     if (!fileResult) {
+    //                         console.log('No file selected')
+    //                         return
+    //                     }
 
-                        // Ensure we have proper string values
-                        filename = String(fileResult.filename || 'unknown-file')
-                        fileContent = String(fileResult.content || '// No content available')
-                        console.log('Extracted filename:', typeof filename, filename)
-                        console.log('Extracted content length:', fileContent.length)
-                    } else {
-                        console.log('Using filename from modal input:', modalResult)
-                        filename = String(modalResult)
+    //                     // Ensure we have proper string values
+    //                     filename = String(fileResult.filename || 'unknown-file')
+    //                     fileContent = String(fileResult.content || '// No content available')
+    //                     console.log('Extracted filename:', typeof filename, filename)
+    //                     console.log('Extracted content length:', fileContent.length)
+    //                 } else {
+    //                     console.log('Using filename from modal input:', modalResult)
+    //                     filename = String(modalResult)
 
-                        // Try to load existing file content if it exists
-                        if (fs) {
-                            try {
-                                const exists = await fs.exists(filename)
-                                if (exists) {
-                                    fileContent = await fs.readFile(filename)
-                                    console.log('Loaded existing file content:', fileContent.length, 'characters')
-                                } else {
-                                    console.log('File does not exist, creating new file:', filename)
-                                    // For new files, start with empty content or a template
-                                    fileContent = ''
-                                }
-                            } catch (error) {
-                                console.warn('Failed to load existing file:', error)
-                                // If there's an error, start with empty content
-                                fileContent = ''
-                            }
-                        }
-                    }
-                } else {
-                    console.error('Unexpected modal result type:', typeof modalResult, modalResult)
-                    return
-                }
+    //                     // Try to load existing file content if it exists
+    //                     if (fs) {
+    //                         try {
+    //                             const exists = await fs.exists(filename)
+    //                             if (exists) {
+    //                                 fileContent = await fs.readFile(filename)
+    //                                 console.log('Loaded existing file content:', fileContent.length, 'characters')
+    //                             } else {
+    //                                 console.log('File does not exist, creating new file:', filename)
+    //                                 // For new files, start with empty content or a template
+    //                                 fileContent = ''
+    //                             }
+    //                         } catch (error) {
+    //                             console.warn('Failed to load existing file:', error)
+    //                             // If there's an error, start with empty content
+    //                             fileContent = ''
+    //                         }
+    //                     }
+    //                 }
+    //             } else {
+    //                 console.error('Unexpected modal result type:', typeof modalResult, modalResult)
+    //                 return
+    //             }
 
-                console.log('Final filename before insertion:', typeof filename, filename)
-                console.log('Final content before insertion:', typeof fileContent, fileContent.substring(0, 50))
+    //             console.log('Final filename before insertion:', typeof filename, filename)
+    //             console.log('Final content before insertion:', typeof fileContent, fileContent.substring(0, 50))
 
-                // Determine language from file extension
-                const ext = filename.split('.').pop()?.toLowerCase() || ''
-                const language = extToLanguageMap[ext] || 'markdown'
+    //             // Determine language from file extension
+    //             const ext = filename.split('.').pop()?.toLowerCase() || ''
+    //             const language = extToLanguageMap[ext] || 'markdown'
 
-                // Insert a codeblock node instead of markdown content
-                editor
-                    .chain()
-                    .focus()
-                    .insertContent({
-                        type: 'ezcodeBlock',
-                        attrs: {
-                            language: language,
-                            file: filename
-                        },
-                        content: fileContent ? [{ type: 'text', text: fileContent }] : [{ type: 'text', text: '' }]
-                    })
-                    .run()
+    //             // Insert a codeblock node instead of markdown content
+    //             editor
+    //                 .chain()
+    //                 .focus()
+    //                 .insertContent({
+    //                     type: 'ezcodeBlock',
+    //                     attrs: {
+    //                         language: language,
+    //                         file: filename
+    //                     },
+    //                     content: fileContent ? [{ type: 'text', text: fileContent }] : [{ type: 'text', text: '' }]
+    //                 })
+    //                 .run()
 
-                console.log('Content insertion completed')
+    //             console.log('Content insertion completed')
 
-                // Force focus back to editor to ensure dropdown closes
-                setTimeout(() => {
-                    editor.commands.focus()
-                }, 100)
-            } catch (error) {
-                console.error('Error in code command:', error)
-            }
-        },
-    },
+    //             // Force focus back to editor to ensure dropdown closes
+    //             setTimeout(() => {
+    //                 editor.commands.focus()
+    //             }, 100)
+    //         } catch (error) {
+    //             console.error('Error in code command:', error)
+    //         }
+    //     },
+    // },
     {
         title: 'Settings',
         description: 'Configure editor preferences',
