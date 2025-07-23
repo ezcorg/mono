@@ -71,7 +71,7 @@ print(add(5, 3))
 
 Reference and change files in a document-local filesystem.
 
-\`\`\`README.md
+\`\`\`src/App.tsx
 \`\`\`
 
 Try editing the content!

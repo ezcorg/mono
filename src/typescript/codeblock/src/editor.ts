@@ -366,7 +366,9 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
         }
 
         try {
-            const content = await fs.readFile(path);
+
+            const exists = await fs.exists(path);
+            const content = exists ? await fs.readFile(path) : '';
             console.debug('file content', { content });
             const ext = path.split('.').pop()?.toLowerCase();
             const languageOrFromExt = ext ? languageFromExt(ext) : (language || 'markdown');
