@@ -5,27 +5,27 @@ import Navbar from '../components/Navbar.astro';
 
 const projects = [
 	{
-		title: 'eznote',
-		description: 'A cross-platform Markdown note-taking application',
-		tags: ['Rust', 'Tauri', 'TypeScript'],
+		title: 'markdown-editor',
+		description: 'An embeddable markdown editor',
+		tags: ['TipTap', 'ProseMirror', 'TypeScript'],
 		image: '',
-		link: 'https://github.com/ezdevlol/mono/tree/main/src/apps/eznote',
+		link: 'https://github.com/ezdevlol/mono/tree/main/src/typescript/markdown-editor',
 	},
 	{
 		title: 'codeblock',
 		description: 'A lightweight embeddable code block editor',
-		tags: ['CodeMirror', 'TypeScript', 'Web Component'],
+		tags: ['CodeMirror', 'TypeScript'],
 		image: '',
 		link: 'https://github.com/ezdevlol/mono/tree/main/src/typescript/codeblock',
 	},
-	{
-		title: 'htmlsnap',
-		description:
-			'A browser extension devtool for snapshotting HTML elements (and applicable CSS)',
-		tags: ['Javascript', 'Web Extension'],
-		image: '',
-		link: 'https://github.com/tbrockman/htmlsnap/',
-	},
+	// {
+	// 	title: 'htmlsnap',
+	// 	description:
+	// 		'A browser extension devtool for snapshotting HTML elements (and applicable CSS)',
+	// 	tags: ['Javascript', 'Web Extension'],
+	// 	image: '',
+	// 	link: 'https://github.com/tbrockman/htmlsnap/',
+	// },
 ];
 ---
 
@@ -44,11 +44,22 @@ const projects = [
 			>
 				{
 					projects.map((project, index) => (
-						<div class="masonry-item w-full md:w-[calc(50%-1rem)] mb-8 border-2 border-[#333333] overflow-hidden transition-all duration-300 hover:border-[#ffffff] hover:bg-[#ffffff] work-item-card">
+						<div
+							class="masonry-item w-full md:w-[calc(50%-1rem)] mb-8 border-2 border-[#333333] overflow-hidden transition-all duration-300 hover:border-[#ffffff] hover:bg-[#ffffff] work-item-card"
+							data-project={project.title}
+						>
 							<div class="p-6">
-								<h3 class="text-2xl font-bold text-[#F5F5F5] mb-3 work-item-title">
-									{project.title}
-								</h3>
+								<div class="flex items-center justify-between mb-3">
+									<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title">
+										{project.title}
+									</h3>
+									<button
+										class="expand-toggle text-[#F5F5F5] text-xl transition-transform duration-300"
+										aria-label="Toggle project details"
+									>
+										<span class="toggle-icon">+</span>
+									</button>
+								</div>
 								<p
 									style="font-family: Times"
 									class="text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description"
@@ -61,6 +72,13 @@ const projects = [
 											{tech}
 										</span>
 									))}
+								</div>
+								<div class="project-content hidden mt-6 border-t border-[#333333] pt-6">
+									<div class="project-demo-container min-h-[400px] bg-[#1a1a1a] border border-[#333333] rounded p-4">
+										<div class="loading-text text-[#F5F5F5] opacity-70">
+											Loading {project.title}...
+										</div>
+									</div>
 								</div>
 							</div>
 						</div>
@@ -98,6 +116,7 @@ const projects = [
 				let masonry: any = null;
 				let resizeTimeout: number | null = null;
 				let currentBreakpoint: string = '';
+				let expandedItems = new Set<string>();
 
 				// Debounced resize handler
 				function debounce(func: Function, wait: number) {
@@ -121,9 +140,14 @@ const projects = [
 					const isDesktop = window.innerWidth >= 768; // md breakpoint
 					const newBreakpoint = isDesktop ? 'desktop' : 'mobile';
 
-					// Update item widths
+					// Update item widths based on expansion state
 					items.forEach((item: HTMLElement) => {
-						if (isDesktop) {
+						const projectName = item.dataset.project;
+						const isExpanded = expandedItems.has(projectName || '');
+
+						if (isExpanded) {
+							item.style.width = '100%';
+						} else if (isDesktop) {
 							item.style.width = 'calc(50% - 1rem)';
 						} else {
 							item.style.width = '100%';
@@ -166,6 +190,144 @@ const projects = [
 					}
 				});
 
+				// Dynamic import function for markdown editor
+				async function loadMarkdownEditor(containerEl: HTMLElement) {
+					try {
+						// Import the markdown editor library
+						const { createEditor } = await import(
+							'@ezdevlol/markdown-editor'
+						);
+
+						// Import CSS if not already loaded
+						if (
+							!document.querySelector(
+								'link[href*="@ezdevlol/markdown-editor"]',
+							)
+						) {
+							const link = document.createElement('link');
+							link.rel = 'stylesheet';
+							link.href = '@ezdevlol/markdown-editor/style.css';
+							document.head.appendChild(link);
+						}
+
+						// Clear loading text
+						containerEl.innerHTML = '';
+
+						// Create editor container
+						const editorDiv = document.createElement('div');
+						editorDiv.style.minHeight = '400px';
+						editorDiv.style.border = '1px solid #333';
+						editorDiv.style.borderRadius = '4px';
+						editorDiv.style.padding = '16px';
+						editorDiv.style.backgroundColor = '#ffffff';
+						containerEl.appendChild(editorDiv);
+
+						// Create the editor
+						const editor = createEditor({
+							element: editorDiv,
+							content: `# Welcome to the Markdown Editor
+
+This is a sample markdown editor built with TipTap and ProseMirror.
+
+## Features
+
+- **Rich text editing** with markdown syntax
+- Task lists with checkboxes
+- Code blocks with syntax highlighting
+- Tables and links
+- And much more!
+
+Try editing this content to see the editor in action.`,
+							onUpdate: ({ editor }) => {
+								console.log(
+									'Editor content updated:',
+									editor.getHTML(),
+								);
+							},
+						});
+
+						console.log('Markdown editor loaded successfully');
+					} catch (error) {
+						console.error('Failed to load markdown editor:', error);
+						containerEl.innerHTML = `<div class="text-red-500">Failed to load editor: ${error.message}</div>`;
+					}
+				}
+
+				// Handle project card expansion
+				function handleProjectExpansion(
+					projectItem: HTMLElement,
+					projectName: string,
+				) {
+					const contentDiv = projectItem.querySelector(
+						'.project-content',
+					) as HTMLElement;
+					const toggleIcon = projectItem.querySelector(
+						'.toggle-icon',
+					) as HTMLElement;
+					const demoContainer = projectItem.querySelector(
+						'.project-demo-container',
+					) as HTMLElement;
+
+					if (!contentDiv || !toggleIcon || !demoContainer) return;
+
+					const isExpanded = expandedItems.has(projectName);
+
+					if (isExpanded) {
+						// Collapse
+						expandedItems.delete(projectName);
+						contentDiv.classList.add('hidden');
+						toggleIcon.textContent = '+';
+						toggleIcon.style.transform = 'rotate(0deg)';
+						projectItem.style.width =
+							window.innerWidth >= 768
+								? 'calc(50% - 1rem)'
+								: '100%';
+					} else {
+						// Expand
+						expandedItems.add(projectName);
+						contentDiv.classList.remove('hidden');
+						toggleIcon.textContent = '−';
+						toggleIcon.style.transform = 'rotate(180deg)';
+						projectItem.style.width = '100%';
+
+						// Load project-specific content
+						if (projectName === 'markdown-editor') {
+							loadMarkdownEditor(demoContainer);
+						} else if (projectName === 'codeblock') {
+							demoContainer.innerHTML =
+								'<div class="text-[#F5F5F5] opacity-70">Codeblock demo coming soon...</div>';
+						}
+					}
+
+					// Relayout masonry after expansion/collapse
+					if (masonry) {
+						setTimeout(() => {
+							masonry.layout();
+						}, 100);
+					}
+				}
+
+				// Add click handlers for expansion
+				function setupExpansionHandlers() {
+					const expandButtons =
+						container.querySelectorAll('.expand-toggle');
+					expandButtons.forEach((button) => {
+						button.addEventListener('click', (e) => {
+							e.stopPropagation();
+							const projectItem = button.closest(
+								'.masonry-item',
+							) as HTMLElement;
+							const projectName = projectItem?.dataset.project;
+							if (projectItem && projectName) {
+								handleProjectExpansion(
+									projectItem,
+									projectName,
+								);
+							}
+						});
+					});
+				}
+
 				// Initialize Masonry
 				const initializeMasonry = () => {
 					// Calculate column width based on current breakpoint
@@ -184,6 +346,9 @@ const projects = [
 						horizontalOrder: true,
 						transitionDuration: 0, // Disable initial transition to prevent jumping
 					});
+
+					// Setup expansion handlers
+					setupExpansionHandlers();
 
 					// Show the container with a smooth fade-in after layout is complete
 					setTimeout(() => {

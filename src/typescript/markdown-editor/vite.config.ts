@@ -65,7 +65,9 @@ export const snapshot = async (props: SnapshotProps = {}) => {
   };
 };
 
-export default async function getConfig() {
+export default async function getConfig({ command }: { command: string }) {
+  const isLibraryBuild = command === 'build';
+
   return defineConfig({
     resolve: {
       alias: {
@@ -83,14 +85,17 @@ export default async function getConfig() {
     optimizeDeps: {
       include: ['buffer'],
     },
-    build: {
+    build: isLibraryBuild ? {
       lib: {
-        entry: path.resolve(__dirname, './src/components/editor/index.tsx'),
+        entry: path.resolve(__dirname, './src/lib/index.ts'),
         name: 'MarkdownEditor',
-        fileName: (format) => `markdown-editor.${format}.js`,
+        fileName: (format) => `index.${format === 'es' ? 'js' : `${format}.js`}`,
+        formats: ['es', 'cjs']
       },
       rollupOptions: {
         external: [
+          'react',
+          'react-dom',
           "@codemirror/autocomplete",
           "@codemirror/commands",
           "@codemirror/lang-javascript",
@@ -101,15 +106,41 @@ export default async function getConfig() {
           "@codemirror/search",
           "@codemirror/state",
           "@codemirror/view",
-        ]
+          "@tiptap/core",
+          "@tiptap/extension-link",
+          "@tiptap/extension-table",
+          "@tiptap/extension-table-cell",
+          "@tiptap/extension-table-header",
+          "@tiptap/extension-table-row",
+          "@tiptap/extension-task-item",
+          "@tiptap/extension-task-list",
+          "@tiptap/pm",
+          "@tiptap/react",
+          "@tiptap/starter-kit",
+          "tiptap-markdown"
+        ],
+        output: {
+          globals: {
+            'react': 'React',
+            'react-dom': 'ReactDOM'
+          },
+          assetFileNames: (assetInfo) => {
+            if (assetInfo.name?.endsWith('.css')) return 'index.css';
+            return assetInfo.name || 'asset';
+          }
+        }
       }
+    } : {
+      // Regular app build for dev mode
+      outDir: 'dist-app'
     },
     plugins: [
-      snapshot({
+      // Only include snapshot plugin in dev mode
+      ...(isLibraryBuild ? [] : [snapshot({
         gitignore: false,
         exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo'],
         output: './public/snapshot.bin'
-      }),
+      })]),
       nodePolyfills({
         include: ['buffer', 'process', 'events'],
         globals: {

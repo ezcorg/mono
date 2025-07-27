@@ -24,11 +24,11 @@ struct Cli {
     config: PathBuf,
 
     /// Proxy listen address
-    #[arg(short, long, default_value = "127.0.0.1:8080")]
+    #[arg(short, long, default_value = "127.0.0.1:8082")]
     proxy_addr: SocketAddr,
 
     /// Web interface listen address
-    #[arg(short, long, default_value = "127.0.0.1:8081")]
+    #[arg(short, long, default_value = "127.0.0.1:8083")]
     web_addr: SocketAddr,
 
     /// Certificate directory
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting MITM Proxy Server");
-
+    
     // Load configuration
     let config = Config::load(&cli.config).unwrap_or_else(|e| {
         warn!("Failed to load config: {}, using defaults", e);

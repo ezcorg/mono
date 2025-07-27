@@ -300,7 +300,6 @@ export namespace Snapshot {
             }
         } catch (error) {
             console.error('Snapshot.mount: Failed to mount snapshot:', error);
-            console.error('Snapshot.mount: Error stack:', error.stack);
             throw error;
         }
     }

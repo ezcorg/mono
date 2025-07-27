@@ -46,7 +46,7 @@ export const SlashCommands = Extension.create<SlashCommandsOptions>({
                     return slashView
                 },
                 props: {
-                    handleKeyDown: (view, event) => {
+                    handleKeyDown: (_, event) => {
                         if (slashView) {
                             // Track when "/" is typed to distinguish from cursor movement
                             if (event.key === '/') {
@@ -297,17 +297,13 @@ class SlashCommandsView {
         this.removeOutsideClickHandler()
 
         if (this.popup) {
-            console.log('Destroying popup')
             this.popup.destroy()
             this.popup = null
-        } else {
-            console.log('No popup to destroy')
         }
 
         // Force cleanup of any remaining tippy instances
         const existingTippyInstances = document.querySelectorAll('[data-tippy-root]')
         existingTippyInstances.forEach(instance => {
-            console.log('Force removing tippy instance')
             instance.remove()
         })
 
@@ -323,7 +319,6 @@ class SlashCommandsView {
         this.query = ''
         this.selectedIndex = 0
         this.lastInputWasSlash = false
-        console.log('hideSuggestions completed')
     }
 
     addOutsideClickHandler() {

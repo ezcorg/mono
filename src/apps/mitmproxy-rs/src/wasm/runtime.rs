@@ -1,7 +1,6 @@
 use super::{
     EventType, PluginAction, PluginMetadata, PluginState, RequestContext, WasmError, WasmResult,
 };
-use crate::wasm::bindings::Plugin;
 use crate::wasm::host_functions::WasmState;
 use std::sync::Arc;
 use std::time::Duration;

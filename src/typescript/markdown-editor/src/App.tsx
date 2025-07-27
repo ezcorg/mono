@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createEditor, MarkdownEditor } from './components/editor';
+import { createEditor, MarkdownEditor } from './lib/editor';
 import { CodeblockFS, SearchIndex } from '@ezdevlol/codeblock';
 
 const initialMarkdown = `
@@ -97,12 +97,8 @@ function App() {
     try {
       const index = await SearchIndex.get(fs, '.codeblock/index.json');
       console.log('Search index ready with', index, 'documents');
-      // Attach the search index to the filesystem object so it can be accessed by the codeblock extension
-      (fs as any).searchIndex = index;
     } catch (error) {
       console.warn('Failed to create search index:', error);
-      // Set a null search index if creation fails
-      (fs as any).searchIndex = null;
     }
 
     return fs;
