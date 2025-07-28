@@ -5,9 +5,9 @@ import { FileSystem, FileType } from '@volar/language-service';
 import { URI } from 'vscode-uri'
 import type { mount, mountFromUrl } from '../workers/fs.worker';
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
-import { SnapshotNode } from "memfs/snapshot";
+import { SnapshotNode } from "@ezdevlol/memfs/snapshot";
 import { promises } from "node:fs";
-import { FsApi } from "memfs/node/types";
+import { FsApi } from "@ezdevlol/memfs/node/types";
 
 Comlink.transferHandlers.set("asyncGenerator", asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set("watchOptions", watchOptionsTransferHandler);

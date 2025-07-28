@@ -198,18 +198,6 @@ const projects = [
 							'@ezdevlol/markdown-editor'
 						);
 
-						// Import CSS if not already loaded
-						if (
-							!document.querySelector(
-								'link[href*="@ezdevlol/markdown-editor"]',
-							)
-						) {
-							const link = document.createElement('link');
-							link.rel = 'stylesheet';
-							link.href = '@ezdevlol/markdown-editor/style.css';
-							document.head.appendChild(link);
-						}
-
 						// Clear loading text
 						containerEl.innerHTML = '';
 

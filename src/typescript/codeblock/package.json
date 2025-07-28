@@ -1,6 +1,6 @@
 {
   "name": "@ezdevlol/codeblock",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "type": "module",
   "module": "dist/index.js",
   "main": "dist/index.js",
@@ -22,29 +22,7 @@
   "files": [
     "dist"
   ],
-  "peerDependencies": {
-    "@codemirror/autocomplete": "^6.0.0",
-    "@codemirror/commands": "^6.0.0",
-    "@codemirror/lang-javascript": "^6.0.0",
-    "@codemirror/lang-python": "^6.0.0",
-    "@codemirror/lang-rust": "^6.0.0",
-    "@codemirror/language": "^6.0.0",
-    "@codemirror/lint": "^6.0.0",
-    "@codemirror/search": "^6.0.0",
-    "@codemirror/state": "^6.0.0",
-    "@codemirror/view": "^6.0.0"
-  },
   "devDependencies": {
-    "@codemirror/autocomplete": "^6.18.6",
-    "@codemirror/commands": "^6.8.1",
-    "@codemirror/lang-javascript": "^6.2.3",
-    "@codemirror/lang-python": "^6.2.0",
-    "@codemirror/lang-rust": "^6.0.1",
-    "@codemirror/language": "^6.11.0",
-    "@codemirror/lint": "^6.8.5",
-    "@codemirror/search": "^6.5.10",
-    "@codemirror/state": "^6.5.2",
-    "@codemirror/view": "^6.36.7",
     "@playwright/test": "^1.52.0",
     "@types/lodash": "^4.17.16",
     "@types/markdown-it": "^14.1.2",
@@ -57,6 +35,16 @@
     "vite": "^6.3.4"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.18.6",
+    "@codemirror/commands": "^6.8.1",
+    "@codemirror/lang-javascript": "^6.2.3",
+    "@codemirror/lang-python": "^6.2.0",
+    "@codemirror/lang-rust": "^6.0.1",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/lint": "^6.8.5",
+    "@codemirror/search": "^6.5.10",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.36.7",
     "@babel/runtime": "^7.27.1",
     "@jsonjoy.com/json-pack": "^1.2.0",
     "@jsonjoy.com/util": "^1.6.0",
@@ -74,7 +62,7 @@
     "lodash": "^4.17.21",
     "lz-string": "^1.5.0",
     "markdown-it": "^14.1.0",
-    "memfs": "workspace:*",
+    "@ezdevlol/memfs": "workspace:*",
     "minisearch": "^7.1.2",
     "parse-gitignore": "^2.0.0",
     "path-browserify": "^1.0.1",

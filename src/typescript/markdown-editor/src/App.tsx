@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
 import { CodeblockFS, SearchIndex } from '@ezdevlol/codeblock';
+import './App.css'
 
 const initialMarkdown = `
 # \`@ezdevlol/markdown-editor\`

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@astrojs/tailwind": "^5.0.0",
+    "@ezdevlol/markdown-editor": "workspace:*",
     "@ezdevlol/shared": "^0.0.3",
     "astro": "^4.0.0",
     "flatpickr": "^4.6.13",

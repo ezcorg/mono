@@ -75,16 +75,16 @@ export default async function getConfig() {
         build: {
             rollupOptions: {
                 external: [
-                    "@codemirror/autocomplete",
-                    "@codemirror/commands",
-                    "@codemirror/lang-javascript",
-                    "@codemirror/lang-python",
-                    "@codemirror/lang-rust",
-                    "@codemirror/language",
-                    "@codemirror/lint",
-                    "@codemirror/search",
-                    "@codemirror/state",
-                    "@codemirror/view",
+                    // "@codemirror/autocomplete",
+                    // "@codemirror/commands",
+                    // "@codemirror/lang-javascript",
+                    // "@codemirror/lang-python",
+                    // "@codemirror/lang-rust",
+                    // "@codemirror/language",
+                    // "@codemirror/lint",
+                    // "@codemirror/search",
+                    // "@codemirror/state",
+                    // "@codemirror/view",
                 ]
             }
         },

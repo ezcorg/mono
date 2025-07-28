@@ -69,22 +69,6 @@ export default async function getConfig({ command }: { command: string }) {
   const isLibraryBuild = command === 'build';
 
   return defineConfig({
-    resolve: {
-      alias: {
-        '@codemirror/state': path.resolve(__dirname, './node_modules/@codemirror/state'),
-        '@codemirror/view': path.resolve(__dirname, './node_modules/@codemirror/view'),
-        '@codemirror/language': path.resolve(__dirname, './node_modules/@codemirror/language'),
-        path: 'path-browserify',
-        process: 'process/browser',
-        buffer: 'buffer',
-      }
-    },
-    define: {
-      global: 'globalThis',
-    },
-    optimizeDeps: {
-      include: ['buffer'],
-    },
     build: isLibraryBuild ? {
       lib: {
         entry: path.resolve(__dirname, './src/lib/index.ts'),
@@ -92,47 +76,12 @@ export default async function getConfig({ command }: { command: string }) {
         fileName: (format) => `index.${format === 'es' ? 'js' : `${format}.js`}`,
         formats: ['es', 'cjs']
       },
-      rollupOptions: {
-        external: [
-          'react',
-          'react-dom',
-          "@codemirror/autocomplete",
-          "@codemirror/commands",
-          "@codemirror/lang-javascript",
-          "@codemirror/lang-python",
-          "@codemirror/lang-rust",
-          "@codemirror/language",
-          "@codemirror/lint",
-          "@codemirror/search",
-          "@codemirror/state",
-          "@codemirror/view",
-          "@tiptap/core",
-          "@tiptap/extension-link",
-          "@tiptap/extension-table",
-          "@tiptap/extension-table-cell",
-          "@tiptap/extension-table-header",
-          "@tiptap/extension-table-row",
-          "@tiptap/extension-task-item",
-          "@tiptap/extension-task-list",
-          "@tiptap/pm",
-          "@tiptap/react",
-          "@tiptap/starter-kit",
-          "tiptap-markdown"
-        ],
-        output: {
-          globals: {
-            'react': 'React',
-            'react-dom': 'ReactDOM'
-          },
-          assetFileNames: (assetInfo) => {
-            if (assetInfo.name?.endsWith('.css')) return 'index.css';
-            return assetInfo.name || 'asset';
-          }
-        }
-      }
     } : {
       // Regular app build for dev mode
       outDir: 'dist-app'
+    },
+    optimizeDeps: {
+      exclude: ['@ezdevlol/codeblock', '@ezdevlol/snapshot']
     },
     plugins: [
       // Only include snapshot plugin in dev mode
@@ -140,17 +89,10 @@ export default async function getConfig({ command }: { command: string }) {
         gitignore: false,
         exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo'],
         output: './public/snapshot.bin'
-      })]),
+      }), react()]),
       nodePolyfills({
-        include: ['buffer', 'process', 'events'],
-        globals: {
-          Buffer: true,
-          global: true,
-          process: true,
-        },
-        protocolImports: true,
-      }),
-      react()
+        include: ['path', 'events', 'process']
+      })
     ],
     server: {
       headers: {

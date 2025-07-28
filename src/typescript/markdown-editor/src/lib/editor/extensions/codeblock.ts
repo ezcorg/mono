@@ -300,9 +300,12 @@ export const ExtendedCodeblock = Node.create({
             cm = new EditorView({ state: initialState });
             const dom = cm.dom;
 
+            console.log('getting fs worker')
+
             // Initialize filesystem worker and update extensions asynchronously
             getFileSystemWorker().then(fs => {
                 fsWorker = fs;
+                console.log('fs worker initialized', fsWorker);
                 SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
                     console.log('creating extended codeblock', { node, index });
                     // Reconfigure with codeblock extension once fs is ready
