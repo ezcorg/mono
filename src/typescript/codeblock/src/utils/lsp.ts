@@ -4,12 +4,24 @@ import { LanguageServerClient, languageServerWithClient } from "@marimo-team/cod
 import { Extension } from "@codemirror/state";
 import MessagePortTransport from "../rpc/transport";
 import { LanguageServer } from "@volar/language-server";
+import { HighlightStyle, LanguageSupport } from "@codemirror/language";
+import { languageSupportCompartment, renderMarkdownCode } from "../editor";
+import { EditorView } from "@codemirror/view";
+import { vscodeDark } from "@uiw/codemirror-theme-vscode";
+import markdownit from 'markdown-it'
 
-const clients: Map<string, LSPClientExtension> = new Map();
+const clients: Map<string, LanguageServerClient> = new Map();
 
 export type LSPClientExtension = {
     client: LanguageServerClient
 } & Extension
+
+export type ClientOptions = {
+    view: EditorView
+    language: string,
+    path: string,
+    fs: Fs
+}
 
 // TODO: better fix for this reference sticking around to prevent Comlink from releasing the port
 export const languageServerFactory: Map<string, (args: { fs: Fs }) => Promise<{ server: LanguageServer }>> = new Map();
@@ -35,57 +47,50 @@ export namespace LSP {
                     const { createLanguageServer } = Comlink.wrap<{ createLanguageServer: (args: { fs: Fs }) => Promise<{ server: LanguageServer }> }>(worker.port);
                     factory = createLanguageServer
                     languageServerFactory.set('javascript', factory)
-                    await factory(Comlink.proxy({ fs }))
                 }
                 break;
         }
+        await factory?.(Comlink.proxy({ fs }))
         return { worker }
     }
 
-    export async function client(language: string, path: string, fs: Fs): Promise<LSPClientExtension> {
-        let ext = clients.get(language)
+    export async function client({ fs, language, path, view }: ClientOptions): Promise<LSPClientExtension> {
+        let client = clients.get(language);
+        let ext: LSPClientExtension | undefined;
+        const uri = `file:///${path}`;
 
-        if (!ext) {
-            const { worker } = await LSP.worker(language, fs)
+        if (!client) {
+            const { worker } = await LSP.worker(language, fs);
+            if (!worker) return null;
 
-            if (!worker) {
-                return null
-            }
+            console.debug('got worker', { worker });
 
-            console.debug('got worker', { worker })
-            const transport = new MessagePortTransport(worker.port);
-            const client = new LanguageServerClient({
-                transport,
+            client = new LanguageServerClient({
+                transport: new MessagePortTransport(worker.port),
                 rootUri: 'file:///',
                 workspaceFolders: [{ name: 'workspace', uri: 'file:///' }]
             });
-            // await client.initialize()
-
-            const uri = `file:///${path}`
-            const extension = languageServerWithClient({
-                client,
-                documentUri: uri,
-                languageId: language,
-                allowHTMLContent: true,
-                // renderMarkdown(content) {
-                //     const contentString = (content as MarkupContent).kind !== undefined ? (content as MarkupContent).value : content.toString()
-                //     const support = languageSupportCompartment.get(view.state) as LanguageSupport
-                //     const highlighter = vscodeDark[1].find(item => item.value instanceof HighlightStyle)?.value;
-                //     const parser = support.language?.parser
-                //     const md = markdownit({
-                //         highlight: (str: string) => {
-                //             return renderMarkdownCode(str, parser, highlighter)
-                //         }
-                //     })
-                //     return md.render(contentString)
-                // },
-            })
-            ext = {
-                client,
-                extension
-            }
-            clients.set(language, ext)
         }
+        clients.set(language, client);
+        ext = { client, extension: [] };
+        ext.extension = languageServerWithClient({
+            client: ext.client,
+            documentUri: uri,
+            languageId: language,
+            allowHTMLContent: true,
+            markdownRenderer(markdown) {
+                const support = languageSupportCompartment.get(view.state) as LanguageSupport
+                const highlighter = vscodeDark[1].find(item => item.value instanceof HighlightStyle)?.value;
+                const parser = support.language?.parser
+                const md = markdownit({
+                    highlight: (str: string) => {
+                        return renderMarkdownCode(str, parser, highlighter)
+                    }
+                })
+                return md.render(markdown)
+            },
+        })
+
         return ext;
     }
 }

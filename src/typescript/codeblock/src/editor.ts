@@ -23,7 +23,7 @@ import { LSP, LSPClientExtension } from "./utils/lsp";
 export type CodeblockConfig = {
     fs: Fs;
     cwd: string,
-    file?: string,
+    filepath?: string,
     content?: string,
     toolbar?: boolean,
     index?: SearchIndex,
@@ -59,7 +59,7 @@ const mod = (n: number, m: number) => ((n % m) + m) % m
 
 // Create a custom panel for the toolbar
 const toolbarPanel = (view: EditorView): Panel => {
-    let { file, index } = view.state.facet(CodeblockFacet);
+    let { filepath: file, index } = view.state.facet(CodeblockFacet);
 
     const dom = document.createElement("div");
     dom.className = "cm-toolbar-panel";
@@ -199,7 +199,7 @@ const toolbarPanel = (view: EditorView): Panel => {
 
         // Check if the file is already open
         const currentConfig = view.state.facet(CodeblockFacet);
-        if (currentConfig.file === result.id) {
+        if (currentConfig.filepath === result.id) {
             console.debug('file already open, skipping reload');
             return;
         }
@@ -211,7 +211,7 @@ const toolbarPanel = (view: EditorView): Panel => {
         view.dispatch({
             effects: configCompartment.reconfigure(CodeblockFacet.of({
                 ...view.state.facet(CodeblockFacet),
-                file: result.id
+                filepath: result.id
             }))
         });
     }
@@ -281,9 +281,9 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 }
 
 // Main codeblock plugin creation function
-export const codeblock = ({ content, fs, cwd, file, language, toolbar = true, index }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index }: CodeblockConfig) => {
     return [
-        configCompartment.of(CodeblockFacet.of({ language, content, fs, cwd, file, toolbar, index })),
+        configCompartment.of(CodeblockFacet.of({ language, content, fs, cwd, filepath, toolbar, index })),
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
@@ -301,15 +301,18 @@ export const codeblock = ({ content, fs, cwd, file, language, toolbar = true, in
 };
 // The main view plugin that handles reactive updates and file syncing
 const codeblockView = ViewPlugin.define((view: EditorView) => {
-    let { fs, file, content, language } = view.state.facet(CodeblockFacet);
+    let { fs, filepath, content, language } = view.state.facet(CodeblockFacet);
     let abortController = new AbortController();
 
-    console.debug('codeblock view plugin', { fs, file, content, language });
+    console.debug('codeblock view plugin', { fs, filepath, content, language });
 
     // Save file changes to disk
     const save = debounce(async () => {
+
+        if (!filepath) return;
+
         console.debug('save called');
-        await fs.writeFile(file, view.state.doc.toString()).catch(console.error);
+        await fs.writeFile(filepath, view.state.doc.toString()).catch(console.error);
     }, 500);
 
     // Function to setup file watching
@@ -320,9 +323,9 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
 
         (async () => {
             try {
-                for await (const _ of fs.watch(file, { signal })) {
+                for await (const _ of fs.watch(filepath, { signal })) {
                     try {
-                        const content = await fs.readFile(file);
+                        const content = await fs.readFile(filepath);
                         const doc = view.state.doc.toString();
                         console.debug('watch event', { content, doc, equal: content === doc });
 
@@ -380,7 +383,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
 
             if (languageOrFromExt) {
                 languageSupport = await getLanguageSupport(languageOrFromExt);
-                lspExtension = await LSP.client(languageOrFromExt, path, fs);
+                lspExtension = await LSP.client({ view, language: languageOrFromExt, path, fs });
                 if (lspExtension) lspCompartment.push(lspExtension);
             }
 
@@ -413,27 +416,27 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
     }
 
     // Auto-load file content if file is specified but content is empty
-    const shouldAutoLoadFile = file && (!content || content.trim() === '');
+    const shouldAutoLoadFile = filepath && (!content || content.trim() === '');
 
-    if (file) {
+    if (filepath) {
         if (shouldAutoLoadFile) {
             // Check if file exists and load its content automatically
-            fs.exists(file).then(exists => {
+            fs.exists(filepath).then(exists => {
                 if (exists) {
-                    console.debug('Auto-loading file content for:', file);
-                    openFile(file)
+                    console.debug('Auto-loading file content for:', filepath);
+                    openFile(filepath)
                 } else {
-                    console.debug('File does not exist, proceeding with empty content:', file);
+                    console.debug('File does not exist, proceeding with empty content:', filepath);
                     // Still open the file interface even if file doesn't exist
-                    openFile(file)
+                    openFile(filepath)
                 }
             }).catch(error => {
                 console.warn('Failed to check file existence:', error);
                 // Proceed with opening the file interface anyway
-                openFile(file)
+                openFile(filepath)
             });
         } else {
-            openFile(file)
+            openFile(filepath)
         }
     } else if (language) {
         getLanguageSupport(language).then((languageSupport) => {
@@ -452,13 +455,13 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             // TODO: properly notify language server of file change
 
             // Handle path changes
-            if (oldConfig.file !== newConfig.file) {
-                ({ fs, file } = newConfig);
-                openFile(file)
+            if (oldConfig.filepath !== newConfig.filepath) {
+                ({ fs, filepath: filepath } = newConfig);
+                openFile(filepath)
             }
 
             // Handle document changes for saving
-            else if (update.docChanged && oldConfig.file === newConfig.file) {
+            else if (update.docChanged && oldConfig.filepath === newConfig.filepath) {
                 save();
             }
         },
@@ -472,7 +475,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
 export type CreateCodeblockArgs = {
     parent: HTMLElement;
     fs: Fs;
-    file?: string;
+    filepath?: string;
     content?: string;
     cwd?: string;
     toolbar?: boolean;
@@ -512,8 +515,8 @@ export const basicSetup: Extension = (() => [
 export function createCodeblock({
     parent,
     fs,
-    file,
-    language = 'markdown',
+    filepath,
+    language,
     content = '',
     cwd = '/',
     toolbar = true,
@@ -522,7 +525,7 @@ export function createCodeblock({
         doc: content,
         extensions: [
             basicSetup,
-            codeblock({ content, fs, file, cwd, language, toolbar, index })
+            codeblock({ content, fs, filepath, cwd, language, toolbar, index })
         ]
     });
 

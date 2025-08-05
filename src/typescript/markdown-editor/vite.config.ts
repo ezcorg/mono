@@ -3,7 +3,6 @@ import react from '@vitejs/plugin-react-swc'
 import path from 'path';
 import { getGitignored, takeSnapshot } from '../codeblock/src/utils/snapshot';
 import fs from 'fs/promises';
-import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import multimatch from 'multimatch';
 
 export const viteDefaults = {
@@ -65,40 +64,26 @@ export const snapshot = async (props: SnapshotProps = {}) => {
   };
 };
 
-export default async function getConfig({ command }: { command: string }) {
-  const isLibraryBuild = command === 'build';
-
-  return defineConfig({
-    build: isLibraryBuild ? {
-      lib: {
-        entry: path.resolve(__dirname, './src/lib/index.ts'),
-        name: 'MarkdownEditor',
-        fileName: (format) => `index.${format === 'es' ? 'js' : `${format}.js`}`,
-        formats: ['es', 'cjs']
-      },
-    } : {
-      // Regular app build for dev mode
-      outDir: 'dist-app'
+export default defineConfig({
+  build: {
+    // Regular app build for dev mode
+    outDir: 'dist-app'
+  },
+  optimizeDeps: {
+    exclude: ['@ezdevlol/codeblock', '@ezdevlol/snapshot']
+  },
+  plugins: [
+    snapshot({
+      gitignore: false,
+      exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo'],
+      output: './public/snapshot.bin'
+    }),
+    react()
+  ],
+  server: {
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+      'Cross-Origin-Opener-Policy': 'same-origin',
     },
-    optimizeDeps: {
-      exclude: ['@ezdevlol/codeblock', '@ezdevlol/snapshot']
-    },
-    plugins: [
-      // Only include snapshot plugin in dev mode
-      ...(isLibraryBuild ? [] : [snapshot({
-        gitignore: false,
-        exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo'],
-        output: './public/snapshot.bin'
-      }), react()]),
-      nodePolyfills({
-        include: ['path', 'events', 'process']
-      })
-    ],
-    server: {
-      headers: {
-        'Cross-Origin-Embedder-Policy': 'credentialless',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-      },
-    },
-  })
-}
+  },
+})

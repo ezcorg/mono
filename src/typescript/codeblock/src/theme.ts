@@ -82,6 +82,13 @@ export const codeblockTheme = EditorView.theme({
     '.cm-diagnosticAction': {
         display: 'none'
     },
+    '.cm-diagnosticText div': {
+        display: 'flex',
+        height: 'fit-content',
+    },
+    '.cm-diagnosticText p': {
+        margin: '0'
+    },
     '.cm-search-results': {
         position: 'absolute',
         top: '100%',

@@ -187,12 +187,12 @@ export const getGitignored = async (path: string, fs = typeof fsPromises) => {
 
 export type TakeSnapshotProps = {
     root: string;
-    filter: (path: string) => boolean;
+    filter: (path: string) => (Promise<boolean> | boolean);
 };
 
 export const snapshotDefaults: TakeSnapshotProps = {
     root: typeof process !== 'undefined' ? process.cwd() : './',
-    filter: () => true,
+    filter: () => Promise.resolve(true),
 };
 
 /**
@@ -229,7 +229,7 @@ export namespace Snapshot {
         separator?: string,
     }): Promise<SnapshotNode> => {
 
-        if (filter && !filter(path)) return null;
+        if (filter && !await filter(path)) return null;
 
         // TODO: think about handling snapshotting symlinks better
         // for now we just resolve and include

@@ -293,7 +293,6 @@ class SlashCommandsView {
     }
 
     hideSuggestions() {
-        console.log('hideSuggestions called')
         this.removeOutsideClickHandler()
 
         if (this.popup) {

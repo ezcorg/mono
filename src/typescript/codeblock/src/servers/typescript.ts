@@ -43,6 +43,7 @@ export const createLanguageServer = async ({ connection, fs }: CreateTypescriptE
                 ts,
                 undefined,
                 async () => ({
+                    // rootUri: params.rootUri,
                     languagePlugins: []
                 })
             ),

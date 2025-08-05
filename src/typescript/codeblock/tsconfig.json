@@ -10,10 +10,8 @@
             "DOM.Iterable"
         ],
         "skipLibCheck": true,
-        /* Bundler mode */
         "moduleResolution": "bundler",
         "moduleDetection": "force",
-        /* Linting */
         "noUnusedLocals": true,
         "noUnusedParameters": true,
         "noFallthroughCasesInSwitch": true,
@@ -21,7 +19,8 @@
         "declaration": true
     },
     "include": [
-        "src"
+        "src",
+        "example.ts"
     ],
     "exclude": [
         "node_modules",

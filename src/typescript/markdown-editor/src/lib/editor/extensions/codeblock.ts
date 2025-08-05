@@ -345,7 +345,6 @@ export const ExtendedCodeblock = Node.create({
                 selectNode() { cm.focus() },
                 stopEvent() { return true },
                 update(updated) {
-                    console.debug('updated', { updatedType: updated.type, nodeType: node.type, equal: updated.type == node.type, updating })
                     if (updated.type != node.type) return false
                     node = updated
                     if (updating) return true

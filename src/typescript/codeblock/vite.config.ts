@@ -66,12 +66,12 @@ export const snapshot = async (props: SnapshotProps = {}) => {
 
 export default async function getConfig() {
     return defineConfig({
-        resolve: {
-            alias: {
-                path: 'path-browserify',
-                process: 'process/browser'
-            }
-        },
+        // resolve: {
+        //     alias: {
+        //         path: 'path-browserify',
+        //         process: 'process/browser'
+        //     }
+        // },
         build: {
             rollupOptions: {
                 external: [
@@ -94,9 +94,9 @@ export default async function getConfig() {
                 exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'public/snapshot.bin', '.vite', '.turbo'],
                 output: './public/snapshot.bin'
             }),
-            nodePolyfills({
-                include: ['events', 'process']
-            }),
+            // nodePolyfills({
+            //     include: ['events', 'process']
+            // }),
         ],
         server: {
             headers: {
