@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@codemirror/state": "^6.5.2",
-    "@codemirror/view": "6.36.7",
+    "@codemirror/view": "6.37.0",
     "@ezdevlol/codeblock": "workspace:*",
     "@tiptap/core": "^2.11.9",
     "@tiptap/extension-link": "^2.12.0",

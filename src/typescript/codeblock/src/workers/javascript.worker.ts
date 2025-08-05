@@ -13,11 +13,11 @@ onconnect = async (event) => {
     const reader = new BrowserMessageReader(port);
     const writer = new BrowserMessageWriter(port);
     const connection = createConnection(reader, writer);
-    connection.listen();
 
     const proxy = async ({ fs }: { fs: Fs }) => {
         console.log('creating language server')
         await createLanguageServer({ fs, connection });
+        connection.listen();
     }
     Comlink.expose({ createLanguageServer: proxy }, port);
 }

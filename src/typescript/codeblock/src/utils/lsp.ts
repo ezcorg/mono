@@ -8,12 +8,13 @@ import { HighlightStyle, LanguageSupport } from "@codemirror/language";
 import { languageSupportCompartment, renderMarkdownCode } from "../editor";
 import { EditorView } from "@codemirror/view";
 import { vscodeDark } from "@uiw/codemirror-theme-vscode";
+import { languageServerSupport, LSPClient, Transport } from "@codemirror/lsp-client"
 import markdownit from 'markdown-it'
 
-const clients: Map<string, LanguageServerClient> = new Map();
+const clients: Map<string, LanguageServerClient | LSPClient> = new Map();
 
 export type LSPClientExtension = {
-    client: LanguageServerClient
+    client: LanguageServerClient | LSPClient
 } & Extension
 
 export type ClientOptions = {
@@ -26,6 +27,33 @@ export type ClientOptions = {
 // TODO: better fix for this reference sticking around to prevent Comlink from releasing the port
 export const languageServerFactory: Map<string, (args: { fs: Fs }) => Promise<{ server: LanguageServer }>> = new Map();
 export const lspWorkers: Map<string, SharedWorker> = new Map()
+
+class TestTransport implements Transport {
+    subscribers: ((msg: string) => void)[] = []
+
+    constructor(private port: MessagePort) {
+        this.port.onmessage = (ev) => {
+            const message = JSON.stringify(ev.data)
+            console.debug('recevied port message', message)
+            this.subscribers.forEach(listener => { listener(message) })
+        }
+
+        this.port.start();
+    }
+
+    send(message: string): void {
+        console.debug('sending message', message)
+        this.port.postMessage(JSON.parse(message));
+    }
+
+    subscribe(listener: (msg: string) => void) {
+        this.subscribers.push(listener)
+    }
+
+    unsubscribe(listener: (msg: string) => void) {
+        this.subscribers = this.subscribers.filter(l => l != listener)
+    }
+}
 
 export namespace LSP {
     export async function worker(language: string, fs: Fs): Promise<{ worker: SharedWorker }> {
@@ -59,37 +87,43 @@ export namespace LSP {
         let clientExtension: LSPClientExtension | undefined;
         const uri = `file:///${path}`;
 
+
         if (!client) {
             const { worker } = await LSP.worker(language, fs);
             if (!worker) return null;
 
             console.debug('got worker', { worker });
+            await worker;
 
-            client = new LanguageServerClient({
-                transport: new MessagePortTransport(worker.port),
-                rootUri: 'file:///',
-                workspaceFolders: [{ name: 'workspace', uri: 'file:///' }]
-            });
+            // client = new LanguageServerClient({
+            //     transport: new MessagePortTransport(worker.port),
+            //     rootUri: 'file:///',
+            //     workspaceFolders: [{ name: 'workspace', uri: 'file:///' }]
+            // });
+            const transport = new TestTransport(worker.port)
+            client = new LSPClient().connect(transport)
+            await client.initializing;
         }
         clients.set(language, client);
         clientExtension = { client, extension: [] };
-        clientExtension.extension = languageServerWithClient({
-            client: clientExtension.client,
-            documentUri: uri,
-            languageId: language,
-            allowHTMLContent: true,
-            markdownRenderer(markdown) {
-                const support = languageSupportCompartment.get(view.state) as LanguageSupport
-                const highlighter = vscodeDark[1].find(item => item.value instanceof HighlightStyle)?.value;
-                const parser = support.language?.parser
-                const md = markdownit({
-                    highlight: (str: string) => {
-                        return renderMarkdownCode(str, parser, highlighter)
-                    }
-                })
-                return md.render(markdown)
-            },
-        })
+        // clientExtension.extension = languageServerWithClient({
+        //     client: clientExtension.client,
+        //     documentUri: uri,
+        //     languageId: language,
+        //     allowHTMLContent: true,
+        //     markdownRenderer(markdown) {
+        //         const support = languageSupportCompartment.get(view.state) as LanguageSupport
+        //         const highlighter = vscodeDark[1].find(item => item.value instanceof HighlightStyle)?.value;
+        //         const parser = support.language?.parser
+        //         const md = markdownit({
+        //             highlight: (str: string) => {
+        //                 return renderMarkdownCode(str, parser, highlighter)
+        //             }
+        //         })
+        //         return md.render(markdown)
+        //     },
+        // })
+        clientExtension.extension = languageServerSupport(client as LSPClient, uri);
 
         return clientExtension;
     }
