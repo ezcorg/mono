@@ -28,7 +28,7 @@ export const mount = async ({ buffer, mountPoint = '/' }: MountArgs): Promise<Mo
                     : uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
                 console.log('Aligned ArrayBuffer:', aligned);
 
-                await Snapshot.mount(aligned as CborUint8Array<SnapshotNode>, {
+                await Snapshot.mount(new Uint8Array(aligned) as CborUint8Array<SnapshotNode>, {
                     // @ts-ignore
                     fs,
                 });

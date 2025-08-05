@@ -12,7 +12,7 @@ async function loadFs() {
     const buffer = await response.arrayBuffer();
     console.debug('Got snapshot', buffer);
 
-    return await CodeblockFS.worker(buffer as CborUint8Array<SnapshotNode>);
+    return await CodeblockFS.worker(buffer as unknown as CborUint8Array<SnapshotNode>);
 }
 const fs = await loadFs()
 const parent = document.getElementById('editor') as HTMLDivElement;

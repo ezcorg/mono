@@ -18,7 +18,7 @@ const isNode = typeof process !== 'undefined' && process.versions?.node;
  * Compress data using gzip compression.
  * Uses Node.js zlib in Node.js environment, browser CompressionStream in browser.
  */
-const compress = async (data: Uint8Array): Promise<Uint8Array> => {
+export const compress = async (data: Uint8Array): Promise<Uint8Array> => {
     if (isNode) {
         // Node.js environment
         try {
@@ -43,7 +43,7 @@ const compress = async (data: Uint8Array): Promise<Uint8Array> => {
             const writer = stream.writable.getWriter();
             const reader = stream.readable.getReader();
 
-            writer.write(data);
+            writer.write(new Uint8Array(data));
             writer.close();
 
             const chunks: Uint8Array[] = [];
@@ -83,29 +83,29 @@ const isGzipCompressed = (data: Uint8Array): boolean => {
     return data.length >= 2 && data[0] === 0x1f && data[1] === 0x8b;
 };
 
-const decompress = async (data: Uint8Array): Promise<Uint8Array> => {
-    console.log('decompressData: Starting decompression, data length:', data.length);
-    console.log('decompressData: First few bytes:', Array.from(data.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+export const decompress = async (data: Uint8Array): Promise<Uint8Array> => {
+    console.debug('decompressData: Starting decompression, data length:', data.length);
+    console.debug('decompressData: First few bytes:', Array.from(data.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
 
     // Check if data is actually compressed
     if (!isGzipCompressed(data)) {
-        console.log('decompressData: Data does not appear to be gzip compressed, returning as-is');
+        console.debug('decompressData: Data does not appear to be gzip compressed, returning as-is');
         return data;
     }
 
-    console.log('decompressData: Data appears to be gzip compressed');
+    console.debug('decompressData: Data appears to be gzip compressed');
 
     if (isNode) {
-        console.log('decompressData: Using Node.js zlib');
+        console.debug('decompressData: Using Node.js zlib');
         // Node.js environment
         const { gunzip } = await import('zlib');
         const { promisify } = await import('util');
         const gunzipAsync = promisify(gunzip);
         const result = new Uint8Array(await gunzipAsync(data));
-        console.log('decompressData: Node.js decompression successful, result length:', result.length);
+        console.debug('decompressData: Node.js decompression successful, result length:', result.length);
         return result;
     } else {
-        console.log('decompressData: Using browser DecompressionStream');
+        console.debug('decompressData: Using browser DecompressionStream');
         // Browser environment
         if (typeof DecompressionStream === 'undefined') {
             // Fallback: assume data is uncompressed if DecompressionStream is not available
@@ -118,26 +118,26 @@ const decompress = async (data: Uint8Array): Promise<Uint8Array> => {
             const writer = stream.writable.getWriter();
             const reader = stream.readable.getReader();
 
-            console.log('decompressData: Writing data to decompression stream');
-            writer.write(data);
+            console.debug('decompressData: Writing data to decompression stream');
+            writer.write(new Uint8Array(data));
             writer.close();
 
             const chunks: Uint8Array[] = [];
             let done = false;
 
-            console.log('decompressData: Reading decompressed chunks');
+            console.debug('decompressData: Reading decompressed chunks');
             while (!done) {
                 const { value, done: readerDone } = await reader.read();
                 done = readerDone;
                 if (value) {
-                    console.log('decompressData: Received chunk of length:', value.length);
+                    console.debug('decompressData: Received chunk of length:', value.length);
                     chunks.push(value);
                 }
             }
 
             // Concatenate all chunks
             const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-            console.log('decompressData: Total decompressed length:', totalLength);
+            console.debug('decompressData: Total decompressed length:', totalLength);
             const result = new Uint8Array(totalLength);
             let offset = 0;
             for (const chunk of chunks) {
@@ -145,7 +145,7 @@ const decompress = async (data: Uint8Array): Promise<Uint8Array> => {
                 offset += chunk.length;
             }
 
-            console.log('decompressData: Browser decompression successful');
+            console.debug('decompressData: Browser decompression successful');
             return result;
         } catch (error) {
             console.warn('decompressData: Browser decompression failed, returning original data:', error);
@@ -204,7 +204,7 @@ export const snapshotDefaults: TakeSnapshotProps = {
 export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     const { root, filter } = { ...snapshotDefaults, ...props };
 
-    console.log('Taking snapshot of filesystem', { root, filter });
+    console.debug('Taking snapshot of filesystem', { root, filter });
 
     const snapshot = await Snapshot
         .take({ fs: fsPromises, path: root, filter })
@@ -220,8 +220,6 @@ export type SnapshotOptions = {
 }
 
 export namespace Snapshot {
-    // TODO: refactor `from` here
-
     export const take = async ({ fs, path, filter, separator = '/' }: {
         fs: typeof fsPromises,
         path: TakeSnapshotProps['root'],
@@ -229,7 +227,7 @@ export namespace Snapshot {
         separator?: string,
     }): Promise<SnapshotNode> => {
 
-        if (filter && !await filter(path)) return null;
+        if (filter && !(await filter(path))) return null;
 
         // TODO: think about handling snapshotting symlinks better
         // for now we just resolve and include
@@ -262,39 +260,39 @@ export namespace Snapshot {
 
     export const mount = async (buffer: CborUint8Array<SnapshotNode>, { fs, path = '/', separator = '/' }: SnapshotOptions): Promise<void> => {
         try {
-            console.log('Snapshot.mount: Starting mount process');
-            console.log('Snapshot.mount: Buffer type:', typeof buffer);
-            console.log('Snapshot.mount: Buffer length:', buffer?.byteLength || buffer?.length || 'unknown');
-            console.log('Snapshot.mount: Buffer constructor:', buffer?.constructor?.name);
+            console.debug('Snapshot.mount: Starting mount process');
+            console.debug('Snapshot.mount: Buffer type:', typeof buffer);
+            console.debug('Snapshot.mount: Buffer length:', buffer?.byteLength || buffer?.length || 'unknown');
+            console.debug('Snapshot.mount: Buffer constructor:', buffer?.constructor?.name);
 
             // Convert buffer to Uint8Array if needed
             const uint8Buffer = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-            console.log('Snapshot.mount: Converted to Uint8Array, length:', uint8Buffer.length);
+            console.debug('Snapshot.mount: Converted to Uint8Array, length:', uint8Buffer.length);
 
             // Check if data appears to be compressed
             const isCompressed = isGzipCompressed(uint8Buffer);
-            console.log('Snapshot.mount: Data appears compressed:', isCompressed);
+            console.debug('Snapshot.mount: Data appears compressed:', isCompressed);
 
             // Try to decompress the buffer first, then decode
             let decompressed: Uint8Array;
             try {
                 decompressed = await decompress(uint8Buffer);
-                console.log('Snapshot.mount: Successfully processed buffer, decompressed length:', decompressed.length);
+                console.debug('Snapshot.mount: Successfully processed buffer, decompressed length:', decompressed.length);
             } catch (decompressError) {
                 console.warn('Snapshot.mount: Decompression failed, using original buffer:', decompressError);
                 // Fallback: assume the buffer is already uncompressed (for backward compatibility)
                 decompressed = uint8Buffer;
             }
 
-            console.log('Snapshot.mount: Attempting to decode CBOR data...');
+            console.debug('Snapshot.mount: Attempting to decode CBOR data...');
             const snapshot = await decoder.decode(decompressed) as SnapshotNode;
-            console.log('Snapshot.mount: Successfully decoded snapshot, type:', typeof snapshot);
-            console.log('Snapshot.mount: Snapshot structure:', Array.isArray(snapshot) ? `Array[${snapshot.length}]` : snapshot);
+            console.debug('Snapshot.mount: Successfully decoded snapshot, type:', typeof snapshot);
+            console.debug('Snapshot.mount: Snapshot structure:', Array.isArray(snapshot) ? `Array[${snapshot.length}]` : snapshot);
 
             if (snapshot) {
-                console.log('Snapshot.mount: Starting fromSnapshot process...');
+                console.debug('Snapshot.mount: Starting fromSnapshot process...');
                 await fromSnapshot(snapshot, { fs, path, separator });
-                console.log('Snapshot.mount: Successfully mounted snapshot');
+                console.debug('Snapshot.mount: Successfully mounted snapshot');
             } else {
                 console.warn('Snapshot.mount: Decoded snapshot is null or undefined');
             }
@@ -309,7 +307,7 @@ export namespace Snapshot {
      */
     export const loadAndMount = async (url: string, { fs, path = '/', separator = '/' }: SnapshotOptions): Promise<void> => {
         try {
-            console.log('Snapshot.loadAndMount: Starting direct load from URL:', url);
+            console.debug('Snapshot.loadAndMount: Starting direct load from URL:', url);
 
             // Fetch the snapshot data directly in the worker
             const response = await fetch(url);
@@ -317,13 +315,13 @@ export namespace Snapshot {
                 throw new Error(`Failed to fetch snapshot: ${response.status} ${response.statusText}`);
             }
 
-            console.log('Snapshot.loadAndMount: Response received, content-length:', response.headers.get('content-length'));
+            console.debug('Snapshot.loadAndMount: Response received, content-length:', response.headers.get('content-length'));
 
             // Get the response as ArrayBuffer for better performance
             const arrayBuffer = await response.arrayBuffer();
             const uint8Buffer = new Uint8Array(arrayBuffer);
 
-            console.log('Snapshot.loadAndMount: Downloaded buffer length:', uint8Buffer.length);
+            console.debug('Snapshot.loadAndMount: Downloaded buffer length:', uint8Buffer.length);
 
             // Use the existing mount logic
             await Snapshot.mount(uint8Buffer as CborUint8Array<SnapshotNode>, { fs, path, separator });
@@ -340,7 +338,7 @@ export namespace Snapshot {
      */
     export const loadAndMountStreaming = async (url: string, { fs, path = '/', separator = '/' }: SnapshotOptions): Promise<void> => {
         try {
-            console.log('Snapshot.loadAndMountStreaming: Starting streaming load from URL:', url);
+            console.debug('Snapshot.loadAndMountStreaming: Starting streaming load from URL:', url);
 
             const response = await fetch(url);
             if (!response.ok) {
@@ -351,7 +349,7 @@ export namespace Snapshot {
                 throw new Error('Response body is not available for streaming');
             }
 
-            console.log('Snapshot.loadAndMountStreaming: Starting streaming download...');
+            console.debug('Snapshot.loadAndMountStreaming: Starting streaming download...');
 
             // Collect all chunks
             const chunks: Uint8Array[] = [];
@@ -368,14 +366,14 @@ export namespace Snapshot {
 
                     // Log progress for large files
                     if (totalLength % (5 * 1024 * 1024) === 0) {
-                        console.log(`Snapshot.loadAndMountStreaming: Downloaded ${Math.round(totalLength / (1024 * 1024))}MB`);
+                        console.debug(`Snapshot.loadAndMountStreaming: Downloaded ${Math.round(totalLength / (1024 * 1024))}MB`);
                     }
                 }
             } finally {
                 reader.releaseLock();
             }
 
-            console.log('Snapshot.loadAndMountStreaming: Download complete, total length:', totalLength);
+            console.debug('Snapshot.loadAndMountStreaming: Download complete, total length:', totalLength);
 
             // Combine all chunks into a single buffer
             const uint8Buffer = new Uint8Array(totalLength);
@@ -385,7 +383,7 @@ export namespace Snapshot {
                 offset += chunk.length;
             }
 
-            console.log('Snapshot.loadAndMountStreaming: Combined buffer created, mounting...');
+            console.debug('Snapshot.loadAndMountStreaming: Combined buffer created, mounting...');
 
             // Use the existing mount logic
             await Snapshot.mount(uint8Buffer as CborUint8Array<SnapshotNode>, { fs, path, separator });

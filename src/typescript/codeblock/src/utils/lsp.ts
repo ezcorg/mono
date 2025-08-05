@@ -56,7 +56,7 @@ export namespace LSP {
 
     export async function client({ fs, language, path, view }: ClientOptions): Promise<LSPClientExtension> {
         let client = clients.get(language);
-        let ext: LSPClientExtension | undefined;
+        let clientExtension: LSPClientExtension | undefined;
         const uri = `file:///${path}`;
 
         if (!client) {
@@ -72,9 +72,9 @@ export namespace LSP {
             });
         }
         clients.set(language, client);
-        ext = { client, extension: [] };
-        ext.extension = languageServerWithClient({
-            client: ext.client,
+        clientExtension = { client, extension: [] };
+        clientExtension.extension = languageServerWithClient({
+            client: clientExtension.client,
             documentUri: uri,
             languageId: language,
             allowHTMLContent: true,
@@ -91,6 +91,6 @@ export namespace LSP {
             },
         })
 
-        return ext;
+        return clientExtension;
     }
 }

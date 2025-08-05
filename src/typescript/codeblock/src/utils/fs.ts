@@ -184,7 +184,7 @@ export namespace CodeblockFS {
             ({ fs } = await proxy.mountFromUrl({
                 url: bufferOrUrl,
                 mountPoint: '/',
-                useStreaming: true
+                useStreaming: false
             }));
         } else {
             // Buffer provided - use traditional mount method

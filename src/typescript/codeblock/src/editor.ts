@@ -389,7 +389,6 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
 
             const unit = getIndentationUnit(content);
             // Compose all changes into a single transaction
-            console.log('dispatching', { content, languageSupport, lspCompartment, unit });
             view.dispatch({
                 changes: { from: 0, to: view.state.doc.length, insert: content },
                 effects: [
@@ -398,13 +397,9 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
                     indentationCompartment.reconfigure(indentUnit.of(unit)),
                 ]
             });
-
-            console.log('applied all initial settings');
-
             // Start watching for file changes after the state is set up
             // TODO: fix this
             // startWatching();
-            console.log('after watch call');
         } catch (error) {
             console.error("Failed to initialize codeblock:", error);
         } finally {
@@ -466,7 +461,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             }
         },
         destroy() {
-            console.log('Destroying codeblock view plugin');
+            console.debug('Destroying codeblock view plugin');
             abortController.abort(); // Stop the watcher
         }
     };
