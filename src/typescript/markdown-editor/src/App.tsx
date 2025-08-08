@@ -117,15 +117,12 @@ function App() {
           content: initialMarkdown,
           fs: {
             fs: fs,
-            filepath: undefined,
+            filepath: 'test.md',
             autoSave: false,
           },
           onUpdate: ({ editor }) => {
-            const json = editor.getJSON();
             const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();
             setMarkdownContent(markdown);
-            console.log("Editor JSON:", json);
-            console.log("Editor Markdown:", markdown);
           },
         });
         setEditor(newEditor);
@@ -144,11 +141,6 @@ function App() {
   return (
     <div style={{ padding: '20px', maxWidth: '800px', margin: 'auto' }}>
       <div id='md-editor' ref={ref}></div>
-      {/* <MarkdownEditor
-
-        initialContent={markdownContent}
-        onChange={handleContentChange}
-      /> */}
       <hr style={{ margin: '20px 0' }} />
       <h2>Live Markdown Output:</h2>
       <pre style={{ whiteSpace: 'pre-wrap', background: '#eee', padding: '10px', border: '1px solid #ccc' }}>

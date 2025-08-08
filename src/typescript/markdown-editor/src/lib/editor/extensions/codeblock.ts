@@ -177,7 +177,6 @@ export const ExtendedCodeblock = Node.create({
 
             const forwardUpdate = (cmView: EditorView, update: ViewUpdate) => {
                 if (updating) return
-
                 // Allow forwarding updates even when not focused during initial file loading
                 // This ensures that asynchronously loaded file content gets propagated to ProseMirror
                 const pos = getPos()
@@ -319,7 +318,7 @@ export const ExtendedCodeblock = Node.create({
                                 content: node.textContent,
                                 fs: fsWorker,
                                 language: node.attrs.language,
-                                file: node.attrs.file,
+                                filepath: node.attrs.file,
                                 toolbar: !!node.attrs.file,
                                 cwd: '/',
                                 index,

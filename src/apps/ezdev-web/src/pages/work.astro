@@ -8,24 +8,14 @@ const projects = [
 		title: 'markdown-editor',
 		description: 'An embeddable markdown editor',
 		tags: ['TipTap', 'ProseMirror', 'TypeScript'],
-		image: '',
 		link: 'https://github.com/ezdevlol/mono/tree/main/src/typescript/markdown-editor',
 	},
 	{
 		title: 'codeblock',
 		description: 'A lightweight embeddable code block editor',
 		tags: ['CodeMirror', 'TypeScript'],
-		image: '',
 		link: 'https://github.com/ezdevlol/mono/tree/main/src/typescript/codeblock',
 	},
-	// {
-	// 	title: 'htmlsnap',
-	// 	description:
-	// 		'A browser extension devtool for snapshotting HTML elements (and applicable CSS)',
-	// 	tags: ['Javascript', 'Web Extension'],
-	// 	image: '',
-	// 	link: 'https://github.com/tbrockman/htmlsnap/',
-	// },
 ];
 ---
 
@@ -34,49 +24,49 @@ const projects = [
 	description="A showcase of projects we've built for clients around the world."
 >
 	<section
-		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-6 md:px-8"
+		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-4 md:px-8"
 	>
 		<div class="w-full mx-auto flex flex-col gap-8">
 			<Navbar currentPath="/work" />
-			<div
-				id="masonry-container"
-				class="mb-16 opacity-0 transition-opacity duration-300 mb-[-2rem]"
-			>
+
+			{/* Packery Grid Container */}
+			<div id="grid-container" class="opacity-0">
+				<div class="grid-sizer"></div>
+
 				{
-					projects.map((project, index) => (
+					projects.map((project) => (
 						<div
-							class="masonry-item w-full md:w-[calc(50%-1rem)] mb-8 border-2 border-[#333333] overflow-hidden transition-all duration-300 hover:border-[#ffffff] hover:bg-[#ffffff] work-item-card"
-							data-project={project.title}
+							class="grid-item"
+							data-project-title={project.title}
 						>
-							<div class="p-6">
-								<div class="flex items-center justify-between mb-3">
-									<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title">
-										{project.title}
-									</h3>
-									<button
-										class="expand-toggle text-[#F5F5F5] text-xl transition-transform duration-300"
-										aria-label="Toggle project details"
-									>
-										<span class="toggle-icon">+</span>
-									</button>
-								</div>
-								<p
-									style="font-family: Times"
-									class="text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description"
-								>
-									{project.description}
-								</p>
-								<div class="flex flex-wrap gap-2 mb-4">
-									{project.tags.map((tech) => (
-										<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
-											{tech}
-										</span>
-									))}
-								</div>
-								<div class="project-content hidden mt-6 border-t border-[#333333] pt-6">
-									<div class="project-demo-container min-h-[400px] bg-[#1a1a1a] border border-[#333333] rounded p-4">
-										<div class="loading-text text-[#F5F5F5] opacity-70">
-											Loading {project.title}...
+							<div class="work-item-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] transition-all duration-300 overflow-hidden">
+								<div class="p-6">
+									<div class="flex items-center justify-between mb-3">
+										<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title">
+											{project.title}
+										</h3>
+										<button
+											class="expand-toggle text-[#F5F5F5] text-xl transition-transform duration-300"
+											aria-label="Toggle project details"
+										>
+											<span class="toggle-icon">+</span>
+										</button>
+									</div>
+									<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
+										{project.description}
+									</p>
+									<div class="flex flex-wrap gap-2 mb-4">
+										{project.tags.map((tech) => (
+											<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+												{tech}
+											</span>
+										))}
+									</div>
+									<div class="project-content hidden mt-6 border-t border-[#333333] pt-6">
+										<div class="project-demo-container min-h-[400px] bg-[#1a1a1a] border border-[#333333] rounded p-4">
+											<div class="loading-text text-[#F5F5F5] opacity-70">
+												Loading {project.title}...
+											</div>
 										</div>
 									</div>
 								</div>
@@ -86,7 +76,7 @@ const projects = [
 				}
 			</div>
 
-			<div class="mb-24">
+			<div class="mb-24 px-2">
 				<p class="text-lg text-[#F5F5F5] opacity-70 mb-8">
 					Want to see yours here?
 				</p>
@@ -102,366 +92,227 @@ const projects = [
 
 	<Footer slot="footer" />
 
-	<!-- Masonry.js CDN -->
-	<script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"
-	></script>
-
 	<script>
-		document.addEventListener('DOMContentLoaded', function () {
-			const container = document.querySelector(
-				'#masonry-container',
+		import Packery from 'packery';
+		import imagesLoaded from 'imagesloaded';
+
+		document.addEventListener('DOMContentLoaded', () => {
+			const grid = document.querySelector(
+				'#grid-container',
 			) as HTMLElement;
+			if (!grid) return;
 
-			if (container && typeof (window as any).Masonry !== 'undefined') {
-				let masonry: any = null;
-				let resizeTimeout: number | null = null;
-				let currentBreakpoint: string = '';
-				let expandedItems = new Set<string>();
+			let pckry: any | null = null;
 
-				// Debounced resize handler
-				function debounce(func: Function, wait: number) {
-					return function executedFunction(...args: any[]) {
-						const later = () => {
-							if (resizeTimeout) clearTimeout(resizeTimeout);
-							func(...args);
-						};
-						if (resizeTimeout) clearTimeout(resizeTimeout);
-						resizeTimeout = setTimeout(later, wait) as any;
-					};
-				}
+			// Dynamically load the markdown editor
+			async function loadMarkdownEditor(containerEl: HTMLElement) {
+				try {
+					const { createEditor } = await import(
+						'@ezdevlol/markdown-editor'
+					);
+					containerEl.innerHTML = ''; // Clear loading text
+					const editorDiv = document.createElement('div');
+					containerEl.appendChild(editorDiv);
 
-				// Handle responsive behavior and reinitialize if needed
-				function handleResize() {
-					if (!container) return;
-
-					const items = container.querySelectorAll(
-						'.masonry-item',
-					) as NodeListOf<HTMLElement>;
-					const isDesktop = window.innerWidth >= 768; // md breakpoint
-					const newBreakpoint = isDesktop ? 'desktop' : 'mobile';
-
-					// Update item widths based on expansion state
-					items.forEach((item: HTMLElement) => {
-						const projectName = item.dataset.project;
-						const isExpanded = expandedItems.has(projectName || '');
-
-						if (isExpanded) {
-							item.style.width = '100%';
-						} else if (isDesktop) {
-							item.style.width = 'calc(50% - 1rem)';
-						} else {
-							item.style.width = '100%';
-						}
+					createEditor({
+						element: editorDiv,
+						content: `# Welcome to the Markdown Editor!\nThis is an interactive demo.`,
 					});
 
-					// If breakpoint changed, reinitialize Masonry for better layout
-					if (newBreakpoint !== currentBreakpoint) {
-						currentBreakpoint = newBreakpoint;
-
-						if (masonry) {
-							masonry.destroy();
+					// After content is loaded, trigger proper relayout
+					if (pckry) {
+						// Find the parent grid item
+						const gridItem = containerEl.closest(
+							'.grid-item',
+						) as HTMLElement;
+						if (
+							gridItem &&
+							gridItem.classList.contains('is-expanded')
+						) {
+							// Use fit to properly position the expanded item
+							setTimeout(() => pckry?.fit(gridItem), 100);
 						}
-
-						// Small delay to ensure DOM updates are complete
-						setTimeout(() => {
-							initializeMasonry();
-						}, 10);
-					} else if (masonry) {
-						// Just relayout if same breakpoint
-						masonry.layout();
 					}
+				} catch (error) {
+					console.error('Failed to load markdown editor:', error);
+					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor.</div>`;
 				}
+			}
 
-				// Debounced resize handler
-				const debouncedResize = debounce(handleResize, 150);
+			// Handle project card expansion and collapse
+			function handleProjectExpansion(item: HTMLElement) {
+				const isExpanded = item.classList.contains('is-expanded');
+				const contentDiv = item.querySelector(
+					'.project-content',
+				) as HTMLElement;
+				const toggleIcon = item.querySelector(
+					'.toggle-icon',
+				) as HTMLElement;
 
-				// Set initial widths and breakpoint
-				const isDesktop = window.innerWidth >= 768;
-				currentBreakpoint = isDesktop ? 'desktop' : 'mobile';
+				if (!isExpanded) {
+					// --- EXPAND ---
+					// First show the content
+					contentDiv.classList.remove('hidden');
 
-				const items = container.querySelectorAll(
-					'.masonry-item',
-				) as NodeListOf<HTMLElement>;
-				items.forEach((item: HTMLElement) => {
-					if (isDesktop) {
-						item.style.width = 'calc(50% - 1rem)';
-					} else {
-						item.style.width = '100%';
+					// Update UI
+					toggleIcon.textContent = '−';
+					toggleIcon.style.transform = 'rotate(180deg)';
+
+					// Add expanded class
+					item.classList.add('is-expanded');
+
+					// Load content if needed
+					const projectTitle = item.dataset.projectTitle;
+					const demoContainer = item.querySelector(
+						'.project-demo-container',
+					) as HTMLElement;
+					if (projectTitle === 'markdown-editor') {
+						loadMarkdownEditor(demoContainer);
+					} else if (projectTitle === 'codeblock') {
+						demoContainer.innerHTML =
+							'<div class="text-[#F5F5F5] opacity-70">Codeblock demo coming soon...</div>';
+					}
+
+					// Use fit for expanding - wait a bit for content to render
+					if (pckry) {
+						setTimeout(() => pckry.fit(item), 50);
+					}
+				} else {
+					// --- COLLAPSE ---
+					// Hide content first
+					contentDiv.classList.add('hidden');
+
+					// Update UI
+					toggleIcon.textContent = '+';
+					toggleIcon.style.transform = 'rotate(0deg)';
+
+					// Remove expanded class after a brief delay to allow content to hide
+					setTimeout(() => {
+						item.classList.remove('is-expanded');
+
+						// Use layout instead of shiftLayout for better repositioning
+						if (pckry) {
+							pckry.layout();
+						}
+					}, 100);
+				}
+			}
+
+			// Initialize Packery
+			const initPackery = () => {
+				pckry = new Packery(grid, {
+					itemSelector: '.grid-item',
+					sizer: '.grid-sizer',
+					gutter: 16,
+					percentPosition: true,
+				});
+
+				// Use event delegation for expand/collapse clicks
+				grid.addEventListener('click', (event) => {
+					const target = event.target as HTMLElement;
+					const button = target.closest('.expand-toggle');
+					if (button) {
+						const item = target.closest(
+							'.grid-item',
+						) as HTMLElement;
+						if (item) {
+							handleProjectExpansion(item);
+						}
 					}
 				});
 
-				// Dynamic import function for markdown editor
-				async function loadMarkdownEditor(containerEl: HTMLElement) {
-					try {
-						// Import the markdown editor library
-						const { createEditor } = await import(
-							'@ezdevlol/markdown-editor'
-						);
+				// Fade in the grid
+				grid.style.opacity = '1';
+			};
 
-						// Clear loading text
-						containerEl.innerHTML = '';
-
-						// Create editor container
-						const editorDiv = document.createElement('div');
-						editorDiv.style.minHeight = '400px';
-						editorDiv.style.border = '1px solid #333';
-						editorDiv.style.borderRadius = '4px';
-						editorDiv.style.padding = '16px';
-						editorDiv.style.backgroundColor = '#ffffff';
-						containerEl.appendChild(editorDiv);
-
-						// Create the editor
-						const editor = createEditor({
-							element: editorDiv,
-							content: `# Welcome to the Markdown Editor
-
-This is a sample markdown editor built with TipTap and ProseMirror.
-
-## Features
-
-- **Rich text editing** with markdown syntax
-- Task lists with checkboxes
-- Code blocks with syntax highlighting
-- Tables and links
-- And much more!
-
-Try editing this content to see the editor in action.`,
-							onUpdate: ({ editor }) => {
-								console.log(
-									'Editor content updated:',
-									editor.getHTML(),
-								);
-							},
-						});
-
-						console.log('Markdown editor loaded successfully');
-					} catch (error) {
-						console.error('Failed to load markdown editor:', error);
-						containerEl.innerHTML = `<div class="text-red-500">Failed to load editor: ${error.message}</div>`;
-					}
-				}
-
-				// Handle project card expansion
-				function handleProjectExpansion(
-					projectItem: HTMLElement,
-					projectName: string,
-				) {
-					const contentDiv = projectItem.querySelector(
-						'.project-content',
-					) as HTMLElement;
-					const toggleIcon = projectItem.querySelector(
-						'.toggle-icon',
-					) as HTMLElement;
-					const demoContainer = projectItem.querySelector(
-						'.project-demo-container',
-					) as HTMLElement;
-
-					if (!contentDiv || !toggleIcon || !demoContainer) return;
-
-					const isExpanded = expandedItems.has(projectName);
-
-					if (isExpanded) {
-						// Collapse
-						expandedItems.delete(projectName);
-						contentDiv.classList.add('hidden');
-						toggleIcon.textContent = '+';
-						toggleIcon.style.transform = 'rotate(0deg)';
-						projectItem.style.width =
-							window.innerWidth >= 768
-								? 'calc(50% - 1rem)'
-								: '100%';
-					} else {
-						// Expand
-						expandedItems.add(projectName);
-						contentDiv.classList.remove('hidden');
-						toggleIcon.textContent = '−';
-						toggleIcon.style.transform = 'rotate(180deg)';
-						projectItem.style.width = '100%';
-
-						// Load project-specific content
-						if (projectName === 'markdown-editor') {
-							loadMarkdownEditor(demoContainer);
-						} else if (projectName === 'codeblock') {
-							demoContainer.innerHTML =
-								'<div class="text-[#F5F5F5] opacity-70">Codeblock demo coming soon...</div>';
-						}
-					}
-
-					// Relayout masonry after expansion/collapse
-					if (masonry) {
-						setTimeout(() => {
-							masonry.layout();
-						}, 100);
-					}
-				}
-
-				// Add click handlers for expansion
-				function setupExpansionHandlers() {
-					const expandButtons =
-						container.querySelectorAll('.expand-toggle');
-					expandButtons.forEach((button) => {
-						button.addEventListener('click', (e) => {
-							e.stopPropagation();
-							const projectItem = button.closest(
-								'.masonry-item',
-							) as HTMLElement;
-							const projectName = projectItem?.dataset.project;
-							if (projectItem && projectName) {
-								handleProjectExpansion(
-									projectItem,
-									projectName,
-								);
-							}
-						});
-					});
-				}
-
-				// Initialize Masonry
-				const initializeMasonry = () => {
-					// Calculate column width based on current breakpoint
-					const isDesktop = window.innerWidth >= 768;
-					const containerWidth = container.offsetWidth;
-					const columnWidth = isDesktop
-						? (containerWidth - 32) / 2
-						: containerWidth;
-
-					// Initialize Masonry with fixed column width
-					masonry = new (window as any).Masonry(container, {
-						itemSelector: '.masonry-item',
-						columnWidth: columnWidth,
-						gutter: 32, // 2rem gap
-						percentPosition: false, // Use fixed positioning for better control
-						horizontalOrder: true,
-						transitionDuration: 0, // Disable initial transition to prevent jumping
-					});
-
-					// Setup expansion handlers
-					setupExpansionHandlers();
-
-					// Show the container with a smooth fade-in after layout is complete
-					setTimeout(() => {
-						container.style.opacity = '1';
-						// Re-enable transitions after initial layout
-						if (masonry && masonry.options) {
-							masonry.options.transitionDuration = '0.3s';
-						}
-					}, 50);
-				};
-
-				// Set up resize handling
-				if ('ResizeObserver' in window) {
-					const resizeObserver = new ResizeObserver(
-						debounce((entries: any[]) => {
-							for (const entry of entries) {
-								// Only trigger if there's a meaningful size change
-								if (
-									entry.contentBoxSize ||
-									entry.borderBoxSize
-								) {
-									handleResize();
-								}
-							}
-						}, 100),
-					);
-
-					// Observe the container
-					resizeObserver.observe(container);
-				} else {
-					// Fallback to window resize for older browsers
-					(window as any).addEventListener('resize', debouncedResize);
-				}
-
-				// Check if all images are loaded
-				const images = container.querySelectorAll('img');
-				if (images.length === 0) {
-					// No images, initialize immediately
-					initializeMasonry();
-				} else {
-					// Wait for images to load
-					let loadedImages = 0;
-					const totalImages = images.length;
-
-					const checkAllImagesLoaded = () => {
-						loadedImages++;
-						if (loadedImages === totalImages) {
-							initializeMasonry();
-						}
-					};
-
-					images.forEach((img: HTMLImageElement) => {
-						if (img.complete) {
-							checkAllImagesLoaded();
-						} else {
-							img.addEventListener('load', checkAllImagesLoaded);
-							img.addEventListener('error', checkAllImagesLoaded); // Handle broken images
-						}
-					});
-
-					// Fallback: initialize after a short delay even if images haven't loaded
-					setTimeout(() => {
-						if (container.style.opacity === '0') {
-							initializeMasonry();
-						}
-					}, 1000);
-				}
-			}
+			// Wait for images to load before initializing to prevent overlap
+			imagesLoaded(grid, initPackery);
 		});
 	</script>
 
 	<style>
-		/* Ensure masonry container has proper positioning */
-		#masonry-container {
-			position: relative;
-			min-height: 200px; /* Prevent layout shift by reserving space */
+		/* Set the font for the description text */
+		.description-text {
+			font-family: Times, serif;
 		}
 
-		/* Masonry items positioning */
-		.masonry-item {
-			position: relative;
+		/* Base styles for the grid container and items */
+		#grid-container {
+			transition: opacity 0.4s ease-in-out;
+		}
+		.grid-item {
+			box-sizing: border-box;
+			width: 100%; /* Full width on mobile */
+		}
+		.grid-sizer {
+			width: 100%;
 		}
 
-		/* Smooth transitions for masonry items after initial load */
-		.masonry-item {
+		/* 2-column layout for medium screens and up */
+		@media (min-width: 768px) {
+			.grid-item {
+				width: calc(50% - 8px);
+			}
+			.grid-sizer {
+				width: calc(50% - 8px);
+			}
+		}
+
+		/* Style for expanded items */
+		.grid-item.is-expanded {
+			width: 100% !important; /* Force full width on all screen sizes */
+			z-index: 10;
+		}
+
+		/* Ensure collapsed items reset to proper width */
+		.grid-item:not(.is-expanded) {
+			width: 100%; /* Full width on mobile */
+		}
+
+		@media (min-width: 768px) {
+			.grid-item:not(.is-expanded) {
+				width: calc(50% - 8px) !important;
+			}
+		}
+
+		/* Ensure project content transitions smoothly */
+		.project-content {
 			transition: all 0.3s ease;
+			overflow: hidden;
 		}
 
-		/* Prevent flash of unstyled content */
-		#masonry-container.loading .masonry-item {
-			visibility: hidden;
+		.project-content.hidden {
+			max-height: 0;
+			opacity: 0;
+			margin-top: 0;
+			padding-top: 0;
+			border-top: none;
 		}
 
-		/* Ensure smooth fade-in */
-		#masonry-container {
-			transition: opacity 0.3s ease-in-out;
-		}
-
-		/* Work item hover effects */
-		.work-item-card {
-			cursor: pointer;
-		}
-
-		.work-item-card:hover .work-item-title {
-			color: #000000;
-		}
-
-		.work-item-card:hover .work-item-description {
-			color: #000000;
+		.project-content:not(.hidden) {
+			max-height: none;
 			opacity: 1;
 		}
 
+		/* Hover effects for work items */
+		.work-item-card {
+			cursor: pointer;
+			box-shadow: 0 0 0 rgba(255, 255, 255, 0);
+		}
+		.work-item-card:hover {
+			box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
+		}
+		.work-item-card:hover .work-item-title,
+		.work-item-card:hover .work-item-description,
+		.work-item-card:hover .expand-toggle {
+			color: #000000;
+			opacity: 1;
+		}
 		.work-item-card:hover .work-item-tag {
 			color: #000000;
 			background-color: #f0f0f0;
 			border-color: #cccccc;
 			opacity: 1;
-		}
-
-		.work-item-card {
-			box-shadow: 0 0 0 rgba(255, 255, 255, 0);
-		}
-
-		.work-item-card:hover {
-			box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
 		}
 	</style>
 </Layout>
