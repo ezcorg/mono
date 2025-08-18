@@ -3,6 +3,8 @@ import Layout from '../layouts/Layout.astro';
 import Footer from '../components/Footer.astro';
 import Navbar from '../components/Navbar.astro';
 
+import '../styles/markdown.css';
+
 const projects = [
 	{
 		title: 'markdown-editor',
@@ -63,12 +65,8 @@ const projects = [
 											</span>
 										))}
 									</div>
-									<div class="project-content hidden mt-6 border-t border-[#333333] pt-6">
-										<div class="project-demo-container min-h-[400px] bg-[#1a1a1a] border border-[#333333] rounded p-4">
-											<div class="loading-text text-[#F5F5F5] opacity-70">
-												Loading {project.title}...
-											</div>
-										</div>
+									<div class="project-content hidden mt-6">
+										<div class="project-demo-container min-h-[400px] border border-[#333333]" />
 									</div>
 								</div>
 							</div>
@@ -97,26 +95,15 @@ const projects = [
 		import Packery from 'packery';
 		import imagesLoaded from 'imagesloaded';
 
-		document.addEventListener('DOMContentLoaded', () => {
-			const grid = document.querySelector(
-				'#grid-container',
-			) as HTMLElement;
-			if (!grid) return;
-
-			let pckry: any | null = null;
-
-			// Dynamically load the markdown editor
-			async function loadMarkdownEditor(containerEl: HTMLElement) {
+		let pckry: any | null = null;
+		const demos = {
+			'markdown-editor': async (containerEl: HTMLElement) => {
 				try {
 					const { createEditor } = await import(
 						'@ezdevlol/markdown-editor'
 					);
-					containerEl.innerHTML = ''; // Clear loading text
-					const editorDiv = document.createElement('div');
-					containerEl.appendChild(editorDiv);
-
 					createEditor({
-						element: editorDiv,
+						element: containerEl,
 						content: `# Welcome to the Markdown Editor!\nThis is an interactive demo.`,
 					});
 
@@ -138,7 +125,18 @@ const projects = [
 					console.error('Failed to load markdown editor:', error);
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor.</div>`;
 				}
-			}
+			},
+			codeblock: async (containerEl: HTMLElement) => {
+				containerEl.innerHTML =
+					'<div class="text-[#F5F5F5] opacity-70">Codeblock demo coming soon...</div>';
+			},
+		};
+
+		document.addEventListener('DOMContentLoaded', () => {
+			const grid = document.querySelector(
+				'#grid-container',
+			) as HTMLElement;
+			if (!grid) return;
 
 			// Handle project card expansion and collapse
 			function handleProjectExpansion(item: HTMLElement) {
@@ -164,15 +162,15 @@ const projects = [
 
 					// Load content if needed
 					const projectTitle = item.dataset.projectTitle;
+					if (!projectTitle || !demos[projectTitle]) return;
+
 					const demoContainer = item.querySelector(
 						'.project-demo-container',
 					) as HTMLElement;
-					if (projectTitle === 'markdown-editor') {
-						loadMarkdownEditor(demoContainer);
-					} else if (projectTitle === 'codeblock') {
-						demoContainer.innerHTML =
-							'<div class="text-[#F5F5F5] opacity-70">Codeblock demo coming soon...</div>';
-					}
+
+					// Call the appropriate demo loader once
+					const result = demos[projectTitle](demoContainer);
+					demos[projectTitle] = () => result;
 
 					// Use fit for expanding - wait a bit for content to render
 					if (pckry) {
@@ -276,6 +274,10 @@ const projects = [
 			}
 		}
 
+		.project-demo-container {
+			display: flex;
+		}
+
 		/* Ensure project content transitions smoothly */
 		.project-content {
 			transition: all 0.3s ease;
@@ -297,15 +299,12 @@ const projects = [
 
 		/* Hover effects for work items */
 		.work-item-card {
-			cursor: pointer;
 			box-shadow: 0 0 0 rgba(255, 255, 255, 0);
 		}
 		.work-item-card:hover {
 			box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
 		}
-		.work-item-card:hover .work-item-title,
-		.work-item-card:hover .work-item-description,
-		.work-item-card:hover .expand-toggle {
+		.work-item-card:hover * {
 			color: #000000;
 			opacity: 1;
 		}

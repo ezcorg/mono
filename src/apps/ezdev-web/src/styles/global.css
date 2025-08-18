@@ -2,22 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-    html {
-        font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
-        scroll-behavior: smooth;
-    }
+html {
+    font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
+    scroll-behavior: smooth;
+}
 
-    body {
-        @apply bg-black text-[#F5F5F5];
-        margin: 0;
-        padding: 0;
-        min-height: 100vh;
-    }
+body {
+    @apply bg-black text-[#F5F5F5];
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+}
 
-    ::selection {
-        @apply bg-[#F5F5F5] text-black;
-    }
+::selection {
+    @apply bg-[#F5F5F5] text-black;
 }
 
 @keyframes blink {
@@ -57,4 +55,33 @@
 
 .animate-blink {
     animation: blink 1s step-start infinite;
+}
+
+.ProseMirror {
+    padding: 1rem;
+    flex: 1;
+
+    /* Work around Tailwind base styles */
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        font-size: revert;
+        font-weight: revert;
+        line-height: revert;
+    }
+
+    ol,
+    ul,
+    menu {
+        list-style: revert;
+    }
+
+    ul {
+        li {
+            display: flex;
+        }
+    }
 }

@@ -34,7 +34,7 @@ const pathSegmentToLabel = (segment: string): Crumb[] => {
 const breadcrumbs = pathSegmentToLabel(currentPath);
 ---
 
-<div class="flex overflow-y-scroll">
+<div class="flex">
 	<Logo size={size} />
 	<Breadcrumb breadcrumbs={breadcrumbs} />
 </div>
