@@ -1,8 +1,10 @@
 pub mod host_functions;
 pub mod plugin_manager;
+pub mod protocol_adapter;
 pub mod runtime;
 
 pub use plugin_manager::PluginManager;
+pub use protocol_adapter::ProtocolAdapter;
 pub use runtime::WasmPlugin;
 
 use anyhow::Result;
@@ -117,6 +119,10 @@ pub enum EventType {
     ResponseBody,
     ConnectionOpen,
     ConnectionClose,
+    /// Protocol negotiation event (fired when ALPN negotiation completes)
+    ProtocolNegotiated,
+    /// TLS handshake completed
+    TlsHandshakeComplete,
 }
 
 impl EventType {
@@ -130,6 +136,8 @@ impl EventType {
             EventType::ResponseBody => "response_body",
             EventType::ConnectionOpen => "connection_open",
             EventType::ConnectionClose => "connection_close",
+            EventType::ProtocolNegotiated => "protocol_negotiated",
+            EventType::TlsHandshakeComplete => "tls_handshake_complete",
         }
     }
 
@@ -143,6 +151,8 @@ impl EventType {
             "response_body" => Some(EventType::ResponseBody),
             "connection_open" => Some(EventType::ConnectionOpen),
             "connection_close" => Some(EventType::ConnectionClose),
+            "protocol_negotiated" => Some(EventType::ProtocolNegotiated),
+            "tls_handshake_complete" => Some(EventType::TlsHandshakeComplete),
             _ => None,
         }
     }

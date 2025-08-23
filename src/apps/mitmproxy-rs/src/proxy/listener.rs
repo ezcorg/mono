@@ -1,6 +1,8 @@
 use super::{Connection, DnsResolver, ProxyError, ProxyResult};
 use crate::cert::CertificateAuthority;
 use crate::config::Config;
+use crate::proxy::handlers::{Http1Handler, Http2Handler, Http3Handler};
+use crate::proxy::protocol::{utils, ProtocolNegotiator};
 use crate::wasm::PluginManager;
 use anyhow::Result;
 use std::net::SocketAddr;
@@ -31,6 +33,15 @@ impl ProxyServer {
             plugin_manager,
             config,
         }
+    }
+
+    /// Create a new protocol negotiator with registered handlers
+    fn create_protocol_negotiator() -> ProtocolNegotiator {
+        let mut protocol_negotiator = ProtocolNegotiator::new();
+        protocol_negotiator.register_handler(Box::new(Http1Handler::new()));
+        protocol_negotiator.register_handler(Box::new(Http2Handler::new()));
+        protocol_negotiator.register_handler(Box::new(Http3Handler::new()));
+        protocol_negotiator
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -308,11 +319,15 @@ impl ProxyServer {
         config: Config,
         dns_resolver: Arc<DnsResolver>,
     ) -> ProxyResult<()> {
+        // Create protocol negotiator for this connection
+        let protocol_negotiator = Self::create_protocol_negotiator();
+
         // Get certificate for the target domain
         let cert = ca.get_certificate_for_domain(&host).await?;
 
-        // Set up TLS server for client connection
-        let tls_config = super::tls::create_server_config(cert)?;
+        // Set up TLS server for client connection with ALPN support
+        let supported_protocols = protocol_negotiator.supported_alpn_protocols();
+        let tls_config = super::tls::create_server_config_with_alpn(cert, supported_protocols)?;
         let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_config));
 
         // Accept TLS connection from client
@@ -336,40 +351,39 @@ impl ProxyServer {
 
         debug!("Established TLS connection with client for {}", host);
 
-        // Resolve target server address with proper port (443 for HTTPS)
-        let target_addr = dns_resolver.resolve_with_fallback(&host, 443).await?;
-        // Connect to target server
-        let upstream_stream = super::establish_upstream_connection(target_addr).await?;
+        // Extract ALPN protocol from TLS handshake
+        let alpn_protocol = super::protocol::utils::extract_alpn_from_tls(&client_tls_stream);
 
-        // Set up TLS client for upstream connection
-        let upstream_tls_config = super::tls::create_client_config()?;
-        let upstream_connector = tokio_rustls::TlsConnector::from(Arc::new(upstream_tls_config));
+        if let Some(ref alpn) = alpn_protocol {
+            info!(
+                "ALPN negotiated protocol: {:?}",
+                String::from_utf8_lossy(alpn)
+            );
+        } else {
+            info!("No ALPN protocol negotiated, defaulting to HTTP/1.1");
+        }
 
-        let server_name = rustls::pki_types::ServerName::try_from(host.clone())
-            .map_err(|_| ProxyError::InvalidRequest("Invalid server name".to_string()))?;
-
-        let upstream_tls_stream = upstream_connector
-            .connect(server_name, upstream_stream)
-            .await
-            .map_err(|e| {
-                ProxyError::Tls(rustls::Error::General(format!(
-                    "Upstream TLS failed: {}",
-                    e
-                )))
-            })?;
-
-        debug!("Established TLS connection with upstream server {}", host);
-
-        // Now we have TLS connections to both client and server
-        // We can intercept and modify the HTTP traffic
-        Self::handle_tls_proxy(
-            client_tls_stream,
-            upstream_tls_stream,
-            connection,
+        // Create connection context for protocol handler
+        let connection_context = utils::create_connection_context(
+            connection.client_addr,
+            Some(host.clone()),
+            true, // is_https
             plugin_manager,
             config,
-        )
-        .await
+            dns_resolver,
+        );
+
+        // Use protocol negotiator to handle the connection
+        let conn_stream: Box<dyn super::protocol::ConnectionStream> = Box::new(client_tls_stream);
+
+        protocol_negotiator
+            .handle_connection(
+                conn_stream,
+                connection.client_addr,
+                alpn_protocol.as_deref(),
+                connection_context,
+            )
+            .await
     }
 
     async fn handle_tls_proxy(

@@ -1,5 +1,9 @@
+pub mod forwarder;
+pub mod handlers;
 pub mod http;
 pub mod listener;
+pub mod message;
+pub mod protocol;
 pub mod tls;
 
 #[cfg(test)]
@@ -59,6 +63,18 @@ pub enum ProxyError {
 
     #[error("DNS resolution failed: {0}")]
     DnsResolution(String),
+
+    #[error("Unsupported protocol: {0}")]
+    UnsupportedProtocol(String),
+
+    #[error("Protocol negotiation failed: {0}")]
+    ProtocolNegotiation(String),
+
+    #[error("HTTP/2 error: {0}")]
+    Http2(String),
+
+    #[error("HTTP/3 error: {0}")]
+    Http3(String),
 }
 
 pub type ProxyResult<T> = Result<T, ProxyError>;
@@ -75,6 +91,7 @@ struct DnsCacheEntry {
     expires_at: Instant,
 }
 
+#[derive(Debug)]
 pub struct DnsResolver {
     cache: Arc<RwLock<HashMap<String, DnsCacheEntry>>>,
     cache_ttl: Duration,
