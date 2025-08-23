@@ -2,7 +2,6 @@ import { defineConfig } from 'vite'
 import { getGitignored, takeSnapshot } from './src/utils/snapshot';
 import fs from 'fs/promises';
 import path from 'path';
-import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import multimatch from 'multimatch';
 
 export const viteDefaults = {
@@ -24,9 +23,9 @@ export type SnapshotProps = {
 }
 
 export type BuildPathFilterArgs = {
-    include: string[],
-    exclude: string[],
-    gitignore: string | false
+    include?: string[],
+    exclude?: string[],
+    gitignore?: string | false | undefined
 }
 
 export const buildPathFilter = async ({ include, exclude, gitignore }: BuildPathFilterArgs) => {
@@ -52,11 +51,11 @@ export const snapshot = async (props: SnapshotProps = {}) => {
     const filter = await buildPathFilter({ include, exclude, gitignore });
 
     try {
-        console.log('Taking snapshot of filesystem', { root, filter });
-        const snapshot = await takeSnapshot({ root, filter })
-        console.log('Snapshot created', snapshot);
-        const fsBuffer = await transform?.(snapshot) || snapshot;
-        await fs.writeFile(output, Buffer.from(fsBuffer));
+        // console.log('Taking snapshot of filesystem', { root, filter });
+        // const snapshot = await takeSnapshot({ root, filter })
+        // console.log('Snapshot created', snapshot);
+        // const fsBuffer = await transform?.(snapshot) || snapshot;
+        // await fs.writeFile(output, Buffer.from(fsBuffer));
     } catch (e) { console.error(e) }
 
     return {

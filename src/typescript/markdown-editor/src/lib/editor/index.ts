@@ -38,7 +38,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             ExtendedLink.configure({}),
             StarterKit.configure({
                 codeBlock: false,
-                bulletList: false, // As Markdown handles bullet lists and allows us to configure the marker to prevent task item conflicts
+                // bulletList: false, // As Markdown handles bullet lists and allows us to configure the marker to prevent task item conflicts
             }),
             Markdown.configure({
                 html: false,

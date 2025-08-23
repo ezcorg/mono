@@ -158,11 +158,6 @@ impl ProxyServer {
             };
 
             info!("Received {} request for {}", method, url);
-            info!("Request headers: {:?}", headers);
-            info!(
-                "Raw request data: {}",
-                String::from_utf8_lossy(request_data)
-            );
 
             // Execute plugin event: request_start
             let mut context = super::create_request_context(

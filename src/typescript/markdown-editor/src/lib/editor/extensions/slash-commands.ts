@@ -51,6 +51,8 @@ export const SlashCommands = Extension.create<SlashCommandsOptions>({
                             // Track when "/" is typed to distinguish from cursor movement
                             if (event.key === '/') {
                                 slashView.lastInputWasSlash = true
+                            } else {
+                                slashView.lastInputWasSlash = false
                             }
 
                             if (slashView.dropdown) {

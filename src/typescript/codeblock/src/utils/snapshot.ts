@@ -8,8 +8,8 @@ import { CborUint8Array } from '@jsonjoy.com/json-pack/lib/cbor/types';
 import { FsApi } from '@ezdevlol/memfs/node/types';
 
 export const writer = new Writer(1024 * 32);
-const encoder = new CborEncoder(writer);
-const decoder = new CborDecoder();
+export const encoder = new CborEncoder(writer);
+export const decoder = new CborDecoder();
 
 // Cross-platform compression utilities
 const isNode = typeof process !== 'undefined' && process.versions?.node;
@@ -328,68 +328,6 @@ export namespace Snapshot {
 
         } catch (error) {
             console.error('Snapshot.loadAndMount: Failed to load and mount snapshot:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Load and mount a snapshot with streaming support for better performance with large files.
-     * This version processes the data in chunks as it arrives.
-     */
-    export const loadAndMountStreaming = async (url: string, { fs, path = '/', separator = '/' }: SnapshotOptions): Promise<void> => {
-        try {
-            console.debug('Snapshot.loadAndMountStreaming: Starting streaming load from URL:', url);
-
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch snapshot: ${response.status} ${response.statusText}`);
-            }
-
-            if (!response.body) {
-                throw new Error('Response body is not available for streaming');
-            }
-
-            console.debug('Snapshot.loadAndMountStreaming: Starting streaming download...');
-
-            // Collect all chunks
-            const chunks: Uint8Array[] = [];
-            const reader = response.body.getReader();
-            let totalLength = 0;
-
-            try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    chunks.push(value);
-                    totalLength += value.length;
-
-                    // Log progress for large files
-                    if (totalLength % (5 * 1024 * 1024) === 0) {
-                        console.debug(`Snapshot.loadAndMountStreaming: Downloaded ${Math.round(totalLength / (1024 * 1024))}MB`);
-                    }
-                }
-            } finally {
-                reader.releaseLock();
-            }
-
-            console.debug('Snapshot.loadAndMountStreaming: Download complete, total length:', totalLength);
-
-            // Combine all chunks into a single buffer
-            const uint8Buffer = new Uint8Array(totalLength);
-            let offset = 0;
-            for (const chunk of chunks) {
-                uint8Buffer.set(chunk, offset);
-                offset += chunk.length;
-            }
-
-            console.debug('Snapshot.loadAndMountStreaming: Combined buffer created, mounting...');
-
-            // Use the existing mount logic
-            await Snapshot.mount(uint8Buffer as CborUint8Array<SnapshotNode>, { fs, path, separator });
-
-        } catch (error) {
-            console.error('Snapshot.loadAndMountStreaming: Failed to load and mount snapshot:', error);
             throw error;
         }
     }

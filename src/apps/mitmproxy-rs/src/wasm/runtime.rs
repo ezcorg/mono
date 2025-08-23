@@ -9,6 +9,76 @@ use wasmtime::component::ResourceTable;
 use wasmtime::component::{Component, Instance, Linker};
 use wasmtime::{Config, Engine, Store, WasmBacktraceDetails};
 use wasmtime_wasi::p2::WasiCtxBuilder;
+/// Plugin interface wrapper for WASM component instances
+pub struct Plugin {
+    instance: Instance,
+}
+
+impl Plugin {
+    /// Create a new Plugin wrapper around a WASM component instance
+    pub fn new(_store: &mut Store<WasmState>, instance: &Instance) -> WasmResult<Self> {
+        Ok(Self {
+            instance: instance.clone(),
+        })
+    }
+
+    /// Call the get_metadata function from the WASM component
+    pub fn call_get_metadata(&self, store: &mut Store<WasmState>) -> WasmResult<String> {
+        // Try to get the get_metadata function from the instance
+        match self
+            .instance
+            .get_typed_func::<(), (String,)>(&mut *store, "get_metadata")
+        {
+            Ok(func) => {
+                let (result,) = func.call(store, ())?;
+                Ok(result)
+            }
+            Err(_) => {
+                // If the function doesn't exist, return a default metadata string
+                tracing::warn!("Plugin does not export get_metadata function, using default");
+                Ok("default-plugin".to_string())
+            }
+        }
+    }
+
+    /// Call an event handler function from the WASM component
+    pub fn call_event_handler(
+        &self,
+        store: &mut Store<WasmState>,
+        event_type: EventType,
+        context: &RequestContext,
+    ) -> WasmResult<PluginAction> {
+        let event_name = event_type.as_str();
+
+        // Try to get the event handler function
+        match self
+            .instance
+            .get_typed_func::<(String,), (i32,)>(&mut *store, event_name)
+        {
+            Ok(func) => {
+                // Serialize the context to JSON for passing to the plugin
+                let context_json = serde_json::to_string(context).map_err(|e| {
+                    WasmError::InvalidFormat(format!("Failed to serialize context: {}", e))
+                })?;
+
+                let (result,) = func.call(store, (context_json,))?;
+
+                // Convert the result to PluginAction
+                match result {
+                    0 => Ok(PluginAction::Continue),
+                    1 => Ok(PluginAction::Block("Blocked by plugin".to_string())),
+                    2 => Ok(PluginAction::Redirect("/blocked".to_string())),
+                    _ => Ok(PluginAction::Continue),
+                }
+            }
+            Err(_) => {
+                // If the function doesn't exist, just continue
+                tracing::debug!("Plugin does not export {} function", event_name);
+                Ok(PluginAction::Continue)
+            }
+        }
+    }
+}
 
 pub struct WasmPlugin {
     engine: Engine,
@@ -99,10 +169,9 @@ impl WasmPlugin {
         event_type: EventType,
         context: &RequestContext,
     ) -> WasmResult<PluginAction> {
-        // For now, return Continue as we need to implement the component interface properly
-        // This is a placeholder until we define the proper WIT interface
-        tracing::info!("WASI preview2 event handler called for: {:?}", event_type);
-        Ok(PluginAction::Continue)
+        // Create a Plugin wrapper and use it to call the event handler
+        let plugin = Plugin::new(store, instance)?;
+        plugin.call_event_handler(store, event_type, context)
     }
 
     pub async fn get_metadata(&self) -> WasmResult<PluginMetadata> {

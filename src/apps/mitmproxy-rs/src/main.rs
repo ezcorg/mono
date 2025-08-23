@@ -17,7 +17,7 @@ use web::WebServer;
 
 #[derive(Parser)]
 #[command(name = "mitm-proxy")]
-#[command(about = "A Rust-based MITM proxy with WASM plugin system")]
+#[command(about = "A Rust MITM proxy connected to a WASM plugin system")]
 struct Cli {
     /// Configuration file path
     #[arg(short, long, default_value = "config.toml")]
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting MITM Proxy Server");
-    
+
     // Load configuration
     let config = Config::load(&cli.config).unwrap_or_else(|e| {
         warn!("Failed to load config: {}, using defaults", e);

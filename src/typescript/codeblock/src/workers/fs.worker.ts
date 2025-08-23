@@ -67,10 +67,9 @@ export const mount = async ({ buffer, mountPoint = '/' }: MountArgs): Promise<Mo
  * This is much more efficient for large snapshots as it avoids transferring
  * data through the main thread.
  */
-export const mountFromUrl = async ({ url, mountPoint = '/', useStreaming = true }: {
+export const mountFromUrl = async ({ url, mountPoint = '/' }: {
     url: string;
     mountPoint?: string;
-    useStreaming?: boolean;
 }): Promise<MountResult> => {
     let filesystem;
 
@@ -79,20 +78,11 @@ export const mountFromUrl = async ({ url, mountPoint = '/', useStreaming = true 
 
         console.log(`Loading and mounting filesystem snapshot from URL: ${url} at [${mountPoint}]...`);
         const startTime = performance.now();
-
-        if (useStreaming) {
-            await Snapshot.loadAndMountStreaming(url, {
-                // @ts-ignore
-                fs,
-                path: mountPoint
-            });
-        } else {
-            await Snapshot.loadAndMount(url, {
-                // @ts-ignore
-                fs,
-                path: mountPoint
-            });
-        }
+        await Snapshot.loadAndMount(url, {
+            // @ts-ignore
+            fs,
+            path: mountPoint
+        });
 
         const endTime = performance.now();
         console.log(`Snapshot loaded and mounted in ${Math.round(endTime - startTime)}ms`);

@@ -170,6 +170,7 @@ impl PluginManager {
                 .await
             {
                 Ok(action) => {
+                    // TODO: certain actions should probably short-circuit further handling?
                     actions.push(action);
                 }
                 Err(e) => {

@@ -183,8 +183,7 @@ export namespace CodeblockFS {
             // URL provided - use optimized mountFromUrl for better performance
             ({ fs } = await proxy.mountFromUrl({
                 url: bufferOrUrl,
-                mountPoint: '/',
-                useStreaming: false
+                mountPoint: '/'
             }));
         } else {
             // Buffer provided - use traditional mount method
