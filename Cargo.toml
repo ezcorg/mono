@@ -8,18 +8,13 @@ members = [
     "src/apps/eznote/src-tauri", 
     "src/apps/wasmtime-wasi-proxy-test-rs", 
     "src/apps/wasm-test-component",
-    "src/rust/hello-wasip3-http", "src/rust/ezfilter-rs", "src/rust/ezfeature-rs",
+    "src/rust/hello-wasip3-http", "src/rust/ezfilter-rs", "src/rust/ezfeature-rs", "src/apps/mitmproxy-salvo",
 ]
 
 # Workspace-wide dependencies that can be shared across projects
 [workspace.dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
-thiserror = "2.0"
-tracing = "0.1"
-uuid = { version = "1.0", features = ["v4"] }
 
 # Workspace-wide configuration
 [profile.release]

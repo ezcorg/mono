@@ -12,8 +12,10 @@ tokio = { version = "1.0", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # HTTP/HTTPS
-hyper = { version = "1.0", features = ["full"] }
-hyper-util = { version = "0.1", features = ["full"] }
+hyper = { version = "1.7.0", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1.16", features = ["server", "client", "http1", "http2", "tokio"] }
+
+hyper-rustls = { version = "0.27.7", features = ["http2"] }
 http-body-util = "0.1"
 
 # TLS

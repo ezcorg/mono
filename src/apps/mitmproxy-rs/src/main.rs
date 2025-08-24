@@ -1,19 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
+use mitmproxy_rs::{CertificateAuthority, Config, ProxyServer, WebServer};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::{info, warn};
-
-mod cert;
-mod config;
-mod content;
-mod proxy;
-mod wasm;
-mod web;
-
-use config::Config;
-use proxy::ProxyServer;
-use web::WebServer;
 
 #[derive(Parser)]
 #[command(name = "mitm-proxy")]
@@ -71,16 +61,16 @@ async fn main() -> Result<()> {
     });
 
     // Create certificate authority
-    let ca = cert::CertificateAuthority::new(&cli.cert_dir).await?;
+    let ca: CertificateAuthority = CertificateAuthority::new(&cli.cert_dir).await?;
     info!("Certificate Authority initialized");
 
     // Initialize WASM plugin manager
-    let plugin_manager = wasm::PluginManager::new(&cli.plugin_dir).await?;
-    let plugin_count = plugin_manager.plugin_count().await;
-    info!(
-        "WASM Plugin Manager initialized with {} plugins",
-        plugin_count
-    );
+    // let plugin_manager = wasm::PluginManager::new(&cli.plugin_dir).await?;
+    // let plugin_count = plugin_manager.plugin_count().await;
+    // info!(
+    //     "WASM Plugin Manager initialized with {} plugins",
+    //     plugin_count
+    // );
 
     // Start web server for certificate distribution
     let web_server = WebServer::new(cli.web_addr, ca.clone());
@@ -91,7 +81,7 @@ async fn main() -> Result<()> {
     });
 
     // Start proxy server
-    let proxy_server = ProxyServer::new(cli.proxy_addr, ca, plugin_manager, config);
+    let proxy_server = ProxyServer::new(cli.proxy_addr, ca, config);
     let proxy_handle = tokio::spawn(async move {
         if let Err(e) = proxy_server.start().await {
             tracing::error!("Proxy server error: {}", e);

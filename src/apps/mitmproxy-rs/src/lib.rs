@@ -4,13 +4,12 @@
 pub mod cert;
 pub mod config;
 pub mod content;
+pub mod plugins;
 pub mod proxy;
-pub mod wasm;
 pub mod web;
 
 // Re-export commonly used types for convenience
 pub use cert::CertificateAuthority;
 pub use config::Config;
 pub use proxy::ProxyServer;
-pub use wasm::PluginManager;
 pub use web::WebServer;

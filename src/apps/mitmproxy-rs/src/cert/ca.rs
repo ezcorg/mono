@@ -2,6 +2,7 @@ use super::{CertError, CertResult, Certificate, CertificateCache};
 use anyhow::Result;
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use salvo::conn::rustls::{Keycert, RustlsConfig};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
@@ -209,5 +210,13 @@ impl CertificateAuthority {
     pub async fn cache_stats(&self) -> (usize, usize) {
         let size = self.cert_cache.size().await;
         (size, 1000) // (current_size, max_size)
+    }
+
+    pub async fn rustls(&self, domain: &str) -> CertResult<RustlsConfig> {
+        let cert = self.get_certificate_for_domain(domain).await?;
+
+        Ok(RustlsConfig::new(
+            Keycert::new().cert(cert.pem_cert).key(cert.pem_key),
+        ))
     }
 }
