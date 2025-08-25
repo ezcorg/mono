@@ -1,22 +1,22 @@
 use crate::cert::CertificateAuthority;
 use crate::config::Config;
 
+use bytes::Bytes;
+use futures::TryStreamExt;
+use http_body_util::{BodyExt, Full};
+use hyper::body::{Body, Incoming};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::upgrade;
+use hyper::{header, Method, Request, Response, StatusCode};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tokio_rustls::{rustls, TlsAcceptor};
 use tracing::{debug, error, info, warn};
 
-use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming;
-use hyper::server::conn::http1;
-use hyper::service::service_fn;
-use hyper::upgrade;
-use hyper::{header, Method, Request, Response, StatusCode, Uri};
-
 use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
-use reqwest;
+use reqwest::{self};
 
 /// Custom error type for proxy operations
 #[derive(Debug)]
@@ -104,7 +104,7 @@ impl ProxyServer {
         ca: CertificateAuthority,
         config: Config,
     ) -> ProxyResult<Self> {
-        // Hyper client that supports HTTP/1.1 and HTTP/2 (ALPN) to upstream servers
+        // reqwest client that supports HTTP/1.1 and HTTP/2 (ALPN) to upstream servers
         let upstream = client()?;
 
         Ok(Self {
@@ -183,11 +183,12 @@ impl ProxyServer {
             let ca = self.ca.clone();
             let cfg = self.config.clone();
             let on_upgrade = upgrade::on(&mut req);
+            let upstream = self.upstream.clone();
 
             tokio::spawn(async move {
                 match on_upgrade.await {
                     Ok(upgraded) => {
-                        if let Err(e) = run_tls_mitm(upgraded, authority, ca, cfg).await {
+                        if let Err(e) = run_tls_mitm(upstream, upgraded, authority, ca, cfg).await {
                             match &e {
                                 ProxyError::Io(ioe) if is_closed(ioe) => {
                                     debug!("tls tunnel closed")
@@ -228,13 +229,22 @@ impl ProxyServer {
         Ok(response)
     }
 }
+
+fn wrap_body(incoming: Incoming) -> reqwest::Body {
+    let stream = incoming.into_data_stream().map_err(|e| {
+        let err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
+        err
+    });
+    reqwest::Body::wrap_stream(stream)
+}
+
 /// Convert a hyper Request to a reqwest Request
 async fn convert_hyper_to_reqwest_request(
     hyper_req: Request<Incoming>,
     client: &reqwest::Client,
 ) -> ProxyResult<reqwest::Request> {
     let (parts, body) = hyper_req.into_parts();
-    let body_bytes = body.collect().await?.to_bytes();
+    // let body_bytes = body.collect().await?.to_bytes();
 
     let method = match parts.method {
         Method::GET => reqwest::Method::GET,
@@ -287,8 +297,8 @@ async fn convert_hyper_to_reqwest_request(
     }
 
     // Add body if present
-    if !body_bytes.is_empty() {
-        req_builder = req_builder.body(body_bytes);
+    if !body.is_end_stream() {
+        req_builder = req_builder.body(wrap_body(body));
     }
 
     req_builder
@@ -329,6 +339,7 @@ fn client() -> ProxyResult<UpstreamClient> {
 /// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
 /// with a Hyper auto server (h1 or h2) and forwards each request to the real upstream via `upstream`.
 async fn run_tls_mitm(
+    upstream: reqwest::Client,
     upgraded: upgrade::Upgraded,
     authority: String,
     ca: Arc<CertificateAuthority>,
@@ -345,8 +356,6 @@ async fn run_tls_mitm(
 
     let tls = acceptor.accept(TokioIo::new(upgraded)).await?;
     info!("TLS established with client for {}", host);
-
-    let upstream = client()?; // build a fresh upstream client
 
     // Auto (h1/h2) Hyper server over the client TLS stream
     let executor = TokioExecutor::new();
