@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
     // Initialize logging
     let log_level = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
         .with_env_filter(format!(
             "mitmproxy_rs={},mitm_proxy={},{}",
             log_level, log_level, log_level
@@ -83,7 +84,7 @@ async fn main() -> Result<()> {
     // Start proxy server
     let proxy_server = ProxyServer::new(cli.proxy_addr, ca, config);
     let proxy_handle = tokio::spawn(async move {
-        if let Err(e) = proxy_server.start().await {
+        if let Err(e) = proxy_server.unwrap().start().await {
             tracing::error!("Proxy server error: {}", e);
         }
     });

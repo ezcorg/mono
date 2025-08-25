@@ -1,24 +1,91 @@
 use crate::cert::CertificateAuthority;
 use crate::config::Config;
 
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tokio_rustls::{rustls, TlsAcceptor};
 use tracing::{debug, error, info, warn};
 
-use http_body_util::Full;
-use hyper::body::Body;
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade;
 use hyper::{header, Method, Request, Response, StatusCode, Uri};
 
-use hyper_rustls::HttpsConnector;
-use hyper_rustls::HttpsConnectorBuilder;
-use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::client::legacy::Client;
 use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
+use reqwest;
+
+/// Custom error type for proxy operations
+#[derive(Debug)]
+pub enum ProxyError {
+    /// IO-related errors
+    Io(std::io::Error),
+    /// TLS/rustls-related errors
+    Tls(rustls::Error),
+    /// HTTP/Hyper-related errors
+    Http(hyper::Error),
+    /// Certificate authority errors
+    Cert(Box<dyn std::error::Error + Send + Sync>),
+    /// Generic errors with a message
+    Generic(String),
+}
+
+impl std::fmt::Display for ProxyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProxyError::Io(e) => write!(f, "IO error: {}", e),
+            ProxyError::Tls(e) => write!(f, "TLS error: {}", e),
+            ProxyError::Http(e) => write!(f, "HTTP error: {}", e),
+            ProxyError::Cert(e) => write!(f, "Certificate error: {}", e),
+            ProxyError::Generic(msg) => write!(f, "Proxy error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for ProxyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ProxyError::Io(e) => Some(e),
+            ProxyError::Tls(e) => Some(e),
+            ProxyError::Http(e) => Some(e),
+            ProxyError::Cert(e) => Some(e.as_ref()),
+            ProxyError::Generic(_) => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ProxyError {
+    fn from(err: std::io::Error) -> Self {
+        ProxyError::Io(err)
+    }
+}
+
+impl From<rustls::Error> for ProxyError {
+    fn from(err: rustls::Error) -> Self {
+        ProxyError::Tls(err)
+    }
+}
+
+impl From<hyper::Error> for ProxyError {
+    fn from(err: hyper::Error) -> Self {
+        ProxyError::Http(err)
+    }
+}
+
+impl From<hyper::http::Error> for ProxyError {
+    fn from(err: hyper::http::Error) -> Self {
+        ProxyError::Generic(format!("HTTP error: {}", err))
+    }
+}
+
+impl From<reqwest::Error> for ProxyError {
+    fn from(err: reqwest::Error) -> Self {
+        ProxyError::Generic(format!("Reqwest error: {}", err))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ProxyServer {
@@ -28,26 +95,17 @@ pub struct ProxyServer {
     upstream: UpstreamClient,
 }
 
-type ReqBody = Full<bytes::Bytes>;
-type UpstreamClient = Client<HttpsConnector<HttpConnector>, ReqBody>;
-pub type ProxyResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+type UpstreamClient = reqwest::Client;
+pub type ProxyResult<T> = Result<T, ProxyError>;
 
 impl ProxyServer {
-    pub async fn new(
+    pub fn new(
         listen_addr: SocketAddr,
         ca: CertificateAuthority,
         config: Config,
     ) -> ProxyResult<Self> {
         // Hyper client that supports HTTP/1.1 and HTTP/2 (ALPN) to upstream servers
-        let https = HttpsConnectorBuilder::new()
-            .with_native_roots()?
-            .https_or_http()
-            .enable_http1()
-            .enable_http2()
-            .build();
-        let upstream = hyper_util::client::legacy::Client::builder(TokioExecutor::new())
-            .http2_adaptive_window(true)
-            .build(https);
+        let upstream = client()?;
 
         Ok(Self {
             listen_addr,
@@ -64,13 +122,20 @@ impl ProxyServer {
         let shared = self.clone();
 
         loop {
-            let (io, peer) = listener.accept().await?;
+            let (io, _peer) = listener.accept().await?;
             let shared = shared.clone();
 
             tokio::spawn(async move {
                 let svc = service_fn(move |req| {
                     let shared = shared.clone();
-                    async move { shared.handle_plain_http(req).await }
+                    async move {
+                        shared.handle_plain_http(req).await.map_err(|e| {
+                            error!("Service error: {}", e);
+                            // Convert to hyper::Error - this is a bit hacky but necessary
+                            // since we can't directly convert ProxyError to hyper::Error
+                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        })
+                    }
                 });
 
                 // Cleartext side: serve HTTP/1.1 (supports CONNECT+upgrade)
@@ -96,31 +161,33 @@ impl ProxyServer {
     /// - CONNECT is acknowledged, then we hijack/upgrade and run TLS MITM with an auto (h1/h2) server.
     async fn handle_plain_http(
         &self,
-        mut req: Request<ReqBody>,
-    ) -> Result<Response<ReqBody>, Infallible> {
+        mut req: Request<Incoming>,
+    ) -> Result<Response<Full<Bytes>>, ProxyError> {
         if req.method() == Method::CONNECT {
+            info!("Handling CONNECT request");
+
             // Host:port lives in the request-target for CONNECT (authority-form)
             let authority = req
                 .uri()
                 .authority()
                 .map(|a| a.as_str().to_string())
                 .unwrap_or_default();
+            info!("CONNECT request authority: {}", authority);
             if authority.is_empty() {
-                return Ok(resp(StatusCode::BAD_REQUEST, "CONNECT missing authority"));
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Full::new(Bytes::from("CONNECT missing authority")))?;
+                return Ok::<_, ProxyError>(resp);
             }
-
-            // Send 200, then hijack the TCP stream and do TLS MITM
-            let mut resp = Response::new(ReqBody::new(bytes::Bytes::new()));
-            *resp.status_mut() = StatusCode::OK;
 
             let ca = self.ca.clone();
             let cfg = self.config.clone();
-            let up = self.upstream.clone();
+            let on_upgrade = upgrade::on(&mut req);
 
             tokio::spawn(async move {
-                match upgrade::on(&mut req).await {
+                match on_upgrade.await {
                     Ok(upgraded) => {
-                        if let Err(e) = run_tls_mitm(upgraded, authority, ca, cfg, up).await {
+                        if let Err(e) = run_tls_mitm(upgraded, authority, ca, cfg).await {
                             match &e {
                                 ProxyError::Io(ioe) if is_closed(ioe) => {
                                     debug!("tls tunnel closed")
@@ -133,53 +200,130 @@ impl ProxyServer {
                 }
             });
 
-            return Ok(resp);
+            // Return 200 Connection Established for CONNECT
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(Full::new(Bytes::new()))?);
         }
 
         // ----- Plain HTTP proxying (request line is absolute-form from clients) -----
-        // Convert absolute-form URI to origin-form for upstream.
-        // Also ensure Host header is correct and strip proxy-only headers.
-        if let Some((scheme, authority, path_and_query)) = split_absolute_uri(req.uri()) {
-            // Set authority as Host header (if not present)
-            if !req.headers().contains_key(header::HOST) {
-                req.headers_mut()
-                    .insert(header::HOST, authority.parse().unwrap());
-            }
-            // Build origin-form URI for upstream request
-            let new_uri = Uri::builder()
-                .path_and_query(path_and_query)
-                .build()
-                .unwrap();
-            *req.uri_mut() = new_uri;
+        info!(
+            "Handling plain HTTP request: {} {}",
+            req.method(),
+            req.uri()
+        );
+        strip_proxy_headers(req.headers_mut());
+        // TODO: plugin: on_request(&mut req, &conn).await;
 
-            // Strip hop-by-hop / proxy headers
-            strip_proxy_headers(req.headers_mut());
-            // TODO: plugin: on_request(&mut req, &conn).await;
+        // Convert hyper request to reqwest request
+        let reqwest_req = convert_hyper_to_reqwest_request(req, &self.upstream).await?;
+        let resp = self.upstream.execute(reqwest_req).await?;
 
-            // Forward using the shared HTTPS client (supports http/1.1 & http/2 upstream)
-            match self.upstream.request(req).await {
-                Ok(mut resp) => {
-                    // TODO: plugin: on_response(&mut resp, &conn).await;
-                    Ok(resp)
-                }
-                Err(err) => {
-                    warn!("upstream error: {}", err);
-                    Ok(resp(StatusCode::BAD_GATEWAY, "Upstream error"))
-                }
-            }
-        } else {
-            // Not absolute-form; some clients still send origin-form even to HTTP proxies.
-            // Best effort: just pass it upstream (requires Host header).
-            strip_proxy_headers(req.headers_mut());
-            match self.upstream.request(req).await {
-                Ok(resp) => Ok(resp),
-                Err(err) => {
-                    warn!("upstream error: {}", err);
-                    Ok(resp(StatusCode::BAD_GATEWAY, "Upstream error"))
-                }
+        // Convert reqwest response back to hyper response
+        let mut response = convert_reqwest_to_hyper_response(resp).await?;
+
+        // Strip hop-by-hop headers from the response
+        strip_proxy_headers(response.headers_mut());
+
+        Ok(response)
+    }
+}
+/// Convert a hyper Request to a reqwest Request
+async fn convert_hyper_to_reqwest_request(
+    hyper_req: Request<Incoming>,
+    client: &reqwest::Client,
+) -> ProxyResult<reqwest::Request> {
+    let (parts, body) = hyper_req.into_parts();
+    let body_bytes = body.collect().await?.to_bytes();
+
+    let method = match parts.method {
+        Method::GET => reqwest::Method::GET,
+        Method::POST => reqwest::Method::POST,
+        Method::PUT => reqwest::Method::PUT,
+        Method::DELETE => reqwest::Method::DELETE,
+        Method::HEAD => reqwest::Method::HEAD,
+        Method::OPTIONS => reqwest::Method::OPTIONS,
+        Method::PATCH => reqwest::Method::PATCH,
+        Method::TRACE => reqwest::Method::TRACE,
+        _ => {
+            return Err(ProxyError::Generic(format!(
+                "Unsupported method: {}",
+                parts.method
+            )))
+        }
+    };
+
+    // Build the URL properly - for TLS MITM, we need to construct the full URL
+    let url = if parts.uri.scheme().is_some() {
+        // Already has scheme (absolute URI)
+        parts.uri.to_string()
+    } else {
+        // Origin form - need to construct full URL from Host header
+        let host = parts
+            .headers
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .ok_or_else(|| ProxyError::Generic("Missing Host header".to_string()))?;
+
+        let scheme = "https"; // Assume HTTPS for TLS MITM
+        let path = parts
+            .uri
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or("/");
+
+        format!("{}://{}{}", scheme, host, path)
+    };
+
+    let mut req_builder = client.request(method, &url);
+
+    // Copy headers, but skip Host header as reqwest will set it from the URL
+    for (name, value) in parts.headers.iter() {
+        if name != header::HOST {
+            if let Ok(value_str) = value.to_str() {
+                req_builder = req_builder.header(name.as_str(), value_str);
             }
         }
     }
+
+    // Add body if present
+    if !body_bytes.is_empty() {
+        req_builder = req_builder.body(body_bytes);
+    }
+
+    req_builder
+        .build()
+        .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest request: {}", e)))
+}
+
+/// Convert a reqwest Response to a hyper Response
+async fn convert_reqwest_to_hyper_response(
+    reqwest_resp: reqwest::Response,
+) -> ProxyResult<Response<Full<Bytes>>> {
+    let status = reqwest_resp.status();
+    let headers = reqwest_resp.headers().clone();
+    let body_bytes = reqwest_resp.bytes().await?;
+
+    let mut response = Response::builder().status(status);
+
+    // Copy headers
+    for (name, value) in headers.iter() {
+        response = response.header(name, value);
+    }
+
+    response
+        .body(Full::new(body_bytes))
+        .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
+}
+
+fn client() -> ProxyResult<UpstreamClient> {
+    let client = reqwest::Client::builder()
+        .pool_idle_timeout(std::time::Duration::from_secs(10))
+        .pool_max_idle_per_host(1)
+        .http1_title_case_headers()
+        .build()
+        .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest client: {}", e)))?;
+    Ok(client)
 }
 
 /// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
@@ -189,8 +333,9 @@ async fn run_tls_mitm(
     authority: String,
     ca: Arc<CertificateAuthority>,
     _config: Arc<Config>,
-    upstream: UpstreamClient,
 ) -> ProxyResult<()> {
+    info!("Running TLS MITM for {}", authority);
+
     // Extract host + port, default :443
     let (host, _port) = parse_authority_host_port(&authority, 443)?;
 
@@ -199,65 +344,76 @@ async fn run_tls_mitm(
     let acceptor = TlsAcceptor::from(Arc::new(server_tls));
 
     let tls = acceptor.accept(TokioIo::new(upgraded)).await?;
-    debug!("TLS established with client for {}", host);
+    info!("TLS established with client for {}", host);
 
-    // Auto (h1/h2) Hyper server over the client TLS stream.
+    let upstream = client()?; // build a fresh upstream client
+
+    // Auto (h1/h2) Hyper server over the client TLS stream
     let executor = TokioExecutor::new();
-    let mut auto = AutoServer::new(executor);
+    let auto: AutoServer<TokioExecutor> = AutoServer::new(executor);
 
-    // Service that proxies each decrypted request to the real upstream host.
-    let svc = service_fn(move |mut req: Request<Body>| {
+    // Service that proxies each decrypted request to the real upstream host
+    let svc = {
         let upstream = upstream.clone();
-        let host = host.clone();
-        let mut inner_conn = conn.clone();
 
-        async move {
-            // Rebuild absolute info if client sends origin-form (expected inside TLS).
-            ensure_authority_and_scheme(&host, &mut req);
+        service_fn(move |req: Request<Incoming>| {
+            let upstream = upstream.clone();
 
-            // Strip hop-by-hop/proxy headers *from the client*
-            strip_proxy_headers(req.headers_mut());
+            async move {
+                info!("Handling TLS request: {} {}", req.method(), req.uri());
 
-            // TODO: plugin: on_tls_request(&mut req, &inner_conn).await;
-
-            // Now rewrite URI to origin-form for upstream, using the path+query only.
-            if let Some((_sch, _auth, path)) = split_absolute_uri(req.uri()) {
-                let new_uri = Uri::builder().path_and_query(path).build().unwrap();
-                *req.uri_mut() = new_uri;
-            }
-
-            // Make sure Host header matches the real upstream host.
-            req.headers_mut()
-                .insert(header::HOST, host.parse().unwrap());
-
-            match upstream.request(req).await {
-                Ok(mut resp) => {
-                    // TODO: plugin: on_tls_response(&mut resp, &inner_conn).await;
-                    Ok::<_, Infallible>(resp)
+                // Forward upstream
+                match convert_hyper_to_reqwest_request(req, &upstream).await {
+                    Ok(reqwest_req) => match upstream.execute(reqwest_req).await {
+                        Ok(resp) => {
+                            info!("Upstream response status: {}", resp.status());
+                            match convert_reqwest_to_hyper_response(resp).await {
+                                Ok(mut response) => {
+                                    strip_proxy_headers(response.headers_mut());
+                                    Ok::<Response<Full<Bytes>>, hyper::http::Error>(response)
+                                }
+                                Err(err) => {
+                                    error!("Failed to convert response: {}", err);
+                                    let resp = Response::builder()
+                                        .status(StatusCode::BAD_GATEWAY)
+                                        .body(Full::new(Bytes::from(
+                                            "Failed to convert upstream response",
+                                        )))
+                                        .unwrap();
+                                    Ok(resp)
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            error!("Upstream request failed with detailed error: {:?}", err);
+                            let resp = Response::builder()
+                                .status(StatusCode::BAD_GATEWAY)
+                                .body(Full::new(Bytes::from(err.to_string())))
+                                .unwrap();
+                            Ok(resp)
+                        }
+                    },
+                    Err(err) => {
+                        error!("Failed to convert request: {}", err);
+                        let resp = Response::builder()
+                            .status(StatusCode::BAD_GATEWAY)
+                            .body(Full::new(Bytes::from("Failed to convert request")))
+                            .unwrap();
+                        Ok(resp)
+                    }
                 }
-                Err(err) => {
-                    warn!("upstream (tls) error: {}", err);
-                    Ok::<_, Infallible>(resp(StatusCode::BAD_GATEWAY, "Upstream error"))
-                }
             }
+        })
+    };
+
+    // Serve the single TLS connection
+    if let Err(e) = auto.serve_connection(TokioIo::new(tls), svc).await {
+        if !is_closed(&e) {
+            warn!("TLS connection error: {}", e);
         }
-    });
+    }
 
-    // Serve the single TLS connection (keep-alive and HTTP/2 streams handled by Hyper)
-    auto.serve_connection(TokioIo::new(tls), svc).await?;
     Ok(())
-}
-
-/* ----------------- Small helpers below ----------------- */
-
-fn resp(status: StatusCode, text: &str) -> Response<ReqBody> {
-    let mut r = Response::new(ReqBody::new(bytes::Bytes::from(text.into())));
-    *r.status_mut() = status;
-    r.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    r
 }
 
 fn strip_proxy_headers(h: &mut hyper::HeaderMap) {
@@ -276,16 +432,6 @@ fn strip_proxy_headers(h: &mut hyper::HeaderMap) {
     }
 }
 
-fn split_absolute_uri(uri: &Uri) -> Option<(&str, String, String)> {
-    let scheme = uri.scheme_str()?;
-    let auth = uri.authority()?.as_str().to_string();
-    let pq = uri
-        .path_and_query()
-        .map(|pq| pq.as_str().to_string())
-        .unwrap_or_else(|| "/".into());
-    Some((scheme, auth, pq))
-}
-
 fn parse_authority_host_port(authority: &str, default_port: u16) -> ProxyResult<(String, u16)> {
     match authority.rsplit_once(':') {
         Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
@@ -295,25 +441,15 @@ fn parse_authority_host_port(authority: &str, default_port: u16) -> ProxyResult<
     }
 }
 
-fn ensure_authority_and_scheme(host: &str, req: &mut Request<ReqBody>) {
-    // If client sent origin-form (e.g., GET /path), inject scheme/authority for our own bookkeeping
-    if req.uri().authority().is_none() || req.uri().scheme().is_none() {
-        let path = req
-            .uri()
-            .path_and_query()
-            .map(|pq| pq.as_str())
-            .unwrap_or("/");
-        let abs = format!("https://{}{}", host, path);
-        *req.uri_mut() = abs.parse().unwrap();
-    }
-}
-
 async fn build_server_tls_for_host(
     ca: &CertificateAuthority,
     host: &str,
 ) -> ProxyResult<rustls::ServerConfig> {
     // Use your CA to mint a leaf cert for `host`
-    let cert = ca.get_certificate_for_domain(host).await?;
+    let cert = ca
+        .get_certificate_for_domain(host)
+        .await
+        .map_err(|e| ProxyError::Cert(e.into()))?;
     // Minimal rustls server config
     let mut cfg = rustls::ServerConfig::builder()
         .with_no_client_auth()
