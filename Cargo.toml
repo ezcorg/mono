@@ -8,7 +8,7 @@ members = [
     "src/apps/eznote/src-tauri", 
     "src/apps/wasmtime-wasi-proxy-test-rs", 
     "src/apps/wasm-test-component",
-    "src/rust/hello-wasip3-http", "src/rust/ezfilter-rs", "src/rust/ezfeature-rs", "src/apps/mitmproxy-salvo",
+    "src/rust/hello-wasip3-http", "src/rust/ezfilter-rs", "src/rust/ezfeature-rs",
 ]
 
 # Workspace-wide dependencies that can be shared across projects
