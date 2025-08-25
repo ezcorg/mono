@@ -1,172 +1,232 @@
-#[cfg(test)]
 mod tests {
-    use crate::proxy::{extract_host_from_headers, DnsResolver};
+    use std::sync::Arc;
 
-    #[tokio::test]
-    async fn test_dns_resolver_empty_hostname() {
-        let resolver = DnsResolver::new().await.unwrap();
+    use hyper_util::rt::TokioExecutor;
+    use reqwest::Certificate;
+    use reqwest::Proxy;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+    use tokio_rustls::TlsAcceptor;
 
-        // Test empty hostname
-        let result = resolver.resolve("").await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Empty hostname"));
+    use crate::ProxyServer;
+    use crate::{CertificateAuthority, Config};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Protocol {
+        Http1,
+        Http2,
     }
 
-    #[tokio::test]
-    async fn test_dns_resolver_whitespace_hostname() {
-        let resolver = DnsResolver::new().await.unwrap();
-
-        // Test whitespace-only hostname
-        let result = resolver.resolve("   ").await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Empty hostname"));
+    pub struct ServerHandle {
+        pub addr: std::net::SocketAddr,
+        shutdown_tx: oneshot::Sender<()>,
+        task: tokio::task::JoinHandle<()>,
     }
 
-    #[tokio::test]
-    async fn test_dns_resolver_invalid_hostname() {
-        let resolver = DnsResolver::new().await.unwrap();
-
-        // Test hostname with invalid characters - let standard library handle validation
-        let result = resolver.resolve("invalid\thostname\nwith\rcontrol").await;
-        assert!(result.is_err());
-        // Should fail on DNS resolution, not necessarily on format validation
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to resolve"));
-    }
-
-    #[tokio::test]
-    async fn test_dns_resolver_valid_hostname_characters() {
-        let resolver = DnsResolver::new().await.unwrap();
-
-        // Test that valid DNS characters are accepted (this will fail DNS resolution but pass validation)
-        let result = resolver.resolve("valid-hostname_123.example.com").await;
-        // Should fail on DNS resolution, not validation
-        assert!(result.is_err());
-        assert!(!result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid hostname format"));
-    }
-
-    #[tokio::test]
-    async fn test_dns_resolver_with_port() {
-        let resolver = DnsResolver::new().await.unwrap();
-
-        // Test hostname with port - use a hostname that definitely won't resolve
-        let result = resolver
-            .resolve_with_port("nonexistent-hostname-12345.invalid:8080", 80)
-            .await;
-        // Should fail on DNS resolution but parse port correctly
-        assert!(result.is_err());
-        // Error should mention the hostname, not the port parsing
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("nonexistent-hostname-12345.invalid"));
-    }
-
-    #[tokio::test]
-    async fn test_dns_resolver_localhost() {
-        let resolver = DnsResolver::new().await.unwrap();
-
-        // Test localhost resolution (should work)
-        let result = resolver.resolve_with_port("localhost", 80).await;
-        assert!(result.is_ok());
-        let addrs = result.unwrap();
-        assert!(!addrs.is_empty());
-        assert_eq!(addrs[0].port(), 80);
-    }
-
-    #[tokio::test]
-    async fn test_dns_resolver_fallback() {
-        let resolver = DnsResolver::new().await.unwrap();
-
-        // Test fallback resolution with localhost
-        let result = resolver.resolve_with_fallback("localhost", 80).await;
-        assert!(result.is_ok());
-        let addr = result.unwrap();
-        assert_eq!(addr.port(), 80);
-    }
-
-    #[tokio::test]
-    async fn test_extract_host_from_headers_empty() {
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("host".to_string(), "".to_string());
-
-        let result = extract_host_from_headers(&headers);
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_extract_host_from_headers_whitespace() {
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("host".to_string(), "   ".to_string());
-
-        let result = extract_host_from_headers(&headers);
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_extract_host_from_headers_valid() {
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("host".to_string(), "  example.com  ".to_string());
-
-        let result = extract_host_from_headers(&headers);
-        assert_eq!(result, Some("example.com".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_extract_host_from_headers_with_port() {
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("host".to_string(), "example.com:8080".to_string());
-
-        let result = extract_host_from_headers(&headers);
-        assert_eq!(result, Some("example.com:8080".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_dns_resolver_ip_address() {
-        let resolver = DnsResolver::new().await.unwrap();
-
-        // Test IPv4 address resolution (should work without DNS lookup)
-        let result = resolver.resolve_with_port("127.0.0.1", 8080).await;
-        if let Err(e) = &result {
-            eprintln!("IPv4 test failed: {:?}", e);
+    impl ServerHandle {
+        pub async fn shutdown(self) {
+            let _ = self.shutdown_tx.send(());
+            let _ = self.task.await;
         }
-        assert!(result.is_ok(), "IPv4 resolution failed: {:?}", result.err());
-        let addrs = result.unwrap();
-        assert_eq!(addrs.len(), 1);
-        assert_eq!(
-            addrs[0].ip(),
-            std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
-        );
-        assert_eq!(addrs[0].port(), 8080);
+    }
 
-        // Test IPv6 address resolution
-        let result = resolver.resolve_with_port("::1", 9090).await;
-        if let Err(e) = &result {
-            eprintln!("IPv6 test failed: {:?}", e);
+    pub async fn setup_ca_and_config() -> (CertificateAuthority, Config) {
+        let cert_dir = tempfile::tempdir().unwrap();
+        let ca = CertificateAuthority::new(cert_dir).await.unwrap();
+        let config = Config::default();
+        (ca, config)
+    }
+
+    pub async fn start_target_server(
+        host: &str,
+        port: u16,
+        ca: CertificateAuthority,
+        proto: Protocol,
+    ) -> ServerHandle {
+        let cert = ca
+            .get_certificate_for_domain(host)
+            .await
+            .expect("CA mint failed");
+
+        let cert_chain = vec![
+            cert.cert_der.clone(),
+            ca.get_root_certificate_der().unwrap().into(),
+        ];
+
+        let mut cfg = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, cert.key_der)
+            .expect("server cert");
+        cfg.alpn_protocols = match proto {
+            Protocol::Http1 => vec![b"http/1.1".to_vec()],
+            Protocol::Http2 => vec![b"h2".to_vec()],
+        };
+
+        let acceptor = TlsAcceptor::from(Arc::new(cfg));
+        let listener = TcpListener::bind(("127.0.0.1", port))
+            .await
+            .expect("bind target listener");
+        let addr = listener.local_addr().unwrap();
+
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => {
+                        break;
+                    }
+                    result = listener.accept() => {
+                        let (stream, _) = match result {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("accept error: {e}");
+                                continue;
+                            }
+                        };
+
+                        let acceptor = acceptor.clone();
+                        tokio::spawn(async move {
+                            match acceptor.accept(stream).await {
+                                Ok(tls) => {
+                                    let io = hyper_util::rt::TokioIo::new(tls);
+
+                                    let svc = hyper::service::service_fn(|_req| async {
+                                        Ok::<_, hyper::Error>(hyper::Response::new(
+                                            http_body_util::Full::new(bytes::Bytes::from("hello world")),
+                                        ))
+                                    });
+
+                                    match proto {
+                                        Protocol::Http1 => {
+                                            if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                                .serve_connection(io, svc)
+                                                .await
+                                            {
+                                                eprintln!("http1 error: {e}");
+                                            }
+                                        }
+                                        Protocol::Http2 => {
+                                            if let Err(e) = hyper::server::conn::http2::Builder::new(
+                                                TokioExecutor::new(),
+                                            )
+                                            .serve_connection(io, svc)
+                                            .await
+                                            {
+                                                eprintln!("http2 error: {e}");
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("tls accept error: {e}");
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        });
+
+        ServerHandle {
+            addr,
+            shutdown_tx,
+            task,
         }
-        assert!(result.is_ok(), "IPv6 resolution failed: {:?}", result.err());
-        let addrs = result.unwrap();
-        assert_eq!(addrs.len(), 1);
-        assert_eq!(
-            addrs[0].ip(),
-            std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))
-        );
-        assert_eq!(addrs[0].port(), 9090);
+    }
 
-        // Test IP address with port in hostname (should parse correctly)
-        let result = resolver.resolve_with_port("192.168.1.1:3000", 8080).await;
-        assert!(result.is_ok());
-        let addrs = result.unwrap();
-        assert_eq!(addrs.len(), 1);
-        assert_eq!(
-            addrs[0].ip(),
-            std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))
-        );
-        assert_eq!(addrs[0].port(), 3000); // Should use port from hostname, not default
+    pub async fn create_client(
+        ca: CertificateAuthority,
+        proxy: &str,
+        proto: Protocol,
+    ) -> reqwest::Client {
+        let mut builder = reqwest::Client::builder();
+
+        builder = match proto {
+            Protocol::Http1 => builder.http1_only(),
+            Protocol::Http2 => builder.http2_prior_knowledge(),
+        };
+
+        builder
+            .add_root_certificate(
+                Certificate::from_der(&ca.get_root_certificate_der().unwrap().clone()).unwrap(),
+            )
+            .proxy(Proxy::all(proxy).unwrap())
+            .build()
+            .unwrap()
+    }
+
+    struct TestCase {
+        client_proto: Protocol,
+        server_proto: Protocol,
+        proxy_port: u16,
+        target_port: u16,
+    }
+
+    async fn run_test(test: TestCase) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (ca, config) = setup_ca_and_config().await;
+        let server_handle =
+            start_target_server("127.0.0.1", test.target_port, ca.clone(), test.server_proto).await;
+        let proxy_addr = format!("127.0.0.1:{}", test.proxy_port).parse().unwrap();
+        let mut proxy = ProxyServer::new(proxy_addr, ca.clone(), config).unwrap();
+        proxy.start().await.unwrap();
+        let client = create_client(
+            ca,
+            &format!("http://127.0.0.1:{}", test.proxy_port),
+            test.client_proto,
+        )
+        .await;
+        client
+            .get(&format!("https://127.0.0.1:{}", test.target_port))
+            .send()
+            .await
+            .unwrap();
+        proxy.shutdown().await;
+        server_handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_http1_to_http1() {
+        run_test(TestCase {
+            client_proto: Protocol::Http1,
+            server_proto: Protocol::Http1,
+            proxy_port: 2345,
+            target_port: 1234,
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_http2_to_http1() {
+        run_test(TestCase {
+            client_proto: Protocol::Http2,
+            server_proto: Protocol::Http1,
+            proxy_port: 2346,
+            target_port: 1235,
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_http2_to_http2() {
+        run_test(TestCase {
+            client_proto: Protocol::Http2,
+            server_proto: Protocol::Http2,
+            proxy_port: 2347,
+            target_port: 1236,
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_http1_to_http2() {
+        run_test(TestCase {
+            client_proto: Protocol::Http1,
+            server_proto: Protocol::Http2,
+            proxy_port: 2348,
+            target_port: 1237,
+        })
+        .await;
     }
 }

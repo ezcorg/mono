@@ -1,91 +1,31 @@
-use crate::cert::CertificateAuthority;
+use crate::cert::{ca, CertificateAuthority};
 use crate::config::Config;
 
 use bytes::Bytes;
-use futures::TryStreamExt;
-use http_body_util::{BodyExt, Full};
-use hyper::body::{Body, Incoming};
+use http_body_util::Full;
+use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade;
-use hyper::{header, Method, Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
-use tokio_rustls::{rustls, TlsAcceptor};
+use tokio::sync::Notify;
+use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
 use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
-use reqwest::{self};
 
-/// Custom error type for proxy operations
-#[derive(Debug)]
-pub enum ProxyError {
-    /// IO-related errors
-    Io(std::io::Error),
-    /// TLS/rustls-related errors
-    Tls(rustls::Error),
-    /// HTTP/Hyper-related errors
-    Http(hyper::Error),
-    /// Certificate authority errors
-    Cert(Box<dyn std::error::Error + Send + Sync>),
-    /// Generic errors with a message
-    Generic(String),
-}
+mod utils;
+pub use utils::{
+    build_server_tls_for_host, client, convert_hyper_to_reqwest_request,
+    convert_reqwest_to_hyper_response, is_closed, parse_authority_host_port, strip_proxy_headers,
+    ProxyError, ProxyResult, UpstreamClient,
+};
 
-impl std::fmt::Display for ProxyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProxyError::Io(e) => write!(f, "IO error: {}", e),
-            ProxyError::Tls(e) => write!(f, "TLS error: {}", e),
-            ProxyError::Http(e) => write!(f, "HTTP error: {}", e),
-            ProxyError::Cert(e) => write!(f, "Certificate error: {}", e),
-            ProxyError::Generic(msg) => write!(f, "Proxy error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for ProxyError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ProxyError::Io(e) => Some(e),
-            ProxyError::Tls(e) => Some(e),
-            ProxyError::Http(e) => Some(e),
-            ProxyError::Cert(e) => Some(e.as_ref()),
-            ProxyError::Generic(_) => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for ProxyError {
-    fn from(err: std::io::Error) -> Self {
-        ProxyError::Io(err)
-    }
-}
-
-impl From<rustls::Error> for ProxyError {
-    fn from(err: rustls::Error) -> Self {
-        ProxyError::Tls(err)
-    }
-}
-
-impl From<hyper::Error> for ProxyError {
-    fn from(err: hyper::Error) -> Self {
-        ProxyError::Http(err)
-    }
-}
-
-impl From<hyper::http::Error> for ProxyError {
-    fn from(err: hyper::http::Error) -> Self {
-        ProxyError::Generic(format!("HTTP error: {}", err))
-    }
-}
-
-impl From<reqwest::Error> for ProxyError {
-    fn from(err: reqwest::Error) -> Self {
-        ProxyError::Generic(format!("Reqwest error: {}", err))
-    }
-}
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone)]
 pub struct ProxyServer {
@@ -93,10 +33,8 @@ pub struct ProxyServer {
     ca: Arc<CertificateAuthority>,
     config: Arc<Config>,
     upstream: UpstreamClient,
+    shutdown_notify: Arc<Notify>,
 }
-
-type UpstreamClient = reqwest::Client;
-pub type ProxyResult<T> = Result<T, ProxyError>;
 
 impl ProxyServer {
     pub fn new(
@@ -104,56 +42,81 @@ impl ProxyServer {
         ca: CertificateAuthority,
         config: Config,
     ) -> ProxyResult<Self> {
-        // reqwest client that supports HTTP/1.1 and HTTP/2 (ALPN) to upstream servers
-        let upstream = client()?;
-
+        let upstream = client(ca.clone())?;
         Ok(Self {
             listen_addr,
             ca: Arc::new(ca),
             config: Arc::new(config),
             upstream,
+            shutdown_notify: Arc::new(Notify::new()),
         })
     }
 
-    pub async fn start(&self) -> ProxyResult<()> {
+    /// Starts the server: binds the listener and spawns the accept loop.
+    /// Returns immediately once the listener is bound.
+    pub async fn start(&mut self) -> ProxyResult<()> {
         let listener = TcpListener::bind(self.listen_addr).await?;
         info!("Proxy listening on {}", self.listen_addr);
+        let shutdown = self.shutdown_notify.clone();
+        let server = self.clone();
 
-        let shared = self.clone();
-
-        loop {
-            let (io, _peer) = listener.accept().await?;
-            let shared = shared.clone();
-
-            tokio::spawn(async move {
-                let svc = service_fn(move |req| {
-                    let shared = shared.clone();
-                    async move {
-                        shared.handle_plain_http(req).await.map_err(|e| {
-                            error!("Service error: {}", e);
-                            // Convert to hyper::Error - this is a bit hacky but necessary
-                            // since we can't directly convert ProxyError to hyper::Error
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                        })
+        // Spawn the accept loop
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown.notified() => {
+                        info!("Shutdown signal received, stopping accept loop");
+                        break;
                     }
-                });
+                    accept_result = listener.accept() => {
+                        match accept_result {
+                            Ok((io, peer)) => {
+                                debug!("Accepted connection from {}", peer);
+                                let shared = server.clone();
+                                tokio::spawn(async move {
+                                    let svc = service_fn(move |req: Request<hyper::body::Incoming>| {
+                                        let shared = shared.clone();
+                                        async move {
+                                            shared.handle_plain_http(req).await.map_err(|e| {
+                                                error!("Service error: {}", e);
+                                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                                            })
+                                        }
+                                    });
 
-                // Cleartext side: serve HTTP/1.1 (supports CONNECT+upgrade)
-                if let Err(e) = http1::Builder::new()
-                    .preserve_header_case(true)
-                    .title_case_headers(true)
-                    .serve_connection(TokioIo::new(io), svc)
-                    .with_upgrades()
-                    .await
-                {
-                    if is_closed(&e) {
-                        debug!("client closed: {}", e);
-                    } else {
-                        error!("conn error: {}", e);
+                                    if let Err(e) = http1::Builder::new()
+                                        .preserve_header_case(true)
+                                        .title_case_headers(true)
+                                        .serve_connection(TokioIo::new(io), svc)
+                                        .with_upgrades()
+                                        .await
+                                    {
+                                        if is_closed(&e) {
+                                            debug!("client closed: {}", e);
+                                        } else {
+                                            error!("conn error: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+                            Err(e) => error!("Accept error: {}", e),
+                        }
                     }
                 }
-            });
-        }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Returns a future that resolves when the server stops.
+    /// Currently this is never unless shutdown is implemented.
+    pub async fn join(&self) {
+        self.shutdown_notify.notified().await;
+    }
+
+    pub async fn shutdown(&self) {
+        self.shutdown_notify.notify_waiters();
     }
 
     /// Handles requests received on the cleartext proxy port.
@@ -228,112 +191,6 @@ impl ProxyServer {
 
         Ok(response)
     }
-}
-
-fn wrap_body(incoming: Incoming) -> reqwest::Body {
-    let stream = incoming.into_data_stream().map_err(|e| {
-        let err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
-        err
-    });
-    reqwest::Body::wrap_stream(stream)
-}
-
-/// Convert a hyper Request to a reqwest Request
-async fn convert_hyper_to_reqwest_request(
-    hyper_req: Request<Incoming>,
-    client: &reqwest::Client,
-) -> ProxyResult<reqwest::Request> {
-    let (parts, body) = hyper_req.into_parts();
-    // let body_bytes = body.collect().await?.to_bytes();
-
-    let method = match parts.method {
-        Method::GET => reqwest::Method::GET,
-        Method::POST => reqwest::Method::POST,
-        Method::PUT => reqwest::Method::PUT,
-        Method::DELETE => reqwest::Method::DELETE,
-        Method::HEAD => reqwest::Method::HEAD,
-        Method::OPTIONS => reqwest::Method::OPTIONS,
-        Method::PATCH => reqwest::Method::PATCH,
-        Method::TRACE => reqwest::Method::TRACE,
-        _ => {
-            return Err(ProxyError::Generic(format!(
-                "Unsupported method: {}",
-                parts.method
-            )))
-        }
-    };
-
-    // Build the URL properly - for TLS MITM, we need to construct the full URL
-    let url = if parts.uri.scheme().is_some() {
-        // Already has scheme (absolute URI)
-        parts.uri.to_string()
-    } else {
-        // Origin form - need to construct full URL from Host header
-        let host = parts
-            .headers
-            .get(header::HOST)
-            .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| ProxyError::Generic("Missing Host header".to_string()))?;
-
-        let scheme = "https"; // Assume HTTPS for TLS MITM
-        let path = parts
-            .uri
-            .path_and_query()
-            .map(|pq| pq.as_str())
-            .unwrap_or("/");
-
-        format!("{}://{}{}", scheme, host, path)
-    };
-
-    let mut req_builder = client.request(method, &url);
-
-    // Copy headers, but skip Host header as reqwest will set it from the URL
-    for (name, value) in parts.headers.iter() {
-        if name != header::HOST {
-            if let Ok(value_str) = value.to_str() {
-                req_builder = req_builder.header(name.as_str(), value_str);
-            }
-        }
-    }
-
-    // Add body if present
-    if !body.is_end_stream() {
-        req_builder = req_builder.body(wrap_body(body));
-    }
-
-    req_builder
-        .build()
-        .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest request: {}", e)))
-}
-
-/// Convert a reqwest Response to a hyper Response
-async fn convert_reqwest_to_hyper_response(
-    reqwest_resp: reqwest::Response,
-) -> ProxyResult<Response<Full<Bytes>>> {
-    let status = reqwest_resp.status();
-    let headers = reqwest_resp.headers().clone();
-    let body_bytes = reqwest_resp.bytes().await?;
-
-    let mut response = Response::builder().status(status);
-
-    // Copy headers
-    for (name, value) in headers.iter() {
-        response = response.header(name, value);
-    }
-
-    response
-        .body(Full::new(body_bytes))
-        .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
-}
-
-fn client() -> ProxyResult<UpstreamClient> {
-    let client = reqwest::Client::builder()
-        .pool_idle_timeout(std::time::Duration::from_secs(10))
-        .pool_max_idle_per_host(1)
-        .http1_title_case_headers()
-        .build()
-        .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest client: {}", e)))?;
-    Ok(client)
 }
 
 /// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
@@ -423,56 +280,4 @@ async fn run_tls_mitm(
     }
 
     Ok(())
-}
-
-fn strip_proxy_headers(h: &mut hyper::HeaderMap) {
-    // hop-by-hop headers (RFC 7230 6.1)
-    const HOPS: &[&str] = &[
-        "connection",
-        "proxy-connection",
-        "keep-alive",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
-    ];
-    for k in HOPS {
-        h.remove(*k);
-    }
-}
-
-fn parse_authority_host_port(authority: &str, default_port: u16) -> ProxyResult<(String, u16)> {
-    match authority.rsplit_once(':') {
-        Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
-            Ok((h.to_string(), p.parse().unwrap_or(default_port)))
-        }
-        _ => Ok((authority.to_string(), default_port)),
-    }
-}
-
-async fn build_server_tls_for_host(
-    ca: &CertificateAuthority,
-    host: &str,
-) -> ProxyResult<rustls::ServerConfig> {
-    // Use your CA to mint a leaf cert for `host`
-    let cert = ca
-        .get_certificate_for_domain(host)
-        .await
-        .map_err(|e| ProxyError::Cert(e.into()))?;
-    // Minimal rustls server config
-    let mut cfg = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert.cert_der], cert.key_der)
-        .map_err(|e| ProxyError::Tls(rustls::Error::General(e.to_string())))?;
-    cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    Ok(cfg)
-}
-
-fn is_closed<E: std::fmt::Display>(e: &E) -> bool {
-    let s = e.to_string().to_lowercase();
-    s.contains("broken pipe")
-        || s.contains("connection reset")
-        || s.contains("connection aborted")
-        || s.contains("unexpected eof")
-        || s.contains("close_notify")
 }

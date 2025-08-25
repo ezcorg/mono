@@ -2,6 +2,7 @@ use super::{CertError, CertResult, Certificate, CertificateCache};
 use anyhow::Result;
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
@@ -143,9 +144,14 @@ impl CertificateAuthority {
         let mut params = CertificateParams::default();
 
         // Add subject alternative names
-        params.subject_alt_names = vec![SanType::DnsName(
-            domain.try_into().map_err(|_| CertError::InvalidFormat)?,
-        )];
+        if let Ok(ip) = domain.parse::<IpAddr>() {
+            params.subject_alt_names.push(rcgen::SanType::IpAddress(ip));
+        } else {
+            params.subject_alt_names.push(rcgen::SanType::DnsName(
+                rcgen::Ia5String::try_from(domain.to_string())
+                    .map_err(|_| CertError::InvalidFormat)?,
+            ));
+        }
 
         // If it's a wildcard domain, add the base domain too
         if domain.starts_with("*.") {

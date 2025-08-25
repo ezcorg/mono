@@ -9,19 +9,18 @@ license = "MIT"
 [dependencies]
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = { version = "0.7", features = ["codec", "compat"] }
 
 # HTTP/HTTPS
 hyper = { version = "1.7.0", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.16", features = ["server", "client", "http1", "http2", "tokio"] }
-
-hyper-rustls = { version = "0.27.7", features = ["http2"] }
+hyper-rustls = { version = "0.27.0", features = ["http2"] }
 http-body-util = "0.1"
 
 # TLS
-rustls = { version = "0.23", features = ["ring"] }
+rustls = { version = "0.23.4", features = ["ring"] }
 rustls-pemfile = "2.0"
-rustls-native-certs = "0.8.1"
+rustls-native-certs = "0.8.0"
 tokio-rustls = "0.26"
 
 # Certificate generation
@@ -43,7 +42,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 
 # HTTP client for plugins
-reqwest = { version = "0.12.23", features = ["default", "stream"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["rustls-tls", "rustls-tls-manual-roots", "stream", "http2"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -84,6 +83,9 @@ path = "src/lib.rs"
 [dev-dependencies]
 # Test dependencies
 tokio-test = "0.4"
+tempfile = "3.8"
+rcgen = "0.13.2"
+webpki-roots = "0.26"
 
 [[bin]]
 name = "mitm-proxy"
