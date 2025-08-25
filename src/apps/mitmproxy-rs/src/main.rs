@@ -82,12 +82,9 @@ async fn main() -> Result<()> {
     });
 
     // Start proxy server
-    let proxy_server = ProxyServer::new(cli.proxy_addr, ca, config);
-    let proxy_handle = tokio::spawn(async move {
-        if let Err(e) = proxy_server.unwrap().start().await {
-            tracing::error!("Proxy server error: {}", e);
-        }
-    });
+    let mut proxy_server = ProxyServer::new(cli.proxy_addr, ca, config)?;
+    proxy_server.start().await?;
+    let proxy_handle = tokio::spawn(async move { proxy_server.join().await });
 
     info!("Proxy listening on {}", cli.proxy_addr);
     info!("Web interface available at http://{}", cli.web_addr);

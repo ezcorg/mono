@@ -18,7 +18,6 @@ mod tests {
     }
 
     pub struct ServerHandle {
-        pub addr: std::net::SocketAddr,
         shutdown_tx: oneshot::Sender<()>,
         task: tokio::task::JoinHandle<()>,
     }
@@ -128,11 +127,7 @@ mod tests {
             }
         });
 
-        ServerHandle {
-            addr,
-            shutdown_tx,
-            task,
-        }
+        ServerHandle { shutdown_tx, task }
     }
 
     pub async fn create_client(
