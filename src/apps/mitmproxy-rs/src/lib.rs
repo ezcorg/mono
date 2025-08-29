@@ -6,10 +6,14 @@ pub mod config;
 pub mod content;
 pub mod plugins;
 pub mod proxy;
+pub mod utils;
 pub mod web;
+
+#[cfg(test)]
+pub mod test_utils;
 
 // Re-export commonly used types for convenience
 pub use cert::CertificateAuthority;
-pub use config::Config;
+pub use config::AppConfig;
 pub use proxy::ProxyServer;
 pub use web::WebServer;

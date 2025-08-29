@@ -1,5 +1,5 @@
-use crate::cert::{ca, CertificateAuthority};
-use crate::config::Config;
+use crate::cert::CertificateAuthority;
+use crate::config::AppConfig;
 
 use bytes::Bytes;
 use http_body_util::Full;
@@ -31,7 +31,7 @@ mod tests;
 pub struct ProxyServer {
     listen_addr: SocketAddr,
     ca: Arc<CertificateAuthority>,
-    config: Arc<Config>,
+    config: Arc<AppConfig>,
     upstream: UpstreamClient,
     shutdown_notify: Arc<Notify>,
 }
@@ -40,7 +40,7 @@ impl ProxyServer {
     pub fn new(
         listen_addr: SocketAddr,
         ca: CertificateAuthority,
-        config: Config,
+        config: AppConfig,
     ) -> ProxyResult<Self> {
         let upstream = client(ca.clone())?;
         Ok(Self {
@@ -200,7 +200,7 @@ async fn run_tls_mitm(
     upgraded: upgrade::Upgraded,
     authority: String,
     ca: Arc<CertificateAuthority>,
-    _config: Arc<Config>,
+    _config: Arc<AppConfig>,
 ) -> ProxyResult<()> {
     info!("Running TLS MITM for {}", authority);
 

@@ -13,3 +13,6 @@
 [submodule "src/typescript/codemirror-languageserver"]
 	path = src/typescript/codemirror-languageserver
 	url = https://github.com/ezdevlol/codemirror-languageserver
+[submodule "src/rust/confique"]
+	path = src/rust/confique
+	url = https://github.com/ezdevlol/confique

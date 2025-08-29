@@ -1,7 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
-use mitmproxy_rs::{CertificateAuthority, Config, ProxyServer, WebServer};
-use std::net::SocketAddr;
+use confique::Config;
+use mitmproxy_rs::{
+    config::confique_partial_app_config::PartialAppConfig, AppConfig, CertificateAuthority,
+    ProxyServer, WebServer,
+};
 use std::path::PathBuf;
 use tracing::{info, warn};
 
@@ -10,24 +13,12 @@ use tracing::{info, warn};
 #[command(about = "A Rust MITM proxy connected to a WASM plugin system")]
 struct Cli {
     /// Configuration file path
-    #[arg(short, long, default_value = "config.toml")]
-    config: PathBuf,
+    #[arg(short, long, default_value = "./config.toml")]
+    config_path: PathBuf,
 
-    /// Proxy listen address
-    #[arg(short, long, default_value = "127.0.0.1:8082")]
-    proxy_addr: SocketAddr,
-
-    /// Web interface listen address
-    #[arg(short, long, default_value = "127.0.0.1:8083")]
-    web_addr: SocketAddr,
-
-    /// Certificate directory
-    #[arg(long, default_value = "./certs")]
-    cert_dir: PathBuf,
-
-    /// Plugin directory
-    #[arg(long, default_value = "./plugins")]
-    plugin_dir: PathBuf,
+    /// Configuration object
+    #[command(flatten)]
+    config: PartialAppConfig,
 
     /// Enable verbose logging
     #[arg(short, long)]
@@ -55,14 +46,14 @@ async fn main() -> Result<()> {
 
     info!("Starting MITM Proxy Server");
 
-    // Load configuration
-    let config = Config::load(&cli.config).unwrap_or_else(|e| {
-        warn!("Failed to load config: {}, using defaults", e);
-        Config::default()
-    });
+    let config = AppConfig::builder()
+        .preloaded(cli.config)
+        .env()
+        .file(&cli.config_path)
+        .load()?;
 
     // Create certificate authority
-    let ca: CertificateAuthority = CertificateAuthority::new(&cli.cert_dir).await?;
+    let ca: CertificateAuthority = CertificateAuthority::new(&config.tls.cert_dir).await?;
     info!("Certificate Authority initialized");
 
     // Initialize WASM plugin manager
@@ -74,7 +65,7 @@ async fn main() -> Result<()> {
     // );
 
     // Start web server for certificate distribution
-    let web_server = WebServer::new(cli.web_addr, ca.clone());
+    let web_server = WebServer::new(config.web.web_bind_addr.parse()?, ca.clone());
     let web_handle = tokio::spawn(async move {
         if let Err(e) = web_server.start().await {
             tracing::error!("Web server error: {}", e);
@@ -82,15 +73,19 @@ async fn main() -> Result<()> {
     });
 
     // Start proxy server
-    let mut proxy_server = ProxyServer::new(cli.proxy_addr, ca, config)?;
+    let mut proxy_server =
+        ProxyServer::new(config.proxy.proxy_bind_addr.parse()?, ca, config.clone())?;
     proxy_server.start().await?;
     let proxy_handle = tokio::spawn(async move { proxy_server.join().await });
 
-    info!("Proxy listening on {}", cli.proxy_addr);
-    info!("Web interface available at http://{}", cli.web_addr);
+    info!("Proxy listening on {}", config.proxy.proxy_bind_addr);
+    info!(
+        "Web interface available at http://{}",
+        config.web.web_bind_addr
+    );
     info!(
         "Visit http://{}/ca.crt to download the root certificate",
-        cli.web_addr
+        config.web.web_bind_addr
     );
 
     // Wait for both servers

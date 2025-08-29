@@ -16,10 +16,6 @@ enabled = true
 timeout_ms = 5000
 max_memory_mb = 64
 
-# Plugin-specific settings can be added here
-[plugins.plugin_settings]
-# Example: logger_plugin = { level = "info", output = "stdout" }
-
 [web]
 enable_dashboard = true
 static_dir = "./web-ui/static"
