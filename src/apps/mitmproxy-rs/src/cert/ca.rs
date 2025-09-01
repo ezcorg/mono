@@ -25,6 +25,14 @@ impl std::fmt::Debug for CertificateAuthority {
     }
 }
 
+pub fn get_root_cert_path(cert_dir: &Path) -> PathBuf {
+    cert_dir.join("ca.crt")
+}
+
+pub fn get_root_key_path(cert_dir: &Path) -> PathBuf {
+    cert_dir.join("ca.key")
+}
+
 impl CertificateAuthority {
     pub async fn new<P: AsRef<Path>>(cert_dir: P) -> Result<Self> {
         let cert_dir = cert_dir.as_ref().to_path_buf();
@@ -32,8 +40,8 @@ impl CertificateAuthority {
         // Create certificate directory if it doesn't exist
         fs::create_dir_all(&cert_dir).await?;
 
-        let root_cert_path = cert_dir.join("ca.crt");
-        let root_key_path = cert_dir.join("ca.key");
+        let root_cert_path = get_root_cert_path(&cert_dir);
+        let root_key_path = get_root_key_path(&cert_dir);
         let (root_cert, root_key) = if root_cert_path.exists() && root_key_path.exists() {
             info!("Loading existing root certificate");
             Self::load_root_certificate(&root_cert_path, &root_key_path).await?

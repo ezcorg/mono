@@ -3,38 +3,62 @@ use super::{
     cert_info, download_ca_crt, download_ca_pem, download_certificate, index_page, AppState,
 };
 use crate::cert::CertificateAuthority;
+use crate::config::AppConfig;
 use anyhow::Result;
 use askama_axum::IntoResponse;
 use axum::{routing::get, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::sync::Notify;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
 #[derive(Debug)]
 pub struct WebServer {
-    listen_addr: SocketAddr,
+    listen_addr: Option<SocketAddr>,
     ca: CertificateAuthority,
+    config: Arc<AppConfig>,
+    shutdown_notify: Arc<Notify>,
 }
 
 impl WebServer {
-    pub fn new(listen_addr: SocketAddr, ca: CertificateAuthority) -> Self {
-        Self { listen_addr, ca }
+    pub fn new(ca: CertificateAuthority, config: AppConfig) -> Self {
+        Self {
+            listen_addr: None,
+            ca,
+            config: Arc::new(config),
+            shutdown_notify: Arc::new(Notify::new()),
+        }
     }
 
-    pub async fn start(self) -> Result<()> {
-        let state = Arc::new(AppState { ca: self.ca });
+    /// Returns the actual bound listen address, if the server has been started
+    pub fn listen_addr(&self) -> Option<SocketAddr> {
+        self.listen_addr
+    }
+
+    /// Starts the server: binds the listener and spawns the accept loop.
+    /// Returns immediately once the listener is bound.
+    pub async fn start(&mut self) -> Result<()> {
+        // Determine the bind address: use configured address or default to OS-assigned port
+        let bind_addr: SocketAddr = if let Some(ref addr_str) = self.config.web.web_bind_addr {
+            addr_str
+                .parse()
+                .map_err(|e| anyhow::anyhow!("Invalid web bind address: {}", e))?
+        } else {
+            "127.0.0.1:0".parse().unwrap()
+        };
+
+        let state = Arc::new(AppState {
+            ca: self.ca.clone(),
+        });
 
         let app = Router::new()
             // Main certificate endpoints
             .route("/", get(index_page))
             .route("/cert", get(download_certificate))
-            // Legacy compatibility endpoints
             .route("/ca.crt", get(download_ca_crt))
             .route("/ca.pem", get(download_ca_pem))
-            .route("/mitm-proxy-ca.crt", get(download_ca_crt))
-            .route("/mitm-proxy-ca.pem", get(download_ca_pem))
             // API endpoints
             .route("/api/cert-info", get(cert_info))
             .route("/api/health", get(health_check))
@@ -54,12 +78,32 @@ impl WebServer {
             .layer(ServiceBuilder::new().layer(CorsLayer::permissive()))
             .with_state(state);
 
-        info!("Web server starting on {}", self.listen_addr);
+        let listener = tokio::net::TcpListener::bind(bind_addr).await?;
 
-        let listener = tokio::net::TcpListener::bind(self.listen_addr).await?;
-        axum::serve(listener, app).await?;
+        // Store the actual bound address
+        self.listen_addr = Some(listener.local_addr()?);
+        let shutdown = self.shutdown_notify.clone();
+
+        // Use axum's graceful shutdown with our shutdown signal
+        let _ = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    shutdown.notified().await;
+                    info!("Shutdown signal received, stopping web server");
+                })
+                .await
+        });
 
         Ok(())
+    }
+
+    /// Returns a future that resolves when the server stops.
+    pub async fn join(&self) {
+        self.shutdown_notify.notified().await;
+    }
+
+    pub async fn shutdown(&self) {
+        self.shutdown_notify.notify_waiters();
     }
 }
 

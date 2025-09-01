@@ -11,6 +11,9 @@ pub struct AppConfig {
     pub proxy: ProxyConfig,
 
     #[config(nested, partial_attr(command(flatten)))]
+    pub db: DbConfig,
+
+    #[config(nested, partial_attr(command(flatten)))]
     pub tls: TlsConfig,
 
     #[config(nested, partial_attr(command(flatten)))]
@@ -23,12 +26,19 @@ pub struct AppConfig {
 #[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
 #[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
 pub struct ProxyConfig {
-    /// The address the proxy server will bind to
+    /// The address the proxy server will bind to (optional, defaults to OS-assigned port)
+    #[config(partial_attr(arg(long)))]
+    pub proxy_bind_addr: Option<String>,
+}
+
+#[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
+#[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
+pub struct DbConfig {
     #[config(
-        default = "127.0.0.1:8082",
-        partial_attr(arg(long, default_value = "127.0.0.1:8082"))
+        default = "./migrations",
+        partial_attr(arg(long, default_value = "./migrations"))
     )]
-    pub proxy_bind_addr: String,
+    pub migrations_dir: PathBuf,
 }
 
 #[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
@@ -64,13 +74,6 @@ pub struct PluginConfig {
     /// The maximum amount of memory a plugin can use
     #[config(default = 1024, partial_attr(arg(long, default_value = "1024")))]
     pub max_memory_mb: u64,
-
-    /// Where to load plugins from
-    #[config(
-        default = "./plugins",
-        partial_attr(arg(short, long, default_value = "./plugins"))
-    )]
-    pub plugin_dir: PathBuf,
 }
 
 #[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
@@ -80,23 +83,20 @@ pub struct WebConfig {
     pub enable_dashboard: bool,
 
     #[config(
-        default = "static/",
-        partial_attr(arg(long, default_value = "static/"))
+        default = "./static/",
+        partial_attr(arg(long, default_value = "./static/"))
     )]
     pub static_dir: String,
 
     #[config(
-        default = "templates/",
-        partial_attr(arg(long, default_value = "templates/"))
+        default = "./templates/",
+        partial_attr(arg(long, default_value = "./templates/"))
     )]
     pub template_dir: String,
 
-    /// The address the web frontend will bind to
-    #[config(
-        default = "127.0.0.1:8083",
-        partial_attr(arg(long, default_value = "127.0.0.1:8083"))
-    )]
-    pub web_bind_addr: String,
+    /// The address the web frontend will bind to (optional, defaults to OS-assigned port)
+    #[config(partial_attr(arg(long)))]
+    pub web_bind_addr: Option<String>,
 }
 
 impl AppConfig {

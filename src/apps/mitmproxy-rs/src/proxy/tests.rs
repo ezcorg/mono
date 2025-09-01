@@ -11,15 +11,19 @@ mod tests {
 
     async fn run_test(test: TestCase) {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let (ca, config) = setup_ca_and_config().await;
+        let (ca, mut config) = setup_ca_and_config().await;
         let server_handle =
             start_target_server("127.0.0.1", test.target_port, ca.clone(), test.server_proto).await;
-        let proxy_addr = format!("127.0.0.1:{}", test.proxy_port).parse().unwrap();
-        let mut proxy = ProxyServer::new(proxy_addr, ca.clone(), config).unwrap();
+
+        // Set the specific proxy port for testing
+        config.proxy.proxy_bind_addr = Some(format!("127.0.0.1:{}", test.proxy_port));
+
+        let mut proxy = ProxyServer::new(ca.clone(), config).unwrap();
         proxy.start().await.unwrap();
+        let actual_proxy_addr = proxy.listen_addr().unwrap();
         let client = create_client(
             ca,
-            &format!("http://127.0.0.1:{}", test.proxy_port),
+            &format!("http://{}", actual_proxy_addr),
             test.client_proto,
         )
         .await;

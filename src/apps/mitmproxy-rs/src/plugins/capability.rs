@@ -1,8 +1,6 @@
-pub struct Selector {}
 pub enum Capability {
-    Request(Selector),
-    Response(Selector),
-    Directory,
-    KeyValueStore,
-    SQL,
+    Directory = 0,
+    KeyValueStore = 1,
+    SQL = 2,
+    FeatureExtraction = 3,
 }

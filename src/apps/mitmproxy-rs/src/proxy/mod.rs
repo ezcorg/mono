@@ -29,7 +29,7 @@ mod tests;
 
 #[derive(Debug, Clone)]
 pub struct ProxyServer {
-    listen_addr: SocketAddr,
+    listen_addr: Option<SocketAddr>,
     ca: Arc<CertificateAuthority>,
     config: Arc<AppConfig>,
     upstream: UpstreamClient,
@@ -37,14 +37,10 @@ pub struct ProxyServer {
 }
 
 impl ProxyServer {
-    pub fn new(
-        listen_addr: SocketAddr,
-        ca: CertificateAuthority,
-        config: AppConfig,
-    ) -> ProxyResult<Self> {
+    pub fn new(ca: CertificateAuthority, config: AppConfig) -> ProxyResult<Self> {
         let upstream = client(ca.clone())?;
         Ok(Self {
-            listen_addr,
+            listen_addr: None,
             ca: Arc::new(ca),
             config: Arc::new(config),
             upstream,
@@ -52,11 +48,27 @@ impl ProxyServer {
         })
     }
 
+    /// Returns the actual bound listen address, if the server has been started
+    pub fn listen_addr(&self) -> Option<SocketAddr> {
+        self.listen_addr
+    }
+
     /// Starts the server: binds the listener and spawns the accept loop.
     /// Returns immediately once the listener is bound.
     pub async fn start(&mut self) -> ProxyResult<()> {
-        let listener = TcpListener::bind(self.listen_addr).await?;
-        info!("Proxy listening on {}", self.listen_addr);
+        // Determine the bind address: use configured address or default to OS-assigned port
+        let bind_addr: SocketAddr = if let Some(ref addr_str) = self.config.proxy.proxy_bind_addr {
+            addr_str.parse().map_err(|e| {
+                ProxyError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+            })?
+        } else {
+            "127.0.0.1:0".parse().unwrap()
+        };
+
+        let listener = TcpListener::bind(bind_addr).await?;
+
+        // Store the actual bound address
+        self.listen_addr = Some(listener.local_addr()?);
         let shutdown = self.shutdown_notify.clone();
         let server = self.clone();
 
