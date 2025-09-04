@@ -18,7 +18,7 @@ mod tests {
         // Set the specific proxy port for testing
         config.proxy.proxy_bind_addr = Some(format!("127.0.0.1:{}", test.proxy_port));
 
-        let mut proxy = ProxyServer::new(ca.clone(), config).unwrap();
+        let mut proxy = ProxyServer::new(ca.clone(), None, config).unwrap();
         proxy.start().await.unwrap();
         let actual_proxy_addr = proxy.listen_addr().unwrap();
         let client = create_client(

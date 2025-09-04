@@ -4,30 +4,36 @@ use super::{
 };
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
+use crate::plugins::registry::PluginRegistry;
 use anyhow::Result;
 use askama_axum::IntoResponse;
 use axum::{routing::get, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, RwLock};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
-#[derive(Debug)]
 pub struct WebServer {
     listen_addr: Option<SocketAddr>,
     ca: CertificateAuthority,
-    config: Arc<AppConfig>,
+    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    config: AppConfig,
     shutdown_notify: Arc<Notify>,
 }
 
 impl WebServer {
-    pub fn new(ca: CertificateAuthority, config: AppConfig) -> Self {
+    pub fn new(
+        ca: CertificateAuthority,
+        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        config: AppConfig,
+    ) -> Self {
         Self {
             listen_addr: None,
             ca,
-            config: Arc::new(config),
+            config,
+            plugin_registry,
             shutdown_notify: Arc::new(Notify::new()),
         }
     }

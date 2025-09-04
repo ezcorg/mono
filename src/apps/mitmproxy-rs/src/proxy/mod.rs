@@ -1,5 +1,6 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
+use crate::plugins::registry::PluginRegistry;
 
 use bytes::Bytes;
 use http_body_util::Full;
@@ -10,7 +11,7 @@ use hyper::upgrade;
 use hyper::{Method, Request, Response, StatusCode};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, RwLock};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
@@ -27,21 +28,27 @@ pub use utils::{
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProxyServer {
     listen_addr: Option<SocketAddr>,
     ca: Arc<CertificateAuthority>,
+    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     config: Arc<AppConfig>,
     upstream: UpstreamClient,
     shutdown_notify: Arc<Notify>,
 }
 
 impl ProxyServer {
-    pub fn new(ca: CertificateAuthority, config: AppConfig) -> ProxyResult<Self> {
+    pub fn new(
+        ca: CertificateAuthority,
+        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        config: AppConfig,
+    ) -> ProxyResult<Self> {
         let upstream = client(ca.clone())?;
         Ok(Self {
             listen_addr: None,
             ca: Arc::new(ca),
+            plugin_registry,
             config: Arc::new(config),
             upstream,
             shutdown_notify: Arc::new(Notify::new()),
@@ -156,14 +163,16 @@ impl ProxyServer {
             }
 
             let ca = self.ca.clone();
-            let cfg = self.config.clone();
+            let config = self.config.clone();
             let on_upgrade = upgrade::on(&mut req);
             let upstream = self.upstream.clone();
 
             tokio::spawn(async move {
                 match on_upgrade.await {
                     Ok(upgraded) => {
-                        if let Err(e) = run_tls_mitm(upstream, upgraded, authority, ca, cfg).await {
+                        if let Err(e) =
+                            run_tls_mitm(upstream, upgraded, authority, ca, config).await
+                        {
                             match &e {
                                 ProxyError::Io(ioe) if is_closed(ioe) => {
                                     debug!("tls tunnel closed")

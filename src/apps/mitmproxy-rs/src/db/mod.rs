@@ -16,10 +16,4 @@ impl Db {
     pub async fn new(pool: SqlitePool) -> Self {
         Db { pool }
     }
-
-    /// Apply any pending database migrations stored in the specified directory
-    pub async fn migrate(&mut self, dir: PathBuf) -> Result<()> {
-        let m = Migrator::new(dir).await?;
-        m.run(&self.pool).await.map_err(anyhow::Error::from)
-    }
 }

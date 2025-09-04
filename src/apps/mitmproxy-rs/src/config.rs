@@ -34,11 +34,12 @@ pub struct ProxyConfig {
 #[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
 #[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
 pub struct DbConfig {
+    /// The database connection URL
     #[config(
-        default = "./migrations",
-        partial_attr(arg(long, default_value = "./migrations"))
+        default = "$HOME/.mitmproxy-rs/db.sqlite",
+        partial_attr(arg(long, default_value = "$HOME/.mitmproxy-rs/db.sqlite"))
     )]
-    pub migrations_dir: PathBuf,
+    pub db_path: PathBuf,
 }
 
 #[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
@@ -54,8 +55,8 @@ pub struct TlsConfig {
 
     /// The directory where root certificates are stored
     #[config(
-        default = "./certs",
-        partial_attr(arg(long, default_value = "./certs"))
+        default = "$HOME/.mitmproxy-rs/certs",
+        partial_attr(arg(long, default_value = "$HOME/.mitmproxy-rs/certs"))
     )]
     pub cert_dir: PathBuf,
 }
@@ -74,6 +75,13 @@ pub struct PluginConfig {
     /// The maximum amount of memory a plugin can use
     #[config(default = 1024, partial_attr(arg(long, default_value = "1024")))]
     pub max_memory_mb: u64,
+
+    /// The maximum amount of fuel a plugin can use
+    #[config(
+        default = 1_000_000,
+        partial_attr(arg(long, default_value = "1000000"))
+    )]
+    pub max_fuel: u64,
 }
 
 #[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
@@ -81,18 +89,6 @@ pub struct PluginConfig {
 pub struct WebConfig {
     #[config(default = true, partial_attr(arg(long, default_value = "true")))]
     pub enable_dashboard: bool,
-
-    #[config(
-        default = "./static/",
-        partial_attr(arg(long, default_value = "./static/"))
-    )]
-    pub static_dir: String,
-
-    #[config(
-        default = "./templates/",
-        partial_attr(arg(long, default_value = "./templates/"))
-    )]
-    pub template_dir: String,
 
     /// The address the web frontend will bind to (optional, defaults to OS-assigned port)
     #[config(partial_attr(arg(long)))]
