@@ -4,8 +4,8 @@ use confique::Config;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Config, Clone, Default, Debug, Serialize, Deserialize)]
-#[config(partial_attr(derive(Args, Serialize, Clone, Debug)))]
+#[derive(Config, Clone, Default, Serialize, Deserialize)]
+#[config(partial_attr(derive(Args, Serialize, Clone)))]
 pub struct AppConfig {
     #[config(nested, partial_attr(command(flatten)))]
     pub proxy: ProxyConfig,
@@ -23,16 +23,16 @@ pub struct AppConfig {
     pub web: WebConfig,
 }
 
-#[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct ProxyConfig {
     /// The address the proxy server will bind to (optional, defaults to OS-assigned port)
-    #[config(partial_attr(arg(long)))]
+    #[config(env = "PROXY_BIND_ADDR", partial_attr(arg(long)))]
     pub proxy_bind_addr: Option<String>,
 }
 
-#[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct DbConfig {
     /// The database connection URL
     #[config(
@@ -40,10 +40,14 @@ pub struct DbConfig {
         partial_attr(arg(long, default_value = "$HOME/.mitmproxy-rs/db.sqlite"))
     )]
     pub db_path: PathBuf,
+
+    /// The database password
+    #[config(env = "DB_PASSWORD", partial_attr(arg(long)))]
+    pub db_password: String,
 }
 
-#[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct TlsConfig {
     /// The size of the generated key
     #[config(default = 2048, partial_attr(arg(long, default_value = "2048")))]
@@ -61,8 +65,8 @@ pub struct TlsConfig {
     pub cert_dir: PathBuf,
 }
 
-#[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct PluginConfig {
     /// Whether or not plugins are enabled for the proxy
     #[config(default = true, partial_attr(arg(long, default_value = "true")))]
@@ -84,8 +88,8 @@ pub struct PluginConfig {
     pub max_fuel: u64,
 }
 
-#[derive(Clone, Debug, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Debug, Serialize,)))]
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct WebConfig {
     #[config(default = true, partial_attr(arg(long, default_value = "true")))]
     pub enable_dashboard: bool,

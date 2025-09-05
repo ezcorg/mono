@@ -1,12 +1,10 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::collections::HashMap;
 
 use anyhow::Result;
-use sqlx::{Pool, Sqlite};
 
 use crate::{
-    config::PluginConfig,
     db::{Db, Insert},
-    plugins::{capability::Capability, Plugin},
+    plugins::Plugin,
 };
 
 pub struct PluginRegistry {
@@ -15,18 +13,14 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
-    pub fn new(config: PluginConfig, db: Db) -> Self {
+    pub fn new(db: Db) -> Self {
         Self {
             plugins: HashMap::new(),
             db,
         }
     }
 
-    pub async fn load_plugins(
-        &mut self,
-        path: PathBuf,
-        key: String,
-    ) -> Result<HashMap<String, Plugin>> {
+    pub async fn load_plugins(&mut self) -> Result<HashMap<String, Plugin>> {
         // select all enabled plugins from the database
         // for each plugin, verify its integrity
         // if any plugin is invalid, disable it and update its status

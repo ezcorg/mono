@@ -14,7 +14,7 @@ use tracing::info;
 #[command(about = "A Rust MITM proxy connected to a WASM plugin system")]
 struct Cli {
     /// Configuration file path
-    #[arg(short, long, default_value = "./config.toml")]
+    #[arg(short, long, default_value = "$HOME/.mitmproxy-rs/config.toml")]
     config_path: PathBuf,
 
     /// Configuration object
@@ -43,17 +43,27 @@ impl Cli {
             ))
             .init();
 
-        info!("Starting MITM Proxy Server");
-
-        let config = AppConfig::builder()
-            .preloaded(self.config.clone())
-            .env()
-            .file(&self.config_path)
-            .load()?;
+        // Resolve home and app directory
         let home_dir = dirs::home_dir().unwrap_or(".".into());
         let app_dir = home_dir.join(".mitmproxy-rs");
         std::fs::create_dir_all(&app_dir)?;
 
+        let config_path = self
+            .config_path
+            .to_str()
+            .unwrap_or("")
+            .replace("$HOME", home_dir.to_str().unwrap_or("."));
+        let config_path = PathBuf::from(config_path);
+
+        let config = AppConfig::builder()
+            .preloaded(self.config.clone())
+            .env()
+            .file(&config_path)
+            .load()?;
+
+        info!("Loaded MITM proxy configuration");
+
+        // Create certificate authority
         let cert_dir: PathBuf = config
             .tls
             .cert_dir
@@ -64,34 +74,30 @@ impl Cli {
             .parse()?;
         std::fs::create_dir_all(&cert_dir)?;
 
-        // Create certificate authority
         let ca = CertificateAuthority::new(cert_dir).await?;
         info!("Certificate Authority initialized");
 
         // Initialize the database and perform any necessary migrations
-        let db_path = "sqlite://".to_owned()
-            + config
-                .db
-                .db_path
-                .to_str()
-                .unwrap_or("")
-                .replace("$HOME", home_dir.to_str().unwrap_or("."))
-                .as_str();
-        std::fs::create_dir_all(&db_path)?;
-        // TODO: configure pool
-        let pool = sqlx::SqlitePool::connect(&db_path).await?;
-        let db = Db::new(pool).await;
-        sqlx::migrate!("src/db/migrations")
-            .run(&db.pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("Database migration failed: {}", e))?;
+        let db_file_path = config
+            .db
+            .db_path
+            .to_str()
+            .unwrap_or("")
+            .replace("$HOME", home_dir.to_str().unwrap_or("."));
+
+        // Create the parent directory of the database file
+        if let Some(parent) = PathBuf::from(&db_file_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let db_path = format!("sqlite://{}", db_file_path);
+
+        let db = Db::from_path(&db_path, &config.db.db_password).await?;
+        db.migrate().await?;
+        info!("Database initialized and migrated at: {}", db_path);
 
         // Plugin registry which will be shared across the proxy and web server
         let plugin_registry = if config.plugins.enabled {
-            Some(Arc::new(RwLock::new(PluginRegistry::new(
-                config.plugins.clone(),
-                db,
-            ))))
+            Some(Arc::new(RwLock::new(PluginRegistry::new(db))))
         } else {
             None
         };
