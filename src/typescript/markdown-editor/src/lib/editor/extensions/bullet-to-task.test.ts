@@ -14,9 +14,9 @@ describe('BulletToTaskConverter', () => {
 
         // Check if it converted to a task item
         const json = editor.getJSON();
-        expect(json.content[0].type).toBe('taskList');
-        expect(json.content[0].content[0].type).toBe('taskItem');
-        expect(json.content[0].content[0].attrs.checked).toBe(false);
+        expect(json.content?.[0].type).toBe('taskList');
+        expect(json.content?.[0].content?.[0].type).toBe('taskItem');
+        expect(json.content?.[0].content?.[0].attrs?.checked).toBe(false);
     });
 
     it('should convert bullet list item to checked task item when [x] is typed', () => {
@@ -31,8 +31,8 @@ describe('BulletToTaskConverter', () => {
 
         // Check if it converted to a checked task item
         const json = editor.getJSON();
-        expect(json.content[0].type).toBe('taskList');
-        expect(json.content[0].content[0].type).toBe('taskItem');
-        expect(json.content[0].content[0].attrs.checked).toBe(true);
+        expect(json.content?.[0].type).toBe('taskList');
+        expect(json.content?.[0].content?.[0].type).toBe('taskItem');
+        expect(json.content?.[0].content?.[0].attrs?.checked).toBe(true);
     });
 });

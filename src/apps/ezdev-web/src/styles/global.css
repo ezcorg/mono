@@ -18,6 +18,59 @@ body {
     @apply bg-[#F5F5F5] text-black;
 }
 
+/*** Works on common browsers ***/
+::selection {
+    background-color: white;
+    color: black;
+}
+
+.work-item-card:hover *::selection {
+    background-color: black;
+    color: white;
+}
+
+.work-item-card:hover *::-moz-selection {
+    background-color: black;
+    color: white;
+}
+
+.work-item-card:hover *::-o-selection {
+    background-color: black;
+    color: white;
+}
+
+.work-item-card:hover *::-ms-selection {
+    background-color: black;
+    color: white;
+}
+
+ul[data-type='taskList']>li>label {
+    margin-right: 6px !important;
+}
+
+/*** Mozilla based browsers ***/
+::-moz-selection {
+    background-color: white;
+    color: black;
+}
+
+/***For Other Browsers ***/
+::-o-selection {
+    background-color: black;
+    color: #fff;
+}
+
+::-ms-selection {
+    background-color: black;
+    color: #fff;
+}
+
+/*** For Webkit ***/
+::-webkit-selection {
+    background-color: black;
+    color: #fff;
+}
+
 @keyframes blink {
 
     0%,
@@ -77,6 +130,14 @@ body {
     ul,
     menu {
         list-style: revert;
+    }
+
+    ol.tight {
+        margin: 0 18px;
+
+        li {
+            padding-left: 2px;
+        }
     }
 
     ul {

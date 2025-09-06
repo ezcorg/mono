@@ -14,32 +14,26 @@ CREATE TABLE plugins (
 
 -- Create plugin_event_handlers table
 CREATE TABLE plugin_event_handlers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    plugin_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL references plugins(id),
     event_type TEXT NOT NULL,
     wasm BLOB NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(plugin_id, event_type, wasm)
+    PRIMARY KEY (plugin_id, event_type)
 );
 
 -- Create plugin_capabilities table
 CREATE TABLE plugin_capabilities (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    plugin_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL references plugins(id),
     capability TEXT NOT NULL,
     granted BOOLEAN NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(plugin_id, capability, granted)
+    PRIMARY KEY (plugin_id, capability)
 );
 
 -- Create plugin_metadata table
 CREATE TABLE plugin_metadata (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    plugin_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL references plugins(id),
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(plugin_id, key)
+    PRIMARY KEY (plugin_id, key)
 );
 
 -- Create indexes for better query performance

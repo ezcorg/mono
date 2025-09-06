@@ -58,6 +58,29 @@ mod tests {
 
         // Run migrations
         db.migrate().await.expect("Failed to run migrations");
+
+        // Check we have the expected tables
+        let tables: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM
+            sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .expect("Failed to query tables");
+        let table_names: Vec<String> = tables.into_iter().map(|t| t.0).collect();
+        let expected_tables = vec![
+            "plugins",
+            "plugin_event_handlers",
+            "plugin_capabilities",
+            "plugin_metadata",
+        ];
+        for table in expected_tables {
+            assert!(
+                table_names.contains(&table.to_string()),
+                "Expected table '{}' not found in database",
+                table
+            );
+        }
     }
 
     #[tokio::test]

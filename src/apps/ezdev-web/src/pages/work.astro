@@ -15,7 +15,7 @@ const projects = [
 	{
 		title: 'codeblock',
 		description:
-			'A codeblock editor with language server and filesystem support',
+			'A codeblock editor with language server and virtual filesystem support',
 		tags: ['CodeMirror', 'TypeScript'],
 		link: 'https://github.com/ezdevlol/mono/tree/main/src/typescript/codeblock',
 	},
@@ -92,10 +92,72 @@ const projects = [
 	<Footer slot="footer" />
 
 	<script>
+		import { CodeblockFS } from '@ezdevlol/codeblock';
 		import Packery from 'packery';
 		import imagesLoaded from 'imagesloaded';
 
 		let pckry: any | null = null;
+		let resizeObserver: ResizeObserver | null = null;
+
+		let fs: any = null;
+
+		async function init() {
+			fs = await CodeblockFS.worker();
+			await fs.writeFile(
+				'example.ts',
+				`export const greet = (name: string) => {
+	return \`Hello, \${name}!\`
+};`,
+			);
+			await fs.writeFile(
+				'hello.md',
+				`# \`@ezdevlol/markdown-editor\`
+
+This editor supports **Markdown** syntax.
+
+## Features
+
+### The basics
+- Paragraphs
+- Headings
+- *Italic* and **Bold** text
+- \`Inline code\`
+- Links (auto-detected google.com and [manual](https://google.com)
+
+### Task Lists
+
+- [x] Task 1 (Done)
+- [ ] Task 2 (Pending)
+	- [ ] Subtask 2.1
+- [ ] Task 3
+
+### Tables
+
+| Header 1 | Header 2 | Header 3 |
+|----------|----------|----------|
+| Cell 1   | Cell 2   | Cell 3   |
+| Cell 4   | Cell 5   | Cell 6   |
+
+### Codeblocks
+
+\`\`\`javascript
+function greet(name) {
+	console.log(\`Hello, \${name}!\`);
+}
+
+greet('World');
+\`\`\`
+
+#### Virtual filesystem
+
+Reference and change files in a document-local filesystem.
+
+\`\`\`example.ts
+\`\`\`
+`,
+			);
+		}
+
 		const demos = {
 			'markdown-editor': async (containerEl: HTMLElement) => {
 				try {
@@ -104,23 +166,15 @@ const projects = [
 					);
 					createEditor({
 						element: containerEl,
-						content: `# Welcome to the Markdown Editor!\nThis is an interactive demo.`,
+						fs: {
+							fs,
+							filepath: 'hello.md',
+						},
 					});
 
-					// After content is loaded, trigger proper relayout
-					if (pckry) {
-						// Find the parent grid item
-						const gridItem = containerEl.closest(
-							'.grid-item',
-						) as HTMLElement;
-						if (
-							gridItem &&
-							gridItem.classList.contains('is-expanded')
-						) {
-							// Use fit to properly position the expanded item
-							setTimeout(() => pckry?.fit(gridItem), 100);
-						}
-					}
+					// After content is loaded, the ResizeObserver will automatically
+					// detect the size change and trigger relayout
+					// No manual relayout needed here anymore
 				} catch (error) {
 					console.error('Failed to load markdown editor:', error);
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor.</div>`;
@@ -133,6 +187,8 @@ const projects = [
 		};
 
 		document.addEventListener('DOMContentLoaded', () => {
+			init();
+
 			const grid = document.querySelector(
 				'#grid-container',
 			) as HTMLElement;
@@ -172,10 +228,14 @@ const projects = [
 					const result = demos[projectTitle](demoContainer);
 					demos[projectTitle] = () => result;
 
-					// Use fit for expanding - wait a bit for content to render
-					if (pckry) {
-						setTimeout(() => pckry.fit(item), 50);
-					}
+					// ResizeObserver will automatically detect the expansion and trigger relayout
+					// Keep a small timeout to ensure content is rendered before observation
+					setTimeout(() => {
+						// Force a size check by updating the dataset
+						if (item.dataset.prevHeight) {
+							delete item.dataset.prevHeight;
+						}
+					}, 50);
 				} else {
 					// --- COLLAPSE ---
 					// Hide content first
@@ -189,17 +249,67 @@ const projects = [
 					setTimeout(() => {
 						item.classList.remove('is-expanded');
 
-						// Use layout instead of shiftLayout for better repositioning
-						if (pckry) {
-							pckry.layout();
+						// ResizeObserver will automatically detect the collapse and trigger relayout
+						// Force a size check by updating the dataset
+						if (item.dataset.prevHeight) {
+							delete item.dataset.prevHeight;
 						}
 					}, 100);
 				}
 			}
 
+			// Initialize ResizeObserver for automatic relayout
+			const initResizeObserver = () => {
+				if (!window.ResizeObserver) {
+					console.warn('ResizeObserver not supported');
+					return;
+				}
+
+				let debounceTimeout: ReturnType<typeof setTimeout>;
+
+				resizeObserver = new ResizeObserver((entries) => {
+					if (!pckry) return;
+
+					// Debounce the relayout to avoid excessive calls
+					clearTimeout(debounceTimeout);
+					debounceTimeout = setTimeout(() => {
+						// Check if any observed element has actually changed size
+						let shouldRelayout = false;
+						for (const entry of entries) {
+							const element = entry.target as HTMLElement;
+							const gridItem = element.closest(
+								'.grid-item',
+							) as HTMLElement;
+
+							if (gridItem) {
+								// Store previous size for comparison
+								const prevHeight = gridItem.dataset.prevHeight;
+								const currentHeight =
+									entry.contentRect.height.toString();
+
+								if (prevHeight !== currentHeight) {
+									gridItem.dataset.prevHeight = currentHeight;
+									shouldRelayout = true;
+								}
+							}
+						}
+
+						if (shouldRelayout) {
+							pckry.layout();
+						}
+					}, 100);
+				});
+
+				// Observe all grid items and their content
+				const gridItems = grid.querySelectorAll('.grid-item');
+				gridItems.forEach((item) => {
+					resizeObserver?.observe(item);
+				});
+			};
+
 			// Initialize Packery
 			const initPackery = () => {
-				pckry = new Packery(grid, {
+				pckry = new (Packery as any)(grid, {
 					itemSelector: '.grid-item',
 					sizer: '.grid-sizer',
 					gutter: 16,
@@ -220,12 +330,26 @@ const projects = [
 					}
 				});
 
+				// Initialize ResizeObserver after Packery is ready
+				initResizeObserver();
+
 				// Fade in the grid
 				grid.style.opacity = '1';
 			};
 
+			// Cleanup function for when the page is unloaded
+			const cleanup = () => {
+				if (resizeObserver) {
+					resizeObserver.disconnect();
+					resizeObserver = null;
+				}
+			};
+
+			// Add cleanup listener
+			window.addEventListener('beforeunload', cleanup);
+
 			// Wait for images to load before initializing to prevent overlap
-			imagesLoaded(grid, initPackery);
+			initPackery();
 		});
 	</script>
 
@@ -304,6 +428,7 @@ const projects = [
 		.work-item-card:hover {
 			box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
 		}
+
 		.work-item-card:hover * {
 			color: #000000;
 			opacity: 1;
