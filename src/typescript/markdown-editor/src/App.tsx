@@ -2,92 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
 import { CodeblockFS, SearchIndex } from '@ezdevlol/codeblock';
 import './App.css'
-
-const initialMarkdown = `
-# \`@ezdevlol/markdown-editor\`
-
-This editor supports **Markdown** syntax.
-
-## Features
-
-### Bring-your-own-LLM
-
-Use \`/settings\` to configure, \`ctrl + enter\` to trigger a completion
-
-* [ ] \`TODO: actually use settings\`
-* [ ] \`TODO: actually use llms\`
-
-### The basics
-- Paragraphs
-- Headings
-- *Italic* and **Bold** text
-- \`Inline code\`
-- Links (auto-detected google.com and [manual](https://google.com)
-
-### Task Lists
-
-- [x] Task 1 (Done)
-- [ ] Task 2 (Pending)
-  - [ ] Subtask 2.1
-- [ ] Task 3
-
-### Tables
-
-| Header 1 | Header 2 | Header 3 |
-|----------|----------|----------|
-| Cell 1   | Cell 2   | Cell 3   |
-| Cell 4   | Cell 5   | Cell 6   |
-
- - [ ] \`TODO: fix pasting typical md syntax not producing tables\`
-
-### Codeblocks
-
-\`\`\`javascript
-function greet(name) {
-  console.log(\`Hello, \${name}!\`);
-}
-
-greet('World');
-\`\`\`
-
-- [ ] \`TODO: support registering/calling execution handlers for each file extension/mime\` (e.g. allowing to run files)
-
-#### Language server support
-
-Lazily-loaded language server support for Typescript/Javascript, Python, Rust, and Go.
-
-\`\`\`python
-def add(a, b):
-  """Adds two numbers."""
-  return a + b
-
-print(add(5, 3))
-\`\`\`
-
-
-* [ ] \`TODO: support LSPs\`
-
-  * [x] \`js/ts\`
-
-  * [ ] \`python\`
-
-  * [ ] \`rust\`
-
-  * [ ] \`go\`
-
-
-#### Virtual filesystem
-
-Reference and change files in a document-local filesystem.
-
-\`\`\`src/App.tsx
-\`\`\`
-
-Try editing the content!
-`;
+import { file } from './test/example';
 
 function App() {
-  const [markdownContent, setMarkdownContent] = useState(initialMarkdown);
+  const [markdownContent, setMarkdownContent] = useState('');
   const [editor, setEditor] = useState<MarkdownEditor | null>(null);
   const ref = useRef(null);
 
@@ -110,11 +28,13 @@ function App() {
     let newEditor: MarkdownEditor | null = null;
 
     if (ref.current && !editor) {
-      loadFs().then(fs => {
+      loadFs().then(async fs => {
         console.debug('Loaded filesystem', fs);
+
+        await fs.writeFile('test.md', file);
+
         newEditor = createEditor({
           element: ref.current!,
-          content: initialMarkdown,
           fs: {
             fs: fs,
             filepath: 'test.md',

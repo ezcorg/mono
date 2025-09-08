@@ -94,6 +94,7 @@ const projects = [
 	<script>
 		import { CodeblockFS } from '@ezdevlol/codeblock';
 		import Packery from 'packery';
+		import { files } from './data/work.js';
 		import imagesLoaded from 'imagesloaded';
 
 		let pckry: any | null = null;
@@ -103,58 +104,10 @@ const projects = [
 
 		async function init() {
 			fs = await CodeblockFS.worker();
-			await fs.writeFile(
-				'example.ts',
-				`export const greet = (name: string) => {
-	return \`Hello, \${name}!\`
-};`,
-			);
-			await fs.writeFile(
-				'hello.md',
-				`# \`@ezdevlol/markdown-editor\`
-
-This editor supports **Markdown** syntax.
-
-## Features
-
-### The basics
-- Paragraphs
-- Headings
-- *Italic* and **Bold** text
-- \`Inline code\`
-- Links (auto-detected google.com and [manual](https://google.com)
-
-### Task Lists
-
-- [x] Task 1 (Done)
-- [ ] Task 2 (Pending)
-	- [ ] Subtask 2.1
-- [ ] Task 3
-
-### Tables
-
-| Header 1 | Header 2 | Header 3 |
-|----------|----------|----------|
-| Cell 1   | Cell 2   | Cell 3   |
-| Cell 4   | Cell 5   | Cell 6   |
-
-### Codeblocks
-
-\`\`\`javascript
-function greet(name) {
-	console.log(\`Hello, \${name}!\`);
-}
-
-greet('World');
-\`\`\`
-
-#### Virtual filesystem
-
-Reference and change files in a document-local filesystem.
-
-\`\`\`example.ts
-\`\`\`
-`,
+			await Promise.all(
+				files.map(async ([path, content]) => {
+					await fs.writeFile(path, content);
+				}),
 			);
 		}
 
@@ -171,10 +124,6 @@ Reference and change files in a document-local filesystem.
 							filepath: 'hello.md',
 						},
 					});
-
-					// After content is loaded, the ResizeObserver will automatically
-					// detect the size change and trigger relayout
-					// No manual relayout needed here anymore
 				} catch (error) {
 					console.error('Failed to load markdown editor:', error);
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor.</div>`;

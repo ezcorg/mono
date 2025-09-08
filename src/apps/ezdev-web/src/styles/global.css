@@ -18,57 +18,47 @@ body {
     @apply bg-[#F5F5F5] text-black;
 }
 
+.work-item-card {
+    .ezdev-mde {
+        --ezdev-mde-bg: tranparent;
+        --ezdev-mde-code-bg: var(--ezdev-mde-code-bg-dark);
+    }
+}
+
+.work-item-card:hover {
+
+    .ezdev-mde {
+        --ezdev-mde-code-bg: var(--ezdev-mde-code-bg-light);
+    }
+
+    *::selection,
+    *::-moz-selection,
+    *::-o-selection,
+    *::-ms-selection,
+    *::-webkit-selection {
+        background-color: black;
+        color: white;
+    }
+}
+
 /*** Works on common browsers ***/
-::selection {
-    background-color: white;
-    color: black;
-}
-
-.work-item-card:hover *::selection {
+/* .work-item-card:hover *::selection,
+.work-item-card:hover *::-moz-selection,
+.work-item-card:hover *::-o-selection,
+.work-item-card:hover *::-ms-selection,
+.work-item-card:hover *::-webkit-selection {
     background-color: black;
     color: white;
-}
+} */
 
-.work-item-card:hover *::-moz-selection {
-    background-color: black;
-    color: white;
-}
 
-.work-item-card:hover *::-o-selection {
-    background-color: black;
-    color: white;
-}
-
-.work-item-card:hover *::-ms-selection {
-    background-color: black;
-    color: white;
-}
-
-ul[data-type='taskList']>li>label {
-    margin-right: 6px !important;
-}
-
-/*** Mozilla based browsers ***/
-::-moz-selection {
-    background-color: white;
-    color: black;
-}
-
-/***For Other Browsers ***/
-::-o-selection {
-    background-color: black;
-    color: #fff;
-}
-
-::-ms-selection {
-    background-color: black;
-    color: #fff;
-}
-
-/*** For Webkit ***/
+::selection,
+::-moz-selection,
+::-o-selection,
+::-ms-selection,
 ::-webkit-selection {
-    background-color: black;
-    color: #fff;
+    background-color: white;
+    color: black;
 }
 
 @keyframes blink {
@@ -111,38 +101,45 @@ ul[data-type='taskList']>li>label {
 }
 
 .ProseMirror {
-    padding: 1rem;
+    padding: 1.5rem;
     flex: 1;
 
-    /* Work around Tailwind base styles */
+    h1:first-of-type {
+        margin-top: 0;
+    }
+
+    & a,
+    & a:hover,
+    & a:visited {
+        color: revert;
+        text-decoration: revert;
+    }
+
+    & a:hover {
+        cursor: pointer;
+    }
+
     h1,
     h2,
     h3,
     h4,
     h5,
-    h6 {
+    h6,
+    p {
         font-size: revert;
         font-weight: revert;
         line-height: revert;
+        margin: revert;
+    }
+
+    li>p {
+        margin-top: 0;
+        margin-bottom: 0;
     }
 
     ol,
     ul,
     menu {
         list-style: revert;
-    }
-
-    ol.tight {
-        margin: 0 18px;
-
-        li {
-            padding-left: 2px;
-        }
-    }
-
-    ul {
-        li {
-            display: flex;
-        }
     }
 }

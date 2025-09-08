@@ -9,6 +9,7 @@ export interface FileSystemOptions {
 
 export const FileSystem = Extension.create<FileSystemOptions>({
     name: 'persistence',
+    // @ts-expect-error
     _saveTimeout: null,
 
     addOptions() {
@@ -52,6 +53,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         if (this._saveTimeout) clearTimeout(this._saveTimeout)
         // @ts-expect-error
         this._saveTimeout = setTimeout(() => {
+            // @ts-expect-error
             const markdown = this.editor.storage.markdown.getMarkdown()
             fs.writeFile(filepath, markdown).catch(error => {
                 console.error(`[Filesystem] Failed to save content to ${filepath}:`, error)

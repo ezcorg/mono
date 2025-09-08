@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import { createLanguageServer } from '../servers/typescript';
+import { createLanguageServer } from '../lsps/typescript';
 import { createConnection } from 'vscode-languageserver/browser';
 import { BrowserMessageReader, BrowserMessageWriter } from '@volar/language-server/browser';
 import { Fs } from '../types';

@@ -16,3 +16,6 @@
 [submodule "src/rust/confique"]
 	path = src/rust/confique
 	url = https://github.com/ezdevlol/confique
+[submodule "src/typescript/tiptap-markdown"]
+	path = src/typescript/tiptap-markdown
+	url = https://github.com/ezdevlol/tiptap-markdown

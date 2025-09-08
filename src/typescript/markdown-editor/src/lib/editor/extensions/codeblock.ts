@@ -1,6 +1,6 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
-import { basicSetup, codeblock, CodeblockFS, extToLanguageMap, SearchIndex } from '@ezdevlol/codeblock'
+import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex } from '@ezdevlol/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
@@ -40,7 +40,7 @@ export const ExtendedCodeblock = Node.create({
                     // we'll handle this in the file attribute parseHTML instead
                     if (extracted && extracted.includes('.')) {
                         const ext = extracted.split('.').pop()?.toLowerCase() || '';
-                        return extToLanguageMap[ext] || 'markdown';
+                        return extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown';
                     }
 
                     return extracted;
@@ -142,7 +142,7 @@ export const ExtendedCodeblock = Node.create({
                     // If input contains a dot, treat it as a filename
                     if (input.includes('.')) {
                         const ext = input.split('.').pop()?.toLowerCase() || '';
-                        const lang = extToLanguageMap[ext] || 'markdown'
+                        const lang = extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown'
                         return {
                             file: input,
                             language: lang,
@@ -150,7 +150,7 @@ export const ExtendedCodeblock = Node.create({
                     }
 
                     // Otherwise, check if it's a language name
-                    const matchingLanguage = Object.entries(extToLanguageMap).find(([ext, lang]) => {
+                    const matchingLanguage = Object.entries(extOrLanguageToLanguageId).find(([ext, lang]) => {
                         return lang.includes(input) || ext === input;
                     })
 

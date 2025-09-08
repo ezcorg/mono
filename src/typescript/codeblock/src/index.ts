@@ -2,5 +2,5 @@ export { createCodeblock, codeblock, basicSetup, type CodeblockConfig, Codeblock
 export { CodeblockFS } from './utils/fs';
 export * from './utils/snapshot';
 export * from './types';
-export * from './constants';
 export * from './utils/search';
+export * from './lsps';

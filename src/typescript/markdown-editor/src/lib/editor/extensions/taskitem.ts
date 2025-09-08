@@ -42,7 +42,6 @@ export const ExtendedTaskItem = TaskItem.extend<ExtendedTaskItemOptions>({
 
             const checkboxWrapper = document.createElement('label');
             checkboxWrapper.contentEditable = 'false';
-            checkboxWrapper.style.marginRight = '0.5rem';
 
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';

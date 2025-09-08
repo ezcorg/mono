@@ -17,106 +17,7 @@
   }
 }
 
-/* --- Revised Task List Styling --- */
-ul[data-type="taskList"] {
-  list-style: none;
-  padding: 0;
-  /* Reset default UL margins, especially for nested lists */
-  margin: 0;
-
-  /* Ensure paragraphs inside list items don't add extra space */
-  p {
-    margin: 0;
-  }
-
-  /* Add space *before* a nested list starts within an item */
-  /* Keep this if you want space between item text and its sublist */
-  p+ul[data-type="taskList"] {
-    margin-top: 0.25rem;
-    /* Reduced slightly, adjust as needed */
-  }
-
-  p+p {
-    margin-top: 0.25rem;
-  }
-
-  li {
-    display: flex;
-    /* REMOVE the universal margin-bottom */
-    /* margin-bottom: 0.5rem; */
-    align-items: flex-start;
-    /* Align label to top if content wraps */
-  }
-
-  li+li {
-    margin-top: 0.25rem;
-    /* Adjust spacing as needed */
-  }
-
-  li>label {
-    margin-right: 0.5rem;
-    /* Small tweak to align checkbox better with text line */
-    cursor: pointer;
-  }
-
-  li>div {
-    flex: 1;
-    /* The nested UL will live inside this div */
-  }
-}
-
-/* Style checked items */
-li[data-checked="true"]>div>p {
-  text-decoration: line-through;
-  color: #888;
-}
-
-/* --- End Task List Styling --- */
-
-
-/* Table Styling (Unchanged) */
-.ProseMirror table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 1rem 0;
-}
-
-.ProseMirror th,
-.ProseMirror td {
-  border: 1px solid #2b2b2b;
-  padding: 0.5rem;
-  vertical-align: top;
-  position: relative;
-}
-
-.ProseMirror th {
-  font-weight: bold;
-  background-color: #2b2b2b;
-  text-align: left;
-  color: white;
-}
-
-.resize-cursor {
-  cursor: col-resize;
-}
-
-.selectedCell::after {
-  z-index: 2;
-  position: absolute;
-  content: "";
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  background: rgba(0, 123, 255, 0.1);
-  pointer-events: none;
-}
-
-.ProseMirror table p {
-  margin: 0;
-}
-
-/* Code Block Styling (Unchanged) */
+/* 
 .ProseMirror> :not(.cm-editor) pre {
   background: #f4f4f4;
   border: 1px solid #ddd;
@@ -138,7 +39,7 @@ li[data-checked="true"]>div>p {
   background: none;
   padding: 0;
   border-radius: 0;
-}
+} */
 
 /* Slash Commands Dropdown */
 .slash-commands-dropdown {

@@ -1,18 +1,17 @@
 import { Editor, EditorOptions, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import TaskList from '@tiptap/extension-task-list';
-import Table from '@tiptap/extension-table';
-import TableRow from '@tiptap/extension-table-row';
-import TableCell from '@tiptap/extension-table-cell';
-import TableHeader from '@tiptap/extension-table-header';
+import { TableKit } from '@tiptap/extension-table'
 import { Markdown, MarkdownStorage } from 'tiptap-markdown';
 import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
 import { FileSystem, FileSystemOptions } from './extensions/filesystem';
+import { styleModule } from './styles';
 
 import { ExtendedLink } from './extensions/link';
 import { SlashCommands } from './extensions/slash-commands';
 import { defaultSlashCommands } from './commands';
+import { StyleModule } from 'style-mod';
 
 export type MarkdownEditorOptions = Partial<EditorOptions> & {
     extensions?: Extension[];
@@ -55,12 +54,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             ExtendedTaskItem.configure({
                 nested: true,
             }),
-            Table.configure({
-                resizable: true,
+            TableKit.configure({
+                table: { resizable: true, allowTableNodeSelection: true },
             }),
-            TableRow,
-            TableHeader,
-            TableCell,
             SlashCommands.configure({
                 commands: defaultSlashCommands,
             }),
@@ -77,6 +73,12 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         injectCSS: options.injectCSS,
         ...options,
     });
+
+    editor.view.dom.classList.add('ezdev-mde');
+
+    if (typeof document !== 'undefined') {
+        StyleModule.mount(document, styleModule);
+    }
 
     return editor as MarkdownEditor;
 }

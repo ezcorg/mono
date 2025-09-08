@@ -9,8 +9,7 @@ import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirro
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { Fs } from "./types";
-import { extToLanguageMap } from "./constants";
-import { getLanguageSupport } from "./servers";
+import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { documentUri, languageId } from '@marimo-team/codemirror-languageserver';
 import { lintKeymap } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
@@ -24,7 +23,7 @@ export type CodeblockConfig = {
     content?: string;
     toolbar?: boolean;
     index?: SearchIndex;
-    language?: keyof typeof extToLanguageMap;
+    language?: ExtensionOrLanguage;
 };
 export const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
     combine: (values) => values[0]
@@ -39,13 +38,13 @@ export const readOnlyCompartment = new Compartment();
 
 // Effects + Fields for async file handling
 export const openFileEffect = StateEffect.define<{ path: string }>();
-export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: string | null }>();
+export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null }>();
 
 // Holds the current file lifecycle
 export const currentFileField = StateField.define<{
     path: string | null;
     content: string;
-    language: string | null;
+    language: ExtensionOrLanguage | null;
     loading: boolean;
 }>({
     create(state) {
@@ -244,13 +243,24 @@ const codeblockView = ViewPlugin.define((view) => {
     // Guard to prevent duplicate opens for same path while loading
     let opening: string | null = null;
 
+    async function setLanguageSupport(language: ExtensionOrLanguage) {
+        if (!language) return;
+        const langSupport = await getLanguageSupport(extOrLanguageToLanguageId[language]);
+        console.log('got language: ', { language, langSupport })
+        safeDispatch(view, {
+            effects: [
+                languageSupportCompartment.reconfigure(langSupport || []),
+            ]
+        });
+    }
+
     async function handleOpen(path: string) {
         if (!path) return;
         if (opening === path) return;
         opening = path;
         try {
             const ext = path.split('.').pop()?.toLowerCase();
-            const lang = ext ? (extToLanguageMap as any)[ext] ?? null : null;
+            const lang = (ext ? (extOrLanguageToLanguageId)[ext] ?? null : null) || language;
             let langSupport = lang ? await getLanguageSupport(lang as any) : null;
 
             safeDispatch(view, {
@@ -285,9 +295,14 @@ const codeblockView = ViewPlugin.define((view) => {
     }
 
     // On initial mount, if field indicates a pending load, kick it off *after* construction
-    const initial = view.state.field(currentFileField);
-    if (initial.path && initial.loading) {
-        queueMicrotask(() => handleOpen(initial.path!));
+    const { path, loading, language } = view.state.field(currentFileField);
+
+    if (!path && language) {
+        setLanguageSupport(language);
+    }
+
+    if (path && loading) {
+        handleOpen(path);
     }
 
     return {
@@ -350,7 +365,7 @@ export type CreateCodeblockArgs = {
     cwd?: string;
     toolbar?: boolean;
     index?: SearchIndex;
-    language?: keyof typeof extToLanguageMap;
+    language?: ExtensionOrLanguage;
 };
 
 export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index }: CreateCodeblockArgs) {
