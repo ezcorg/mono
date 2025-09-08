@@ -26,13 +26,14 @@
     "@playwright/test": "^1.52.0",
     "@types/lodash": "^4.17.16",
     "@types/markdown-it": "^14.1.2",
-    "@types/node": "^22.15.3",
+    "@types/node": "^24.3.1",
     "@types/parse-gitignore": "^1.0.2",
-    "@types/sharedworker": "^0.0.150",
+    "@types/sharedworker": "^0.0.180",
     "multimatch": "^7.0.0",
     "process": "^0.11.10",
     "tsx": "^4.19.4",
-    "vite": "^7.0.6"
+    "vite": "^7.0.6",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "@babel/runtime": "^7.27.1",

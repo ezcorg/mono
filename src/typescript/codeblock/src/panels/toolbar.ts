@@ -1,0 +1,430 @@
+import { EditorView, Panel } from "@codemirror/view";
+import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
+import { HighlightedSearch } from "../utils/search";
+import { CodeblockFacet, openFileEffect, currentFileField } from "../editor";
+import { extOrLanguageToLanguageId } from "../lsps";
+
+// Command result types for the first section
+interface CommandResult {
+    id: string;
+    type: 'create-file' | 'rename-file';
+    icon: string;
+    query: string;
+    requiresInput?: boolean;
+}
+
+// Combined result type
+type SearchResult = HighlightedSearch | CommandResult;
+
+// Type guards
+function isCommandResult(result: SearchResult): result is CommandResult {
+    return 'type' in result;
+}
+
+function isSearchResult(result: SearchResult): result is HighlightedSearch {
+    return 'score' in result;
+}
+
+// Naming mode state
+interface NamingMode {
+    active: boolean;
+    type: 'create-file' | 'rename-file';
+    originalQuery: string;
+    languageExtension?: string;
+}
+
+// Search results state - now handles both commands and search results
+export const setSearchResults = StateEffect.define<SearchResult[]>();
+export const searchResultsField = StateField.define<SearchResult[]>({
+    create() {
+        return [];
+    },
+    update(value, tr) {
+        for (let e of tr.effects) if (e.is(setSearchResults)) return e.value;
+        return value;
+    }
+});
+
+const mod = (n: number, m: number) => ((n % m) + m) % m;
+
+// A safe dispatcher to avoid nested-update errors from UI events during CM updates
+function safeDispatch(view: EditorView, spec: TransactionSpec) {
+    // Always queue to a microtask so we never dispatch within an ongoing update cycle
+    queueMicrotask(() => {
+        try { view.dispatch(spec); } catch (e) { console.error(e); }
+    });
+}
+
+// Check if query matches a programming language
+function isValidProgrammingLanguage(query: string): boolean {
+    const lowerQuery = query.toLowerCase();
+    return Object.keys(extOrLanguageToLanguageId).some(key =>
+        key.toLowerCase() === lowerQuery ||
+        extOrLanguageToLanguageId[key].toLowerCase() === lowerQuery
+    );
+}
+
+// Create command results for the first section
+function createCommandResults(query: string, view: EditorView, searchResults: SearchResult[]): CommandResult[] {
+    const commands: CommandResult[] = [];
+    const currentFile = view.state.field(currentFileField);
+    const hasValidFile = currentFile.path && !currentFile.loading;
+    const isLanguageQuery = isValidProgrammingLanguage(query);
+
+    // Check if query matches an existing file (first search result with exact match)
+    const hasExactFileMatch = searchResults.length > 0 && searchResults[0].id === query;
+
+    if (query.trim()) {
+        // Create new file command (only if query doesn't match existing file)
+        if (!hasExactFileMatch) {
+            const createFileCommand: CommandResult = {
+                id: `Create new file "${query}"`,
+                type: 'create-file',
+                icon: '📄',
+                query,
+                requiresInput: isLanguageQuery
+            };
+            commands.push(createFileCommand);
+        }
+
+        // Rename file command (only if file is open, query is not a language, and doesn't match current file)
+        if (hasValidFile && !isLanguageQuery && !hasExactFileMatch) {
+            const renameCommand: CommandResult = {
+                id: `Rename to "${query}"`,
+                type: 'rename-file',
+                icon: '✏️',
+                query
+            };
+            commands.push(renameCommand);
+        }
+    }
+
+    return commands;
+}
+
+// Toolbar Panel
+export const toolbarPanel = (view: EditorView): Panel => {
+    let { filepath, language, index } = view.state.facet(CodeblockFacet);
+
+    const dom = document.createElement("div");
+    dom.className = "cm-toolbar-panel";
+
+    // Create state icon (left side)
+    const stateIcon = document.createElement("div");
+    stateIcon.className = "cm-toolbar-state-icon";
+    stateIcon.textContent = "📄"; // Default file icon
+    dom.appendChild(stateIcon);
+
+    // Create input container for the right-aligned input
+    const inputContainer = document.createElement("div");
+    inputContainer.className = "cm-toolbar-input-container";
+    dom.appendChild(inputContainer);
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = filepath || language || "";
+    input.className = "cm-toolbar-input";
+    inputContainer.appendChild(input);
+
+    const resultsList = document.createElement("ul");
+    resultsList.className = "cm-search-results";
+    dom.appendChild(resultsList);
+
+    let selectedIndex = 0;
+    let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
+
+    // Set CSS variable for gutter width
+    function updateGutterWidthVariable() {
+        const gutters = view.dom.querySelector('.cm-gutters');
+        if (gutters) {
+            const gutterWidth = gutters.getBoundingClientRect().width;
+            dom.style.setProperty('--cm-gutter-width', `${gutterWidth}px`);
+        }
+    }
+
+    // Set up ResizeObserver to watch gutter width changes
+    let gutterObserver: ResizeObserver | null = null;
+    function setupGutterObserver() {
+        const gutters = view.dom.querySelector('.cm-gutters');
+        if (gutters && window.ResizeObserver) {
+            gutterObserver = new ResizeObserver(() => {
+                updateGutterWidthVariable();
+            });
+            gutterObserver.observe(gutters);
+        }
+    }
+
+    // Set state icon to use CSS variable for width
+    stateIcon.style.width = 'var(--cm-gutter-width)';
+
+    // Initial width setup and observer
+    updateGutterWidthVariable();
+    setupGutterObserver();
+
+    const renderItem = (result: SearchResult, i: number) => {
+        const li = document.createElement("li");
+        li.innerHTML = `<span class="cm-result-icon" style="width: var(--cm-gutter-width); display: inline-block; text-align: center;">${result.icon || ''}</span>
+        <span class="cm-result-label">${result.id}</span>`;
+
+        if (isCommandResult(result)) {
+            li.className = "cm-search-result cm-command-result";
+        } else {
+            li.className = "cm-search-result cm-file-result";
+        }
+
+        if (i === selectedIndex) li.classList.add("selected");
+
+        li.addEventListener("mousedown", (ev) => {
+            ev.preventDefault();
+        });
+
+        li.addEventListener("click", () => selectResult(result));
+        return li;
+    };
+
+    const renderDivider = () => {
+        const divider = document.createElement("li");
+        divider.className = "cm-search-divider";
+        divider.innerHTML = '<hr>';
+        return divider;
+    };
+
+    function updateDropdown() {
+        const results = view.state.field(searchResultsField);
+        const children: HTMLElement[] = [];
+
+        // Separate commands from search results
+        const commands = results.filter(isCommandResult);
+        const searchResults = results.filter(isSearchResult);
+
+        let currentIndex = 0;
+
+        // Render commands section
+        commands.forEach((command) => {
+            children.push(renderItem(command, currentIndex));
+            currentIndex++;
+        });
+
+        // Add divider if we have both commands and search results
+        if (commands.length > 0 && searchResults.length > 0) {
+            children.push(renderDivider());
+        }
+
+        // Render search results section
+        searchResults.forEach((result) => {
+            children.push(renderItem(result, currentIndex));
+            currentIndex++;
+        });
+
+        resultsList.replaceChildren(...children);
+    }
+
+    function selectResult(result: SearchResult) {
+        if (isCommandResult(result)) {
+            handleCommandResult(result);
+        } else {
+            handleSearchResult(result);
+        }
+    }
+
+    function updateStateIcon() {
+        if (namingMode.active) {
+            stateIcon.textContent = namingMode.type === 'create-file' ? '📄' : '✏️';
+        } else {
+            stateIcon.textContent = '📄'; // Default file icon
+        }
+    }
+
+    function enterNamingMode(type: 'create-file' | 'rename-file', originalQuery: string, languageExtension?: string) {
+        namingMode = { active: true, type, originalQuery, languageExtension };
+
+        // Update state icon
+        updateStateIcon();
+
+        // Clear input and focus
+        input.value = '';
+        input.placeholder = languageExtension ? `filename.${languageExtension}` : 'filename';
+        input.focus();
+
+        // Clear search results
+        safeDispatch(view, { effects: setSearchResults.of([]) });
+    }
+
+    function exitNamingMode() {
+        namingMode = { active: false, type: 'create-file', originalQuery: '' };
+        updateStateIcon();
+        input.placeholder = '';
+    }
+
+    function handleCommandResult(command: CommandResult) {
+        if (command.type === 'create-file') {
+            if (command.requiresInput) {
+                // Enter naming mode for language-specific file
+                enterNamingMode('create-file', command.query, command.query);
+            } else {
+                // Create file directly and populate toolbar
+                const pathToOpen = command.query.includes('.') ? command.query : `${command.query}.txt`;
+                input.value = pathToOpen;
+                safeDispatch(view, {
+                    effects: [setSearchResults.of([]), openFileEffect.of({ path: pathToOpen })]
+                });
+            }
+        } else if (command.type === 'rename-file') {
+            // Enter naming mode for rename
+            enterNamingMode('rename-file', command.query);
+        }
+    }
+
+    function handleSearchResult(result: HighlightedSearch) {
+        input.value = result.id;
+        safeDispatch(view, {
+            effects: [setSearchResults.of([]), openFileEffect.of({ path: result.id })]
+        });
+    }
+
+    function executeNamingMode(filename: string) {
+        if (!namingMode.active || !filename.trim()) return;
+
+        if (namingMode.type === 'create-file') {
+            const pathToOpen = namingMode.languageExtension && !filename.includes('.')
+                ? `${filename}.${namingMode.languageExtension}`
+                : filename;
+            input.value = pathToOpen;
+            // TODO: handle edge-cases like trying to create folders, invalid characters, etc.
+            safeDispatch(view, {
+                effects: [setSearchResults.of([]), openFileEffect.of({ path: pathToOpen })]
+            });
+        } else if (namingMode.type === 'rename-file') {
+            const currentFile = view.state.field(currentFileField);
+            if (currentFile.path) {
+                const newPath = filename.includes('.') ? filename : `${filename}.txt`;
+                input.value = newPath;
+                // TODO: Implement actual file rename logic
+                console.log(`Rename ${currentFile.path} to ${newPath}`);
+                safeDispatch(view, {
+                    effects: [setSearchResults.of([]), openFileEffect.of({ path: newPath })]
+                });
+            }
+        }
+
+        exitNamingMode();
+    }
+
+    // Close dropdown when clicking outside
+    function handleClickOutside(event: Event) {
+        if (!dom.contains(event.target as Node)) {
+            safeDispatch(view, { effects: setSearchResults.of([]) });
+        }
+    }
+
+    input.addEventListener("click", () => {
+        // Open dropdown when input is clicked
+        if (!namingMode.active) {
+            const query = input.value;
+            let results: SearchResult[] = [];
+
+            if (query.trim()) {
+                // Get regular search results from index first
+                const searchResults: SearchResult[] = (index?.search(query, { fuzzy: true, prefix: true }) || []).slice(0, 100);
+
+                // Add command results first (passing search results to check for existing files)
+                const commands = createCommandResults(query, view, searchResults);
+
+                results = searchResults.concat(commands);
+            }
+
+            safeDispatch(view, { effects: setSearchResults.of(results) });
+
+            // Add click-outside listener when dropdown opens
+            document.addEventListener("click", handleClickOutside);
+        }
+    });
+
+    input.addEventListener("input", (event) => {
+        const query = (event.target as HTMLInputElement).value;
+        selectedIndex = 0;
+
+        // If in naming mode, don't show search results
+        if (namingMode.active) {
+            return;
+        }
+
+        let results: SearchResult[] = [];
+
+        if (query.trim()) {
+            // Get regular search results from index first
+            const searchResults = (index?.search(query, { fuzzy: true, prefix: true }) || []).slice(0, 1000);
+
+            // Add command results first (passing search results to check for existing files)
+            const commands = createCommandResults(query, view, searchResults);
+            results.push(...commands);
+
+            // Add search results
+            results.push(...searchResults);
+        }
+
+        safeDispatch(view, { effects: setSearchResults.of(results) });
+    });
+
+    input.addEventListener("keydown", (event) => {
+        if (namingMode.active) {
+            // Handle naming mode
+            if (event.key === "Enter") {
+                event.preventDefault();
+                executeNamingMode(input.value);
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                exitNamingMode();
+                input.value = namingMode.originalQuery;
+            }
+            return;
+        }
+
+        // Normal search mode
+        const results = view.state.field(searchResultsField);
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            if (results.length) {
+                selectedIndex = mod(selectedIndex + 1, results.length);
+                updateDropdown();
+            }
+        } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            if (results.length) {
+                selectedIndex = mod(selectedIndex - 1, results.length);
+                updateDropdown();
+            }
+        } else if (event.key === "Enter" && results.length && selectedIndex >= 0) {
+            event.preventDefault();
+            selectResult(results[selectedIndex]);
+        }
+    });
+
+    return {
+        dom,
+        top: true,
+        update(update) {
+            // Re-render dropdown when search results change
+            const a = update.startState.field(searchResultsField);
+            const b = update.state.field(searchResultsField);
+            if (a !== b) {
+                updateDropdown();
+
+                // Remove click-outside listener when dropdown closes
+                if (b.length === 0) {
+                    document.removeEventListener("click", handleClickOutside);
+                }
+            }
+        },
+        destroy() {
+            // Clean up event listeners when panel is destroyed
+            document.removeEventListener("click", handleClickOutside);
+
+            // Clean up ResizeObserver
+            if (gutterObserver) {
+                gutterObserver.disconnect();
+                gutterObserver = null;
+            }
+        }
+    };
+};

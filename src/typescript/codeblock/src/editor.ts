@@ -13,8 +13,9 @@ import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } fr
 import { documentUri, languageId } from '@marimo-team/codemirror-languageserver';
 import { lintKeymap } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
-import { HighlightedSearch, SearchIndex } from "./utils/search";
+import { SearchIndex } from "./utils/search";
 import { LSP, LSPClientExtension } from "./utils/lsp";
+import { toolbarPanel, searchResultsField } from "./panels/toolbar";
 
 export type CodeblockConfig = {
     fs: Fs;
@@ -69,20 +70,6 @@ export const currentFileField = StateField.define<{
     }
 });
 
-// Search results state
-const setSearchResults = StateEffect.define<HighlightedSearch[]>();
-const searchResultsField = StateField.define<HighlightedSearch[]>({
-    create() {
-        return [];
-    },
-    update(value, tr) {
-        for (let e of tr.effects) if (e.is(setSearchResults)) return e.value;
-        return value;
-    }
-});
-
-const mod = (n: number, m: number) => ((n % m) + m) % m;
-
 // A safe dispatcher to avoid nested-update errors from UI events during CM updates
 function safeDispatch(view: EditorView, spec: TransactionSpec) {
     // Always queue to a microtask so we never dispatch within an ongoing update cycle
@@ -91,96 +78,6 @@ function safeDispatch(view: EditorView, spec: TransactionSpec) {
     });
 }
 
-// Toolbar Panel
-const toolbarPanel = (view: EditorView): Panel => {
-    let { filepath: file, index } = view.state.facet(CodeblockFacet);
-
-    const dom = document.createElement("div");
-    dom.className = "cm-toolbar-panel";
-
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = file || "";
-    input.className = "cm-toolbar-input";
-    dom.appendChild(input);
-
-    const resultsList = document.createElement("ul");
-    resultsList.className = "cm-search-results";
-    dom.appendChild(resultsList);
-
-    let selectedIndex = 0;
-
-    const renderItem = (result: HighlightedSearch, i: number) => {
-        const li = document.createElement("li");
-        li.textContent = result.id;
-        li.className = "cm-search-result"; // keep class for existing CSS
-        if (i === selectedIndex) li.classList.add("selected"); // keyboard-focus style
-
-        // Hover style: update selectedIndex on mouseenter so CSS :hover and .selected stay in sync
-        li.addEventListener("mouseenter", () => {
-            selectedIndex = i;
-            updateDropdown();
-        });
-
-        li.addEventListener("mousedown", (ev) => {
-            ev.preventDefault(); // avoid blurring the input before we act
-        });
-
-        li.addEventListener("click", () => selectResult(result));
-        return li;
-    };
-
-    function updateDropdown() {
-        const results = view.state.field(searchResultsField);
-        const children = results.map((r, i) => renderItem(r, i));
-        resultsList.replaceChildren(...children);
-    }
-
-    function selectResult(result: HighlightedSearch) {
-        input.value = result.id;
-        // Clear results and request file open outside the current update cycle
-        safeDispatch(view, { effects: [setSearchResults.of([]), openFileEffect.of({ path: result.id })] });
-    }
-
-    input.addEventListener("input", (event) => {
-        const query = (event.target as HTMLInputElement).value;
-        selectedIndex = 0;
-        const results = (index?.search(query, { fuzzy: true, prefix: true }) || []).slice(0, 1000);
-        safeDispatch(view, { effects: setSearchResults.of(results) });
-    });
-
-    input.addEventListener("keydown", (event) => {
-        const results = view.state.field(searchResultsField);
-        if (event.key === "ArrowDown") {
-            event.preventDefault();
-            if (results.length) {
-                selectedIndex = mod(selectedIndex + 1, results.length);
-                updateDropdown();
-            }
-        } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            if (results.length) {
-                selectedIndex = mod(selectedIndex - 1, results.length);
-                updateDropdown();
-            }
-        } else if (event.key === "Enter" && results.length && selectedIndex >= 0) {
-            event.preventDefault();
-            // queue to avoid nested updates
-            selectResult(results[selectedIndex]);
-        }
-    });
-
-    return {
-        dom,
-        top: true,
-        update(update) {
-            // Re-render dropdown when search results change
-            const a = update.startState.field(searchResultsField);
-            const b = update.state.field(searchResultsField);
-            if (a !== b) updateDropdown();
-        }
-    };
-};
 
 const navigationKeymap: KeyBinding[] = [{
     key: "ArrowUp",

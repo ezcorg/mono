@@ -10,7 +10,7 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezdev-mde': {
         // Light/dark mode vars
-        '--ezdev-mde-code-bg-light': '#f4f4f4',
+        '--ezdev-mde-code-bg-light': '#f1f1f1',
         '--ezdev-mde-code-bg-dark': '#2c2c2c',
         '--ezdev-mde-bg-light': '#ffffff',
         '--ezdev-mde-bg-dark': '#1e1e1e',
