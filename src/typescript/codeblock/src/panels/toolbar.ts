@@ -5,7 +5,7 @@ import { CodeblockFacet, openFileEffect, currentFileField } from "../editor";
 import { extOrLanguageToLanguageId } from "../lsps";
 
 // Command result types for the first section
-interface CommandResult {
+export interface CommandResult {
     id: string;
     type: 'create-file' | 'rename-file';
     icon: string;
@@ -14,7 +14,7 @@ interface CommandResult {
 }
 
 // Combined result type
-type SearchResult = HighlightedSearch | CommandResult;
+export type SearchResult = HighlightedSearch | CommandResult;
 
 // Type guards
 function isCommandResult(result: SearchResult): result is CommandResult {
@@ -26,7 +26,7 @@ function isSearchResult(result: SearchResult): result is HighlightedSearch {
 }
 
 // Naming mode state
-interface NamingMode {
+export interface NamingMode {
     active: boolean;
     type: 'create-file' | 'rename-file';
     originalQuery: string;

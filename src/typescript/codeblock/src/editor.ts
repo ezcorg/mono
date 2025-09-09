@@ -1,5 +1,5 @@
 import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, TransactionSpec } from "@codemirror/state";
-import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel, tooltips, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from "@codemirror/view";
+import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, showPanel, tooltips, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
 import { vscodeDark } from '@uiw/codemirror-theme-vscode';
@@ -16,6 +16,7 @@ import { highlightCode } from "@lezer/highlight";
 import { SearchIndex } from "./utils/search";
 import { LSP, LSPClientExtension } from "./utils/lsp";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
+export type { CommandResult } from "./panels/toolbar";
 
 export type CodeblockConfig = {
     fs: Fs;

@@ -2,9 +2,14 @@
 import Layout from '../layouts/Layout.astro';
 import Footer from '../components/Footer.astro';
 import Navbar from '../components/Navbar.astro';
+// @ts-expect-error
+import Packery from './packery.min.js?raw';
 
 import '../styles/markdown.css';
 
+// Inline Packery script to avoid FOUC, sure would be nice if browser supported Masonry grid natively
+const packeryLoad =
+	"<script type='module'>" + Packery + ';window.PackeryInit()</script>';
 const projects = [
 	{
 		title: 'markdown-editor',
@@ -22,6 +27,51 @@ const projects = [
 ];
 ---
 
+<!-- Order is sequential, first we make the promise available to the window -->
+<script is:inline>
+	window.PackeryPromise = new Promise((resolve) => {
+		window.PackeryInit = () => {
+			resolve(window.Packery);
+		};
+	});
+</script>
+<!-- And then resolve it in our Fragment, which is our embedded Packery script -->
+<Fragment set:html={packeryLoad} />
+<!-- Then, as soon as our skeleton element is available, we use Packery to layout the skeleton -->
+<script is:inline>
+	function waitForElm(selector) {
+		return new Promise((resolve) => {
+			if (document.querySelector(selector)) {
+				return resolve(document.querySelector(selector));
+			}
+
+			const observer = new MutationObserver((mutations) => {
+				if (document.querySelector(selector)) {
+					observer.disconnect();
+					resolve(document.querySelector(selector));
+				}
+			});
+
+			// If you get "parameter 1 is not of type 'Node'" error, see https://stackoverflow.com/a/77855838/492336
+			observer.observe(document.documentElement, {
+				childList: true,
+				subtree: true,
+			});
+		});
+	}
+
+	waitForElm('#loading-skeleton').then(async (loadingSkeleton) => {
+		await window.PackeryPromise;
+
+		window.skeletonPackery = new window.Packery(loadingSkeleton, {
+			itemSelector: '.grid-item',
+			sizer: '.grid-sizer',
+			gutter: 16,
+			percentPosition: true,
+		});
+	});
+</script>
+
 <Layout
 	title="Work | ez dev"
 	description="A showcase of projects we've built for clients around the world."
@@ -32,8 +82,37 @@ const projects = [
 		<div class="w-full mx-auto flex flex-col gap-8">
 			<Navbar currentPath="/work" />
 
-			{/* Packery Grid Container */}
-			<div id="grid-container" class="opacity-0">
+			{/* Loading skeleton placeholders - using same grid structure */}
+			<div id="loading-skeleton" class="opacity-100">
+				<div class="grid-sizer"></div>
+				{
+					projects.map((_, index) => (
+						<div class="grid-item skeleton-item">
+							<div class="skeleton-card border-2 border-[#333333] overflow-hidden">
+								<div class="p-6">
+									<div class="flex items-center justify-between mb-3">
+										<div class="skeleton-title" />
+										<div class="skeleton-button" />
+									</div>
+									<div class="skeleton-description mb-4" />
+									<div class="skeleton-description-line mb-4" />
+									<div class="flex flex-wrap gap-2 mb-4">
+										<div class="skeleton-tag" />
+										<div class="skeleton-tag" />
+										<div class="skeleton-tag" />
+									</div>
+								</div>
+							</div>
+						</div>
+					))
+				}
+			</div>
+
+			{/* Packery Grid Container - positioned over skeleton */}
+			<div
+				id="grid-container"
+				class="opacity-0 absolute top-0 left-0 w-full"
+			>
 				<div class="grid-sizer"></div>
 
 				{
@@ -75,7 +154,11 @@ const projects = [
 				}
 			</div>
 
-			<div class="mb-24 px-2">
+			{/* Bottom content - initially hidden */}
+			<div
+				id="bottom-content"
+				class="mb-24 px-2 opacity-0 transition-opacity duration-400"
+			>
 				<p class="text-lg text-[#F5F5F5] opacity-70 mb-8">
 					Want to see yours here?
 				</p>
@@ -93,23 +176,31 @@ const projects = [
 
 	<script>
 		import { CodeblockFS } from '@ezdevlol/codeblock';
-		import Packery from 'packery';
 		import { files } from './data/work.js';
-		import imagesLoaded from 'imagesloaded';
 
 		let pckry: any | null = null;
 		let resizeObserver: ResizeObserver | null = null;
 
 		let fs: any = null;
 
+		let initPromise: Promise<void> | null = null;
+
 		async function init() {
-			fs = await CodeblockFS.worker();
-			await Promise.all(
-				files.map(async ([path, content]) => {
-					await fs.writeFile(path, content);
-				}),
-			);
+			if (initPromise) return initPromise;
+
+			initPromise = (async () => {
+				fs = await CodeblockFS.worker();
+				await Promise.all(
+					files.map(async ([path, content]) => {
+						await fs.writeFile(path, content);
+					}),
+				);
+			})();
+
+			return initPromise;
 		}
+		// Initialize filesystem and demos
+		init();
 
 		const demos = {
 			'markdown-editor': async (containerEl: HTMLElement) => {
@@ -117,6 +208,9 @@ const projects = [
 					const { createEditor } = await import(
 						'@ezdevlol/markdown-editor'
 					);
+					// Ensure fs is initialized before using it
+					await initPromise;
+
 					createEditor({
 						element: containerEl,
 						fs: {
@@ -126,25 +220,50 @@ const projects = [
 					});
 				} catch (error) {
 					console.error('Failed to load markdown editor:', error);
-					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor.</div>`;
+					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
 				}
 			},
 			codeblock: async (containerEl: HTMLElement) => {
-				containerEl.innerHTML =
-					'<div class="text-[#F5F5F5] opacity-70">Codeblock demo coming soon...</div>';
+				try {
+					const { createCodeblock, SearchIndex } = await import(
+						'@ezdevlol/codeblock'
+					);
+
+					// Ensure fs is initialized before using it
+					await initPromise;
+
+					const index = await SearchIndex.get(
+						fs,
+						'.codeblock/index.json',
+					);
+					createCodeblock({
+						parent: containerEl,
+						fs,
+						filepath: 'example.ts',
+						index,
+					});
+				} catch (error) {
+					console.error('Failed to load codeblock editor:', error);
+					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
+				}
 			},
 		};
 
 		document.addEventListener('DOMContentLoaded', () => {
-			init();
-
 			const grid = document.querySelector(
 				'#grid-container',
 			) as HTMLElement;
+			const loadingSkeleton = document.querySelector(
+				'#loading-skeleton',
+			) as HTMLElement;
+			const bottomContent = document.querySelector(
+				'#bottom-content',
+			) as HTMLElement;
+
 			if (!grid) return;
 
 			// Handle project card expansion and collapse
-			function handleProjectExpansion(item: HTMLElement) {
+			async function handleProjectExpansion(item: HTMLElement) {
 				const isExpanded = item.classList.contains('is-expanded');
 				const contentDiv = item.querySelector(
 					'.project-content',
@@ -154,17 +273,6 @@ const projects = [
 				) as HTMLElement;
 
 				if (!isExpanded) {
-					// --- EXPAND ---
-					// First show the content
-					contentDiv.classList.remove('hidden');
-
-					// Update UI
-					toggleIcon.textContent = '−';
-					toggleIcon.style.transform = 'rotate(180deg)';
-
-					// Add expanded class
-					item.classList.add('is-expanded');
-
 					// Load content if needed
 					const projectTitle = item.dataset.projectTitle;
 					if (!projectTitle || !demos[projectTitle]) return;
@@ -174,8 +282,19 @@ const projects = [
 					) as HTMLElement;
 
 					// Call the appropriate demo loader once
-					const result = demos[projectTitle](demoContainer);
+					const result = await demos[projectTitle](demoContainer);
 					demos[projectTitle] = () => result;
+
+					// --- EXPAND ---
+					// Show the content
+					contentDiv.classList.remove('hidden');
+
+					// Update UI
+					toggleIcon.textContent = '−';
+					toggleIcon.style.transform = 'rotate(180deg)';
+
+					// Add expanded class
+					item.classList.add('is-expanded');
 
 					// ResizeObserver will automatically detect the expansion and trigger relayout
 					// Keep a small timeout to ensure content is rendered before observation
@@ -258,7 +377,12 @@ const projects = [
 
 			// Initialize Packery
 			const initPackery = () => {
-				pckry = new (Packery as any)(grid, {
+				loadingSkeleton.style.display = 'none';
+				// @ts-ignore
+				window.skeletonPackery.destroy();
+
+				// @ts-ignore
+				pckry = new (window.Packery as any)(grid, {
 					itemSelector: '.grid-item',
 					sizer: '.grid-sizer',
 					gutter: 16,
@@ -282,8 +406,13 @@ const projects = [
 				// Initialize ResizeObserver after Packery is ready
 				initResizeObserver();
 
-				// Fade in the grid
+				// Better transition: fade in grid while skeleton is still visible
 				grid.style.opacity = '1';
+
+				// After grid is visible, fade out skeleton and show bottom content
+				setTimeout(() => {
+					bottomContent.style.opacity = '1';
+				}, 200);
 			};
 
 			// Cleanup function for when the page is unloaded
@@ -308,8 +437,84 @@ const projects = [
 			font-family: Times, serif;
 		}
 
+		/* Skeleton loading styles */
+		@keyframes shimmer {
+			0% {
+				background-position: -200px 0;
+			}
+			100% {
+				background-position: calc(200px + 100%) 0;
+			}
+		}
+
+		.skeleton-card {
+			background: linear-gradient(
+				90deg,
+				transparent,
+				rgba(255, 255, 255, 0.05),
+				transparent
+			);
+			background-size: 200px 100%;
+			animation: shimmer 1.5s ease-in-out infinite;
+			/* min-height: 200px; */
+		}
+
+		.skeleton-title {
+			height: 32px;
+			width: 60%;
+			background: linear-gradient(90deg, #333333, #444444, #333333);
+			background-size: 200px 100%;
+			animation: shimmer 1.5s ease-in-out infinite;
+			border-radius: 4px;
+		}
+
+		.skeleton-button {
+			height: 24px;
+			width: 24px;
+			background: linear-gradient(90deg, #333333, #444444, #333333);
+			background-size: 200px 100%;
+			animation: shimmer 1.5s ease-in-out infinite;
+			border-radius: 4px;
+		}
+
+		.skeleton-description {
+			height: 18px;
+			width: 85%;
+			background: linear-gradient(90deg, #333333, #444444, #333333);
+			background-size: 200px 100%;
+			animation: shimmer 1.5s ease-in-out infinite;
+			border-radius: 4px;
+		}
+
+		.skeleton-description-line {
+			height: 18px;
+			width: 65%;
+			background: linear-gradient(90deg, #333333, #444444, #333333);
+			background-size: 200px 100%;
+			animation: shimmer 1.5s ease-in-out infinite;
+			border-radius: 4px;
+		}
+
+		.skeleton-tag {
+			height: 24px;
+			width: 80px;
+			background: linear-gradient(90deg, #333333, #444444, #333333);
+			background-size: 200px 100%;
+			animation: shimmer 1.5s ease-in-out infinite;
+			border-radius: 12px;
+		}
+
+		/* Skeleton container styles */
+		#loading-skeleton {
+			transition: opacity 0.3s ease-in-out;
+		}
+
 		/* Base styles for the grid container and items */
 		#grid-container {
+			position: relative;
+		}
+
+		#bottom-content {
 			transition: opacity 0.4s ease-in-out;
 		}
 		.grid-item {

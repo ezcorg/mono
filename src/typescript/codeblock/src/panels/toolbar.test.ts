@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { toolbarPanel, setSearchResults, searchResultsField } from './toolbar';
+import { searchResultsField } from './toolbar';
 import { CodeblockFacet, currentFileField } from '../editor';
-import { extOrLanguageToLanguageId } from '../lsps';
 
 // Mock dependencies
 vi.mock('../lsps', () => ({
@@ -60,6 +59,7 @@ describe('Toolbar Panel', () => {
             state,
             parent: document.createElement('div')
         });
+        console.log(view)
     });
 
     describe('Command Results Generation', () => {
