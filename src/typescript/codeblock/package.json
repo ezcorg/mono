@@ -80,6 +80,7 @@
     "minisearch": "^7.1.2",
     "parse-gitignore": "^2.0.0",
     "path-browserify": "^1.0.1",
+    "style-mod": "^4.1.2",
     "typescript": "~5.9.2",
     "uuid": "^11.1.0",
     "vite-plugin-node-polyfills": "^0.23.0",

@@ -7,8 +7,8 @@ import { LanguageServer } from "@volar/language-server";
 import { HighlightStyle, LanguageSupport } from "@codemirror/language";
 import { languageSupportCompartment, renderMarkdownCode } from "../editor";
 import { EditorView } from "@codemirror/view";
-import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import markdownit from 'markdown-it'
+import { vscodeLightDark } from "../themes/vscode";
 
 const clients: Map<string, LanguageServerClient> = new Map();
 
@@ -80,7 +80,7 @@ export namespace LSP {
             allowHTMLContent: true,
             markdownRenderer(markdown) {
                 const support = languageSupportCompartment.get(view.state) as LanguageSupport
-                const highlighter = vscodeDark[1].find(item => item.value instanceof HighlightStyle)?.value;
+                const highlighter = vscodeLightDark[1].find(item => item.value instanceof HighlightStyle)?.value;
                 const parser = support.language?.parser
                 const md = markdownit({
                     highlight: (str: string) => {

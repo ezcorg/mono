@@ -163,7 +163,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
     const renderItem = (result: SearchResult, i: number) => {
         const li = document.createElement("li");
-        li.innerHTML = `<span class="cm-result-icon" style="width: var(--cm-gutter-width); display: inline-block; text-align: center;">${result.icon || ''}</span>
+        li.innerHTML = `<span class="cm-result-icon">${result.icon || ''}</span>
         <span class="cm-result-label">${result.id}</span>`;
 
         if (isCommandResult(result)) {
@@ -182,13 +182,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
         return li;
     };
 
-    const renderDivider = () => {
-        const divider = document.createElement("li");
-        divider.className = "cm-search-divider";
-        divider.innerHTML = '<hr>';
-        return divider;
-    };
-
     function updateDropdown() {
         const results = view.state.field(searchResultsField);
         const children: HTMLElement[] = [];
@@ -204,11 +197,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
             children.push(renderItem(command, currentIndex));
             currentIndex++;
         });
-
-        // Add divider if we have both commands and search results
-        if (commands.length > 0 && searchResults.length > 0) {
-            children.push(renderDivider());
-        }
 
         // Render search results section
         searchResults.forEach((result) => {

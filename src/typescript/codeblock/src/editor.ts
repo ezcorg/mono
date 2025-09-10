@@ -1,8 +1,8 @@
 import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, showPanel, tooltips, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from "@codemirror/view";
 import { debounce } from "lodash";
-import { codeblockTheme } from "./theme";
-import { vscodeDark } from '@uiw/codemirror-theme-vscode';
+import { codeblockTheme } from "./themes/index";
+import { vscodeLightDark, vscodeStyleMod } from "./themes/vscode";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
@@ -16,6 +16,7 @@ import { highlightCode } from "@lezer/highlight";
 import { SearchIndex } from "./utils/search";
 import { LSP, LSPClientExtension } from "./utils/lsp";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
+import { StyleModule } from "style-mod";
 export type { CommandResult } from "./panels/toolbar";
 
 export type CodeblockConfig = {
@@ -26,7 +27,12 @@ export type CodeblockConfig = {
     toolbar?: boolean;
     index?: SearchIndex;
     language?: ExtensionOrLanguage;
+    dark?: boolean;
 };
+export type CreateCodeblockArgs = CodeblockConfig & {
+    parent: HTMLElement;
+    content?: string;
+}
 export const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
     combine: (values) => values[0]
 });
@@ -112,7 +118,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index }: CodeblockConfig) => [
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark }: CodeblockConfig) => [
     configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index })),
     currentFileField,
     languageSupportCompartment.of([]),
@@ -124,7 +130,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     codeblockTheme,
     codeblockView,
     keymap.of(navigationKeymap.concat([indentWithTab])),
-    vscodeDark,
+    vscodeLightDark,
     searchResultsField
 ];
 
@@ -255,21 +261,12 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export type CreateCodeblockArgs = {
-    parent: HTMLElement;
-    fs: Fs;
-    filepath?: string;
-    content?: string;
-    cwd?: string;
-    toolbar?: boolean;
-    index?: SearchIndex;
-    language?: ExtensionOrLanguage;
-};
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark }: CreateCodeblockArgs) {
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index }: CreateCodeblockArgs) {
+    StyleModule.mount(document, vscodeStyleMod)
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark })]
     });
     return new EditorView({ state, parent });
 }
