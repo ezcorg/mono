@@ -7,14 +7,14 @@ export const files = [
 ## Usage
 
 ### Install
-\`\`\`bash
+\`\`\`sh
 pnpm i @ezdevlol/markdown-editor
 \`\`\`
 
 ### Import
 
 \`\`\`ts
-import { createEditor } from '@ezdevlol/markdown-editor;
+import { createEditor } from '@ezdevlol/markdown-editor';
 \`\`\`
 
 ## Features

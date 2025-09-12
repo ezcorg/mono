@@ -10,8 +10,6 @@ async function loadFs() {
         throw new Error(`Failed to load snapshot: ${response.statusText}`);
     }
     const buffer = await response.arrayBuffer();
-    console.debug('Got snapshot', buffer);
-
     return await CodeblockFS.worker(buffer as unknown as CborUint8Array<SnapshotNode>);
 }
 const fs = await loadFs()

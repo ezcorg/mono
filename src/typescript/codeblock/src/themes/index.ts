@@ -1,6 +1,15 @@
 import { EditorView } from '@codemirror/view';
 
 export const codeblockTheme = EditorView.theme({
+    '&': {
+        background: 'transparent !important'
+    },
+    "&:not(.cm-focused)": {
+        '& .cm-activeLine, & .cm-activeLineGutter': {
+            color: 'inherit',
+            backgroundColor: "transparent"
+        }
+    },
     '.cm-toolbar-input': {
         fontFamily: 'var(--cm-font-family)',
         lineHeight: 1.4,
@@ -25,16 +34,23 @@ export const codeblockTheme = EditorView.theme({
         display: 'flex',
         alignItems: 'center',
     },
+    '.cm-command-result > span': {
+        color: 'var(--cm-command-result-color)'
+    },
     '.cm-search-result': {
-        color: 'var(--cm-toolbar-foreground)',
+        color: 'var(--cm-search-result-color)',
         display: 'flex',
         cursor: 'pointer',
         '&:hover': {
-            color: 'var(--cm-search-result-color-hover)',
-            backgroundColor: 'var(--cm-search-result-select-bg)',
+            '& > span': {
+                color: 'var(--cm-search-result-color-hover)',
+            },
+            backgroundColor: 'var(--cm-search-result-bg-hover)',
         },
         '&.selected': {
-            color: 'var(--cm-search-result-color-hover)',
+            '& > span': {
+                color: 'var(--cm-search-result-color-selected)',
+            },
             backgroundColor: 'var(--cm-search-result-select-bg)',
         },
         '& > .cm-result-icon': {
@@ -72,7 +88,9 @@ export const codeblockTheme = EditorView.theme({
     '.cm-tooltip a': {
         color: 'var(--cm-link)',
     },
-    '.cm-tooltip-section': {},
+    '.cm-tooltip-section:not(:first-child)': {
+        borderTop: 'none',
+    },
     '.cm-tooltip-lint': {
         order: -1,
     },
@@ -101,13 +119,15 @@ export const codeblockTheme = EditorView.theme({
         margin: 0,
         padding: '0.25rem 6px',
         fontSize: '1rem',
-        whiteSpace: 'pre-wrap',
     },
     '.documentation > p > code': {
         backgroundColor: 'var(--cm-comment-bg)',
         padding: '2px 4px',
         margin: '2px 0',
         display: 'inline-block',
+    },
+    '.documentation > pre > code': {
+        whiteSpace: 'break-spaces',
     },
     '.cm-diagnosticAction': {
         display: 'none',

@@ -93,8 +93,49 @@ function vscodeLightDarkTheme(options?: Partial<CreateThemeOptions>) {
 }
 
 export const vscodeLightDark = vscodeLightDarkTheme();
+const darkModeStyles = {
+    "--cm-background": "#1e1e1e",
+    "--cm-foreground": "#9cdcfe",
+    "--cm-caret": "#c6c6c6",
+    "--cm-selection": "#6199ff2f",
+    "--cm-selection-match": "#72a1ff59",
+    "--cm-line-highlight": "#ffffff0f",
+    "--cm-gutter-background": "#1e1e1e",
+    "--cm-gutter-foreground": "#838383",
+    "--cm-gutter-active-foreground": "#ffffff",
+
+    "--cm-keyword": "#569cd6",
+    "--cm-control": "#c586c0",
+    "--cm-name": "#9cdcfe",
+    "--cm-heading": "#9cdcfe",
+    "--cm-type": "#4ec9b0",
+    "--cm-function": "#dcdcaa",
+    "--cm-number": "#b5cea8",
+    "--cm-operator": "#d4d4d4",
+    "--cm-regexp": "#d16969",
+    "--cm-string": "#ce9178",
+    "--cm-angle-bracket": "#808080",
+    "--cm-comment": "#6a9955",
+    "--cm-link": "#4078f2",
+    "--cm-invalid": "#ff0000",
+
+    "--cm-search-result-color": "var(--cm-angle-bracket)",
+    "--cm-search-result-color-hover": "#ffffff",
+    "--cm-command-result-color": "var(--cm-search-result-color-hover)",
+
+    "--cm-toolbar-color": "#ffffff",
+    "--cm-toolbar-background": "#2a2a2f",
+    "--cm-toolbar-foreground": "#ffffff",
+
+    "--cm-tooltip-color": "var(--cm-gutter-active-foreground)",
+    "--cm-tooltip-background": "var(--cm-toolbar-background)",
+    "--cm-tooltip-border": "#000000",
+
+    "--cm-diagnostic-error-bg": "#d11",
+    "--cm-comment-bg": "rgba(0,0,0,0.32)",
+}
 export const vscodeStyleMod = new StyleModule({
-    ":root": {
+    ".cm-editor, .cm-editor[data-theme='light'], [data-theme='light'] .cm-editor": {
         /* Shared */
         "--cm-font-family":
             'Menlo, Monaco, Consolas, "Andale Mono", "Ubuntu Mono", "Courier New", monospace',
@@ -105,7 +146,7 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-caret": "#000000",
         "--cm-selection": "#add6ff",
         "--cm-selection-match": "#a8ac94",
-        "--cm-line-highlight": "#99999926",
+        "--cm-line-highlight": "#99999914",
         "--cm-gutter-background": "#ffffff",
         "--cm-gutter-foreground": "#237893",
         "--cm-gutter-active-foreground": "#0b216f",
@@ -127,8 +168,13 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-invalid": "#e45649",
 
         /* Additional UI colors */
-        "--cm-search-result-color-hover": "var(--cm-background)",
-        "--cm-search-result-select-bg": "#569cd6",
+        "--cm-search-result-color": "#838383",
+        "--cm-search-result-color-hover": "var(--cm-toolbar-color)",
+        "--cm-search-result-bg-hover": "#2490e94f",
+        "--cm-search-result-color-selected": "#ffffff",
+        "--cm-search-result-select-bg": "#2490e9",
+
+        "--cm-command-result-color": "var(--cm-toolbar-color)",
 
         "--cm-toolbar-color": "#000000",
         "--cm-toolbar-background": "#f3f3f3",
@@ -140,50 +186,17 @@ export const vscodeStyleMod = new StyleModule({
 
         "--cm-diagnostic-info-color": "white",
         "--cm-diagnostic-info-bg": "#545454",
+        // "--cm-diagnostic-info-color": "#000000",
+        // "--cm-diagnostic-info-bg": "#f3f3f3",
+
         "--cm-diagnostic-error-color": "white",
         "--cm-diagnostic-error-bg": "#e45649",
         "--cm-comment-bg": "rgba(0,0,0,0.1)",
     },
+    ".cm-editor[data-theme='dark'], [data-theme='dark'] .cm-editor": darkModeStyles,
 
     /* Dark-mode override */
     "@media (prefers-color-scheme: dark)": {
-        ":root": {
-            "--cm-background": "#1e1e1e",
-            "--cm-foreground": "#9cdcfe",
-            "--cm-caret": "#c6c6c6",
-            "--cm-selection": "#6199ff2f",
-            "--cm-selection-match": "#72a1ff59",
-            "--cm-line-highlight": "#ffffff0f",
-            "--cm-gutter-background": "#1e1e1e",
-            "--cm-gutter-foreground": "#838383",
-            "--cm-gutter-active-foreground": "#ffffff",
-
-            "--cm-keyword": "#569cd6",
-            "--cm-control": "#c586c0",
-            "--cm-name": "#9cdcfe",
-            "--cm-heading": "#9cdcfe",
-            "--cm-type": "#4ec9b0",
-            "--cm-function": "#dcdcaa",
-            "--cm-number": "#b5cea8",
-            "--cm-operator": "#d4d4d4",
-            "--cm-regexp": "#d16969",
-            "--cm-string": "#ce9178",
-            "--cm-angle-bracket": "#808080",
-            "--cm-comment": "#6a9955",
-            "--cm-link": "#4078f2",
-            "--cm-invalid": "#ff0000",
-
-            "--cm-search-result-color-hover": "var(--cm-search-result-color)",
-            "--cm-search-result-color": "var(--cm-toolbar-foreground)",
-
-            "--cm-toolbar-color": "#ffffff",
-            "--cm-toolbar-background": "#2a2a2f",
-            "--cm-toolbar-foreground": "#ffffff",
-            "--cm-tooltip-color": "var(--cm-gutter-active-foreground)",
-            "--cm-tooltip-background": "var(--cm-toolbar-background)",
-            "--cm-tooltip-border": "#000000",
-            "--cm-diagnostic-error-bg": "#d11",
-            "--cm-comment-bg": "rgba(0,0,0,0.32)",
-        }
+        ".cm-editor": darkModeStyles,
     }
 });

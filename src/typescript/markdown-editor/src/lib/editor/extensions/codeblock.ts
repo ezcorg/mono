@@ -1,14 +1,57 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
-import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex } from '@ezdevlol/codeblock'
+import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@ezdevlol/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history"
 import { MarkdownNodeSpec } from 'tiptap-markdown';
 
-// TODO: configure a filesystem worker which is used by both the editor and the codeblock extension
-// Initialize filesystem worker lazily to avoid top-level await
+// Function to reassign z-index values to all codeblocks in DOM order
+function reassignZIndexes() {
+    const editors = document.querySelectorAll('.cm-editor');
+    editors.forEach((editor, index) => {
+        // Assign z-index from highest (n) to lowest (0) based on DOM order
+        // This ensures later codeblocks (lower in document) have higher z-index
+        (editor as HTMLElement).style.zIndex = (editors.length - index).toString();
+    });
+}
+
+// Global registry for codeblock instances
+class CodeblockRegistry {
+    private static instance: CodeblockRegistry;
+    private codeblocks: Set<EditorView> = new Set();
+
+    static getInstance(): CodeblockRegistry {
+        if (!CodeblockRegistry.instance) {
+            CodeblockRegistry.instance = new CodeblockRegistry();
+        }
+        return CodeblockRegistry.instance;
+    }
+
+    register(view: EditorView): void {
+        this.codeblocks.add(view);
+    }
+
+    unregister(view: EditorView): void {
+        this.codeblocks.delete(view);
+    }
+
+    setTheme(options: { dark: boolean }): void {
+        this.codeblocks.forEach(view => {
+            view.dispatch({
+                effects: setThemeEffect.of(options)
+            })
+        });
+    }
+
+    getCount(): number {
+        return this.codeblocks.size;
+    }
+}
+
+export const codeblockRegistry = CodeblockRegistry.getInstance();
+
 let fsWorkerPromise: Promise<any> | null = null;
 
 function getFileSystemWorker() {
@@ -299,6 +342,10 @@ export const ExtendedCodeblock = Node.create({
             cm = new EditorView({ state: initialState });
             const dom = cm.dom;
 
+            // Reassign z-indexes for all codeblocks whenever a new one is created
+            // This ensures proper stacking order based on DOM position
+            reassignZIndexes();
+
             // Initialize filesystem worker and update extensions asynchronously
             getFileSystemWorker().then(fs => {
                 fsWorker = fs;
@@ -315,9 +362,8 @@ export const ExtendedCodeblock = Node.create({
                                 fs: fsWorker,
                                 language: node.attrs.language,
                                 filepath: node.attrs.file,
-                                toolbar: !!node.attrs.file,
-                                cwd: '/',
                                 index,
+                                dark: true,
                             }),
                         ]
                     }));
@@ -325,6 +371,9 @@ export const ExtendedCodeblock = Node.create({
             }).catch(error => {
                 console.error('Failed to initialize filesystem worker:', error);
             });
+
+            // Register the codeblock instance
+            codeblockRegistry.register(cm);
 
             return {
                 dom,
@@ -335,7 +384,10 @@ export const ExtendedCodeblock = Node.create({
                     updating = false
                 },
                 destroy() {
+                    // Unregister before destroying
+                    codeblockRegistry.unregister(cm);
                     cm.destroy();
+                    requestAnimationFrame(reassignZIndexes);
                 },
                 selectNode() { cm.focus() },
                 stopEvent() { return true },
@@ -370,4 +422,26 @@ export const ExtendedCodeblock = Node.create({
             };
         }
     },
+
+    addCommands() {
+        return {
+            setCodeblockTheme: (options) => () => {
+                codeblockRegistry.setTheme(options);
+                return true;
+            },
+        };
+    },
 });
+
+declare module '@tiptap/core' {
+    interface Commands<ReturnType> {
+        ezcodeBlock: {
+            /**
+             * Set the codeblock theme to dark or light mode.
+             * @param options - An object with a `dark` boolean property.
+             * @example editor.commands.setCodeblockTheme({ dark: true })
+             */
+            setCodeblockTheme: (options: { dark: boolean }) => ReturnType
+        }
+    }
+}

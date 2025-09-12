@@ -21,7 +21,7 @@ export type { CommandResult } from "./panels/toolbar";
 
 export type CodeblockConfig = {
     fs: Fs;
-    cwd: string;
+    cwd?: string;
     filepath?: string;
     content?: string;
     toolbar?: boolean;
@@ -47,6 +47,9 @@ export const readOnlyCompartment = new Compartment();
 // Effects + Fields for async file handling
 export const openFileEffect = StateEffect.define<{ path: string }>();
 export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null }>();
+
+// Light mode/dark mode theme toggle
+export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
 
 // Holds the current file lifecycle
 export const currentFileField = StateField.define<{
@@ -118,7 +121,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark }: CodeblockConfig) => [
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index }: CodeblockConfig) => [
     configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index })),
     currentFileField,
     languageSupportCompartment.of([]),
@@ -131,11 +134,13 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     codeblockView,
     keymap.of(navigationKeymap.concat([indentWithTab])),
     vscodeLightDark,
-    searchResultsField
+    searchResultsField,
 ];
 
 // ViewPlugin reacts to field state & effects, with microtask scheduling to avoid nested updates
 const codeblockView = ViewPlugin.define((view) => {
+    StyleModule.mount(document, vscodeStyleMod);
+
     let { fs } = view.state.facet(CodeblockFacet);
 
     // Debounced save
@@ -150,7 +155,6 @@ const codeblockView = ViewPlugin.define((view) => {
     async function setLanguageSupport(language: ExtensionOrLanguage) {
         if (!language) return;
         const langSupport = await getLanguageSupport(extOrLanguageToLanguageId[language]);
-        console.log('got language: ', { language, langSupport })
         safeDispatch(view, {
             effects: [
                 languageSupportCompartment.reconfigure(langSupport || []),
@@ -214,6 +218,11 @@ const codeblockView = ViewPlugin.define((view) => {
             // React to explicit openFileEffect requests
             for (let e of u.transactions.flatMap(t => t.effects)) {
                 if (e.is(openFileEffect)) queueMicrotask(() => handleOpen(e.value.path));
+                if (e.is(setThemeEffect)) {
+                    const dark = e.value.dark;
+
+                    u.view.dom.setAttribute('data-theme', dark ? 'dark' : 'light');
+                }
             }
 
             // Keep read-only in sync with loading state without dispatching new transactions
@@ -262,8 +271,6 @@ export const basicSetup: Extension = (() => [
 ])();
 
 export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark }: CreateCodeblockArgs) {
-
-    StyleModule.mount(document, vscodeStyleMod)
     const state = EditorState.create({
         doc: content,
         extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark })]

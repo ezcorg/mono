@@ -169,7 +169,6 @@ export namespace CodeblockFS {
      */
     export const worker = async (bufferOrUrl?: CborUint8Array<SnapshotNode> | string): Promise<Fs> => {
         const url = new URL('../workers/fs.worker.js', import.meta.url)
-        console.log('Loading fs worker', url.href);
         const worker = new SharedWorker(url, { type: 'module' });
         worker.port.start()
         const proxy = Comlink.wrap<{ mount: typeof mount; mountFromUrl: typeof mountFromUrl }>(worker.port);

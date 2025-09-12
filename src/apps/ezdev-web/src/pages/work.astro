@@ -9,7 +9,7 @@ import '../styles/markdown.css';
 
 // Inline Packery script to avoid FOUC, sure would be nice if browser supported Masonry grid natively
 const packeryLoad =
-	"<script type='module'>" + Packery + ';window.PackeryInit()</script>';
+	"<script type='module'>" + Packery + ";window.PackeryInit()</script>";
 const projects = [
 	{
 		title: 'markdown-editor',
@@ -182,6 +182,7 @@ const projects = [
 		let resizeObserver: ResizeObserver | null = null;
 
 		let fs: any = null;
+		let editor: any = null;
 
 		let initPromise: Promise<void> | null = null;
 
@@ -203,7 +204,7 @@ const projects = [
 		init();
 
 		const demos = {
-			'markdown-editor': async (containerEl: HTMLElement) => {
+			'markdown-editor': async (containerEl: HTMLElement, containerParent: HTMLElement) => {
 				try {
 					const { createEditor } = await import(
 						'@ezdevlol/markdown-editor'
@@ -211,13 +212,25 @@ const projects = [
 					// Ensure fs is initialized before using it
 					await initPromise;
 
-					createEditor({
+					editor = createEditor({
 						element: containerEl,
 						fs: {
 							fs,
 							filepath: 'hello.md',
 						},
 					});
+					containerParent.addEventListener(
+						'mouseover',
+						() => {
+							editor.commands.setCodeblockTheme({ dark: false });
+						},
+					);
+					containerParent.addEventListener(
+						'mouseout',
+						() => {
+							editor.commands.setCodeblockTheme({ dark: true });
+						},
+					);
 				} catch (error) {
 					console.error('Failed to load markdown editor:', error);
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
@@ -241,6 +254,7 @@ const projects = [
 						fs,
 						filepath: 'example.ts',
 						index,
+						cwd: '/',
 					});
 				} catch (error) {
 					console.error('Failed to load codeblock editor:', error);
@@ -282,7 +296,10 @@ const projects = [
 					) as HTMLElement;
 
 					// Call the appropriate demo loader once
-					const result = await demos[projectTitle](demoContainer);
+					const result = await demos[projectTitle](
+						demoContainer,
+						item,
+					);
 					demos[projectTitle] = () => result;
 
 					// --- EXPAND ---

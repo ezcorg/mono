@@ -14,13 +14,32 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezdev-mde-code-bg-dark': '#2c2c2c',
         '--ezdev-mde-bg-light': '#ffffff',
         '--ezdev-mde-bg-dark': '#1e1e1e',
+        '--ezdev-mde-link-color': '#5861ff',
+        '--ezdev-mde-link-color-hover': '#383ea3',
 
         // Default to light mode, overridden by media query
         '--ezdev-mde-code-bg': 'var(--ezdev-mde-code-bg-light)',
         '--ezdev-mde-bg': 'var(--ezdev-mde-bg-light)',
 
         // Base editor styles
-        'background': 'var(--ezdev-mde-bg)',
+        'background': 'transparent',
+
+        '& a': {
+            color: 'var(--ezdev-mde-link-color)',
+            'font-weight': 'bold',
+            'text-decoration': 'inherit',
+        },
+
+        '& a:hover': {
+            color: 'var(--ezdev-mde-link-color-hover)',
+            cursor: 'pointer',
+        },
+
+        // Codeblock styles
+        '& .cm-editor': {
+            margin: '2rem 0',
+            border: '1px solid var(--cm-diagnostic-info-bg)'
+        },
 
         // Inline code styles
         '& > :not(.cm-editor) code': {
@@ -29,7 +48,6 @@ export const styleModule: StyleModule = new StyleModule({
             padding: '0.1em 0.3em',
             'border-radius': '3px',
         },
-
         // Table styles
         '&.tableWrapper': {
             margin: '1.5rem 0',
@@ -38,7 +56,7 @@ export const styleModule: StyleModule = new StyleModule({
         '& table': {
             "border-collapse": "collapse",
             "width": "100%",
-            "margin": "1em 0",
+            "margin": "2em 0",
             overflow: 'hidden',
             'table-layout': 'fixed',
             '& p': {
@@ -67,7 +85,7 @@ export const styleModule: StyleModule = new StyleModule({
                 'color': 'white',
             },
             '& th, & td': {
-                border: '1px solid #2b2b2b',
+                border: '1px solid #545454',
                 padding: '0.5em',
                 'vertical-align': 'top',
                 position: 'relative',

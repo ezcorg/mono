@@ -20,15 +20,15 @@ body {
 
 .work-item-card {
     .ezdev-mde {
-        --ezdev-mde-bg: tranparent;
+        --ezdev-mde-bg: var(--ezdev-mde-bg-dark);
         --ezdev-mde-code-bg: var(--ezdev-mde-code-bg-dark);
     }
 }
 
 .work-item-card:hover {
-
     .ezdev-mde {
         --ezdev-mde-code-bg: var(--ezdev-mde-code-bg-light);
+        --ezdev-mde-bg: var(--ezdev-mde-bg-light);
     }
 
     *::selection,
@@ -40,17 +40,6 @@ body {
         color: white;
     }
 }
-
-/*** Works on common browsers ***/
-/* .work-item-card:hover *::selection,
-.work-item-card:hover *::-moz-selection,
-.work-item-card:hover *::-o-selection,
-.work-item-card:hover *::-ms-selection,
-.work-item-card:hover *::-webkit-selection {
-    background-color: black;
-    color: white;
-} */
-
 
 ::selection,
 ::-moz-selection,
@@ -103,16 +92,17 @@ body {
 .ProseMirror {
     padding: 1.5rem;
     flex: 1;
+    max-width: 100%;
+    font-optical-sizing: auto;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+
+    &:focus-visible {
+        outline: none;
+    }
 
     h1:first-of-type {
         margin-top: 0;
-    }
-
-    & a,
-    & a:hover,
-    & a:visited {
-        color: revert;
-        text-decoration: revert;
     }
 
     & a:hover {
@@ -141,5 +131,19 @@ body {
     ul,
     menu {
         list-style: revert;
+    }
+
+    .cm-editor[data-theme='dark'] {
+        --cm-line-highlight: #ffffff1a;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .cm-editor {
+            --cm-line-highlight: #ffffff1a;
+        }
+    }
+
+    .cm-gutters {
+        background-color: transparent;
     }
 }

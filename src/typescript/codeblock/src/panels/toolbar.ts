@@ -63,6 +63,114 @@ function isValidProgrammingLanguage(query: string): boolean {
         extOrLanguageToLanguageId[key].toLowerCase() === lowerQuery
     );
 }
+// Get appropriate icon for language/extension
+function getLanguageIcon(query: string): string {
+    const lowerQuery = query.toLowerCase();
+
+    // Language/extension icons matching extOrLanguageToLanguageId
+    const iconMap: Record<string, string> = {
+        // JavaScript/TypeScript family
+        'javascript': '🟨',
+        'js': '🟨',
+        'typescript': '🔷',
+        'ts': '🔷',
+        'jsx': '⚛️',
+        'tsx': '⚛️',
+
+        // Python
+        'python': '🐍',
+        'py': '🐍',
+
+        // Ruby
+        'ruby': '💎',
+        'rb': '💎',
+
+        // PHP
+        'php': '🐘',
+
+        // Java
+        'java': '☕',
+
+        // C/C++
+        'cpp': '⚙️',
+        'c': '⚙️',
+
+        // C#
+        'csharp': '🔷',
+        'cs': '🔷',
+
+        // Go
+        'go': '🐹',
+
+        // Swift
+        'swift': '🦉',
+
+        // Kotlin
+        'kotlin': '🟣',
+        'kt': '🟣',
+
+        // Rust
+        'rust': '🦀',
+        'rs': '🦀',
+
+        // Scala
+        'scala': '🔴',
+
+        // Visual Basic
+        'vb': '🔵',
+
+        // Haskell
+        'haskell': '🎭',
+        'hs': '🎭',
+
+        // Lua
+        'lua': '🌙',
+
+        // Perl
+        'perl': '🐪',
+        'pl': '🐪',
+
+        // Shell/Bash
+        'bash': '🐚',
+        'shell': '🐚',
+        'sh': '🐚',
+        'zsh': '🐚',
+
+        // SQL
+        'mysql': '🗃️',
+        'sql': '🗃️',
+
+        // Web technologies
+        'html': '🌐',
+        'css': '🎨',
+        'scss': '🎨',
+        'less': '🎨',
+
+        // Data formats
+        'json': '📋',
+        'yaml': '⚙️',
+        'yml': '⚙️',
+        'xml': '📄',
+        'toml': '⚙️',
+        'ini': '⚙️',
+        'conf': '⚙️',
+        'log': '📄',
+        'env': '🔧',
+
+        // Documentation
+        'markdown': '📝',
+        'md': '📝',
+
+        // Docker/Build
+        'dockerfile': '🐳',
+        'makefile': '🔨',
+        'dockerignore': '🐳',
+        'gitignore': '📝'
+    };
+
+    return iconMap[lowerQuery] || '📄';
+}
+
 
 // Create command results for the first section
 function createCommandResults(query: string, view: EditorView, searchResults: SearchResult[]): CommandResult[] {
@@ -70,6 +178,7 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
     const currentFile = view.state.field(currentFileField);
     const hasValidFile = currentFile.path && !currentFile.loading;
     const isLanguageQuery = isValidProgrammingLanguage(query);
+    // TODO: fix language ext for new file with full language names, "typescript" -> "file.ts"
 
     // Check if query matches an existing file (first search result with exact match)
     const hasExactFileMatch = searchResults.length > 0 && searchResults[0].id === query;
@@ -78,9 +187,9 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         // Create new file command (only if query doesn't match existing file)
         if (!hasExactFileMatch) {
             const createFileCommand: CommandResult = {
-                id: `Create new file "${query}"`,
+                id: isLanguageQuery ? "Create new file" : `Create new file "${query}"`,
                 type: 'create-file',
-                icon: '📄',
+                icon: isLanguageQuery ? getLanguageIcon(query) : '📄',
                 query,
                 requiresInput: isLanguageQuery
             };
@@ -258,8 +367,17 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 });
             }
         } else if (command.type === 'rename-file') {
-            // Enter naming mode for rename
-            enterNamingMode('rename-file', command.query);
+            // Rename file directly since the new name is provided by the query
+            const currentFile = view.state.field(currentFileField);
+            if (currentFile.path) {
+                const newPath = command.query.includes('.') ? command.query : `${command.query}.txt`;
+                input.value = newPath;
+                // TODO: Implement actual file rename logic
+                console.log(`Rename ${currentFile.path} to ${newPath}`);
+                safeDispatch(view, {
+                    effects: [setSearchResults.of([]), openFileEffect.of({ path: newPath })]
+                });
+            }
         }
     }
 
