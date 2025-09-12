@@ -1,9 +1,6 @@
 import { EditorView } from '@codemirror/view';
 
 export const codeblockTheme = EditorView.theme({
-    '&': {
-        background: 'transparent !important'
-    },
     "&:not(.cm-focused)": {
         '& .cm-activeLine, & .cm-activeLineGutter': {
             color: 'inherit',
@@ -41,34 +38,47 @@ export const codeblockTheme = EditorView.theme({
         color: 'var(--cm-search-result-color)',
         display: 'flex',
         cursor: 'pointer',
+        '&.cm-command-result': {
+            color: 'var(--cm-command-result-color)'
+        },
+        '& > .cm-search-result-icon-container': {
+            width: 'var(--cm-gutter-width)',
+
+            '& > .cm-search-result-icon': {
+                fontSize: '16px',
+                textAlign: 'right',
+                boxSizing: 'border-box',
+                padding: '0 3px 0 5px',
+                width: 'var(--cm-gutter-lineno-width)',
+            }
+        },
         '&:hover': {
-            '& > span': {
+            '& div': {
                 color: 'var(--cm-search-result-color-hover)',
             },
             backgroundColor: 'var(--cm-search-result-bg-hover)',
         },
         '&.selected': {
-            '& > span': {
+            '& div': {
                 color: 'var(--cm-search-result-color-selected)',
             },
             backgroundColor: 'var(--cm-search-result-select-bg)',
         },
-        '& > .cm-result-icon': {
-            textAlign: 'center',
-            width: 'var(--cm-gutter-width)',
-        },
-        '& > .cm-result-label': {
+        '& > .cm-search-result-label': {
             flex: 1,
             padding: '0 2px 0 6px',
         },
     },
+    '.cm-toolbar-state-icon-container': {
+        width: 'var(--cm-gutter-width)',
+    },
     '.cm-toolbar-state-icon': {
         fontSize: '16px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        textAlign: 'right',
+        boxSizing: 'border-box',
+        padding: '0 3px 0 5px',
         color: 'var(--cm-foreground)',
-        flexShrink: 0,
+        width: 'var(--cm-gutter-lineno-width)'
     },
     '.cm-content': {
         padding: 0,

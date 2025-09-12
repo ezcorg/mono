@@ -123,8 +123,8 @@ const darkModeStyles = {
     "--cm-search-result-color-hover": "#ffffff",
     "--cm-command-result-color": "var(--cm-search-result-color-hover)",
 
-    "--cm-toolbar-color": "#ffffff",
-    "--cm-toolbar-background": "#2a2a2f",
+    "--cm-toolbar-background": "var(--cm-toolbar-bg-dark)",
+    "--cm-toolbar-color": "var(--cm-toolbar-color-dark)",
     "--cm-toolbar-foreground": "#ffffff",
 
     "--cm-tooltip-color": "var(--cm-gutter-active-foreground)",
@@ -135,7 +135,7 @@ const darkModeStyles = {
     "--cm-comment-bg": "rgba(0,0,0,0.32)",
 }
 export const vscodeStyleMod = new StyleModule({
-    ".cm-editor, .cm-editor[data-theme='light'], [data-theme='light'] .cm-editor": {
+    ":root, .cm-editor[data-theme='light'], [data-theme='light'] .cm-editor": {
         /* Shared */
         "--cm-font-family":
             'Menlo, Monaco, Consolas, "Andale Mono", "Ubuntu Mono", "Courier New", monospace',
@@ -176,8 +176,12 @@ export const vscodeStyleMod = new StyleModule({
 
         "--cm-command-result-color": "var(--cm-toolbar-color)",
 
-        "--cm-toolbar-color": "#000000",
-        "--cm-toolbar-background": "#f3f3f3",
+        "--cm-toolbar-bg-light": "#f3f3f3",
+        "--cm-toolbar-bg-dark": "#2a2a2f",
+        "--cm-toolbar-color-light": "#000000",
+        "--cm-toolbar-color-dark": "#ffffff",
+        "--cm-toolbar-background": "var(--cm-toolbar-bg-light)",
+        "--cm-toolbar-color": "var(--cm-toolbar-color-light)",
         "--cm-toolbar-foreground": "var(--cm-foreground)",
 
         "--cm-tooltip-color": "var(--cm-foreground)",
@@ -193,10 +197,10 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-diagnostic-error-bg": "#e45649",
         "--cm-comment-bg": "rgba(0,0,0,0.1)",
     },
-    ".cm-editor[data-theme='dark'], [data-theme='dark'] .cm-editor": darkModeStyles,
+    ":root[data-theme='dark'], .cm-editor[data-theme='dark'], [data-theme='dark'] .cm-editor": darkModeStyles,
 
     /* Dark-mode override */
     "@media (prefers-color-scheme: dark)": {
-        ".cm-editor": darkModeStyles,
+        ":root": darkModeStyles,
     }
 });

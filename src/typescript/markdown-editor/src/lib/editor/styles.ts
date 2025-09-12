@@ -1,14 +1,16 @@
 import { StyleModule } from 'style-mod';
 
+const darkModeStyles = {
+    '--ezdev-mde-code-bg': 'var(--ezdev-mde-code-bg-dark)',
+    '--ezdev-mde-bg': 'var(--ezdev-mde-bg-dark)',
+    '--ezdev-mde-table-bg': 'var(--cm-toolbar-bg-dark)',
+}
 export const styleModule: StyleModule = new StyleModule({
-
+    ':root[data-theme="dark"], [data-theme="dark"] .ezdev-mde, .ezdev-mde[data-theme="dark"]': darkModeStyles,
     '@media (prefers-color-scheme: dark)': {
-        'div.ezdev-mde': {
-            '--ezdev-mde-code-bg': 'var(--ezdev-mde-code-bg-dark)',
-            '--ezdev-mde-bg': 'var(--ezdev-mde-bg-dark)',
-        }
+        'div.ezdev-mde': darkModeStyles
     },
-    '.ezdev-mde': {
+    ':root, :root[data-theme="light"], [data-theme="light"] .ezdev-mde, .ezdev-mde[data-theme="light"]': {
         // Light/dark mode vars
         '--ezdev-mde-code-bg-light': '#f1f1f1',
         '--ezdev-mde-code-bg-dark': '#2c2c2c',
@@ -20,6 +22,9 @@ export const styleModule: StyleModule = new StyleModule({
         // Default to light mode, overridden by media query
         '--ezdev-mde-code-bg': 'var(--ezdev-mde-code-bg-light)',
         '--ezdev-mde-bg': 'var(--ezdev-mde-bg-light)',
+        '--ezdev-mde-table-bg': 'var(--cm-toolbar-bg-light)',
+    },
+    '.ezdev-mde': {
 
         // Base editor styles
         'background': 'transparent',
@@ -38,7 +43,10 @@ export const styleModule: StyleModule = new StyleModule({
         // Codeblock styles
         '& .cm-editor': {
             margin: '2rem 0',
-            border: '1px solid var(--cm-diagnostic-info-bg)'
+
+            // Color overrides
+            '--cm-gutter-background': 'transparent',
+            '--cm-background': 'transparent',
         },
 
         // Inline code styles
@@ -72,20 +80,13 @@ export const styleModule: StyleModule = new StyleModule({
                 top: 0,
                 width: '4px',
             },
-            '& td': {
-                border: '1px solid #2b2b2b',
-                padding: '0.5em',
-                'vertical-align': 'top',
-                position: 'relative',
-            },
             '& th': {
                 'font-weight': 'bold',
-                'background-color': '#2b2b2b',
+                'background-color': 'var(--ezdev-mde-table-bg)',
                 'text-align': 'left',
-                'color': 'white',
             },
             '& th, & td': {
-                border: '1px solid #545454',
+                border: 'none',
                 padding: '0.5em',
                 'vertical-align': 'top',
                 position: 'relative',

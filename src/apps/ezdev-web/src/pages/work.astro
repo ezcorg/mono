@@ -9,7 +9,7 @@ import '../styles/markdown.css';
 
 // Inline Packery script to avoid FOUC, sure would be nice if browser supported Masonry grid natively
 const packeryLoad =
-	"<script type='module'>" + Packery + ";window.PackeryInit()</script>";
+	"<script type='module'>" + Packery + ';window.PackeryInit()</script>';
 const projects = [
 	{
 		title: 'markdown-editor',
@@ -204,7 +204,10 @@ const projects = [
 		init();
 
 		const demos = {
-			'markdown-editor': async (containerEl: HTMLElement, containerParent: HTMLElement) => {
+			'markdown-editor': async (
+				containerEl: HTMLElement,
+				containerParent: HTMLElement,
+			) => {
 				try {
 					const { createEditor } = await import(
 						'@ezdevlol/markdown-editor'
@@ -219,18 +222,16 @@ const projects = [
 							filepath: 'hello.md',
 						},
 					});
-					containerParent.addEventListener(
-						'mouseover',
-						() => {
-							editor.commands.setCodeblockTheme({ dark: false });
-						},
+					editor.view.dom.setAttribute(
+						'data-theme',
+						containerParent.matches(':hover') ? 'light' : 'dark',
 					);
-					containerParent.addEventListener(
-						'mouseout',
-						() => {
-							editor.commands.setCodeblockTheme({ dark: true });
-						},
-					);
+					containerParent.addEventListener('mouseover', () => {
+						editor.view.dom.setAttribute('data-theme', 'light');
+					});
+					containerParent.addEventListener('mouseout', () => {
+						editor.view.dom.setAttribute('data-theme', 'dark');
+					});
 				} catch (error) {
 					console.error('Failed to load markdown editor:', error);
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;

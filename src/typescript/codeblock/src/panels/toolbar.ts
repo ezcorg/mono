@@ -222,7 +222,12 @@ export const toolbarPanel = (view: EditorView): Panel => {
     const stateIcon = document.createElement("div");
     stateIcon.className = "cm-toolbar-state-icon";
     stateIcon.textContent = "📄"; // Default file icon
-    dom.appendChild(stateIcon);
+
+    // Create container for state icon to help with alignment
+    const stateIconContainer = document.createElement("div");
+    stateIconContainer.className = "cm-toolbar-state-icon-container";
+    stateIconContainer.appendChild(stateIcon);
+    dom.appendChild(stateIconContainer);
 
     // Create input container for the right-aligned input
     const inputContainer = document.createElement("div");
@@ -242,13 +247,21 @@ export const toolbarPanel = (view: EditorView): Panel => {
     let selectedIndex = 0;
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
 
-    // Set CSS variable for gutter width
-    function updateGutterWidthVariable() {
+    // Tracks gutter width for toolbar alignment
+    function updateGutterWidthVariables() {
         const gutters = view.dom.querySelector('.cm-gutters');
         if (gutters) {
             const gutterWidth = gutters.getBoundingClientRect().width;
             dom.style.setProperty('--cm-gutter-width', `${gutterWidth}px`);
+
+            const numberGutter = gutters.querySelector('.cm-lineNumbers');
+
+            if (numberGutter) {
+                const numberGutterWidth = numberGutter.getBoundingClientRect().width;
+                dom.style.setProperty('--cm-gutter-lineno-width', `${numberGutterWidth}px`);
+            }
         }
+
     }
 
     // Set up ResizeObserver to watch gutter width changes
@@ -257,29 +270,35 @@ export const toolbarPanel = (view: EditorView): Panel => {
         const gutters = view.dom.querySelector('.cm-gutters');
         if (gutters && window.ResizeObserver) {
             gutterObserver = new ResizeObserver(() => {
-                updateGutterWidthVariable();
+                updateGutterWidthVariables();
             });
             gutterObserver.observe(gutters);
         }
     }
 
-    // Set state icon to use CSS variable for width
-    stateIcon.style.width = 'var(--cm-gutter-width)';
-
     // Initial width setup and observer
-    updateGutterWidthVariable();
+    updateGutterWidthVariables();
     setupGutterObserver();
 
     const renderItem = (result: SearchResult, i: number) => {
         const li = document.createElement("li");
-        li.innerHTML = `<span class="cm-result-icon">${result.icon || ''}</span>
-        <span class="cm-result-label">${result.id}</span>`;
+        li.className = `cm-search-result ${isCommandResult(result) ? 'cm-command-result' : 'cm-file-result'}`;
 
-        if (isCommandResult(result)) {
-            li.className = "cm-search-result cm-command-result";
-        } else {
-            li.className = "cm-search-result cm-file-result";
-        }
+        const resultIconContainer = document.createElement("div");
+        resultIconContainer.className = "cm-search-result-icon-container";
+
+        const resultIcon = document.createElement("div");
+        resultIcon.className = "cm-search-result-icon";
+        resultIcon.textContent = isCommandResult(result) ? result.icon : '📄';
+
+        resultIconContainer.appendChild(resultIcon);
+        li.appendChild(resultIconContainer);
+
+        const resultLabel = document.createElement("div");
+        resultLabel.className = "cm-search-result-label";
+        resultLabel.textContent = result.id;
+
+        li.appendChild(resultLabel);
 
         if (i === selectedIndex) li.classList.add("selected");
 
