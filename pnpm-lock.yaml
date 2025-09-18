@@ -836,6 +836,25 @@ importers:
         specifier: ^1.32.10
         version: 1.92.1
 
+  src/typescript/wasmer-sh-test:
+    dependencies:
+      '@wasmer/sdk':
+        specifier: ^0.9.0
+        version: 0.9.0
+      xterm:
+        specifier: ^5.3.0
+        version: 5.3.0
+      xterm-addon-fit:
+        specifier: ^0.8.0
+        version: 0.8.0(xterm@5.3.0)
+    devDependencies:
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vite:
+        specifier: ^7.1.2
+        version: 7.1.4(@types/node@24.3.1)(jiti@1.21.7)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0)
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
@@ -4023,6 +4042,9 @@ packages:
 
   '@vue/shared@3.5.21':
     resolution: {integrity: sha512-+2k1EQpnYuVuu3N7atWyG3/xoFWIVJZq4Mz8XNOdScFI0etES75fbny/oU4lKWk/577P1zmg0ioYvpGEDZ3DLw==}
+
+  '@wasmer/sdk@0.9.0':
+    resolution: {integrity: sha512-k/CY19NfeLCjA9ZpX69JAoZKiuMT3hKjDFJYWdRGkCdfig9NtC9Op7Gpg2LeezuuQKd4WaSSq8bpSMdHw1BMgg==}
 
   '@wdio/config@9.19.1':
     resolution: {integrity: sha512-BeTB2paSjaij3cf1NXQzX9CZmdj5jz2/xdUhkJlCeGmGn1KjWu5BjMO+exuiy+zln7dOJjev8f0jlg8e8f1EbQ==}
@@ -9572,6 +9594,9 @@ packages:
     resolution: {integrity: sha512-A7Jxrg7+eV+eZR/CIdESDnRGFb6/bcKukGvJBB5snI6cw3is1c2qamkYstC1bY1p08TyMRlN9eTMkxmnKJBPBw==}
     engines: {node: '>= 8'}
 
+  web-worker@1.5.0:
+    resolution: {integrity: sha512-RiMReJrTAiA+mBjGONMnjVDP2u3p9R1vkcGz6gDIrOMT3oGuYwX2WRMYI9ipkphSuE5XKEhydbhNEJh4NY9mlw==}
+
   webdriver@9.19.1:
     resolution: {integrity: sha512-cvccIZ3QaUZxxrA81a3rqqgxKt6VzVrZupMc+eX9J40qfGrV3NtdLb/m4AA1PmeTPGN5O3/4KrzDpnVZM4WUnA==}
     engines: {node: '>=18.20.0'}
@@ -9801,6 +9826,16 @@ packages:
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
     engines: {node: '>=0.4'}
+
+  xterm-addon-fit@0.8.0:
+    resolution: {integrity: sha512-yj3Np7XlvxxhYF/EJ7p3KHaMt6OdwQ+HDu573Vx1lRXsVxOcnVJs51RgjZOouIZOczTsskaS+CpXspK81/DLqw==}
+    deprecated: This package is now deprecated. Move to @xterm/addon-fit instead.
+    peerDependencies:
+      xterm: ^5.0.0
+
+  xterm@5.3.0:
+    resolution: {integrity: sha512-8QqjlekLUFTrU6x7xck1MsPzPA571K5zNqWm0M0oroYEWVOptZ0+ubQSkQ3uxIEhcIHRujJy6emDWX4A7qyFzg==}
+    deprecated: This package is now deprecated. Move to @xterm/xterm instead.
 
   xxhash-wasm@1.1.0:
     resolution: {integrity: sha512-147y/6YNh+tlp6nd/2pWq38i9h6mz/EuQ6njIrmW8D1BS5nCqs0P6DG+m6zTGnNz5I+uhZ0SHxBs9BsPrwcKDA==}
@@ -13544,6 +13579,10 @@ snapshots:
       vue: 3.5.21(typescript@5.9.2)
 
   '@vue/shared@3.5.21': {}
+
+  '@wasmer/sdk@0.9.0':
+    dependencies:
+      web-worker: 1.5.0
 
   '@wdio/config@9.19.1':
     dependencies:
@@ -20154,6 +20193,8 @@ snapshots:
 
   web-streams-polyfill@4.1.0: {}
 
+  web-worker@1.5.0: {}
+
   webdriver@9.19.1:
     dependencies:
       '@types/node': 20.19.4
@@ -20454,6 +20495,12 @@ snapshots:
   xmlchars@2.2.0: {}
 
   xtend@4.0.2: {}
+
+  xterm-addon-fit@0.8.0(xterm@5.3.0):
+    dependencies:
+      xterm: 5.3.0
+
+  xterm@5.3.0: {}
 
   xxhash-wasm@1.1.0: {}
 

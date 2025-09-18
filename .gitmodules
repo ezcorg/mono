@@ -19,3 +19,6 @@
 [submodule "src/typescript/tiptap-markdown"]
 	path = src/typescript/tiptap-markdown
 	url = https://github.com/ezdevlol/tiptap-markdown
+[submodule "src/typescript/jswasi"]
+	path = src/typescript/jswasi
+	url = https://github.com/ezdevlol/jswasi
