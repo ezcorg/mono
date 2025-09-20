@@ -8,7 +8,7 @@ import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { Fs } from "./types";
+import { VfsInterface } from "./types";
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { documentUri, languageId } from '@marimo-team/codemirror-languageserver';
 import { lintKeymap } from "@codemirror/lint";
@@ -17,10 +17,11 @@ import { SearchIndex } from "./utils/search";
 import { LSP, LSPClientExtension } from "./utils/lsp";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
 import { StyleModule } from "style-mod";
+import { dirname } from "path-browserify";
 export type { CommandResult } from "./panels/toolbar";
 
 export type CodeblockConfig = {
-    fs: Fs;
+    fs: VfsInterface;
     cwd?: string;
     filepath?: string;
     content?: string;
@@ -146,7 +147,15 @@ const codeblockView = ViewPlugin.define((view) => {
     // Debounced save
     const save = debounce(async () => {
         const fileState = view.state.field(currentFileField);
-        if (fileState.path) await fs.writeFile(fileState.path, view.state.doc.toString()).catch(console.error);
+        if (fileState.path) {
+            // confirm parent exists
+            const parent = dirname(fileState.path);
+
+            if (parent) {
+                await fs.mkdir(parent, { recursive: true }).catch(console.error);
+            }
+            await fs.writeFile(fileState.path, view.state.doc.toString()).catch(console.error)
+        }
     }, 500);
 
     // Guard to prevent duplicate opens for same path while loading
@@ -168,7 +177,7 @@ const codeblockView = ViewPlugin.define((view) => {
         opening = path;
         try {
             const ext = path.split('.').pop()?.toLowerCase();
-            const lang = (ext ? (extOrLanguageToLanguageId)[ext] ?? null : null) || language;
+            const lang = (ext ? (extOrLanguageToLanguageId)[ext] ?? null : language) || 'markdown';
             let langSupport = lang ? await getLanguageSupport(lang as any) : null;
 
             safeDispatch(view, {

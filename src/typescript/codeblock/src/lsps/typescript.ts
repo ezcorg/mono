@@ -1,5 +1,5 @@
 import { create as createTypeScriptServicePlugins } from 'volar-service-typescript'
-import { Fs } from '../types';
+import { VfsInterface } from '../types';
 import { Connection, createServerBase, createTypeScriptProject } from '@volar/language-server/browser';
 import ts from 'typescript';
 import { VolarFs } from '../utils/fs';
@@ -15,7 +15,7 @@ function getLanguageServicePlugins(_ts: typeof ts) {
 
 export type CreateTypescriptEnvironmentArgs = {
     connection: Connection
-    fs: Fs
+    fs: VfsInterface
 }
 
 export const createLanguageServer = async ({ connection, fs }: CreateTypescriptEnvironmentArgs) => {

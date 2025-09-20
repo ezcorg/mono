@@ -450,7 +450,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
             if (query.trim()) {
                 // Get regular search results from index first
-                const searchResults: SearchResult[] = (index?.search(query, { fuzzy: true, prefix: true }) || []).slice(0, 100);
+                const searchResults: SearchResult[] = (index?.search(query) || []).slice(0, 100);
 
                 // Add command results first (passing search results to check for existing files)
                 const commands = createCommandResults(query, view, searchResults);
@@ -478,7 +478,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
         if (query.trim()) {
             // Get regular search results from index first
-            const searchResults = (index?.search(query, { fuzzy: true, prefix: true }) || []).slice(0, 1000);
+            const searchResults = (index?.search(query) || []).slice(0, 1000);
 
             // Add command results first (passing search results to check for existing files)
             const commands = createCommandResults(query, view, searchResults);

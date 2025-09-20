@@ -131,7 +131,7 @@ const languageSupportMap = {
     gitignore: async () => {
         const { properties } = await import('@codemirror/legacy-modes/mode/properties');
         return StreamLanguage.define(properties);
-    },
+    }
 };
 
 export const getLanguageSupport = async (language: keyof typeof languageSupportMap) => {

@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite'
-import { getGitignored, takeSnapshot } from './src/utils/snapshot';
-import fs from 'fs/promises';
+import { getGitignored } from './src/utils/snapshot';
 import path from 'path';
 import multimatch from 'multimatch';
 

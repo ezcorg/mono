@@ -4,7 +4,7 @@ import { SnapshotNode } from "@ezdevlol/memfs/snapshot";
 import { FsApi } from "@ezdevlol/memfs/node/types";
 
 // TODO: consider changing interface to allow writes at specific offsets within files
-export interface Fs {
+export interface VfsInterface {
     /**
      * Reads the entire contents of a file asynchronously
      * @param path A path to a file

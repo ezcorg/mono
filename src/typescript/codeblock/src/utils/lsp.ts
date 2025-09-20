@@ -1,4 +1,4 @@
-import { Fs } from "../types";
+import { VfsInterface } from "../types";
 import * as Comlink from 'comlink';
 import { LanguageServerClient, languageServerWithClient } from "@marimo-team/codemirror-languageserver";
 import { Extension } from "@codemirror/state";
@@ -20,15 +20,15 @@ export type ClientOptions = {
     view: EditorView
     language: string,
     path: string,
-    fs: Fs
+    fs: VfsInterface
 }
 
 // TODO: better fix for this reference sticking around to prevent Comlink from releasing the port
-export const languageServerFactory: Map<string, (args: { fs: Fs }) => Promise<{ server: LanguageServer }>> = new Map();
+export const languageServerFactory: Map<string, (args: { fs: VfsInterface }) => Promise<{ server: LanguageServer }>> = new Map();
 export const lspWorkers: Map<string, SharedWorker> = new Map()
 
 export namespace LSP {
-    export async function worker(language: string, fs: Fs): Promise<{ worker: SharedWorker }> {
+    export async function worker(language: string, fs: VfsInterface): Promise<{ worker: SharedWorker }> {
         let factory, worker;
 
         console.debug('language', { language })
@@ -44,7 +44,7 @@ export namespace LSP {
                     worker = new SharedWorker(new URL('../workers/javascript.worker.js', import.meta.url), { type: 'module' });
                     worker.port.start();
                     lspWorkers.set('javascript', worker)
-                    const { createLanguageServer } = Comlink.wrap<{ createLanguageServer: (args: { fs: Fs }) => Promise<{ server: LanguageServer }> }>(worker.port);
+                    const { createLanguageServer } = Comlink.wrap<{ createLanguageServer: (args: { fs: VfsInterface }) => Promise<{ server: LanguageServer }> }>(worker.port);
                     factory = createLanguageServer
                     languageServerFactory.set('javascript', factory)
                 }

@@ -1,6 +1,0 @@
-package component:echo-handler;
-
-world proxy {
-  import wasi:http/types;
-  export wasi:http/incoming-handler;
-}

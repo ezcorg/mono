@@ -1,6 +1,0 @@
-package component:json-api-handler;
-
-world proxy {
-  import wasi:http/types;
-  export wasi:http/incoming-handler;
-}
