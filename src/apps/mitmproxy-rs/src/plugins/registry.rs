@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{
     db::{Db, Insert},
-    plugins::Plugin,
+    plugins::{Capability, EventData, EventResult, EventType, Plugin},
 };
 
 pub struct PluginRegistry {
@@ -34,5 +34,21 @@ impl PluginRegistry {
         // Add it to the registry
         self.plugins.insert(plugin.id(), plugin);
         Ok(())
+    }
+
+    pub async fn handle(&self, event_type: EventType, data: EventData) -> EventResult {
+        let result = EventResult::Next(data);
+
+        for plugin in self.plugins.values() {
+            // Check if the plugin was granted the capability to handle this event
+            if plugin.granted.contains(&Capability::Event(event_type.clone())) {
+                if let Some(handlers) = plugin.handlers.get(&event_type) {
+                    for handler in handlers {
+                        // TODO: Execute the handler's wasm code
+                    }
+                }
+            }
+        }
+        result
     }
 }

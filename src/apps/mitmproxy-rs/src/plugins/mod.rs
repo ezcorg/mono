@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
+use http_body_util::Full;
+use hyper::{body::{Incoming}, Request, Response};
+use bytes::Bytes;
 use sqlx::{query, Sqlite, Transaction};
 
 use crate::{
@@ -11,16 +14,30 @@ use crate::{
 mod capability;
 pub mod registry;
 
-pub enum Event {
+/// Types of events that plugins can handle
+#[derive(Clone, Eq, Hash, PartialEq)]
+pub enum EventType {
     Request,
     Response,
 }
 
-impl Event {
+/// Data associated with each given event
+pub enum EventData {
+    Request(Request<Incoming>),
+    Response(Response<Full<Bytes>>),
+}
+
+/// Result of processing an event by a plugin
+pub enum EventResult {
+    Next(EventData),
+    Done(Option<EventData>),
+}
+
+impl EventType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Event::Request => "request",
-            Event::Response => "response",
+            EventType::Request => "request {todo:}",
+            EventType::Response => "response {todo:}",
         }
     }
 }
@@ -47,7 +64,7 @@ pub struct Plugin {
     // Plugin metadata
     pub metadata: HashMap<String, String>,
     // Plugin event handlers
-    pub handlers: HashMap<Event, HashSet<EventHandler>>,
+    pub handlers: HashMap<EventType, HashSet<EventHandler>>,
 }
 
 impl Plugin {
@@ -57,8 +74,9 @@ impl Plugin {
 }
 
 // Schema:
+// plugin_id = `${namespace}/${name}`
 // `plugins` (namespace, name, version, author, description, license, url, publickey)
-// `plugin_event_handlers` (plugin_id, event_type, wasm)
+// `plugin_event_handlers` (plugin_id, event_type, wasm, digest)
 // `plugin_capabilities` (plugin_id, capability, granted)
 // `plugin_metadata` (plugin_id, key, value)
 
@@ -83,29 +101,3 @@ impl Insert for Plugin {
         Ok(())
     }
 }
-
-// pub trait EventHandler<EventType>: Send + Sync
-// where
-//     EventType: SystemEvent,
-// {
-//     fn priority(&self) -> Either<u32, String>;
-//     fn handle(
-//         &self,
-//         event: Event<EventType>,
-//         capabilities: HashSet<Capability>,
-//     ) -> Option<EventAction<EventType>>;
-// }
-
-// pub enum EventAction<T: SystemEvent> {
-//     /// Modify/keep the event and pass onto future handlers
-//     Next(Event<T>),
-//     /// Stop processing the event, optionally do not pass it on by returning None
-//     Done(Option<Event<T>>),
-// }
-
-// pub struct Event<T: SystemEvent> {
-//     id: String,
-//     data: T,
-// }
-
-// pub trait SystemEvent {}

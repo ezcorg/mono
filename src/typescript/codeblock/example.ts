@@ -27,8 +27,7 @@ async function loadFs() {
 
 // await reset();
 const fs = await loadFs()
-console.log('got fs', fs);
 const parent = document.getElementById('editor') as HTMLDivElement;
 const path = '.codeblock/index.json'
-const index = await SearchIndex.build(fs, { fields: ['path', 'basename', 'dirname', 'extension']});
+const index = await SearchIndex.get(fs, path, ['path', 'basename', 'dirname', 'extension']);
 createCodeblock({ parent, fs, language: 'ts', toolbar: true, index, cwd: '/' });

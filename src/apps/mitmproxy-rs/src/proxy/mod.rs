@@ -1,6 +1,7 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
+use crate::plugins::{EventData, EventResult, EventType};
 
 use bytes::Bytes;
 use http_body_util::Full;
@@ -163,15 +164,15 @@ impl ProxyServer {
             }
 
             let ca = self.ca.clone();
-            let config = self.config.clone();
             let on_upgrade = upgrade::on(&mut req);
             let upstream = self.upstream.clone();
+            let plugin_registry = self.plugin_registry.clone();
 
             tokio::spawn(async move {
                 match on_upgrade.await {
                     Ok(upgraded) => {
                         if let Err(e) =
-                            run_tls_mitm(upstream, upgraded, authority, ca, config).await
+                            run_tls_mitm(upstream, upgraded, authority, ca, plugin_registry).await
                         {
                             match &e {
                                 ProxyError::Io(ioe) if is_closed(ioe) => {
@@ -214,6 +215,92 @@ impl ProxyServer {
     }
 }
 
+// --- Extracted helpers from run_tls_mitm ---
+
+pub(crate) async fn perform_upstream(
+    upstream: &reqwest::Client,
+    req: Request<Incoming>,
+) -> Response<Full<Bytes>> {
+    match convert_hyper_to_reqwest_request(req, upstream).await {
+        Ok(reqwest_req) => match upstream.execute(reqwest_req).await {
+            Ok(resp) => {
+                info!("Upstream response status: {}", resp.status());
+                match convert_reqwest_to_hyper_response(resp).await {
+                    Ok(mut response) => {
+                        strip_proxy_headers(response.headers_mut());
+                        response
+                    }
+                    Err(err) => {
+                        error!("Failed to convert response: {}", err);
+                        Response::builder()
+                            .status(StatusCode::BAD_GATEWAY)
+                            .body(Full::new(Bytes::from(
+                                "Failed to convert upstream response",
+                            )))
+                            .unwrap()
+                    }
+                }
+            }
+            Err(err) => {
+                error!("Upstream request failed with detailed error: {:?}", err);
+                Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(Full::new(Bytes::from(err.to_string())))
+                    .unwrap()
+            }
+        },
+        Err(err) => {
+            error!("Failed to convert request: {}", err);
+            Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(Full::new(Bytes::from("Failed to convert request")))
+                .unwrap()
+        }
+    }
+}
+
+pub(crate) async fn run_response_handlers(
+    plugin_registry: &Option<Arc<RwLock<PluginRegistry>>>,
+    resp: Response<Full<Bytes>>,
+) -> Response<Full<Bytes>> {
+    if let Some(registry) = plugin_registry {
+        let result = registry
+            .read()
+            .await
+            .handle(EventType::Response, EventData::Response(resp))
+            .await;
+
+        match result {
+            EventResult::Next(EventData::Response(r)) => r,
+            EventResult::Next(_) => {
+                error!("Invalid EventResult::Next for Response: non-response data");
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Full::new(Bytes::from(
+                        "Invalid plugin EventResult::Next type for Response",
+                    )))
+                    .unwrap()
+            }
+            EventResult::Done(None) => Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(Full::new(Bytes::new()))
+                .unwrap(),
+            EventResult::Done(Some(EventData::Response(r))) => r,
+            EventResult::Done(Some(_)) => {
+                error!("Invalid EventResult::Done(Some(_)) for Response: non-response data");
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Full::new(Bytes::from(
+                        "Invalid plugin EventData for Response",
+                    )))
+                    .unwrap()
+            }
+        }
+    } else {
+        resp
+    }
+}
+
 /// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
 /// with a Hyper auto server (h1 or h2) and forwards each request to the real upstream via `upstream`.
 async fn run_tls_mitm(
@@ -221,7 +308,7 @@ async fn run_tls_mitm(
     upgraded: upgrade::Upgraded,
     authority: String,
     ca: Arc<CertificateAuthority>,
-    _config: Arc<AppConfig>,
+    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
 ) -> ProxyResult<()> {
     info!("Running TLS MITM for {}", authority);
 
@@ -241,61 +328,76 @@ async fn run_tls_mitm(
 
     // Service that proxies each decrypted request to the real upstream host
     let svc = {
-        let upstream = upstream.clone();
-
         service_fn(move |req: Request<Incoming>| {
             let upstream = upstream.clone();
+            let plugin_registry = plugin_registry.clone();
 
             async move {
-                info!("Handling TLS request: {} {}", req.method(), req.uri());
+                let method = req.method().clone();
+                let uri = req.uri().clone();
+                info!("Handling TLS request: {} {}", method, uri);
 
-                // Forward upstream
-                match convert_hyper_to_reqwest_request(req, &upstream).await {
-                    Ok(reqwest_req) => match upstream.execute(reqwest_req).await {
-                        Ok(resp) => {
-                            info!("Upstream response status: {}", resp.status());
-                            match convert_reqwest_to_hyper_response(resp).await {
-                                Ok(mut response) => {
-                                    strip_proxy_headers(response.headers_mut());
-                                    Ok::<Response<Full<Bytes>>, hyper::http::Error>(response)
-                                }
-                                Err(err) => {
-                                    error!("Failed to convert response: {}", err);
-                                    let resp = Response::builder()
-                                        .status(StatusCode::BAD_GATEWAY)
-                                        .body(Full::new(Bytes::from(
-                                            "Failed to convert upstream response",
-                                        )))
-                                        .unwrap();
-                                    Ok(resp)
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            error!("Upstream request failed with detailed error: {:?}", err);
-                            let resp = Response::builder()
-                                .status(StatusCode::BAD_GATEWAY)
-                                .body(Full::new(Bytes::from(err.to_string())))
-                                .unwrap();
-                            Ok(resp)
-                        }
-                    },
-                    Err(err) => {
-                        error!("Failed to convert request: {}", err);
-                        let resp = Response::builder()
-                            .status(StatusCode::BAD_GATEWAY)
-                            .body(Full::new(Bytes::from("Failed to convert request")))
-                            .unwrap();
-                        Ok(resp)
+                // Step 1: Request event handling - move req into the event
+                let request_event_result = if let Some(registry) = &plugin_registry {
+                    registry
+                        .read()
+                        .await
+                        .handle(EventType::Request, EventData::Request(req))
+                        .await
+                } else {
+                    EventResult::Done(Some(EventData::Request(req)))
+                };
+
+                // Step 2: Act based on request event result
+                let initial_response = match request_event_result {
+                    // Perform request with modified request
+                    EventResult::Next(EventData::Request(rq)) => perform_upstream(&upstream, rq).await,
+
+                    // Any other Next variant is invalid
+                    EventResult::Next(_) => {
+                        error!("Invalid EventResult::Next for Request: non-request data");
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Full::new(Bytes::from(
+                                "Invalid plugin EventResult::Next type for Request",
+                            )))
+                            .unwrap()
                     }
-                }
+
+                    // Perform request with contained request
+                    EventResult::Done(Some(EventData::Request(rq))) => {
+                        perform_upstream(&upstream, rq).await
+                    }
+
+                    // Do not perform the request
+                    EventResult::Done(None) => {
+                        return Ok::<Response<Full<Bytes>>, hyper::http::Error>(
+                            Response::builder()
+                                .status(StatusCode::NO_CONTENT)
+                                .body(Full::new(Bytes::new()))
+                                .unwrap(),
+                        );
+                    }
+
+                    // Return the given response immediately
+                    EventResult::Done(Some(EventData::Response(resp))) => resp,
+                };
+
+                // Step 3: Run response handlers and return final response
+                let final_response =
+                    run_response_handlers(&plugin_registry, initial_response).await;
+
+                Ok::<Response<Full<Bytes>>, hyper::http::Error>(final_response)
             }
+            
         })
     };
 
     // Serve the single TLS connection
     if let Err(e) = auto.serve_connection(TokioIo::new(tls), svc).await {
-        if !is_closed(&e) {
+        if is_closed(&e) {
+            debug!("TLS connection closed: {}", e);
+        } else {
             warn!("TLS connection error: {}", e);
         }
     }
