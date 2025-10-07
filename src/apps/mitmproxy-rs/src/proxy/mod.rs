@@ -1,6 +1,6 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
-use crate::plugins::registry::PluginRegistry;
+use crate::plugins::registry::{HostHandleRequestResult, PluginRegistry};
 
 use bytes::Bytes;
 use http_body_util::{Full};
@@ -260,48 +260,6 @@ pub(crate) async fn perform_upstream(
     }
 }
 
-pub(crate) async fn run_response_handlers(
-    plugin_registry: &Option<Arc<RwLock<PluginRegistry>>>,
-    resp: Resource<WasmResponse>,
-) -> EventResult {
-    if let Some(registry) = plugin_registry {
-        let result = registry
-            .read()
-            .await
-            .handle(EventType::Response, EventData::Response(resp))
-            .await;
-        result
-        // match result {
-        //     EventResult::Next(EventData::Response(r)) => r,
-        //     EventResult::Next(_) => {
-        //         error!("Invalid EventResult::Next for Response: non-response data");
-        //         Response::builder()
-        //             .status(StatusCode::INTERNAL_SERVER_ERROR)
-        //             .body(Full::new(Bytes::from(
-        //                 "Invalid plugin EventResult::Next type for Response",
-        //             )))
-        //             .unwrap()
-        //     }
-        //     EventResult::Done(None) => Response::builder()
-        //         .status(StatusCode::NO_CONTENT)
-        //         .body(Full::new(Bytes::new()))
-        //         .unwrap(),
-        //     EventResult::Done(Some(EventData::Response(r))) => r,
-        //     EventResult::Done(Some(_)) => {
-        //         error!("Invalid EventResult::Done(Some(_)) for Response: non-response data");
-        //         Response::builder()
-        //             .status(StatusCode::INTERNAL_SERVER_ERROR)
-        //             .body(Full::new(Bytes::from(
-        //                 "Invalid plugin EventData for Response",
-        //             )))
-        //             .unwrap()
-        //     }
-        // }
-    } else {
-        EventResult::Done(Some(EventData::Response(resp)))
-    }
-}
-
 /// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
 /// with a Hyper auto server (h1 or h2) and forwards each request to the real upstream via `upstream`.
 async fn run_tls_mitm(
@@ -338,8 +296,6 @@ async fn run_tls_mitm(
                 let uri = req.uri().clone();
                 info!("Handling TLS request: {} {}", method, uri);
 
-                let (sender, receiver) = tokio::sync::oneshot::channel();
-
                 // Step 1: Request event handling - move req into the event
                 let request_event_result = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
@@ -347,7 +303,7 @@ async fn run_tls_mitm(
                         .handle_request(req)
                         .await
                 } else {
-                    EventResult::Done(None)
+                    HostHandleRequestResult::Noop(req)
                 };
                 // Check whether the request short circuited with a Response
                 // TODO:
@@ -355,43 +311,41 @@ async fn run_tls_mitm(
                 // Act based on request event result
                 let initial_response = match request_event_result {
                     // Perform request with modified request
-                    EventResult::Next(EventData::Request(rq)) => perform_upstream(&upstream, rq).await,
+                    HostHandleRequestResult::Noop(rq) => perform_upstream(&upstream, rq).await,
 
                     // Any other Next variant is invalid
-                    EventResult::Next(_) => {
-                        error!("Invalid EventResult::Next for Request: non-request data");
+                    HostHandleRequestResult::Request(rq) => {
+                        error!("Invalid HostHandleRequestResult::Next for Request: non-request data");
                         Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
                             .body(Full::new(Bytes::from(
-                                "Invalid plugin EventResult::Next type for Request",
+                                "Invalid plugin HostHandleRequestResult::Next type for Request",
                             )))
                             .unwrap()
                     }
-
-                    // Perform request with contained request
-                    EventResult::Done(Some(EventData::Request(rq))) => {
-                        perform_upstream(&upstream, rq).await
-                    }
-
-                    // Do not perform the request
-                    EventResult::Done(None) => {
-                        return Ok::<Response<Full<Bytes>>, hyper::http::Error>(
-                            Response::builder()
-                                .status(StatusCode::NO_CONTENT)
-                                .body(Full::new(Bytes::new()))
-                                .unwrap(),
-                        );
-                    }
-
-                    // Return the given response immediately
-                    EventResult::Done(Some(EventData::Response(resp))) => resp,
+                    HostHandleRequestResult::Response(resp) => {
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Full::new(Bytes::from(
+                                "Invalid plugin HostHandleRequestResult::Next type for Request",
+                            )))
+                            .unwrap()
+                    },
                 };
 
                 // Step 3: Run response handlers and return final response
-                let final_response =
-                    run_response_handlers(&plugin_registry, initial_response).await;
+                let final_response = if let Some(registry) = &plugin_registry {
+                    let registry = registry.read().await;
+                    registry
+                        .handle_response(initial_response)
+                        .await
+                } else {
+                    HostHandleResponseResult::Response(initial_response)
+                };
 
-                Ok::<Response<Full<Bytes>>, hyper::http::Error>(final_response)
+                Response::builder()
+                    .status(StatusCode::NOT_IMPLEMENTED)
+                    .body(Full::new(Bytes::from("Not implemented")))
             }
             
         })

@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use bytes::Bytes;
 use http_body_util::BodyExt;
-use hyper::{body::Incoming, Request};
+use hyper::{body::Incoming, Request, Response};
 use tracing::warn;
 use wasmtime::{component::Resource, Store};
 use wasmtime_wasi_http::p3::{
-    bindings::http::types::ErrorCode, Request as WasiRequest, Response as WasiResponse,
+    bindings::http::{handler::ErrorCode}, Request as WasiRequest, Response as WasiResponse,
     WasiHttpView,
 };
 
 use crate::{
     db::{Db, Insert},
     plugins::{Capability, ProxyPlugin},
-    wasm::{generated::Plugin, CapabilityProvider, Host, Runtime},
+    wasm::{generated::{exports::host::plugin::event_handler::HandleRequestResult, Plugin}, CapabilityProvider, Host, Runtime},
 };
 
 pub struct PluginRegistry {
@@ -24,9 +25,14 @@ pub struct PluginRegistry {
 
 pub enum HostHandleRequestResult {
     Noop(Request<Incoming>),
-    Request(WasiRequest),
-    Response(WasiResponse),
+    Request(Resource<WasiRequest>),
+    Response(Resource<WasiResponse>),
 }
+
+pub enum HostHandleResponseResult {
+    Response(Response<Bytes>),
+}
+
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Self {
@@ -56,6 +62,7 @@ impl PluginRegistry {
     }
 
     pub async fn handle_request(&self, original_req: Request<Incoming>) -> HostHandleRequestResult {
+        let result: HostHandleRequestResult = HostHandleRequestResult::Noop(original_req);
         let plugins = self
             .plugins
             .values()
@@ -63,14 +70,16 @@ impl PluginRegistry {
             .collect::<Vec<&ProxyPlugin>>();
 
         if plugins.is_empty() {
-            return HostHandleRequestResult::Noop(original_req);
+            return result;
         }
 
         let mut store = Store::new(&self.runtime.engine, Host::default());
+
         let (req, body) = original_req.into_parts();
         let body = body.map_err(ErrorCode::from_hyper_request_error);
         let req = Request::from_parts(req, body);
         let (req, io) = WasiRequest::from_http(req);
+
         let mut req: Resource<WasiRequest> = store.data_mut().http().table.push(req).unwrap();
 
         let provider = CapabilityProvider::new();
@@ -87,7 +96,7 @@ impl PluginRegistry {
                 warn!(
                     target: "plugins",
                     plugin_id = %plugin.id(),
-                    event_type = %EventType::Request.as_str(),
+                    event_type = "request",
                     error = %e,
                     "Failed to instantiate plugin; skipping"
                 );
@@ -101,7 +110,7 @@ impl PluginRegistry {
                 warn!(
                     target: "plugins",
                     plugin_id = %plugin.id(),
-                    event_type = %EventType::Request.as_str(),
+                    event_type = "request",
                     error = %e,
                     "Failed to access plugin event handler; skipping"
                 );
@@ -118,20 +127,55 @@ impl PluginRegistry {
                 let guest_result = instance
                     .run_concurrent(
                         &mut store,
-                        async move |store| -> Result<(), anyhow::Error> {
+                        async move |store| -> Result<HandleRequestResult, ErrorCode> {
                             // Invoke the component's handler with the event type, data, and capability provider resource
-                            let (result, task) = plugin_instance
+                            let (result, task) = match plugin_instance
                                 .host_plugin_event_handler()
                                 .call_handle_request(store, req, cap_res)
-                                .await?;
+                                .await
+                            {
+                                Ok(ok) => ok,
+                                Err(e) => {
+                                    warn!(
+                                        target: "plugins",
+                                        event_type = "request",
+                                        error = %e,
+                                        "Error calling handle_request"
+                                    );
+                                    return Err(ErrorCode::DestinationUnavailable);
+                                }
+                            };
                             task.block(store).await;
-                            Ok(())
+                            Ok(result)
                         },
                     )
                     .await;
                 let _ = tx.send(guest_result);
             });
-            let result = rx.await;
+            let result = match rx.await {
+                Ok(Ok(Ok(res))) => res,
+                _ => continue,
+            };
+            match result {
+                HandleRequestResult::Done(req_or_res) => {
+
+                },
+                HandleRequestResult::Next(new_req) => {
+                    let _ = store.data_mut().http().table.delete(req);
+                    let new_req = store.data_mut().http().table.get(&new_req).unwrap();
+                    let (new_req, _io) = new_req.into_http();
+                    return HostHandleRequestResult::Request(new_req);
+                }
+            };
         }
+        return result;
+    }
+
+    pub async fn handle_response(
+        &self,
+        original_res: Response<Bytes>,
+    ) -> HostHandleResponseResult {
+        // TODO:
+        HostHandleResponseResult::Response(original_res)
     }
 }

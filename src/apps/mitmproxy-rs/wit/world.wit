@@ -30,14 +30,14 @@ interface event-handler {
 
     variant handle-request-result {
         next(request),
-        done(option<request-or-response>),
+        done(request-or-response),
     }
 
     handle-request: func(r: request, cp: capability-provider) -> handle-request-result;
 
     variant handle-response-result {
         next(response),
-        done(option<response>),
+        done(response),
     }
 
     handle-response: func(r: response, cp: capability-provider) -> handle-response-result;
