@@ -1,9 +1,6 @@
 [submodule "src/typescript/memfs"]
 	path = src/typescript/memfs
 	url = https://github.com/ezdevlol/memfs
-[submodule "src/apps/cuttlefish"]
-	path = src/apps/cuttlefish
-	url = https://github.com/ezdevlol/cuttlefish
 [submodule "src/rust/hello-wasip3-http"]
 	path = src/rust/hello-wasip3-http
 	url = https://github.com/ezdevlol/hello-wasip3-http

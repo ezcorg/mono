@@ -8,6 +8,7 @@ use hyper::{header, Method, Request, Response};
 use reqwest::Certificate;
 use tokio_rustls::rustls;
 use wasmtime_wasi_http::body::HyperIncomingBody;
+use wasmtime_wasi_http::p3::{Request as WasiRequest};
 
 /// Custom error type for proxy operations
 #[derive(Debug)]

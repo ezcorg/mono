@@ -10,6 +10,7 @@ use hyper::service::service_fn;
 use hyper::{upgrade, Response};
 use hyper::{Method, Request, StatusCode};
 use tokio::sync::{Notify, RwLock};
+use wasmtime_wasi_http::p3::{Request as WasiRequest};
 
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
@@ -309,9 +310,6 @@ async fn run_tls_mitm(
 
                 // Act based on request event result
                 let initial_response = match request_event_result {
-                    // Perform request with modified request
-                    HostHandleRequestResult::Noop(rq) => perform_upstream(&upstream, rq).await,
-
                     // Request was dropped by plugins
                     HostHandleRequestResult::Drop => {
                         Response::builder()
@@ -320,15 +318,27 @@ async fn run_tls_mitm(
                             .unwrap()
                     }
 
+                    // Perform request with modified request
+                    HostHandleRequestResult::Noop(rq) => perform_upstream(&upstream, rq).await,
+
                     // Any other Next variant is invalid
                     HostHandleRequestResult::Request(rq) => {
-                        error!("Invalid HostHandleRequestResult::Next for Request: non-request data");
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from(
-                                "Invalid plugin HostHandleRequestResult::Next type for Request",
-                            )))
-                            .unwrap()
+                        // Convert WasiRequest back to hyper Request
+                        let whatever = WasiRequest::consume_body(rq, result_rx);
+
+                        match rq.to_http() {
+                            Ok(hyper_req) => {
+                                // Use existing conversion function to convert to reqwest and execute
+                                perform_upstream(&upstream, hyper_req).await
+                            }
+                            Err(err) => {
+                                error!("Failed to convert WasiRequest to hyper request: {:?}", err);
+                                Response::builder()
+                                    .status(StatusCode::BAD_GATEWAY)
+                                    .body(Full::new(Bytes::from("Failed to convert WasiRequest")))
+                                    .unwrap()
+                            }
+                        }
                     }
                     HostHandleRequestResult::Response(resp) => {
                         Response::builder()
