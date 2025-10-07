@@ -11,6 +11,8 @@ members = [
     "src/rust/confique",
 ]
 
+exclude = ["src/apps/wasmtime"]
+
 # Workspace-wide configuration
 [profile.release]
 opt-level = "s"

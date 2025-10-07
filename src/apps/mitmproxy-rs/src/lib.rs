@@ -9,6 +9,7 @@ pub mod plugins;
 pub mod proxy;
 pub mod utils;
 pub mod web;
+pub mod wasm;
 
 #[cfg(test)]
 pub mod test_utils;

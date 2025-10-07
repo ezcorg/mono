@@ -1,5 +1,3 @@
-use crate::plugins::EventType;
-
 /// Represents the capabilities that a plugin can be granted.
 /// 
 /// Granted capabilities must be implemented by the host application.
@@ -20,6 +18,8 @@ pub enum Capability {
     Queue,
     /// Allows annotating content and retrieving existing content annotations
     Annotator,
-    /// Allows running in response to system events (e.g. on HTTP request/response, on startup, etc.)
-    Event(EventType),
+    /// Allows registering request handlers
+    Request,
+    /// Allows registering response handlers
+    Response
 }

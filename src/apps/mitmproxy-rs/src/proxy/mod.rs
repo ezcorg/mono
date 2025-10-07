@@ -1,18 +1,19 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
-use crate::plugins::{EventData, EventResult, EventType};
 
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::upgrade;
-use hyper::{Method, Request, Response, StatusCode};
+use hyper::{upgrade, Response};
+use hyper::{Method, Request, StatusCode};
+use tokio::sync::{Notify, RwLock};
+use wasmtime::component::Resource;
+
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
-use tokio::sync::{Notify, RwLock};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
@@ -94,7 +95,7 @@ impl ProxyServer {
                                 debug!("Accepted connection from {}", peer);
                                 let shared = server.clone();
                                 tokio::spawn(async move {
-                                    let svc = service_fn(move |req: Request<hyper::body::Incoming>| {
+                                    let svc = service_fn(move |req: Request<Incoming>| {
                                         let shared = shared.clone();
                                         async move {
                                             shared.handle_plain_http(req).await.map_err(|e| {
@@ -261,43 +262,43 @@ pub(crate) async fn perform_upstream(
 
 pub(crate) async fn run_response_handlers(
     plugin_registry: &Option<Arc<RwLock<PluginRegistry>>>,
-    resp: Response<Full<Bytes>>,
-) -> Response<Full<Bytes>> {
+    resp: Resource<WasmResponse>,
+) -> EventResult {
     if let Some(registry) = plugin_registry {
         let result = registry
             .read()
             .await
             .handle(EventType::Response, EventData::Response(resp))
             .await;
-
-        match result {
-            EventResult::Next(EventData::Response(r)) => r,
-            EventResult::Next(_) => {
-                error!("Invalid EventResult::Next for Response: non-response data");
-                Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Full::new(Bytes::from(
-                        "Invalid plugin EventResult::Next type for Response",
-                    )))
-                    .unwrap()
-            }
-            EventResult::Done(None) => Response::builder()
-                .status(StatusCode::NO_CONTENT)
-                .body(Full::new(Bytes::new()))
-                .unwrap(),
-            EventResult::Done(Some(EventData::Response(r))) => r,
-            EventResult::Done(Some(_)) => {
-                error!("Invalid EventResult::Done(Some(_)) for Response: non-response data");
-                Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Full::new(Bytes::from(
-                        "Invalid plugin EventData for Response",
-                    )))
-                    .unwrap()
-            }
-        }
+        result
+        // match result {
+        //     EventResult::Next(EventData::Response(r)) => r,
+        //     EventResult::Next(_) => {
+        //         error!("Invalid EventResult::Next for Response: non-response data");
+        //         Response::builder()
+        //             .status(StatusCode::INTERNAL_SERVER_ERROR)
+        //             .body(Full::new(Bytes::from(
+        //                 "Invalid plugin EventResult::Next type for Response",
+        //             )))
+        //             .unwrap()
+        //     }
+        //     EventResult::Done(None) => Response::builder()
+        //         .status(StatusCode::NO_CONTENT)
+        //         .body(Full::new(Bytes::new()))
+        //         .unwrap(),
+        //     EventResult::Done(Some(EventData::Response(r))) => r,
+        //     EventResult::Done(Some(_)) => {
+        //         error!("Invalid EventResult::Done(Some(_)) for Response: non-response data");
+        //         Response::builder()
+        //             .status(StatusCode::INTERNAL_SERVER_ERROR)
+        //             .body(Full::new(Bytes::from(
+        //                 "Invalid plugin EventData for Response",
+        //             )))
+        //             .unwrap()
+        //     }
+        // }
     } else {
-        resp
+        EventResult::Done(Some(EventData::Response(resp)))
     }
 }
 
@@ -337,18 +338,21 @@ async fn run_tls_mitm(
                 let uri = req.uri().clone();
                 info!("Handling TLS request: {} {}", method, uri);
 
+                let (sender, receiver) = tokio::sync::oneshot::channel();
+
                 // Step 1: Request event handling - move req into the event
                 let request_event_result = if let Some(registry) = &plugin_registry {
+                    let registry = registry.read().await;
                     registry
-                        .read()
-                        .await
-                        .handle(EventType::Request, EventData::Request(req))
+                        .handle_request(req)
                         .await
                 } else {
-                    EventResult::Done(Some(EventData::Request(req)))
+                    EventResult::Done(None)
                 };
+                // Check whether the request short circuited with a Response
+                // TODO:
 
-                // Step 2: Act based on request event result
+                // Act based on request event result
                 let initial_response = match request_event_result {
                     // Perform request with modified request
                     EventResult::Next(EventData::Request(rq)) => perform_upstream(&upstream, rq).await,

@@ -1,0 +1,49 @@
+package host:plugin@0.0.1;
+
+interface capabilities {
+    // resource http-client {}
+    // resource key-value-client {}
+    // resource sql-client {}
+    // resource queue-client {}
+    resource annotator-client {
+        annotate: func(content: list<u8>);
+    }
+
+    resource capability-provider {
+        constructor();
+        // http: func() -> option<http-client>;
+        // kv: func() -> option<key-value-client>;
+        // sql: func() -> option<sql-client>;
+        // queue: func() -> option<queue-client>;
+        annotator: func() -> option<annotator-client>;
+    }
+}
+
+interface event-handler {
+    use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
+    use capabilities.{capability-provider};
+
+    variant request-or-response {
+        request(request),
+        response(response),
+    }
+
+    variant handle-request-result {
+        next(request),
+        done(option<request-or-response>),
+    }
+
+    handle-request: func(r: request, cp: capability-provider) -> handle-request-result;
+
+    variant handle-response-result {
+        next(response),
+        done(option<response>),
+    }
+
+    handle-response: func(r: response, cp: capability-provider) -> handle-response-result;
+}
+
+world plugin {
+    import capabilities;
+    export event-handler;
+}

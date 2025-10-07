@@ -7,6 +7,7 @@ use hyper::body::{Body, Incoming};
 use hyper::{header, Method, Request, Response};
 use reqwest::Certificate;
 use tokio_rustls::rustls;
+use wasmtime_wasi_http::body::HyperIncomingBody;
 
 /// Custom error type for proxy operations
 #[derive(Debug)]
@@ -131,7 +132,8 @@ pub async fn convert_hyper_to_reqwest_request(
             .and_then(|h| h.to_str().ok())
             .ok_or_else(|| ProxyError::Generic("Missing Host header".to_string()))?;
 
-        let scheme = "https"; // Assume HTTPS for TLS MITM
+        // TODO: fixme this to handle http vs https properly
+        let scheme = "https";
         let path = parts
             .uri
             .path_and_query()

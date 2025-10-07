@@ -1,10 +1,10 @@
 [package]
 name = "mitmproxy-rs"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A Rust-based MITM proxy with WASM plugin system"
-license = "MIT"
+license = "AGPLv3"
 
 [dependencies]
 # Async runtime
@@ -32,9 +32,13 @@ time = { version = "0.3", features = ["macros"] }
 # DNS resolution (using tokio's built-in resolver)
 # hickory-dns = "0.24"  # Commented out for now
 
-# WASM runtime
-wasmtime = { version = "34.0.1", features = ["async"] }
-wasmtime-wasi = "34.0.1"
+# WASM runtime (component-model + async)
+wasmtime = { path = "../wasmtime/crates/wasmtime", features = ["component-model-async"] }
+wasmtime-wasi = { path = "../wasmtime/crates/wasi", features = ["p3"] }
+wasmtime-wasi-http = { path = "../wasmtime/crates/wasi-http", features = ["p3"] }
+wit-bindgen = { version = "0.46.0", features = ["default"] }
+# WASM signature verification
+wasmsign2 = "0.2.6"
 
 # Web server
 axum = { version = "0.7", features = ["macros"] }
@@ -74,7 +78,6 @@ askama_axum = "0.4"
 # Configuration
 clap = { version = "4.5.47", features = ["derive"] }
 markup5ever = "0.35.0"
-wasi = { version = "0.14.2", features = ["core"] }
 either = "1.15.0"
 confique = { path = "../../rust/confique", features = ["toml"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
