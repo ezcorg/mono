@@ -25,6 +25,7 @@ use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, Ho
 use crate::wasm::generated::Plugin;
 use crate::wasm::generated::exports::host::plugin::event_handler::{HandleRequestResult};
 
+
 pub struct CapabilityProvider {}
 
 impl CapabilityProvider {

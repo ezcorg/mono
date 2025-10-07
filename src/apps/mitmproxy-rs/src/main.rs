@@ -3,7 +3,7 @@ use clap::Parser;
 use confique::Config;
 use mitmproxy_rs::{
     config::confique_partial_app_config::PartialAppConfig, db::Db,
-    plugins::registry::PluginRegistry, AppConfig, CertificateAuthority, ProxyServer, WebServer,
+    plugins::registry::PluginRegistry, wasm::Runtime, AppConfig, CertificateAuthority, ProxyServer, WebServer,
 };
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -97,7 +97,8 @@ impl Cli {
 
         // Plugin registry which will be shared across the proxy and web server
         let plugin_registry = if config.plugins.enabled {
-            Some(Arc::new(RwLock::new(PluginRegistry::new(db))))
+            let runtime = Runtime::default()?;
+            Some(Arc::new(RwLock::new(PluginRegistry::new(db, runtime))))
         } else {
             None
         };

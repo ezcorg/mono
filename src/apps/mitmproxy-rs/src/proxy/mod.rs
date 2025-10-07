@@ -312,6 +312,14 @@ async fn run_tls_mitm(
                     // Perform request with modified request
                     HostHandleRequestResult::Noop(rq) => perform_upstream(&upstream, rq).await,
 
+                    // Request was dropped by plugins
+                    HostHandleRequestResult::Drop => {
+                        Response::builder()
+                            .status(StatusCode::FORBIDDEN)
+                            .body(Full::new(Bytes::from("Request dropped by plugin")))
+                            .unwrap()
+                    }
+
                     // Any other Next variant is invalid
                     HostHandleRequestResult::Request(rq) => {
                         error!("Invalid HostHandleRequestResult::Next for Request: non-request data");

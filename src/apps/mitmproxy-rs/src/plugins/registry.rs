@@ -24,6 +24,7 @@ pub struct PluginRegistry {
 }
 
 pub enum HostHandleRequestResult {
+    Drop,
     Noop(Request<Incoming>),
     Request(WasiRequest),
     Response(WasiResponse),
@@ -62,7 +63,6 @@ impl PluginRegistry {
     }
 
     pub async fn handle_request(&self, original_req: Request<Incoming>) -> HostHandleRequestResult {
-        let mut result: HostHandleRequestResult = HostHandleRequestResult::Noop(original_req);
         let plugins = self
             .plugins
             .values()
@@ -70,22 +70,17 @@ impl PluginRegistry {
             .collect::<Vec<&ProxyPlugin>>();
 
         if plugins.is_empty() {
-            return result;
+            return HostHandleRequestResult::Noop(original_req);
         }
-
-        let mut store = Store::new(&self.runtime.engine, Host::default());
 
         let (req, body) = original_req.into_parts();
         let body = body.map_err(ErrorCode::from_hyper_request_error);
         let req = Request::from_parts(req, body);
-        let (req, io) = WasiRequest::from_http(req);
-
-        let mut req: Resource<WasiRequest> = store.data_mut().http().table.push(req).unwrap();
-
-        let provider = CapabilityProvider::new();
-        let cap_res = store.data_mut().http().table.push(provider).unwrap();
+        let (mut current_req, _io) = WasiRequest::from_http(req);
 
         for plugin in plugins.iter() {
+            let mut store = self.new_store();
+            
             let instance = self
                 .runtime
                 .linker
@@ -119,44 +114,50 @@ impl PluginRegistry {
 
             let plugin_instance = plugin_instance.unwrap();
 
+            // Push the current request and capability provider into the table
+            // The request is moved here, so we can't recover it if the plugin fails
+            let req_resource: Resource<WasiRequest> = store.data_mut().http().table.push(current_req).unwrap();
+            let provider = CapabilityProvider::new();
+            let cap_res_resource = store.data_mut().http().table.push(provider).unwrap();
+
             // Hyper request -> HTTP request -> WASI request -> our WASI handler
 
-            let (tx, rx) = tokio::sync::oneshot::channel();
+            let guest_result = instance
+                .run_concurrent(
+                    &mut store,
+                    async move |store| -> Result<HandleRequestResult, ErrorCode> {
+                        // Invoke the component's handler with the event type, data, and capability provider resource
+                        let (result, task) = match plugin_instance
+                            .host_plugin_event_handler()
+                            .call_handle_request(store, req_resource, cap_res_resource)
+                            .await
+                        {
+                            Ok(ok) => ok,
+                            Err(e) => {
+                                warn!(
+                                    target: "plugins",
+                                    event_type = "request",
+                                    error = %e,
+                                    "Error calling handle_request"
+                                );
+                                return Err(ErrorCode::DestinationUnavailable);
+                            }
+                        };
+                        task.block(store).await;
+                        Ok(result)
+                    },
+                )
+                .await;
 
-            tokio::task::spawn(async move {
-                let guest_result = instance
-                    .run_concurrent(
-                        &mut store,
-                        async move |store| -> Result<HandleRequestResult, ErrorCode> {
-                            // Invoke the component's handler with the event type, data, and capability provider resource
-                            let (result, task) = match plugin_instance
-                                .host_plugin_event_handler()
-                                .call_handle_request(store, req, cap_res)
-                                .await
-                            {
-                                Ok(ok) => ok,
-                                Err(e) => {
-                                    warn!(
-                                        target: "plugins",
-                                        event_type = "request",
-                                        error = %e,
-                                        "Error calling handle_request"
-                                    );
-                                    return Err(ErrorCode::DestinationUnavailable);
-                                }
-                            };
-                            task.block(store).await;
-                            Ok(result)
-                        },
-                    )
-                    .await;
-                let _ = tx.send(guest_result);
-            });
-            let inner = match rx.await {
-                Ok(Ok(Ok(res))) => res,
-                _ => continue,
+            let inner = match guest_result {
+                Ok(Ok(res)) => res,
+                _ => {
+                    // If plugin execution failed, we can't recover the request since it was moved
+                    // Return Drop to indicate the request processing should stop
+                    return HostHandleRequestResult::Drop;
+                }
             };
-            result = match inner {
+            match inner {
                 HandleRequestResult::Done(req_or_res) => {
                     match req_or_res {
                         RequestOrResponse::Request(r) => {
@@ -180,17 +181,17 @@ impl PluginRegistry {
                     }
                 },
                 HandleRequestResult::Next(new_req) => {
-                    let r = store
+                    // Extract the updated request from the table for the next iteration
+                    current_req = store
                         .data_mut()
                         .http()
                         .table
                         .delete(new_req)
                         .expect("failed to retrieve new request from table");
-                    HostHandleRequestResult::Request(r)
                 }
             };
         }
-        return result;
+        return HostHandleRequestResult::Drop;
     }
 
     pub async fn handle_response(
