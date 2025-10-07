@@ -1,6 +1,6 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
-use crate::plugins::registry::{HostHandleRequestResult, PluginRegistry};
+use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 
 use bytes::Bytes;
 use http_body_util::{Full};
@@ -10,7 +10,6 @@ use hyper::service::service_fn;
 use hyper::{upgrade, Response};
 use hyper::{Method, Request, StatusCode};
 use tokio::sync::{Notify, RwLock};
-use wasmtime::component::Resource;
 
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;

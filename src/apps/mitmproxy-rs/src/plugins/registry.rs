@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use bytes::Bytes;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, Request, Response};
 use tracing::warn;
 use wasmtime::{component::Resource, Store};
@@ -14,7 +14,7 @@ use wasmtime_wasi_http::p3::{
 use crate::{
     db::{Db, Insert},
     plugins::{Capability, ProxyPlugin},
-    wasm::{generated::{exports::host::plugin::event_handler::HandleRequestResult, Plugin}, CapabilityProvider, Host, Runtime},
+    wasm::{generated::{exports::host::plugin::event_handler::{HandleRequestResult, RequestOrResponse}, Plugin}, CapabilityProvider, Host, Runtime},
 };
 
 pub struct PluginRegistry {
@@ -25,12 +25,12 @@ pub struct PluginRegistry {
 
 pub enum HostHandleRequestResult {
     Noop(Request<Incoming>),
-    Request(Resource<WasiRequest>),
-    Response(Resource<WasiResponse>),
+    Request(WasiRequest),
+    Response(WasiResponse),
 }
 
 pub enum HostHandleResponseResult {
-    Response(Response<Bytes>),
+    Response(Response<Full<Bytes>>),
 }
 
 
@@ -62,7 +62,7 @@ impl PluginRegistry {
     }
 
     pub async fn handle_request(&self, original_req: Request<Incoming>) -> HostHandleRequestResult {
-        let result: HostHandleRequestResult = HostHandleRequestResult::Noop(original_req);
+        let mut result: HostHandleRequestResult = HostHandleRequestResult::Noop(original_req);
         let plugins = self
             .plugins
             .values()
@@ -152,19 +152,41 @@ impl PluginRegistry {
                     .await;
                 let _ = tx.send(guest_result);
             });
-            let result = match rx.await {
+            let inner = match rx.await {
                 Ok(Ok(Ok(res))) => res,
                 _ => continue,
             };
-            match result {
+            result = match inner {
                 HandleRequestResult::Done(req_or_res) => {
-
+                    match req_or_res {
+                        RequestOrResponse::Request(r) => {
+                            let r = store
+                                .data_mut()
+                                .http()
+                                .table
+                                .delete(r)
+                                .expect("failed to delete request from table");
+                            return HostHandleRequestResult::Request(r);
+                        }
+                        RequestOrResponse::Response(r) => {
+                            let r = store
+                                .data_mut()
+                                .http()
+                                .table
+                                .delete(r)
+                                .expect("failed to delete response from table");
+                            return HostHandleRequestResult::Response(r);
+                        }
+                    }
                 },
                 HandleRequestResult::Next(new_req) => {
-                    let _ = store.data_mut().http().table.delete(req);
-                    let new_req = store.data_mut().http().table.get(&new_req).unwrap();
-                    let (new_req, _io) = new_req.into_http();
-                    return HostHandleRequestResult::Request(new_req);
+                    let r = store
+                        .data_mut()
+                        .http()
+                        .table
+                        .delete(new_req)
+                        .expect("failed to retrieve new request from table");
+                    HostHandleRequestResult::Request(r)
                 }
             };
         }
@@ -173,7 +195,7 @@ impl PluginRegistry {
 
     pub async fn handle_response(
         &self,
-        original_res: Response<Bytes>,
+        original_res: Response<Full<Bytes>>,
     ) -> HostHandleResponseResult {
         // TODO:
         HostHandleResponseResult::Response(original_res)
