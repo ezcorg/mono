@@ -22,7 +22,7 @@ use hyper_util::{rt::TokioExecutor, rt::TokioIo};
 
 mod utils;
 pub use utils::{
-    build_server_tls_for_host, client, convert_hyper_incoming_to_reqwest_request,
+    build_server_tls_for_host, client, convert_boxbody_to_full_response, convert_hyper_incoming_to_reqwest_request,
     convert_reqwest_to_hyper_response, is_closed, parse_authority_host_port, strip_proxy_headers,
     ProxyError, ProxyResult, UpstreamClient,
 };
@@ -296,20 +296,15 @@ async fn run_tls_mitm(
                 } else {
                     HostHandleRequestResult::Noop(req)
                 };
-                // Check whether the request short circuited with a Response
-                // TODO:
 
                 // Act based on request event result
                 let initial_response = match request_event_result {
-                    // Request was dropped by plugins
                     HostHandleRequestResult::Drop => {
                         Response::builder()
                             .status(StatusCode::FORBIDDEN)
                             .body(Full::new(Bytes::from("Request dropped by plugin")))
                             .unwrap()
                     }
-
-                    // Perform request with modified request
                     HostHandleRequestResult::Noop(rq) => {
                         match convert_hyper_incoming_to_reqwest_request(rq, &upstream) {
                             Ok(rq) => perform_upstream(&upstream, rq).await,
@@ -321,8 +316,6 @@ async fn run_tls_mitm(
                                     )))).unwrap()
                         }
                     }
-
-                    // Any other Next variant is invalid
                     HostHandleRequestResult::Request(rq) => {
                         let rq = convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
                         match rq {
@@ -337,13 +330,17 @@ async fn run_tls_mitm(
                         }
                     }
                     HostHandleRequestResult::Response(resp) => {
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from(
-                                "Invalid plugin HostHandleRequestResult::Next type for Request",
-                            )))
-                            .unwrap()
-                    },
+                        match convert_boxbody_to_full_response(resp).await {
+                            Ok(converted_resp) => converted_resp,
+                            Err(err) => {
+                                error!("Failed to convert plugin response: {}", err);
+                                Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(Full::new(Bytes::from("Failed to convert plugin response")))
+                                    .unwrap()
+                            }
+                        }
+                    }
                 };
 
                 // Step 3: Run response handlers and return final response

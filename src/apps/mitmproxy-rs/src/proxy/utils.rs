@@ -262,6 +262,32 @@ pub async fn convert_reqwest_to_hyper_response(
         .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
 }
 
+/// Convert a Response<BoxBody<Bytes, ErrorCode>> to a Response<Full<Bytes>>
+pub async fn convert_boxbody_to_full_response(
+    response: Response<BoxBody<Bytes, ErrorCode>>,
+) -> ProxyResult<Response<Full<Bytes>>> {
+    let (parts, body) = response.into_parts();
+    
+    // Collect all body data into bytes
+    let body_bytes = body.collect().await
+        .map_err(|e| ProxyError::Generic(format!("Failed to collect body data: {}", e)))?
+        .to_bytes();
+    
+    // Build new response with Full<Bytes> body
+    let mut response_builder = Response::builder()
+        .status(parts.status)
+        .version(parts.version);
+    
+    // Copy all headers
+    for (name, value) in parts.headers.iter() {
+        response_builder = response_builder.header(name, value);
+    }
+    
+    response_builder
+        .body(Full::new(body_bytes))
+        .map_err(|e| ProxyError::Generic(format!("Failed to build response: {}", e)))
+}
+
 /// Create a configured reqwest client for upstream requests
 pub fn client(ca: CertificateAuthority) -> ProxyResult<UpstreamClient> {
     let ca_cert = Certificate::from_der(&ca.get_root_certificate_der()?)

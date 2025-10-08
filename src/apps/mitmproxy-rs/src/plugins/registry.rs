@@ -5,9 +5,9 @@ use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, Request, Response};
 use tracing::warn;
-use wasmtime::{component::{Accessor, Resource}, Store};
+use wasmtime::{component::{Resource}, Store};
 use wasmtime_wasi_http::p3::{
-    bindings::http::{handler::ErrorCode}, Request as WasiRequest, Response as WasiResponse,
+    bindings::http::{handler::ErrorCode}, Request as WasiRequest,
     WasiHttpView,
 };
 
@@ -27,7 +27,7 @@ pub enum HostHandleRequestResult {
     Drop,
     Noop(Request<Incoming>),
     Request(Request<BoxBody<Bytes, ErrorCode>>),
-    Response(WasiResponse),
+    Response(Response<BoxBody<Bytes, ErrorCode>>),
 }
 
 pub enum HostHandleResponseResult {
@@ -77,9 +77,9 @@ impl PluginRegistry {
         let body = body.map_err(ErrorCode::from_hyper_request_error);
         let req = Request::from_parts(req, body);
         let (mut current_req, _io) = WasiRequest::from_http(req);
+        let mut store = self.new_store();
 
         for plugin in plugins.iter() {
-            let mut store = self.new_store();
             
             let instance = self
                 .runtime
@@ -117,18 +117,19 @@ impl PluginRegistry {
             // Push the current request and capability provider into the table
             // The request is moved here, so we can't recover it if the plugin fails
             let req_resource: Resource<WasiRequest> = store.data_mut().http().table.push(current_req).unwrap();
+            // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
-            let cap_res_resource = store.data_mut().http().table.push(provider).unwrap();
+            let cap_resource = store.data_mut().http().table.push(provider).unwrap();
 
             // Hyper request -> HTTP request -> WASI request -> our WASI handler
 
             let guest_result = store
                 .run_concurrent(
                     async move |store| -> Result<HandleRequestResult, ErrorCode> {
-                        // Invoke the component's handler with the event type, data, and capability provider resource
+
                         let (result, task) = match plugin_instance
                             .host_plugin_event_handler()
-                            .call_handle_request(store, req_resource, cap_res_resource)
+                            .call_handle_request(store, req_resource, cap_resource)
                             .await
                         {
                             Ok(ok) => ok,
@@ -151,8 +152,9 @@ impl PluginRegistry {
             let inner = match guest_result {
                 Ok(Ok(res)) => res,
                 _ => {
-                    // If plugin execution failed, we can't recover the request since it was moved
+                    // If plugin execution failed, we currently can't recover the request since it was moved
                     // Return Drop to indicate the request processing should stop
+                    // TODO: fix this, failed plugins shouldn't drop requests
                     return HostHandleRequestResult::Drop;
                 }
             };
@@ -166,7 +168,6 @@ impl PluginRegistry {
                                 .table
                                 .delete(r)
                                 .expect("failed to delete request from table");
-                            // Convert back to hyper Request outside of the closure to avoid lifetime issues
                             let req_result = r.into_http(&mut store, async { Ok(()) });
                             match req_result {
                                 Ok(req) => return HostHandleRequestResult::Request(req),
@@ -180,7 +181,13 @@ impl PluginRegistry {
                                 .table
                                 .delete(r)
                                 .expect("failed to delete response from table");
-                            return HostHandleRequestResult::Response(r);
+                            let r = r.into_http(&mut store, async { Ok(()) });
+                            match r {
+                                Err(_) => return HostHandleRequestResult::Drop,
+                                Ok(r) => {
+                                    return HostHandleRequestResult::Response(r);
+                                }
+                            }
                         }
                     }
                 },
@@ -195,7 +202,10 @@ impl PluginRegistry {
                 }
             };
         }
-        return HostHandleRequestResult::Drop;
+        match current_req.into_http(store, async { Ok(()) }) {
+            Ok(req) => HostHandleRequestResult::Request(req),
+            Err(_) => HostHandleRequestResult::Drop,
+        }
     }
 
     pub async fn handle_response(

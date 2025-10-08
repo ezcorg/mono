@@ -8997,7 +8997,7 @@ dependencies = [
 name = "wasm-test-component"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen 0.43.0",
+ "wit-bindgen 0.46.0",
 ]
 
 [[package]]

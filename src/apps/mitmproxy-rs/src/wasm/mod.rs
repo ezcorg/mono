@@ -1,9 +1,10 @@
-use anyhow::{Context, Result};
-use wasmtime::component::{Accessor, TaskExit};
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
+
+#[cfg(test)]
+mod tests;
 
 pub use runtime::Runtime;
 
@@ -24,7 +25,6 @@ pub mod generated {
 use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider};
 use crate::wasm::generated::Plugin;
 use crate::wasm::generated::exports::host::plugin::event_handler::{HandleRequestResult};
-
 
 pub struct CapabilityProvider {}
 
@@ -70,7 +70,7 @@ impl HostAnnotatorClient for Host {
         &mut self,
         rep: wasmtime::component::Resource<AnnotatorClient>,
     ) -> wasmtime::Result<()> {
-        self.table.delete(rep);
+        let _ = self.table.delete(rep);
         Ok(())
     }
 }
@@ -95,7 +95,7 @@ impl HostCapabilityProvider for Host {
         &mut self,
         rep: wasmtime::component::Resource<CapabilityProvider>,
     ) -> wasmtime::Result<()> {
-        self.table.delete(rep);
+        let _ = self.table.delete(rep);
         Ok(())
     }
 }
@@ -128,35 +128,5 @@ impl wasmtime_wasi_http::p3::WasiHttpView for Host {
             table: &mut self.table,
             ctx: &mut self.p3_http,
         }
-    }
-}
-
-impl Plugin {
-    pub async fn handle_request(
-        &self,
-        store: &Accessor<impl wasmtime_wasi_http::p3::WasiHttpView>,
-        req: impl Into<wasmtime_wasi_http::p3::Request>,
-    ) -> Result<(HandleRequestResult, TaskExit)> {
-        // Push the incoming request into the p3 HTTP table and get a WIT handle
-        let req = store.with(|mut store| {
-            store
-                .data_mut()
-                .http()
-                .table
-                .push(req.into())
-                .context("failed to push request to table")
-        })?;
-
-        // Allocate a CapabilityProvider in the component resource table
-        let cap_res = store.with(|mut store| {
-            let provider = CapabilityProvider::new();
-            store.data_mut().http().table.push(provider)
-        })?;
-
-        // Invoke the component's handler with the event type, data, and capability provider resource
-        self
-            .host_plugin_event_handler()
-            .call_handle_request(store, req, cap_res)
-            .await
     }
 }
