@@ -98,7 +98,10 @@ impl Cli {
         // Plugin registry which will be shared across the proxy and web server
         let plugin_registry = if config.plugins.enabled {
             let runtime = Runtime::default()?;
-            Some(Arc::new(RwLock::new(PluginRegistry::new(db, runtime))))
+            let mut registry = PluginRegistry::new(db, runtime);
+            registry.load_plugins().await?;
+            info!("Loaded {} plugins", registry.plugins.len());
+            Some(Arc::new(RwLock::new(registry)))
         } else {
             None
         };

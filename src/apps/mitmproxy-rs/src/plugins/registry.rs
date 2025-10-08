@@ -13,16 +13,18 @@ use wasmtime_wasi_http::p3::{
 
 use crate::{
     db::{Db, Insert},
-    plugins::{Capability, ProxyPlugin},
+    plugins::{Capability, MitmPlugin},
     wasm::{generated::{exports::host::plugin::event_handler::{HandleRequestResult, RequestOrResponse}, Plugin}, CapabilityProvider, Host, Runtime},
 };
 
 pub struct PluginRegistry {
-    pub plugins: HashMap<String, ProxyPlugin>,
+    pub plugins: HashMap<String, MitmPlugin>,
     pub db: Db,
     pub runtime: Runtime,
 }
 
+/// Result of handling a request through the plugin chain.
+/// Omits any internal WASI types, only exposes HTTP types.
 pub enum HostHandleRequestResult {
     Drop,
     Noop(Request<Incoming>),
@@ -44,13 +46,16 @@ impl PluginRegistry {
         }
     }
 
-    pub async fn load_plugins(&mut self) -> Result<HashMap<String, ProxyPlugin>> {
-        // TODO: select enabled plugins from DB, verify signatures, compile WASM components,
-        // and populate self.plugins with handlers containing compiled invokers.
-        Ok(HashMap::new())
+    pub async fn load_plugins(&mut self) -> Result<()> {
+        // TODO: select plugins from DB, verify signatures, compile WASM components
+        let plugins = MitmPlugin::all(&mut self.db, &self.runtime.engine).await?;
+        for plugin in plugins.into_iter() {
+            self.plugins.insert(plugin.id(), plugin);
+        }
+        Ok(())
     }
 
-    pub async fn register_plugin(&mut self, plugin: ProxyPlugin) -> Result<()> {
+    pub async fn register_plugin(&mut self, plugin: MitmPlugin) -> Result<()> {
         // Upsert the given plugin into the database
         plugin.insert(&mut self.db).await?;
         // Add it to the registry
@@ -62,12 +67,14 @@ impl PluginRegistry {
         Store::new(&self.runtime.engine, Host::default())
     }
 
+    /// Handle an incoming HTTP request by passing it through all registered plugins
+    /// that have the `Request` capability.
     pub async fn handle_request(&self, original_req: Request<Incoming>) -> HostHandleRequestResult {
         let plugins = self
             .plugins
             .values()
             .filter(|p| p.granted.contains(&Capability::Request))
-            .collect::<Vec<&ProxyPlugin>>();
+            .collect::<Vec<&MitmPlugin>>();
 
         if plugins.is_empty() {
             return HostHandleRequestResult::Noop(original_req);
@@ -120,9 +127,7 @@ impl PluginRegistry {
             // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
             let cap_resource = store.data_mut().http().table.push(provider).unwrap();
-
-            // Hyper request -> HTTP request -> WASI request -> our WASI handler
-
+            // Call the plugin's handle_request function
             let guest_result = store
                 .run_concurrent(
                     async move |store| -> Result<HandleRequestResult, ErrorCode> {
@@ -154,7 +159,9 @@ impl PluginRegistry {
                 _ => {
                     // If plugin execution failed, we currently can't recover the request since it was moved
                     // Return Drop to indicate the request processing should stop
-                    // TODO: fix this, failed plugins shouldn't drop requests
+                    // TODO: fix this, despite whatever overhead it might add, it's
+                    // probably worth it to duplicate the request before passing to each plugin
+                    // such that we can recover from individual plugin failures
                     return HostHandleRequestResult::Drop;
                 }
             };
@@ -208,6 +215,8 @@ impl PluginRegistry {
         }
     }
 
+    /// Handle an incoming HTTP response by passing it through all registered plugins
+    /// that have the `Response` capability.
     pub async fn handle_response(
         &self,
         original_res: Response<Full<Bytes>>,

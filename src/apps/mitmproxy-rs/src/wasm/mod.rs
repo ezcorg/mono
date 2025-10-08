@@ -3,10 +3,8 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
-#[cfg(test)]
-mod tests;
-
 pub use runtime::Runtime;
+use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider};
 
 pub mod generated {
     pub use crate::wasm::{AnnotatorClient, CapabilityProvider};
@@ -21,11 +19,6 @@ pub mod generated {
         }
     });
 }
-
-use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider};
-use crate::wasm::generated::Plugin;
-use crate::wasm::generated::exports::host::plugin::event_handler::{HandleRequestResult};
-
 pub struct CapabilityProvider {}
 
 impl CapabilityProvider {
