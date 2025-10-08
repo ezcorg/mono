@@ -1323,28 +1323,28 @@ dependencies = [
 
 [[package]]
 name = "cranelift-assembler-x64"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
 
 [[package]]
 name = "cranelift-assembler-x64-meta"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "cranelift-srcgen",
 ]
 
 [[package]]
 name = "cranelift-bforest"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "cranelift-entity",
 ]
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "serde",
  "serde_derive",
@@ -1352,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-meta"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -1388,18 +1388,18 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-shared"
-version = "0.125.0"
+version = "0.126.0"
 
 [[package]]
 name = "cranelift-control"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "arbitrary",
 ]
 
 [[package]]
 name = "cranelift-entity"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "cranelift-frontend"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -1418,11 +1418,11 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.125.0"
+version = "0.126.0"
 
 [[package]]
 name = "cranelift-native"
-version = "0.125.0"
+version = "0.126.0"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -1431,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "cranelift-srcgen"
-version = "0.125.0"
+version = "0.126.0"
 
 [[package]]
 name = "crc"
@@ -5643,7 +5643,7 @@ dependencies = [
 
 [[package]]
 name = "pulley-interpreter"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -5653,7 +5653,7 @@ dependencies = [
 
 [[package]]
 name = "pulley-macros"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9055,7 +9055,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "addr2line 0.25.1",
  "anyhow",
@@ -9109,7 +9109,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-environ"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -9134,7 +9134,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-cache"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -9152,7 +9152,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-component-macro"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -9165,11 +9165,11 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-component-util"
-version = "38.0.0"
+version = "39.0.0"
 
 [[package]]
 name = "wasmtime-internal-cranelift"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -9195,7 +9195,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-fiber"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -9208,7 +9208,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-debug"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "cc",
  "object 0.37.3",
@@ -9218,7 +9218,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -9228,18 +9228,18 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-math"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "wasmtime-internal-slab"
-version = "38.0.0"
+version = "39.0.0"
 
 [[package]]
 name = "wasmtime-internal-unwinder"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -9250,7 +9250,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-versioned-export-macros"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9259,7 +9259,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-winch"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -9275,7 +9275,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-wit-bindgen"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "bitflags 2.9.4",
@@ -9286,7 +9286,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-wasi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9315,7 +9315,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-wasi-http"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9338,7 +9338,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-wasi-io"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9531,7 +9531,7 @@ dependencies = [
 
 [[package]]
 name = "wiggle"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9544,7 +9544,7 @@ dependencies = [
 
 [[package]]
 name = "wiggle-generate"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "heck 0.5.0",
@@ -9556,7 +9556,7 @@ dependencies = [
 
 [[package]]
 name = "wiggle-macro"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9597,7 +9597,7 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "winch-codegen"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cranelift-assembler-x64",

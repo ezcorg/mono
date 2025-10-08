@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, Request, Response};
 use tracing::warn;
-use wasmtime::{component::Resource, Store};
+use wasmtime::{component::{Accessor, Resource}, Store};
 use wasmtime_wasi_http::p3::{
     bindings::http::{handler::ErrorCode}, Request as WasiRequest, Response as WasiResponse,
     WasiHttpView,
@@ -26,7 +26,7 @@ pub struct PluginRegistry {
 pub enum HostHandleRequestResult {
     Drop,
     Noop(Request<Incoming>),
-    Request(WasiRequest),
+    Request(Request<BoxBody<Bytes, ErrorCode>>),
     Response(WasiResponse),
 }
 
@@ -122,9 +122,8 @@ impl PluginRegistry {
 
             // Hyper request -> HTTP request -> WASI request -> our WASI handler
 
-            let guest_result = instance
+            let guest_result = store
                 .run_concurrent(
-                    &mut store,
                     async move |store| -> Result<HandleRequestResult, ErrorCode> {
                         // Invoke the component's handler with the event type, data, and capability provider resource
                         let (result, task) = match plugin_instance
@@ -167,7 +166,12 @@ impl PluginRegistry {
                                 .table
                                 .delete(r)
                                 .expect("failed to delete request from table");
-                            return HostHandleRequestResult::Request(r);
+                            // Convert back to hyper Request outside of the closure to avoid lifetime issues
+                            let req_result = r.into_http(&mut store, async { Ok(()) });
+                            match req_result {
+                                Ok(req) => return HostHandleRequestResult::Request(req),
+                                Err(_) => return HostHandleRequestResult::Drop,
+                            }
                         }
                         RequestOrResponse::Response(r) => {
                             let r = store

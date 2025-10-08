@@ -1,6 +1,7 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
+use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 
 use bytes::Bytes;
 use http_body_util::{Full};
@@ -10,7 +11,6 @@ use hyper::service::service_fn;
 use hyper::{upgrade, Response};
 use hyper::{Method, Request, StatusCode};
 use tokio::sync::{Notify, RwLock};
-use wasmtime_wasi_http::p3::{Request as WasiRequest};
 
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
@@ -22,7 +22,7 @@ use hyper_util::{rt::TokioExecutor, rt::TokioIo};
 
 mod utils;
 pub use utils::{
-    build_server_tls_for_host, client, convert_hyper_to_reqwest_request,
+    build_server_tls_for_host, client, convert_hyper_incoming_to_reqwest_request,
     convert_reqwest_to_hyper_response, is_closed, parse_authority_host_port, strip_proxy_headers,
     ProxyError, ProxyResult, UpstreamClient,
 };
@@ -203,7 +203,7 @@ impl ProxyServer {
         // TODO: plugin: on_request(&mut req, &conn).await;
 
         // Convert hyper request to reqwest request
-        let reqwest_req = convert_hyper_to_reqwest_request(req, &self.upstream).await?;
+        let reqwest_req = convert_hyper_incoming_to_reqwest_request(req, &self.upstream)?;
         let resp = self.upstream.execute(reqwest_req).await?;
 
         // Convert reqwest response back to hyper response
@@ -220,41 +220,32 @@ impl ProxyServer {
 
 pub(crate) async fn perform_upstream(
     upstream: &reqwest::Client,
-    req: Request<Incoming>,
+    req: reqwest::Request,
 ) -> Response<Full<Bytes>> {
-    match convert_hyper_to_reqwest_request(req, upstream).await {
-        Ok(reqwest_req) => match upstream.execute(reqwest_req).await {
-            Ok(resp) => {
-                info!("Upstream response status: {}", resp.status());
-                match convert_reqwest_to_hyper_response(resp).await {
-                    Ok(mut response) => {
-                        strip_proxy_headers(response.headers_mut());
-                        response
-                    }
-                    Err(err) => {
-                        error!("Failed to convert response: {}", err);
-                        Response::builder()
-                            .status(StatusCode::BAD_GATEWAY)
-                            .body(Full::new(Bytes::from(
-                                "Failed to convert upstream response",
-                            )))
-                            .unwrap()
-                    }
+    match upstream.execute(req).await {
+        Ok(resp) => {
+            info!("Upstream response status: {}", resp.status());
+            match convert_reqwest_to_hyper_response(resp).await {
+                Ok(mut response) => {
+                    strip_proxy_headers(response.headers_mut());
+                    response
+                }
+                Err(err) => {
+                    error!("Failed to convert response: {}", err);
+                    Response::builder()
+                        .status(StatusCode::BAD_GATEWAY)
+                        .body(Full::new(Bytes::from(
+                            "Failed to convert upstream response",
+                        )))
+                        .unwrap()
                 }
             }
-            Err(err) => {
-                error!("Upstream request failed with detailed error: {:?}", err);
-                Response::builder()
-                    .status(StatusCode::BAD_GATEWAY)
-                    .body(Full::new(Bytes::from(err.to_string())))
-                    .unwrap()
-            }
-        },
+        }
         Err(err) => {
-            error!("Failed to convert request: {}", err);
+            error!("Upstream request failed with detailed error: {:?}", err);
             Response::builder()
                 .status(StatusCode::BAD_GATEWAY)
-                .body(Full::new(Bytes::from("Failed to convert request")))
+                .body(Full::new(Bytes::from(err.to_string())))
                 .unwrap()
         }
     }
@@ -319,25 +310,30 @@ async fn run_tls_mitm(
                     }
 
                     // Perform request with modified request
-                    HostHandleRequestResult::Noop(rq) => perform_upstream(&upstream, rq).await,
+                    HostHandleRequestResult::Noop(rq) => {
+                        match convert_hyper_incoming_to_reqwest_request(rq, &upstream) {
+                            Ok(rq) => perform_upstream(&upstream, rq).await,
+                            Err(err) => Response::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .body(Full::new(Bytes::from(format!(
+                                        "Failed to convert request: {}",
+                                        err
+                                    )))).unwrap()
+                        }
+                    }
 
                     // Any other Next variant is invalid
                     HostHandleRequestResult::Request(rq) => {
-                        // Convert WasiRequest back to hyper Request
-                        let whatever = WasiRequest::consume_body(rq, result_rx);
-
-                        match rq.to_http() {
-                            Ok(hyper_req) => {
-                                // Use existing conversion function to convert to reqwest and execute
-                                perform_upstream(&upstream, hyper_req).await
-                            }
-                            Err(err) => {
-                                error!("Failed to convert WasiRequest to hyper request: {:?}", err);
-                                Response::builder()
-                                    .status(StatusCode::BAD_GATEWAY)
-                                    .body(Full::new(Bytes::from("Failed to convert WasiRequest")))
+                        let rq = convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
+                        match rq {
+                            Ok(rq) => perform_upstream(&upstream, rq).await,
+                            Err(err) => Response::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .body(Full::new(Bytes::from(format!(
+                                        "Failed to convert request: {}",
+                                        err
+                                    ))))
                                     .unwrap()
-                            }
                         }
                     }
                     HostHandleRequestResult::Response(resp) => {
@@ -360,9 +356,9 @@ async fn run_tls_mitm(
                     HostHandleResponseResult::Response(initial_response)
                 };
 
-                Response::builder()
-                    .status(StatusCode::NOT_IMPLEMENTED)
-                    .body(Full::new(Bytes::from("Not implemented")))
+                match final_response {
+                    HostHandleResponseResult::Response(resp) => Ok::<_, std::io::Error>(resp)
+                }
             }
             
         })
