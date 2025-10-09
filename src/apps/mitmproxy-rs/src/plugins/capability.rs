@@ -1,4 +1,5 @@
 use bimap::BiMap;
+use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
 use lazy_static::lazy_static;
 
@@ -8,7 +9,7 @@ use lazy_static::lazy_static;
 /// 
 /// Currently supported:
 /// - None
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, ToSchema)]
 pub enum Capability {
     /// Allows reading and writing files in a filesystem
     Directory,

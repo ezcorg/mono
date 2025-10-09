@@ -1,11 +1,6 @@
 use crate::cert::generator::{CertificateBundle, DeviceInfo};
 use crate::cert::{CertificateAuthority, CertificateFormat, CertificateGenerator};
 use anyhow::Result;
-use axum::{
-    extract::{Query, State},
-    http::{header, StatusCode},
-    response::{IntoResponse, Response},
-};
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::debug;
@@ -16,55 +11,55 @@ pub struct CertQuery {
     pub download: Option<bool>,
 }
 
-pub async fn handle_cert_download(
-    State(ca): State<Arc<CertificateAuthority>>,
-    Query(query): Query<CertQuery>,
-    device_info: DeviceInfo,
-) -> Result<Response, StatusCode> {
-    debug!("Certificate download request: {:?}", query);
+// pub async fn handle_cert_download(
+//     State(ca): State<Arc<CertificateAuthority>>,
+//     Query(query): Query<CertQuery>,
+//     device_info: DeviceInfo,
+// ) -> Result<Response, StatusCode> {
+//     debug!("Certificate download request: {:?}", query);
 
-    // Get root certificate
-    let cert_pem = ca
-        .get_root_certificate_pem()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+//     // Get root certificate
+//     let cert_pem = ca
+//         .get_root_certificate_pem()
+//         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Determine format
-    let format = if let Some(fmt) = query.format {
-        match fmt.as_str() {
-            "pem" => CertificateFormat::Pem,
-            "der" | "crt" => CertificateFormat::Der,
-            "p12" => CertificateFormat::P12,
-            "mobileconfig" => CertificateFormat::MobileConfig,
-            _ => device_info.recommended_format(),
-        }
-    } else {
-        device_info.recommended_format()
-    };
+//     // Determine format
+//     let format = if let Some(fmt) = query.format {
+//         match fmt.as_str() {
+//             "pem" => CertificateFormat::Pem,
+//             "der" | "crt" => CertificateFormat::Der,
+//             "p12" => CertificateFormat::P12,
+//             "mobileconfig" => CertificateFormat::MobileConfig,
+//             _ => device_info.recommended_format(),
+//         }
+//     } else {
+//         device_info.recommended_format()
+//     };
 
-    // Generate certificate bundle
-    let bundle = CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+//     // Generate certificate bundle
+//     let bundle = CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
+//         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Return file download
-    if query.download.unwrap_or(false) {
-        Ok((
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, bundle.mime_type),
-                (
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{}\"", bundle.filename),
-                ),
-            ],
-            bundle.data,
-        )
-            .into_response())
-    } else {
-        // Return instructions page
-        let html = generate_instructions_html(&bundle, &device_info);
-        Ok((StatusCode::OK, [(header::CONTENT_TYPE, "text/html")], html).into_response())
-    }
-}
+//     // Return file download
+//     if query.download.unwrap_or(false) {
+//         Ok((
+//             StatusCode::OK,
+//             [
+//                 (header::CONTENT_TYPE, bundle.mime_type),
+//                 (
+//                     header::CONTENT_DISPOSITION,
+//                     format!("attachment; filename=\"{}\"", bundle.filename),
+//                 ),
+//             ],
+//             bundle.data,
+//         )
+//             .into_response())
+//     } else {
+//         // Return instructions page
+//         let html = generate_instructions_html(&bundle, &device_info);
+//         Ok((StatusCode::OK, [(header::CONTENT_TYPE, "text/html")], html).into_response())
+//     }
+// }
 
 fn generate_instructions_html(bundle: &CertificateBundle, _device_info: &DeviceInfo) -> String {
     format!(

@@ -1,19 +1,26 @@
-use super::templates::DashboardTemplate;
 use super::{
-    cert_info, download_ca_crt, download_ca_pem, download_certificate, index_page, AppState,
+    download_certificate, index_page, AppState,
 };
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
 use anyhow::Result;
-use askama_axum::IntoResponse;
-use axum::{routing::get, Router};
+use salvo::server::ServerHandle;
+use salvo::{conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi, Router};
+use tokio::signal;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::info;
+use rust_embed::{RustEmbed};
+use salvo::serve_static::static_embed;
+use salvo::{affix_state, Listener, Server};
+#[cfg(unix)]
+use tokio::signal::unix;
+use tokio::task;
+
 
 pub struct WebServer {
     listen_addr: Option<SocketAddr>,
@@ -22,6 +29,10 @@ pub struct WebServer {
     config: AppConfig,
     shutdown_notify: Arc<Notify>,
 }
+
+#[derive(RustEmbed)]
+#[folder = "web-ui/static"]
+struct Assets;
 
 impl WebServer {
     pub fn new(
@@ -60,44 +71,38 @@ impl WebServer {
         });
 
         let app = Router::new()
-            // Main certificate endpoints
-            .route("/", get(index_page))
-            .route("/cert", get(download_certificate))
-            .route("/ca.crt", get(download_ca_crt))
-            .route("/ca.pem", get(download_ca_pem))
-            // API endpoints
-            .route("/api/cert-info", get(cert_info))
-            .route("/api/health", get(health_check))
-            .route("/api/stats", get(proxy_stats))
-            // Plugin management endpoints (if dashboard is enabled)
-            .route("/api/plugins", get(list_plugins))
-            .route("/api/plugins/:name", get(get_plugin_info))
-            .route("/api/plugins/:name/enable", get(enable_plugin))
-            .route("/api/plugins/:name/disable", get(disable_plugin))
-            .route("/api/plugins/logs", get(get_plugin_logs))
-            // Static files and dashboard
-            .nest_service(
-                "/static",
-                tower_http::services::ServeDir::new("web-ui/static"),
-            )
-            .route("/dashboard", get(dashboard_page))
-            .layer(ServiceBuilder::new().layer(CorsLayer::permissive()))
-            .with_state(state);
+            .hoop(affix_state::inject(state))
+            .push(Router::with_path("/").get(index_page))
+            .push(Router::with_path("/cert").get(download_certificate))
+            // .push(Router::with_path("/ca.crt").get(download_ca_crt))
+            // .push(Router::with_path("/ca.pem").get(download_ca_pem))
+            // .push(Router::with_path("/api/cert-info").get(cert_info))
+            // .push(Router::with_path("/api/health").get(health_check))
+            // .push(Router::with_path("/api/plugins").get(list_plugins))
+            // Static assets
+            .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
-        let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+
+        let doc = OpenApi::new("test api", "0.0.1").merge_router(&app);
+        let app = app
+            .unshift(doc.into_router("/api-doc/openapi.json"))
+            .unshift(SwaggerUi::new("/api-doc/openapi.json").into_router("/swagger-ui"));
+
+
+        let acceptor = TcpListener::new(bind_addr).bind().await;
 
         // Store the actual bound address
-        self.listen_addr = Some(listener.local_addr()?);
+        self.listen_addr = Some(acceptor.local_addr()?);
         let shutdown = self.shutdown_notify.clone();
+        let server = Server::new(acceptor);
+        let handle = server.handle();
 
-        // Use axum's graceful shutdown with our shutdown signal
-        let _ = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    shutdown.notified().await;
-                    info!("Shutdown signal received, stopping web server");
-                })
-                .await
+        tokio::spawn(async move {
+            listen_shutdown_signal(handle).await;
+            shutdown.notify_waiters();
+        });
+        tokio::spawn(async move {
+            server.serve(app).await;
         });
 
         Ok(())
@@ -113,86 +118,77 @@ impl WebServer {
     }
 }
 
-// Health check endpoint
-async fn health_check() -> axum::Json<serde_json::Value> {
-    axum::Json(serde_json::json!({
-        "status": "healthy",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "version": env!("CARGO_PKG_VERSION")
-    }))
-}
+// // Health check endpoint
+// async fn health_check() -> axum::Json<serde_json::Value> {
+//     axum::Json(serde_json::json!({
+//         "status": "healthy",
+//         "timestamp": chrono::Utc::now().to_rfc3339(),
+//         "version": env!("CARGO_PKG_VERSION")
+//     }))
+// }
 
-// Proxy statistics endpoint
-async fn proxy_stats(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
-    let (cache_size, cache_max) = state.ca.cache_stats().await;
+// // Proxy statistics endpoint
+// async fn proxy_stats(
+//     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+// ) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+//     let (cache_size, cache_max) = state.ca.cache_stats().await;
 
-    Ok(axum::Json(serde_json::json!({
-        "certificate_cache": {
-            "size": cache_size,
-            "max_size": cache_max,
-            "hit_rate": "N/A" // Would need to track this
-        },
-        "connections": {
-            "active": "N/A", // Would need to track this
-            "total": "N/A"
-        }
-    })))
-}
+//     Ok(axum::Json(serde_json::json!({
+//         "certificate_cache": {
+//             "size": cache_size,
+//             "max_size": cache_max,
+//             "hit_rate": "N/A" // Would need to track this
+//         },
+//         "connections": {
+//             "active": "N/A", // Would need to track this
+//             "total": "N/A"
+//         }
+//     })))
+// }
 
-// Plugin management endpoints
-async fn list_plugins() -> axum::Json<serde_json::Value> {
-    // This would integrate with the plugin manager
-    // For now, return empty list
-    axum::Json(serde_json::json!({
-        "plugins": [],
-        "total": 0
-    }))
-}
+// // Plugin management endpoints
+// async fn list_plugins() -> axum::Json<serde_json::Value> {
+//     // This would integrate with the plugin manager
+//     // For now, return empty list
+//     axum::Json(serde_json::json!({
+//         "plugins": [],
+//         "total": 0
+//     }))
+// }
 
-async fn get_plugin_info(
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
-    // This would get plugin info from the plugin manager
-    Ok(axum::Json(serde_json::json!({
-        "name": name,
-        "status": "not_implemented"
-    })))
-}
+async fn listen_shutdown_signal(handle: ServerHandle) {
+    // Wait Shutdown Signal
+    let ctrl_c = async {
+        // Handle Ctrl+C signal
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
 
-async fn enable_plugin(
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
-    // This would enable the plugin
-    Ok(axum::Json(serde_json::json!({
-        "plugin": name,
-        "action": "enable",
-        "status": "not_implemented"
-    })))
-}
+    #[cfg(unix)]
+    let terminate = async {
+        // Handle SIGTERM on Unix systems
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
 
-async fn disable_plugin(
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
-    // This would disable the plugin
-    Ok(axum::Json(serde_json::json!({
-        "plugin": name,
-        "action": "disable",
-        "status": "not_implemented"
-    })))
-}
+    #[cfg(windows)]
+    let terminate = async {
+        // Handle Ctrl+C on Windows (alternative implementation)
+        signal::windows::ctrl_c()
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
 
-async fn get_plugin_logs() -> axum::Json<serde_json::Value> {
-    // This would get plugin logs from the plugin manager
-    axum::Json(serde_json::json!({
-        "logs": [],
-        "total": 0
-    }))
-}
+    // Wait for either signal to be received
+    tokio::select! {
+        _ = ctrl_c => println!("ctrl_c signal received"),
+        _ = terminate => println!("terminate signal received"),
+    };
 
-// Dashboard page
-async fn dashboard_page() -> Result<impl IntoResponse, axum::http::StatusCode> {
-    let template = DashboardTemplate::new();
-    Ok(template)
+    // Graceful Shutdown Server
+    handle.stop_graceful(None);
 }

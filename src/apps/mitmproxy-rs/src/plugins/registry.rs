@@ -87,11 +87,17 @@ impl PluginRegistry {
         let mut store = self.new_store();
 
         for plugin in plugins.iter() {
+
+            let component = if let Some(c) = &plugin.component {
+                c
+            } else {
+                continue;
+            };
             
             let instance = self
                 .runtime
                 .linker
-                .instantiate_async(&mut store, &plugin.component)
+                .instantiate_async(&mut store, &component)
                 .await;
 
             if let Err(e) = instance {

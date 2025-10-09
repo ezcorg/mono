@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
+use salvo::oapi::ToSchema;
+use serde::{Deserialize, Serialize};
 use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row};
 use wasmsign2::reexports::hmac_sha256::Hash;
 use wasmtime::component::Component;
@@ -15,6 +17,7 @@ use crate::{
 mod capability;
 pub mod registry;
 
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct MitmPlugin {
     pub namespace: String,
     pub name: String,
@@ -26,14 +29,40 @@ pub struct MitmPlugin {
     pub publickey: String,
     pub enabled: bool,
     // Plugin capabilities
-    pub granted: HashSet<Capability>,
-    pub requested: HashSet<Capability>,
+    pub granted: CapabilitySet,
+    pub requested: CapabilitySet,
     // Plugin metadata
     pub metadata: HashMap<String, String>,
     // Compiled WASM component implementing the Plugin interface
-    pub component: Component,
+    #[serde(skip)]
+    pub component: Option<Component>,
     // Raw bytes of the WASM component for storage
     pub component_bytes: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct CapabilitySet(HashSet<Capability>);
+
+impl CapabilitySet {
+    pub fn new() -> Self {
+        Self(HashSet::new())
+    }
+
+    pub fn insert(&mut self, cap: Capability) {
+        self.0.insert(cap);
+    }
+
+    pub fn contains(&self, cap: &Capability) -> bool {
+        self.0.contains(cap)
+    }
+}
+
+impl Iterator for &CapabilitySet {
+    type Item = Capability;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.iter().cloned().next()
+    }
 }
 
 impl MitmPlugin {
@@ -48,7 +77,7 @@ impl MitmPlugin {
     pub async fn from_plugin_row(plugin_row: SqliteRow, db: &mut Db, engine: &Engine) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
-        let component = Component::from_binary(engine, &component_bytes)?;
+        let component = Some(Component::from_binary(engine, &component_bytes)?);
         let namespace = plugin_row.try_get::<String, _>("namespace")?;
         let name = plugin_row.try_get::<String, _>("name")?;
         let id = Self::make_id(&namespace, &name);
@@ -63,8 +92,8 @@ impl MitmPlugin {
         .bind(&id)
         .fetch_all(&db.pool)
         .await?;
-        let mut granted: HashSet<Capability> = HashSet::new();
-        let mut requested: HashSet<Capability> = HashSet::new();
+        let mut granted = CapabilitySet::new();
+        let mut requested = CapabilitySet::new();
         for row in capabilities {
             let cap_str: String = row.try_get("capability")?;
             let cap = Capability::from(cap_str);
@@ -178,7 +207,7 @@ impl Insert for MitmPlugin {
         // Insert requested capabilities
         for capability in &self.requested {
             // Only insert if not already granted (avoid duplicates)
-            if !self.granted.contains(capability) {
+            if !self.granted.contains(&capability) {
                 query(
                     "
                     INSERT INTO plugin_capabilities (plugin_id, capability, granted)

@@ -54,13 +54,3 @@ impl InstructionsTemplate {
         }
     }
 }
-
-#[derive(Template)]
-#[template(path = "dashboard.html")]
-pub struct DashboardTemplate;
-
-impl DashboardTemplate {
-    pub fn new() -> Self {
-        Self
-    }
-}
