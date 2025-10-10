@@ -8,7 +8,9 @@ use salvo::writing::Text;
 pub use server::WebServer;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::debug;
 use salvo::oapi::endpoint;
 use salvo::{Depot, Request, Response, Scribe};
@@ -17,9 +19,10 @@ use crate::cert::generator::DeviceInfo;
 use crate::cert::{CertificateAuthority, CertificateFormat, CertificateGenerator};
 use crate::web::templates::{IndexTemplate, InstructionsTemplate};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     pub ca: CertificateAuthority,
+    pub plugin_registry: Option<Arc<RwLock<crate::plugins::registry::PluginRegistry>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,47 +119,6 @@ pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut
     }
 }
 
-// // Legacy endpoints for compatibility
-// pub async fn download_ca_crt(State(state): State<Arc<AppState>>) -> Result<Response, StatusCode> {
-//     let cert_der = state
-//         .ca
-//         .get_root_certificate_der()
-//         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-//     Ok((
-//         StatusCode::OK,
-//         [
-//             (header::CONTENT_TYPE, "application/x-x509-ca-cert"),
-//             (
-//                 header::CONTENT_DISPOSITION,
-//                 "attachment; filename=\"mitm-proxy-ca.crt\"",
-//             ),
-//         ],
-//         cert_der,
-//     )
-//         .into_response())
-// }
-
-// pub async fn download_ca_pem(State(state): State<Arc<AppState>>) -> Result<Response, StatusCode> {
-//     let cert_pem = state
-//         .ca
-//         .get_root_certificate_pem()
-//         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-//     Ok((
-//         StatusCode::OK,
-//         [
-//             (header::CONTENT_TYPE, "application/x-pem-file"),
-//             (
-//                 header::CONTENT_DISPOSITION,
-//                 "attachment; filename=\"mitm-proxy-ca.pem\"",
-//             ),
-//         ],
-//         cert_pem,
-//     )
-//         .into_response())
-// }
-
 #[endpoint]
 pub async fn index_page(req: &mut salvo::Request, res: &mut salvo::Response) {
     let user_agent = req.headers().get("user-agent").and_then(|h| h.to_str().ok()).unwrap_or("Unknown");
@@ -169,48 +131,3 @@ pub async fn index_page(req: &mut salvo::Request, res: &mut salvo::Response) {
         Text::Plain("Something went wrong").render(res);
     }
 }
-
-// // Certificate information API
-// pub async fn cert_info(State(_state): State<Arc<AppState>>) -> Result<Json<CertInfo>, StatusCode> {
-//     let formats = vec![
-//         FormatInfo {
-//             name: "PEM".to_string(),
-//             extension: "pem".to_string(),
-//             mime_type: "application/x-pem-file".to_string(),
-//             description: "Privacy-Enhanced Mail format, widely supported".to_string(),
-//             platforms: vec!["Linux".to_string(), "macOS".to_string()],
-//         },
-//         FormatInfo {
-//             name: "DER/CRT".to_string(),
-//             extension: "crt".to_string(),
-//             mime_type: "application/x-x509-ca-cert".to_string(),
-//             description: "Distinguished Encoding Rules, binary format".to_string(),
-//             platforms: vec!["Android".to_string(), "Windows".to_string()],
-//         },
-//         FormatInfo {
-//             name: "PKCS#12".to_string(),
-//             extension: "p12".to_string(),
-//             mime_type: "application/x-pkcs12".to_string(),
-//             description: "Public Key Cryptography Standards #12".to_string(),
-//             platforms: vec!["Windows".to_string()],
-//         },
-//         FormatInfo {
-//             name: "Mobile Config".to_string(),
-//             extension: "mobileconfig".to_string(),
-//             mime_type: "application/x-apple-aspen-config".to_string(),
-//             description: "Apple Configuration Profile".to_string(),
-//             platforms: vec!["iOS".to_string(), "macOS".to_string()],
-//         },
-//     ];
-
-//     let mut instructions = HashMap::new();
-//     instructions.insert(
-//         "general".to_string(),
-//         "Download and install the certificate to enable HTTPS interception.".to_string(),
-//     );
-
-//     Ok(Json(CertInfo {
-//         formats,
-//         instructions,
-//     }))
-// }

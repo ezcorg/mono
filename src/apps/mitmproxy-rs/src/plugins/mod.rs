@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use salvo::oapi::ToSchema;
+use salvo::{macros::Extractible, oapi::ToSchema};
 use serde::{Deserialize, Serialize};
 use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row};
 use wasmsign2::reexports::hmac_sha256::Hash;
@@ -18,6 +18,7 @@ mod capability;
 pub mod registry;
 
 #[derive(Serialize, Deserialize, ToSchema)]
+#[salvo(extract(default_source(from = "body")))]
 pub struct MitmPlugin {
     pub namespace: String,
     pub name: String,
@@ -37,6 +38,7 @@ pub struct MitmPlugin {
     #[serde(skip)]
     pub component: Option<Component>,
     // Raw bytes of the WASM component for storage
+    // TODO: stream this when receiving from API
     pub component_bytes: Vec<u8>,
 }
 

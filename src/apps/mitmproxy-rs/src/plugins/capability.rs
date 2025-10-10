@@ -8,6 +8,8 @@ use lazy_static::lazy_static;
 /// Granted capabilities must be implemented by the host application.
 /// 
 /// Currently supported:
+/// - Request
+/// - Response
 /// - None
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, ToSchema)]
 pub enum Capability {

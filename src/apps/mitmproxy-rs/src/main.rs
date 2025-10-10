@@ -109,28 +109,66 @@ impl Cli {
         // Start web server for certificate distribution
         let mut web_server = WebServer::new(ca.clone(), plugin_registry.clone(), config.clone());
         web_server.start().await?;
-        let web_addr = web_server.listen_addr().unwrap();
-        let web_handle = tokio::spawn(async move { web_server.join().await });
+        let web_addr = if let Some(addr) = web_server.listen_addr() {
+            addr
+        } else {
+            return Err(anyhow::anyhow!("Failed to get web server listen address"));
+        };
         info!("Web listening on {}", web_addr);
         info!("Visit the web interface to download the root certificate");
 
         // Start proxy server
         let mut proxy_server = ProxyServer::new(ca, plugin_registry.clone(), config.clone())?;
         proxy_server.start().await?;
-        let proxy_addr = proxy_server.listen_addr().unwrap();
-        let proxy_handle = tokio::spawn(async move { proxy_server.join().await });
+        let proxy_addr = if let Some(addr) = proxy_server.listen_addr() {
+            addr
+        } else {
+            return Err(anyhow::anyhow!("Failed to get proxy server listen address"));
+        };
         info!("Proxy listening on {}", proxy_addr);
 
         // Wait for both servers
         tokio::select! {
-            _ = web_handle => {},
-            _ = proxy_handle => {},
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received shutdown signal");
+            _ = web_server.join() => {},
+            _ = proxy_server.join() => {},
+            _ = listen_shutdown_signal() => {
+                info!("Shutdown signal received, stopping servers...");
             }
         };
+        web_server.shutdown().await;
+        proxy_server.shutdown().await;
+        info!("Thanks for stopping by!");
         Ok(())
     }
+}
+
+async fn listen_shutdown_signal() {
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut sigterm) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            sigterm.recv().await;
+        } else {
+            eprintln!("Warning: failed to install SIGTERM handler");
+            futures::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(windows)]
+    let terminate = async {
+        if let Ok(mut sigterm) = tokio::signal::windows::ctrl_c() {
+            sigterm.recv().await;
+        } else {
+            eprintln!("Warning: failed to install SIGBREAK handler");
+            futures::future::pending::<()>().await;
+        }
+    };
+
+    // Wait for either signal to be received
+    tokio::select! {
+        _ = terminate => {},
+        _ = tokio::signal::ctrl_c() => {},
+    };
+
 }
 
 #[tokio::main]

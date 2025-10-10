@@ -4,22 +4,20 @@ use super::{
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
+use crate::plugins::MitmPlugin;
 use anyhow::Result;
+use salvo::oapi::endpoint;
+use salvo::oapi::extract::JsonBody;
 use salvo::server::ServerHandle;
 use salvo::{conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi, Router};
-use tokio::signal;
+use salvo::Writer;
+use tracing::warn;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
-use tower::ServiceBuilder;
-use tower_http::cors::CorsLayer;
-use tracing::info;
 use rust_embed::{RustEmbed};
 use salvo::serve_static::static_embed;
-use salvo::{affix_state, Listener, Server};
-#[cfg(unix)]
-use tokio::signal::unix;
-use tokio::task;
+use salvo::{affix_state, Depot, Listener, Server};
 
 
 pub struct WebServer {
@@ -28,6 +26,7 @@ pub struct WebServer {
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     config: AppConfig,
     shutdown_notify: Arc<Notify>,
+    handle: Option<ServerHandle>,
 }
 
 #[derive(RustEmbed)]
@@ -46,6 +45,7 @@ impl WebServer {
             config,
             plugin_registry,
             shutdown_notify: Arc::new(Notify::new()),
+            handle: None,
         }
     }
 
@@ -66,43 +66,39 @@ impl WebServer {
             "127.0.0.1:0".parse().unwrap()
         };
 
-        let state = Arc::new(AppState {
+        let state = AppState {
             ca: self.ca.clone(),
-        });
+            plugin_registry: self.plugin_registry.clone(),
+        };
 
         let app = Router::new()
             .hoop(affix_state::inject(state))
             .push(Router::with_path("/").get(index_page))
             .push(Router::with_path("/cert").get(download_certificate))
-            // .push(Router::with_path("/ca.crt").get(download_ca_crt))
-            // .push(Router::with_path("/ca.pem").get(download_ca_pem))
-            // .push(Router::with_path("/api/cert-info").get(cert_info))
-            // .push(Router::with_path("/api/health").get(health_check))
-            // .push(Router::with_path("/api/plugins").get(list_plugins))
+            .push(Router::with_path("/api/health").get(health_check))
+            .push(
+                Router::with_path("/api/plugins")
+                .get(list_plugins)
+                .put(upsert_plugin))
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
 
-        let doc = OpenApi::new("test api", "0.0.1").merge_router(&app);
+        let doc = OpenApi::new("citmproxy", "0.0.1").merge_router(&app);
         let app = app
             .unshift(doc.into_router("/api-doc/openapi.json"))
             .unshift(SwaggerUi::new("/api-doc/openapi.json").into_router("/swagger-ui"));
-
-
         let acceptor = TcpListener::new(bind_addr).bind().await;
 
         // Store the actual bound address
         self.listen_addr = Some(acceptor.local_addr()?);
-        let shutdown = self.shutdown_notify.clone();
+        let did_shutdown = self.shutdown_notify.clone();
         let server = Server::new(acceptor);
-        let handle = server.handle();
+        self.handle = Some(server.handle());
 
         tokio::spawn(async move {
-            listen_shutdown_signal(handle).await;
-            shutdown.notify_waiters();
-        });
-        tokio::spawn(async move {
             server.serve(app).await;
+            did_shutdown.notify_waiters();
         });
 
         Ok(())
@@ -115,80 +111,75 @@ impl WebServer {
 
     pub async fn shutdown(&self) {
         self.shutdown_notify.notify_waiters();
+
+        if let Some(handle) = &self.handle {
+            handle.stop_graceful(None);
+        }
     }
 }
 
 // // Health check endpoint
-// async fn health_check() -> axum::Json<serde_json::Value> {
-//     axum::Json(serde_json::json!({
-//         "status": "healthy",
-//         "timestamp": chrono::Utc::now().to_rfc3339(),
-//         "version": env!("CARGO_PKG_VERSION")
-//     }))
-// }
+#[endpoint]
+async fn health_check(res: &mut salvo::Response) {
+    res.status_code(salvo::http::StatusCode::OK);
+    res.render(salvo::writing::Text::Plain("OK"));
+}
 
-// // Proxy statistics endpoint
-// async fn proxy_stats(
-//     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-// ) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
-//     let (cache_size, cache_max) = state.ca.cache_stats().await;
-
-//     Ok(axum::Json(serde_json::json!({
-//         "certificate_cache": {
-//             "size": cache_size,
-//             "max_size": cache_max,
-//             "hit_rate": "N/A" // Would need to track this
-//         },
-//         "connections": {
-//             "active": "N/A", // Would need to track this
-//             "total": "N/A"
-//         }
-//     })))
-// }
-
-// // Plugin management endpoints
-// async fn list_plugins() -> axum::Json<serde_json::Value> {
-//     // This would integrate with the plugin manager
-//     // For now, return empty list
-//     axum::Json(serde_json::json!({
-//         "plugins": [],
-//         "total": 0
-//     }))
-// }
-
-async fn listen_shutdown_signal(handle: ServerHandle) {
-    // Wait Shutdown Signal
-    let ctrl_c = async {
-        // Handle Ctrl+C signal
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+// Plugin management endpoints
+#[endpoint]
+async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
+    let registry = if let Some(state) = depot.obtain::<AppState>().ok() {
+        state.plugin_registry.clone()
+    } else {
+        warn!("Failed to obtain AppState in list_plugins");
+        res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(salvo::writing::Text::Plain("Internal server error"));
+        return;
     };
 
-    #[cfg(unix)]
-    let terminate = async {
-        // Handle SIGTERM on Unix systems
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+    if let Some(registry) = registry {
+        let registry = registry.read().await;
+        let plugin_names: Vec<String> = registry.plugins.iter().map(|(name, _)| name.clone()).collect();
+        res.status_code(salvo::http::StatusCode::OK);
+        res.render(salvo::writing::Json(plugin_names));
+    } else {
+        res.status_code(salvo::http::StatusCode::OK);
+        res.render(salvo::writing::Json(Vec::<String>::new()));
+    }
+}
+
+#[endpoint]
+async fn upsert_plugin(depot: &mut Depot, plugin: JsonBody<MitmPlugin>, res: &mut salvo::Response) {
+    let registry = if let Some(state) = depot.obtain::<AppState>().ok() {
+        state.plugin_registry.clone()
+    } else {
+        warn!("Failed to obtain AppState in upsert_plugin");
+        res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(salvo::writing::Text::Plain("Internal server error"));
+        return;
     };
 
-    #[cfg(windows)]
-    let terminate = async {
-        // Handle Ctrl+C on Windows (alternative implementation)
-        signal::windows::ctrl_c()
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+    let registry = if let Some(r) = registry {
+        r
+    } else {
+        res.status_code(salvo::http::StatusCode::BAD_REQUEST);
+        res.render(salvo::writing::Text::Plain("Plugin system is disabled"));
+        return;
     };
 
-    // Wait for either signal to be received
-    tokio::select! {
-        _ = ctrl_c => println!("ctrl_c signal received"),
-        _ = terminate => println!("terminate signal received"),
-    };
+     let mut registry = registry.write().await;
 
-    // Graceful Shutdown Server
-    handle.stop_graceful(None);
+     let result = registry.register_plugin(plugin.0).await;
+     match result {
+         Ok(_) => {
+             res.status_code(salvo::http::StatusCode::OK);
+             res.render(salvo::writing::Text::Plain("Plugin added/updated successfully"));
+         }
+         Err(e) => {
+             warn!("Failed to add/update plugin: {}", e);
+             res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
+             res.render(salvo::writing::Text::Plain("Failed to add/update plugin"));
+         }
+     }
+
 }
