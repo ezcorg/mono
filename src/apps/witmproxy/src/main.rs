@@ -3,7 +3,7 @@ use clap::Parser;
 use confique::Config;
 use mitmproxy_rs::{
     config::confique_partial_app_config::PartialAppConfig, db::Db,
-    plugins::registry::PluginRegistry, wasm::Runtime, AppConfig, CertificateAuthority, ProxyServer, WebServer,
+    plugins::registry::PluginRegistry, wasm::Runtime, AppConfig, CertificateAuthority, WitmProxy,
 };
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -14,7 +14,7 @@ use tracing::info;
 #[command(about = "A Rust MITM proxy connected to a WASM plugin system")]
 struct Cli {
     /// Configuration file path
-    #[arg(short, long, default_value = "$HOME/.mitmproxy-rs/config.toml")]
+    #[arg(short, long, default_value = "$HOME/.witmproxy/config.toml")]
     config_path: PathBuf,
 
     /// Configuration object
@@ -28,24 +28,9 @@ struct Cli {
 
 impl Cli {
     async fn run(&self) -> Result<()> {
-        // Install default crypto provider for rustls
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .map_err(|_| anyhow::anyhow!("Failed to install default crypto provider"))?;
-
-        // Initialize logging
-        let log_level = if self.verbose { "debug" } else { "info" };
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_env_filter(format!(
-                "mitmproxy_rs={},mitm_proxy={},{}",
-                log_level, log_level, log_level
-            ))
-            .init();
-
         // Resolve home and app directory
         let home_dir = dirs::home_dir().unwrap_or(".".into());
-        let app_dir = home_dir.join(".mitmproxy-rs");
+        let app_dir = home_dir.join(".witmproxy");
         std::fs::create_dir_all(&app_dir)?;
 
         let config_path = self
@@ -61,7 +46,7 @@ impl Cli {
             .file(&config_path)
             .load()?;
 
-        info!("Loaded MITM proxy configuration");
+        info!("Loaded proxy configuration");
 
         // Create certificate authority
         let cert_dir: PathBuf = config
@@ -106,69 +91,11 @@ impl Cli {
             None
         };
 
-        // Start web server for certificate distribution
-        let mut web_server = WebServer::new(ca.clone(), plugin_registry.clone(), config.clone());
-        web_server.start().await?;
-        let web_addr = if let Some(addr) = web_server.listen_addr() {
-            addr
-        } else {
-            return Err(anyhow::anyhow!("Failed to get web server listen address"));
-        };
-        info!("Web listening on {}", web_addr);
-        info!("Visit the web interface to download the root certificate");
+        let mut proxy = WitmProxy::new(ca, plugin_registry, config, self.verbose);
+        proxy.run().await?;
 
-        // Start proxy server
-        let mut proxy_server = ProxyServer::new(ca, plugin_registry.clone(), config.clone())?;
-        proxy_server.start().await?;
-        let proxy_addr = if let Some(addr) = proxy_server.listen_addr() {
-            addr
-        } else {
-            return Err(anyhow::anyhow!("Failed to get proxy server listen address"));
-        };
-        info!("Proxy listening on {}", proxy_addr);
-
-        // Wait for both servers
-        tokio::select! {
-            _ = web_server.join() => {},
-            _ = proxy_server.join() => {},
-            _ = listen_shutdown_signal() => {
-                info!("Shutdown signal received, stopping servers...");
-            }
-        };
-        web_server.shutdown().await;
-        proxy_server.shutdown().await;
-        info!("Thanks for stopping by!");
         Ok(())
     }
-}
-
-async fn listen_shutdown_signal() {
-    #[cfg(unix)]
-    let terminate = async {
-        if let Ok(mut sigterm) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            sigterm.recv().await;
-        } else {
-            eprintln!("Warning: failed to install SIGTERM handler");
-            futures::future::pending::<()>().await;
-        }
-    };
-
-    #[cfg(windows)]
-    let terminate = async {
-        if let Ok(mut sigterm) = tokio::signal::windows::ctrl_c() {
-            sigterm.recv().await;
-        } else {
-            eprintln!("Warning: failed to install SIGBREAK handler");
-            futures::future::pending::<()>().await;
-        }
-    };
-
-    // Wait for either signal to be received
-    tokio::select! {
-        _ = terminate => {},
-        _ = tokio::signal::ctrl_c() => {},
-    };
-
 }
 
 #[tokio::main]

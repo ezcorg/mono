@@ -41,7 +41,7 @@ impl CertificateGenerator {
         Ok(CertificateBundle {
             format: "pem".to_string(),
             data: cert_pem.as_bytes().to_vec(),
-            filename: "mitm-proxy-ca.pem".to_string(),
+            filename: "witmproxy-ca.pem".to_string(),
             mime_type: "application/x-pem-file".to_string(),
             instructions: Self::get_pem_instructions(),
         })
@@ -54,7 +54,7 @@ impl CertificateGenerator {
         Ok(CertificateBundle {
             format: "der".to_string(),
             data: cert_der,
-            filename: "mitm-proxy-ca.crt".to_string(),
+            filename: "witmproxy-ca.crt".to_string(),
             mime_type: "application/x-x509-ca-cert".to_string(),
             instructions: Self::get_der_instructions(),
         })
@@ -68,7 +68,7 @@ impl CertificateGenerator {
         Ok(CertificateBundle {
             format: "p12".to_string(),
             data: cert_der, // Simplified - should be proper PKCS#12
-            filename: "mitm-proxy-ca.p12".to_string(),
+            filename: "witmproxy-ca.p12".to_string(),
             mime_type: "application/x-pkcs12".to_string(),
             instructions: Self::get_p12_instructions(),
         })
@@ -86,7 +86,7 @@ impl CertificateGenerator {
         Ok(CertificateBundle {
             format: "mobileconfig".to_string(),
             data: mobileconfig.as_bytes().to_vec(),
-            filename: "mitm-proxy-ca.mobileconfig".to_string(),
+            filename: "witmproxy-ca.mobileconfig".to_string(),
             mime_type: "application/x-apple-aspen-config".to_string(),
             instructions: Self::get_mobileconfig_instructions(),
         })
@@ -129,7 +129,7 @@ impl CertificateGenerator {
     <array>
         <dict>
             <key>PayloadCertificateFileName</key>
-            <string>mitm-proxy-ca.crt</string>
+            <string>witmproxy-ca.crt</string>
             <key>PayloadContent</key>
             <data>{}</data>
             <key>PayloadDescription</key>

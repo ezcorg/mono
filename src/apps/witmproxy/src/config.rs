@@ -36,8 +36,8 @@ pub struct ProxyConfig {
 pub struct DbConfig {
     /// The database connection URL
     #[config(
-        default = "$HOME/.mitmproxy-rs/db.sqlite",
-        partial_attr(arg(long, default_value = "$HOME/.mitmproxy-rs/db.sqlite"))
+        default = "$HOME/.witmproxy/db.sqlite",
+        partial_attr(arg(long, default_value = "$HOME/.witmproxy/db.sqlite"))
     )]
     pub db_path: PathBuf,
 
@@ -59,8 +59,8 @@ pub struct TlsConfig {
 
     /// The directory where root certificates are stored
     #[config(
-        default = "$HOME/.mitmproxy-rs/certs",
-        partial_attr(arg(long, default_value = "$HOME/.mitmproxy-rs/certs"))
+        default = "$HOME/.witmproxy/certs",
+        partial_attr(arg(long, default_value = "$HOME/.witmproxy/certs"))
     )]
     pub cert_dir: PathBuf,
 }

@@ -98,6 +98,6 @@ webpki-roots = "0.26"
 sqlx-cli = { version = "0.8.6", features = ["rustls"] }
 
 [[bin]]
-name = "mitm-proxy"
+name = "witmproxy"
 path = "src/main.rs"
 
