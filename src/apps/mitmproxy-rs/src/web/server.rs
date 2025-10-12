@@ -71,6 +71,8 @@ impl WebServer {
             plugin_registry: self.plugin_registry.clone(),
         };
 
+        salvo::http::request::set_global_secure_max_size(1 * 1024 * 1024 * 1024); // 1 GB
+
         let app = Router::new()
             .hoop(affix_state::inject(state))
             .push(Router::with_path("/").get(index_page))
@@ -83,11 +85,10 @@ impl WebServer {
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
-
         let doc = OpenApi::new("citmproxy", "0.0.1").merge_router(&app);
         let app = app
-            .unshift(doc.into_router("/api-doc/openapi.json"))
-            .unshift(SwaggerUi::new("/api-doc/openapi.json").into_router("/swagger-ui"));
+            .unshift(doc.into_router("/api/docs/openapi.json"))
+            .unshift(SwaggerUi::new("/api/docs/openapi.json").into_router("/swagger"));
         let acceptor = TcpListener::new(bind_addr).bind().await;
 
         // Store the actual bound address
@@ -178,7 +179,7 @@ async fn upsert_plugin(depot: &mut Depot, plugin: JsonBody<MitmPlugin>, res: &mu
          Err(e) => {
              warn!("Failed to add/update plugin: {}", e);
              res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
-             res.render(salvo::writing::Text::Plain("Failed to add/update plugin"));
+             res.render(salvo::writing::Text::Plain(format!("Failed to add/update plugin: {}", e)));
          }
      }
 

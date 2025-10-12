@@ -12,14 +12,14 @@ impl Guest for Plugin {
     fn handle_request(req: Request, cap: CapabilityProvider) -> HandleRequestResult {
         let headers = req.get_headers();
         let val = "req".as_bytes().to_vec();
-        headers.set("fart", &[val]);
+        headers.set("citmproxy", &[val]);
         HandleRequestResult::Next(req)
     }
 
     fn handle_response(res: Response, cap: CapabilityProvider) -> HandleResponseResult {
         let headers = res.get_headers();
         let val = "res".as_bytes().to_vec();
-        headers.set("fart", &[val]);
+        headers.set("citmproxy", &[val]);
         HandleResponseResult::Next(res)
     }
 }

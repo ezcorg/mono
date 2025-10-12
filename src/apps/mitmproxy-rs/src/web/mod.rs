@@ -19,6 +19,9 @@ use crate::cert::generator::DeviceInfo;
 use crate::cert::{CertificateAuthority, CertificateFormat, CertificateGenerator};
 use crate::web::templates::{IndexTemplate, InstructionsTemplate};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone)]
 pub struct AppState {
     pub ca: CertificateAuthority,

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use salvo::{macros::Extractible, oapi::ToSchema};
+use salvo::{oapi::ToSchema};
 use serde::{Deserialize, Serialize};
 use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row};
 use wasmsign2::reexports::hmac_sha256::Hash;
@@ -14,7 +14,7 @@ use crate::{
     plugins::capability::Capability,
 };
 
-mod capability;
+pub mod capability;
 pub mod registry;
 
 #[derive(Serialize, Deserialize, ToSchema)]
@@ -42,7 +42,7 @@ pub struct MitmPlugin {
     pub component_bytes: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct CapabilitySet(HashSet<Capability>);
 
 impl CapabilitySet {
@@ -59,11 +59,12 @@ impl CapabilitySet {
     }
 }
 
-impl Iterator for &CapabilitySet {
-    type Item = Capability;
+impl<'a> IntoIterator for &'a CapabilitySet {
+    type Item = &'a Capability;
+    type IntoIter = std::collections::hash_set::Iter<'a, Capability>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.iter().cloned().next()
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -82,16 +83,16 @@ impl MitmPlugin {
         let component = Some(Component::from_binary(engine, &component_bytes)?);
         let namespace = plugin_row.try_get::<String, _>("namespace")?;
         let name = plugin_row.try_get::<String, _>("name")?;
-        let id = Self::make_id(&namespace, &name);
 
         let capabilities = query(
             "
             SELECT capability, granted
             FROM plugin_capabilities
-            WHERE plugin_id = ?
+            WHERE namespace = ? AND name = ?
             ",
         )
-        .bind(&id)
+        .bind(&namespace)
+        .bind(&name)
         .fetch_all(&db.pool)
         .await?;
         let mut granted = CapabilitySet::new();
@@ -111,10 +112,11 @@ impl MitmPlugin {
             "
             SELECT key, value
             FROM plugin_metadata
-            WHERE plugin_id = ?
+            WHERE namespace = ? AND name = ?
             ",
         )
-        .bind(&id)
+        .bind(&namespace)
+        .bind(&name)
         .fetch_all(&db.pool)
         .await?;
         
@@ -163,20 +165,18 @@ impl MitmPlugin {
 
 // Schema:
 // `plugins` (namespace, name, version, author, description, license, url, publickey, component)
-// `plugin_capabilities` (plugin_id, capability, granted)
-// `plugin_metadata` (plugin_id, key, value)
+// `plugin_capabilities` (namespace, name, capability, granted)
+// `plugin_metadata` (namespace, name, key, value)
 
 impl Insert for MitmPlugin {
     async fn insert_tx(&self, db: &mut Db) -> Result<Transaction<'_, Sqlite>> {
         let mut tx: Transaction<'_, Sqlite> = db.pool.begin().await?;
         
-        let plugin_id = self.id();
-        
         // Insert into plugins table
         query(
             "
-            INSERT INTO plugins (namespace, name, version, author, description, license, url, publickey, component)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
         .bind(self.namespace.clone())
@@ -187,52 +187,39 @@ impl Insert for MitmPlugin {
         .bind(self.license.clone())
         .bind(self.url.clone())
         .bind(self.publickey.clone())
+        .bind(self.enabled)
         .bind(self.component_bytes.clone())
         .execute(&mut *tx)
         .await?;
 
-        // Insert granted capabilities
-        for capability in &self.granted {
-            query(
-                "
-                INSERT INTO plugin_capabilities (plugin_id, capability, granted)
-                VALUES (?, ?, ?)
-                ",
-            )
-            .bind(plugin_id.clone())
-            .bind(format!("{:?}", capability))
-            .bind(true)
-            .execute(&mut *tx)
-            .await?;
-        }
-
         // Insert requested capabilities
         for capability in &self.requested {
             // Only insert if not already granted (avoid duplicates)
-            if !self.granted.contains(&capability) {
-                query(
-                    "
-                    INSERT INTO plugin_capabilities (plugin_id, capability, granted)
-                    VALUES (?, ?, ?)
-                    ",
-                )
-                .bind(plugin_id.clone())
-                .bind(format!("{:?}", capability))
-                .bind(false)
-                .execute(&mut *tx)
-                .await?;
-            }
+            let granted = self.granted.contains(capability);
+            query(
+                "
+                INSERT INTO plugin_capabilities (namespace, name, capability, granted)
+                VALUES (?, ?, ?, ?)
+                ",
+            )
+            .bind(self.namespace.clone())
+            .bind(self.name.clone())
+            .bind(format!("{:?}", capability))
+            .bind(granted)
+            .execute(&mut *tx)
+            .await?;
         }
 
         // Insert metadata
         for (key, value) in &self.metadata {
             query(
                 "
-                INSERT INTO plugin_metadata (plugin_id, key, value)
-                VALUES (?, ?, ?)
+                INSERT INTO plugin_metadata (namespace, name, key, value)
+                VALUES (?, ?, ?, ?)
                 ",
             )
-            .bind(plugin_id.clone())
+            .bind(self.namespace.clone())
+            .bind(self.name.clone())
             .bind(key.clone())
             .bind(value.clone())
             .execute(&mut *tx)

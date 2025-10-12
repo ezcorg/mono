@@ -7,6 +7,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 
+use crate::ProxyServer;
 use crate::{AppConfig, CertificateAuthority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +26,13 @@ impl ServerHandle {
         let _ = self.shutdown_tx.send(());
         let _ = self.task.await;
     }
+}
+
+pub async fn create_proxy_server() -> (ProxyServer, CertificateAuthority, AppConfig) {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let (ca, config) = setup_ca_and_config().await;
+    let mut proxy = ProxyServer::new(ca.clone(), None, config.clone()).unwrap();
+    (proxy, ca, config)
 }
 
 pub async fn setup_ca_and_config() -> (CertificateAuthority, AppConfig) {
