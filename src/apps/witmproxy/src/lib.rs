@@ -1,4 +1,4 @@
-// Library interface for mitmproxy-rs
+// Library interface for witmproxy
 // This exposes the internal modules for testing and external use
 
 pub mod cert;
@@ -7,7 +7,6 @@ pub mod content;
 pub mod db;
 pub mod plugins;
 pub mod proxy;
-pub mod utils;
 pub mod web;
 pub mod wasm;
 

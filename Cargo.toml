@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "src/apps/mitmproxy-rs",
+    "src/apps/witmproxy",
 #    "src/apps/ezfilter-client/src-tauri",
     "src/apps/eznote/src-tauri", 
     "src/apps/wasm-test-component",

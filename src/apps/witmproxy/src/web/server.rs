@@ -4,7 +4,7 @@ use super::{
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
-use crate::plugins::MitmPlugin;
+use crate::plugins::WitmPlugin;
 use anyhow::Result;
 use salvo::oapi::endpoint;
 use salvo::oapi::extract::JsonBody;
@@ -150,7 +150,7 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
 }
 
 #[endpoint]
-async fn upsert_plugin(depot: &mut Depot, plugin: JsonBody<MitmPlugin>, res: &mut salvo::Response) {
+async fn upsert_plugin(depot: &mut Depot, plugin: JsonBody<WitmPlugin>, res: &mut salvo::Response) {
     let registry = if let Some(state) = depot.obtain::<AppState>().ok() {
         state.plugin_registry.clone()
     } else {

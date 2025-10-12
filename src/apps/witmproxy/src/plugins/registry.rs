@@ -13,12 +13,12 @@ use wasmtime_wasi_http::p3::{
 
 use crate::{
     db::{Db, Insert},
-    plugins::{Capability, MitmPlugin},
+    plugins::{Capability, WitmPlugin},
     wasm::{generated::{exports::host::plugin::event_handler::{HandleRequestResult, RequestOrResponse}, Plugin}, CapabilityProvider, Host, Runtime},
 };
 
 pub struct PluginRegistry {
-    pub plugins: HashMap<String, MitmPlugin>,
+    pub plugins: HashMap<String, WitmPlugin>,
     pub db: Db,
     pub runtime: Runtime,
 }
@@ -48,14 +48,14 @@ impl PluginRegistry {
 
     pub async fn load_plugins(&mut self) -> Result<()> {
         // TODO: select plugins from DB, verify signatures, compile WASM components
-        let plugins = MitmPlugin::all(&mut self.db, &self.runtime.engine).await?;
+        let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine).await?;
         for plugin in plugins.into_iter() {
             self.plugins.insert(plugin.id(), plugin);
         }
         Ok(())
     }
 
-    pub async fn register_plugin(&mut self, plugin: MitmPlugin) -> Result<()> {
+    pub async fn register_plugin(&mut self, plugin: WitmPlugin) -> Result<()> {
         // Upsert the given plugin into the database
         plugin.insert(&mut self.db).await?;
         // Add it to the registry
@@ -74,7 +74,7 @@ impl PluginRegistry {
             .plugins
             .values()
             .filter(|p| p.granted.contains(&Capability::Request))
-            .collect::<Vec<&MitmPlugin>>();
+            .collect::<Vec<&WitmPlugin>>();
 
         if plugins.is_empty() {
             return HostHandleRequestResult::Noop(original_req);

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use salvo::{oapi::ToSchema};
 use serde::{Deserialize, Serialize};
-use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row};
+use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row, QueryBuilder};
 use wasmsign2::reexports::hmac_sha256::Hash;
 use wasmtime::component::Component;
 use wasmtime::Engine;
@@ -19,7 +19,7 @@ pub mod registry;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[salvo(extract(default_source(from = "body")))]
-pub struct MitmPlugin {
+pub struct WitmPlugin {
     pub namespace: String,
     pub name: String,
     pub version: String,
@@ -68,7 +68,7 @@ impl<'a> IntoIterator for &'a CapabilitySet {
     }
 }
 
-impl MitmPlugin {
+impl WitmPlugin {
     fn make_id(namespace: &str, name: &str) -> String {
         format!("{}/{}", namespace, name)
     }
@@ -127,7 +127,7 @@ impl MitmPlugin {
             metadata.insert(key, value);
         }
 
-        Ok(MitmPlugin {
+        Ok(WitmPlugin {
             namespace: plugin_row.try_get("namespace")?,
             name: plugin_row.try_get("name")?,
             version: plugin_row.try_get("version")?,
@@ -157,7 +157,7 @@ impl MitmPlugin {
 
         let mut plugins = Vec::new();
         for row in rows {
-            plugins.push(MitmPlugin::from_plugin_row(row, db, engine).await?);
+            plugins.push(WitmPlugin::from_plugin_row(row, db, engine).await?);
         }
         Ok(plugins)
     }
@@ -168,7 +168,7 @@ impl MitmPlugin {
 // `plugin_capabilities` (namespace, name, capability, granted)
 // `plugin_metadata` (namespace, name, key, value)
 
-impl Insert for MitmPlugin {
+impl Insert for WitmPlugin {
     async fn insert_tx(&self, db: &mut Db) -> Result<Transaction<'_, Sqlite>> {
         let mut tx: Transaction<'_, Sqlite> = db.pool.begin().await?;
         
@@ -192,38 +192,37 @@ impl Insert for MitmPlugin {
         .execute(&mut *tx)
         .await?;
 
-        // Insert requested capabilities
-        for capability in &self.requested {
-            // Only insert if not already granted (avoid duplicates)
-            let granted = self.granted.contains(capability);
-            query(
-                "
-                INSERT INTO plugin_capabilities (namespace, name, capability, granted)
-                VALUES (?, ?, ?, ?)
-                ",
-            )
-            .bind(self.namespace.clone())
-            .bind(self.name.clone())
-            .bind(format!("{:?}", capability))
-            .bind(granted)
-            .execute(&mut *tx)
-            .await?;
+        // Bulk insert capabilities
+        if !self.requested.0.is_empty() {
+            let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+                "INSERT INTO plugin_capabilities (namespace, name, capability, granted) "
+            );
+            
+            query_builder.push_values(&self.requested, |mut b, capability| {
+                let granted = self.granted.contains(capability);
+                b.push_bind(&self.namespace)
+                    .push_bind(&self.name)
+                    .push_bind(format!("{:?}", capability))
+                    .push_bind(granted);
+            });
+            
+            query_builder.build().execute(&mut *tx).await?;
         }
 
-        // Insert metadata
-        for (key, value) in &self.metadata {
-            query(
-                "
-                INSERT INTO plugin_metadata (namespace, name, key, value)
-                VALUES (?, ?, ?, ?)
-                ",
-            )
-            .bind(self.namespace.clone())
-            .bind(self.name.clone())
-            .bind(key.clone())
-            .bind(value.clone())
-            .execute(&mut *tx)
-            .await?;
+        // Bulk insert metadata
+        if !self.metadata.is_empty() {
+            let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+                "INSERT INTO plugin_metadata (namespace, name, key, value) "
+            );
+            
+            query_builder.push_values(&self.metadata, |mut b, (key, value)| {
+                b.push_bind(&self.namespace)
+                    .push_bind(&self.name)
+                    .push_bind(key)
+                    .push_bind(value);
+            });
+            
+            query_builder.build().execute(&mut *tx).await?;
         }
 
         Ok(tx)

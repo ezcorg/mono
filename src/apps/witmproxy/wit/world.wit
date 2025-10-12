@@ -9,6 +9,12 @@ interface capabilities {
         annotate: func(content: list<u8>);
     }
 
+    resource local-storage-client {
+        set: func(key: string, value: list<u8>);
+        get: func(key: string) -> option<list<u8>>;
+        delete: func(key: string);
+    }
+
     resource capability-provider {
         constructor();
         // http: func() -> option<http-client>;
@@ -16,6 +22,7 @@ interface capabilities {
         // sql: func() -> option<sql-client>;
         // queue: func() -> option<queue-client>;
         annotator: func() -> option<annotator-client>;
+        local-storage: func() -> option<local-storage-client>;
     }
 }
 

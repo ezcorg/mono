@@ -1,5 +1,5 @@
 mod tests {
-    use crate::{plugins::{capability::Capability, CapabilitySet, MitmPlugin}, test_utils::setup_ca_and_config};
+    use crate::{plugins::{capability::Capability, CapabilitySet, WitmPlugin}, test_utils::setup_ca_and_config};
     use crate::web::WebServer;
     use crate::plugins::registry::PluginRegistry;
     use crate::db::Db;
@@ -35,7 +35,7 @@ mod tests {
         granted.insert(Capability::Response);
         let requested = granted.clone();
 
-        let plugin = MitmPlugin {
+        let plugin = WitmPlugin {
             name: "test_plugin".into(),
             component_bytes,
             namespace: "test".into(),

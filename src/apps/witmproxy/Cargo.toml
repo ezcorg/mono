@@ -1,5 +1,5 @@
 [package]
-name = "mitmproxy-rs"
+name = "witmproxy"
 version = "0.0.1"
 edition = "2021"
 authors = ["Theodore Brockman <iam@theo.lol>"]
@@ -28,9 +28,6 @@ rcgen = "0.13.2"
 ring = "0.17"
 x509-parser = "0.17"
 time = { version = "0.3", features = ["macros"] }
-
-# DNS resolution (using tokio's built-in resolver)
-# hickory-dns = "0.24"  # Commented out for now
 
 # WASM runtime (component-model + async)
 wasmtime = { path = "../wasmtime/crates/wasmtime", features = ["component-model-async"] }
@@ -73,7 +70,6 @@ markup5ever_rcdom = "0.3"
 # Template engine
 askama = "0.12"
 
-# Configuration
 clap = { version = "4.5.47", features = ["derive"] }
 markup5ever = "0.35.0"
 either = "1.15.0"

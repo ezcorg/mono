@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
@@ -7,7 +9,7 @@ pub use runtime::Runtime;
 use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider};
 
 pub mod generated {
-    pub use crate::wasm::{AnnotatorClient, CapabilityProvider};
+    pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient};
 
     wasmtime::component::bindgen!({
         world: "host:plugin/plugin",
@@ -15,6 +17,7 @@ pub mod generated {
         with: {
             "host:plugin/capabilities/capability-provider": CapabilityProvider,
             "host:plugin/capabilities/annotator-client": AnnotatorClient,
+            "host:plugin/capabilities/local-storage-client": LocalStorageClient,
             "wasi:http/types@0.3.0-rc-2025-09-16": wasmtime_wasi_http::p3::bindings::http::types,
         }
     });
@@ -31,6 +34,23 @@ pub struct AnnotatorClient {}
 
 impl AnnotatorClient {
     pub fn annotate(&self, _data: Vec<u8>) {}
+}
+
+#[derive(Default)]
+pub struct LocalStorageClient {
+    pub store: HashMap<String, Vec<u8>>,
+}
+
+impl LocalStorageClient {
+    pub fn set(&mut self, key: String, value: Vec<u8>) {
+        let _ = self.store.insert(key, value);
+    }
+    pub fn get(&self, key: String) -> Option<&Vec<u8>> {
+        self.store.get(&key)
+    }
+    pub fn delete(&mut self, key: String) {
+        let _ = self.store.remove(&key);
+    }
 }
 
 /// Minimal WASI host state for each Store.
@@ -75,9 +95,14 @@ impl HostCapabilityProvider for Host {
         self.table.push(provider).unwrap()
     }
 
+    fn local_storage(&mut self, _self: wasmtime::component::Resource<CapabilityProvider>) -> Option<wasmtime::component::Resource<generated::host::plugin::capabilities::LocalStorageClient>> {
+        let client = LocalStorageClient::default();
+        Some(self.table.push(client).unwrap())
+    }
+
     fn annotator(
         &mut self,
-        _self_: wasmtime::component::Resource<CapabilityProvider>,
+        _self: wasmtime::component::Resource<CapabilityProvider>,
     ) -> Option<wasmtime::component::Resource<AnnotatorClient>> {
         // TODO: real implementation
         let client = AnnotatorClient {};
