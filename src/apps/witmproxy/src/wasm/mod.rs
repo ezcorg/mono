@@ -6,7 +6,7 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 mod runtime;
 
 pub use runtime::Runtime;
-use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider};
+use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient};
 
 pub mod generated {
     pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient};
@@ -67,8 +67,42 @@ impl Default for Host {
             table: ResourceTable::new(),
             wasi: WasiCtxBuilder::new().build(),
             http: WasiHttpCtx::new(),
-            p3_http: P3Ctx {},
+            p3_http: P3Ctx {}
         }
+    }
+}
+
+impl HostLocalStorageClient for Host {
+    fn set(
+        &mut self,
+        self_: wasmtime::component::Resource<LocalStorageClient>,
+        key: String,
+        value: Vec<u8>,
+    ) {
+        let client = self.table.get_mut(&self_).unwrap();
+        client.set(key, value);
+    }
+
+    fn get(
+        &mut self,
+        self_: wasmtime::component::Resource<LocalStorageClient>,
+        key: String,
+    ) -> Option<Vec<u8>> {
+        let client = self.table.get(&self_).unwrap();
+        client.get(key).cloned()
+    }
+
+    fn delete(&mut self, self_: wasmtime::component::Resource<LocalStorageClient>, key: String) {
+        let client = self.table.get_mut(&self_).unwrap();
+        client.delete(key);
+    }
+
+    fn drop(
+        &mut self,
+        rep: wasmtime::component::Resource<LocalStorageClient>,
+    ) -> wasmtime::Result<()> {
+        let _ = self.table.delete(rep);
+        Ok(())
     }
 }
 
@@ -117,6 +151,9 @@ impl HostCapabilityProvider for Host {
         Ok(())
     }
 }
+
+// Implement the generated capabilities::Host trait
+impl generated::host::plugin::capabilities::Host for Host {}
 
 pub struct P3Ctx {}
 impl wasmtime_wasi_http::p3::WasiHttpCtx for P3Ctx {}

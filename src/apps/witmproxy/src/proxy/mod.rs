@@ -297,9 +297,11 @@ async fn run_tls_mitm(
                     HostHandleRequestResult::Noop(req)
                 };
 
+                info!("Handled request event, checking result and performing upstream call if needed");
+
                 // Act based on request event result
                 let initial_response = match request_event_result {
-                    HostHandleRequestResult::Drop => {
+                    HostHandleRequestResult::None => {
                         Response::builder()
                             .status(StatusCode::FORBIDDEN)
                             .body(Full::new(Bytes::from("Request dropped by plugin")))
@@ -343,6 +345,8 @@ async fn run_tls_mitm(
                     }
                 };
 
+                info!("Initial response obtained, proceeding to response event handling");
+
                 // Step 3: Run response handlers and return final response
                 let final_response = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
@@ -353,7 +357,19 @@ async fn run_tls_mitm(
                     HostHandleResponseResult::Response(initial_response)
                 };
 
+                info!("Final response ready, sending back to client");
+
                 match final_response {
+                    // TODO: fix std::io::Error ugliness
+                    HostHandleResponseResult::None => {
+                        Response::builder()
+                            .status(StatusCode::FORBIDDEN)
+                            .body(Full::new(Bytes::from("Response dropped by plugin")))
+                            .map_err(|e| {
+                                error!("Failed to build drop response: {}", e);
+                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                            })
+                    }
                     HostHandleResponseResult::Response(resp) => Ok::<_, std::io::Error>(resp)
                 }
             }

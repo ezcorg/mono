@@ -9,8 +9,6 @@ use hyper::{header, Method, Request, Response};
 use reqwest::Certificate;
 use tokio_rustls::rustls;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::body::HyperIncomingBody;
-use wasmtime_wasi_http::p3::{Request as WasiRequest};
 
 /// Custom error type for proxy operations
 #[derive(Debug)]
@@ -130,17 +128,18 @@ pub fn convert_hyper_boxed_body_to_reqwest_request(
         }
     };
 
-// Build the URL properly - for TLS MITM, we need to construct the full URL
+    // Build the URL properly - for TLS MITM, we need to construct the full URL
     let url = if parts.uri.scheme().is_some() {
         // Already has scheme (absolute URI)
         parts.uri.to_string()
     } else {
-        // Origin form - need to construct full URL from Host header
+        // Origin form - need to construct full URL from Host header or URI authority
         let host = parts
             .headers
             .get(header::HOST)
             .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| ProxyError::Generic("Missing Host header".to_string()))?;
+            .or_else(|| parts.uri.authority().map(|auth| auth.as_str()))
+            .ok_or_else(|| ProxyError::Generic("Missing Host header and URI authority".to_string()))?;
 
         // TODO: fixme this to handle http vs https properly
         let scheme = "https";
@@ -155,12 +154,9 @@ pub fn convert_hyper_boxed_body_to_reqwest_request(
 
     let mut req_builder = client.request(method, &url);
 
-    // Copy headers, but skip Host header as reqwest will set it from the URL
     for (name, value) in parts.headers.iter() {
-        if name != header::HOST {
-            if let Ok(value_str) = value.to_str() {
-                req_builder = req_builder.header(name.as_str(), value_str);
-            }
+        if let Ok(value_str) = value.to_str() {
+            req_builder = req_builder.header(name.as_str(), value_str);
         }
     }
 
@@ -203,12 +199,13 @@ pub fn convert_hyper_incoming_to_reqwest_request(
         // Already has scheme (absolute URI)
         parts.uri.to_string()
     } else {
-        // Origin form - need to construct full URL from Host header
+        // Origin form - need to construct full URL from Host header or URI authority
         let host = parts
             .headers
             .get(header::HOST)
             .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| ProxyError::Generic("Missing Host header".to_string()))?;
+            .or_else(|| parts.uri.authority().map(|auth| auth.as_str()))
+            .ok_or_else(|| ProxyError::Generic("Missing Host header and URI authority".to_string()))?;
 
         // TODO: fixme this to handle http vs https properly
         let scheme = "https";

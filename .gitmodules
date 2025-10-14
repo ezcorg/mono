@@ -18,4 +18,4 @@
 	url = https://github.com/ezdevlol/jswasi
 [submodule "src/apps/wasmtime"]
 	path = src/apps/wasmtime
-	url = https://github.com/bytecodealliance/wasmtime
+	url = https://github.com/ezdevlol/wasmtime

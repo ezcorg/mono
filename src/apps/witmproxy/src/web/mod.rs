@@ -7,11 +7,10 @@ use askama::Template;
 use salvo::writing::Text;
 pub use server::WebServer;
 
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use tokio::sync::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::debug;
 use salvo::oapi::endpoint;
 use salvo::{Depot, Request, Response, Scribe};
 
@@ -26,12 +25,6 @@ mod tests;
 pub struct AppState {
     pub ca: CertificateAuthority,
     pub plugin_registry: Option<Arc<RwLock<crate::plugins::registry::PluginRegistry>>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CertQuery {
-    format: Option<String>,
-    download: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,9 +46,7 @@ pub struct FormatInfo {
 #[endpoint]
 pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut Depot) {
     let user_agent = req.headers().get("user-agent").and_then(|h| h.to_str().ok()).unwrap_or("Unknown");
-
     let device_info = DeviceInfo::from_user_agent(user_agent);
-    debug!("Device detected: {:?}", device_info);
 
     let state = if let Ok(state) = depot.obtain::<AppState>() {
         state

@@ -4,7 +4,7 @@ use anyhow::Result;
 use salvo::{oapi::ToSchema};
 use serde::{Deserialize, Serialize};
 use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row, QueryBuilder};
-use wasmsign2::reexports::hmac_sha256::Hash;
+// use wasmsign2::reexports::hmac_sha256::Hash;
 use wasmtime::component::Component;
 use wasmtime::Engine;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};

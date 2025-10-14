@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use confique::Config;
-use mitmproxy_rs::{
+use witmproxy::{
     config::confique_partial_app_config::PartialAppConfig, db::Db,
     plugins::registry::PluginRegistry, wasm::Runtime, AppConfig, CertificateAuthority, WitmProxy,
 };
@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "mitm")]
+#[command(name = "witmproxy")]
 #[command(about = "A Rust MITM proxy connected to a WASM plugin system")]
 struct Cli {
     /// Configuration file path
@@ -91,7 +91,7 @@ impl Cli {
             None
         };
 
-        let mut proxy = WitmProxy::new(ca, plugin_registry, config, self.verbose);
+        let mut proxy = WitmProxy::new(ca, plugin_registry, config, if self.verbose { "debug" } else { "info" }.to_string());
         proxy.run().await?;
 
         Ok(())

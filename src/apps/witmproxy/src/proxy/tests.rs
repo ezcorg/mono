@@ -1,5 +1,5 @@
 mod tests {
-    use crate::test_utils::{create_client, setup_ca_and_config, start_target_server, Protocol};
+    use crate::test_utils::{create_client, create_ca_and_config, create_hello_server, Protocol};
     use crate::ProxyServer;
 
     struct TestCase {
@@ -11,9 +11,9 @@ mod tests {
 
     async fn run_test(test: TestCase) {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let (ca, mut config) = setup_ca_and_config().await;
+        let (ca, mut config) = create_ca_and_config().await;
         let server_handle =
-            start_target_server("127.0.0.1", test.target_port, ca.clone(), test.server_proto).await;
+            create_hello_server("127.0.0.1", test.target_port, ca.clone(), test.server_proto).await;
 
         // Set the specific proxy port for testing
         config.proxy.proxy_bind_addr = Some(format!("127.0.0.1:{}", test.proxy_port));

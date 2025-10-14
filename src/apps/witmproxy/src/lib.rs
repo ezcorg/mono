@@ -12,6 +12,8 @@ pub mod wasm;
 
 #[cfg(test)]
 pub mod test_utils;
+#[cfg(test)]
+mod tests;
 
 // Re-export commonly used types for convenience
 pub use cert::CertificateAuthority;
@@ -32,7 +34,7 @@ pub struct WitmProxy {
     ca: CertificateAuthority,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     config: AppConfig,
-    verbose: bool,
+    log_level: String,
     proxy_server: Option<ProxyServer>,
     web_server: Option<WebServer>,
     shutdown_notify: Arc<Notify>,
@@ -42,21 +44,21 @@ impl WitmProxy {
     /// Create a new WitmProxy instance with the given components
     ///
     /// # Arguments
-    /// * `ca` - The certificate authority for TLS operations
-    /// * `plugin_registry` - Optional plugin registry for WASM plugins
-    /// * `config` - The application configuration
-    /// * `verbose` - Enable verbose logging
+    /// * [`ca`](CertificateAuthority) - The certificate authority for TLS operations
+    /// * [`plugin_registry`](PluginRegistry) - Optional plugin registry for WASM plugins
+    /// * [`config`](AppConfig) - The application configuration
+    /// * `log_level` - The log level to use for the proxy (e.g. "info", "debug")
     pub fn new(
         ca: CertificateAuthority,
         plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
         config: AppConfig,
-        verbose: bool,
+        log_level: String,
     ) -> Self {
         Self {
             ca,
             plugin_registry,
             config,
-            verbose,
+            log_level,
             proxy_server: None,
             web_server: None,
             shutdown_notify: Arc::new(Notify::new()),
@@ -96,9 +98,9 @@ impl WitmProxy {
             .map_err(|_| anyhow::anyhow!("Failed to install default crypto provider"))?;
 
         // Initialize logging
-        self.init_logging();
+        self.init_logging(&self.log_level);
 
-        info!("Starting WitmProxy services");
+        info!("Hi there! witmproxy is starting...");
 
         // Start web server for certificate distribution
         let mut web_server = WebServer::new(
@@ -127,7 +129,7 @@ impl WitmProxy {
         self.web_server = Some(web_server);
         self.proxy_server = Some(proxy_server);
 
-        info!("witmproxy services started successfully");
+        info!("witmproxy started successfully");
         Ok(())
     }
 
@@ -168,14 +170,12 @@ impl WitmProxy {
     }
 
     // Private helper methods
-
-    fn init_logging(&self) {
-        let log_level = if self.verbose { "debug" } else { "info" };
+    fn init_logging(&self, log_level: &str) {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
             .with_env_filter(format!(
-                "mitmproxy_rs={},mitm_proxy={},{}",
-                log_level, log_level, log_level
+                "witmproxy={},{}",
+                log_level, log_level
             ))
             .init();
     }

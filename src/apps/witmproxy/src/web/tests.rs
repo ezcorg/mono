@@ -1,5 +1,5 @@
 mod tests {
-    use crate::{plugins::{capability::Capability, CapabilitySet, WitmPlugin}, test_utils::setup_ca_and_config};
+    use crate::{plugins::{capability::Capability, CapabilitySet, WitmPlugin}, test_utils::create_ca_and_config};
     use crate::web::WebServer;
     use crate::plugins::registry::PluginRegistry;
     use crate::db::Db;
@@ -10,7 +10,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_plugin_upsert() {
-        let (ca, config) = setup_ca_and_config().await;
+        let (ca, config) = create_ca_and_config().await;
         
         // Create a temporary database for testing
         let temp_dir = tempdir().unwrap();
