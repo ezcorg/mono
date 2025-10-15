@@ -69,7 +69,7 @@ pub async fn create_plugin_registry() -> (PluginRegistry, tempfile::TempDir) {
 /// In conjunction with our echo server, we can verify that the target server
 /// received the modified request, and that the client received the modified response.
 pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
-    let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.wasm").unwrap();
+    let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm").unwrap();
     let mut granted = CapabilitySet::new();
     granted.insert(Capability::Request);
     granted.insert(Capability::Response);
@@ -77,6 +77,9 @@ pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<()
 
     // Compile the component from bytes using the registry's runtime engine
     let component = Some(wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)?);
+    // Simple CEL selector that matches all requests
+    let cel_source = "true".to_string();
+    let cel_filter = Some(cel::Program::compile(&cel_source)?);
 
     let plugin = WitmPlugin {
         name: "test_plugin".into(),
@@ -93,6 +96,8 @@ pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<()
         requested,
         metadata: std::collections::HashMap::new(),
         component,
+        cel_filter,
+        cel_source,
     };
     registry
         .register_plugin(plugin)

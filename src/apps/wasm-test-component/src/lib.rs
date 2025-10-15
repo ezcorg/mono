@@ -1,4 +1,4 @@
-use crate::{exports::host::plugin::event_handler::{CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, Request, Response}, wasi::http::types::Fields};
+use crate::{exports::host::plugin::witm_plugin::{CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, Request, Response, PluginManifest}};
 
 wit_bindgen::generate!({
     world: "host:plugin/plugin",
@@ -9,6 +9,23 @@ wit_bindgen::generate!({
 struct Plugin;
 
 impl Guest for Plugin {
+    fn manifest() -> PluginManifest {
+        PluginManifest {
+            name: "wasm-test-component".to_string(),
+            version: "0.0.1".to_string(),
+            description: "A test plugin implemented as a WASM component".to_string(),
+            metadata: vec![],
+            capabilities: vec![
+                "request".to_string(),
+                "response".to_string(),
+            ],
+            cel: "true".to_string(),
+            license: "MIT".to_string(),
+            url: "https://example.com".to_string(),
+            publickey: "todo".to_string(),
+        }
+    }
+
     fn handle_request(req: Request, cap: CapabilityProvider) -> HandleRequestResult {
         let authority = req.get_authority().clone();
         let path_with_query = req.get_path_with_query().clone();

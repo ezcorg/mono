@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
+use ::cel::Program;
 use salvo::{oapi::ToSchema};
 use serde::{Deserialize, Serialize};
 use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row, QueryBuilder};
@@ -16,6 +17,7 @@ use crate::{
 
 pub mod capability;
 pub mod registry;
+pub mod cel;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[salvo(extract(default_source(from = "body")))]
@@ -40,6 +42,10 @@ pub struct WitmPlugin {
     // Raw bytes of the WASM component for storage
     // TODO: stream this when receiving from API
     pub component_bytes: Vec<u8>,
+    #[serde(skip)]
+    pub cel_filter: Option<Program>,
+    /// Source code for the CEL selector
+    pub cel_source: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
@@ -81,6 +87,13 @@ impl WitmPlugin {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
         let component = Some(Component::from_binary(engine, &component_bytes)?);
+        
+        let cel_source: String = plugin_row.try_get("cel_filter")?;
+        let cel_filter = if !cel_source.is_empty() {
+            Some(Program::compile(&cel_source)?)
+        } else {
+            None
+        };
         let namespace = plugin_row.try_get::<String, _>("namespace")?;
         let name = plugin_row.try_get::<String, _>("name")?;
 
@@ -142,6 +155,8 @@ impl WitmPlugin {
             granted,
             requested,
             metadata,
+            cel_filter,
+            cel_source,
         })
     }
 
@@ -175,8 +190,8 @@ impl Insert for WitmPlugin {
         // Insert into plugins table
         query(
             "
-            INSERT INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component, cel_filter)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
         .bind(self.namespace.clone())
@@ -189,6 +204,7 @@ impl Insert for WitmPlugin {
         .bind(self.publickey.clone())
         .bind(self.enabled)
         .bind(self.component_bytes.clone())
+        .bind(self.cel_source.clone())
         .execute(&mut *tx)
         .await?;
 

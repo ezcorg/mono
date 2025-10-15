@@ -1,8 +1,6 @@
 use anyhow::{Result};
 use wasmtime::{component::{Linker, HasSelf}, Config, Engine};
-use wasmtime_wasi_http::{p3::WasiHttp};
 use wasmtime_wasi::p3::bindings::LinkOptions;
-use wasmtime_wasi_http::p3::WasiHttpView;
 use crate::{wasm::{Host}};
 
 pub struct Runtime {

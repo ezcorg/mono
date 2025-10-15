@@ -5,11 +5,13 @@ mod tests {
     use crate::db::Db;
     use crate::wasm::Runtime;
     use std::sync::Arc;
+    use anyhow::Result;
     use tokio::sync::RwLock;
     use tempfile::tempdir;
 
     #[tokio::test]
-    async fn test_plugin_upsert() {
+    async fn test_plugin_upsert() -> Result<()> {
+         // Create CA and config
         let (ca, config) = create_ca_and_config().await;
         
         // Create a temporary database for testing
@@ -29,11 +31,14 @@ mod tests {
         web_server.start().await.unwrap();
         let bind_addr = web_server.listen_addr().unwrap();
 
-        let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.wasm").unwrap();
+        let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm").unwrap();
         let mut granted = CapabilitySet::new();
         granted.insert(Capability::Request);
         granted.insert(Capability::Response);
         let requested = granted.clone();
+
+        let cel_source = "true".to_string();
+        let cel_filter = Some(cel::Program::compile(&cel_source)?);
 
         let plugin = WitmPlugin {
             name: "test_plugin".into(),
@@ -50,6 +55,8 @@ mod tests {
             requested,
             metadata: std::collections::HashMap::new(),
             component: None,
+            cel_filter,
+            cel_source,
         };
 
         let response = reqwest::Client::new()
@@ -58,13 +65,12 @@ mod tests {
             .send()
             .await
             .unwrap();
-            
-        // The connection reset issue is now fixed - we can reach the web server
-        // and get a proper HTTP response instead of a connection reset
+        
         assert!(response.status().is_success(),
             "Expected successful response, got: {} - {}",
             response.status(),
             response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string())
         );
+        Ok(())
     }
 }

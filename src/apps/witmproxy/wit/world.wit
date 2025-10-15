@@ -26,9 +26,28 @@ interface capabilities {
     }
 }
 
-interface event-handler {
+interface witm-plugin {
     use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
     use capabilities.{capability-provider};
+
+    record tag {
+        key: string,
+        value: string,
+    }
+
+    record plugin-manifest {
+        name: string,
+        version: string,
+        description: string,
+        license: string,
+        url: string,
+        publickey: string,
+        cel: string,
+        capabilities: list<string>,
+        metadata: list<tag>,
+    }
+
+    manifest: func() -> plugin-manifest;
 
     variant request-or-response {
         request(request),
@@ -52,5 +71,5 @@ interface event-handler {
 
 world plugin {
     import capabilities;
-    export event-handler;
+    export witm-plugin;
 }

@@ -10,6 +10,7 @@ CREATE TABLE plugins (
     publickey TEXT NOT NULL,
     enabled BOOLEAN NOT NULL,
     component BLOB NOT NULL,
+    cel_filter TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (namespace, name)
 );

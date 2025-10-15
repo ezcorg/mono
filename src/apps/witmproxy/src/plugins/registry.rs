@@ -2,19 +2,28 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use bytes::Bytes;
+use cel::Value;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, Request, Response};
 use tracing::{info, warn};
-use wasmtime::{component::{Resource}, Store};
+use wasmtime::{component::Resource, Store};
 use wasmtime_wasi_http::p3::{
-    bindings::http::{handler::ErrorCode}, Request as WasiRequest, Response as WasiResponse,
+    bindings::http::handler::ErrorCode, Request as WasiRequest, Response as WasiResponse,
     WasiHttpView,
 };
 
 use crate::{
     db::{Db, Insert},
-    plugins::{Capability, WitmPlugin},
-    wasm::{generated::{exports::host::plugin::event_handler::{HandleRequestResult, HandleResponseResult, RequestOrResponse}, Plugin}, CapabilityProvider, Host, Runtime},
+    plugins::{cel::CelRequest, Capability, WitmPlugin},
+    wasm::{
+        generated::{
+            exports::host::plugin::witm_plugin::{
+                HandleRequestResult, HandleResponseResult, RequestOrResponse,
+            },
+            Plugin,
+        },
+        CapabilityProvider, Host, Runtime,
+    },
 };
 
 pub struct PluginRegistry {
@@ -36,7 +45,6 @@ pub enum HostHandleResponseResult {
     None,
     Response(Response<Full<Bytes>>),
 }
-
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Self {
@@ -68,14 +76,43 @@ impl PluginRegistry {
         Store::new(&self.runtime.engine, Host::default())
     }
 
+    pub async fn find_matching_request_plugins(&self, req: &Request<Incoming>) -> Vec<&WitmPlugin> {
+        self.plugins
+            .values()
+            .filter(|p| p.granted.contains(&Capability::Request))
+            .filter(|p| {
+                let result = if let Some(cel_selector) = &p.cel_filter {
+                    let mut ctx = cel::Context::empty();
+                    let req = CelRequest::from(req);
+
+                    match ctx.add_variable("request", req) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %p.id(),
+                                error = %e,
+                                "Failed to add request to CEL context; skipping plugin"
+                            );
+                            return false;
+                        }
+                    }
+                    cel_selector.execute(&ctx).unwrap_or(Value::Bool(false))
+                } else {
+                    Value::Bool(false)
+                };
+                match result {
+                    Value::Bool(b) => b,
+                    _ => false,
+                }
+            })
+            .collect()
+    }
+
     /// Handle an incoming HTTP request by passing it through all registered plugins
     /// that have the `Request` capability.
     pub async fn handle_request(&self, original_req: Request<Incoming>) -> HostHandleRequestResult {
-        let plugins = self
-            .plugins
-            .values()
-            .filter(|p| p.granted.contains(&Capability::Request))
-            .collect::<Vec<&WitmPlugin>>();
+        let plugins = self.find_matching_request_plugins(&original_req).await;
 
         if plugins.is_empty() {
             return HostHandleRequestResult::Noop(original_req);
@@ -88,13 +125,12 @@ impl PluginRegistry {
         let mut store = self.new_store();
 
         for plugin in plugins.iter() {
-
             let component = if let Some(c) = &plugin.component {
                 c
             } else {
                 continue;
             };
-            
+
             let instance = self
                 .runtime
                 .linker
@@ -130,7 +166,8 @@ impl PluginRegistry {
 
             // Push the current request and capability provider into the table
             // The request is moved here, so we can't recover it if the plugin fails
-            let req_resource: Resource<WasiRequest> = store.data_mut().http().table.push(current_req).unwrap();
+            let req_resource: Resource<WasiRequest> =
+                store.data_mut().http().table.push(current_req).unwrap();
             // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
             let cap_resource = store.data_mut().http().table.push(provider).unwrap();
@@ -138,9 +175,8 @@ impl PluginRegistry {
             let guest_result = store
                 .run_concurrent(
                     async move |store| -> Result<HandleRequestResult, ErrorCode> {
-
                         let (result, task) = match plugin_instance
-                            .host_plugin_event_handler()
+                            .host_plugin_witm_plugin()
                             .call_handle_request(store, req_resource, cap_resource)
                             .await
                         {
@@ -173,34 +209,32 @@ impl PluginRegistry {
                 }
             };
             match inner {
-                HandleRequestResult::Done(req_or_res) => {
-                    match req_or_res {
-                        RequestOrResponse::Request(r) => {
-                            let r = store
-                                .data_mut()
-                                .http()
-                                .table
-                                .delete(r)
-                                .expect("failed to delete request from table");
-                            let req_result = r.into_http(&mut store, async { Ok(()) });
-                            match req_result {
-                                Ok(req) => return HostHandleRequestResult::Request(req),
-                                Err(_) => return HostHandleRequestResult::None,
-                            }
+                HandleRequestResult::Done(req_or_res) => match req_or_res {
+                    RequestOrResponse::Request(r) => {
+                        let r = store
+                            .data_mut()
+                            .http()
+                            .table
+                            .delete(r)
+                            .expect("failed to delete request from table");
+                        let req_result = r.into_http(&mut store, async { Ok(()) });
+                        match req_result {
+                            Ok(req) => return HostHandleRequestResult::Request(req),
+                            Err(_) => return HostHandleRequestResult::None,
                         }
-                        RequestOrResponse::Response(r) => {
-                            let r = store
-                                .data_mut()
-                                .http()
-                                .table
-                                .delete(r)
-                                .expect("failed to delete response from table");
-                            let r = r.into_http(&mut store, async { Ok(()) });
-                            match r {
-                                Err(_) => return HostHandleRequestResult::None,
-                                Ok(r) => {
-                                    return HostHandleRequestResult::Response(r);
-                                }
+                    }
+                    RequestOrResponse::Response(r) => {
+                        let r = store
+                            .data_mut()
+                            .http()
+                            .table
+                            .delete(r)
+                            .expect("failed to delete response from table");
+                        let r = r.into_http(&mut store, async { Ok(()) });
+                        match r {
+                            Err(_) => return HostHandleRequestResult::None,
+                            Ok(r) => {
+                                return HostHandleRequestResult::Response(r);
                             }
                         }
                     }
@@ -213,7 +247,6 @@ impl PluginRegistry {
                         .table
                         .delete(new_req)
                         .expect("failed to retrieve new request from table");
-
                 }
             };
         }
@@ -255,7 +288,7 @@ impl PluginRegistry {
             } else {
                 continue;
             };
-            
+
             let instance = self
                 .runtime
                 .linker
@@ -291,7 +324,8 @@ impl PluginRegistry {
 
             // Push the current response and capability provider into the table
             // The response is moved here, so we can't recover it if the plugin fails
-            let res_resource: Resource<WasiResponse> = store.data_mut().http().table.push(current_res).unwrap();
+            let res_resource: Resource<WasiResponse> =
+                store.data_mut().http().table.push(current_res).unwrap();
             // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
             let cap_resource = store.data_mut().http().table.push(provider).unwrap();
@@ -299,9 +333,8 @@ impl PluginRegistry {
             let guest_result = store
                 .run_concurrent(
                     async move |store| -> Result<HandleResponseResult, ErrorCode> {
-
                         let (result, task) = match plugin_instance
-                            .host_plugin_event_handler()
+                            .host_plugin_witm_plugin()
                             .call_handle_response(store, res_resource, cap_resource)
                             .await
                         {
@@ -354,10 +387,10 @@ impl PluginRegistry {
                             let body = Full::new(collected);
                             let res = Response::from_parts(parts, body);
                             return HostHandleResponseResult::Response(res);
-                        },
+                        }
                         Err(_) => return HostHandleResponseResult::None,
                     }
-                },
+                }
                 HandleResponseResult::Next(new_res) => {
                     // Extract the updated response from the table for the next iteration
                     current_res = store
@@ -386,7 +419,7 @@ impl PluginRegistry {
                 let body = Full::new(collected);
                 let res = Response::from_parts(parts, body);
                 HostHandleResponseResult::Response(res)
-            },
+            }
             Err(_) => HostHandleResponseResult::None,
         }
     }
