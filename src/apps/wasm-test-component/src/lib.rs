@@ -13,13 +13,13 @@ impl Guest for Plugin {
         PluginManifest {
             name: "wasm-test-component".to_string(),
             version: "0.0.1".to_string(),
-            description: "A test plugin implemented as a WASM component".to_string(),
+            description: "A test plugin".to_string(),
             metadata: vec![],
             capabilities: vec![
                 "request".to_string(),
                 "response".to_string(),
             ],
-            cel: "true".to_string(),
+            cel: "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])".to_string(),
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
             publickey: "todo".to_string(),

@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 use bytes::Bytes;
 use cel::Value;
+use either::Either;
+use http_body::Body;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, Request, Response};
 use tracing::{info, warn};
@@ -34,9 +36,13 @@ pub struct PluginRegistry {
 
 /// Result of handling a request through the plugin chain.
 /// Omits any internal WASI types, only exposes HTTP types.
-pub enum HostHandleRequestResult {
+pub enum HostHandleRequestResult<T = Incoming>
+where
+    T: Body<Data = Bytes> + Send + Sync + 'static,
+    T::Error: Into<ErrorCode>,
+{
     None,
-    Noop(Request<Incoming>),
+    Noop(Request<T>),
     Request(Request<BoxBody<Bytes, ErrorCode>>),
     Response(Response<BoxBody<Bytes, ErrorCode>>),
 }
@@ -76,14 +82,18 @@ impl PluginRegistry {
         Store::new(&self.runtime.engine, Host::default())
     }
 
-    pub async fn find_matching_request_plugins(&self, req: &Request<Incoming>) -> Vec<&WitmPlugin> {
+    pub async fn find_matching_plugins<T>(&self, req_or_res: Either<&Request<T>, &Response<T>>) -> Vec<&WitmPlugin>
+    where
+        T: Body<Data = Bytes> + Send + Sync + 'static,
+        T::Error: Into<ErrorCode>,
+    {
         self.plugins
             .values()
             .filter(|p| p.granted.contains(&Capability::Request))
             .filter(|p| {
                 let result = if let Some(cel_selector) = &p.cel_filter {
                     let mut ctx = cel::Context::empty();
-                    let req = CelRequest::from(req);
+                    let req = CelRequest::from(req_or_res);
 
                     match ctx.add_variable("request", req) {
                         Ok(_) => {}
@@ -97,7 +107,19 @@ impl PluginRegistry {
                             return false;
                         }
                     }
-                    cel_selector.execute(&ctx).unwrap_or(Value::Bool(false))
+
+                    match cel_selector.execute(&ctx) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %p.id(),
+                                error = %e,
+                                "Failed to execute CEL filter; skipping plugin"
+                            );
+                            Value::Bool(false)
+                        }
+                    }
                 } else {
                     Value::Bool(false)
                 };
@@ -111,15 +133,19 @@ impl PluginRegistry {
 
     /// Handle an incoming HTTP request by passing it through all registered plugins
     /// that have the `Request` capability.
-    pub async fn handle_request(&self, original_req: Request<Incoming>) -> HostHandleRequestResult {
-        let plugins = self.find_matching_request_plugins(&original_req).await;
+    pub async fn handle_request<T>(&self, original_req: Request<T>) -> HostHandleRequestResult<T>
+    where
+        T: Body<Data = Bytes> + Send + Sync + 'static,
+        T::Error: Into<ErrorCode>,
+    {
+        let plugins = self.find_matching_plugins(Either::Left(&original_req)).await;
 
         if plugins.is_empty() {
             return HostHandleRequestResult::Noop(original_req);
         }
 
         let (req, body) = original_req.into_parts();
-        let body = body.map_err(ErrorCode::from_hyper_request_error);
+        let body = body.map_err(Into::into);
         let req = Request::from_parts(req, body);
         let (mut current_req, _io) = WasiRequest::from_http(req);
         let mut store = self.new_store();
@@ -391,6 +417,7 @@ impl PluginRegistry {
                         Err(_) => return HostHandleResponseResult::None,
                     }
                 }
+                
                 HandleResponseResult::Next(new_res) => {
                     // Extract the updated response from the table for the next iteration
                     current_res = store
@@ -423,4 +450,225 @@ impl PluginRegistry {
             Err(_) => HostHandleResponseResult::None,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::{Method, Request};
+    use crate::test_utils::{create_plugin_registry};
+    use crate::plugins::{Capability, CapabilitySet, WitmPlugin};
+
+    /// Create a test plugin with the specific CEL expression for filtering
+    async fn register_test_plugin_with_cel_filter(registry: &mut PluginRegistry, cel_expression: &str) -> Result<(), anyhow::Error> {
+        let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm").unwrap();
+        let mut granted = CapabilitySet::new();
+        granted.insert(Capability::Request);
+        granted.insert(Capability::Response);
+        let requested = granted.clone();
+
+        // Compile the component from bytes using the registry's runtime engine
+        let component = Some(wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)?);
+        
+        // Use the provided CEL expression
+        let cel_source = cel_expression.to_string();
+        let cel_filter = Some(cel::Program::compile(&cel_source)?);
+
+        let plugin = WitmPlugin {
+            name: "test_plugin_with_filter".into(),
+            component_bytes,
+            namespace: "test".into(),
+            version: "0.0.0".into(),
+            author: "author".into(),
+            description: "description".into(),
+            license: "mit".into(),
+            enabled: true,
+            url: "https://example.com".into(),
+            publickey: "todo".into(),
+            granted,
+            requested,
+            metadata: std::collections::HashMap::new(),
+            component,
+            cel_filter,
+            cel_source,
+        };
+        registry.register_plugin(plugin).await
+    }
+
+    #[tokio::test]
+    async fn test_find_matching_request_plugins_with_cel_filter() {
+        let (mut registry, _temp_dir) = create_plugin_registry().await;
+        
+        // Register a plugin with the specific CEL expression
+        let cel_expression = "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])";
+        register_test_plugin_with_cel_filter(&mut registry, cel_expression).await.unwrap();
+
+        // Test case 1: Request to normal host without skipthis header - should match
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/test")
+            .header("host", "example.com")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 1, "Request to example.com should return one plugin");
+
+        // Test case 2: Request to normal host with skipthis header set to 'false' - should match
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/test")
+            .header("host", "example.com")
+            .header("skipthis", "false")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 1, "Request to example.com with skipthis=false should return one plugin");
+
+        // Test case 3: Request to normal host with skipthis header set to 'true' - should still match (first condition is true)
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/test")
+            .header("host", "example.com")
+            .header("skipthis", "true")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 0, "Request to example.com with skipthis=true should not match");
+
+        // Test case 4: Request to 'donotprocess.com' without skipthis header - should match (second condition is true)
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://donotprocess.com/test")
+            .header("host", "donotprocess.com")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com should not match");
+
+        // Test case 5: Request to 'donotprocess.com' with skipthis header set to 'false' - should match
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://donotprocess.com/test")
+            .header("host", "donotprocess.com")
+            .header("skipthis", "false")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com with skipthis=false should not match");
+
+        // Test case 6: Request to 'donotprocess.com' with skipthis header set to 'true' - should NOT match
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://donotprocess.com/test")
+            .header("host", "donotprocess.com")
+            .header("skipthis", "true")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com with skipthis=true should not match");
+    }
+
+    #[tokio::test]
+    async fn test_find_matching_request_plugins_no_plugins() {
+        let (registry, _temp_dir) = create_plugin_registry().await;
+        
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/test")
+            .header("host", "example.com")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 0, "Should return no plugins when none are registered");
+    }
+
+    #[tokio::test]
+    async fn test_find_matching_request_plugins_no_request_capability() {
+        let (mut registry, _temp_dir) = create_plugin_registry().await;
+        
+        // Register a plugin without Request capability
+        let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm").unwrap();
+        let mut granted = CapabilitySet::new();
+        granted.insert(Capability::Response); // Only Response capability, not Request
+        let requested = granted.clone();
+
+        let component = Some(wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes).unwrap());
+        let cel_source = "true".to_string();
+        let cel_filter = Some(cel::Program::compile(&cel_source).unwrap());
+
+        let plugin = WitmPlugin {
+            name: "response_only_plugin".into(),
+            component_bytes,
+            namespace: "test".into(),
+            version: "0.0.0".into(),
+            author: "author".into(),
+            description: "description".into(),
+            license: "mit".into(),
+            enabled: true,
+            url: "https://example.com".into(),
+            publickey: "todo".into(),
+            granted,
+            requested,
+            metadata: std::collections::HashMap::new(),
+            component,
+            cel_filter,
+            cel_source,
+        };
+        registry.register_plugin(plugin).await.unwrap();
+        
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/test")
+            .header("host", "example.com")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        
+        let matching_plugins = registry.find_matching_plugins(&req).await;
+        assert_eq!(matching_plugins.len(), 0, "Should return no plugins when plugin doesn't have Request capability");
+    }
+
+    // #[tokio::test]
+    // async fn test_find_matching_request_plugins_multiple_plugins() {
+    //     let (mut registry, _temp_dir) = create_plugin_registry().await;
+        
+    //     // Register first plugin that matches all requests
+    //     let cel_expression1 = "true";
+    //     register_test_plugin_with_cel_filter(&mut registry, cel_expression1).await.unwrap();
+        
+    //     // Register second plugin with the specific filter
+    //     let cel_expression2 = "request.host != 'donotprocess.com' || !(request.headers.has('skipthis') && request.headers['skipthis'] == 'true')";
+    //     register_test_plugin_with_cel_filter(&mut registry, cel_expression2).await.unwrap();
+        
+    //     // Test with a request that should match both plugins
+    //     let req = Request::builder()
+    //         .method(Method::GET)
+    //         .uri("https://example.com/test")
+    //         .header("host", "example.com")
+    //         .body(Full::new(Bytes::from("test body")))
+    //         .unwrap();
+        
+    //     let matching_plugins = registry.find_matching_request_plugins(&req).await;
+    //     assert_eq!(matching_plugins.len(), 2, "Should match both plugins for example.com request");
+        
+    //     // Test with a request that should only match the first plugin (matches all)
+    //     let req = Request::builder()
+    //         .method(Method::GET)
+    //         .uri("https://donotprocess.com/test")
+    //         .header("host", "donotprocess.com")
+    //         .header("skipthis", "true")
+    //         .body(Full::new(Bytes::from("test body")))
+    //         .unwrap();
+        
+    //     let matching_plugins = registry.find_matching_request_plugins(&req).await;
+    //     assert_eq!(matching_plugins.len(), 1, "Should only match the 'true' filter plugin for donotprocess.com with skipthis=true");
+    // }
 }
