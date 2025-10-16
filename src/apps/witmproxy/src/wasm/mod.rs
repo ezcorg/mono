@@ -5,8 +5,10 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
+use crate::wasm::generated::host::plugin::capabilities::{
+    HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient,
+};
 pub use runtime::Runtime;
-use crate::wasm::generated::host::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient};
 
 pub mod generated {
     pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient};
@@ -67,7 +69,7 @@ impl Default for Host {
             table: ResourceTable::new(),
             wasi: WasiCtxBuilder::new().build(),
             http: WasiHttpCtx::new(),
-            p3_http: P3Ctx {}
+            p3_http: P3Ctx {},
         }
     }
 }
@@ -129,7 +131,12 @@ impl HostCapabilityProvider for Host {
         self.table.push(provider).unwrap()
     }
 
-    fn local_storage(&mut self, _self: wasmtime::component::Resource<CapabilityProvider>) -> Option<wasmtime::component::Resource<generated::host::plugin::capabilities::LocalStorageClient>> {
+    fn local_storage(
+        &mut self,
+        _self: wasmtime::component::Resource<CapabilityProvider>,
+    ) -> Option<
+        wasmtime::component::Resource<generated::host::plugin::capabilities::LocalStorageClient>,
+    > {
         let client = LocalStorageClient::default();
         Some(self.table.push(client).unwrap())
     }

@@ -1,12 +1,15 @@
-use anyhow::{Result};
-use wasmtime::{component::{Linker, HasSelf}, Config, Engine};
+use crate::wasm::Host;
+use anyhow::Result;
+use wasmtime::{
+    component::{HasSelf, Linker},
+    Config, Engine,
+};
 use wasmtime_wasi::p3::bindings::LinkOptions;
-use crate::{wasm::{Host}};
 
 pub struct Runtime {
     pub engine: Engine,
     pub config: Config,
-    pub linker: Linker<Host>
+    pub linker: Linker<Host>,
 }
 
 impl Runtime {
@@ -29,10 +32,17 @@ impl Runtime {
 
         // Add WASI HTTP support
         wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
-        
-        // Add our custom host capabilities
-        crate::wasm::generated::host::plugin::capabilities::add_to_linker::<Host, HasSelf<Host>>(&mut linker, |host: &mut Host| -> &mut Host { host })?;
 
-        Ok(Self { engine, config, linker })
+        // Add our custom host capabilities
+        crate::wasm::generated::host::plugin::capabilities::add_to_linker::<Host, HasSelf<Host>>(
+            &mut linker,
+            |host: &mut Host| -> &mut Host { host },
+        )?;
+
+        Ok(Self {
+            engine,
+            config,
+            linker,
+        })
     }
 }

@@ -1,13 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
 use confique::Config;
+use std::{path::PathBuf, sync::Arc};
+use tokio::sync::RwLock;
+use tracing::info;
 use witmproxy::{
     config::confique_partial_app_config::PartialAppConfig, db::Db,
     plugins::registry::PluginRegistry, wasm::Runtime, AppConfig, CertificateAuthority, WitmProxy,
 };
-use std::{path::PathBuf, sync::Arc};
-use tokio::sync::RwLock;
-use tracing::info;
 
 #[derive(Parser)]
 #[command(name = "witmproxy")]
@@ -91,7 +91,12 @@ impl Cli {
             None
         };
 
-        let mut proxy = WitmProxy::new(ca, plugin_registry, config, if self.verbose { "debug" } else { "info" }.to_string());
+        let mut proxy = WitmProxy::new(
+            ca,
+            plugin_registry,
+            config,
+            if self.verbose { "debug" } else { "info" }.to_string(),
+        );
         proxy.run().await?;
 
         Ok(())

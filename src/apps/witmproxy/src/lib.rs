@@ -7,8 +7,8 @@ pub mod content;
 pub mod db;
 pub mod plugins;
 pub mod proxy;
-pub mod web;
 pub mod wasm;
+pub mod web;
 
 #[cfg(test)]
 pub mod test_utils;
@@ -106,10 +106,11 @@ impl WitmProxy {
         let mut web_server = WebServer::new(
             self.ca.clone(),
             self.plugin_registry.clone(),
-            self.config.clone()
+            self.config.clone(),
         );
         web_server.start().await?;
-        let web_addr = web_server.listen_addr()
+        let web_addr = web_server
+            .listen_addr()
             .ok_or_else(|| anyhow::anyhow!("Failed to get web server listen address"))?;
         info!("Web listening on {}", web_addr);
         info!("Visit the web interface to download the root certificate");
@@ -118,10 +119,11 @@ impl WitmProxy {
         let mut proxy_server = ProxyServer::new(
             self.ca.clone(),
             self.plugin_registry.clone(),
-            self.config.clone()
+            self.config.clone(),
         )?;
         proxy_server.start().await?;
-        let proxy_addr = proxy_server.listen_addr()
+        let proxy_addr = proxy_server
+            .listen_addr()
             .ok_or_else(|| anyhow::anyhow!("Failed to get proxy server listen address"))?;
         info!("Proxy listening on {}", proxy_addr);
 
@@ -148,15 +150,15 @@ impl WitmProxy {
     /// Shutdown all services gracefully
     pub async fn shutdown(&mut self) {
         info!("Shutting down...");
-        
+
         if let Some(web_server) = &self.web_server {
             web_server.shutdown().await;
         }
-        
+
         if let Some(proxy_server) = &self.proxy_server {
             proxy_server.shutdown().await;
         }
-        
+
         self.shutdown_notify.notify_waiters();
         info!("Thanks for stopping by!");
     }
@@ -173,17 +175,16 @@ impl WitmProxy {
     fn init_logging(&self, log_level: &str) {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
-            .with_env_filter(format!(
-                "witmproxy={},{}",
-                log_level, log_level
-            ))
+            .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
             .init();
     }
 
     async fn listen_shutdown_signal(&self) {
         #[cfg(unix)]
         let terminate = async {
-            if let Ok(mut sigterm) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            if let Ok(mut sigterm) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            {
                 sigterm.recv().await;
             } else {
                 eprintln!("Warning: failed to install SIGTERM handler");

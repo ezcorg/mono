@@ -8,7 +8,10 @@ pub struct Db {
 
 /// A trait which allows inserting a struct into the database
 pub trait Insert: Send + Sync {
-    fn insert_tx(&self, db: &mut Db) -> impl std::future::Future<Output = Result<Transaction<'_, Sqlite>>> + Send;
+    fn insert_tx(
+        &self,
+        db: &mut Db,
+    ) -> impl std::future::Future<Output = Result<Transaction<'_, Sqlite>>> + Send;
     fn insert(&self, db: &mut Db) -> impl std::future::Future<Output = Result<()>> + Send {
         async move {
             let tx = self.insert_tx(db).await?;

@@ -65,18 +65,24 @@ pub async fn create_plugin_registry() -> (PluginRegistry, tempfile::TempDir) {
 /// Register the `wasm-test-component` WASM plugin for testing.
 /// The component adds a `"witmproxy":"req"` header to requests
 /// and a `"witmproxy":"res"` header to responses.
-/// 
+///
 /// In conjunction with our echo server, we can verify that the target server
 /// received the modified request, and that the client received the modified response.
 pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
-    let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm").unwrap();
+    let component_bytes = std::fs::read(
+        "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
+    )
+    .unwrap();
     let mut granted = CapabilitySet::new();
     granted.insert(Capability::Request);
     granted.insert(Capability::Response);
     let requested = granted.clone();
 
     // Compile the component from bytes using the registry's runtime engine
-    let component = Some(wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)?);
+    let component = Some(wasmtime::component::Component::from_binary(
+        &registry.runtime.engine,
+        &component_bytes,
+    )?);
     // Simple CEL selector that matches all requests
     let cel_source = "true".to_string();
     let cel_filter = Some(cel::Program::compile(&cel_source)?);
@@ -99,9 +105,7 @@ pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<()
         cel_filter,
         cel_source,
     };
-    registry
-        .register_plugin(plugin)
-        .await
+    registry.register_plugin(plugin).await
 }
 
 pub async fn create_db() -> (Db, tempfile::TempDir) {
@@ -113,11 +117,22 @@ pub async fn create_db() -> (Db, tempfile::TempDir) {
     (db, temp_dir)
 }
 
-pub async fn create_witmproxy() -> (WitmProxy, Arc<RwLock<PluginRegistry>>, CertificateAuthority, AppConfig, tempfile::TempDir) {
+pub async fn create_witmproxy() -> (
+    WitmProxy,
+    Arc<RwLock<PluginRegistry>>,
+    CertificateAuthority,
+    AppConfig,
+    tempfile::TempDir,
+) {
     let (ca, config) = create_ca_and_config().await;
     let (registry, temp_dir) = create_plugin_registry().await;
     let registry = Arc::new(RwLock::new(registry));
-    let proxy = WitmProxy::new(ca.clone(), Some(registry.clone()), config.clone(), "info".to_string());
+    let proxy = WitmProxy::new(
+        ca.clone(),
+        Some(registry.clone()),
+        config.clone(),
+        "info".to_string(),
+    );
     (proxy, registry, ca, config, temp_dir)
 }
 
@@ -142,7 +157,7 @@ pub async fn create_echo_server(
     proto: Protocol,
 ) -> ServerHandle {
     let port = port.unwrap_or(0); // Use OS-assigned port if None
-    
+
     let cert = ca
         .get_certificate_for_domain(host)
         .await
@@ -196,7 +211,7 @@ pub async fn create_echo_server(
                                     let uri = req.uri();
                                     let path = uri.path().to_string();
                                     let query = uri.query().map(|q| q.to_string());
-                                    
+
                                     // Extract headers
                                     let mut headers = std::collections::HashMap::new();
                                     for (name, value) in req.headers() {
@@ -205,7 +220,7 @@ pub async fn create_echo_server(
                                             value.to_str().unwrap_or("").to_string(),
                                         );
                                     }
-                                    
+
                                     // Extract body
                                     let (body, body_error) = match BodyExt::collect(req.into_body()).await {
                                         Ok(collected) => {
@@ -226,16 +241,16 @@ pub async fn create_echo_server(
                                         body,
                                         body_error: body_error.clone(),
                                     };
-                                    
+
                                     // Create response JSON
                                     let mut response_data = serde_json::to_value(&response).unwrap_or_else(|_| serde_json::json!({"error": "Failed to serialize response"}));
-                                    
+
                                     if let Some(error) = body_error {
                                         response_data["body_error"] = serde_json::Value::String(error);
                                     }
-                                    
+
                                     let response_body = response_data.to_string();
-                                    
+
                                     Ok::<_, hyper::Error>(
                                         hyper::Response::builder()
                                             .header("content-type", "application/json")
@@ -275,7 +290,11 @@ pub async fn create_echo_server(
         }
     });
 
-    ServerHandle { listen_addr, shutdown_tx, task }
+    ServerHandle {
+        listen_addr,
+        shutdown_tx,
+        task,
+    }
 }
 
 pub async fn create_hello_server(
@@ -368,7 +387,11 @@ pub async fn create_hello_server(
         }
     });
 
-    ServerHandle { listen_addr, shutdown_tx, task }
+    ServerHandle {
+        listen_addr,
+        shutdown_tx,
+        task,
+    }
 }
 
 pub async fn create_client(
@@ -394,7 +417,10 @@ pub async fn create_client(
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();
             // Ensure we always have standard headers that might be expected
-            headers.insert(reqwest::header::USER_AGENT, "witmproxy-test/1.0".parse().unwrap());
+            headers.insert(
+                reqwest::header::USER_AGENT,
+                "witmproxy-test/1.0".parse().unwrap(),
+            );
             headers
         })
         .build()

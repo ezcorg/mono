@@ -1,24 +1,21 @@
-use super::{
-    download_certificate, index_page, AppState,
-};
+use super::{download_certificate, index_page, AppState};
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
 use crate::plugins::WitmPlugin;
 use anyhow::Result;
+use rust_embed::RustEmbed;
 use salvo::oapi::endpoint;
 use salvo::oapi::extract::JsonBody;
+use salvo::serve_static::static_embed;
 use salvo::server::ServerHandle;
-use salvo::{conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi, Router};
 use salvo::Writer;
-use tracing::warn;
+use salvo::{affix_state, Depot, Listener, Server};
+use salvo::{conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
-use rust_embed::{RustEmbed};
-use salvo::serve_static::static_embed;
-use salvo::{affix_state, Depot, Listener, Server};
-
+use tracing::warn;
 
 pub struct WebServer {
     listen_addr: Option<SocketAddr>,
@@ -80,8 +77,9 @@ impl WebServer {
             .push(Router::with_path("/api/health").get(health_check))
             .push(
                 Router::with_path("/api/plugins")
-                .get(list_plugins)
-                .put(upsert_plugin))
+                    .get(list_plugins)
+                    .put(upsert_plugin),
+            )
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
@@ -140,7 +138,11 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
 
     if let Some(registry) = registry {
         let registry = registry.read().await;
-        let plugin_names: Vec<String> = registry.plugins.iter().map(|(name, _)| name.clone()).collect();
+        let plugin_names: Vec<String> = registry
+            .plugins
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
         res.status_code(salvo::http::StatusCode::OK);
         res.render(salvo::writing::Json(plugin_names));
     } else {
@@ -168,19 +170,23 @@ async fn upsert_plugin(depot: &mut Depot, plugin: JsonBody<WitmPlugin>, res: &mu
         return;
     };
 
-     let mut registry = registry.write().await;
+    let mut registry = registry.write().await;
 
-     let result = registry.register_plugin(plugin.0).await;
-     match result {
-         Ok(_) => {
-             res.status_code(salvo::http::StatusCode::OK);
-             res.render(salvo::writing::Text::Plain("Plugin added/updated successfully"));
-         }
-         Err(e) => {
-             warn!("Failed to add/update plugin: {}", e);
-             res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
-             res.render(salvo::writing::Text::Plain(format!("Failed to add/update plugin: {}", e)));
-         }
-     }
-
+    let result = registry.register_plugin(plugin.0).await;
+    match result {
+        Ok(_) => {
+            res.status_code(salvo::http::StatusCode::OK);
+            res.render(salvo::writing::Text::Plain(
+                "Plugin added/updated successfully",
+            ));
+        }
+        Err(e) => {
+            warn!("Failed to add/update plugin: {}", e);
+            res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(salvo::writing::Text::Plain(format!(
+                "Failed to add/update plugin: {}",
+                e
+            )));
+        }
+    }
 }

@@ -1,12 +1,12 @@
 use bimap::BiMap;
+use lazy_static::lazy_static;
 use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
-use lazy_static::lazy_static;
 
 /// Represents the capabilities that a plugin can be granted.
-/// 
+///
 /// Granted capabilities must be implemented by the host application.
-/// 
+///
 /// Currently supported:
 /// - Request
 /// - Response
@@ -30,9 +30,8 @@ pub enum Capability {
     /// Allows registering response handlers
     Response,
     /// Default
-    None
+    None,
 }
-
 
 lazy_static! {
     static ref BIMAP: BiMap<String, Capability> = {

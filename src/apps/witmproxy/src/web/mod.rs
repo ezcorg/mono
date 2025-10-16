@@ -7,12 +7,12 @@ use askama::Template;
 use salvo::writing::Text;
 pub use server::WebServer;
 
-use serde::{Serialize};
-use tokio::sync::RwLock;
-use std::collections::HashMap;
-use std::sync::Arc;
 use salvo::oapi::endpoint;
 use salvo::{Depot, Request, Response, Scribe};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::cert::generator::DeviceInfo;
 use crate::cert::{CertificateAuthority, CertificateFormat, CertificateGenerator};
@@ -45,7 +45,11 @@ pub struct FormatInfo {
 // Main certificate download endpoint
 #[endpoint]
 pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut Depot) {
-    let user_agent = req.headers().get("user-agent").and_then(|h| h.to_str().ok()).unwrap_or("Unknown");
+    let user_agent = req
+        .headers()
+        .get("user-agent")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("Unknown");
     let device_info = DeviceInfo::from_user_agent(user_agent);
 
     let state = if let Ok(state) = depot.obtain::<AppState>() {
@@ -78,7 +82,9 @@ pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut
     };
 
     // Generate certificate bundle
-    let bundle = if let Ok(bundle) = CertificateGenerator::generate_bundle(&cert_pem, format, &device_info) {
+    let bundle = if let Ok(bundle) =
+        CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
+    {
         bundle
     } else {
         res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
@@ -89,13 +95,15 @@ pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut
     // Return file download or instructions page
     if req.query::<bool>("download").unwrap_or(false) {
         res.status_code(salvo::http::StatusCode::OK)
-        .add_header(salvo::http::header::CONTENT_TYPE, bundle.mime_type, true)
-        .unwrap()
-        .add_header(
-            salvo::http::header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", bundle.filename),
-            true,
-        ).unwrap().body(bundle.data);
+            .add_header(salvo::http::header::CONTENT_TYPE, bundle.mime_type, true)
+            .unwrap()
+            .add_header(
+                salvo::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", bundle.filename),
+                true,
+            )
+            .unwrap()
+            .body(bundle.data);
     } else {
         // Return instructions page
         let template = InstructionsTemplate::new(&bundle);
@@ -108,14 +116,19 @@ pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut
             }
         };
         res.status_code(salvo::http::StatusCode::OK);
-        res.add_header(salvo::http::header::CONTENT_TYPE, "text/html", true).unwrap();
+        res.add_header(salvo::http::header::CONTENT_TYPE, "text/html", true)
+            .unwrap();
         res.render(Text::Html(template));
     }
 }
 
 #[endpoint]
 pub async fn index_page(req: &mut salvo::Request, res: &mut salvo::Response) {
-    let user_agent = req.headers().get("user-agent").and_then(|h| h.to_str().ok()).unwrap_or("Unknown");
+    let user_agent = req
+        .headers()
+        .get("user-agent")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("Unknown");
 
     let device_info = DeviceInfo::from_user_agent(user_agent);
     let template = IndexTemplate::new(&device_info);

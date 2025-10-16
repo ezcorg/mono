@@ -1,9 +1,7 @@
+use salvo::http::uri::Scheme;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use salvo::http::{uri::{Scheme}};
-use wasmtime_wasi_http::p3::{
-    Request as WasiRequest, Response as WasiResponse
-};
-use serde::{Serialize, Deserialize};
+use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
 #[derive(Serialize, Deserialize)]
 pub struct CelRequest {
@@ -15,13 +13,14 @@ pub struct CelRequest {
     pub headers: HashMap<String, Vec<String>>,
 }
 
-impl From<&WasiRequest> for CelRequest
-{
+impl From<&WasiRequest> for CelRequest {
     fn from(req: &WasiRequest) -> Self {
         let mut headers = HashMap::new();
 
         for (name, value) in req.headers.iter() {
-            let entry = headers.entry(name.as_str().to_string()).or_insert_with(Vec::new);
+            let entry = headers
+                .entry(name.as_str().to_string())
+                .or_insert_with(Vec::new);
             if let Ok(val_str) = value.to_str() {
                 entry.push(val_str.to_string());
             }
@@ -65,13 +64,14 @@ pub struct CelResponse {
     pub headers: HashMap<String, Vec<String>>,
 }
 
-impl From<&WasiResponse> for CelResponse
-{
+impl From<&WasiResponse> for CelResponse {
     fn from(res: &WasiResponse) -> Self {
         let mut headers = HashMap::new();
 
         for (name, value) in res.headers.iter() {
-            let entry = headers.entry(name.as_str().to_string()).or_insert_with(Vec::new);
+            let entry = headers
+                .entry(name.as_str().to_string())
+                .or_insert_with(Vec::new);
             if let Ok(val_str) = value.to_str() {
                 entry.push(val_str.to_string());
             }

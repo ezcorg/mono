@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
 use ::cel::Program;
-use salvo::{oapi::ToSchema};
+use anyhow::Result;
+use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{query, sqlite::SqliteRow, Sqlite, Transaction, Row, QueryBuilder};
+use sqlx::{query, sqlite::SqliteRow, QueryBuilder, Row, Sqlite, Transaction};
 // use wasmsign2::reexports::hmac_sha256::Hash;
 use wasmtime::component::Component;
 use wasmtime::Engine;
@@ -16,8 +16,8 @@ use crate::{
 };
 
 pub mod capability;
-pub mod registry;
 pub mod cel;
+pub mod registry;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[salvo(extract(default_source(from = "body")))]
@@ -83,11 +83,15 @@ impl WitmPlugin {
         Self::make_id(&self.namespace, &self.name)
     }
 
-    pub async fn from_plugin_row(plugin_row: SqliteRow, db: &mut Db, engine: &Engine) -> Result<Self> {
+    pub async fn from_plugin_row(
+        plugin_row: SqliteRow,
+        db: &mut Db,
+        engine: &Engine,
+    ) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
         let component = Some(Component::from_binary(engine, &component_bytes)?);
-        
+
         let cel_source: String = plugin_row.try_get("cel_filter")?;
         let cel_filter = if !cel_source.is_empty() {
             Some(Program::compile(&cel_source)?)
@@ -132,7 +136,7 @@ impl WitmPlugin {
         .bind(&name)
         .fetch_all(&db.pool)
         .await?;
-        
+
         let mut metadata: HashMap<String, String> = HashMap::new();
         for row in metadata_rows {
             let key: String = row.try_get("key")?;
@@ -165,7 +169,7 @@ impl WitmPlugin {
             "
             SELECT namespace, name, version, author, description, license, url, publickey, component
             FROM plugins
-            "
+            ",
         )
         .fetch_all(&db.pool)
         .await?;
@@ -186,7 +190,7 @@ impl WitmPlugin {
 impl Insert for WitmPlugin {
     async fn insert_tx(&self, db: &mut Db) -> Result<Transaction<'_, Sqlite>> {
         let mut tx: Transaction<'_, Sqlite> = db.pool.begin().await?;
-        
+
         // Insert into plugins table
         query(
             "
@@ -211,9 +215,9 @@ impl Insert for WitmPlugin {
         // Bulk insert capabilities
         if !self.requested.0.is_empty() {
             let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-                "INSERT INTO plugin_capabilities (namespace, name, capability, granted) "
+                "INSERT INTO plugin_capabilities (namespace, name, capability, granted) ",
             );
-            
+
             query_builder.push_values(&self.requested, |mut b, capability| {
                 let granted = self.granted.contains(capability);
                 b.push_bind(&self.namespace)
@@ -221,23 +225,22 @@ impl Insert for WitmPlugin {
                     .push_bind(format!("{:?}", capability))
                     .push_bind(granted);
             });
-            
+
             query_builder.build().execute(&mut *tx).await?;
         }
 
         // Bulk insert metadata
         if !self.metadata.is_empty() {
-            let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-                "INSERT INTO plugin_metadata (namespace, name, key, value) "
-            );
-            
+            let mut query_builder: QueryBuilder<Sqlite> =
+                QueryBuilder::new("INSERT INTO plugin_metadata (namespace, name, key, value) ");
+
             query_builder.push_values(&self.metadata, |mut b, (key, value)| {
                 b.push_bind(&self.namespace)
                     .push_bind(&self.name)
                     .push_bind(key)
                     .push_bind(value);
             });
-            
+
             query_builder.build().execute(&mut *tx).await?;
         }
 

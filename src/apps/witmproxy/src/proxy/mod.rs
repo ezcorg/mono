@@ -4,7 +4,7 @@ use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 
 use bytes::Bytes;
-use http_body_util::{Full};
+use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -22,9 +22,9 @@ use hyper_util::{rt::TokioExecutor, rt::TokioIo};
 
 mod utils;
 pub use utils::{
-    build_server_tls_for_host, client, convert_boxbody_to_full_response, convert_hyper_incoming_to_reqwest_request,
-    convert_reqwest_to_hyper_response, is_closed, parse_authority_host_port, strip_proxy_headers,
-    ProxyError, ProxyResult, UpstreamClient,
+    build_server_tls_for_host, client, convert_boxbody_to_full_response,
+    convert_hyper_incoming_to_reqwest_request, convert_reqwest_to_hyper_response, is_closed,
+    parse_authority_host_port, strip_proxy_headers, ProxyError, ProxyResult, UpstreamClient,
 };
 
 #[cfg(test)]
@@ -85,10 +85,7 @@ impl ProxyServer {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.notified() => {
-                        info!("Shutdown signal received, stopping accept loop");
-                        break;
-                    }
+                    _ = shutdown.notified() => break,
                     accept_result = listener.accept() => {
                         match accept_result {
                             Ok((io, peer)) => {
@@ -98,10 +95,7 @@ impl ProxyServer {
                                     let svc = service_fn(move |req: Request<Incoming>| {
                                         let shared = shared.clone();
                                         async move {
-                                            shared.handle_plain_http(req).await.map_err(|e| {
-                                                error!("Service error: {}", e);
-                                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                                            })
+                                            shared.handle_plain_http(req).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
                                         }
                                     });
 
@@ -290,32 +284,31 @@ async fn run_tls_mitm(
                 // Step 1: Request event handling - move req into the event
                 let request_event_result = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
-                    registry
-                        .handle_request(req)
-                        .await
+                    registry.handle_request(req).await
                 } else {
                     HostHandleRequestResult::Noop(req)
                 };
 
-                info!("Handled request event, checking result and performing upstream call if needed");
+                info!(
+                    "Handled request event, checking result and performing upstream call if needed"
+                );
 
                 // Act based on request event result
                 let initial_response = match request_event_result {
-                    HostHandleRequestResult::None => {
-                        Response::builder()
-                            .status(StatusCode::FORBIDDEN)
-                            .body(Full::new(Bytes::from("Request dropped by plugin")))
-                            .unwrap()
-                    }
+                    HostHandleRequestResult::None => Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .body(Full::new(Bytes::from("Request dropped by plugin")))
+                        .unwrap(),
                     HostHandleRequestResult::Noop(rq) => {
                         match convert_hyper_incoming_to_reqwest_request(rq, &upstream) {
                             Ok(rq) => perform_upstream(&upstream, rq).await,
                             Err(err) => Response::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .body(Full::new(Bytes::from(format!(
-                                        "Failed to convert request: {}",
-                                        err
-                                    )))).unwrap()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Full::new(Bytes::from(format!(
+                                    "Failed to convert request: {}",
+                                    err
+                                ))))
+                                .unwrap(),
                         }
                     }
                     HostHandleRequestResult::Request(rq) => {
@@ -323,12 +316,12 @@ async fn run_tls_mitm(
                         match rq {
                             Ok(rq) => perform_upstream(&upstream, rq).await,
                             Err(err) => Response::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .body(Full::new(Bytes::from(format!(
-                                        "Failed to convert request: {}",
-                                        err
-                                    ))))
-                                    .unwrap()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Full::new(Bytes::from(format!(
+                                    "Failed to convert request: {}",
+                                    err
+                                ))))
+                                .unwrap(),
                         }
                     }
                     HostHandleRequestResult::Response(resp) => {
@@ -338,7 +331,9 @@ async fn run_tls_mitm(
                                 error!("Failed to convert plugin response: {}", err);
                                 Response::builder()
                                     .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(Full::new(Bytes::from("Failed to convert plugin response")))
+                                    .body(Full::new(Bytes::from(
+                                        "Failed to convert plugin response",
+                                    )))
                                     .unwrap()
                             }
                         }
@@ -350,9 +345,7 @@ async fn run_tls_mitm(
                 // Step 3: Run response handlers and return final response
                 let final_response = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
-                    registry
-                        .handle_response(initial_response)
-                        .await
+                    registry.handle_response(initial_response).await
                 } else {
                     HostHandleResponseResult::Response(initial_response)
                 };
@@ -361,19 +354,16 @@ async fn run_tls_mitm(
 
                 match final_response {
                     // TODO: fix std::io::Error ugliness
-                    HostHandleResponseResult::None => {
-                        Response::builder()
-                            .status(StatusCode::FORBIDDEN)
-                            .body(Full::new(Bytes::from("Response dropped by plugin")))
-                            .map_err(|e| {
-                                error!("Failed to build drop response: {}", e);
-                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                            })
-                    }
-                    HostHandleResponseResult::Response(resp) => Ok::<_, std::io::Error>(resp)
+                    HostHandleResponseResult::None => Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .body(Full::new(Bytes::from("Response dropped by plugin")))
+                        .map_err(|e| {
+                            error!("Failed to build drop response: {}", e);
+                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        }),
+                    HostHandleResponseResult::Response(resp) => Ok::<_, std::io::Error>(resp),
                 }
             }
-            
         })
     };
 

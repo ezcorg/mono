@@ -2,7 +2,7 @@ pub mod ca;
 pub mod generator;
 
 pub use ca::CertificateAuthority;
-pub use generator::{CertificateGenerator, CertificateFormat};
+pub use generator::{CertificateFormat, CertificateGenerator};
 
 use anyhow::Result;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -50,14 +50,14 @@ impl CertificateCache {
 
     pub async fn insert(&self, domain: String, cert: Certificate) {
         let mut cache = self.cache.write().await;
-        
+
         // Simple LRU eviction - remove oldest entries if cache is full
         if cache.len() >= self.max_size {
             if let Some(key) = cache.keys().next().cloned() {
                 cache.remove(&key);
             }
         }
-        
+
         cache.insert(domain, cert);
     }
 
@@ -76,13 +76,13 @@ impl CertificateCache {
 pub enum CertError {
     #[error("Certificate generation failed: {0}")]
     Generation(#[from] rcgen::Error),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Invalid certificate format")]
     InvalidFormat,
-    
+
     #[error("Certificate not found for domain: {0}")]
     NotFound(String),
 }
