@@ -87,13 +87,14 @@ impl PluginRegistry {
 
     pub fn find_first_unexecuted_plugin(
         &self,
-        req_or_res: Either<&WasiRequest, &WasiResponse>,
+        cel_request: CelRequest,
+        cel_response: Option<CelResponse>,
         executed_plugins: &HashSet<String>,
     ) -> Option<&WitmPlugin> {
-        // Determine which capability we need based on the input type
-        let required_capability = match req_or_res {
-            Either::Left(_) => Capability::Request,
-            Either::Right(_) => Capability::Response,
+        // Determine which capability we need based on whether we have a response
+        let required_capability = match cel_response {
+            None => Capability::Request,
+            Some(_) => Capability::Response,
         };
 
         self.plugins
@@ -105,21 +106,20 @@ impl PluginRegistry {
                 if let Some(cel_selector) = &p.cel_filter {
                     let mut ctx = cel::Context::empty();
 
-                    // Add the appropriate variable to the CEL context based on the input type
-                    let context_result = match &req_or_res {
-                        Either::Left(request) => {
-                            let cel_request = CelRequest::from(*request);
-                            // Add 'request' variable and set 'response' to null
-                            ctx.add_variable("request", cel_request)
-                                .and_then(|_| Ok(ctx.add_variable("response", cel::Value::Null)))
-                        }
-                        Either::Right(response) => {
-                            let cel_response = CelResponse::from(*response);
-                            // Add 'response' variable and set 'request' to null
-                            ctx.add_variable("response", cel_response)
-                                .and_then(|_| Ok(ctx.add_variable("request", cel::Value::Null)))
-                        }
-                    };
+                    // Always add the CelRequest as "request"
+                    let context_result = ctx.add_variable("request", cel_request.clone())
+                        .and_then(|_| {
+                            // Add CelResponse as "response" if it's Some(), otherwise cel::Value::Null
+                            match &cel_response {
+                                Some(cel_resp) => {
+                                    ctx.add_variable("response", cel_resp);
+                                },
+                                None => {
+                                    ctx.add_variable("response", cel::Value::Null);
+                                }
+                            };
+                            Ok(())
+                        });
 
                     match context_result {
                         Ok(_) => {}
@@ -178,8 +178,10 @@ impl PluginRegistry {
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();
 
-        while let Some(plugin) =
-            self.find_first_unexecuted_plugin(Either::Left(&current_req), &executed_plugins)
+        while let Some(plugin) = {
+            let cel_request = CelRequest::from(&current_req);
+            self.find_first_unexecuted_plugin(cel_request, None, &executed_plugins)
+        }
         {
             executed_plugins.insert(plugin.id());
 
@@ -324,6 +326,7 @@ impl PluginRegistry {
     pub async fn handle_response(
         &self,
         original_res: Response<Full<Bytes>>,
+        request_ctx: CelRequest,
     ) -> HostHandleResponseResult {
         let any_plugins = self
             .plugins
@@ -340,8 +343,10 @@ impl PluginRegistry {
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();
 
-        while let Some(plugin) =
-            self.find_first_unexecuted_plugin(Either::Right(&current_res), &executed_plugins)
+        while let Some(plugin) = {
+            let cel_response = CelResponse::from(&current_res);
+            self.find_first_unexecuted_plugin(request_ctx.clone(), Some(cel_response), &executed_plugins)
+        }
         {
             executed_plugins.insert(plugin.id());
 
@@ -559,8 +564,9 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com should return one plugin"
@@ -576,8 +582,9 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com with skipthis=false should return one plugin"
@@ -593,8 +600,9 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to example.com with skipthis=true should not match"
@@ -609,8 +617,9 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com should not match"
@@ -626,8 +635,9 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=false should not match"
@@ -643,8 +653,9 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=true should not match"
@@ -664,8 +675,9 @@ mod tests {
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let executed_plugins = HashSet::new();
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when none are registered"
@@ -721,8 +733,9 @@ mod tests {
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let executed_plugins = HashSet::new();
 
+        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when plugin doesn't have Request capability"
@@ -788,8 +801,9 @@ mod tests {
         let mut executed_plugins = HashSet::new();
 
         // First call should return a plugin
+        let cel_request = CelRequest::from(&wasi_req);
         let first_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request.clone(), None, &executed_plugins);
         assert!(
             first_plugin.is_some(),
             "Should find a plugin when none are executed"
@@ -800,7 +814,7 @@ mod tests {
 
         // Second call should return a different plugin (if there are multiple)
         let second_plugin =
-            registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            registry.find_first_unexecuted_plugin(cel_request.clone(), None, &executed_plugins);
         if let Some(second_plugin) = second_plugin {
             assert_ne!(
                 first_plugin.unwrap().id(),
@@ -813,7 +827,7 @@ mod tests {
 
             // Third call should return None since all plugins are executed
             let third_plugin =
-                registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+                registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
             assert!(
                 third_plugin.is_none(),
                 "Should return None when all plugins have been executed"

@@ -1,5 +1,6 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
+use crate::plugins::cel::CelRequest;
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 
@@ -280,6 +281,7 @@ async fn run_tls_mitm(
                 let method = req.method().clone();
                 let uri = req.uri().clone();
                 info!("Handling TLS request: {} {}", method, uri);
+                let mut request_ctx = CelRequest::from(&req);
 
                 // Step 1: Request event handling - move req into the event
                 let request_event_result = if let Some(registry) = &plugin_registry {
@@ -300,6 +302,8 @@ async fn run_tls_mitm(
                         .body(Full::new(Bytes::from("Request dropped by plugin")))
                         .unwrap(),
                     HostHandleRequestResult::Noop(rq) => {
+                        request_ctx = CelRequest::from(&rq);
+
                         match convert_hyper_incoming_to_reqwest_request(rq, &upstream) {
                             Ok(rq) => perform_upstream(&upstream, rq).await,
                             Err(err) => Response::builder()
@@ -312,6 +316,8 @@ async fn run_tls_mitm(
                         }
                     }
                     HostHandleRequestResult::Request(rq) => {
+                        request_ctx = CelRequest::from(&rq);
+
                         let rq = convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
                         match rq {
                             Ok(rq) => perform_upstream(&upstream, rq).await,
@@ -345,7 +351,7 @@ async fn run_tls_mitm(
                 // Step 3: Run response handlers and return final response
                 let final_response = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
-                    registry.handle_response(initial_response).await
+                    registry.handle_response(initial_response, request_ctx).await
                 } else {
                     HostHandleResponseResult::Response(initial_response)
                 };
