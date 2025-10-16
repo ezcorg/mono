@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use salvo::http::uri::{Authority, Scheme};
+use salvo::http::{uri::{Scheme}};
 use wasmtime_wasi_http::p3::{
     Request as WasiRequest, Response as WasiResponse
 };
@@ -27,8 +27,16 @@ impl From<&WasiRequest> for CelRequest
             }
         }
 
+        let host = if let Some(authority) = &req.authority {
+            authority.to_string()
+        } else {
+            "".to_string()
+        };
         let mut query = HashMap::new();
         let mut path = "".to_string();
+        let scheme = req.scheme.clone().unwrap_or(Scheme::HTTPS).to_string();
+        let method = req.method.to_string();
+
         if let Some(path_and_query) = &req.path_with_query {
             path = path_and_query.path().to_string();
 
@@ -41,11 +49,11 @@ impl From<&WasiRequest> for CelRequest
         }
 
         CelRequest {
-            scheme: req.scheme.clone().unwrap_or(Scheme::HTTPS).to_string(),
-            host: req.authority.clone().unwrap_or(Authority::from_static("")).to_string(),
+            scheme,
+            host,
             path,
             query,
-            method: req.method.to_string(),
+            method,
             headers,
         }
     }

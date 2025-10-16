@@ -515,12 +515,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_matching_request_plugins_with_cel_filter() {
+    async fn test_find_first_unexecuted_plugin_with_cel_filter() {
         let (mut registry, _temp_dir) = create_plugin_registry().await;
         
         // Register a plugin with the specific CEL expression
         let cel_expression = "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])";
         register_test_plugin_with_cel_filter(&mut registry, cel_expression).await.unwrap();
+
+        let executed_plugins = HashSet::new();
 
         // Test case 1: Request to normal host without skipthis header - should match
         let req = Request::builder()
@@ -529,9 +531,10 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 1, "Request to example.com should return one plugin");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_some(), "Request to example.com should return one plugin");
 
         // Test case 2: Request to normal host with skipthis header set to 'false' - should match
         let req = Request::builder()
@@ -541,11 +544,12 @@ mod tests {
             .header("skipthis", "false")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 1, "Request to example.com with skipthis=false should return one plugin");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_some(), "Request to example.com with skipthis=false should return one plugin");
 
-        // Test case 3: Request to normal host with skipthis header set to 'true' - should still match (first condition is true)
+        // Test case 3: Request to normal host with skipthis header set to 'true' - should not match
         let req = Request::builder()
             .method(Method::GET)
             .uri("https://example.com/test")
@@ -553,22 +557,24 @@ mod tests {
             .header("skipthis", "true")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 0, "Request to example.com with skipthis=true should not match");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_none(), "Request to example.com with skipthis=true should not match");
 
-        // Test case 4: Request to 'donotprocess.com' without skipthis header - should match (second condition is true)
+        // Test case 4: Request to 'donotprocess.com' without skipthis header - should not match
         let req = Request::builder()
             .method(Method::GET)
             .uri("https://donotprocess.com/test")
             .header("host", "donotprocess.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com should not match");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_none(), "Request to donotprocess.com should not match");
 
-        // Test case 5: Request to 'donotprocess.com' with skipthis header set to 'false' - should match
+        // Test case 5: Request to 'donotprocess.com' with skipthis header set to 'false' - should not match
         let req = Request::builder()
             .method(Method::GET)
             .uri("https://donotprocess.com/test")
@@ -576,9 +582,10 @@ mod tests {
             .header("skipthis", "false")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com with skipthis=false should not match");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_none(), "Request to donotprocess.com with skipthis=false should not match");
 
         // Test case 6: Request to 'donotprocess.com' with skipthis header set to 'true' - should NOT match
         let req = Request::builder()
@@ -588,13 +595,14 @@ mod tests {
             .header("skipthis", "true")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com with skipthis=true should not match");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_none(), "Request to donotprocess.com with skipthis=true should not match");
     }
 
     #[tokio::test]
-    async fn test_find_matching_request_plugins_no_plugins() {
+    async fn test_find_first_unexecuted_plugin_no_plugins() {
         let (registry, _temp_dir) = create_plugin_registry().await;
         
         let req = Request::builder()
@@ -603,13 +611,15 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let executed_plugins = HashSet::new();
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 0, "Should return no plugins when none are registered");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_none(), "Should return no plugins when none are registered");
     }
 
     #[tokio::test]
-    async fn test_find_matching_request_plugins_no_request_capability() {
+    async fn test_find_first_unexecuted_plugin_no_request_capability() {
         let (mut registry, _temp_dir) = create_plugin_registry().await;
         
         // Register a plugin without Request capability
@@ -648,44 +658,81 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let executed_plugins = HashSet::new();
         
-        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
-        assert_eq!(matching_plugins.len(), 0, "Should return no plugins when plugin doesn't have Request capability");
+        let matching_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(matching_plugin.is_none(), "Should return no plugins when plugin doesn't have Request capability");
     }
 
-    // #[tokio::test]
-    // async fn test_find_matching_request_plugins_multiple_plugins() {
-    //     let (mut registry, _temp_dir) = create_plugin_registry().await;
+    #[tokio::test]
+    async fn test_find_first_unexecuted_plugin_excludes_executed_plugins() {
+        let (mut registry, _temp_dir) = create_plugin_registry().await;
         
-    //     // Register first plugin that matches all requests
-    //     let cel_expression1 = "true";
-    //     register_test_plugin_with_cel_filter(&mut registry, cel_expression1).await.unwrap();
+        // Register first plugin that matches all requests
+        let cel_expression1 = "true";
+        register_test_plugin_with_cel_filter(&mut registry, cel_expression1).await.unwrap();
         
-    //     // Register second plugin with the specific filter
-    //     let cel_expression2 = "request.host != 'donotprocess.com' || !(request.headers.has('skipthis') && request.headers['skipthis'] == 'true')";
-    //     register_test_plugin_with_cel_filter(&mut registry, cel_expression2).await.unwrap();
+        // Create another plugin with a different name to test multiple plugins
+        let component_bytes = std::fs::read("/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm").unwrap();
+        let mut granted = CapabilitySet::new();
+        granted.insert(Capability::Request);
+        granted.insert(Capability::Response);
+        let requested = granted.clone();
+
+        let component = Some(wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes).unwrap());
+        let cel_source = "true".to_string();
+        let cel_filter = Some(cel::Program::compile(&cel_source).unwrap());
+
+        let plugin2 = WitmPlugin {
+            name: "second_test_plugin".into(),
+            component_bytes,
+            namespace: "test".into(),
+            version: "0.0.0".into(),
+            author: "author".into(),
+            description: "description".into(),
+            license: "mit".into(),
+            enabled: true,
+            url: "https://example.com".into(),
+            publickey: "todo".into(),
+            granted,
+            requested,
+            metadata: std::collections::HashMap::new(),
+            component,
+            cel_filter,
+            cel_source,
+        };
+        registry.register_plugin(plugin2).await.unwrap();
         
-    //     // Test with a request that should match both plugins
-    //     let req = Request::builder()
-    //         .method(Method::GET)
-    //         .uri("https://example.com/test")
-    //         .header("host", "example.com")
-    //         .body(Full::new(Bytes::from("test body")))
-    //         .unwrap();
+        // Test with a request that should match both plugins initially
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/test")
+            .header("host", "example.com")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+        let (wasi_req, _io) = WasiRequest::from_http(req);
         
-    //     let matching_plugins = registry.find_matching_request_plugins(&req).await;
-    //     assert_eq!(matching_plugins.len(), 2, "Should match both plugins for example.com request");
+        let mut executed_plugins = HashSet::new();
         
-    //     // Test with a request that should only match the first plugin (matches all)
-    //     let req = Request::builder()
-    //         .method(Method::GET)
-    //         .uri("https://donotprocess.com/test")
-    //         .header("host", "donotprocess.com")
-    //         .header("skipthis", "true")
-    //         .body(Full::new(Bytes::from("test body")))
-    //         .unwrap();
+        // First call should return a plugin
+        let first_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        assert!(first_plugin.is_some(), "Should find a plugin when none are executed");
         
-    //     let matching_plugins = registry.find_matching_request_plugins(&req).await;
-    //     assert_eq!(matching_plugins.len(), 1, "Should only match the 'true' filter plugin for donotprocess.com with skipthis=true");
-    // }
+        // Add the first plugin to executed set
+        executed_plugins.insert(first_plugin.unwrap().id());
+        
+        // Second call should return a different plugin (if there are multiple)
+        let second_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+        if let Some(second_plugin) = second_plugin {
+            assert_ne!(first_plugin.unwrap().id(), second_plugin.id(), "Should return a different plugin");
+            
+            // Add the second plugin to executed set
+            executed_plugins.insert(second_plugin.id());
+            
+            // Third call should return None since all plugins are executed
+            let third_plugin = registry.find_first_unexecuted_plugin(Either::Left(&wasi_req), &executed_plugins);
+            assert!(third_plugin.is_none(), "Should return None when all plugins have been executed");
+        }
+    }
 }
