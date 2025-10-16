@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -82,15 +82,7 @@ impl PluginRegistry {
         Store::new(&self.runtime.engine, Host::default())
     }
 
-
-    // TODO: change this and related code, since plugins can modify requests and responses
-    // we need to re-match plugins after each pass. Additionally, our response CEL context
-    // should contain the corresponding `request` that was actually sent
-    pub async fn find_matching_plugins<T>(&self, req_or_res: Either<&Request<T>, &Response<T>>) -> Vec<&WitmPlugin>
-    where
-        T: Body<Data = Bytes> + Send + Sync + 'static,
-        T::Error: Into<ErrorCode>,
-    {
+    pub fn find_first_unexecuted_plugin(&self, req_or_res: Either<&WasiRequest, &WasiResponse>, executed_plugins: &HashSet<String>) -> Option<&WitmPlugin> {
         // Determine which capability we need based on the input type
         let required_capability = match req_or_res {
             Either::Left(_) => Capability::Request,
@@ -99,9 +91,9 @@ impl PluginRegistry {
 
         self.plugins
             .values()
-            .filter(|p| p.granted.contains(&required_capability))
+            .find(|p| p.granted.contains(&required_capability) && !executed_plugins.contains(&p.id()))
             .filter(|p| {
-                let result = if let Some(cel_selector) = &p.cel_filter {
+                if let Some(cel_selector) = &p.cel_filter {
                     let mut ctx = cel::Context::empty();
 
                     // Add the appropriate variable to the CEL context based on the input type
@@ -133,7 +125,7 @@ impl PluginRegistry {
                         }
                     }
 
-                    match cel_selector.execute(&ctx) {
+                    let result = match cel_selector.execute(&ctx) {
                         Ok(v) => v,
                         Err(e) => {
                             warn!(
@@ -144,16 +136,15 @@ impl PluginRegistry {
                             );
                             Value::Bool(false)
                         }
+                    };
+                    match result {
+                        Value::Bool(b) => b,
+                        _ => false,
                     }
                 } else {
-                    Value::Bool(false)
-                };
-                match result {
-                    Value::Bool(b) => b,
-                    _ => false,
-                }
+                    false
+                }                
             })
-            .collect()
     }
 
     /// Handle an incoming HTTP request by passing it through all registered plugins
@@ -163,9 +154,10 @@ impl PluginRegistry {
         T: Body<Data = Bytes> + Send + Sync + 'static,
         T::Error: Into<ErrorCode>,
     {
-        let plugins = self.find_matching_plugins(Either::Left(&original_req)).await;
-
-        if plugins.is_empty() {
+        let any_plugins = self.plugins
+            .values()
+            .any(|p| p.granted.contains(&Capability::Request));
+        if !any_plugins {
             return HostHandleRequestResult::Noop(original_req);
         }
 
@@ -174,8 +166,11 @@ impl PluginRegistry {
         let req = Request::from_parts(req, body);
         let (mut current_req, _io) = WasiRequest::from_http(req);
         let mut store = self.new_store();
+        let mut executed_plugins = HashSet::new();
 
-        for plugin in plugins.iter() {
+        while let Some(plugin) = self.find_first_unexecuted_plugin(Either::Left(&current_req), &executed_plugins) {
+            executed_plugins.insert(plugin.id());
+
             let component = if let Some(c) = &plugin.component {
                 c
             } else {
@@ -299,7 +294,7 @@ impl PluginRegistry {
                         .delete(new_req)
                         .expect("failed to retrieve new request from table");
                 }
-            };
+            };            
         }
 
         current_req.headers.iter().for_each(|(k, v)| {
@@ -318,13 +313,11 @@ impl PluginRegistry {
         &self,
         original_res: Response<Full<Bytes>>,
     ) -> HostHandleResponseResult {
-        let plugins = self
-            .plugins
+        let any_plugins = self.plugins
             .values()
-            .filter(|p| p.granted.contains(&Capability::Response))
-            .collect::<Vec<&WitmPlugin>>();
+            .any(|p| p.granted.contains(&Capability::Response));
 
-        if plugins.is_empty() {
+        if !any_plugins {
             return HostHandleResponseResult::Response(original_res);
         }
 
@@ -332,8 +325,11 @@ impl PluginRegistry {
         let res = Response::from_parts(res, body);
         let (mut current_res, _io) = WasiResponse::from_http(res);
         let mut store = self.new_store();
+        let mut executed_plugins = HashSet::new();
 
-        for plugin in plugins.iter() {
+        while let Some(plugin) = self.find_first_unexecuted_plugin(Either::Right(&current_res), &executed_plugins) {
+            executed_plugins.insert(plugin.id());
+
             let component = if let Some(c) = &plugin.component {
                 c
             } else {
@@ -454,10 +450,6 @@ impl PluginRegistry {
                 }
             };
         }
-
-        current_res.headers.iter().for_each(|(k, v)| {
-            info!(target: "plugins", "Final response header: {}: {:?}", k, v);
-        });
 
         match current_res.into_http(store, async { Ok(()) }) {
             Ok(res) => {

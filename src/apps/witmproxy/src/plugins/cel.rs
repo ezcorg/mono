@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-
-use hyper::{body::{Body}, Request, Response};
+use salvo::http::uri::{Authority, Scheme};
+use wasmtime_wasi_http::p3::{
+    Request as WasiRequest, Response as WasiResponse
+};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
@@ -13,14 +15,12 @@ pub struct CelRequest {
     pub headers: HashMap<String, Vec<String>>,
 }
 
-impl<B> From<&Request<B>> for CelRequest
-where
-    B: Body + Send + 'static,
+impl From<&WasiRequest> for CelRequest
 {
-    fn from(req: &Request<B>) -> Self {
+    fn from(req: &WasiRequest) -> Self {
         let mut headers = HashMap::new();
 
-        for (name, value) in req.headers().iter() {
+        for (name, value) in req.headers.iter() {
             let entry = headers.entry(name.as_str().to_string()).or_insert_with(Vec::new);
             if let Ok(val_str) = value.to_str() {
                 entry.push(val_str.to_string());
@@ -28,19 +28,24 @@ where
         }
 
         let mut query = HashMap::new();
-        if let Some(query_str) = req.uri().query() {
-            for (key, value) in url::form_urlencoded::parse(query_str.as_bytes()) {
-                let entry = query.entry(key.to_string()).or_insert_with(Vec::new);
-                entry.push(value.to_string());
+        let mut path = "".to_string();
+        if let Some(path_and_query) = &req.path_with_query {
+            path = path_and_query.path().to_string();
+
+            if let Some(query_str) = path_and_query.query() {
+                for (key, value) in url::form_urlencoded::parse(query_str.as_bytes()) {
+                    let entry = query.entry(key.to_string()).or_insert_with(Vec::new);
+                    entry.push(value.to_string());
+                }
             }
         }
 
         CelRequest {
-            scheme: req.uri().scheme_str().unwrap_or("").to_string(),
-            host: req.uri().host().unwrap_or("").to_string(),
-            path: req.uri().path().to_string(),
+            scheme: req.scheme.clone().unwrap_or(Scheme::HTTPS).to_string(),
+            host: req.authority.clone().unwrap_or(Authority::from_static("")).to_string(),
+            path,
             query,
-            method: req.method().to_string(),
+            method: req.method.to_string(),
             headers,
         }
     }
@@ -52,14 +57,12 @@ pub struct CelResponse {
     pub headers: HashMap<String, Vec<String>>,
 }
 
-impl<B> From<&Response<B>> for CelResponse
-where
-    B: Body + Send + 'static,
+impl From<&WasiResponse> for CelResponse
 {
-    fn from(res: &Response<B>) -> Self {
+    fn from(res: &WasiResponse) -> Self {
         let mut headers = HashMap::new();
 
-        for (name, value) in res.headers().iter() {
+        for (name, value) in res.headers.iter() {
             let entry = headers.entry(name.as_str().to_string()).or_insert_with(Vec::new);
             if let Ok(val_str) = value.to_str() {
                 entry.push(val_str.to_string());
@@ -67,7 +70,7 @@ where
         }
 
         CelResponse {
-            status: res.status().as_u16(),
+            status: res.status.as_u16(),
             headers,
         }
     }
