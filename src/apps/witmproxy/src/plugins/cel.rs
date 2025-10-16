@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use hyper::{body::{Body}, Request};
+use hyper::{body::{Body}, Request, Response};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
@@ -50,6 +50,25 @@ where
 pub struct CelResponse {
     pub status: u16,
     pub headers: HashMap<String, Vec<String>>,
-    pub host: String,
-    pub path: String,
+}
+
+impl<B> From<&Response<B>> for CelResponse
+where
+    B: Body + Send + 'static,
+{
+    fn from(res: &Response<B>) -> Self {
+        let mut headers = HashMap::new();
+
+        for (name, value) in res.headers().iter() {
+            let entry = headers.entry(name.as_str().to_string()).or_insert_with(Vec::new);
+            if let Ok(val_str) = value.to_str() {
+                entry.push(val_str.to_string());
+            }
+        }
+
+        CelResponse {
+            status: res.status().as_u16(),
+            headers,
+        }
+    }
 }

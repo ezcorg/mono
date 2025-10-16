@@ -16,7 +16,7 @@ use wasmtime_wasi_http::p3::{
 
 use crate::{
     db::{Db, Insert},
-    plugins::{cel::CelRequest, Capability, WitmPlugin},
+    plugins::{cel::{CelRequest, CelResponse}, Capability, WitmPlugin},
     wasm::{
         generated::{
             exports::host::plugin::witm_plugin::{
@@ -82,27 +82,52 @@ impl PluginRegistry {
         Store::new(&self.runtime.engine, Host::default())
     }
 
+
+    // TODO: change this and related code, since plugins can modify requests and responses
+    // we need to re-match plugins after each pass. Additionally, our response CEL context
+    // should contain the corresponding `request` that was actually sent
     pub async fn find_matching_plugins<T>(&self, req_or_res: Either<&Request<T>, &Response<T>>) -> Vec<&WitmPlugin>
     where
         T: Body<Data = Bytes> + Send + Sync + 'static,
         T::Error: Into<ErrorCode>,
     {
+        // Determine which capability we need based on the input type
+        let required_capability = match req_or_res {
+            Either::Left(_) => Capability::Request,
+            Either::Right(_) => Capability::Response,
+        };
+
         self.plugins
             .values()
-            .filter(|p| p.granted.contains(&Capability::Request))
+            .filter(|p| p.granted.contains(&required_capability))
             .filter(|p| {
                 let result = if let Some(cel_selector) = &p.cel_filter {
                     let mut ctx = cel::Context::empty();
-                    let req = CelRequest::from(req_or_res);
 
-                    match ctx.add_variable("request", req) {
+                    // Add the appropriate variable to the CEL context based on the input type
+                    let context_result = match &req_or_res {
+                        Either::Left(request) => {
+                            let cel_request = CelRequest::from(*request);
+                            // Add 'request' variable and set 'response' to null
+                            ctx.add_variable("request", cel_request)
+                                .and_then(|_| Ok(ctx.add_variable("response", cel::Value::Null)))
+                        }
+                        Either::Right(response) => {
+                            let cel_response = CelResponse::from(*response);
+                            // Add 'response' variable and set 'request' to null
+                            ctx.add_variable("response", cel_response)
+                                .and_then(|_| Ok(ctx.add_variable("request", cel::Value::Null)))
+                        }
+                    };
+
+                    match context_result {
                         Ok(_) => {}
                         Err(e) => {
                             warn!(
                                 target: "plugins",
                                 plugin_id = %p.id(),
                                 error = %e,
-                                "Failed to add request to CEL context; skipping plugin"
+                                "Failed to add variables to CEL context; skipping plugin"
                             );
                             return false;
                         }
@@ -513,7 +538,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 1, "Request to example.com should return one plugin");
 
         // Test case 2: Request to normal host with skipthis header set to 'false' - should match
@@ -525,7 +550,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 1, "Request to example.com with skipthis=false should return one plugin");
 
         // Test case 3: Request to normal host with skipthis header set to 'true' - should still match (first condition is true)
@@ -537,7 +562,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 0, "Request to example.com with skipthis=true should not match");
 
         // Test case 4: Request to 'donotprocess.com' without skipthis header - should match (second condition is true)
@@ -548,7 +573,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com should not match");
 
         // Test case 5: Request to 'donotprocess.com' with skipthis header set to 'false' - should match
@@ -560,7 +585,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com with skipthis=false should not match");
 
         // Test case 6: Request to 'donotprocess.com' with skipthis header set to 'true' - should NOT match
@@ -572,7 +597,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 0, "Request to donotprocess.com with skipthis=true should not match");
     }
 
@@ -587,7 +612,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 0, "Should return no plugins when none are registered");
     }
 
@@ -632,7 +657,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         
-        let matching_plugins = registry.find_matching_plugins(&req).await;
+        let matching_plugins = registry.find_matching_plugins(Either::Left(&req)).await;
         assert_eq!(matching_plugins.len(), 0, "Should return no plugins when plugin doesn't have Request capability");
     }
 
