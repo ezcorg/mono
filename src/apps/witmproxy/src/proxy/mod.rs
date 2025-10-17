@@ -351,7 +351,9 @@ async fn run_tls_mitm(
                 // Step 3: Run response handlers and return final response
                 let final_response = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
-                    registry.handle_response(initial_response, request_ctx).await
+                    registry
+                        .handle_response(initial_response, request_ctx)
+                        .await
                 } else {
                     HostHandleResponseResult::Response(initial_response)
                 };

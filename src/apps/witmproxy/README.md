@@ -1,11 +1,11 @@
 # witmproxy <sup>⚠️ `under construction` 👷</sup>
 
-A man-in-the-middle proxy with WebAssembly plugin support, written in Rust.
+A WASM-in-the-middle proxy, written in Rust.
 
 ## Features
 
-- 🔒 **TLS Interception**: Automatic certificate generation and TLS termination
 - 🧩 **WASM Plugin System**: Extensible plugin architecture built on [WebAssembly Components](https://component-model.bytecodealliance.org/)
+- 🔒 **TLS Interception**: Automatic certificate generation and TLS termination
 - 📱 **Smart Certificate Distribution**: Automatic device detection and certificate format selection
 - 🌐 **Web Interface**: Built-in web server for certificate downloads and management
 - 🔧 **Easy Configuration**: TOML-based configuration with sensible defaults

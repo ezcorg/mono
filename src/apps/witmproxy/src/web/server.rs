@@ -2,16 +2,18 @@ use super::{download_certificate, index_page, AppState};
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
-use crate::plugins::WitmPlugin;
 use anyhow::Result;
 use rust_embed::RustEmbed;
+use salvo::conn::rustls::{Keycert, RustlsConfig};
 use salvo::oapi::endpoint;
-use salvo::oapi::extract::JsonBody;
+use salvo::oapi::extract::FormFile;
+use salvo::prelude::ForceHttps;
 use salvo::serve_static::static_embed;
 use salvo::server::ServerHandle;
 use salvo::Writer;
 use salvo::{affix_state, Depot, Listener, Server};
 use salvo::{conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi, Router};
+use tokio::fs;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
@@ -70,7 +72,24 @@ impl WebServer {
 
         salvo::http::request::set_global_secure_max_size(1 * 1024 * 1024 * 1024); // 1 GB
 
+        // TODO: HTTPS when cert is trusted
+        // Generate a certificate for the web server using our CA
+        let server_cert = self.ca.get_certificate_for_domain("127.0.0.1").await?;
+
+        // Build certificate chain: server cert + CA cert (in PEM format)
+        let ca_cert_pem = self.ca.get_root_certificate_pem()?;
+        let cert_chain = format!("{}\n{}", server_cert.pem_cert, ca_cert_pem);
+        let rustls = RustlsConfig::new(
+            Keycert::new()
+                .cert(cert_chain.as_bytes().to_vec())
+                .key(server_cert.pem_key.as_bytes().to_vec()),
+        );
+
+        let acceptor = TcpListener::new(bind_addr).rustls(rustls).bind().await;
+        // Store the actual bound address
+        self.listen_addr = Some(acceptor.inner().local_addr()?);
         let app = Router::new()
+            .hoop(ForceHttps::new().https_port(self.listen_addr.unwrap().port()))
             .hoop(affix_state::inject(state))
             .push(Router::with_path("/").get(index_page))
             .push(Router::with_path("/cert").get(download_certificate))
@@ -78,19 +97,16 @@ impl WebServer {
             .push(
                 Router::with_path("/api/plugins")
                     .get(list_plugins)
-                    .put(upsert_plugin),
+                    .post(upsert_plugin),
             )
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
-        let doc = OpenApi::new("citmproxy", "0.0.1").merge_router(&app);
+        let doc = OpenApi::new("witmproxy", "0.0.1").merge_router(&app);
         let app = app
             .unshift(doc.into_router("/api/docs/openapi.json"))
             .unshift(SwaggerUi::new("/api/docs/openapi.json").into_router("/swagger"));
-        let acceptor = TcpListener::new(bind_addr).bind().await;
 
-        // Store the actual bound address
-        self.listen_addr = Some(acceptor.local_addr()?);
         let did_shutdown = self.shutdown_notify.clone();
         let server = Server::new(acceptor);
         self.handle = Some(server.handle());
@@ -152,7 +168,7 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
 }
 
 #[endpoint]
-async fn upsert_plugin(depot: &mut Depot, plugin: JsonBody<WitmPlugin>, res: &mut salvo::Response) {
+async fn upsert_plugin(file: FormFile, depot: &mut Depot, res: &mut salvo::Response) {
     let registry = if let Some(state) = depot.obtain::<AppState>().ok() {
         state.plugin_registry.clone()
     } else {
@@ -170,9 +186,31 @@ async fn upsert_plugin(depot: &mut Depot, plugin: JsonBody<WitmPlugin>, res: &mu
         return;
     };
 
+    let bytes = match fs::read(file.path()).await {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("Failed to read uploaded file: {}", e);
+            res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(salvo::writing::Text::Plain(format!(
+                "Failed to read uploaded file: {}",
+                e
+            )));
+            return;
+        }
+    };
+
+    let plugin = match registry.read().await.plugin_from_component(bytes).await {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Failed to parse plugin: {}", e);
+            res.status_code(salvo::http::StatusCode::BAD_REQUEST);
+            res.render(salvo::writing::Text::Plain(format!("Failed to parse plugin: {}", e)));
+            return;
+        }
+    };
     let mut registry = registry.write().await;
 
-    let result = registry.register_plugin(plugin.0).await;
+    let result = registry.register_plugin(plugin).await;
     match result {
         Ok(_) => {
             res.status_code(salvo::http::StatusCode::OK);

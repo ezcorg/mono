@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use bytes::Bytes;
 use cel::Value;
-use either::Either;
 use http_body::Body;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, Request, Response};
@@ -73,6 +72,40 @@ impl PluginRegistry {
         Ok(())
     }
 
+    pub async fn plugin_from_component(
+        &self,
+        component_bytes: Vec<u8>,
+    ) -> Result<WitmPlugin> {
+        let component = wasmtime::component::Component::from_binary(&self.runtime.engine, &component_bytes)?;
+        let mut store = wasmtime::Store::new(&self.runtime.engine, Host::default());
+        let instance = self
+            .runtime
+            .linker
+            .instantiate_async(&mut store, &component)
+            .await?;
+        let plugin_instance = Plugin::new(&mut store, &instance)?;
+        let guest_result = store
+            .run_concurrent(async move |store| {
+                let (manifest, task) = match plugin_instance
+                    .host_plugin_witm_plugin()
+                    .call_manifest(store)
+                    .await
+                {
+                    Ok(ok) => ok,
+                    Err(e) => {
+                        warn!("Error calling manifest: {}", e);
+                        return Err(e);
+                    }
+                };
+                task.block(store).await;
+
+                Ok(manifest)
+            })
+            .await??;
+
+        Ok(WitmPlugin::from(guest_result))
+    }
+
     pub async fn register_plugin(&mut self, plugin: WitmPlugin) -> Result<()> {
         // Upsert the given plugin into the database
         plugin.insert(&mut self.db).await?;
@@ -107,31 +140,29 @@ impl PluginRegistry {
                     let mut ctx = cel::Context::empty();
 
                     // Always add the CelRequest as "request"
-                    let context_result = ctx.add_variable("request", cel_request.clone())
-                        .and_then(|_| {
-                            // Add CelResponse as "response" if it's Some(), otherwise cel::Value::Null
-                            match &cel_response {
-                                Some(cel_resp) => {
-                                    ctx.add_variable("response", cel_resp);
-                                },
-                                None => {
-                                    ctx.add_variable("response", cel::Value::Null);
-                                }
-                            };
-                            Ok(())
-                        });
+                    let context_result =
+                        ctx.add_variable("request", cel_request.clone())
+                            .and_then(|_| {
+                                // Add CelResponse as "response" if it's Some(), otherwise cel::Value::Null
+                                match &cel_response {
+                                    Some(cel_resp) => {
+                                        _ = ctx.add_variable("response", cel_resp);
+                                    }
+                                    None => {
+                                        _ = ctx.add_variable("response", cel::Value::Null);
+                                    }
+                                };
+                                Ok(())
+                            });
 
-                    match context_result {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                plugin_id = %p.id(),
-                                error = %e,
-                                "Failed to add variables to CEL context; skipping plugin"
-                            );
-                            return false;
-                        }
+                    if let Err(e) = context_result {
+                        warn!(
+                            target: "plugins",
+                            plugin_id = %p.id(),
+                            error = %e,
+                            "Failed to add variables to CEL context; skipping plugin"
+                        );
+                        return false;
                     }
 
                     let result = match cel_selector.execute(&ctx) {
@@ -181,8 +212,7 @@ impl PluginRegistry {
         while let Some(plugin) = {
             let cel_request = CelRequest::from(&current_req);
             self.find_first_unexecuted_plugin(cel_request, None, &executed_plugins)
-        }
-        {
+        } {
             executed_plugins.insert(plugin.id());
 
             let component = if let Some(c) = &plugin.component {
@@ -345,9 +375,12 @@ impl PluginRegistry {
 
         while let Some(plugin) = {
             let cel_response = CelResponse::from(&current_res);
-            self.find_first_unexecuted_plugin(request_ctx.clone(), Some(cel_response), &executed_plugins)
-        }
-        {
+            self.find_first_unexecuted_plugin(
+                request_ctx.clone(),
+                Some(cel_response),
+                &executed_plugins,
+            )
+        } {
             executed_plugins.insert(plugin.id());
 
             let component = if let Some(c) = &plugin.component {
@@ -374,20 +407,19 @@ impl PluginRegistry {
             }
             let instance = instance.unwrap();
 
-            let plugin_instance = Plugin::new(&mut store, &instance);
-
-            if let Err(e) = plugin_instance {
-                warn!(
-                    target: "plugins",
-                    plugin_id = %plugin.id(),
-                    event_type = "response",
-                    error = %e,
-                    "Failed to access plugin event handler; skipping"
-                );
-                continue;
-            }
-
-            let plugin_instance = plugin_instance.unwrap();
+            let plugin_instance = match Plugin::new(&mut store, &instance) {
+                Ok(pi) => pi,
+                Err(e) => {
+                    warn!(
+                        target: "plugins",
+                        plugin_id = %plugin.id(),
+                        event_type = "response",
+                        error = %e,
+                        "Failed to access plugin event handler; skipping"
+                    );
+                    continue;
+                }
+            };
 
             // Push the current response and capability provider into the table
             // The response is moved here, so we can't recover it if the plugin fails
@@ -398,28 +430,26 @@ impl PluginRegistry {
             let cap_resource = store.data_mut().http().table.push(provider).unwrap();
             // Call the plugin's handle_response function
             let guest_result = store
-                .run_concurrent(
-                    async move |store| -> Result<HandleResponseResult, ErrorCode> {
-                        let (result, task) = match plugin_instance
-                            .host_plugin_witm_plugin()
-                            .call_handle_response(store, res_resource, cap_resource)
-                            .await
-                        {
-                            Ok(ok) => ok,
-                            Err(e) => {
-                                warn!(
-                                    target: "plugins",
-                                    event_type = "response",
-                                    error = %e,
-                                    "Error calling handle_response"
-                                );
-                                return Err(ErrorCode::DestinationUnavailable);
-                            }
-                        };
-                        task.block(store).await;
-                        Ok(result)
-                    },
-                )
+                .run_concurrent(async move |store| {
+                    let (result, task) = match plugin_instance
+                        .host_plugin_witm_plugin()
+                        .call_handle_response(store, res_resource, cap_resource)
+                        .await
+                    {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_type = "response",
+                                error = %e,
+                                "Error calling handle_response"
+                            );
+                            return Err(ErrorCode::DestinationUnavailable);
+                        }
+                    };
+                    task.block(store).await;
+                    Ok(result)
+                })
                 .await;
 
             let inner = match guest_result {

@@ -5,6 +5,7 @@ use anyhow::Result;
 use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::{query, sqlite::SqliteRow, QueryBuilder, Row, Sqlite, Transaction};
+use tracing::error;
 // use wasmsign2::reexports::hmac_sha256::Hash;
 use wasmtime::component::Component;
 use wasmtime::Engine;
@@ -13,6 +14,8 @@ pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 use crate::{
     db::{Db, Insert},
     plugins::capability::Capability,
+    wasm::{generated::Plugin, Host},
+    Runtime,
 };
 
 pub mod capability;
@@ -83,23 +86,42 @@ impl WitmPlugin {
         Self::make_id(&self.namespace, &self.name)
     }
 
-    pub async fn from_plugin_row(
-        plugin_row: SqliteRow,
-        db: &mut Db,
-        engine: &Engine,
-    ) -> Result<Self> {
+    /// Only needs the `component` column
+    pub async fn from_db_row(plugin_row: SqliteRow, db: &mut Db, engine: &Engine) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
-        let component = Some(Component::from_binary(engine, &component_bytes)?);
+        let component = Component::from_binary(engine, &component_bytes)?;
+        let runtime = Runtime::default()?;
+        let mut store = wasmtime::Store::new(engine, Host::default());
+        let instance = runtime
+            .linker
+            .instantiate_async(&mut store, &component)
+            .await?;
+        let plugin_instance = Plugin::new(&mut store, &instance)?;
+        let guest_result = store
+            .run_concurrent(async move |store| {
+                let (manifest, task) = match plugin_instance
+                    .host_plugin_witm_plugin()
+                    .call_manifest(store)
+                    .await
+                {
+                    Ok(ok) => ok,
+                    Err(e) => {
+                        error!("Error calling manifest: {}", e);
+                        return Err(e);
+                    }
+                };
+                task.block(store).await;
+                Ok(manifest)
+            })
+            .await??;
 
-        let cel_source: String = plugin_row.try_get("cel_filter")?;
-        let cel_filter = if !cel_source.is_empty() {
-            Some(Program::compile(&cel_source)?)
+        let mut plugin = WitmPlugin::from(guest_result);
+        plugin.cel_filter = if !plugin.cel_source.is_empty() {
+            Some(Program::compile(&plugin.cel_source)?)
         } else {
             None
         };
-        let namespace = plugin_row.try_get::<String, _>("namespace")?;
-        let name = plugin_row.try_get::<String, _>("name")?;
 
         let capabilities = query(
             "
@@ -108,8 +130,8 @@ impl WitmPlugin {
             WHERE namespace = ? AND name = ?
             ",
         )
-        .bind(&namespace)
-        .bind(&name)
+        .bind(&plugin.namespace)
+        .bind(&plugin.name)
         .fetch_all(&db.pool)
         .await?;
         let mut granted = CapabilitySet::new();
@@ -124,50 +146,15 @@ impl WitmPlugin {
                 requested.insert(cap);
             }
         }
-
-        let metadata_rows = query(
-            "
-            SELECT key, value
-            FROM plugin_metadata
-            WHERE namespace = ? AND name = ?
-            ",
-        )
-        .bind(&namespace)
-        .bind(&name)
-        .fetch_all(&db.pool)
-        .await?;
-
-        let mut metadata: HashMap<String, String> = HashMap::new();
-        for row in metadata_rows {
-            let key: String = row.try_get("key")?;
-            let value: String = row.try_get("value")?;
-            metadata.insert(key, value);
-        }
-
-        Ok(WitmPlugin {
-            namespace: plugin_row.try_get("namespace")?,
-            name: plugin_row.try_get("name")?,
-            version: plugin_row.try_get("version")?,
-            author: plugin_row.try_get("author")?,
-            description: plugin_row.try_get("description")?,
-            license: plugin_row.try_get("license")?,
-            url: plugin_row.try_get("url")?,
-            publickey: plugin_row.try_get("publickey")?,
-            enabled: plugin_row.try_get("enabled")?,
-            component_bytes,
-            component,
-            granted,
-            requested,
-            metadata,
-            cel_filter,
-            cel_source,
-        })
+        plugin.granted = granted;
+        plugin.requested = requested;
+        Ok(plugin)
     }
 
     pub async fn all(db: &mut Db, engine: &wasmtime::Engine) -> Result<Vec<Self>> {
         let rows = query(
             "
-            SELECT namespace, name, version, author, description, license, url, publickey, component
+            SELECT component
             FROM plugins
             ",
         )
@@ -176,7 +163,15 @@ impl WitmPlugin {
 
         let mut plugins = Vec::new();
         for row in rows {
-            plugins.push(WitmPlugin::from_plugin_row(row, db, engine).await?);
+            match WitmPlugin::from_db_row(row, db, engine).await {
+                Ok(plugin) => plugins.push(plugin),
+                Err(e) => {
+                    error!(
+                        "Failed to load plugin from database row, dropping and continuing: {}",
+                        e
+                    );
+                }
+            }
         }
         Ok(plugins)
     }

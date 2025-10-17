@@ -60,8 +60,9 @@ impl From<&WasiRequest> for CelRequest {
     }
 }
 
-impl <B> From<&Request<B>> for CelRequest
-where B: http_body::Body<Data = Bytes> + Send + Sync + 'static,
+impl<B> From<&Request<B>> for CelRequest
+where
+    B: http_body::Body<Data = Bytes> + Send + Sync + 'static,
 {
     fn from(req: &Request<B>) -> Self {
         let mut headers = HashMap::new();
@@ -136,7 +137,7 @@ impl From<&WasiResponse> for CelResponse {
 impl From<&reqwest::Request> for CelRequest {
     fn from(req: &reqwest::Request) -> Self {
         let mut headers = HashMap::new();
-        
+
         for (name, value) in req.headers().iter() {
             let entry = headers
                 .entry(name.as_str().to_string())

@@ -5,12 +5,20 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
-use crate::wasm::generated::host::plugin::capabilities::{
-    HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient,
+use crate::wasm::generated::exports::host::plugin::witm_plugin::Tag;
+use crate::{
+    plugins::{CapabilitySet, WitmPlugin},
+    wasm::generated::{
+        host::plugin::capabilities::{
+            HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient,
+        },
+        PluginManifest,
+    },
 };
 pub use runtime::Runtime;
 
 pub mod generated {
+    pub use crate::wasm::generated::exports::host::plugin::witm_plugin::PluginManifest;
     pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient};
 
     wasmtime::component::bindgen!({
@@ -189,6 +197,36 @@ impl wasmtime_wasi_http::p3::WasiHttpView for Host {
         wasmtime_wasi_http::p3::WasiHttpCtxView {
             table: &mut self.table,
             ctx: &mut self.p3_http,
+        }
+    }
+}
+
+impl From<PluginManifest> for WitmPlugin {
+    fn from(manifest: PluginManifest) -> Self {
+        let metadata = manifest
+            .metadata
+            .iter()
+            .cloned()
+            .map(|Tag { key, value }| (key, value))
+            .collect::<HashMap<String, String>>();
+
+        WitmPlugin {
+            namespace: manifest.namespace,
+            name: manifest.name,
+            version: manifest.version,
+            author: manifest.author,
+            description: manifest.description,
+            license: manifest.license,
+            url: manifest.url,
+            publickey: manifest.publickey,
+            enabled: true,
+            granted: CapabilitySet::new(),
+            requested: CapabilitySet::new(),
+            component: None,
+            component_bytes: vec![],
+            metadata,
+            cel_filter: None,
+            cel_source: manifest.cel,
         }
     }
 }

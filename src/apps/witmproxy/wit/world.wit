@@ -37,6 +37,8 @@ interface witm-plugin {
 
     record plugin-manifest {
         name: string,
+        namespace: string,
+        author: string,
         version: string,
         description: string,
         license: string,

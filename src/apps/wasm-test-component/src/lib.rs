@@ -12,6 +12,8 @@ impl Guest for Plugin {
     fn manifest() -> PluginManifest {
         PluginManifest {
             name: "wasm-test-component".to_string(),
+            namespace: "ezco".to_string(),
+            author: "theo".to_string(),
             version: "0.0.1".to_string(),
             description: "A test plugin".to_string(),
             metadata: vec![],
