@@ -142,8 +142,4 @@ body {
             --cm-line-highlight: #ffffff1a;
         }
     }
-
-    .cm-gutters {
-        background-color: transparent;
-    }
 }

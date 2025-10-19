@@ -5,8 +5,6 @@ import Navbar from '../components/Navbar.astro';
 // @ts-expect-error
 import Packery from './packery.min.js?raw';
 
-import '../styles/markdown.css';
-
 // Inline Packery script to avoid FOUC, sure would be nice if browser supported Masonry grid natively
 const packeryLoad =
 	"<script type='module'>" + Packery + ";window.PackeryInit()</script>";

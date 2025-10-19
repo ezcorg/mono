@@ -43,11 +43,7 @@ export const styleModule: StyleModule = new StyleModule({
         // Codeblock styles
         '& .cm-editor': {
             margin: '2rem 0',
-            border: '2px solid var(--cm-toolbar-background)',
-
-            // Color overrides
-            '--cm-gutter-background': 'transparent',
-            '--cm-background': 'transparent',
+            border: '2px solid var(--ezdev-mde-table-bg)'
         },
 
         // Inline code styles
@@ -66,7 +62,7 @@ export const styleModule: StyleModule = new StyleModule({
             "border-collapse": "collapse",
             "width": "100%",
             "margin": "2em 0",
-            border: '2px solid var(--cm-toolbar-background)',
+            border: '2px solid var(--ezdev-mde-table-bg)',
             overflow: 'hidden',
             'table-layout': 'fixed',
             '& p': {

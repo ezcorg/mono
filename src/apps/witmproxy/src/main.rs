@@ -11,7 +11,7 @@ use witmproxy::{
 
 #[derive(Parser)]
 #[command(name = "witmproxy")]
-#[command(about = "A Rust MITM proxy connected to a WASM plugin system")]
+#[command(about = "A WASM-in-the-middle proxy")]
 struct Cli {
     /// Configuration file path
     #[arg(short, long, default_value = "$HOME/.witmproxy/config.toml")]
@@ -39,7 +39,6 @@ impl Cli {
             .unwrap_or("")
             .replace("$HOME", home_dir.to_str().unwrap_or("."));
         let config_path = PathBuf::from(config_path);
-
         let config = AppConfig::builder()
             .preloaded(self.config.clone())
             .env()

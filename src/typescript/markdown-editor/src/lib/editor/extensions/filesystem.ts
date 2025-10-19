@@ -1,8 +1,8 @@
 import { Extension } from '@tiptap/core'
-import { Fs } from '@ezdevlol/codeblock'
+import { VfsInterface } from '@ezdevlol/codeblock'
 
 export interface FileSystemOptions {
-    fs?: Fs
+    fs?: VfsInterface
     filepath?: string
     autoSave?: boolean
 }
