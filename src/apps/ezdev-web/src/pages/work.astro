@@ -126,10 +126,16 @@ const projects = [
 											{project.title}
 										</h3>
 										<button
-											class="expand-toggle text-[#F5F5F5] text-xl transition-transform duration-300"
+											class="expand-toggle relative flex items-center justify-center w-6 h-6 text-[#F5F5F5] text-xl transition-transform duration-300"
 											aria-label="Toggle project details"
 										>
-											<span class="toggle-icon">+</span>
+											<span class="toggle-icon absolute">+</span>
+											<span class="loading-icon absolute hidden">
+												<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+													<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.3"></circle>
+													<path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+												</svg>
+											</span>
 										</button>
 									</div>
 									<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
@@ -235,7 +241,10 @@ const projects = [
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
 				}
 			},
-			codeblock: async (containerEl: HTMLElement) => {
+			codeblock: async (
+				containerEl: HTMLElement,
+				containerParent: HTMLElement,
+			) => {
 				try {
 					const { createCodeblock, SearchIndex } = await import(
 						'@ezdevlol/codeblock'
@@ -248,12 +257,22 @@ const projects = [
 						fs,
 						'.codeblock/index.json',
 					);
-					createCodeblock({
+					const codeblock = createCodeblock({
 						parent: containerEl,
 						fs,
 						filepath: 'example.ts',
 						index,
 						cwd: '/',
+					});
+					codeblock.dom.setAttribute(
+						'data-theme',
+						containerParent.matches(':hover') ? 'light' : 'dark',
+					);
+					containerParent.addEventListener('mouseover', () => {
+						codeblock.dom.setAttribute('data-theme', 'light');
+					});
+					containerParent.addEventListener('mouseout', () => {
+						codeblock.dom.setAttribute('data-theme', 'dark');
 					});
 				} catch (error) {
 					console.error('Failed to load codeblock editor:', error);
@@ -278,48 +297,77 @@ const projects = [
 			// Handle project card expansion and collapse
 			async function handleProjectExpansion(item: HTMLElement) {
 				const isExpanded = item.classList.contains('is-expanded');
+				const isLoading = item.classList.contains('is-loading');
 				const contentDiv = item.querySelector(
 					'.project-content',
 				) as HTMLElement;
 				const toggleIcon = item.querySelector(
 					'.toggle-icon',
 				) as HTMLElement;
+				const loadingIcon = item.querySelector(
+					'.loading-icon',
+				) as HTMLElement;
+				const expandButton = item.querySelector(
+					'.expand-toggle',
+				) as HTMLButtonElement;
+
+				// Prevent interaction during loading
+				if (isLoading) return;
 
 				if (!isExpanded) {
 					// Load content if needed
 					const projectTitle = item.dataset.projectTitle;
 					if (!projectTitle || !demos[projectTitle]) return;
 
-					const demoContainer = item.querySelector(
-						'.project-demo-container',
-					) as HTMLElement;
+					// --- START LOADING ---
+					item.classList.add('is-loading');
+					expandButton.disabled = true;
+					toggleIcon.classList.add('hidden');
+					loadingIcon.classList.remove('hidden');
 
-					// Call the appropriate demo loader once
-					const result = await demos[projectTitle](
-						demoContainer,
-						item,
-					);
-					demos[projectTitle] = () => result;
+					try {
+						const demoContainer = item.querySelector(
+							'.project-demo-container',
+						) as HTMLElement;
 
-					// --- EXPAND ---
-					// Show the content
-					contentDiv.classList.remove('hidden');
+						// Call the appropriate demo loader once
+						const result = await demos[projectTitle](
+							demoContainer,
+							item,
+						);
+						demos[projectTitle] = () => result;
 
-					// Update UI
-					toggleIcon.textContent = '−';
-					toggleIcon.style.transform = 'rotate(180deg)';
+						// --- END LOADING & EXPAND ---
+						item.classList.remove('is-loading');
+						expandButton.disabled = false;
+						loadingIcon.classList.add('hidden');
+						
+						// Show the content
+						contentDiv.classList.remove('hidden');
 
-					// Add expanded class
-					item.classList.add('is-expanded');
+						// Update UI
+						toggleIcon.textContent = '−';
+						toggleIcon.classList.remove('hidden');
 
-					// ResizeObserver will automatically detect the expansion and trigger relayout
-					// Keep a small timeout to ensure content is rendered before observation
-					setTimeout(() => {
-						// Force a size check by updating the dataset
-						if (item.dataset.prevHeight) {
-							delete item.dataset.prevHeight;
-						}
-					}, 50);
+						// Add expanded class
+						item.classList.add('is-expanded');
+
+						// ResizeObserver will automatically detect the expansion and trigger relayout
+						// Keep a small timeout to ensure content is rendered before observation
+						setTimeout(() => {
+							// Force a size check by updating the dataset
+							if (item.dataset.prevHeight) {
+								delete item.dataset.prevHeight;
+							}
+						}, 50);
+					} catch (error) {
+						// --- ERROR HANDLING ---
+						console.error('Failed to load demo:', error);
+						item.classList.remove('is-loading');
+						expandButton.disabled = false;
+						loadingIcon.classList.add('hidden');
+						toggleIcon.classList.remove('hidden');
+					}
 				} else {
 					// --- COLLAPSE ---
 					// Hide content first
@@ -327,7 +375,6 @@ const projects = [
 
 					// Update UI
 					toggleIcon.textContent = '+';
-					toggleIcon.style.transform = 'rotate(0deg)';
 
 					// Remove expanded class after a brief delay to allow content to hide
 					setTimeout(() => {
@@ -408,12 +455,12 @@ const projects = [
 				// Use event delegation for expand/collapse clicks
 				grid.addEventListener('click', (event) => {
 					const target = event.target as HTMLElement;
-					const button = target.closest('.expand-toggle');
-					if (button) {
+					const button = target.closest('.expand-toggle') as HTMLButtonElement;
+					if (button && !button.disabled) {
 						const item = target.closest(
 							'.grid-item',
 						) as HTMLElement;
-						if (item) {
+						if (item && !item.classList.contains('is-loading')) {
 							handleProjectExpansion(item);
 						}
 					}
@@ -597,6 +644,7 @@ const projects = [
 
 		/* Hover effects for work items */
 		.work-item-card {
+			position: relative;
 			box-shadow: 0 0 0 rgba(255, 255, 255, 0);
 		}
 		.work-item-card:hover {
@@ -612,6 +660,85 @@ const projects = [
 			background-color: #f0f0f0;
 			border-color: #cccccc;
 			opacity: 1;
+		}
+		/* Loading state styles */
+		.expand-toggle:disabled {
+			cursor: not-allowed;
+			opacity: 0.7;
+		}
+
+		/* Perfect centering for toggle button icons */
+		.expand-toggle {
+			min-width: 24px;
+			min-height: 24px;
+		}
+
+		.toggle-icon,
+		.loading-icon {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			transition: opacity 0.2s ease-in-out;
+		}
+
+		/* Ensure hidden class works properly with absolute positioning */
+		.loading-icon.hidden {
+			display: none !important;
+		}
+
+		.toggle-icon.hidden {
+			display: none !important;
+		}
+
+		.loading-icon svg {
+			animation: spin 1s linear infinite;
+		}
+
+		@keyframes spin {
+			from {
+				transform: rotate(0deg);
+			}
+			to {
+				transform: rotate(360deg);
+			}
+		}
+
+		/* Pulsing background animation for loading state - applied as overlay */
+		.grid-item.is-loading .work-item-card::before {
+			content: '';
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: linear-gradient(
+				90deg,
+				transparent,
+				rgba(255, 255, 255, 0.05),
+				transparent
+			);
+			background-size: 200px 100%;
+			animation: shimmer 1.5s ease-in-out infinite;
+			pointer-events: none;
+			z-index: 1;
+		}
+
+		/* Ensure content stays above the loading overlay */
+		.grid-item.is-loading .work-item-card > * {
+			position: relative;
+			z-index: 2;
+		}
+
+		/* Prevent interaction during loading */
+		.grid-item.is-loading .expand-toggle {
+			pointer-events: none;
+		}
+
+		.grid-item.is-loading {
+			opacity: 0.9;
 		}
 	</style>
 </Layout>

@@ -2,20 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {}
+
 html {
     font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
     scroll-behavior: smooth;
 }
 
 body {
-    @apply bg-black text-[#F5F5F5];
     margin: 0;
     padding: 0;
     min-height: 100vh;
-}
-
-::selection {
-    @apply bg-[#F5F5F5] text-black;
 }
 
 .work-item-card {
@@ -30,24 +27,6 @@ body {
         --ezdev-mde-code-bg: var(--ezdev-mde-code-bg-light);
         --ezdev-mde-bg: var(--ezdev-mde-bg-light);
     }
-
-    *::selection,
-    *::-moz-selection,
-    *::-o-selection,
-    *::-ms-selection,
-    *::-webkit-selection {
-        background-color: black;
-        color: white;
-    }
-}
-
-::selection,
-::-moz-selection,
-::-o-selection,
-::-ms-selection,
-::-webkit-selection {
-    background-color: white;
-    color: black;
 }
 
 @keyframes blink {
