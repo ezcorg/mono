@@ -40,7 +40,7 @@ jobs:
 
       - name: Install dependencies
         run: 
-          pnpm i
+          pnpm i -r
 
       - name: Build with Astro
         run: |
