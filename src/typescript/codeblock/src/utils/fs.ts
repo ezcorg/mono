@@ -282,8 +282,9 @@ export namespace Vfs {
      *                     for better performance with large files.
      */
     export const worker = async (bufferOrUrl?: CborUint8Array<SnapshotNode> | string): Promise<VfsInterface> => {
-        const url = new URL('../workers/fs.worker.js', import.meta.url)
-        const worker = new SharedWorker(url, { type: 'module' });
+        // TODO: fix this for non-Vite consumers
+        const workerUrl = await import('../workers/fs.worker.js?sharedworker&url')
+        const worker = new SharedWorker(workerUrl.default, { type: 'module' });
         worker.port.start()
         const proxy = Comlink.wrap<{ mount: typeof mount; mountFromUrl: typeof mountFromUrl }>(worker.port);
 
@@ -302,6 +303,7 @@ export namespace Vfs {
             // Buffer provided - use traditional mount method
             ({ fs } = await proxy.mount(Comlink.transfer({ buffer: bufferOrUrl, mountPoint: "/" }, [bufferOrUrl])));
         }
+        console.debug('Filesystem worker mounted');
         return Comlink.proxy(Vfs.fromMemfs(fs))
     }
     
