@@ -181,7 +181,7 @@ export default {
 
 async function sendEmail(data: ContactFormData, env: Env) {
     const recipientEmail = env.RECIPIENT_EMAIL || 'dev@joinez.co';
-    const senderEmail = `mailatron@mail.joinez.co`;
+    const senderEmail = `mailatron@joinez.co`;
 
     // Format dateRange for display
     const formatDateRange = (dateRange?: [Date, Date]) => {
