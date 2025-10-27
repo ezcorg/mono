@@ -1,0 +1,57 @@
+services:
+  # PostgreSQL database with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ezfeature-postgres
+    environment:
+      POSTGRES_DB: ezfeature
+      POSTGRES_USER: ezfeature_user
+      POSTGRES_PASSWORD: ezfeature_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ezfeature_user -d ezfeature"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ezfeature-network
+
+  # ezfeature application
+  ezfeature-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ezfeature-app
+    environment:
+      DATABASE_URL: postgresql://ezfeature_user:ezfeature_password@postgres:5432/ezfeature
+      RUST_LOG: info
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./config:/app/config
+      - temp_storage:/tmp/ezfeature
+    networks:
+      - ezfeature-network
+    restart: no
+
+volumes:
+  postgres_data:
+    driver: local
+  temp_storage:
+    driver: local
+
+networks:
+  ezfeature-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

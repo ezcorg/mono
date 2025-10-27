@@ -1,76 +1,52 @@
 import { useEffect, useRef, useState } from 'react';
-import { createEditor, MarkdownEditor } from './components/editor';
-
-const initialMarkdown = `
-# @ezdevlol/markdown-editor
-
-This editor supports **Markdown** syntax.
-
-## Features
-
-- Paragraphs
-- Headings
-- *Italic* and **Bold** text
-- \`Inline code\`
-- Links (auto-detected google.com and [manual](https://google.com)
-
-### Task Lists
-
-- [x] Task 1 (Done)
-- [ ] Task 2 (Pending)
-  - [ ] Subtask 2.1
-- [ ] Task 3
-
-### Tables
-
-| Header 1 | Header 2 | Header 3 |
-|----------|----------|----------|
-| Cell 1   | Cell 2   | Cell 3   |
-| Cell 4   | Cell 5   | Cell 6   |
-
-### Custom Code Block
-
-\`\`\`javascript
-function greet(name) {
-  console.log(\`Hello, \${name}!\`);
-}
-
-greet('World');
-\`\`\`
-
-\`\`\`python
-def add(a, b):
-  """Adds two numbers."""
-  return a + b
-
-print(add(5, 3))
-\`\`\`
-
-Try editing the content!
-`;
+import { createEditor, MarkdownEditor } from './lib/editor';
+import { CodeblockFS, SearchIndex } from '@joinezco/codeblock';
+import './App.css'
+import { file } from './test/example';
 
 function App() {
-  const [markdownContent, setMarkdownContent] = useState(initialMarkdown);
+  const [markdownContent, setMarkdownContent] = useState('');
   const [editor, setEditor] = useState<MarkdownEditor | null>(null);
   const ref = useRef(null);
+
+  async function loadFs() {
+    const fs = await CodeblockFS.worker('/snapshot.bin');
+
+    // Generate or load search index
+    try {
+      const index = await SearchIndex.get(fs, '.codeblock/index.json');
+      console.log('Search index ready with', index, 'documents');
+    } catch (error) {
+      console.warn('Failed to create search index:', error);
+    }
+
+    return fs;
+  }
 
   useEffect(() => {
 
     let newEditor: MarkdownEditor | null = null;
 
     if (ref.current && !editor) {
-      newEditor = createEditor({
-        element: ref.current,
-        content: initialMarkdown,
-        onUpdate: ({ editor }) => {
-          const json = editor.getJSON();
-          const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();
-          setMarkdownContent(markdown);
-          console.log("Editor JSON:", json);
-          console.log("Editor Markdown:", markdown);
-        },
+      loadFs().then(async fs => {
+        console.debug('Loaded filesystem', fs);
+
+        await fs.writeFile('test.md', file);
+
+        newEditor = createEditor({
+          element: ref.current!,
+          fs: {
+            fs: fs,
+            filepath: 'test.md',
+            autoSave: false,
+          },
+          onUpdate: ({ editor }) => {
+            const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();
+            setMarkdownContent(markdown);
+          },
+        });
+        setEditor(newEditor);
       });
-      setEditor(newEditor);
     }
 
     return () => {
@@ -85,11 +61,6 @@ function App() {
   return (
     <div style={{ padding: '20px', maxWidth: '800px', margin: 'auto' }}>
       <div id='md-editor' ref={ref}></div>
-      {/* <MarkdownEditor
-
-        initialContent={markdownContent}
-        onChange={handleContentChange}
-      /> */}
       <hr style={{ margin: '20px 0' }} />
       <h2>Live Markdown Output:</h2>
       <pre style={{ whiteSpace: 'pre-wrap', background: '#eee', padding: '10px', border: '1px solid #ccc' }}>

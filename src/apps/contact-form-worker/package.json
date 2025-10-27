@@ -13,11 +13,11 @@
         "test:run": "vitest run"
     },
     "dependencies": {
-        "@ezdevlol/shared": "^0.0.3",
-        "zod": "^3.22.0"
+        "@joinezco/shared": "^0.0.5",
+        "zod": "^4.1.12"
     },
     "devDependencies": {
-        "@cloudflare/vitest-pool-workers": "^0.8.49",
+        "@cloudflare/vitest-pool-workers": "^0.10.0",
         "@cloudflare/workers-types": "^4.20250703.0",
         "@vitest/ui": "^1.0.0",
         "typescript": "^5.0.0",

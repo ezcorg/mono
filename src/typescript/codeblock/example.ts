@@ -1,21 +1,33 @@
-import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
+import { TopLevelFs } from "@joinezco/jswasi/filesystem";
 import { createCodeblock } from "./src/editor";
-import { CodeblockFS } from "./src/utils/fs";
+import { Vfs } from "./src/utils/fs";
 import { SearchIndex } from "./src/utils/search";
-import { SnapshotNode } from "memfs/snapshot";
 
 async function loadFs() {
-    const response = await fetch('/snapshot.bin');
-    if (!response.ok) {
-        throw new Error(`Failed to load snapshot: ${response.statusText}`);
+    const fs = new TopLevelFs();
+    const config = {
+        "fsType": "fsa",
+        "opts": {
+            "name": "fsa1",
+            "keepMetadata": "true",
+            "create": "true"
+        }
     }
-    const buffer = await response.arrayBuffer();
-    console.debug('Got snapshot', buffer);
-
-    return await CodeblockFS.worker(buffer as CborUint8Array<SnapshotNode>);
+    await fs.addMount(
+        // @ts-expect-error
+        undefined,
+        "",
+        undefined,
+        "/",
+        config.fsType,
+        0n,
+        config.opts);
+    return await Vfs.fromJswasiFs(fs);
 }
+
+// await reset();
 const fs = await loadFs()
 const parent = document.getElementById('editor') as HTMLDivElement;
 const path = '.codeblock/index.json'
-const index = await SearchIndex.get(fs, path)
-createCodeblock({ parent, fs, file: 'example.ts', language: 'javascript', toolbar: true, index });
+const index = await SearchIndex.get(fs, path, ['path', 'basename', 'dirname', 'extension']);
+createCodeblock({ parent, fs, language: 'ts', toolbar: true, index, cwd: '/' });

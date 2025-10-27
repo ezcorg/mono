@@ -1,5 +1,6 @@
 packages:
   - src/typescript/*
+  - src/typescript/tiptap-markdown/example
   - src/apps/*
   - src/apps/workers/*
 allowUnusedPatches: true

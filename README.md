@@ -7,7 +7,7 @@ Monorepo containing all of the organization's projects and code.
 ## Clone the repository
 
 ```sh
-git clone --recursive https://github.com/ezdevlol/mono
+git clone --recursive https://github.com/ezcorg/mono
 # or if you've already cloned it, but are missing submodules
 git submodule update --init --recursive
 ```

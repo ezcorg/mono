@@ -1,9 +1,21 @@
-[submodule "src/typescript/codemirror-languageserver"]
-	path = src/typescript/codemirror-languageserver
-	url = https://github.com/tbrockman/codemirror-languageserver
 [submodule "src/typescript/memfs"]
 	path = src/typescript/memfs
-	url = https://github.com/ezdevlol/memfs
-[submodule "src/apps/cuttlefish"]
-	path = src/apps/cuttlefish
-	url = https://github.com/ezdevlol/cuttlefish
+	url = https://github.com/ezcorg/memfs
+[submodule "src/rust/hello-wasip3-http"]
+	path = src/rust/hello-wasip3-http
+	url = https://github.com/ezcorg/hello-wasip3-http
+[submodule "src/typescript/codemirror-languageserver"]
+	path = src/typescript/codemirror-languageserver
+	url = https://github.com/ezcorg/codemirror-languageserver
+[submodule "src/rust/confique"]
+	path = src/rust/confique
+	url = https://github.com/ezcorg/confique
+[submodule "src/typescript/tiptap-markdown"]
+	path = src/typescript/tiptap-markdown
+	url = https://github.com/ezcorg/tiptap-markdown
+[submodule "src/typescript/jswasi"]
+	path = src/typescript/jswasi
+	url = https://github.com/ezcorg/jswasi
+[submodule "src/apps/wasmtime"]
+	path = src/apps/wasmtime
+	url = https://github.com/ezcorg/wasmtime

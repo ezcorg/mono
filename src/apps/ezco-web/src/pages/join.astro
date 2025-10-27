@@ -1,0 +1,144 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Footer from '../components/Footer.astro';
+import Navbar from '../components/Navbar.astro';
+---
+
+<Layout
+	title="Join us | ez co"
+	description="Join a team of passionate and thoughtful builders."
+>
+	<section
+		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-6 pb-12 md:px-8 md:pb-16"
+	>
+		<div class="w-full mx-auto flex flex-col gap-8">
+			<Navbar currentPath="/join" />
+			<form
+				class="space-y-6 max-w-2xl"
+				action="#"
+				method="POST"
+				enctype="multipart/form-data"
+				id="join-form"
+			>
+				<div>
+					<label for="name" class="block text-[#F5F5F5] mb-2">Name *</label>
+					<input
+						type="text"
+						id="name"
+						name="name"
+						required
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] placeholder-gray-400 px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
+					/>
+				</div>
+
+				<div>
+					<label for="email" class="block text-[#F5F5F5] mb-2">Email *</label>
+					<input
+						type="email"
+						id="email"
+						name="email"
+						required
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] placeholder-gray-400 px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
+					/>
+				</div>
+
+				<div>
+					<label for="resume" class="block text-[#F5F5F5] mb-2"
+						>Resume/CV *</label
+					>
+					<input
+						type="file"
+						id="resume"
+						name="resume"
+						accept=".pdf,.doc,.docx"
+						required
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 file:mr-4 file:py-2 file:px-4 file:border-0 file:text-sm file:font-semibold file:bg-[#F5F5F5] file:text-black hover:file:bg-opacity-90"
+					/>
+					<p class="text-sm text-[#F5F5F5] opacity-60 mt-2">
+						Please upload your resume in PDF, DOC, or DOCX format
+					</p>
+				</div>
+
+				<div>
+					<label for="motivation" class="block text-[#F5F5F5] mb-2"
+						>Why do you want to join? *</label
+					>
+					<textarea
+						id="motivation"
+						name="motivation"
+						required
+						rows="6"
+						placeholder="What interests you about becoming a member? What resonates with you?"
+						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] placeholder-gray-400 px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 resize-vertical"
+					></textarea>
+				</div>
+
+				<div>
+					<input type="checkbox" id="not-llm" name="not-llm" required/>
+					<label for="not-llm" class="text-[#F5F5F5] ml-2">I am not a large language model or other form of automation *</label>
+				</div>
+
+				<div>
+					<input type="checkbox" id="but-maybe-llm" name="but-maybe-llm"/>
+					<label for="but-maybe-llm" class="text-[#F5F5F5] ml-2">But if I <i>were</i> I would also check this box</label>
+				</div>
+
+				<button
+					type="submit"
+					class="bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
+				>
+					Submit
+				</button>
+			</form>
+		</div>
+	</section>
+	<Footer slot="footer" />
+</Layout>
+
+<script>
+	// Form submission handling
+	document
+		.querySelector('#join-form')
+		?.addEventListener('submit', function (e) {
+			e.preventDefault();
+
+			// Get form data
+			const formData = new FormData(this);
+			const name = formData.get('name');
+			const email = formData.get('email');
+			const resume = formData.get('resume');
+			const motivation = formData.get('motivation');
+
+			// Basic validation
+			if (!name || !email || !resume || !motivation) {
+				alert('Please fill in all required fields.');
+				return;
+			}
+
+			// Here you would typically send the data to your backend
+			// For now, we'll just show a success message
+			alert(
+				'Thank you for your application! We will review it and get back to you soon.',
+			);
+
+			// Reset form
+			this.reset();
+		});
+
+	// File input styling enhancement
+	const fileInput = document.getElementById('resume') as HTMLInputElement;
+	if (fileInput) {
+		fileInput.addEventListener('change', function (e) {
+			const target = e.target as HTMLInputElement;
+			const file = target.files?.[0];
+			if (file) {
+				// You could add file size validation here
+				const maxSize = 10 * 1024 * 1024; // 10MB
+				if (file.size > maxSize) {
+					alert('File size must be less than 10MB');
+					target.value = '';
+				}
+			}
+		});
+	}
+</script>

@@ -1,8 +1,8 @@
 import * as Comlink from 'comlink';
-import { createLanguageServer } from '../servers/typescript';
+import { createLanguageServer } from '../lsps/typescript';
 import { createConnection } from 'vscode-languageserver/browser';
 import { BrowserMessageReader, BrowserMessageWriter } from '@volar/language-server/browser';
-import { Fs } from '../types';
+import { VfsInterface } from '../types';
 
 // TODO: get rid of this
 // instead, create language specific workers (with a smarter client)
@@ -15,7 +15,7 @@ onconnect = async (event) => {
     const connection = createConnection(reader, writer);
     connection.listen();
 
-    const proxy = async ({ fs }: { fs: Fs }) => {
+    const proxy = async ({ fs }: { fs: VfsInterface }) => {
         console.log('creating language server')
         await createLanguageServer({ fs, connection });
     }

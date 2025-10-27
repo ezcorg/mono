@@ -1,0 +1,105 @@
+[package]
+name = "witmproxy"
+version = "0.0.1"
+edition = "2021"
+authors = ["Theodore Brockman <iam@theo.lol>"]
+description = "A WASM-in-the-middle HTTP proxy"
+license = "AGPLv3"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.47.1", features = ["full"] }
+tokio-util = { version = "0.7.16", features = ["codec", "compat"] }
+
+# HTTP/HTTPS
+hyper = { version = "1.7.0", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1.16", features = ["server", "client", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27.0", features = ["http2"] }
+http-body-util = "0.1"
+
+# TLS
+rustls = { version = "0.23.4", features = ["ring"] }
+rustls-pemfile = "2.0"
+rustls-native-certs = "0.8.0"
+tokio-rustls = "0.26"
+
+# Certificate generation
+rcgen = "0.13.2"
+ring = "0.17"
+x509-parser = "0.17"
+time = { version = "0.3", features = ["macros"] }
+
+# WASM runtime (component-model + async)
+wasmtime = { path = "../wasmtime/crates/wasmtime", features = ["component-model-async"] }
+wasmtime-wasi = { path = "../wasmtime/crates/wasi", features = ["p3"] }
+wasmtime-wasi-http = { path = "../wasmtime/crates/wasi-http", features = ["p3"] }
+wit-bindgen = { version = "0.46.0", features = ["default"] }
+# WASM signature verification
+wasmsign2 = "0.2.6"
+
+# Web server
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# HTTP client for plugins
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "rustls-tls-manual-roots", "stream", "http2"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Utilities
+anyhow = "1.0"
+thiserror = "2.0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.0", features = ["v4"] }
+base64 = "0.22"
+hex = "0.4"
+bytes = "1.0"
+futures = "0.3"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+
+# HTML parsing
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
+
+# Template engine
+askama = "0.12"
+
+clap = { version = "4.5.47", features = ["derive"] }
+markup5ever = "0.35.0"
+either = "1.15.0"
+confique = { path = "../../rust/confique", features = ["toml"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
+# Must match version in sqlx
+libsqlite3-sys = { version = "0.30.1", features = [
+    "bundled-sqlcipher"
+] }
+dirs = "6.0.0"
+lazy_static = "1.5.0"
+bimap = "0.6.3"
+salvo = { version = "0.84.1", features = ["oapi", "quinn", "serve-static", "cors", "affix-state", "rustls", "force-https"] }
+rust-embed = "8.7.2"
+cel = "0.11.4"
+http-body = "1.0.1"
+
+[lib]
+name = "witmproxy"
+path = "src/lib.rs"
+
+[dev-dependencies]
+# Test dependencies
+tokio-test = "0.4"
+tempfile = "3.8"
+rcgen = "0.13.2"
+webpki-roots = "0.26"
+sqlx-cli = { version = "0.8.6", features = ["rustls"] }
+
+[[bin]]
+name = "witm"
+path = "src/main.rs"
+

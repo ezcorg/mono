@@ -1,0 +1,100 @@
+---
+export interface Props {
+	size?: number;
+}
+
+const { size = 60 } = Astro.props;
+---
+
+<a href="/" class="logo-link">
+	<div
+		class="relative logo-wrapper"
+		style={`width: ${size * 2}px; height: ${size}px;`}
+	>
+		<!-- Border elements -->
+		<div
+			class="absolute border-2 border-[#F5F5F5] logo-border-left"
+			style={`width: ${size}px; height: ${size}px; left: 0;`}
+		></div>
+		<div
+			class="absolute border-2 border-[#F5F5F5] logo-border-right"
+			style={`width: ${size}px; height: ${size}px; left: ${size}px;`}
+		></div>
+		
+		<!-- Base text elements (light colored) -->
+		<div
+			class="absolute flex items-center justify-center logo-text-base"
+			style={`width: ${size * 2}px; height: ${size}px; left: 0; font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500; color: #F5F5F5;`}
+		>
+			<span style={`width: ${size}px; text-align: center; display: inline-block;`}>ez</span><span style={`width: ${size}px; text-align: center; display: inline-block;`}>co</span>
+		</div>
+		
+		<!-- Sliding white background with dark text overlay -->
+		<div
+			class="absolute bg-white sliding-background overflow-hidden"
+			style={`width: ${size}px; height: ${size}px; left: ${size}px;`}
+		>
+			<div
+				class="absolute flex items-center justify-center logo-text-masked"
+				style={`width: ${size * 2}px; height: ${size}px; left: ${-size}px; font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500; color: #000000;`}
+			>
+				<span style={`width: ${size}px; text-align: center; display: inline-block;`}>ez</span><span style={`width: ${size}px; text-align: center; display: inline-block;`}>co</span>
+			</div>
+		</div>
+	</div>
+</a>
+
+<style>
+	.logo-link {
+		display: flex;
+		align-items: center;
+		cursor: pointer;
+		text-decoration: none;
+	}
+
+	.logo-wrapper {
+		position: relative;
+		overflow: hidden;
+	}
+
+	.logo-border-left,
+	.logo-border-right {
+		transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+		z-index: 1;
+	}
+
+	.logo-text-base {
+		z-index: 2;
+	}
+
+	.sliding-background {
+		transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+		z-index: 3;
+	}
+
+	.logo-text-masked {
+		/* This text moves with the sliding background to stay aligned */
+		transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	/* Hover/Focus state: slide background to cover ez */
+	.logo-link:hover .sliding-background,
+	.logo-link:focus .sliding-background {
+		transform: translateX(-100%);
+		box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+	}
+
+	/* The masked text needs to move with the background to show the correct portion */
+	.logo-link:hover .logo-text-masked,
+	.logo-link:focus .logo-text-masked {
+		transform: translateX(50%);
+	}
+
+	.logo-link:hover .logo-border-left,
+	.logo-link:hover .logo-border-right,
+	.logo-link:focus .logo-border-left,
+	.logo-link:focus .logo-border-right {
+		border-color: #ffffff;
+		box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+	}
+</style>

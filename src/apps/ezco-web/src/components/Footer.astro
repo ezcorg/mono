@@ -1,0 +1,139 @@
+---
+import Logo from './Logo.astro';
+
+const currentYear = new Date().getFullYear();
+const startYear = 2025;
+const displayYear =
+	currentYear > startYear ? `${startYear} - ${currentYear}` : startYear;
+
+const services = [
+	{ text: 'Open source', href: '/newproject?service=open-source' },
+	{
+		text: 'Software development',
+		href: '/newproject?service=software-development',
+	},
+	{ text: 'Consulting', href: '/newproject?service=consulting' },
+];
+
+const company = [
+	{ text: 'About', href: '/about' },
+	{ text: 'Our work', href: '/work' },
+	// { text: 'Join us', href: '/join' }, TODO: build worker for submit
+];
+
+const resources = [{ text: 'Blog', href: '/blog' }];
+
+const connect = [
+	{ text: 'LinkedIn', href: 'https://linkedin.com/company/eeezco/' },
+	{ text: 'GitHub', href: 'https://github.com/join-ezco' },
+];
+
+interface FooterLink {
+	text: string;
+	href: string;
+}
+---
+
+<footer
+	class="w-full md:w-auto md:max-w-7xl md:mx-auto py-16 px-4 sm:px-6 md:px-8 border-t border-[#333333]"
+>
+	<div class="md:max-w-none">
+		<div
+			class="flex flex-col md:flex-row justify-between items-start gap-8"
+		>
+			<div class="flex flex-col gap-4">
+				<Logo size={40} />
+				<p
+					class="text-[2rem] text-[#F5F5F5] opacity-80 max-w-md"
+					style="font-family: 'Times New Roman', Times, serif;"
+				>
+					your friendly neighborhood tech collective
+				</p>
+			</div>
+
+			<div class="grid grid-cols-2 md:grid-cols-3 gap-8">
+				<div class="flex flex-col gap-4">
+					<h3 class="text-[#F5F5F5] text-lg font-medium">Services</h3>
+					<nav class="flex flex-col gap-2">
+						{
+							services.map((link: FooterLink) => (
+								<a
+									href={link.href}
+									class="text-[#F5F5F5] opacity-60 hover:opacity-100 transition-opacity duration-300"
+								>
+									{link.text}
+								</a>
+							))
+						}
+					</nav>
+				</div>
+
+				<div class="flex flex-col gap-4">
+					<h3 class="text-[#F5F5F5] text-lg font-medium">Company</h3>
+					<nav class="flex flex-col gap-2">
+						{
+							company.map((link: FooterLink) => (
+								<a
+									href={link.href}
+									class="text-[#F5F5F5] opacity-60 hover:opacity-100 transition-opacity duration-300"
+								>
+									{link.text}
+								</a>
+							))
+						}
+					</nav>
+				</div>
+
+				<div class="flex flex-col gap-4">
+					<h3 class="text-[#F5F5F5] text-lg font-medium">
+						Resources
+					</h3>
+					<nav class="flex flex-col gap-2">
+						{
+							resources.map((link: FooterLink) => (
+								<a
+									href={link.href}
+									class="text-[#F5F5F5] opacity-60 hover:opacity-100 transition-opacity duration-300"
+								>
+									{link.text}
+								</a>
+							))
+						}
+					</nav>
+				</div>
+
+				<div class="flex flex-col gap-4 col-span-2 md:col-span-1">
+					<h3 class="text-[#F5F5F5] text-lg font-medium">Connect</h3>
+					<nav class="flex flex-col gap-2">
+						{
+							connect.map((link: FooterLink) => (
+								<a
+									href={link.href}
+									class="text-[#F5F5F5] opacity-60 hover:opacity-100 transition-opacity duration-300"
+								>
+									{link.text}
+								</a>
+							))
+						}
+					</nav>
+				</div>
+			</div>
+		</div>
+
+		<div
+			class="mt-16 pt-8 border-t border-[#333333] flex flex-col md:flex-row justify-between items-center gap-4"
+		>
+			<p class="text-[#F5F5F5] opacity-60 text-sm">
+				© {displayYear} ez dev inc. All rights reserved.
+			</p>
+			<!-- <div class="flex gap-6">
+				<a
+					href="#privacy"
+					class="text-[#F5F5F5] opacity-60 text-sm hover:opacity-100 transition-opacity duration-300"
+				>
+					Privacy Policy
+				</a>
+			</div> -->
+		</div>
+	</div>
+</footer>

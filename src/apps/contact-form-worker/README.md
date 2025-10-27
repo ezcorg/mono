@@ -25,7 +25,7 @@ wrangler secret put MAILGUN_API_TOKEN
 
 Optional:
 ```bash
-wrangler secret put RECIPIENT_EMAIL  # defaults to dev@ezdev.lol
+wrangler secret put RECIPIENT_EMAIL  # defaults to dev@joinez.co
 ```
 
 ### 2. Rate Limiting
@@ -110,14 +110,14 @@ When rate limited, returns HTTP 429 with:
 ## CORS
 
 The worker supports CORS for the following origins:
-- `https://ezdev.lol`
-- `https://www.ezdev.lol`
+- `https://joinez.co`
+- `https://www.joinez.co`
 
 ## Email Format
 
 Emails are sent via Mailgun with:
-- **From**: `Mailatron 9000 <mailatron@mail.ezdev.lol>`
-- **To**: `{RECIPIENT_EMAIL}` (default: dev@ezdev.lol)
+- **From**: `Mailatron 9000 <mailatron@mail.joinez.co>`
+- **To**: `{RECIPIENT_EMAIL}` (default: dev@joinez.co)
 - **Subject**: `[new project] [{service}] for {name}`
 - **Reply-To**: Contact's email address
 

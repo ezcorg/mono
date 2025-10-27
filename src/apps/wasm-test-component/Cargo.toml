@@ -1,0 +1,18 @@
+[package]
+name = "wasm-test-component"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wit-bindgen = { version = "0.46.0" }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:wasm-test-component"
+proxy = true
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]

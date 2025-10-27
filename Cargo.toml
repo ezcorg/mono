@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "src/apps/witmproxy",
+#    "src/apps/ezfilter-client/src-tauri",
+    "src/apps/eznote/src-tauri", 
+    "src/apps/wasm-test-component",
+    "src/rust/hello-wasip3-http", 
+    "src/rust/ezfilter-rs", 
+    "src/rust/ezfeature-rs",
+    "src/rust/confique",
+]
+
+exclude = ["src/apps/wasmtime"]
+
+# Workspace-wide configuration
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true

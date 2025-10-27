@@ -38,14 +38,14 @@ describe('Contact Form Worker', () => {
             const request = new Request('https://example.com', {
                 method: 'OPTIONS',
                 headers: {
-                    'Origin': 'https://ezdev.lol'
+                    'Origin': 'https://joinez.co'
                 }
             });
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
             expect(response.status).toBe(200);
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co');
             expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST, OPTIONS');
             expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
         });
@@ -61,7 +61,7 @@ describe('Contact Form Worker', () => {
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
             expect(response.status).toBe(200);
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol'); // Default to first allowed origin
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co'); // Default to first allowed origin
             expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST, OPTIONS');
             expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
         });
@@ -74,7 +74,7 @@ describe('Contact Form Worker', () => {
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
             expect(response.status).toBe(200);
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol'); // Default to first allowed origin
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co'); // Default to first allowed origin
             expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST, OPTIONS');
             expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
         });
@@ -104,7 +104,7 @@ describe('Contact Form Worker', () => {
             const request = new Request('https://example.com', {
                 method: 'GET',
                 headers: {
-                    'Origin': 'https://ezdev.lol'
+                    'Origin': 'https://joinez.co'
                 }
             });
 
@@ -113,7 +113,7 @@ describe('Contact Form Worker', () => {
             expect(response.status).toBe(405);
             const text = await response.text();
             expect(text).toBe('Method not allowed');
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co');
         });
 
         it('should reject non-POST requests with disallowed origin', async () => {
@@ -129,7 +129,7 @@ describe('Contact Form Worker', () => {
             expect(response.status).toBe(405);
             const text = await response.text();
             expect(text).toBe('Method not allowed');
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol'); // Default to first allowed origin
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co'); // Default to first allowed origin
         });
     });
 
@@ -165,7 +165,7 @@ describe('Contact Form Worker', () => {
                 }
             });
             expect(response.headers.get('Content-Type')).toBe('application/json');
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol'); // Default to first allowed origin
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co'); // Default to first allowed origin
         });
 
         it('should return validation errors for missing required fields', async () => {
@@ -245,7 +245,7 @@ describe('Contact Form Worker', () => {
                 headers: {
                     'Content-Type': 'application/json',
                     'CF-Connecting-IP': '192.168.1.1',
-                    'Origin': 'https://www.ezdev.lol'
+                    'Origin': 'https://www.joinez.co'
                 },
                 body: JSON.stringify(jsonData),
             });
@@ -261,7 +261,7 @@ describe('Contact Form Worker', () => {
                 success: false,
                 error: 'Rate limit exceeded. Please try again later.'
             });
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.joinez.co');
             expect(mockEnv.IP_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: '192.168.1.1' });
         });
     });
@@ -283,7 +283,7 @@ describe('Contact Form Worker', () => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Origin': 'https://ezdev.lol'
+                    'Origin': 'https://joinez.co'
                 },
                 body: JSON.stringify(jsonData),
             });
@@ -301,7 +301,7 @@ describe('Contact Form Worker', () => {
                 success: false,
                 error: 'Captcha verification failed'
             });
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co');
         });
 
         it('should handle missing Turnstile token with proper CORS header', async () => {
@@ -320,7 +320,7 @@ describe('Contact Form Worker', () => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Origin': 'https://www.ezdev.lol'
+                    'Origin': 'https://www.joinez.co'
                 },
                 body: JSON.stringify(jsonData),
             });
@@ -333,7 +333,7 @@ describe('Contact Form Worker', () => {
                 success: false,
                 error: 'Captcha verification required'
             });
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.joinez.co');
         });
 
         it('should handle Turnstile API errors gracefully with proper CORS header', async () => {
@@ -352,7 +352,7 @@ describe('Contact Form Worker', () => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Origin': 'https://ezdev.lol'
+                    'Origin': 'https://joinez.co'
                 },
                 body: JSON.stringify(jsonData),
             });
@@ -370,7 +370,7 @@ describe('Contact Form Worker', () => {
                 success: false,
                 error: 'Captcha verification failed'
             });
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co');
         });
     });
 
@@ -392,7 +392,7 @@ describe('Contact Form Worker', () => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Origin': 'https://www.ezdev.lol'
+                    'Origin': 'https://www.joinez.co'
                 },
                 body: JSON.stringify(jsonData),
             });
@@ -404,7 +404,7 @@ describe('Contact Form Worker', () => {
 
             // Mock successful Mailgun response
             fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
                 .reply(200, { id: 'test-message-id' });
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
@@ -417,7 +417,7 @@ describe('Contact Form Worker', () => {
             });
 
             // Verify the response has the correct CORS header
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.joinez.co');
         });
 
         it('should handle Mailgun API errors gracefully with proper CORS header', async () => {
@@ -436,7 +436,7 @@ describe('Contact Form Worker', () => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Origin': 'https://ezdev.lol'
+                    'Origin': 'https://joinez.co'
                 },
                 body: JSON.stringify(jsonData),
             });
@@ -448,7 +448,7 @@ describe('Contact Form Worker', () => {
 
             // Mock Mailgun API error
             fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
                 .reply(400, 'Bad Request');
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
@@ -459,7 +459,7 @@ describe('Contact Form Worker', () => {
                 success: false,
                 error: 'Failed to send email'
             });
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co');
         });
 
         it('should use default recipient email when not provided in env', async () => {
@@ -494,7 +494,7 @@ describe('Contact Form Worker', () => {
 
             // Mock successful Mailgun response
             fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
                 .reply(200, { id: 'test-message-id', ok: true });
 
             const response = await worker.fetch(request, envWithoutRecipient, mockCtx);
@@ -513,7 +513,7 @@ describe('Contact Form Worker', () => {
             const request = new Request('https://example.com', {
                 method: 'POST',
                 headers: {
-                    'Origin': 'https://ezdev.lol'
+                    'Origin': 'https://joinez.co'
                 },
                 body: 'invalid-form-data',
             });
@@ -526,7 +526,7 @@ describe('Contact Form Worker', () => {
                 success: false,
                 error: 'Internal server error'
             });
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co');
         });
 
         it('should handle malformed JSON data with proper CORS header', async () => {
@@ -534,7 +534,7 @@ describe('Contact Form Worker', () => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Origin': 'https://www.ezdev.lol'
+                    'Origin': 'https://www.joinez.co'
                 },
                 body: '{ invalid json',
             });
@@ -546,7 +546,7 @@ describe('Contact Form Worker', () => {
             const typedResponseData = responseData as { success: boolean; error: string };
             expect(typedResponseData.success).toBe(false);
             expect(typedResponseData.error).toBe('Internal server error');
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.ezdev.lol');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.joinez.co');
         });
     });
 
@@ -579,7 +579,7 @@ describe('Contact Form Worker', () => {
 
             // Mock successful Mailgun response
             fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.ezdev.lol/messages' })
+                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
                 .reply(200, { id: 'test-message-id' });
 
             const response = await worker.fetch(request, mockEnv, mockCtx);

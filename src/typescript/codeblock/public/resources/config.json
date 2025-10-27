@@ -1,0 +1,13 @@
+{
+  "init": "/usr/bin/wasibox",
+  "initArgs": ["init"],
+  "rootfs": "https://antmicro.github.io/jswasi-rootfs/rootfs.tar.gz",
+  "mountConfig": {
+    "fsType": "fsa",
+    "opts": {
+      "name": "fsa1",
+      "keepMetadata": "true",
+      "create": "true"
+    }
+  }
+}
