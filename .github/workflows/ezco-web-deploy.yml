@@ -39,14 +39,12 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: |
-          cd src/apps/ezco-web
+        run: 
           pnpm i
 
       - name: Build with Astro
         run: |
-          cd src/apps/ezco-web
-          pnpm run build
+          pnpm build:ezco-web
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

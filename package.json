@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "build:ezco-web": "turbo build --filter=@joinezco/ezco-web",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
