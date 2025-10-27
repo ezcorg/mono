@@ -13,7 +13,7 @@
         "test:run": "vitest run"
     },
     "dependencies": {
-        "@joinezco/shared": "^0.0.4",
+        "@joinezco/shared": "^0.0.5",
         "zod": "^4.1.12"
     },
     "devDependencies": {
