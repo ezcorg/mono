@@ -16,3 +16,6 @@
 [submodule "src/apps/wasmtime"]
 	path = src/apps/wasmtime
 	url = https://github.com/ezcorg/wasmtime
+[submodule "src/typescript/codemirror-languageserver"]
+	path = src/typescript/codemirror-languageserver
+	url = https://github.com/ezcorg/codemirror-languageserver
