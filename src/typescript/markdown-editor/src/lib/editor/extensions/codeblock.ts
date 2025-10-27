@@ -1,6 +1,6 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
-import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@ezdevlol/codeblock'
+import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";

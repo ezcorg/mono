@@ -25,7 +25,7 @@ witmproxy stop # stop the service, until explictly restarted
 Plugins are how you can extend `witmproxy` with whatever functionality your heart desires.
 
 ```sh
-witmproxy add @ezdev/hello # add a plugin from the witmproxy.rs registry
+witmproxy add @ezco/hello # add a plugin from the witmproxy.rs registry
 witmproxy add ./path/to/component.wasm # add a local plugin
 ```
 

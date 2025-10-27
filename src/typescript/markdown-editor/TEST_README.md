@@ -1,6 +1,6 @@
 # Markdown Editor Testing Guide
 
-This document explains how to use the testing setup for the `@ezdevlol/markdown-editor` library.
+This document explains how to use the testing setup for the `@joinezco/markdown-editor` library.
 
 ## Overview
 

@@ -1,5 +1,5 @@
 export const file = `
-# \`@ezdevlol/markdown-editor\`
+# \`@joinezco/markdown-editor\`
 
 This editor supports **Markdown** syntax.
 

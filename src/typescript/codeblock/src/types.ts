@@ -1,7 +1,7 @@
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { FileType } from "@volar/language-service";
-import { SnapshotNode } from "@ezdevlol/memfs/snapshot";
-import { FsApi } from "@ezdevlol/memfs/node/types";
+import { SnapshotNode } from "@joinezco/memfs/snapshot";
+import { FsApi } from "@joinezco/memfs/node/types";
 
 // TODO: consider changing interface to allow writes at specific offsets within files
 export interface VfsInterface {

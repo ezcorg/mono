@@ -1,4 +1,4 @@
-import { TopLevelFs } from "@ezdevlol/jswasi/filesystem";
+import { TopLevelFs } from "@joinezco/jswasi/filesystem";
 import { createCodeblock } from "./src/editor";
 import { Vfs } from "./src/utils/fs";
 import { SearchIndex } from "./src/utils/search";

@@ -1,21 +1,21 @@
 [submodule "src/typescript/memfs"]
 	path = src/typescript/memfs
-	url = https://github.com/ezdevlol/memfs
+	url = https://github.com/join-ezco/memfs
 [submodule "src/rust/hello-wasip3-http"]
 	path = src/rust/hello-wasip3-http
-	url = https://github.com/ezdevlol/hello-wasip3-http
+	url = https://github.com/join-ezco/hello-wasip3-http
 [submodule "src/typescript/codemirror-languageserver"]
 	path = src/typescript/codemirror-languageserver
-	url = https://github.com/ezdevlol/codemirror-languageserver
+	url = https://github.com/join-ezco/codemirror-languageserver
 [submodule "src/rust/confique"]
 	path = src/rust/confique
-	url = https://github.com/ezdevlol/confique
+	url = https://github.com/join-ezco/confique
 [submodule "src/typescript/tiptap-markdown"]
 	path = src/typescript/tiptap-markdown
-	url = https://github.com/ezdevlol/tiptap-markdown
+	url = https://github.com/join-ezco/tiptap-markdown
 [submodule "src/typescript/jswasi"]
 	path = src/typescript/jswasi
-	url = https://github.com/ezdevlol/jswasi
+	url = https://github.com/join-ezco/jswasi
 [submodule "src/apps/wasmtime"]
 	path = src/apps/wasmtime
-	url = https://github.com/ezdevlol/wasmtime
+	url = https://github.com/join-ezco/wasmtime

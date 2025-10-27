@@ -30,7 +30,7 @@ npm run preview
 ## 🏗️ Architecture
 
 - **Framework**: Astro 4.0 with Tailwind CSS
-- **Components**: Modular design following ezdev-web patterns
+- **Components**: Modular design following ezco-web patterns
 - **Animations**: CSS-based with custom keyframes
 - **Email**: Integration ready for waitlist worker (rate-limited, no captcha)
 
@@ -98,4 +98,4 @@ Built for static deployment on platforms like:
 
 ## 📝 License
 
-Part of the ezdev monorepo.
+Part of the ezco monorepo.

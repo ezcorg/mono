@@ -1,5 +1,5 @@
 {
-  "name": "@ezdevlol/codeblock",
+  "name": "@joinezco/codeblock",
   "version": "0.0.8",
   "type": "module",
   "module": "dist/index.js",
@@ -61,8 +61,8 @@
     "@codemirror/search": "^6.5.10",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.7",
-    "@ezdevlol/memfs": "workspace:*",
-    "@ezdevlol/jswasi": "workspace:*",
+    "@joinezco/memfs": "workspace:*",
+    "@joinezco/jswasi": "workspace:*",
     "@jsonjoy.com/json-pack": "^1.2.0",
     "@jsonjoy.com/util": "^1.6.0",
     "@lezer/highlight": "^1.2.1",

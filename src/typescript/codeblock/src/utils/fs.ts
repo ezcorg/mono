@@ -5,11 +5,11 @@ import { FileSystem, FileType } from '@volar/language-service';
 import { URI } from 'vscode-uri'
 import type { mount, mountFromUrl } from '../workers/fs.worker';
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
-import { SnapshotNode } from "@ezdevlol/memfs/snapshot";
+import { SnapshotNode } from "@joinezco/memfs/snapshot";
 import { promises } from "node:fs";
-import type { FsApi } from "@ezdevlol/memfs/node/types";
-import { TopLevelFs } from "@ezdevlol/jswasi/filesystem";
-import { constants } from "@ezdevlol/jswasi";
+import type { FsApi } from "@joinezco/memfs/node/types";
+import { TopLevelFs } from "@joinezco/jswasi/filesystem";
+import { constants } from "@joinezco/jswasi";
 
 Comlink.transferHandlers.set("asyncGenerator", asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set("watchOptions", watchOptionsTransferHandler);

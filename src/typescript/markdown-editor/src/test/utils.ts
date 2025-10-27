@@ -1,5 +1,5 @@
 import { MarkdownEditor, createEditor, MarkdownEditorOptions } from '../lib/editor'
-import { CodeblockFS, type Fs } from '@ezdevlol/codeblock'
+import { CodeblockFS, type Fs } from '@joinezco/codeblock'
 
 /**
  * Test utilities for markdown editor testing

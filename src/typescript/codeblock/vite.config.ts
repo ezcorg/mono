@@ -58,7 +58,7 @@ export const snapshot = async (props: SnapshotProps = {}) => {
     } catch (e) { console.error(e) }
 
     return {
-        name: '@ezdevlol/snapshot'
+        name: '@joinezco/snapshot'
     };
 };
 

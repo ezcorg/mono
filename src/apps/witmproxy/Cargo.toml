@@ -3,7 +3,7 @@ name = "witmproxy"
 version = "0.0.1"
 edition = "2021"
 authors = ["Theodore Brockman <iam@theo.lol>"]
-description = "A Rust-based MITM proxy with WASM plugin system"
+description = "A WASM-in-the-middle HTTP proxy"
 license = "AGPLv3"
 
 [dependencies]
@@ -100,6 +100,6 @@ webpki-roots = "0.26"
 sqlx-cli = { version = "0.8.6", features = ["rustls"] }
 
 [[bin]]
-name = "witmproxy"
+name = "witm"
 path = "src/main.rs"
 

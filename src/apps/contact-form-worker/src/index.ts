@@ -1,4 +1,4 @@
-import { validateContactForm, getValidationErrorMessage, type ContactFormData } from '@ezdevlol/shared';
+import { validateContactForm, getValidationErrorMessage, type ContactFormData } from '@joinezco/shared';
 
 interface Env {
     MAILGUN_API_TOKEN: string;
@@ -32,7 +32,7 @@ async function verifyTurnstile(token: string, secretKey: string, remoteIP?: stri
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-        const allowedOrigins = env.ALLOWED_ORIGINS || 'https://ezdev.lol, https://www.ezdev.lol';
+        const allowedOrigins = env.ALLOWED_ORIGINS || 'https://joinez.co, https://www.joinez.co';
         const allowedOriginsList = allowedOrigins.split(',').map(origin => origin.trim());
 
         // Get the client's origin
@@ -180,8 +180,8 @@ export default {
 };
 
 async function sendEmail(data: ContactFormData, env: Env) {
-    const recipientEmail = env.RECIPIENT_EMAIL || 'dev@ezdev.lol';
-    const senderEmail = `mailatron@mail.ezdev.lol`;
+    const recipientEmail = env.RECIPIENT_EMAIL || 'dev@joinez.co';
+    const senderEmail = `mailatron@mail.joinez.co`;
 
     // Format dateRange for display
     const formatDateRange = (dateRange?: [Date, Date]) => {
@@ -206,7 +206,7 @@ Message:
 ${data.message}
 
 ---
-This email was sent from the ezdev.lol contact form.`.trim();
+This email was sent from the joinez.co contact form.`.trim();
 
     const formData = new FormData();
     formData.append('from', `Mailatron 9000 <${senderEmail}>`);
@@ -215,7 +215,7 @@ This email was sent from the ezdev.lol contact form.`.trim();
     formData.append('text', emailBody);
     formData.append('h:Reply-To', data.email);
 
-    const response = await fetch(`https://api.mailgun.net/v3/mail.ezdev.lol/messages`, {
+    const response = await fetch(`https://api.mailgun.net/v3/mail.joinez.co/messages`, {
         method: 'POST',
         headers: {
             'Authorization': `Basic ${btoa(`api:${env.MAILGUN_API_TOKEN}`)}`,

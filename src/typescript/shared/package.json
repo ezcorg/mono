@@ -1,7 +1,7 @@
 {
-    "name": "@ezdevlol/shared",
+    "name": "@joinezco/shared",
     "version": "0.0.3",
-    "description": "Shared validation schemas and utilities for ezdev projects",
+    "description": "Shared schemas and utilities for ezco projects",
     "type": "module",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -14,7 +14,7 @@
     },
     "devDependencies": {
         "@types/node": "^24.3.1",
-        "@types/sharedworker": "^0.0.180",
+        "@types/sharedworker": "^0.0.189",
         "typescript": "^5.0.0"
     },
     "dependencies": {

@@ -1,55 +1,54 @@
 import { StyleModule } from 'style-mod';
 
 const darkModeStyles = {
-    '--ezdev-mde-code-bg': 'var(--ezdev-mde-code-bg-dark)',
-    '--ezdev-mde-bg': 'var(--ezdev-mde-bg-dark)',
-    '--ezdev-mde-table-bg': 'var(--cm-toolbar-bg-dark)',
+    '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-dark)',
+    '--ezco-mde-bg': 'var(--ezco-mde-bg-dark)',
+    '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-dark)',
 }
 export const styleModule: StyleModule = new StyleModule({
-    ':root[data-theme="dark"], [data-theme="dark"] .ezdev-mde, .ezdev-mde[data-theme="dark"]': darkModeStyles,
+    ':root[data-theme="dark"], [data-theme="dark"] .ezco-mde, .ezco-mde[data-theme="dark"]': darkModeStyles,
     '@media (prefers-color-scheme: dark)': {
-        'div.ezdev-mde': darkModeStyles
+        'div.ezco-mde': darkModeStyles
     },
-    ':root, :root[data-theme="light"], [data-theme="light"] .ezdev-mde, .ezdev-mde[data-theme="light"]': {
+    ':root, :root[data-theme="light"], [data-theme="light"] .ezco-mde, .ezco-mde[data-theme="light"]': {
         // Light/dark mode vars
-        '--ezdev-mde-code-bg-light': '#f1f1f1',
-        '--ezdev-mde-code-bg-dark': '#2c2c2c',
-        '--ezdev-mde-bg-light': '#ffffff',
-        '--ezdev-mde-bg-dark': '#1e1e1e',
-        '--ezdev-mde-link-color': '#5861ff',
-        '--ezdev-mde-link-color-hover': '#383ea3',
+        '--ezco-mde-code-bg-light': '#f1f1f1',
+        '--ezco-mde-code-bg-dark': '#2c2c2c',
+        '--ezco-mde-bg-light': '#ffffff',
+        '--ezco-mde-bg-dark': '#1e1e1e',
+        '--ezco-mde-link-color': '#5861ff',
+        '--ezco-mde-link-color-hover': '#383ea3',
 
         // Default to light mode, overridden by media query
-        '--ezdev-mde-code-bg': 'var(--ezdev-mde-code-bg-light)',
-        '--ezdev-mde-bg': 'var(--ezdev-mde-bg-light)',
-        '--ezdev-mde-table-bg': 'var(--cm-toolbar-bg-light)',
+        '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-light)',
+        '--ezco-mde-bg': 'var(--ezco-mde-bg-light)',
+        '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-light)',
     },
-    '.ezdev-mde': {
+    '.ezco-mde': {
 
         // Base editor styles
         'background': 'transparent',
 
         '& a': {
-            color: 'var(--ezdev-mde-link-color)',
-            'font-weight': 'bold',
+            color: 'var(--ezco-mde-link-color)',
             'text-decoration': 'inherit',
         },
 
         '& a:hover': {
-            color: 'var(--ezdev-mde-link-color-hover)',
+            color: 'var(--ezco-mde-link-color-hover)',
             cursor: 'pointer',
         },
 
         // Codeblock styles
         '& .cm-editor': {
             margin: '2rem 0',
-            border: '2px solid var(--ezdev-mde-table-bg)'
+            border: '2px solid var(--ezco-mde-table-bg)'
         },
 
         // Inline code styles
         '& > :not(.cm-editor) code': {
             'font-family': 'monospace',
-            background: 'var(--ezdev-mde-code-bg)',
+            background: 'var(--ezco-mde-code-bg)',
             padding: '0.1em 0.3em',
             'border-radius': '3px',
         },
@@ -62,7 +61,7 @@ export const styleModule: StyleModule = new StyleModule({
             "border-collapse": "collapse",
             "width": "100%",
             "margin": "2em 0",
-            border: '2px solid var(--ezdev-mde-table-bg)',
+            border: '2px solid var(--ezco-mde-table-bg)',
             overflow: 'hidden',
             'table-layout': 'fixed',
             '& p': {
@@ -80,7 +79,7 @@ export const styleModule: StyleModule = new StyleModule({
             },
             '& th': {
                 'font-weight': 'bold',
-                'background-color': 'var(--ezdev-mde-table-bg)',
+                'background-color': 'var(--ezco-mde-table-bg)',
                 'text-align': 'left',
             },
             '& th, & td': {

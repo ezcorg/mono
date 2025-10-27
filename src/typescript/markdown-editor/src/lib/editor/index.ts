@@ -73,7 +73,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         injectCSS: options.injectCSS,
         ...options,
     });
-    editor.view.dom.classList.add('ezdev-mde');
+    editor.view.dom.classList.add('ezco-mde');
 
     if (typeof document !== 'undefined') {
         StyleModule.mount(document, styleModule);

@@ -1,5 +1,5 @@
 {
-  "name": "@ezdevlol/markdown-editor",
+  "name": "@joinezco/markdown-editor",
   "private": false,
   "version": "0.0.1",
   "type": "module",
@@ -26,7 +26,7 @@
   "dependencies": {
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "6.36.7",
-    "@ezdevlol/codeblock": "workspace:*",
+    "@joinezco/codeblock": "workspace:*",
     "@tiptap/core": "^3.4.1",
     "@tiptap/extension-link": "^3.4.1",
     "@tiptap/extension-table": "^3.4.1",

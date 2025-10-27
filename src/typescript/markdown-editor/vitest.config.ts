@@ -53,7 +53,7 @@ export default defineConfig({
     },
     // Optimize deps for testing
     optimizeDeps: {
-        exclude: ['@ezdevlol/codeblock'],
+        exclude: ['@joinezco/codeblock'],
     },
     // Server configuration for tests
     server: {

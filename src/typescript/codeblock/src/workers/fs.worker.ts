@@ -1,7 +1,7 @@
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../rpc/serde';
 import { MountArgs, MountResult } from "../types";
-import type { SnapshotNode } from '@ezdevlol/memfs/snapshot';
+import type { SnapshotNode } from '@joinezco/memfs/snapshot';
 import type { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { Snapshot } from "../utils";
 
@@ -15,7 +15,7 @@ export const mount = async ({ buffer, mountPoint = '/' }: MountArgs): Promise<Mo
 
     try {
         console.log('Importing memfs after FS mount...');
-        const { fs } = await import('@ezdevlol/memfs');
+        const { fs } = await import('@joinezco/memfs');
         console.log("FS imported")
 
         try {
@@ -74,7 +74,7 @@ export const mountFromUrl = async ({ url, mountPoint = '/' }: {
     let filesystem;
 
     try {
-        const { fs } = await import('@ezdevlol/memfs');
+        const { fs } = await import('@joinezco/memfs');
 
         console.log(`Loading and mounting filesystem snapshot from URL: ${url} at [${mountPoint}]...`);
         const startTime = performance.now();

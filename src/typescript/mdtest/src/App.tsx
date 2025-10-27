@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import './App.css'
-import { createEditor } from '@ezdevlol/markdown-editor';
+import { createEditor } from '@joinezco/markdown-editor';
 
 function App() {
-  const [count, setCount] = useState(0)
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { Extension } from '@tiptap/core'
-import { VfsInterface } from '@ezdevlol/codeblock'
+import { VfsInterface } from '@joinezco/codeblock'
 
 export interface FileSystemOptions {
     fs?: VfsInterface
