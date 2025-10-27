@@ -19,13 +19,13 @@ In the current corporate meta where big company executives and majority share ho
 
 Network effects, walled-gardens, and lack of competition (due to ineffective and oft unenforced US antitrust law) make it difficult for consumers to vote with their wallets.
 
-Over-representation of psychopathic traits in leadership roles means that the people who are in charge of making decisions are the least empathetic, and thus more likely to assign a low cost to the harming others (or alternatively, a higher value to risk & profit).
+Over-representation of psychopathic traits in leadership roles means that the people who are in charge of making decisions are the least empathetic, and more likely to assign a low cost to suffering of others.
 
 Conveniently, excessive layers of middle-management provide a way for non-decision makers to absolve themselves of any responsibility they might feel for their involvement, placing the blame at the feet of their masters instead.
 
 Even with the best of intentions, the pressure to perform, meet targets, or satisfy fiduciary duties can lead to decisions that prioritize local profits over global well-being.
 
-Maximizing growth regardless of the societal costs has led to a pretty large tab for humanity to pay, with the ones who ordered fancy cocktails and multiple entrees conveniently missing when the bill arrives.
+Maximizing growth above all has led to a pretty large tab for humanity to pay, with the ones who ordered fancy cocktails and multiple entrees now conveniently missing.
 
 
 ## The solution
