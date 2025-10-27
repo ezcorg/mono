@@ -15,6 +15,7 @@
     "@joinezco/codeblock": "workspace:*",
     "@joinezco/markdown-editor": "workspace:*",
     "@joinezco/shared": "workspace:*",
+    "@tailwindcss/vite": "^4.1.16",
     "astro": "^5.15.1",
     "flatpickr": "^4.6.13",
     "imagesloaded": "^5.0.0",
