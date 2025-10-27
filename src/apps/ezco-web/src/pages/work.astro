@@ -2,12 +2,19 @@
 import Layout from '../layouts/Layout.astro';
 import Footer from '../components/Footer.astro';
 import Navbar from '../components/Navbar.astro';
-// @ts-expect-error
-import Packery from './packery.min.js?raw';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Read Packery script from public directory at build time
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const publicDir = join(__dirname, '../../public');
+const packeryScript = readFileSync(join(publicDir, 'packery.min.js'), 'utf-8');
 
 // Inline Packery script to avoid FOUC, sure would be nice if browser supported Masonry grid natively
 const packeryLoad =
-	"<script type='module'>" + Packery + ";window.PackeryInit()</script>";
+	"<script type='module'>" + packeryScript + ";window.PackeryInit()</script>";
 const projects = [
 	{
 		title: 'markdown-editor',
