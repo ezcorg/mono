@@ -117,7 +117,6 @@ export function validateContactForm(data: Record<string, any>): ValidationResult
         if (error instanceof z.ZodError) {
             const fieldErrors: Record<string, string[]> = {};
 
-            // @ts-expect-error
             error.errors.forEach((err: any) => {
                 const path = err.path.join('.');
                 if (!fieldErrors[path]) {

@@ -1,6 +1,6 @@
 {
     "name": "@joinezco/shared",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "description": "Shared schemas and utilities for ezco projects",
     "type": "module",
     "main": "dist/index.js",
