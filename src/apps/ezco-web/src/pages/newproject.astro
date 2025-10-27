@@ -22,6 +22,7 @@ import Footer from '../components/Footer.astro';
 						type="text"
 						id="name"
 						name="name"
+						placeholder="Who are you?"
 						required
 						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
 					/>
@@ -34,6 +35,7 @@ import Footer from '../components/Footer.astro';
 						type="email"
 						id="email"
 						name="email"
+						placeholder="Where can we reach you?"
 						required
 						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300"
 					/>
@@ -194,6 +196,7 @@ import Footer from '../components/Footer.astro';
 						rows="6"
 						minlength="50"
 						oninput="checkMessageLength(this)"
+						placeholder="Give us a brief overview of your project."
 						class="w-full bg-transparent border-2 border-[#333333] text-[#F5F5F5] px-4 py-3 focus:border-[#F5F5F5] focus:outline-none transition-colors duration-300 resize-vertical"
 					></textarea>
 					<small id="message-warning" class="text-red-500 hidden"
