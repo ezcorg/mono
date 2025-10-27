@@ -1,0 +1,52 @@
+---
+export interface Crumb {
+	label: string;
+	href: string;
+}
+
+export interface Props {
+	breadcrumbs?: Crumb[];
+}
+
+const { breadcrumbs } = Astro.props;
+---
+
+{
+	breadcrumbs && breadcrumbs.length > 0 && (
+		<nav class="flex items-center gap-2 text-[#F5F5F5] breadcrumb-nav">
+			{breadcrumbs.map((breadcrumb: Crumb) => (
+				<span class="text-[32px] breadcrumb-item">
+					<span class="text-[24px] m-[0.75rem] breadcrumb-separator">/</span>
+					<a href={breadcrumb.href} class="breadcrumb-link">
+						{breadcrumb.label}
+					</a>
+				</span>
+			))}
+		</nav>
+	)
+}
+
+<style>
+	.breadcrumb-link {
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		cursor: pointer;
+		text-decoration: none;
+		position: relative;
+		padding: 4px 8px;
+		/* border-radius: 4px; */
+	}
+
+	.breadcrumb-link:hover {
+		color: #000000;
+		background-color: #ffffff;
+		box-shadow: 0 0 20px rgba(255, 255, 255, 0.4);
+	}
+
+	.breadcrumb-separator {
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.breadcrumb-item:hover .breadcrumb-separator {
+		color: #ffffff;
+	}
+</style>

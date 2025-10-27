@@ -1,0 +1,81 @@
+name: Publish @joinezco/shared to NPM
+
+on:
+  push:
+    tags:
+      - 'shared-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 1.0.1)'
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+        
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '*'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.15'
+          registry-url: 'https://registry.npmjs.org'
+          
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+          
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+            
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        
+      - name: Extract version from tag
+        if: github.event_name == 'push'
+        run: |
+          # Extract version from tag (e.g., shared-v1.0.0 -> 1.0.0)
+          VERSION=${GITHUB_REF#refs/tags/shared-v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          
+      - name: Update version (if tag trigger)
+        if: github.event_name == 'push'
+        run: |
+          cd src/typescript/shared
+          npm version ${{ env.VERSION }} --no-git-tag-version || true
+          
+      - name: Update version (if manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cd src/typescript/shared
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version || true
+          
+      - name: Build shared library
+        run: pnpm --filter @joinezco/shared build
+        
+      - name: Type check
+        run: pnpm --filter @joinezco/shared typecheck
+        
+      - name: Publish to NPM
+        run: |
+          cd src/typescript/shared
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

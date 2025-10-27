@@ -1,0 +1,30 @@
+{
+  "name": "ezco-web-astro",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "prebuild": "pnpm --filter @joinezco/shared build",
+    "build": "astro check && astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/tailwind": "^5.0.0",
+    "@joinezco/codeblock": "workspace:*",
+    "@joinezco/markdown-editor": "workspace:*",
+    "@joinezco/shared": "workspace:*",
+    "astro": "^4.0.0",
+    "flatpickr": "^4.6.13",
+    "imagesloaded": "^5.0.0",
+    "lucide-astro": "^0.344.0",
+    "packery": "^3.0.0",
+    "tailwindcss": "^3.0.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.3.0",
+    "@types/packery": "^1.4.37",
+    "typescript": "^5.0.0"
+  }
+}
