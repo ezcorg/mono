@@ -86,6 +86,9 @@ export default async function getConfig() {
                 ]
             }
         },
+        worker: {
+            format: 'es',
+        },
         plugins: [
             snapshot({
                 gitignore: false,
