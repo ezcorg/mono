@@ -104,11 +104,16 @@ const projects = [
 				{/* New Project skeleton - matches the actual new-project card */}
 				<div class="grid-item skeleton-item">
 					<div class="skeleton-card border-2 border-dashed border-[#666666] overflow-hidden">
-						<div class="p-6 h-full flex flex-col justify-center items-center text-center gap-4">
-							<div class="skeleton-icon mb-4" />
-							<div class="skeleton-title-centered mb-3" />
-							<div class="skeleton-description-centered mb-4" />
-							<div class="skeleton-description-line-centered" />
+						<div class="p-6">
+							<div class="flex items-center justify-between mb-3">
+								<div class="skeleton-title" />
+								<div class="skeleton-button" />
+							</div>
+							<div class="skeleton-description mb-4" />
+							<div class="skeleton-description-line mb-4" />
+							<div class="flex flex-wrap gap-2">
+								<div class="skeleton-tag" />
+							</div>
 						</div>
 					</div>
 				</div>
@@ -125,7 +130,7 @@ const projects = [
 									</div>
 									<div class="skeleton-description mb-4" />
 									<div class="skeleton-description-line mb-4" />
-									<div class="flex flex-wrap gap-2 mb-4">
+									<div class="flex flex-wrap gap-2">
 										<div class="skeleton-tag" />
 										<div class="skeleton-tag" />
 										<div class="skeleton-tag" />
@@ -151,16 +156,21 @@ const projects = [
 						class="block w-full h-full"
 					>
 						<div class="work-item-card new-project-card h-full border-2 border-dashed border-[#666666] hover:border-[#ffffff] hover:bg-[#ffffff] transition-all duration-300 overflow-hidden">
-							<div class="p-6 h-full flex flex-col justify-center items-center text-center">
-								<div class="mb-4">
-									<span class="text-4xl">✨</span>
+							<div class="p-6">
+								<div class="flex items-center justify-between mb-3">
+									<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title">
+										[ your project here ] 
+									</h3>
+									<span>✨</span>
 								</div>
-								<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title mb-3">
-									Start a new project
-								</h3>
 								<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
-									Want to see your project here? Let's build something together.
+									Want to see your idea come to life? Let's build it together.
 								</p>
+								<div class="flex flex-wrap gap-2">
+									<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+										Start a new project
+									</span>
+								</div>
 							</div>
 						</div>
 					</a>
@@ -198,7 +208,7 @@ const projects = [
 									<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
 										{project.description}
 									</p>
-									<div class="flex flex-wrap gap-2 mb-4">
+									<div class="flex flex-wrap gap-2">
 										{project.tags.map((tech) => (
 											<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
 												{tech}
