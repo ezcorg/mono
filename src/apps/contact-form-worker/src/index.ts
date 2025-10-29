@@ -206,15 +206,8 @@ async function sendEmail(data: ContactFormData, env: Env) {
     };
 
     const emailBody = `
-<h2>Contact Information:</h2>
+<h2>Project details:</h2>
 <ul>
-    <li><strong>Name:</strong> ${data.name}</li>
-    <li><strong>Email:</strong> ${data.email}</li>
-</ul>
-
-<h2>Project Details:</h2>
-<ul>
-    <li><strong>Service:</strong> ${data.service}</li>
     <li><strong>Timeline:</strong> ${formatDateRange(data.dateRange)}</li>
     <li><strong>Budget:</strong> ${data.currency} ${data.minBudget} - ${data.maxBudget}</li>
 </ul>
