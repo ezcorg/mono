@@ -4,9 +4,6 @@ import { createConnection } from 'vscode-languageserver/browser';
 import { BrowserMessageReader, BrowserMessageWriter } from '@volar/language-server/browser';
 import { VfsInterface } from '../types';
 
-// TODO: get rid of this
-// instead, create language specific workers (with a smarter client)
-// i.e typescript.worker.ts / rust.worker.ts / ...
 onconnect = async (event) => {
     const [port] = event.ports;
     console.debug('LSP worker connected on port: ', port);

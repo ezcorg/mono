@@ -77,23 +77,27 @@ const { size = 60 } = Astro.props;
 		transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 	}
 
-	/* Hover/Focus state: slide background to cover ez */
+	/* Hover/Focus/Active state: slide background to cover ez */
 	.logo-link:hover .sliding-background,
-	.logo-link:focus .sliding-background {
+	.logo-link:focus .sliding-background,
+	.logo-link:active .sliding-background {
 		transform: translateX(-100%);
 		box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
 	}
 
 	/* The masked text needs to move with the background to show the correct portion */
 	.logo-link:hover .logo-text-masked,
-	.logo-link:focus .logo-text-masked {
+	.logo-link:focus .logo-text-masked,
+	.logo-link:active .logo-text-masked {
 		transform: translateX(50%);
 	}
 
 	.logo-link:hover .logo-border-left,
 	.logo-link:hover .logo-border-right,
 	.logo-link:focus .logo-border-left,
-	.logo-link:focus .logo-border-right {
+	.logo-link:focus .logo-border-right,
+	.logo-link:active .logo-border-left,
+	.logo-link:active .logo-border-right {
 		border-color: #ffffff;
 		box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
 	}

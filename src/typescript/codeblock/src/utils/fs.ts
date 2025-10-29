@@ -283,8 +283,7 @@ export namespace Vfs {
      */
     export const worker = async (bufferOrUrl?: CborUint8Array<SnapshotNode> | string): Promise<VfsInterface> => {
         // TODO: fix this for non-Vite consumers
-        const workerUrl = await import('../workers/fs.worker.js?sharedworker&url')
-        const worker = new SharedWorker(workerUrl.default, { type: 'module' });
+        const worker = new SharedWorker(new URL('../workers/fs.worker.js', import.meta.url), { type: 'module' });
         worker.port.start()
         const proxy = Comlink.wrap<{ mount: typeof mount; mountFromUrl: typeof mountFromUrl }>(worker.port);
 

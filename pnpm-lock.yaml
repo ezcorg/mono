@@ -49,9 +49,6 @@ importers:
 
   src/apps/ezco-web:
     dependencies:
-      '@astrojs/tailwind':
-        specifier: ^6.0.2
-        version: 6.0.2(astro@5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0))(tailwindcss@4.1.16)(ts-node@10.9.2(@swc/core@1.13.2(@swc/helpers@0.5.17))(@types/node@24.3.1)(typescript@5.9.2))
       '@joinezco/codeblock':
         specifier: workspace:*
         version: link:../../typescript/codeblock
@@ -66,7 +63,7 @@ importers:
         version: 4.1.16(vite@6.4.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
       astro:
         specifier: ^5.15.1
-        version: 5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)
+        version: 5.15.2(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)
       flatpickr:
         specifier: ^4.6.13
         version: 4.6.13
@@ -75,7 +72,7 @@ importers:
         version: 5.0.0
       lucide-astro:
         specifier: ^0.548.0
-        version: 0.548.0(astro@5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0))
+        version: 0.548.0(astro@5.15.2(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0))
       packery:
         specifier: ^3.0.0
         version: 3.0.0
@@ -919,12 +916,6 @@ packages:
 
   '@astrojs/tailwind@5.1.5':
     resolution: {integrity: sha512-1diguZEau7FZ9vIjzE4BwavGdhD3+JkdS8zmibl1ene+EHgIU5hI0NMgRYG3yea+Niaf7cyMwjeWeLvzq/maxg==}
-    peerDependencies:
-      astro: ^3.0.0 || ^4.0.0 || ^5.0.0
-      tailwindcss: ^3.0.24
-
-  '@astrojs/tailwind@6.0.2':
-    resolution: {integrity: sha512-j3mhLNeugZq6A8dMNXVarUa8K6X9AW+QHU9u3lKNrPLMHhOQ0S7VeWhHwEeJFpEK1BTKEUY1U78VQv2gN6hNGg==}
     peerDependencies:
       astro: ^3.0.0 || ^4.0.0 || ^5.0.0
       tailwindcss: ^3.0.24
@@ -4813,8 +4804,8 @@ packages:
     engines: {node: ^18.17.1 || ^20.3.0 || >=21.0.0, npm: '>=9.6.5', pnpm: '>=7.1.0'}
     hasBin: true
 
-  astro@5.15.1:
-    resolution: {integrity: sha512-VM679M1qxOjGo6q3vKYDNDddkALGgMopG93IwbEXd3Buc2xVLuuPj4HNziNugSbPQx5S6UReMp5uzw10EJN81A==}
+  astro@5.15.2:
+    resolution: {integrity: sha512-xQQ+PiYJ7WpUJrHJpAb52TQAUCFmSR8lAtQr3tFfSIZoTQiEMFx3HITJ01t3eDUpHjja8J6JcYqgAhr9xygKQg==}
     engines: {node: 18.20.8 || ^20.3.0 || >=22.0.0, npm: '>=9.6.5', pnpm: '>=7.1.0'}
     hasBin: true
 
@@ -8040,8 +8031,8 @@ packages:
   obuf@1.1.2:
     resolution: {integrity: sha512-PX1wu0AmAdPqOL1mWhqmlOd8kOIZQwGZw6rh7uby9fTc5lhaOWFLX3I6R1hrF9k3zUY40e6igsLGkDXK92LJNg==}
 
-  ofetch@1.4.1:
-    resolution: {integrity: sha512-QZj2DfGplQAr2oj9KzceK9Hwz6Whxazmn85yYeVuS3u9XTMOGMRx0kO95MQ+vLsj/S/NwBDMMLU5hpxvI6Tklw==}
+  ofetch@1.5.0:
+    resolution: {integrity: sha512-A7llJ7eZyziA5xq9//3ZurA8OhFqtS99K5/V1sLBJ5j137CM/OAjlbA/TEJXBuOWwOfLqih+oH5U3ran4za1FQ==}
 
   ohash@2.0.11:
     resolution: {integrity: sha512-RdR9FQrFwNBNXAr4GixM8YaRZRJ5PUWbKYbE5eOsrwAjJW0q2REGcf79oYPsLyskQCZG1PLN+S/K1V00joZAoQ==}
@@ -10901,16 +10892,6 @@ snapshots:
     transitivePeerDependencies:
       - ts-node
 
-  '@astrojs/tailwind@6.0.2(astro@5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0))(tailwindcss@4.1.16)(ts-node@10.9.2(@swc/core@1.13.2(@swc/helpers@0.5.17))(@types/node@24.3.1)(typescript@5.9.2))':
-    dependencies:
-      astro: 5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)
-      autoprefixer: 10.4.21(postcss@8.5.6)
-      postcss: 8.5.6
-      postcss-load-config: 4.0.2(postcss@8.5.6)(ts-node@10.9.2(@swc/core@1.13.2(@swc/helpers@0.5.17))(@types/node@24.3.1)(typescript@5.9.2))
-      tailwindcss: 4.1.16
-    transitivePeerDependencies:
-      - ts-node
-
   '@astrojs/telemetry@3.1.0':
     dependencies:
       ci-info: 4.2.0
@@ -12893,8 +12874,8 @@ snapshots:
 
   '@jridgewell/source-map@0.3.6':
     dependencies:
-      '@jridgewell/gen-mapping': 0.3.8
-      '@jridgewell/trace-mapping': 0.3.25
+      '@jridgewell/gen-mapping': 0.3.13
+      '@jridgewell/trace-mapping': 0.3.30
 
   '@jridgewell/sourcemap-codec@1.5.0': {}
 
@@ -15221,7 +15202,7 @@ snapshots:
       - terser
       - typescript
 
-  astro@5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0):
+  astro@5.15.2(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0):
     dependencies:
       '@astrojs/compiler': 2.12.2
       '@astrojs/internal-helpers': 0.7.4
@@ -15336,16 +15317,6 @@ snapshots:
       normalize-range: 0.1.2
       picocolors: 1.1.1
       postcss: 8.5.3
-      postcss-value-parser: 4.2.0
-
-  autoprefixer@10.4.21(postcss@8.5.6):
-    dependencies:
-      browserslist: 4.24.5
-      caniuse-lite: 1.0.30001717
-      fraction.js: 4.3.7
-      normalize-range: 0.1.2
-      picocolors: 1.1.1
-      postcss: 8.5.6
       postcss-value-parser: 4.2.0
 
   available-typed-arrays@1.0.7:
@@ -18479,9 +18450,9 @@ snapshots:
     dependencies:
       astro: 4.16.18(@types/node@24.3.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(typescript@5.9.2)
 
-  lucide-astro@0.548.0(astro@5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)):
+  lucide-astro@0.548.0(astro@5.15.2(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)):
     dependencies:
-      astro: 5.15.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)
+      astro: 5.15.2(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)
 
   lz-string@1.5.0: {}
 
@@ -19209,7 +19180,7 @@ snapshots:
 
   obuf@1.1.2: {}
 
-  ofetch@1.4.1:
+  ofetch@1.5.0:
     dependencies:
       destr: 2.0.5
       node-fetch-native: 1.6.7
@@ -19545,14 +19516,6 @@ snapshots:
       yaml: 2.8.0
     optionalDependencies:
       postcss: 8.5.3
-      ts-node: 10.9.2(@swc/core@1.13.2(@swc/helpers@0.5.17))(@types/node@24.3.1)(typescript@5.9.2)
-
-  postcss-load-config@4.0.2(postcss@8.5.6)(ts-node@10.9.2(@swc/core@1.13.2(@swc/helpers@0.5.17))(@types/node@24.3.1)(typescript@5.9.2)):
-    dependencies:
-      lilconfig: 3.1.3
-      yaml: 2.8.0
-    optionalDependencies:
-      postcss: 8.5.6
       ts-node: 10.9.2(@swc/core@1.13.2(@swc/helpers@0.5.17))(@types/node@24.3.1)(typescript@5.9.2)
 
   postcss-nested@6.2.0(postcss@8.5.3):
@@ -21149,7 +21112,7 @@ snapshots:
 
   tsx@4.19.4:
     dependencies:
-      esbuild: 0.25.8
+      esbuild: 0.25.10
       get-tsconfig: 4.10.0
     optionalDependencies:
       fsevents: 2.3.3
@@ -21308,7 +21271,7 @@ snapshots:
   unifont@0.6.0:
     dependencies:
       css-tree: 3.1.0
-      ofetch: 1.4.1
+      ofetch: 1.5.0
       ohash: 2.0.11
 
   unique-string@2.0.0:
@@ -21373,7 +21336,7 @@ snapshots:
       h3: 1.15.4
       lru-cache: 10.4.3
       node-fetch-native: 1.6.7
-      ofetch: 1.4.1
+      ofetch: 1.5.0
       ufo: 1.6.1
 
   update-browserslist-db@1.1.3(browserslist@4.24.5):
