@@ -214,9 +214,31 @@ import Footer from '../components/Footer.astro';
 
 				<button
 					type="submit"
-					class="bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
+					class="bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90 flex items-center justify-center gap-2 min-h-[60px]"
+					id="submit-button"
 				>
-					Send message
+					<span id="button-text">Send message</span>
+					<svg
+						id="loading-spinner"
+						class="hidden animate-spin w-5 h-5"
+						xmlns="http://www.w3.org/2000/svg"
+						fill="none"
+						viewBox="0 0 24 24"
+					>
+						<circle
+							class="opacity-25"
+							cx="12"
+							cy="12"
+							r="10"
+							stroke="currentColor"
+							stroke-width="4"
+						></circle>
+						<path
+							class="opacity-75"
+							fill="currentColor"
+							d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+						></path>
+					</svg>
 				</button>
 			</form>
 		</div>
@@ -1006,14 +1028,18 @@ import Footer from '../components/Footer.astro';
 		const submitButton = contactForm.querySelector(
 			'button[type="submit"]',
 		) as HTMLButtonElement;
-		const originalButtonText = submitButton.textContent;
+		const buttonText = document.getElementById('button-text') as HTMLSpanElement;
+		const loadingSpinner = document.getElementById('loading-spinner') as HTMLElement;
+		const originalButtonText = buttonText.textContent;
 
 		contactForm.addEventListener('submit', async (e) => {
 			e.preventDefault();
+
 			// Disable submit button and show loading state
 			submitButton.disabled = true;
-			submitButton.textContent = 'Sending...';
-			submitButton.classList.add('opacity-50');
+			buttonText.textContent = 'Sending...';
+			loadingSpinner.classList.remove('hidden');
+			submitButton.classList.add('opacity-75', 'cursor-not-allowed');
 
 			try {
 				const formData = new FormData(contactForm);
@@ -1027,17 +1053,20 @@ import Footer from '../components/Footer.astro';
 				}
 
 				// Extract form fields manually into an object
-				const formDataObject = {
+				const formDataObject: any = {
 					name: formData.get('name') as string,
 					email: formData.get('email') as string,
 					service: formData.get('service') as string,
-					dateRange: fp.selectedDates.slice(0, 2),
 					minBudget: Number(formData.get('minBudget')),
 					maxBudget: Number(formData.get('maxBudget')),
 					currency: formData.get('currency') as string,
 					message: formData.get('message') as string,
 					turnstileToken: turnstileResponse,
 				};
+
+				if (fp.selectedDates && fp.selectedDates.length >= 2) {
+					formDataObject.dateRange = fp.selectedDates.slice(0, 2);
+				}
 
 				// Validate using shared validation library
 				const validation = validateContactForm(formDataObject);
@@ -1068,11 +1097,19 @@ import Footer from '../components/Footer.astro';
 				if (response.ok && result.success) {
 					// Show success message
 					contactForm.innerHTML = `
-						<div class="text-center py-8">
-							<div class="text-[#F5F5F5] text-xl mb-4">✓ Message sent successfully!</div>
-							<p class="text-[#AAAAAA]">Thank you for your inquiry. We'll get back to you soon.</p>
+						<div class="space-y-6 max-w-2xl">
+							<div class="border-2 border-[#333333] bg-transparent px-6 py-8">
+								<div class="text-[#F5F5F5] text-xl mb-4 flex items-center gap-3">
+									<svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+									</svg>
+									Message sent
+								</div>
+								<p class="text-[#AAAAAA] leading-relaxed">Thank you for your inquiry. We'll review your project details and get back to you.</p>
+							</div>
 						</div>
 					`;
+					requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
 				} else {
 					throw new Error(result.error || 'Failed to send message');
 				}
@@ -1081,8 +1118,9 @@ import Footer from '../components/Footer.astro';
 
 				// Re-enable submit button
 				submitButton.disabled = false;
-				submitButton.textContent = originalButtonText;
-				submitButton.classList.remove('opacity-50');
+				buttonText.textContent = originalButtonText;
+				loadingSpinner.classList.add('hidden');
+				submitButton.classList.remove('opacity-75', 'cursor-not-allowed');
 			}
 		});
 	});

@@ -206,28 +206,30 @@ async function sendEmail(data: ContactFormData, env: Env) {
     };
 
     const emailBody = `
-New Project Inquiry from ${data.name}
+<h2>Contact Information:</h2>
+<ul>
+    <li><strong>Name:</strong> ${data.name}</li>
+    <li><strong>Email:</strong> ${data.email}</li>
+</ul>
 
-Contact Information:
-- Name: ${data.name}
-- Email: ${data.email}
+<h2>Project Details:</h2>
+<ul>
+    <li><strong>Service:</strong> ${data.service}</li>
+    <li><strong>Timeline:</strong> ${formatDateRange(data.dateRange)}</li>
+    <li><strong>Budget:</strong> ${data.currency} ${data.minBudget} - ${data.maxBudget}</li>
+</ul>
 
-Project Details:
-- Service: ${data.service}
-- Timeline: ${formatDateRange(data.dateRange)}
-- Budget: ${data.currency} ${data.minBudget} - ${data.maxBudget}
+<h2>Message:</h2>
+<p>${data.message}</p>
 
-Message:
-${data.message}
-
----
-This email was sent from the joinez.co contact form.`.trim();
+<hr>
+<p><em>This email was sent from the joinez.co contact form.</em></p>`.trim();
 
     await mailer.send({
         from: { name: 'Mailatron 9000', email: senderEmail },
         to: { email: recipientEmail },
         subject: `[new project] [${data.service}] for ${data.name}`,
-        text: emailBody,
+        html: emailBody,
         reply: { email: data.email, name: data.name },
     });
 }
