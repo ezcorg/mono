@@ -1,7 +1,9 @@
 import { validateContactForm, getValidationErrorMessage, type ContactFormData } from '@joinezco/shared';
+import { WorkerMailer } from 'worker-mailer';
 
 interface Env {
-    MAILGUN_API_TOKEN: string;
+    EMAIL_USERNAME: string;
+    EMAIL_PASSWORD: string;
     RECIPIENT_EMAIL?: string;
     IP_RATE_LIMITER: any;
     TURNSTILE_SECRET_KEY: string;
@@ -138,6 +140,7 @@ export default {
                 });
             }
 
+            // TODO: don't rate-limit on email send failure or internal server errors
             try {
                 await sendEmail(contactData, env);
                 return new Response(JSON.stringify({
@@ -181,7 +184,19 @@ export default {
 
 async function sendEmail(data: ContactFormData, env: Env) {
     const recipientEmail = env.RECIPIENT_EMAIL || 'dev@joinez.co';
-    const senderEmail = `mailatron@joinez.co`;
+    const senderEmail = `contact@joinez.co`;
+
+    // Connect to SMTP server
+    const mailer = await WorkerMailer.connect({
+        credentials: {
+            username: env.EMAIL_USERNAME,
+            password: env.EMAIL_PASSWORD,
+        },
+        authType: 'plain',
+        host: 'smtp.migadu.com',
+        port: 465,
+        secure: true,
+    })
 
     // Format dateRange for display
     const formatDateRange = (dateRange?: [Date, Date]) => {
@@ -208,25 +223,11 @@ ${data.message}
 ---
 This email was sent from the joinez.co contact form.`.trim();
 
-    const formData = new FormData();
-    formData.append('from', `Mailatron 9000 <${senderEmail}>`);
-    formData.append('to', recipientEmail);
-    formData.append('subject', `[new project] [${data.service}] for ${data.name}`);
-    formData.append('text', emailBody);
-    formData.append('h:Reply-To', data.email);
-
-    const response = await fetch(`https://api.mailgun.net/v3/mail.joinez.co/messages`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Basic ${btoa(`api:${env.MAILGUN_API_TOKEN}`)}`,
-        },
-        body: formData,
+    await mailer.send({
+        from: { name: 'Mailatron 9000', email: senderEmail },
+        to: { email: recipientEmail },
+        subject: `[new project] [${data.service}] for ${data.name}`,
+        text: emailBody,
+        reply: { email: data.email, name: data.name },
     });
-
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Mailgun API error: ${response.status} - ${errorText}`);
-    }
-
-    return await response.json();
 }

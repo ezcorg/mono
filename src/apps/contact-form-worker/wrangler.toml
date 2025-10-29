@@ -1,6 +1,7 @@
 name = "contact-form-worker"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-09-23"
+compatibility_flags = [ "nodejs_compat" ]
 
 [env.production]
 name = "contact-form-worker"
@@ -16,6 +17,7 @@ namespace_id = "1001"
 simple = { limit = 1, period = 60 }
 
 # Add your secrets:
-# wrangler secret put MAILGUN_API_TOKEN
+# wrangler secret put EMAIL_USERNAME
+# wrangler secret put EMAIL_PASSWORD
 # wrangler secret put TURNSTILE_SECRET_KEY
 # wrangler secret put RECIPIENT_EMAIL (optional)

@@ -4,7 +4,8 @@ import worker from './index';
 
 // Mock environment
 const mockEnv = {
-    MAILGUN_API_TOKEN: 'test-token',
+    EMAIL_USERNAME: 'test-email',
+    EMAIL_PASSWORD: 'test-password',
     RECIPIENT_EMAIL: 'test@example.com',
     TURNSTILE_SECRET_KEY: 'test-turnstile-key',
     IP_RATE_LIMITER: {

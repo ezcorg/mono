@@ -4,23 +4,18 @@ A Cloudflare Worker that handles contact form submissions with Mailgun email del
 
 ## Features
 
-- **Mailgun Integration**: Sends emails via Mailgun API instead of Cloudflare Email
-- **Rate Limiting**: Prevents spam with dual rate limiting:
-  - By client IP: 1 request per hour
-  - By email address: 1 request per hour
+- **SMTP Integration**: Sends emails via Cloudflare Worker to Migadu's SMTP port instead of Cloudflare Email
+- **Rate Limiting**: Prevents abuse with IP-based rate limiting
 - **CORS Support**: Handles preflight requests for web forms
 - **Automatic Deployment**: GitHub Actions workflow for CI/CD
 
 ## Setup
 
-### 1. Mailgun Configuration
-
-1. Create a Mailgun account and verify your domain
-2. Get your API token from the Mailgun dashboard
-3. Set the required secrets:
+### 1. SMTP Configuration
 
 ```bash
-wrangler secret put MAILGUN_API_TOKEN
+wrangler secret put EMAIL_USERNAME
+wrangler secret put EMAIL_PASSWORD
 ```
 
 Optional:
@@ -115,10 +110,8 @@ The worker supports CORS for the following origins:
 
 ## Email Format
 
-Emails are sent via Mailgun with:
+Emails are sent via Cloudflare Worker to Migadu's SMTP port with:
 - **From**: `Mailatron 9000 <mailatron@mail.joinez.co>`
 - **To**: `{RECIPIENT_EMAIL}` (default: dev@joinez.co)
 - **Subject**: `[new project] [{service}] for {name}`
 - **Reply-To**: Contact's email address
-
-The email body includes all form data in a structured format.
