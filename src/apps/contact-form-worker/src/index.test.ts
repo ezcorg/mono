@@ -465,7 +465,7 @@ describe('Contact Form Worker', () => {
                 from: { name: 'Mailatron 9000', email: 'contact@joinez.co' },
                 to: { email: 'test@example.com' },
                 subject: '[new project] [software-development] for John Doe',
-                html: expect.stringContaining('John Doe'),
+                html: expect.stringContaining('This is a test message that is long enough to meet the minimum requirements'),
                 reply: { email: 'john@example.com', name: 'John Doe' },
             });
 
