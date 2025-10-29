@@ -232,4 +232,5 @@ async function sendEmail(data: ContactFormData, env: Env) {
         html: emailBody,
         reply: { email: data.email, name: data.name },
     });
+    await mailer.close();
 }

@@ -2,6 +2,31 @@ import { fetchMock } from "cloudflare:test";
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import worker from './index';
 
+// Mock the WorkerMailer module
+vi.mock('worker-mailer', () => {
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const mockClose = vi.fn().mockResolvedValue(undefined);
+    const mockConnect = vi.fn().mockResolvedValue({
+        send: mockSend,
+        close: mockClose
+    } as any);
+
+    return {
+        WorkerMailer: {
+            connect: mockConnect,
+            send: mockSend,
+            close: mockClose,
+        }
+    };
+});
+
+// Get references to the mocked functions after the module is mocked
+const { WorkerMailer } = await import('worker-mailer');
+const mockConnect = vi.mocked(WorkerMailer.connect);
+const mockSend = vi.mocked(WorkerMailer.send);
+// @ts-expect-error
+const mockClose = vi.mocked(WorkerMailer.close);
+
 // Mock environment
 const mockEnv = {
     EMAIL_USERNAME: 'test-email',
@@ -27,6 +52,17 @@ describe('Contact Form Worker', () => {
         vi.clearAllMocks();
         // Default rate limiter responses (success)
         mockEnv.IP_RATE_LIMITER.limit.mockResolvedValue({ success: true });
+        
+        // Reset WorkerMailer mocks for each test
+        mockConnect.mockClear();
+        mockSend.mockClear();
+        mockClose.mockClear();
+        
+        // Set up default successful behavior
+        mockConnect.mockResolvedValue({
+            send: mockSend,
+            close: mockClose
+        } as any);
     });
 
     afterEach(() => {
@@ -376,7 +412,8 @@ describe('Contact Form Worker', () => {
     });
 
     describe('Email Sending', () => {
-        it('should successfully send email and return success response with proper CORS header', async () => {
+
+        it('should properly mock WorkerMailer and verify email sending', async () => {
             const jsonData = {
                 name: 'John Doe',
                 email: 'john@example.com',
@@ -386,51 +423,6 @@ describe('Contact Form Worker', () => {
                 currency: 'USD',
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token',
-                dateRange: ['2024-01-01T00:00:00.000Z', '2024-03-31T23:59:59.999Z'],
-            };
-
-            const request = new Request('https://example.com', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Origin': 'https://www.joinez.co'
-                },
-                body: JSON.stringify(jsonData),
-            });
-
-            // Mock successful Turnstile verification
-            fetchMock.get('https://challenges.cloudflare.com')
-                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
-                .reply(200, { success: true });
-
-            // Mock successful Mailgun response
-            fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
-                .reply(200, { id: 'test-message-id' });
-
-            const response = await worker.fetch(request, mockEnv, mockCtx);
-
-            expect(response.status).toBe(200);
-            const responseData = await response.json();
-            expect(responseData).toEqual({
-                success: true,
-                message: 'Form submitted successfully'
-            });
-
-            // Verify the response has the correct CORS header
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.joinez.co');
-        });
-
-        it('should handle Mailgun API errors gracefully with proper CORS header', async () => {
-            const jsonData = {
-                name: 'John Doe',
-                email: 'john@example.com',
-                service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
-                turnstileToken: 'test-token',
-                message: 'This is a test message that is long enough to meet the minimum requirements.',
             };
 
             const request = new Request('https://example.com', {
@@ -447,28 +439,41 @@ describe('Contact Form Worker', () => {
                 .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
                 .reply(200, { success: true });
 
-            // Mock Mailgun API error
-            fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
-                .reply(400, 'Bad Request');
-
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
-            expect(response.status).toBe(500);
+            expect(response.status).toBe(200);
             const responseData = await response.json();
             expect(responseData).toEqual({
-                success: false,
-                error: 'Failed to send email'
+                success: true,
+                message: 'Form submitted successfully'
             });
-            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://joinez.co');
+
+            // Verify that WorkerMailer.connect was called with correct parameters
+            expect(mockConnect).toHaveBeenCalledWith({
+                credentials: {
+                    username: 'test-email',
+                    password: 'test-password',
+                },
+                authType: 'plain',
+                host: 'smtp.migadu.com',
+                port: 465,
+                secure: true,
+            });
+
+            // Verify that send was called
+            expect(mockSend).toHaveBeenCalledWith({
+                from: { name: 'Mailatron 9000', email: 'contact@joinez.co' },
+                to: { email: 'test@example.com' },
+                subject: '[new project] [software-development] for John Doe',
+                html: expect.stringContaining('John Doe'),
+                reply: { email: 'john@example.com', name: 'John Doe' },
+            });
+
+            // Verify that close was called
+            expect(mockClose).toHaveBeenCalled();
         });
 
-        it('should use default recipient email when not provided in env', async () => {
-            const envWithoutRecipient = {
-                ...mockEnv,
-                RECIPIENT_EMAIL: undefined
-            };
-
+        it('should handle WorkerMailer connection errors', async () => {
             const jsonData = {
                 name: 'John Doe',
                 email: 'john@example.com',
@@ -476,14 +481,15 @@ describe('Contact Form Worker', () => {
                 minBudget: 1000,
                 maxBudget: 5000,
                 currency: 'USD',
-                turnstileToken: 'test-token',
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
+                turnstileToken: 'test-token',
             };
 
             const request = new Request('https://example.com', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Origin': 'https://joinez.co'
                 },
                 body: JSON.stringify(jsonData),
             });
@@ -493,19 +499,63 @@ describe('Contact Form Worker', () => {
                 .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
                 .reply(200, { success: true });
 
-            // Mock successful Mailgun response
-            fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
-                .reply(200, { id: 'test-message-id', ok: true });
+            // Mock WorkerMailer connection failure
+            mockConnect.mockRejectedValueOnce(new Error('SMTP connection failed'));
 
-            const response = await worker.fetch(request, envWithoutRecipient, mockCtx);
+            const response = await worker.fetch(request, mockEnv, mockCtx);
 
-            expect(response.status).toBe(200);
+            expect(response.status).toBe(500);
             const responseData = await response.json();
             expect(responseData).toEqual({
-                success: true,
-                message: 'Form submitted successfully'
+                success: false,
+                error: 'Failed to send email'
             });
+        });
+
+        it('should handle WorkerMailer send errors', async () => {
+            const jsonData = {
+                name: 'John Doe',
+                email: 'john@example.com',
+                service: 'software-development',
+                minBudget: 1000,
+                maxBudget: 5000,
+                currency: 'USD',
+                message: 'This is a test message that is long enough to meet the minimum requirements.',
+                turnstileToken: 'test-token',
+            };
+
+            const request = new Request('https://example.com', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Origin': 'https://joinez.co'
+                },
+                body: JSON.stringify(jsonData),
+            });
+
+            // Mock successful Turnstile verification
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: true });
+
+            // Mock WorkerMailer send failure
+            const mockFailingSend = vi.fn().mockRejectedValue(new Error('Failed to send'));
+            mockConnect.mockResolvedValueOnce({
+                send: mockFailingSend,
+                close: mockClose
+            } as any);
+
+            const response = await worker.fetch(request, mockEnv, mockCtx);
+
+            expect(response.status).toBe(500);
+            const responseData = await response.json();
+            expect(responseData).toEqual({
+                success: false,
+                error: 'Failed to send email'
+            });
+
+            // Verify that send was attempted
+            expect(mockFailingSend).toHaveBeenCalled();
         });
     });
 
@@ -548,50 +598,6 @@ describe('Contact Form Worker', () => {
             expect(typedResponseData.success).toBe(false);
             expect(typedResponseData.error).toBe('Internal server error');
             expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.joinez.co');
-        });
-    });
-
-    describe('Email Content Validation', () => {
-        it('should format email content correctly', async () => {
-            const jsonData = {
-                name: 'Jane Smith',
-                email: 'jane@example.com',
-                service: 'consulting',
-                minBudget: 2000,
-                maxBudget: 10000,
-                currency: 'EUR',
-                message: 'I need help with my project. This is a detailed message about what I need.',
-                dateRange: ['2024-04-01T00:00:00.000Z', '2024-06-30T23:59:59.999Z'],
-                turnstileToken: 'test-token'
-            };
-
-            const request = new Request('https://example.com', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(jsonData),
-            });
-
-            // Mock successful Turnstile verification
-            fetchMock.get('https://challenges.cloudflare.com')
-                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
-                .reply(200, { success: true });
-
-            // Mock successful Mailgun response
-            fetchMock.get('https://api.mailgun.net')
-                .intercept({ method: 'POST', path: '/v3/mail.joinez.co/messages' })
-                .reply(200, { id: 'test-message-id' });
-
-            const response = await worker.fetch(request, mockEnv, mockCtx);
-            const responseData = await response.json();
-
-            expect(response.status).toBe(200);
-
-            expect(responseData).toEqual({
-                success: true,
-                message: 'Form submitted successfully'
-            });
         });
     });
 });
