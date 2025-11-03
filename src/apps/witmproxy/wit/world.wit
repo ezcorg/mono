@@ -1,4 +1,4 @@
-package host:plugin@0.0.1;
+package witmproxy:plugin@0.0.1;
 
 interface capabilities {
     // resource http-client {}
@@ -16,7 +16,6 @@ interface capabilities {
     }
 
     resource capability-provider {
-        constructor();
         // http: func() -> option<http-client>;
         // kv: func() -> option<key-value-client>;
         // sql: func() -> option<sql-client>;
@@ -43,7 +42,7 @@ interface witm-plugin {
         description: string,
         license: string,
         url: string,
-        publickey: string,
+        publickey: list<u8>,
         cel: string,
         capabilities: list<string>,
         metadata: list<tag>,

@@ -19,3 +19,12 @@
 [submodule "src/typescript/codemirror-languageserver"]
 	path = src/typescript/codemirror-languageserver
 	url = https://github.com/ezcorg/codemirror-languageserver
+[submodule "src/apps/cargo-generate"]
+	path = src/apps/cargo-generate
+	url = https://github.com/ezcorg/cargo-generate
+[submodule "src/rust/witmproxy-plugin-template-rust"]
+	path = src/rust/witmproxy-plugin-template-rust
+	url = https://github.com/ezcorg/witmproxy-plugin-template-rust
+[submodule "src/apps/wasm-pkg-tools"]
+	path = src/apps/wasm-pkg-tools
+	url = https://github.com/ezcorg/wasm-pkg-tools

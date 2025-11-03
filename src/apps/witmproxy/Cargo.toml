@@ -42,7 +42,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 
 # HTTP client for plugins
-reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "rustls-tls-manual-roots", "stream", "http2"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "rustls-tls-manual-roots", "stream", "http2", "multipart"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -69,6 +69,7 @@ markup5ever_rcdom = "0.3"
 
 # Template engine
 askama = "0.12"
+cargo-generate = { path = "../cargo-generate" }
 
 clap = { version = "4.5.47", features = ["derive"] }
 markup5ever = "0.35.0"

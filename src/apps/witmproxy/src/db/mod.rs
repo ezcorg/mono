@@ -80,7 +80,6 @@ mod tests {
         let table_names: Vec<String> = tables.into_iter().map(|t| t.0).collect();
         let expected_tables = vec![
             "plugins",
-            "plugin_event_handlers",
             "plugin_capabilities",
             "plugin_metadata",
         ];

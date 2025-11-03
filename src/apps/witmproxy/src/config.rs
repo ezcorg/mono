@@ -91,9 +91,6 @@ pub struct PluginConfig {
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct WebConfig {
-    #[config(default = true, partial_attr(arg(long, default_value = "true")))]
-    pub enable_dashboard: bool,
-
     /// The address the web frontend will bind to (optional, defaults to OS-assigned port)
     #[config(partial_attr(arg(long)))]
     pub web_bind_addr: Option<String>,

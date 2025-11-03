@@ -32,7 +32,7 @@ pub struct WitmPlugin {
     pub description: String,
     pub license: String,
     pub url: String,
-    pub publickey: String,
+    pub publickey: Vec<u8>,
     pub enabled: bool,
     // Plugin capabilities
     pub granted: CapabilitySet,
@@ -101,7 +101,7 @@ impl WitmPlugin {
         let guest_result = store
             .run_concurrent(async move |store| {
                 let (manifest, task) = match plugin_instance
-                    .host_plugin_witm_plugin()
+                    .witmproxy_plugin_witm_plugin()
                     .call_manifest(store)
                     .await
                 {
@@ -117,6 +117,8 @@ impl WitmPlugin {
             .await??;
 
         let mut plugin = WitmPlugin::from(guest_result);
+        plugin.component = Some(component);
+        plugin.component_bytes = component_bytes;
         plugin.cel_filter = if !plugin.cel_source.is_empty() {
             Some(Program::compile(&plugin.cel_source)?)
         } else {

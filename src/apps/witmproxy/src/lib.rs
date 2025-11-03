@@ -10,6 +10,7 @@ pub mod plugins;
 pub mod proxy;
 pub mod wasm;
 pub mod web;
+pub mod cli;
 
 #[cfg(test)]
 pub mod test_utils;
@@ -35,7 +36,6 @@ pub struct WitmProxy {
     ca: CertificateAuthority,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     config: AppConfig,
-    log_level: String,
     proxy_server: Option<ProxyServer>,
     web_server: Option<WebServer>,
     shutdown_notify: Arc<Notify>,
@@ -53,13 +53,11 @@ impl WitmProxy {
         ca: CertificateAuthority,
         plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
         config: AppConfig,
-        log_level: String,
     ) -> Self {
         Self {
             ca,
             plugin_registry,
             config,
-            log_level,
             proxy_server: None,
             web_server: None,
             shutdown_notify: Arc::new(Notify::new()),
@@ -97,10 +95,6 @@ impl WitmProxy {
         rustls::crypto::ring::default_provider()
             .install_default()
             .map_err(|_| anyhow::anyhow!("Failed to install default crypto provider"))?;
-
-        // Initialize logging
-        self.init_logging(&self.log_level);
-
         info!("Hi there! witmproxy is starting...");
 
         // Start web server for certificate distribution
@@ -170,14 +164,6 @@ impl WitmProxy {
         self.join().await?;
         self.shutdown().await;
         Ok(())
-    }
-
-    // Private helper methods
-    fn init_logging(&self, log_level: &str) {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
-            .init();
     }
 
     async fn listen_shutdown_signal(&self) {

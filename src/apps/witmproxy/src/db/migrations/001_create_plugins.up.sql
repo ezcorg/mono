@@ -7,7 +7,7 @@ CREATE TABLE plugins (
     description TEXT NOT NULL,
     license TEXT NOT NULL,
     url TEXT NOT NULL,
-    publickey TEXT NOT NULL,
+    publickey BLOB NOT NULL,
     enabled BOOLEAN NOT NULL,
     component BLOB NOT NULL,
     cel_filter TEXT NOT NULL,

@@ -4,7 +4,6 @@ mod tests {
     use crate::wasm::Runtime;
     use crate::web::WebServer;
     use crate::{
-        plugins::{capability::Capability, CapabilitySet, WitmPlugin},
         test_utils::create_ca_and_config,
     };
     use anyhow::Result;
@@ -14,6 +13,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_plugin_upsert() -> Result<()> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         // Create CA and config
         let (ca, config) = create_ca_and_config().await;
 
@@ -38,36 +39,26 @@ mod tests {
             "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
         )
         .unwrap();
-        let mut granted = CapabilitySet::new();
-        granted.insert(Capability::Request);
-        granted.insert(Capability::Response);
-        let requested = granted.clone();
 
-        let cel_source = "true".to_string();
-        let cel_filter = Some(cel::Program::compile(&cel_source)?);
+        // Create a temporary file with the component bytes for upload
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp_file.path(), &component_bytes).unwrap();
+        
+        // Create form with file upload
+        let form = reqwest::multipart::Form::new()
+            .file("file", temp_file.path())
+            .await
+            .unwrap();
 
-        let plugin = WitmPlugin {
-            name: "test_plugin".into(),
-            component_bytes,
-            namespace: "test".into(),
-            version: "0.0.0".into(),
-            author: "author".into(),
-            description: "description".into(),
-            license: "mit".into(),
-            enabled: true,
-            url: "https://example.com".into(),
-            publickey: "todo".into(),
-            granted,
-            requested,
-            metadata: std::collections::HashMap::new(),
-            component: None,
-            cel_filter,
-            cel_source,
-        };
+        // Create HTTP client that accepts self-signed certificates
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .unwrap();
 
-        let response = reqwest::Client::new()
-            .put(format!("http://{}/api/plugins", bind_addr))
-            .json(&plugin)
+        let response = client
+            .post(format!("https://{}/api/plugins", bind_addr))
+            .multipart(form)
             .send()
             .await
             .unwrap();

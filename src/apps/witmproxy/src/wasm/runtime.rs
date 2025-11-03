@@ -23,6 +23,7 @@ impl Runtime {
 
         let mut linker: Linker<Host> = Linker::new(&engine);
 
+        // TODO: fix this
         // Add WASI CLI support (needed by the component)
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
 
@@ -34,7 +35,7 @@ impl Runtime {
         wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
 
         // Add our custom host capabilities
-        crate::wasm::generated::host::plugin::capabilities::add_to_linker::<Host, HasSelf<Host>>(
+        crate::wasm::generated::witmproxy::plugin::capabilities::add_to_linker::<Host, HasSelf<Host>>(
             &mut linker,
             |host: &mut Host| -> &mut Host { host },
         )?;

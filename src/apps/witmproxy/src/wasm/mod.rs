@@ -5,11 +5,11 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
-use crate::wasm::generated::exports::host::plugin::witm_plugin::Tag;
+use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::Tag;
 use crate::{
     plugins::{CapabilitySet, WitmPlugin},
     wasm::generated::{
-        host::plugin::capabilities::{
+        witmproxy::plugin::capabilities::{
             HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient,
         },
         PluginManifest,
@@ -18,20 +18,21 @@ use crate::{
 pub use runtime::Runtime;
 
 pub mod generated {
-    pub use crate::wasm::generated::exports::host::plugin::witm_plugin::PluginManifest;
+    pub use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::PluginManifest;
     pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient};
 
     wasmtime::component::bindgen!({
-        world: "host:plugin/plugin",
+        world: "witmproxy:plugin/plugin",
         exports: { default: async | store | task_exit },
         with: {
-            "host:plugin/capabilities/capability-provider": CapabilityProvider,
-            "host:plugin/capabilities/annotator-client": AnnotatorClient,
-            "host:plugin/capabilities/local-storage-client": LocalStorageClient,
+            "witmproxy:plugin/capabilities.capability-provider": CapabilityProvider,
+            "witmproxy:plugin/capabilities.annotator-client": AnnotatorClient,
+            "witmproxy:plugin/capabilities.local-storage-client": LocalStorageClient,
             "wasi:http/types@0.3.0-rc-2025-09-16": wasmtime_wasi_http::p3::bindings::http::types,
         }
     });
 }
+
 pub struct CapabilityProvider {}
 
 impl CapabilityProvider {
@@ -134,16 +135,11 @@ impl HostAnnotatorClient for Host {
 
 // TODO: real implementation
 impl HostCapabilityProvider for Host {
-    fn new(&mut self) -> wasmtime::component::Resource<CapabilityProvider> {
-        let provider = CapabilityProvider::new();
-        self.table.push(provider).unwrap()
-    }
-
     fn local_storage(
         &mut self,
         _self: wasmtime::component::Resource<CapabilityProvider>,
     ) -> Option<
-        wasmtime::component::Resource<generated::host::plugin::capabilities::LocalStorageClient>,
+        wasmtime::component::Resource<generated::witmproxy::plugin::capabilities::LocalStorageClient>,
     > {
         let client = LocalStorageClient::default();
         Some(self.table.push(client).unwrap())
@@ -168,7 +164,7 @@ impl HostCapabilityProvider for Host {
 }
 
 // Implement the generated capabilities::Host trait
-impl generated::host::plugin::capabilities::Host for Host {}
+impl generated::witmproxy::plugin::capabilities::Host for Host {}
 
 pub struct P3Ctx {}
 impl wasmtime_wasi_http::p3::WasiHttpCtx for P3Ctx {}

@@ -130,8 +130,7 @@ pub async fn create_witmproxy() -> (
     let proxy = WitmProxy::new(
         ca.clone(),
         Some(registry.clone()),
-        config.clone(),
-        "info".to_string(),
+        config.clone()
     );
     (proxy, registry, ca, config, temp_dir)
 }

@@ -4,7 +4,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use cel::Value;
 use http_body::Body;
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
+use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full};
 use hyper::{body::Incoming, Request, Response};
 use tracing::{info, warn};
 use wasmtime::{component::Resource, Store};
@@ -21,7 +21,7 @@ use crate::{
     },
     wasm::{
         generated::{
-            exports::host::plugin::witm_plugin::{
+            exports::witmproxy::plugin::witm_plugin::{
                 HandleRequestResult, HandleResponseResult, RequestOrResponse,
             },
             Plugin,
@@ -45,8 +45,8 @@ where
 {
     None,
     Noop(Request<T>),
-    Request(Request<BoxBody<Bytes, ErrorCode>>),
-    Response(Response<BoxBody<Bytes, ErrorCode>>),
+    Request(Request<UnsyncBoxBody<Bytes, ErrorCode>>),
+    Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
 }
 
 pub enum HostHandleResponseResult {
@@ -72,11 +72,9 @@ impl PluginRegistry {
         Ok(())
     }
 
-    pub async fn plugin_from_component(
-        &self,
-        component_bytes: Vec<u8>,
-    ) -> Result<WitmPlugin> {
-        let component = wasmtime::component::Component::from_binary(&self.runtime.engine, &component_bytes)?;
+    pub async fn plugin_from_component(&self, component_bytes: Vec<u8>) -> Result<WitmPlugin> {
+        let component =
+            wasmtime::component::Component::from_binary(&self.runtime.engine, &component_bytes)?;
         let mut store = wasmtime::Store::new(&self.runtime.engine, Host::default());
         let instance = self
             .runtime
@@ -87,7 +85,7 @@ impl PluginRegistry {
         let guest_result = store
             .run_concurrent(async move |store| {
                 let (manifest, task) = match plugin_instance
-                    .host_plugin_witm_plugin()
+                    .witmproxy_plugin_witm_plugin()
                     .call_manifest(store)
                     .await
                 {
@@ -103,7 +101,30 @@ impl PluginRegistry {
             })
             .await??;
 
-        Ok(WitmPlugin::from(guest_result))
+        // Verify the WASM component signature using wasmsign2
+        let public_key_bytes = &guest_result.publickey;
+        if !public_key_bytes.is_empty() {
+            let public_key = wasmsign2::PublicKey::from_bytes(&public_key_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to parse public key: {}", e))?;
+
+            let mut reader = std::io::Cursor::new(&component_bytes);
+            match public_key.verify(&mut reader, None) {
+                Ok(()) => {
+                    info!("WASM component signature verified successfully for plugin: {}", guest_result.name);
+                }
+                Err(e) => {
+                    anyhow::bail!("WASM component signature verification failed for plugin {}: {}", guest_result.name, e);
+                }
+            }
+        } else {
+            anyhow::bail!("Plugin {} does not have a public key for signature verification", guest_result.name);
+        }
+
+        let mut plugin = WitmPlugin::from(guest_result);
+        plugin.component_bytes = component_bytes;
+        plugin.component = Some(component);
+        
+        Ok(plugin)
     }
 
     pub async fn register_plugin(&mut self, plugin: WitmPlugin) -> Result<()> {
@@ -266,7 +287,7 @@ impl PluginRegistry {
                 .run_concurrent(
                     async move |store| -> Result<HandleRequestResult, ErrorCode> {
                         let (result, task) = match plugin_instance
-                            .host_plugin_witm_plugin()
+                            .witmproxy_plugin_witm_plugin()
                             .call_handle_request(store, req_resource, cap_resource)
                             .await
                         {
@@ -432,7 +453,7 @@ impl PluginRegistry {
             let guest_result = store
                 .run_concurrent(async move |store| {
                     let (result, task) = match plugin_instance
-                        .host_plugin_witm_plugin()
+                        .witmproxy_plugin_witm_plugin()
                         .call_handle_response(store, res_resource, cap_resource)
                         .await
                     {

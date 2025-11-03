@@ -2,7 +2,7 @@ use crate::cert::{CertError, CertificateAuthority};
 
 use bytes::Bytes;
 use futures::TryStreamExt;
-use http_body_util::combinators::BoxBody;
+use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Incoming};
 use hyper::{header, Method, Request, Response};
@@ -97,7 +97,7 @@ pub fn wrap_body(incoming: Incoming) -> reqwest::Body {
     reqwest::Body::wrap_stream(stream)
 }
 
-pub fn wrap_box_body(body: BoxBody<Bytes, ErrorCode>) -> reqwest::Body {
+pub fn wrap_box_body(body: UnsyncBoxBody<Bytes, ErrorCode>) -> reqwest::Body {
     let stream = body.into_data_stream().map_err(|e| {
         let err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
         err
@@ -106,7 +106,7 @@ pub fn wrap_box_body(body: BoxBody<Bytes, ErrorCode>) -> reqwest::Body {
 }
 
 pub fn convert_hyper_boxed_body_to_reqwest_request(
-    hyper_req: Request<BoxBody<Bytes, ErrorCode>>,
+    hyper_req: Request<UnsyncBoxBody<Bytes, ErrorCode>>,
     client: &reqwest::Client,
 ) -> ProxyResult<reqwest::Request> {
     let (parts, body) = hyper_req.into_parts();
@@ -265,7 +265,7 @@ pub async fn convert_reqwest_to_hyper_response(
 
 /// Convert a Response<BoxBody<Bytes, ErrorCode>> to a Response<Full<Bytes>>
 pub async fn convert_boxbody_to_full_response(
-    response: Response<BoxBody<Bytes, ErrorCode>>,
+    response: Response<UnsyncBoxBody<Bytes, ErrorCode>>,
 ) -> ProxyResult<Response<Full<Bytes>>> {
     let (parts, body) = response.into_parts();
 

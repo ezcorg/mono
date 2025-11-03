@@ -16,7 +16,7 @@ A WASM-in-the-middle proxy, written in Rust.
 
 ```sh
 cargo install witmproxy
-witmproxy start # starts in the background, restarts on startup
+witmproxy # starts in the background, restarts on startup
 witmproxy stop # stop the service, until explictly restarted
 ```
 
@@ -35,11 +35,14 @@ witmproxy add ./path/to/component.wasm # add a local plugin
 witmproxy new plugin <name> [...options] # creates plugin scaffolding
 ```
 
-### 4. `todo:` Creating capabilities
+The witmproxy plugin WIT interface is automatically published to [GitHub Container Registry](https://ghcr.io) and can be consumed using [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools):
 
 ```sh
-witmproxy new capability <interface> # creates capability scaffolding
+# Fetch the WIT interface for plugin development
+wkg get --format wit witmproxy:plugin@0.0.1 --output plugin.wit
 ```
+
+See [WIT Publishing Documentation](../../docs/wit-publishing.md) for more information.
 
 ###
 

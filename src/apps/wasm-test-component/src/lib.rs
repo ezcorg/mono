@@ -1,10 +1,12 @@
-use crate::{exports::host::plugin::witm_plugin::{CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, Request, Response, PluginManifest}};
+use crate::{exports::witmproxy::plugin::witm_plugin::{CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, Request, Response, PluginManifest}};
 
 wit_bindgen::generate!({
-    world: "host:plugin/plugin",
+    world: "witmproxy:plugin/plugin",
     path: "../witmproxy/wit",
     generate_all
 });
+
+const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 
 struct Plugin;
 
@@ -24,7 +26,7 @@ impl Guest for Plugin {
             cel: "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])".to_string(),
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
-            publickey: "todo".to_string(),
+            publickey: PUBLIC_KEY_BYTES.to_vec(),
         }
     }
 

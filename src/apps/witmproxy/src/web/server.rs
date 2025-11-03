@@ -13,9 +13,9 @@ use salvo::server::ServerHandle;
 use salvo::Writer;
 use salvo::{affix_state, Depot, Listener, Server};
 use salvo::{conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi, Router};
-use tokio::fs;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::fs;
 use tokio::sync::{Notify, RwLock};
 use tracing::warn;
 
@@ -204,7 +204,10 @@ async fn upsert_plugin(file: FormFile, depot: &mut Depot, res: &mut salvo::Respo
         Err(e) => {
             warn!("Failed to parse plugin: {}", e);
             res.status_code(salvo::http::StatusCode::BAD_REQUEST);
-            res.render(salvo::writing::Text::Plain(format!("Failed to parse plugin: {}", e)));
+            res.render(salvo::writing::Text::Plain(format!(
+                "Failed to parse plugin: {}",
+                e
+            )));
             return;
         }
     };

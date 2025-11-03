@@ -62,7 +62,7 @@ impl From<&WasiRequest> for CelRequest {
 
 impl<B> From<&Request<B>> for CelRequest
 where
-    B: http_body::Body<Data = Bytes> + Send + Sync + 'static,
+    B: http_body::Body<Data = Bytes> + Send + 'static,
 {
     fn from(req: &Request<B>) -> Self {
         let mut headers = HashMap::new();
