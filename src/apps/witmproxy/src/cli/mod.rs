@@ -61,6 +61,11 @@ enum PluginCommands {
         /// Local path, remote URL, or plugin name
         source: String,
     },
+    /// Remove a plugin by name or namespace/name
+    Remove {
+        /// Plugin name or namespace/name to remove
+        plugin_name: String,
+    },
 }
 
 impl Cli {
@@ -98,6 +103,7 @@ impl Cli {
                 dest,
             } => self.create_new_plugin(plugin_name, language, dest).await,
             PluginCommands::Add { source } => self.add_plugin(source).await,
+            PluginCommands::Remove { plugin_name } => self.remove_plugin(plugin_name).await,
         }
     }
 
@@ -233,6 +239,87 @@ impl Cli {
         registry.register_plugin(plugin).await?;
         
         println!("Plugin successfully added from {}", source);
+        Ok(())
+    }
+
+    async fn remove_plugin(&self, plugin_name: &str) -> Result<()> {
+        // Initialize database
+        let home_dir = dirs::home_dir().unwrap_or(".".into());
+        let config_path = self
+            .config_path
+            .to_str()
+            .unwrap_or("")
+            .replace("$HOME", home_dir.to_str().unwrap_or("."));
+        let config_path = PathBuf::from(config_path);
+        let config = AppConfig::builder()
+            .preloaded(self.config.clone())
+            .env()
+            .file(&config_path)
+            .load()?;
+
+        let db_file_path = config
+            .db
+            .db_path
+            .to_str()
+            .unwrap_or("")
+            .replace("$HOME", home_dir.to_str().unwrap_or("."));
+
+        if let Some(parent) = PathBuf::from(&db_file_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let db_path = format!("sqlite://{}", db_file_path);
+
+        let db = Db::from_path(&db_path, &config.db.db_password).await?;
+        db.migrate().await?;
+
+        // Create runtime and registry
+        let runtime = Runtime::default()?;
+        let mut registry = PluginRegistry::new(db, runtime);
+        registry.load_plugins().await?;
+
+        // Check if plugin_name contains a slash (indicating namespace/name format)
+        let matching_plugin_ids = if plugin_name.contains('/') {
+            // Direct namespace/name format - look for exact match
+            let plugin_id = plugin_name.to_string();
+            if registry.plugins.contains_key(&plugin_id) {
+                vec![plugin_id]
+            } else {
+                Vec::new()
+            }
+        } else {
+            // Just name provided - find all plugins with matching name
+            registry.plugins
+                .iter()
+                .filter(|(_, p)| p.name == plugin_name)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        if matching_plugin_ids.is_empty() {
+            anyhow::bail!("No plugin found with name '{}'", plugin_name);
+        }
+
+        if matching_plugin_ids.len() > 1 {
+            println!("Multiple plugins found with name '{}'. Please specify with namespace:", plugin_name);
+            for plugin_id in &matching_plugin_ids {
+                println!("  {}", plugin_id);
+            }
+            anyhow::bail!("Please re-run the command with a specific namespace/name");
+        }
+
+        let plugin_id_to_remove = &matching_plugin_ids[0];
+        let plugin_to_remove = registry.plugins.get(plugin_id_to_remove)
+            .ok_or_else(|| anyhow::anyhow!("Plugin not found in registry"))?;
+        
+        info!("Removing plugin: {} ({}:{})", plugin_to_remove.name, plugin_to_remove.namespace, plugin_to_remove.version);
+
+        // Remove from database
+        plugin_to_remove.delete(&mut registry.db).await?;
+        
+        // Remove from in-memory registry
+        registry.plugins.remove(plugin_id_to_remove);
+        
+        println!("Plugin '{}' successfully removed", plugin_id_to_remove);
         Ok(())
     }
 
