@@ -545,7 +545,10 @@ impl PluginRegistry {
                 let res = Response::from_parts(parts, body);
                 HostHandleResponseResult::Response(res)
             }
-            Err(_) => HostHandleResponseResult::None,
+            Err(e) => {
+                warn!("Failed to convert response to HTTP: {}", e);
+                HostHandleResponseResult::None
+            },
         }
     }
 }

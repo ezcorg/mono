@@ -92,7 +92,7 @@ impl WitmProxy {
     /// Initialize and start all services
     pub async fn start(&mut self) -> Result<()> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        info!("Hi there! witmproxy is starting...");
+        info!("Hi there! Starting up witmproxy for ya");
 
         // Start web server for certificate distribution
         let mut web_server = WebServer::new(

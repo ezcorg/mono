@@ -4,6 +4,21 @@ use confique::Config;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Utility function to expand $HOME in a PathBuf
+pub fn expand_home_in_path(path: &PathBuf) -> Result<PathBuf> {
+    let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in path"))?;
+    
+    if path_str.contains("$HOME") {
+        let expanded = path_str.replace("$HOME", home_dir.to_str().unwrap_or("."));
+        Ok(PathBuf::from(expanded))
+    } else {
+        Ok(path.clone())
+    }
+}
+
 #[derive(Config, Clone, Default, Serialize, Deserialize)]
 #[config(partial_attr(derive(Args, Serialize, Clone)))]
 pub struct AppConfig {
@@ -107,5 +122,17 @@ impl AppConfig {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    /// Resolve all potential $HOME placeholders in configuration paths
+    /// This should be called once during initialization to avoid repeated path resolution
+    pub fn with_resolved_paths(mut self) -> Result<Self> {
+        // Resolve database path
+        self.db.db_path = expand_home_in_path(&self.db.db_path)?;
+        
+        // Resolve TLS certificate directory
+        self.tls.cert_dir = expand_home_in_path(&self.tls.cert_dir)?;
+        
+        Ok(self)
     }
 }

@@ -1,9 +1,32 @@
 mod tests {
     use crate::{
-        Db, Runtime, cli::Cli, config::confique_partial_app_config::PartialAppConfig, plugins::WitmPlugin, test_utils::test_component_path
+        Db, Runtime, cli::ResolvedCli, config::confique_partial_app_config::PartialAppConfig, plugins::WitmPlugin, test_utils::test_component_path, AppConfig
     };
-    use confique::Partial;
-    use tempfile::tempdir;
+    use confique::{Config, Partial};
+    use tempfile::{tempdir};
+    use std::path::Path;
+
+    /// Test helper that creates a ResolvedCli with test configuration
+    async fn create_test_cli(temp_path: &Path) -> ResolvedCli {
+        let db_path = temp_path.join("test.db");
+        let mut partial_config = PartialAppConfig::default_values();
+        partial_config.db.db_path = Some(db_path);
+        partial_config.db.db_password = Some("test_password".to_string());
+
+        // Create a resolved config directly for testing
+        let config = AppConfig::builder()
+            .preloaded(partial_config)
+            .load()
+            .expect("Failed to load test config")
+            .with_resolved_paths()
+            .expect("Failed to resolve paths in test config");
+
+        ResolvedCli {
+            command: None,
+            config,
+            verbose: true,
+        }
+    }
 
     #[tokio::test]
     async fn test_witm_plugin_add_local_wasm() {
@@ -11,19 +34,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
 
-        // Set up test configuration paths
-        let db_path = temp_path.join("test.db");
-        let mut config = PartialAppConfig::default_values();
-        config.db.db_path = Some(db_path);
-        config.db.db_password = Some("test_password".to_string());
-
-        // Create CLI instance with test configuration
-        let cli = Cli {
-            command: None,
-            config_path: temp_path.join("config.toml"),
-            config,
-            verbose: true,
-        };
+        // Create resolved CLI instance with test configuration
+        let cli = create_test_cli(temp_path).await;
 
         // Test path to the signed WASM component
         let wasm_path = test_component_path();
@@ -82,20 +94,9 @@ mod tests {
     async fn test_witm_plugin_add_nonexistent_file() {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
-        let config_path = temp_path.join("config.toml");
-        let db_path = temp_path.join("test.db");
-        let mut config = PartialAppConfig::default_values();
 
-        config.db.db_path = Some(db_path);
-        config.db.db_password = Some("test_password".to_string());
-
-        // Create CLI instance with test configuration
-        let cli = Cli {
-            command: None,
-            config_path,
-            config,
-            verbose: true,
-        };
+        // Create resolved CLI instance with test configuration
+        let cli = create_test_cli(temp_path).await;
 
         // Test with non-existent file
         let result = cli.add_plugin("/nonexistent/file.wasm").await;
@@ -111,24 +112,13 @@ mod tests {
     async fn test_witm_plugin_add_non_wasm_file() {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
-        let config_path = temp_path.join("config.toml");
         let dummy_file = temp_path.join("not_a_wasm.txt");
 
         // Create a dummy non-WASM file
         std::fs::write(&dummy_file, "This is not a WASM file").unwrap();
 
-        let db_path = temp_path.join("test.db");
-        let mut config = PartialAppConfig::default_values();
-        config.db.db_path = Some(db_path);
-        config.db.db_password = Some("test_password".to_string());
-
-        // Create CLI instance with test configuration
-        let cli = Cli {
-            command: None,
-            config_path,
-            config,
-            verbose: true,
-        };
+        // Create resolved CLI instance with test configuration
+        let cli = create_test_cli(temp_path).await;
 
         // Test with non-WASM file
         let result = cli.add_plugin(dummy_file.to_str().unwrap()).await;
@@ -145,19 +135,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
 
-        // Set up test configuration paths
-        let db_path = temp_path.join("test.db");
-        let mut config = PartialAppConfig::default_values();
-        config.db.db_path = Some(db_path);
-        config.db.db_password = Some("test_password".to_string());
-
-        // Create CLI instance with test configuration
-        let cli = Cli {
-            command: None,
-            config_path: temp_path.join("config.toml"),
-            config,
-            verbose: true,
-        };
+        // Create resolved CLI instance with test configuration
+        let cli = create_test_cli(temp_path).await;
 
         // Test path to the signed WASM component
         let wasm_path = test_component_path();
@@ -207,19 +186,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
 
-        // Set up test configuration paths
-        let db_path = temp_path.join("test.db");
-        let mut config = PartialAppConfig::default_values();
-        config.db.db_path = Some(db_path);
-        config.db.db_password = Some("test_password".to_string());
-
-        // Create CLI instance with test configuration
-        let cli = Cli {
-            command: None,
-            config_path: temp_path.join("config.toml"),
-            config,
-            verbose: true,
-        };
+        // Create resolved CLI instance with test configuration
+        let cli = create_test_cli(temp_path).await;
 
         // Test path to the signed WASM component
         let wasm_path = test_component_path();
@@ -269,19 +237,8 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
 
-        // Set up test configuration paths
-        let db_path = temp_path.join("test.db");
-        let mut config = PartialAppConfig::default_values();
-        config.db.db_path = Some(db_path);
-        config.db.db_password = Some("test_password".to_string());
-
-        // Create CLI instance with test configuration
-        let cli = Cli {
-            command: None,
-            config_path: temp_path.join("config.toml"),
-            config,
-            verbose: true,
-        };
+        // Create resolved CLI instance with test configuration
+        let cli = create_test_cli(temp_path).await;
 
         // Test removing a nonexistent plugin
         let remove_result = cli.remove_plugin("nonexistent_plugin").await;
