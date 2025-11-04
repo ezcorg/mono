@@ -1,11 +1,9 @@
 mod tests {
     use crate::db::Db;
     use crate::plugins::registry::PluginRegistry;
+    use crate::test_utils::create_ca_and_config;
     use crate::wasm::Runtime;
     use crate::web::WebServer;
-    use crate::{
-        test_utils::create_ca_and_config,
-    };
     use anyhow::Result;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -43,7 +41,7 @@ mod tests {
         // Create a temporary file with the component bytes for upload
         let temp_file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(temp_file.path(), &component_bytes).unwrap();
-        
+
         // Create form with file upload
         let form = reqwest::multipart::Form::new()
             .file("file", temp_file.path())

@@ -1,15 +1,15 @@
-use anyhow::Result;
-use clap::{Parser, Subcommand};
-use confique::Config;
-use std::{path::PathBuf, sync::Arc};
-use tokio::sync::RwLock;
-use tracing::info;
 use crate::{
     config::confique_partial_app_config::PartialAppConfig, db::Db,
     plugins::registry::PluginRegistry, wasm::Runtime, AppConfig, CertificateAuthority, WitmProxy,
 };
+use anyhow::Result;
 use cargo_generate::{generate, GenerateArgs, TemplatePath};
+use clap::{Parser, Subcommand};
+use confique::Config;
 use std::env;
+use std::{path::PathBuf, sync::Arc};
+use tokio::sync::RwLock;
+use tracing::info;
 
 #[cfg(test)]
 mod tests;
@@ -70,16 +70,11 @@ enum PluginCommands {
 
 impl Cli {
     pub async fn run(&self) -> Result<()> {
-
-        let log_level = if self.verbose {
-            "debug"
-        } else {
-            "info"
-        };
+        let log_level = if self.verbose { "debug" } else { "info" };
         tracing_subscriber::fmt()
             .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
             .init();
-        
+
         // Handle subcommands first
         if let Some(command) = &self.command {
             return self.handle_command(command).await;
@@ -135,10 +130,8 @@ impl Cli {
         };
         // Resolve destination path
         let destination = match dest {
-            Some(path) => {
-                std::fs::canonicalize(path).unwrap_or_else(|_| path.clone())
-            }
-            None => env::current_dir()?
+            Some(path) => std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
+            None => env::current_dir()?,
         };
         std::fs::create_dir_all(destination.as_path())?;
 
@@ -163,9 +156,7 @@ impl Cli {
             bin: false,
             ssh_identity: None,
             gitconfig: None,
-            define: vec![
-                format!("plugin-name={}", plugin_name),
-            ],
+            define: vec![format!("plugin-name={}", plugin_name)],
             init: false,
             destination: Some(destination),
             force_git_init: true,
@@ -182,13 +173,13 @@ impl Cli {
 
     async fn add_plugin(&self, source: &str) -> Result<()> {
         use std::path::Path;
-        
+
         // For now, only handle local WASM files
         let path = Path::new(source);
         if !path.exists() {
             anyhow::bail!("File does not exist: {}", source);
         }
-        
+
         if !path.extension().map_or(false, |ext| ext == "wasm") {
             anyhow::bail!("Only .wasm files are supported for local installation");
         }
@@ -232,12 +223,15 @@ impl Cli {
 
         // Create plugin from component bytes (including signature verification)
         let plugin = registry.plugin_from_component(component_bytes).await?;
-        
-        info!("Created plugin: {} ({}:{})", plugin.name, plugin.namespace, plugin.version);
+
+        info!(
+            "Created plugin: {} ({}:{})",
+            plugin.name, plugin.namespace, plugin.version
+        );
 
         // Register the plugin
         registry.register_plugin(plugin).await?;
-        
+
         println!("Plugin successfully added from {}", source);
         Ok(())
     }
@@ -288,7 +282,8 @@ impl Cli {
             }
         } else {
             // Just name provided - find all plugins with matching name
-            registry.plugins
+            registry
+                .plugins
                 .iter()
                 .filter(|(_, p)| p.name == plugin_name)
                 .map(|(id, _)| id.clone())
@@ -300,7 +295,10 @@ impl Cli {
         }
 
         if matching_plugin_ids.len() > 1 {
-            println!("Multiple plugins found with name '{}'. Please specify with namespace:", plugin_name);
+            println!(
+                "Multiple plugins found with name '{}'. Please specify with namespace:",
+                plugin_name
+            );
             for plugin_id in &matching_plugin_ids {
                 println!("  {}", plugin_id);
             }
@@ -308,17 +306,22 @@ impl Cli {
         }
 
         let plugin_id_to_remove = &matching_plugin_ids[0];
-        let plugin_to_remove = registry.plugins.get(plugin_id_to_remove)
+        let plugin_to_remove = registry
+            .plugins
+            .get(plugin_id_to_remove)
             .ok_or_else(|| anyhow::anyhow!("Plugin not found in registry"))?;
-        
-        info!("Removing plugin: {} ({}:{})", plugin_to_remove.name, plugin_to_remove.namespace, plugin_to_remove.version);
+
+        info!(
+            "Removing plugin: {} ({}:{})",
+            plugin_to_remove.name, plugin_to_remove.namespace, plugin_to_remove.version
+        );
 
         // Remove from database
         plugin_to_remove.delete(&mut registry.db).await?;
-        
+
         // Remove from in-memory registry
         registry.plugins.remove(plugin_id_to_remove);
-        
+
         println!("Plugin '{}' successfully removed", plugin_id_to_remove);
         Ok(())
     }
@@ -386,11 +389,7 @@ impl Cli {
             None
         };
 
-        let mut proxy = WitmProxy::new(
-            ca,
-            plugin_registry,
-            config
-        );
+        let mut proxy = WitmProxy::new(ca, plugin_registry, config);
         proxy.run().await?;
 
         Ok(())

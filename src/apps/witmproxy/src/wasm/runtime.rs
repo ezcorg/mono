@@ -35,10 +35,10 @@ impl Runtime {
         wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
 
         // Add our custom host capabilities
-        crate::wasm::generated::witmproxy::plugin::capabilities::add_to_linker::<Host, HasSelf<Host>>(
-            &mut linker,
-            |host: &mut Host| -> &mut Host { host },
-        )?;
+        crate::wasm::generated::witmproxy::plugin::capabilities::add_to_linker::<
+            Host,
+            HasSelf<Host>,
+        >(&mut linker, |host: &mut Host| -> &mut Host { host })?;
 
         Ok(Self {
             engine,

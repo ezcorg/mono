@@ -78,11 +78,7 @@ mod tests {
         .await
         .expect("Failed to query tables");
         let table_names: Vec<String> = tables.into_iter().map(|t| t.0).collect();
-        let expected_tables = vec![
-            "plugins",
-            "plugin_capabilities",
-            "plugin_metadata",
-        ];
+        let expected_tables = vec!["plugins", "plugin_capabilities", "plugin_metadata"];
         for table in expected_tables {
             assert!(
                 table_names.contains(&table.to_string()),

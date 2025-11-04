@@ -110,20 +110,30 @@ impl PluginRegistry {
             let mut reader = std::io::Cursor::new(&component_bytes);
             match public_key.verify(&mut reader, None) {
                 Ok(()) => {
-                    info!("WASM component signature verified successfully for plugin: {}", guest_result.name);
+                    info!(
+                        "WASM component signature verified successfully for plugin: {}",
+                        guest_result.name
+                    );
                 }
                 Err(e) => {
-                    anyhow::bail!("WASM component signature verification failed for plugin {}: {}", guest_result.name, e);
+                    anyhow::bail!(
+                        "WASM component signature verification failed for plugin {}: {}",
+                        guest_result.name,
+                        e
+                    );
                 }
             }
         } else {
-            anyhow::bail!("Plugin {} does not have a public key for signature verification", guest_result.name);
+            anyhow::bail!(
+                "Plugin {} does not have a public key for signature verification",
+                guest_result.name
+            );
         }
 
         let mut plugin = WitmPlugin::from(guest_result);
         plugin.component_bytes = component_bytes;
         plugin.component = Some(component);
-        
+
         Ok(plugin)
     }
 

@@ -139,7 +139,9 @@ impl HostCapabilityProvider for Host {
         &mut self,
         _self: wasmtime::component::Resource<CapabilityProvider>,
     ) -> Option<
-        wasmtime::component::Resource<generated::witmproxy::plugin::capabilities::LocalStorageClient>,
+        wasmtime::component::Resource<
+            generated::witmproxy::plugin::capabilities::LocalStorageClient,
+        >,
     > {
         let client = LocalStorageClient::default();
         Some(self.table.push(client).unwrap())

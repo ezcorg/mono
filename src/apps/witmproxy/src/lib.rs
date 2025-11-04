@@ -3,6 +3,7 @@
 // This exposes the internal modules for testing and external use
 
 pub mod cert;
+pub mod cli;
 pub mod config;
 pub mod content;
 pub mod db;
@@ -10,7 +11,6 @@ pub mod plugins;
 pub mod proxy;
 pub mod wasm;
 pub mod web;
-pub mod cli;
 
 #[cfg(test)]
 pub mod test_utils;

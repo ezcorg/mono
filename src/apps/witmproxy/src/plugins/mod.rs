@@ -181,13 +181,11 @@ impl WitmPlugin {
     pub async fn delete(&self, db: &mut Db) -> Result<()> {
         let mut tx = db.pool.begin().await?;
         // Delete from plugins table
-        sqlx::query(
-            "DELETE FROM plugins WHERE namespace = ? AND name = ?"
-        )
-        .bind(&self.namespace)
-        .bind(&self.name)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("DELETE FROM plugins WHERE namespace = ? AND name = ?")
+            .bind(&self.namespace)
+            .bind(&self.name)
+            .execute(&mut *tx)
+            .await?;
 
         tx.commit().await?;
         Ok(())

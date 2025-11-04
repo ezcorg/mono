@@ -127,11 +127,7 @@ pub async fn create_witmproxy() -> (
     let (ca, config) = create_ca_and_config().await;
     let (registry, temp_dir) = create_plugin_registry().await;
     let registry = Arc::new(RwLock::new(registry));
-    let proxy = WitmProxy::new(
-        ca.clone(),
-        Some(registry.clone()),
-        config.clone()
-    );
+    let proxy = WitmProxy::new(ca.clone(), Some(registry.clone()), config.clone());
     (proxy, registry, ca, config, temp_dir)
 }
 
