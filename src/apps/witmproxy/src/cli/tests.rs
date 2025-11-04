@@ -1,10 +1,14 @@
 mod tests {
     use crate::{
-        AppConfig, Db, Runtime, cli::{Commands, ResolvedCli, plugin::PluginCommands}, config::confique_partial_app_config::PartialAppConfig, plugins::WitmPlugin, test_utils::test_component_path
+        cli::{plugin::PluginCommands, Commands, ResolvedCli},
+        config::confique_partial_app_config::PartialAppConfig,
+        plugins::WitmPlugin,
+        test_utils::test_component_path,
+        AppConfig, Db, Runtime,
     };
     use confique::{Config, Partial};
-    use tempfile::{tempdir};
     use std::path::Path;
+    use tempfile::tempdir;
 
     /// Test helper that creates a ResolvedCli with test configuration
     async fn create_test_cli(temp_path: &Path) -> ResolvedCli {
@@ -110,7 +114,6 @@ mod tests {
 
         // Test with non-existent file
         let result = cli.handle_command(&command).await;
-
 
         assert!(result.is_err(), "Should fail for non-existent file");
         assert!(result

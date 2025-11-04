@@ -10,7 +10,7 @@ pub fn expand_home_in_path(path: &PathBuf) -> Result<PathBuf> {
     let path_str = path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in path"))?;
-    
+
     if path_str.contains("$HOME") {
         let expanded = path_str.replace("$HOME", home_dir.to_str().unwrap_or("."));
         Ok(PathBuf::from(expanded))
@@ -129,10 +129,10 @@ impl AppConfig {
     pub fn with_resolved_paths(mut self) -> Result<Self> {
         // Resolve database path
         self.db.db_path = expand_home_in_path(&self.db.db_path)?;
-        
+
         // Resolve TLS certificate directory
         self.tls.cert_dir = expand_home_in_path(&self.tls.cert_dir)?;
-        
+
         Ok(self)
     }
 }

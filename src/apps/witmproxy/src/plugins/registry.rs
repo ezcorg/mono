@@ -548,7 +548,7 @@ impl PluginRegistry {
             Err(e) => {
                 warn!("Failed to convert response to HTTP: {}", e);
                 HostHandleResponseResult::None
-            },
+            }
         }
     }
 }
@@ -568,8 +568,7 @@ mod tests {
         cel_expression: &str,
     ) -> Result<(), anyhow::Error> {
         let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path)
-        .unwrap();
+        let component_bytes = std::fs::read(&wasm_path).unwrap();
         let mut granted = CapabilitySet::new();
         granted.insert(Capability::Request);
         granted.insert(Capability::Response);
@@ -753,8 +752,7 @@ mod tests {
 
         // Register a plugin without Request capability
         let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path)
-        .unwrap();
+        let component_bytes = std::fs::read(&wasm_path).unwrap();
         let mut granted = CapabilitySet::new();
         granted.insert(Capability::Response); // Only Response capability, not Request
         let requested = granted.clone();
@@ -816,8 +814,7 @@ mod tests {
 
         // Create another plugin with a different name to test multiple plugins
         let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path)
-        .unwrap();
+        let component_bytes = std::fs::read(&wasm_path).unwrap();
         let mut granted = CapabilitySet::new();
         granted.insert(Capability::Request);
         granted.insert(Capability::Response);

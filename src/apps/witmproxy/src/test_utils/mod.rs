@@ -71,8 +71,7 @@ pub async fn create_plugin_registry() -> (PluginRegistry, tempfile::TempDir) {
 /// received the modified request, and that the client received the modified response.
 pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = test_component_path();
-    let component_bytes = std::fs::read(&wasm_path)
-    .unwrap();
+    let component_bytes = std::fs::read(&wasm_path).unwrap();
     let mut granted = CapabilitySet::new();
     granted.insert(Capability::Request);
     granted.insert(Capability::Response);

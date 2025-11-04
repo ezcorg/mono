@@ -1,6 +1,7 @@
 mod tests {
     use crate::test_utils::{
-        EchoResponse, Protocol, create_client, create_echo_server, create_witmproxy, register_test_component
+        create_client, create_echo_server, create_witmproxy, register_test_component, EchoResponse,
+        Protocol,
     };
 
     #[tokio::test]

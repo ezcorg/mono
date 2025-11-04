@@ -1,10 +1,14 @@
 use crate::{
-    config::expand_home_in_path, db::Db,
-    plugins::registry::PluginRegistry, wasm::Runtime, AppConfig, CertificateAuthority, WitmProxy,
+    config::expand_home_in_path, db::Db, plugins::registry::PluginRegistry, wasm::Runtime,
+    AppConfig, CertificateAuthority, WitmProxy,
 };
+use plugin::PluginCommands;
+use trust::TrustCommands;
+use proxy::ProxyCommands;
+
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use confique::Config;
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -13,11 +17,9 @@ use tracing::info;
 // Re-export PartialAppConfig for public usage
 pub use crate::config::confique_partial_app_config::PartialAppConfig;
 
-pub mod plugin;
-pub use plugin::PluginCommands;
-
-pub mod trust;
-pub use trust::TrustCommands;
+mod plugin;
+mod trust;
+mod proxy;
 
 #[cfg(test)]
 mod tests;
@@ -61,6 +63,11 @@ enum Commands {
         #[command(subcommand)]
         command: TrustCommands,
     },
+    /// System proxy management commands
+    Proxy {
+        #[command(subcommand)]
+        command: ProxyCommands,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -92,7 +99,7 @@ impl Cli {
     async fn resolve_config(self) -> Result<ResolvedCli> {
         // Resolve home directory and config path
         let config_path = expand_home_in_path(&self.config_path)?;
-        
+
         // Load configuration using confique
         let config = AppConfig::builder()
             .preloaded(self.config)
@@ -110,7 +117,6 @@ impl Cli {
 }
 
 impl ResolvedCli {
-
     async fn handle_command(&self, command: &Commands) -> Result<()> {
         match command {
             Commands::Plugin { command } => {
@@ -121,12 +127,20 @@ impl ResolvedCli {
                 let trust_handler = trust::TrustHandler::new(self.config.clone());
                 trust_handler.handle(command).await
             }
+            Commands::Proxy { command } => {
+                let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
+                proxy_handler.handle(command).await
+            }
         }
     }
 
     async fn run_proxy(&self) -> Result<()> {
         // Create app directory based on the resolved cert_dir parent
-        let app_dir = self.config.tls.cert_dir.parent()
+        let app_dir = self
+            .config
+            .tls
+            .cert_dir
+            .parent()
             .unwrap_or(&PathBuf::from("."))
             .to_path_buf();
         std::fs::create_dir_all(&app_dir)?;

@@ -1,6 +1,6 @@
+use crate::{cert::CertificateAuthority, config::AppConfig};
 use anyhow::Result;
 use clap::Subcommand;
-use crate::{config::AppConfig, cert::CertificateAuthority};
 
 #[derive(Subcommand)]
 pub enum TrustCommands {
@@ -38,7 +38,7 @@ impl TrustHandler {
     pub async fn handle(&self, command: &TrustCommands) -> Result<()> {
         // Create certificate authority to access the root certificate
         let ca = CertificateAuthority::new(&self.config.tls.cert_dir).await?;
-        
+
         match command {
             TrustCommands::Install { yes, dry_run } => {
                 ca.install_root_certificate(*yes, *dry_run).await
@@ -46,9 +46,7 @@ impl TrustHandler {
             TrustCommands::Remove { yes, dry_run } => {
                 ca.remove_root_certificate(*yes, *dry_run).await
             }
-            TrustCommands::Status => {
-                ca.check_root_certificate_status().await
-            }
+            TrustCommands::Status => ca.check_root_certificate_status().await,
         }
     }
 }

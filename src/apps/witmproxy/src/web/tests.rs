@@ -34,8 +34,7 @@ mod tests {
         let bind_addr = web_server.listen_addr().unwrap();
 
         let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path)
-        .unwrap();
+        let component_bytes = std::fs::read(&wasm_path).unwrap();
 
         // Create a temporary file with the component bytes for upload
         let temp_file = tempfile::NamedTempFile::new().unwrap();

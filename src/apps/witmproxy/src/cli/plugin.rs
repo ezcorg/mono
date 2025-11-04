@@ -1,14 +1,9 @@
-use crate::{
-    db::Db,
-    plugins::registry::PluginRegistry,
-    wasm::Runtime,
-    AppConfig,
-};
+use crate::{db::Db, plugins::registry::PluginRegistry, wasm::Runtime, AppConfig};
 use anyhow::Result;
 use cargo_generate::{generate, GenerateArgs, TemplatePath};
 use clap::Subcommand;
 use std::env;
-use std::{path::PathBuf};
+use std::path::PathBuf;
 use tracing::info;
 
 #[derive(Subcommand)]

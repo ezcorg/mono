@@ -1,5 +1,5 @@
 use super::{CertError, CertResult, Certificate, CertificateCache};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::io;
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use tokio::fs;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 #[derive(Clone)]
 pub struct CertificateAuthority {
@@ -234,7 +234,10 @@ impl CertificateAuthority {
         debug!("Detected platform: {:?}", platform);
 
         if dry_run {
-            info!("DRY RUN: Would install root certificate for platform: {:?}", platform);
+            info!(
+                "DRY RUN: Would install root certificate for platform: {:?}",
+                platform
+            );
             info!("DRY RUN: Certificate path: {:?}", root_cert_path);
             return Ok(());
         }
@@ -244,7 +247,7 @@ impl CertificateAuthority {
             info!("This will allow the system to trust certificates issued by witmproxy.");
             info!("Certificate location: {:?}", root_cert_path);
             info!("Do you want to continue? [y/N]");
-            
+
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             if !input.trim().to_lowercase().starts_with('y') {
@@ -258,7 +261,10 @@ impl CertificateAuthority {
             Platform::Linux => self.install_linux(&root_cert_path).await,
             Platform::Windows => self.install_windows(&root_cert_path).await,
             Platform::Unknown(os) => {
-                warn!("Unsupported platform: {}. Manual installation required.", os);
+                warn!(
+                    "Unsupported platform: {}. Manual installation required.",
+                    os
+                );
                 self.print_manual_instructions(&root_cert_path).await
             }
         }
@@ -270,14 +276,17 @@ impl CertificateAuthority {
         info!("Detected platform: {:?}", platform);
 
         if dry_run {
-            info!("DRY RUN: Would remove root certificate for platform: {:?}", platform);
+            info!(
+                "DRY RUN: Would remove root certificate for platform: {:?}",
+                platform
+            );
             return Ok(());
         }
 
         if !yes {
             info!("This command will remove the witmproxy root CA certificate from your system's trust store.");
             info!("Do you want to continue? [y/N]");
-            
+
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             if !input.trim().to_lowercase().starts_with('y') {
@@ -301,13 +310,13 @@ impl CertificateAuthority {
     pub async fn check_root_certificate_status(&self) -> Result<()> {
         let root_cert_path = get_root_cert_path(&self.cert_dir);
         let platform = detect_platform()?;
-        
+
         info!("Certificate Authority Status");
         info!("============================");
         info!("Platform: {:?}", platform);
         info!("Certificate path: {:?}", root_cert_path);
         info!("Certificate exists: {}", root_cert_path.exists());
-        
+
         if root_cert_path.exists() {
             match platform {
                 Platform::MacOS => self.check_macos_status().await,
@@ -327,19 +336,30 @@ impl CertificateAuthority {
     // Platform-specific installation methods
     async fn install_macos(&self, cert_path: &Path) -> Result<()> {
         info!("Installing root certificate on macOS via Keychain");
-        
+
         info!("Installing certificate to system keychain...");
         info!("You may be prompted for your password to access the System keychain.");
-        
+
         let output = Command::new("sudo")
-            .args(&["security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", "/Library/Keychains/System.keychain"])
+            .args(&[
+                "security",
+                "add-trusted-cert",
+                "-d",
+                "-r",
+                "trustRoot",
+                "-k",
+                "/Library/Keychains/System.keychain",
+            ])
             .arg(cert_path)
             .output()?;
 
         if output.status.success() {
             info!("✓ Certificate successfully installed to System keychain");
         } else {
-            error!("Failed to install certificate: {}", String::from_utf8_lossy(&output.stderr));
+            error!(
+                "Failed to install certificate: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             return Err(anyhow!("Failed to install certificate to macOS keychain"));
         }
 
@@ -348,16 +368,16 @@ impl CertificateAuthority {
 
     async fn install_linux(&self, cert_path: &Path) -> Result<()> {
         info!("Installing root certificate on Linux");
-        
+
         // Try different approaches based on what's available on the system
         if Path::new("/usr/local/share/ca-certificates").exists() {
             // Ubuntu/Debian approach
             info!("Installing certificate via ca-certificates...");
             info!("You may be prompted for your password (sudo access required).");
-            
+
             let cert_name = "witmproxy-root-ca.crt";
             let dest_path = format!("/usr/local/share/ca-certificates/{}", cert_name);
-            
+
             let output = Command::new("sudo")
                 .args(&["cp"])
                 .arg(cert_path)
@@ -365,7 +385,10 @@ impl CertificateAuthority {
                 .output()?;
 
             if !output.status.success() {
-                return Err(anyhow!("Failed to copy certificate: {}", String::from_utf8_lossy(&output.stderr)));
+                return Err(anyhow!(
+                    "Failed to copy certificate: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
 
             let output = Command::new("sudo")
@@ -375,7 +398,10 @@ impl CertificateAuthority {
             if output.status.success() {
                 info!("✓ Certificate successfully installed via update-ca-certificates");
             } else {
-                error!("Failed to update certificates: {}", String::from_utf8_lossy(&output.stderr));
+                error!(
+                    "Failed to update certificates: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 return Err(anyhow!("Failed to update ca-certificates"));
             }
         } else if Path::new("/etc/pki/ca-trust/source/anchors").exists() {
@@ -385,7 +411,7 @@ impl CertificateAuthority {
 
             let cert_name = "witmproxy-root-ca.crt";
             let dest_path = format!("/etc/pki/ca-trust/source/anchors/{}", cert_name);
-            
+
             let output = Command::new("sudo")
                 .args(&["cp"])
                 .arg(cert_path)
@@ -393,17 +419,21 @@ impl CertificateAuthority {
                 .output()?;
 
             if !output.status.success() {
-                return Err(anyhow!("Failed to copy certificate: {}", String::from_utf8_lossy(&output.stderr)));
+                return Err(anyhow!(
+                    "Failed to copy certificate: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
 
-            let output = Command::new("sudo")
-                .args(&["update-ca-trust"])
-                .output()?;
+            let output = Command::new("sudo").args(&["update-ca-trust"]).output()?;
 
             if output.status.success() {
                 info!("✓ Certificate successfully installed via update-ca-trust");
             } else {
-                error!("Failed to update certificates: {}", String::from_utf8_lossy(&output.stderr));
+                error!(
+                    "Failed to update certificates: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 return Err(anyhow!("Failed to update ca-trust"));
             }
         } else {
@@ -416,10 +446,10 @@ impl CertificateAuthority {
 
     async fn install_windows(&self, cert_path: &Path) -> Result<()> {
         info!("Installing root certificate on Windows");
-        
+
         info!("Installing certificate to Windows certificate store...");
         info!("You may see a User Account Control prompt.");
-        
+
         let output = Command::new("certutil")
             .args(&["-addstore", "-f", "Root"])
             .arg(cert_path)
@@ -428,7 +458,10 @@ impl CertificateAuthority {
         if output.status.success() {
             info!("✓ Certificate successfully installed using certutil");
         } else {
-            error!("Failed to install certificate: {}", String::from_utf8_lossy(&output.stderr));
+            error!(
+                "Failed to install certificate: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             return Err(anyhow!("Failed to install certificate to Windows store"));
         }
 
@@ -442,13 +475,22 @@ impl CertificateAuthority {
         info!("Searching for witmproxy certificates in keychain...");
 
         let output = Command::new("sudo")
-            .args(&["security", "delete-certificate", "-c", "MITM Proxy Root CA", "/Library/Keychains/System.keychain"])
+            .args(&[
+                "security",
+                "delete-certificate",
+                "-c",
+                "MITM Proxy Root CA",
+                "/Library/Keychains/System.keychain",
+            ])
             .output()?;
 
         if output.status.success() {
             info!("✓ Certificate successfully removed from macOS System keychain");
         } else {
-            warn!("⚠ Certificate may not have been installed or already removed: {}", String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "⚠ Certificate may not have been installed or already removed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -456,17 +498,15 @@ impl CertificateAuthority {
 
     async fn remove_linux(&self) -> Result<()> {
         info!("Removing root certificate from Linux");
-        
+
         let mut removed = false;
-        
+
         // Try Ubuntu/Debian approach
         let cert_path = "/usr/local/share/ca-certificates/witmproxy-root-ca.crt";
         if Path::new(cert_path).exists() {
             info!("Removing certificate from ca-certificates...");
-            
-            let output = Command::new("sudo")
-                .args(&["rm", cert_path])
-                .output()?;
+
+            let output = Command::new("sudo").args(&["rm", cert_path]).output()?;
 
             if output.status.success() {
                 let _ = Command::new("sudo")
@@ -476,25 +516,21 @@ impl CertificateAuthority {
                 info!("✓ Certificate removed via ca-certificates");
             }
         }
-        
+
         // Try RHEL/CentOS/Fedora approach
         let cert_path = "/etc/pki/ca-trust/source/anchors/witmproxy-root-ca.crt";
         if Path::new(cert_path).exists() {
             info!("Removing certificate from ca-trust...");
-            
-            let output = Command::new("sudo")
-                .args(&["rm", cert_path])
-                .output()?;
+
+            let output = Command::new("sudo").args(&["rm", cert_path]).output()?;
 
             if output.status.success() {
-                let _ = Command::new("sudo")
-                    .args(&["update-ca-trust"])
-                    .output()?;
+                let _ = Command::new("sudo").args(&["update-ca-trust"]).output()?;
                 removed = true;
                 info!("✓ Certificate removed via ca-trust");
             }
         }
-        
+
         if !removed {
             info!("⚠ Certificate not found in standard locations (may already be removed)");
         }
@@ -504,7 +540,7 @@ impl CertificateAuthority {
 
     async fn remove_windows(&self) -> Result<()> {
         info!("Removing root certificate from Windows");
-        
+
         let output = Command::new("certutil")
             .args(&["-delstore", "Root", "MITM Proxy Root CA"])
             .output()?;
@@ -512,7 +548,10 @@ impl CertificateAuthority {
         if output.status.success() || output.stderr.is_empty() {
             info!("✓ Certificate removal attempted (may already be removed)");
         } else {
-            warn!("⚠ Certificate removal failed or certificate not found: {}", String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "⚠ Certificate removal failed or certificate not found: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -521,7 +560,12 @@ impl CertificateAuthority {
     // Platform-specific status checking methods
     async fn check_macos_status(&self) -> Result<()> {
         let output = Command::new("security")
-            .args(&["find-certificate", "-c", "MITM Proxy Root CA", "/Library/Keychains/System.keychain"])
+            .args(&[
+                "find-certificate",
+                "-c",
+                "MITM Proxy Root CA",
+                "/Library/Keychains/System.keychain",
+            ])
             .output()?;
 
         if output.status.success() {
@@ -536,7 +580,7 @@ impl CertificateAuthority {
     async fn check_linux_status(&self) -> Result<()> {
         let ubuntu_path = Path::new("/usr/local/share/ca-certificates/witmproxy-root-ca.crt");
         let rhel_path = Path::new("/etc/pki/ca-trust/source/anchors/witmproxy-root-ca.crt");
-        
+
         if ubuntu_path.exists() {
             info!("Trust status: ✓ Installed via ca-certificates");
         } else if rhel_path.exists() {
