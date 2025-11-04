@@ -170,7 +170,7 @@ impl PluginHandler {
         // Register the plugin
         registry.register_plugin(plugin).await?;
 
-        println!("Plugin successfully added from {}", source);
+        info!("Plugin successfully added from {}", source);
         Ok(())
     }
 
@@ -214,12 +214,12 @@ impl PluginHandler {
         }
 
         if matching_plugin_ids.len() > 1 {
-            println!(
+            info!(
                 "Multiple plugins found with name '{}'. Please specify with namespace:",
                 plugin_name
             );
             for plugin_id in &matching_plugin_ids {
-                println!("  {}", plugin_id);
+                info!("  {}", plugin_id);
             }
             anyhow::bail!("Please re-run the command with a specific namespace/name");
         }
@@ -241,7 +241,7 @@ impl PluginHandler {
         // Remove from in-memory registry
         registry.plugins.remove(plugin_id_to_remove);
 
-        println!("Plugin '{}' successfully removed", plugin_id_to_remove);
+        info!("Plugin '{}' successfully removed", plugin_id_to_remove);
         Ok(())
     }
 }

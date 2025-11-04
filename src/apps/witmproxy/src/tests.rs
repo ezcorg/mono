@@ -30,12 +30,7 @@ mod tests {
             .await
             .unwrap();
         let headers = resp.headers().clone();
-
-        // Debug: print the response status and body to understand what's happening
-        println!("Response status: {}", resp.status());
-        println!("Response headers: {:?}", resp.headers());
         let response_text = resp.text().await.unwrap();
-        println!("Response body: {}", response_text);
 
         // Try to parse the response as JSON
         let json: EchoResponse = serde_json::from_str(&response_text)

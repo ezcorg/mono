@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
+use tracing::error;
 
 use crate::plugins::capability::Capability;
 use crate::plugins::CapabilitySet;
@@ -188,7 +189,7 @@ pub async fn create_echo_server(
                     let (stream, _) = match result {
                         Ok(s) => s,
                         Err(e) => {
-                            eprintln!("accept error: {e}");
+                            error!("accept error: {e}");
                             continue;
                         }
                     };
@@ -259,7 +260,7 @@ pub async fn create_echo_server(
                                             .serve_connection(io, svc)
                                             .await
                                         {
-                                            eprintln!("http1 error: {e}");
+                                            error!("http1 error: {e}");
                                         }
                                     }
                                     Protocol::Http2 => {
@@ -269,13 +270,13 @@ pub async fn create_echo_server(
                                         .serve_connection(io, svc)
                                         .await
                                         {
-                                            eprintln!("http2 error: {e}");
+                                            error!("http2 error: {e}");
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
-                                eprintln!("tls accept error: {e}");
+                                error!("tls accept error: {e}");
                             }
                         }
                     });
@@ -333,7 +334,7 @@ pub async fn create_hello_server(
                     let (stream, _) = match result {
                         Ok(s) => s,
                         Err(e) => {
-                            eprintln!("accept error: {e}");
+                            error!("accept error: {e}");
                             continue;
                         }
                     };
@@ -356,7 +357,7 @@ pub async fn create_hello_server(
                                             .serve_connection(io, svc)
                                             .await
                                         {
-                                            eprintln!("http1 error: {e}");
+                                            error!("http1 error: {e}");
                                         }
                                     }
                                     Protocol::Http2 => {
@@ -366,13 +367,13 @@ pub async fn create_hello_server(
                                         .serve_connection(io, svc)
                                         .await
                                         {
-                                            eprintln!("http2 error: {e}");
+                                            error!("http2 error: {e}");
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
-                                eprintln!("tls accept error: {e}");
+                                error!("tls accept error: {e}");
                             }
                         }
                     });

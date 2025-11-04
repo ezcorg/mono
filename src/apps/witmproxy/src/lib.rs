@@ -30,7 +30,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct WitmProxy {
     ca: CertificateAuthority,
@@ -171,7 +171,7 @@ impl WitmProxy {
             {
                 sigterm.recv().await;
             } else {
-                eprintln!("Warning: failed to install SIGTERM handler");
+                warn!("Warning: failed to install SIGTERM handler");
                 futures::future::pending::<()>().await;
             }
         };
@@ -181,7 +181,7 @@ impl WitmProxy {
             if let Ok(mut sigterm) = tokio::signal::windows::ctrl_c() {
                 sigterm.recv().await;
             } else {
-                eprintln!("Warning: failed to install SIGBREAK handler");
+                warn!("Warning: failed to install SIGBREAK handler");
                 futures::future::pending::<()>().await;
             }
         };

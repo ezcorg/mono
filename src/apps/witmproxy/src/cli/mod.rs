@@ -16,6 +16,9 @@ pub use crate::config::confique_partial_app_config::PartialAppConfig;
 pub mod plugin;
 pub use plugin::PluginCommands;
 
+pub mod trust;
+pub use trust::TrustCommands;
+
 #[cfg(test)]
 mod tests;
 
@@ -52,6 +55,11 @@ enum Commands {
     Plugin {
         #[command(subcommand)]
         command: PluginCommands,
+    },
+    /// Certificate trust management commands
+    Trust {
+        #[command(subcommand)]
+        command: TrustCommands,
     },
 }
 
@@ -108,6 +116,10 @@ impl ResolvedCli {
             Commands::Plugin { command } => {
                 let plugin_handler = plugin::PluginHandler::new(self.config.clone(), self.verbose);
                 plugin_handler.handle(command).await
+            }
+            Commands::Trust { command } => {
+                let trust_handler = trust::TrustHandler::new(self.config.clone());
+                trust_handler.handle(command).await
             }
         }
     }
