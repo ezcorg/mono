@@ -554,7 +554,7 @@ impl PluginRegistry {
 mod tests {
     use super::*;
     use crate::plugins::{Capability, CapabilitySet, WitmPlugin};
-    use crate::test_utils::create_plugin_registry;
+    use crate::test_utils::{create_plugin_registry, test_component_path};
     use bytes::Bytes;
     use http_body_util::Full;
     use hyper::{Method, Request};
@@ -564,9 +564,8 @@ mod tests {
         registry: &mut PluginRegistry,
         cel_expression: &str,
     ) -> Result<(), anyhow::Error> {
-        let component_bytes = std::fs::read(
-            "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
-        )
+        let wasm_path = test_component_path();
+        let component_bytes = std::fs::read(&wasm_path)
         .unwrap();
         let mut granted = CapabilitySet::new();
         granted.insert(Capability::Request);
@@ -750,9 +749,8 @@ mod tests {
         let (mut registry, _temp_dir) = create_plugin_registry().await;
 
         // Register a plugin without Request capability
-        let component_bytes = std::fs::read(
-            "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
-        )
+        let wasm_path = test_component_path();
+        let component_bytes = std::fs::read(&wasm_path)
         .unwrap();
         let mut granted = CapabilitySet::new();
         granted.insert(Capability::Response); // Only Response capability, not Request
@@ -814,9 +812,8 @@ mod tests {
             .unwrap();
 
         // Create another plugin with a different name to test multiple plugins
-        let component_bytes = std::fs::read(
-            "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
-        )
+        let wasm_path = test_component_path();
+        let component_bytes = std::fs::read(&wasm_path)
         .unwrap();
         let mut granted = CapabilitySet::new();
         granted.insert(Capability::Request);

@@ -1,7 +1,7 @@
 mod tests {
     use crate::db::Db;
     use crate::plugins::registry::PluginRegistry;
-    use crate::test_utils::create_ca_and_config;
+    use crate::test_utils::{create_ca_and_config, test_component_path};
     use crate::wasm::Runtime;
     use crate::web::WebServer;
     use anyhow::Result;
@@ -33,9 +33,8 @@ mod tests {
         web_server.start().await.unwrap();
         let bind_addr = web_server.listen_addr().unwrap();
 
-        let component_bytes = std::fs::read(
-            "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
-        )
+        let wasm_path = test_component_path();
+        let component_bytes = std::fs::read(&wasm_path)
         .unwrap();
 
         // Create a temporary file with the component bytes for upload

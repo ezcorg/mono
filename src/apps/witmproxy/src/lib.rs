@@ -91,10 +91,7 @@ impl WitmProxy {
 
     /// Initialize and start all services
     pub async fn start(&mut self) -> Result<()> {
-        // Install default crypto provider for rustls
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .map_err(|_| anyhow::anyhow!("Failed to install default crypto provider"))?;
+        let _ = rustls::crypto::ring::default_provider().install_default();
         info!("Hi there! witmproxy is starting...");
 
         // Start web server for certificate distribution

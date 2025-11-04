@@ -1,6 +1,10 @@
-.phony=all clean
+.PHONY: all clean wasmsign
+.DEFAULT_GOAL := all
 
-key.secret key.public:
+wasmsign:
+	cargo install wasmsign2-cli
+
+key.secret key.public: wasmsign
 	wasmsign2 keygen --public-key key.public --secret-key key.secret
 
 all: key.secret key.public

@@ -69,9 +69,8 @@ pub async fn create_plugin_registry() -> (PluginRegistry, tempfile::TempDir) {
 /// In conjunction with our echo server, we can verify that the target server
 /// received the modified request, and that the client received the modified response.
 pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
-    let component_bytes = std::fs::read(
-        "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
-    )
+    let wasm_path = test_component_path();
+    let component_bytes = std::fs::read(&wasm_path)
     .unwrap();
     let mut granted = CapabilitySet::new();
     granted.insert(Capability::Request);
@@ -420,4 +419,11 @@ pub async fn create_client(
         })
         .build()
         .unwrap()
+}
+
+pub fn test_component_path() -> String {
+    format!(
+        "{}/../../../target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    )
 }

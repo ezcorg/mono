@@ -1,7 +1,6 @@
 mod tests {
     use crate::{
-        cli::Cli, config::confique_partial_app_config::PartialAppConfig, plugins::WitmPlugin, Db,
-        Runtime,
+        Db, Runtime, cli::Cli, config::confique_partial_app_config::PartialAppConfig, plugins::WitmPlugin, test_utils::test_component_path
     };
     use confique::Partial;
     use tempfile::tempdir;
@@ -27,11 +26,10 @@ mod tests {
         };
 
         // Test path to the signed WASM component
-        let wasm_path =
-            "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm";
+        let wasm_path = test_component_path();
 
         // Check if the test WASM file exists before running the test
-        if !std::path::Path::new(wasm_path).exists() {
+        if !std::path::Path::new(&wasm_path).exists() {
             panic!(
                 "WASM test component not found at {}, build it first",
                 wasm_path
@@ -39,7 +37,7 @@ mod tests {
         }
 
         // Test adding the plugin
-        let result = cli.add_plugin(wasm_path).await;
+        let result = cli.add_plugin(&wasm_path).await;
 
         match result {
             Ok(()) => {
@@ -162,11 +160,10 @@ mod tests {
         };
 
         // Test path to the signed WASM component
-        let wasm_path =
-            "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm";
+        let wasm_path = test_component_path();
 
         // Check if the test WASM file exists before running the test
-        if !std::path::Path::new(wasm_path).exists() {
+        if !std::path::Path::new(&wasm_path).exists() {
             panic!(
                 "WASM test component not found at {}, build it first",
                 wasm_path
@@ -174,7 +171,7 @@ mod tests {
         }
 
         // Add the plugin first
-        let result = cli.add_plugin(wasm_path).await;
+        let result = cli.add_plugin(&wasm_path).await;
         assert!(result.is_ok(), "Failed to add plugin: {:?}", result.err());
 
         // Verify plugin was added
@@ -225,11 +222,10 @@ mod tests {
         };
 
         // Test path to the signed WASM component
-        let wasm_path =
-            "/home/theo/dev/mono/target/wasm32-wasip2/release/wasm_test_component.signed.wasm";
+        let wasm_path = test_component_path();
 
         // Check if the test WASM file exists before running the test
-        if !std::path::Path::new(wasm_path).exists() {
+        if !std::path::Path::new(&wasm_path).exists() {
             panic!(
                 "WASM test component not found at {}, build it first",
                 wasm_path
@@ -237,7 +233,7 @@ mod tests {
         }
 
         // Add the plugin first
-        let result = cli.add_plugin(wasm_path).await;
+        let result = cli.add_plugin(&wasm_path).await;
         assert!(result.is_ok(), "Failed to add plugin: {:?}", result.err());
 
         // Verify plugin was added and get its full ID
