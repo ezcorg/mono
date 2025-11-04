@@ -1,6 +1,6 @@
 mod tests {
     use crate::{
-        Db, Runtime, cli::ResolvedCli, config::confique_partial_app_config::PartialAppConfig, plugins::WitmPlugin, test_utils::test_component_path, AppConfig
+        AppConfig, Db, Runtime, cli::{Commands, ResolvedCli, plugin::PluginCommands}, config::confique_partial_app_config::PartialAppConfig, plugins::WitmPlugin, test_utils::test_component_path
     };
     use confique::{Config, Partial};
     use tempfile::{tempdir};
@@ -49,7 +49,12 @@ mod tests {
         }
 
         // Test adding the plugin
-        let result = cli.add_plugin(&wasm_path).await;
+        let command = Commands::Plugin {
+            command: PluginCommands::Add {
+                source: wasm_path.clone(),
+            },
+        };
+        let result = cli.handle_command(&command).await;
 
         match result {
             Ok(()) => {
@@ -97,9 +102,15 @@ mod tests {
 
         // Create resolved CLI instance with test configuration
         let cli = create_test_cli(temp_path).await;
+        let command = Commands::Plugin {
+            command: PluginCommands::Add {
+                source: "/nonexistent/file.wasm".to_string(),
+            },
+        };
 
         // Test with non-existent file
-        let result = cli.add_plugin("/nonexistent/file.wasm").await;
+        let result = cli.handle_command(&command).await;
+
 
         assert!(result.is_err(), "Should fail for non-existent file");
         assert!(result
@@ -121,7 +132,12 @@ mod tests {
         let cli = create_test_cli(temp_path).await;
 
         // Test with non-WASM file
-        let result = cli.add_plugin(dummy_file.to_str().unwrap()).await;
+        let command = Commands::Plugin {
+            command: PluginCommands::Add {
+                source: dummy_file.to_str().unwrap().to_string(),
+            },
+        };
+        let result = cli.handle_command(&command).await;
 
         assert!(result.is_err(), "Should fail for non-WASM file");
         assert!(result
@@ -150,7 +166,12 @@ mod tests {
         }
 
         // Add the plugin first
-        let result = cli.add_plugin(&wasm_path).await;
+        let add_command = Commands::Plugin {
+            command: PluginCommands::Add {
+                source: wasm_path.clone(),
+            },
+        };
+        let result = cli.handle_command(&add_command).await;
         assert!(result.is_ok(), "Failed to add plugin: {:?}", result.err());
 
         // Verify plugin was added
@@ -166,7 +187,12 @@ mod tests {
         let plugin_name = &test_plugin.name;
 
         // Test removing the plugin by name
-        let remove_result = cli.remove_plugin(plugin_name).await;
+        let remove_command = Commands::Plugin {
+            command: PluginCommands::Remove {
+                plugin_name: plugin_name.clone(),
+            },
+        };
+        let remove_result = cli.handle_command(&remove_command).await;
         assert!(
             remove_result.is_ok(),
             "Failed to remove plugin: {:?}",
@@ -201,7 +227,12 @@ mod tests {
         }
 
         // Add the plugin first
-        let result = cli.add_plugin(&wasm_path).await;
+        let add_command = Commands::Plugin {
+            command: PluginCommands::Add {
+                source: wasm_path.clone(),
+            },
+        };
+        let result = cli.handle_command(&add_command).await;
         assert!(result.is_ok(), "Failed to add plugin: {:?}", result.err());
 
         // Verify plugin was added and get its full ID
@@ -217,7 +248,12 @@ mod tests {
         let full_plugin_id = format!("{}/{}", test_plugin.namespace, test_plugin.name);
 
         // Test removing the plugin by namespace/name
-        let remove_result = cli.remove_plugin(&full_plugin_id).await;
+        let remove_command = Commands::Plugin {
+            command: PluginCommands::Remove {
+                plugin_name: full_plugin_id.clone(),
+            },
+        };
+        let remove_result = cli.handle_command(&remove_command).await;
         assert!(
             remove_result.is_ok(),
             "Failed to remove plugin: {:?}",
@@ -241,7 +277,12 @@ mod tests {
         let cli = create_test_cli(temp_path).await;
 
         // Test removing a nonexistent plugin
-        let remove_result = cli.remove_plugin("nonexistent_plugin").await;
+        let remove_command = Commands::Plugin {
+            command: PluginCommands::Remove {
+                plugin_name: "nonexistent_plugin".to_string(),
+            },
+        };
+        let remove_result = cli.handle_command(&remove_command).await;
         assert!(
             remove_result.is_err(),
             "Should fail when removing nonexistent plugin"
