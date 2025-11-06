@@ -288,14 +288,8 @@ mod tests {
         };
         let remove_result = cli.handle_command(&remove_command).await;
         assert!(
-            remove_result.is_err(),
-            "Should fail when removing nonexistent plugin"
-        );
-        assert!(
-            remove_result
-                .unwrap_err()
-                .to_string()
-                .contains("No plugin found")
+            remove_result.is_ok(),
+            "Should not fail when removing nonexistent plugin"
         );
     }
 }

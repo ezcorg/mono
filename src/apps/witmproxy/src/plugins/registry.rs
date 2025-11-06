@@ -374,7 +374,7 @@ impl PluginRegistry {
                             .expect("failed to delete request from table");
                         let req_result = r.into_http(&mut store, async { Ok(()) });
                         match req_result {
-                            Ok(req) => return HostHandleRequestResult::Request(req),
+                            Ok((req, _)) => return HostHandleRequestResult::Request(req),
                             Err(_) => return HostHandleRequestResult::None,
                         }
                     }
@@ -407,7 +407,7 @@ impl PluginRegistry {
         }
         
         match current_req.into_http(store, async { Ok(()) }) {
-            Ok(req) => HostHandleRequestResult::Request(req),
+            Ok((req, _)) => HostHandleRequestResult::Request(req),
             Err(_) => HostHandleRequestResult::None,
         }
     }
