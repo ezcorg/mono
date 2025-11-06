@@ -1,8 +1,8 @@
-use crate::wasm::Host;
+use crate::wasm::{Host, WitmProxy};
 use anyhow::Result;
 use wasmtime::{
-    component::{HasSelf, Linker},
     Config, Engine,
+    component::Linker,
 };
 use wasmtime_wasi::p3::bindings::LinkOptions;
 
@@ -34,11 +34,10 @@ impl Runtime {
         // Add WASI HTTP support
         wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
 
-        // Add our custom host capabilities
-        crate::wasm::generated::witmproxy::plugin::capabilities::add_to_linker::<
-            Host,
-            HasSelf<Host>,
-        >(&mut linker, |host: &mut Host| -> &mut Host { host })?;
+        // Add our custom host capabilities using the wrapper pattern
+        crate::wasm::add_to_linker(&mut linker, |host: &mut Host| {
+            WitmProxy::new(&host.witmproxy_ctx, &mut host.table)
+        })?;
 
         Ok(Self {
             engine,

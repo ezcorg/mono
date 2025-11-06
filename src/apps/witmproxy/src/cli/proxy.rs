@@ -227,14 +227,16 @@ impl ProxyHandler {
 
             if enable {
                 // Parse proxy URL to get host and port
+
+                use anyhow::anyhow;
                 let url_without_protocol = proxy_url.strip_prefix("http://").unwrap_or(proxy_url);
                 let parts: Vec<&str> = url_without_protocol.split(':').collect();
                 let host = parts[0];
-                let port = parts.get(1).unwrap_or(&"8080");
+                let port = parts.get(1).ok_or_else(|| anyhow!("Missing port in proxy URL"))?.to_string();
 
                 // Enable HTTP proxy
                 let status = Command::new("sudo")
-                    .args(["networksetup", "-setwebproxy", service, host, port])
+                    .args(["networksetup", "-setwebproxy", service, host, &port])
                     .status()?;
 
                 if !status.success() {
@@ -244,7 +246,7 @@ impl ProxyHandler {
 
                 // Enable HTTPS proxy
                 let status = Command::new("sudo")
-                    .args(["networksetup", "-setsecurewebproxy", service, host, port])
+                    .args(["networksetup", "-setsecurewebproxy", service, host, &port])
                     .status()?;
 
                 if !status.success() {

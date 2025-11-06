@@ -2,6 +2,23 @@
 import Layout from '../layouts/Layout.astro';
 ---
 
-<Layout title="ezfilter" />
+<Layout title="ezfilter">
+	<main>
+		<img src="/hero.svg" alt="Ezfilter Hero" />
+	</main>
+</Layout>
 
-<style></style>
+<style>
+	main {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		min-height: 100vh;
+		padding: 1rem;
+	}
+
+	img {
+		max-width: 100%;
+		height: auto;
+	}
+</style>

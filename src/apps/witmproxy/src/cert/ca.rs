@@ -1,5 +1,5 @@
 use super::{CertError, CertResult, Certificate, CertificateCache};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::io;
@@ -243,7 +243,9 @@ impl CertificateAuthority {
         }
 
         if !yes {
-            info!("This command will install the witmproxy root CA certificate to your system's trust store.");
+            info!(
+                "This command will install the witmproxy root CA certificate to your system's trust store."
+            );
             info!("This will allow the system to trust certificates issued by witmproxy.");
             info!("Certificate location: {:?}", root_cert_path);
             info!("Do you want to continue? [y/N]");
@@ -284,7 +286,9 @@ impl CertificateAuthority {
         }
 
         if !yes {
-            info!("This command will remove the witmproxy root CA certificate from your system's trust store.");
+            info!(
+                "This command will remove the witmproxy root CA certificate from your system's trust store."
+            );
             info!("Do you want to continue? [y/N]");
 
             let mut input = String::new();

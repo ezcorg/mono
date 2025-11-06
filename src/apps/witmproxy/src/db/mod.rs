@@ -1,5 +1,6 @@
 use anyhow::Result;
-use sqlx::{sqlite::SqliteConnectOptions, Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, SqlitePool, Transaction, sqlite::SqliteConnectOptions};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 pub struct Db {
@@ -26,7 +27,14 @@ impl Db {
         Db { pool }
     }
 
-    pub async fn from_path(db_path: &str, password: &str) -> Result<Self> {
+    pub async fn from_path(db_path: PathBuf, password: &str) -> Result<Self> {
+        let db_path_str = db_path.to_string_lossy();
+        let db_path = if !db_path_str.starts_with("sqlite://") {
+            format!("sqlite://{}", db_path_str)
+        } else {
+            db_path_str.to_string()
+        };
+
         let options = SqliteConnectOptions::from_str(&db_path)?
             .pragma("key", password.to_owned())
             .create_if_missing(true);
@@ -62,7 +70,7 @@ mod tests {
 
         let password = "test_password";
 
-        let db = Db::from_path(&db_path_str, password)
+        let db = Db::from_path(db_path, password)
             .await
             .expect("Failed to create database");
 
@@ -102,7 +110,7 @@ mod tests {
 
         // Create database with original password
         {
-            let db = Db::from_path(&db_path_str, original_password)
+            let db = Db::from_path(db_path.clone(), original_password)
                 .await
                 .expect("Failed to create database with original password");
 
@@ -111,7 +119,7 @@ mod tests {
         } // Database connection is dropped here
 
         // Try to open the same database with a different password
-        let wrong_db_result = Db::from_path(&db_path_str, wrong_password).await;
+        let wrong_db_result = Db::from_path(db_path.clone(), wrong_password).await;
 
         // The database should either fail to open or fail when we try to query it
         match wrong_db_result {
@@ -132,7 +140,7 @@ mod tests {
         }
 
         // Verify we can still open with the correct password
-        let _correct_db = Db::from_path(&db_path_str, original_password)
+        let _correct_db = Db::from_path(db_path, original_password)
             .await
             .expect("Database should open successfully with correct password");
     }

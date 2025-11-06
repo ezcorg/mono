@@ -1,10 +1,10 @@
 mod tests {
     use crate::{
-        cli::{plugin::PluginCommands, Commands, ResolvedCli},
+        AppConfig, Db, Runtime,
+        cli::{Commands, ResolvedCli, plugin::PluginCommands},
         config::confique_partial_app_config::PartialAppConfig,
         plugins::WitmPlugin,
         test_utils::test_component_path,
-        AppConfig, Db, Runtime,
     };
     use confique::{Config, Partial};
     use std::path::Path;
@@ -64,8 +64,7 @@ mod tests {
             Ok(()) => {
                 // Verify the plugin was actually added to the database
                 let db_file_path = temp_path.join("test.db");
-                let db_url = format!("sqlite://{}", db_file_path.display());
-                let mut db = Db::from_path(&db_url, "test_password").await.unwrap();
+                let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
                 // Create runtime to check plugins
                 let runtime = Runtime::default().unwrap();
@@ -116,10 +115,12 @@ mod tests {
         let result = cli.handle_command(&command).await;
 
         assert!(result.is_err(), "Should fail for non-existent file");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("File does not exist"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("File does not exist")
+        );
     }
 
     #[tokio::test]
@@ -143,10 +144,12 @@ mod tests {
         let result = cli.handle_command(&command).await;
 
         assert!(result.is_err(), "Should fail for non-WASM file");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Only .wasm files are supported"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Only .wasm files are supported")
+        );
     }
 
     #[tokio::test]
@@ -179,8 +182,7 @@ mod tests {
 
         // Verify plugin was added
         let db_file_path = temp_path.join("test.db");
-        let db_url = format!("sqlite://{}", db_file_path.display());
-        let mut db = Db::from_path(&db_url, "test_password").await.unwrap();
+        let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
         let runtime = Runtime::default().unwrap();
         let plugins_before = WitmPlugin::all(&mut db, &runtime.engine).await.unwrap();
@@ -240,8 +242,7 @@ mod tests {
 
         // Verify plugin was added and get its full ID
         let db_file_path = temp_path.join("test.db");
-        let db_url = format!("sqlite://{}", db_file_path.display());
-        let mut db = Db::from_path(&db_url, "test_password").await.unwrap();
+        let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
         let runtime = Runtime::default().unwrap();
         let plugins_before = WitmPlugin::all(&mut db, &runtime.engine).await.unwrap();
@@ -290,9 +291,11 @@ mod tests {
             remove_result.is_err(),
             "Should fail when removing nonexistent plugin"
         );
-        assert!(remove_result
-            .unwrap_err()
-            .to_string()
-            .contains("No plugin found"));
+        assert!(
+            remove_result
+                .unwrap_err()
+                .to_string()
+                .contains("No plugin found")
+        );
     }
 }

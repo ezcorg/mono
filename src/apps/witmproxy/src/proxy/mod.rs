@@ -9,23 +9,23 @@ use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{upgrade, Response};
 use hyper::{Method, Request, StatusCode};
+use hyper::{Response, upgrade};
 use tokio::sync::{Notify, RwLock};
 
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
 
 mod utils;
 pub use utils::{
-    build_server_tls_for_host, client, convert_boxbody_to_full_response,
-    convert_hyper_incoming_to_reqwest_request, convert_reqwest_to_hyper_response, is_closed,
-    parse_authority_host_port, strip_proxy_headers, ProxyError, ProxyResult, UpstreamClient,
+    ProxyError, ProxyResult, UpstreamClient, build_server_tls_for_host, client,
+    convert_boxbody_to_full_response, convert_hyper_incoming_to_reqwest_request,
+    convert_reqwest_to_hyper_response, is_closed, parse_authority_host_port, strip_proxy_headers,
 };
 
 #[cfg(test)]
@@ -143,7 +143,7 @@ impl ProxyServer {
         mut req: Request<Incoming>,
     ) -> Result<Response<Full<Bytes>>, ProxyError> {
         if req.method() == Method::CONNECT {
-            info!("Handling CONNECT request");
+            debug!("Handling CONNECT request");
 
             // Host:port lives in the request-target for CONNECT (authority-form)
             let authority = req
@@ -151,7 +151,7 @@ impl ProxyServer {
                 .authority()
                 .map(|a| a.as_str().to_string())
                 .unwrap_or_default();
-            info!("CONNECT request authority: {}", authority);
+            debug!("CONNECT request authority: {}", authority);
             if authority.is_empty() {
                 let resp = Response::builder()
                     .status(StatusCode::BAD_REQUEST)
@@ -168,13 +168,13 @@ impl ProxyServer {
                 match on_upgrade.await {
                     Ok(upgraded) => {
                         if let Err(e) =
-                            run_tls_mitm(upstream, upgraded, authority, ca, plugin_registry).await
+                            run_tls_mitm(upstream, upgraded, authority.clone(), ca, plugin_registry).await
                         {
                             match &e {
                                 ProxyError::Io(ioe) if is_closed(ioe) => {
                                     debug!("tls tunnel closed")
                                 }
-                                _ => warn!("tls mitm error: {}", e),
+                                _ => warn!("tls mitm error for upstream {}: {}", authority, e),
                             }
                         }
                     }
@@ -189,7 +189,7 @@ impl ProxyServer {
         }
 
         // ----- Plain HTTP proxying (request line is absolute-form from clients) -----
-        info!(
+        debug!(
             "Handling plain HTTP request: {} {}",
             req.method(),
             req.uri()
@@ -219,7 +219,7 @@ pub(crate) async fn perform_upstream(
 ) -> Response<Full<Bytes>> {
     match upstream.execute(req).await {
         Ok(resp) => {
-            info!("Upstream response status: {}", resp.status());
+            debug!("Upstream response status: {}", resp.status());
             match convert_reqwest_to_hyper_response(resp).await {
                 Ok(mut response) => {
                     strip_proxy_headers(response.headers_mut());
@@ -255,7 +255,7 @@ async fn run_tls_mitm(
     ca: Arc<CertificateAuthority>,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
 ) -> ProxyResult<()> {
-    info!("Running TLS MITM for {}", authority);
+    debug!("Running TLS MITM for {}", authority);
 
     // Extract host + port, default :443
     let (host, _port) = parse_authority_host_port(&authority, 443)?;
@@ -265,7 +265,7 @@ async fn run_tls_mitm(
     let acceptor = TlsAcceptor::from(Arc::new(server_tls));
 
     let tls = acceptor.accept(TokioIo::new(upgraded)).await?;
-    info!("TLS established with client for {}", host);
+    debug!("TLS established with client for {}", host);
 
     // Auto (h1/h2) Hyper server over the client TLS stream
     let executor = TokioExecutor::new();
@@ -280,7 +280,7 @@ async fn run_tls_mitm(
             async move {
                 let method = req.method().clone();
                 let uri = req.uri().clone();
-                info!("Handling TLS request: {} {}", method, uri);
+                debug!("Handling TLS request: {} {}", method, uri);
                 let mut request_ctx = CelRequest::from(&req);
 
                 // Step 1: Request event handling - move req into the event
@@ -291,7 +291,7 @@ async fn run_tls_mitm(
                     HostHandleRequestResult::Noop(req)
                 };
 
-                info!(
+                debug!(
                     "Handled request event, checking result and performing upstream call if needed"
                 );
 
@@ -346,7 +346,7 @@ async fn run_tls_mitm(
                     }
                 };
 
-                info!("Initial response obtained, proceeding to response event handling");
+                debug!("Initial response obtained, proceeding to response event handling");
 
                 // Step 3: Run response handlers and return final response
                 let final_response = if let Some(registry) = &plugin_registry {
@@ -358,7 +358,7 @@ async fn run_tls_mitm(
                     HostHandleResponseResult::Response(initial_response)
                 };
 
-                info!("Final response ready, sending back to client");
+                debug!("Final response ready, sending back to client");
 
                 match final_response {
                     // TODO: fix std::io::Error ugliness

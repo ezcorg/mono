@@ -4,10 +4,11 @@ members = [
     "src/apps/witmproxy",
 #    "src/apps/ezfilter-client/src-tauri",
     "src/apps/eznote/src-tauri", 
-    "src/apps/wasm-test-component",
+    "src/rust/wasm-test-component",
     "src/rust/ezfilter-rs",
+    "src/rust/ezfilter-filter",
     "src/rust/ezfeature-rs",
-    "src/rust/confique"
+    "src/rust/confique",
 ]
 
 exclude = ["src/apps/wasmtime", "src/apps/wasm-pkg-tools"]

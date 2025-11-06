@@ -19,8 +19,7 @@ mod tests {
         // Create a temporary database for testing
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let db_path_str = format!("sqlite://{}", db_path.to_str().unwrap());
-        let db = Db::from_path(&db_path_str, "test_password").await.unwrap();
+        let db = Db::from_path(db_path, "test_password").await.unwrap();
         db.migrate().await.unwrap();
 
         // Create runtime

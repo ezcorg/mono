@@ -32,6 +32,7 @@ use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 use tracing::{info, warn};
 
+/// Main WitmProxy struct that holds everything necessary to run the proxy
 pub struct WitmProxy {
     ca: CertificateAuthority,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
@@ -163,6 +164,7 @@ impl WitmProxy {
         Ok(())
     }
 
+    /// Listen for shutdown signals (SIGINT, SIGTERM)
     async fn listen_shutdown_signal(&self) {
         #[cfg(unix)]
         let terminate = async {

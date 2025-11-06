@@ -1,10 +1,10 @@
 use crate::{
-    config::expand_home_in_path, db::Db, plugins::registry::PluginRegistry, wasm::Runtime,
-    AppConfig, CertificateAuthority, WitmProxy,
+    AppConfig, CertificateAuthority, WitmProxy, config::expand_home_in_path, db::Db,
+    plugins::registry::PluginRegistry, wasm::Runtime,
 };
 use plugin::PluginCommands;
-use trust::TrustCommands;
 use proxy::ProxyCommands;
+use trust::TrustCommands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -18,8 +18,8 @@ use tracing::info;
 pub use crate::config::confique_partial_app_config::PartialAppConfig;
 
 mod plugin;
-mod trust;
 mod proxy;
+mod trust;
 
 #[cfg(test)]
 mod tests;
@@ -118,6 +118,7 @@ impl Cli {
 
 impl ResolvedCli {
     async fn handle_command(&self, command: &Commands) -> Result<()> {
+        // TODO: change CLI such that the same code can be used for local and remote proxy management
         match command {
             Commands::Plugin { command } => {
                 let plugin_handler = plugin::PluginHandler::new(self.config.clone(), self.verbose);
@@ -153,22 +154,23 @@ impl ResolvedCli {
         info!("Certificate Authority initialized");
 
         // Initialize database using pre-resolved path
-        let db_path = format!("sqlite://{}", self.config.db.db_path.display());
-
         if let Some(parent) = self.config.db.db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let db = Db::from_path(&db_path, &self.config.db.db_password).await?;
+        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
         db.migrate().await?;
-        info!("Database initialized and migrated at: {}", db_path);
+        info!(
+            "Database initialized and migrated at: {}",
+            self.config.db.db_path.display()
+        );
 
         // Plugin registry which will be shared across the proxy and web server
         let plugin_registry = if self.config.plugins.enabled {
             let runtime = Runtime::default()?;
             let mut registry = PluginRegistry::new(db, runtime);
             registry.load_plugins().await?;
-            info!("Loaded {} plugins", registry.plugins.len());
+            info!("Number of plugins loaded: {}", registry.plugins().len());
             Some(Arc::new(RwLock::new(registry)))
         } else {
             None

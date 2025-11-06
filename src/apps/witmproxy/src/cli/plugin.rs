@@ -1,10 +1,11 @@
-use crate::{db::Db, plugins::registry::PluginRegistry, wasm::Runtime, AppConfig};
+use crate::plugins::capability;
+use crate::{AppConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
-use cargo_generate::{generate, GenerateArgs, TemplatePath};
+use cargo_generate::{GenerateArgs, TemplatePath, generate};
 use clap::Subcommand;
 use std::env;
-use std::path::PathBuf;
-use tracing::info;
+use std::path::{PathBuf, Path};
+use tracing::{debug, info};
 
 #[derive(Subcommand)]
 pub enum PluginCommands {
@@ -124,8 +125,6 @@ impl PluginHandler {
     }
 
     async fn add_plugin(&self, source: &str) -> Result<()> {
-        use std::path::Path;
-
         // For now, only handle local WASM files
         let path = Path::new(source);
         if !path.exists() {
@@ -138,16 +137,8 @@ impl PluginHandler {
 
         // Read the WASM file
         let component_bytes = std::fs::read(path)?;
-        info!("Read WASM component from: {}", source);
 
-        // Initialize database using pre-resolved config - no more duplication!
-        let db_path = format!("sqlite://{}", self.config.db.db_path.display());
-
-        if let Some(parent) = self.config.db.db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let db = Db::from_path(&db_path, &self.config.db.db_password).await?;
+        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
         db.migrate().await?;
 
         // Create runtime and registry
@@ -155,11 +146,16 @@ impl PluginHandler {
         let mut registry = PluginRegistry::new(db, runtime);
 
         // Create plugin from component bytes (including signature verification)
-        let plugin = registry.plugin_from_component(component_bytes).await?;
+        let mut plugin = registry.plugin_from_component(component_bytes).await?;
+        // TODO: granted capabilities
+        plugin.granted.insert(capability::Capability::Request);
+        plugin.granted.insert(capability::Capability::Response);
+        plugin.granted.insert(capability::Capability::Logger);
+        plugin.requested = plugin.granted.clone();
 
-        info!(
-            "Created plugin: {} ({}:{})",
-            plugin.name, plugin.namespace, plugin.version
+        debug!(
+            "Received plugin: {}/{}:{}",
+            plugin.namespace, plugin.name, plugin.version
         );
 
         // Register the plugin
@@ -170,73 +166,18 @@ impl PluginHandler {
     }
 
     async fn remove_plugin(&self, plugin_name: &str) -> Result<()> {
-        // Initialize database using pre-resolved config - no more duplication!
-        let db_path = format!("sqlite://{}", self.config.db.db_path.display());
-
-        if let Some(parent) = self.config.db.db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let db = Db::from_path(&db_path, &self.config.db.db_password).await?;
+        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
         db.migrate().await?;
 
-        // Create runtime and registry
         let runtime = Runtime::default()?;
         let mut registry = PluginRegistry::new(db, runtime);
-        registry.load_plugins().await?;
-
-        // Check if plugin_name contains a slash (indicating namespace/name format)
-        let matching_plugin_ids = if plugin_name.contains('/') {
-            // Direct namespace/name format - look for exact match
-            let plugin_id = plugin_name.to_string();
-            if registry.plugins.contains_key(&plugin_id) {
-                vec![plugin_id]
-            } else {
-                Vec::new()
-            }
-        } else {
-            // Just name provided - find all plugins with matching name
-            registry
-                .plugins
-                .iter()
-                .filter(|(_, p)| p.name == plugin_name)
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>()
+        
+        let (name, namespace) = match plugin_name.split_once("/") {
+            Some((ns, n)) => (n.to_string(), Some(ns.to_string())),
+            None => (plugin_name.to_string(), None),
         };
 
-        if matching_plugin_ids.is_empty() {
-            anyhow::bail!("No plugin found with name '{}'", plugin_name);
-        }
-
-        if matching_plugin_ids.len() > 1 {
-            info!(
-                "Multiple plugins found with name '{}'. Please specify with namespace:",
-                plugin_name
-            );
-            for plugin_id in &matching_plugin_ids {
-                info!("  {}", plugin_id);
-            }
-            anyhow::bail!("Please re-run the command with a specific namespace/name");
-        }
-
-        let plugin_id_to_remove = &matching_plugin_ids[0];
-        let plugin_to_remove = registry
-            .plugins
-            .get(plugin_id_to_remove)
-            .ok_or_else(|| anyhow::anyhow!("Plugin not found in registry"))?;
-
-        info!(
-            "Removing plugin: {} ({}:{})",
-            plugin_to_remove.name, plugin_to_remove.namespace, plugin_to_remove.version
-        );
-
-        // Remove from database
-        plugin_to_remove.delete(&mut registry.db).await?;
-
-        // Remove from in-memory registry
-        registry.plugins.remove(plugin_id_to_remove);
-
-        info!("Plugin '{}' successfully removed", plugin_id_to_remove);
+        registry.remove_plugin(&name, namespace.as_deref()).await?;
         Ok(())
     }
 }

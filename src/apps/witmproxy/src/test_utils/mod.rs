@@ -9,19 +9,19 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
 use tokio::sync::RwLock;
+use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use tracing::error;
 
-use crate::plugins::capability::Capability;
-use crate::plugins::CapabilitySet;
-use crate::plugins::WitmPlugin;
 use crate::Db;
 use crate::PluginRegistry;
 use crate::ProxyServer;
 use crate::Runtime;
 use crate::WitmProxy;
+use crate::plugins::CapabilitySet;
+use crate::plugins::WitmPlugin;
+use crate::plugins::capability::Capability;
 use crate::{AppConfig, CertificateAuthority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,46 +72,16 @@ pub async fn create_plugin_registry() -> (PluginRegistry, tempfile::TempDir) {
 pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = test_component_path();
     let component_bytes = std::fs::read(&wasm_path).unwrap();
-    let mut granted = CapabilitySet::new();
-    granted.insert(Capability::Request);
-    granted.insert(Capability::Response);
-    let requested = granted.clone();
-
-    // Compile the component from bytes using the registry's runtime engine
-    let component = Some(wasmtime::component::Component::from_binary(
-        &registry.runtime.engine,
-        &component_bytes,
-    )?);
-    // Simple CEL selector that matches all requests
-    let cel_source = "true".to_string();
-    let cel_filter = Some(cel::Program::compile(&cel_source)?);
-
-    let plugin = WitmPlugin {
-        name: "test_plugin".into(),
-        component_bytes,
-        namespace: "test".into(),
-        version: "0.0.0".into(),
-        author: "author".into(),
-        description: "description".into(),
-        license: "mit".into(),
-        enabled: true,
-        url: "https://example.com".into(),
-        publickey: "todo".into(),
-        granted,
-        requested,
-        metadata: std::collections::HashMap::new(),
-        component,
-        cel_filter,
-        cel_source,
-    };
+    
+    // Use the actual plugin_from_component method to test the real code path
+    let plugin = registry.plugin_from_component(component_bytes).await?;
     registry.register_plugin(plugin).await
 }
 
 pub async fn create_db() -> (Db, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test.db");
-    let db_path_str = format!("sqlite://{}", db_path.to_str().unwrap());
-    let db = Db::from_path(&db_path_str, "test_password").await.unwrap();
+    let db = Db::from_path(db_path, "test_password").await.unwrap();
     db.migrate().await.unwrap();
     (db, temp_dir)
 }

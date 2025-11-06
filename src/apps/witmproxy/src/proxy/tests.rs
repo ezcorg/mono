@@ -1,6 +1,6 @@
 mod tests {
-    use crate::test_utils::{create_ca_and_config, create_client, create_hello_server, Protocol};
     use crate::ProxyServer;
+    use crate::test_utils::{Protocol, create_ca_and_config, create_client, create_hello_server};
 
     struct TestCase {
         client_proto: Protocol,

@@ -4,52 +4,23 @@ use ::cel::Program;
 use anyhow::Result;
 use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{query, sqlite::SqliteRow, QueryBuilder, Row, Sqlite, Transaction};
+use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
 use tracing::error;
 // use wasmsign2::reexports::hmac_sha256::Hash;
-use wasmtime::component::Component;
 use wasmtime::Engine;
+use wasmtime::component::Component;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
 use crate::{
+    Runtime,
     db::{Db, Insert},
     plugins::capability::Capability,
-    wasm::{generated::Plugin, Host},
-    Runtime,
+    wasm::{Host, generated::Plugin},
 };
 
 pub mod capability;
 pub mod cel;
 pub mod registry;
-
-#[derive(Serialize, Deserialize, ToSchema)]
-#[salvo(extract(default_source(from = "body")))]
-pub struct WitmPlugin {
-    pub namespace: String,
-    pub name: String,
-    pub version: String,
-    pub author: String,
-    pub description: String,
-    pub license: String,
-    pub url: String,
-    pub publickey: Vec<u8>,
-    pub enabled: bool,
-    // Plugin capabilities
-    pub granted: CapabilitySet,
-    pub requested: CapabilitySet,
-    // Plugin metadata
-    pub metadata: HashMap<String, String>,
-    // Compiled WASM component implementing the Plugin interface
-    #[serde(skip)]
-    pub component: Option<Component>,
-    // Raw bytes of the WASM component for storage
-    // TODO: stream this when receiving from API
-    pub component_bytes: Vec<u8>,
-    #[serde(skip)]
-    pub cel_filter: Option<Program>,
-    /// Source code for the CEL selector
-    pub cel_source: String,
-}
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct CapabilitySet(HashSet<Capability>);
@@ -77,6 +48,36 @@ impl<'a> IntoIterator for &'a CapabilitySet {
     }
 }
 
+#[derive(Serialize, Deserialize, ToSchema)]
+#[salvo(extract(default_source(from = "body")))]
+pub struct WitmPlugin {
+    pub namespace: String,
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub description: String,
+    pub license: String,
+    pub url: String,
+    pub publickey: Vec<u8>,
+    pub enabled: bool,
+    // Plugin capabilities
+    pub granted: CapabilitySet,
+    // TODO: simplify this
+    pub requested: CapabilitySet,
+    // Plugin metadata
+    pub metadata: HashMap<String, String>,
+    // Compiled WASM component implementing the Plugin interface
+    #[serde(skip)]
+    pub component: Option<Component>,
+    // Raw bytes of the WASM component for storage
+    // TODO: stream this when receiving from API
+    pub component_bytes: Vec<u8>,
+    #[serde(skip)]
+    pub cel_filter: Option<Program>,
+    /// Source code for the CEL selector
+    pub cel_source: String,
+}
+
 impl WitmPlugin {
     fn make_id(namespace: &str, name: &str) -> String {
         format!("{}/{}", namespace, name)
@@ -84,6 +85,12 @@ impl WitmPlugin {
 
     pub fn id(&self) -> String {
         Self::make_id(&self.namespace, &self.name)
+    }
+
+    pub fn with_component(mut self, component: Component, component_bytes: Vec<u8>) -> Self {
+        self.component = Some(component);
+        self.component_bytes = component_bytes;
+        self
     }
 
     /// Only needs the `component` column
@@ -116,15 +123,7 @@ impl WitmPlugin {
             })
             .await??;
 
-        let mut plugin = WitmPlugin::from(guest_result);
-        plugin.component = Some(component);
-        plugin.component_bytes = component_bytes;
-        plugin.cel_filter = if !plugin.cel_source.is_empty() {
-            Some(Program::compile(&plugin.cel_source)?)
-        } else {
-            None
-        };
-
+        let mut plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes);
         let capabilities = query(
             "
             SELECT capability, granted
@@ -201,10 +200,10 @@ impl Insert for WitmPlugin {
     async fn insert_tx(&self, db: &mut Db) -> Result<Transaction<'_, Sqlite>> {
         let mut tx: Transaction<'_, Sqlite> = db.pool.begin().await?;
 
-        // Insert into plugins table
+        // Insert or replace into plugins table (triggers on delete for related tables)
         query(
             "
-            INSERT INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component, cel_filter)
+            INSERT OR REPLACE INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component, cel_filter)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
@@ -232,7 +231,7 @@ impl Insert for WitmPlugin {
                 let granted = self.granted.contains(capability);
                 b.push_bind(&self.namespace)
                     .push_bind(&self.name)
-                    .push_bind(format!("{:?}", capability))
+                    .push_bind(capability.to_string())
                     .push_bind(granted);
             });
 

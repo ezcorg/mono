@@ -41,7 +41,7 @@ pub struct AppConfig {
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct ProxyConfig {
-    /// The address the proxy server will bind to (optional, defaults to OS-assigned port)
+    /// The address the proxy server will bind to (optional, defaults to 127.0.0.1:0)
     #[config(env = "PROXY_BIND_ADDR", partial_attr(arg(long)))]
     pub proxy_bind_addr: Option<String>,
 }
@@ -106,7 +106,7 @@ pub struct PluginConfig {
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(partial_attr(derive(Args, Clone, Serialize,)))]
 pub struct WebConfig {
-    /// The address the web frontend will bind to (optional, defaults to OS-assigned port)
+    /// The address the web frontend will bind to (optional, defaults to 127.0.0.1:0)
     #[config(partial_attr(arg(long)))]
     pub web_bind_addr: Option<String>,
 }

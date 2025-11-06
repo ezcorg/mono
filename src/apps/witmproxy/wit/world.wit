@@ -1,10 +1,18 @@
-package witmproxy:plugin@0.0.1;
+package witmproxy:plugin@0.0.2;
 
 interface capabilities {
     // resource http-client {}
     // resource key-value-client {}
     // resource sql-client {}
     // resource queue-client {}
+
+    resource logger {
+        info: func(message: string);
+        warn: func(message: string);
+        error: func(message: string);
+        debug: func(message: string);
+    }
+
     resource annotator-client {
         annotate: func(content: list<u8>);
     }
@@ -20,6 +28,7 @@ interface capabilities {
         // kv: func() -> option<key-value-client>;
         // sql: func() -> option<sql-client>;
         // queue: func() -> option<queue-client>;
+        logger: func() -> option<logger>;
         annotator: func() -> option<annotator-client>;
         local-storage: func() -> option<local-storage-client>;
     }

@@ -1,5 +1,5 @@
-use crate::cert::generator::{CertificateBundle, DeviceInfo, Platform};
 use crate::cert::CertificateFormat;
+use crate::cert::generator::{CertificateBundle, DeviceInfo, Platform};
 use askama::Template;
 
 #[derive(Template)]

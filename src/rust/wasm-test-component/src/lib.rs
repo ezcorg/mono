@@ -5,7 +5,7 @@ use crate::exports::witmproxy::plugin::witm_plugin::{
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
-    path: "../witmproxy/wit",
+    path: "../../apps/witmproxy/wit",
     generate_all
 });
 

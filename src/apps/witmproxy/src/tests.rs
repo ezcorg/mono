@@ -1,11 +1,14 @@
 mod tests {
     use crate::test_utils::{
-        create_client, create_echo_server, create_witmproxy, register_test_component, EchoResponse,
-        Protocol,
+        EchoResponse, Protocol, create_client, create_echo_server, create_witmproxy,
+        register_test_component,
     };
 
     #[tokio::test]
     async fn e2e_test() {
+        tracing_subscriber::fmt()
+            .with_env_filter(format!("witmproxy={},{}", "debug", "debug"))
+            .init();
         let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await;
         proxy.start().await.unwrap();
 
@@ -49,11 +52,13 @@ mod tests {
         assert!(json.headers.get("witmproxy").unwrap().contains("req"));
         // Expect the response header added by the WASM plugin
         assert!(headers.contains_key("witmproxy"));
-        assert!(headers
-            .get("witmproxy")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .contains("res"));
+        assert!(
+            headers
+                .get("witmproxy")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("res")
+        );
     }
 }

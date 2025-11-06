@@ -29,6 +29,8 @@ pub enum Capability {
     Request,
     /// Allows registering response handlers
     Response,
+    /// Allows logging messages
+    Logger,
     /// Default
     None,
 }
@@ -44,6 +46,7 @@ lazy_static! {
         m.insert("annotator".to_string(), Capability::Annotator);
         m.insert("request".to_string(), Capability::Request);
         m.insert("response".to_string(), Capability::Response);
+        m.insert("logger".to_string(), Capability::Logger);
         m.insert("none".to_string(), Capability::None);
         m
     };
@@ -54,6 +57,15 @@ impl From<String> for Capability {
         match BIMAP.get_by_left(&s) {
             Some(cap) => cap.clone(),
             None => Capability::None,
+        }
+    }
+}
+
+impl ToString for Capability {
+    fn to_string(&self) -> String {
+        match BIMAP.get_by_right(self) {
+            Some(cap) => cap.clone(),
+            None => "none".to_string(),
         }
     }
 }

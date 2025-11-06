@@ -5,7 +5,7 @@ use futures::TryStreamExt;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Incoming};
-use hyper::{header, Method, Request, Response};
+use hyper::{Method, Request, Response, header};
 use reqwest::Certificate;
 use tokio_rustls::rustls;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
@@ -124,7 +124,7 @@ pub fn convert_hyper_boxed_body_to_reqwest_request(
             return Err(ProxyError::Generic(format!(
                 "Unsupported method: {}",
                 parts.method
-            )))
+            )));
         }
     };
 
@@ -192,7 +192,7 @@ pub fn convert_hyper_incoming_to_reqwest_request(
             return Err(ProxyError::Generic(format!(
                 "Unsupported method: {}",
                 parts.method
-            )))
+            )));
         }
     };
 
@@ -262,6 +262,7 @@ pub async fn convert_reqwest_to_hyper_response(
         .body(Full::new(body_bytes))
         .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
 }
+
 
 /// Convert a Response<BoxBody<Bytes, ErrorCode>> to a Response<Full<Bytes>>
 pub async fn convert_boxbody_to_full_response(

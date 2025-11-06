@@ -1,18 +1,18 @@
-use super::{download_certificate, index_page, AppState};
+use super::{AppState, download_certificate, index_page};
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
 use anyhow::Result;
 use rust_embed::RustEmbed;
+use salvo::Writer;
 use salvo::conn::rustls::{Keycert, RustlsConfig};
 use salvo::oapi::endpoint;
 use salvo::oapi::extract::FormFile;
 use salvo::prelude::ForceHttps;
 use salvo::serve_static::static_embed;
 use salvo::server::ServerHandle;
-use salvo::Writer;
-use salvo::{affix_state, Depot, Listener, Server};
-use salvo::{conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi, Router};
+use salvo::{Depot, Listener, Server, affix_state};
+use salvo::{Router, conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::fs;
@@ -155,7 +155,7 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
     if let Some(registry) = registry {
         let registry = registry.read().await;
         let plugin_names: Vec<String> = registry
-            .plugins
+            .plugins()
             .iter()
             .map(|(name, _)| name.clone())
             .collect();

@@ -4,34 +4,34 @@ use anyhow::Result;
 use bytes::Bytes;
 use cel::Value;
 use http_body::Body;
-use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full};
-use hyper::{body::Incoming, Request, Response};
-use tracing::{info, warn};
-use wasmtime::{component::Resource, Store};
+use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
+use hyper::{Request, Response, body::Incoming};
+use tracing::{info, warn, debug};
+use wasmtime::{Store, component::Resource};
 use wasmtime_wasi_http::p3::{
-    bindings::http::handler::ErrorCode, Request as WasiRequest, Response as WasiResponse,
-    WasiHttpView,
+    Request as WasiRequest, Response as WasiResponse, WasiHttpView,
+    bindings::http::handler::ErrorCode,
 };
 
 use crate::{
     db::{Db, Insert},
     plugins::{
-        cel::{CelRequest, CelResponse},
         Capability, WitmPlugin,
+        cel::{CelRequest, CelResponse},
     },
     wasm::{
+        CapabilityProvider, Host, Runtime,
         generated::{
+            Plugin,
             exports::witmproxy::plugin::witm_plugin::{
                 HandleRequestResult, HandleResponseResult, RequestOrResponse,
             },
-            Plugin,
         },
-        CapabilityProvider, Host, Runtime,
     },
 };
 
 pub struct PluginRegistry {
-    pub plugins: HashMap<String, WitmPlugin>,
+    plugins: HashMap<String, WitmPlugin>,
     pub db: Db,
     pub runtime: Runtime,
 }
@@ -61,6 +61,10 @@ impl PluginRegistry {
             db,
             runtime,
         }
+    }
+
+    pub fn plugins(&self) -> &HashMap<String, WitmPlugin> {
+        &self.plugins
     }
 
     pub async fn load_plugins(&mut self) -> Result<()> {
@@ -130,10 +134,7 @@ impl PluginRegistry {
             );
         }
 
-        let mut plugin = WitmPlugin::from(guest_result);
-        plugin.component_bytes = component_bytes;
-        plugin.component = Some(component);
-
+        let plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes);
         Ok(plugin)
     }
 
@@ -143,6 +144,35 @@ impl PluginRegistry {
         // Add it to the registry
         self.plugins.insert(plugin.id(), plugin);
         Ok(())
+    }
+
+    pub async fn remove_plugin(&mut self, name: &str, namespace: Option<&str>) -> Result<Vec<String>> {
+        // Delete from database and get the deleted records using RETURNING
+        let deleted_plugins: Vec<(String, String)> = if let Some(namespace) = namespace {
+            // Delete specific plugin with namespace
+            sqlx::query_as("DELETE FROM plugins WHERE namespace = ? AND name = ? RETURNING namespace, name")
+                .bind(namespace)
+                .bind(name)
+                .fetch_all(&self.db.pool)
+                .await?
+        } else {
+            // Delete all plugins with this name regardless of namespace
+            sqlx::query_as("DELETE FROM plugins WHERE name = ? RETURNING namespace, name")
+                .bind(name)
+                .fetch_all(&self.db.pool)
+                .await?
+        };
+
+        // Build list of plugin IDs that were removed and remove from in-memory registry
+        let mut removed_plugin_ids = Vec::new();
+        for (ns, n) in deleted_plugins {
+            let plugin_id = WitmPlugin::make_id(&ns, &n);
+            if self.plugins.remove(&plugin_id).is_some() {
+                removed_plugin_ids.push(plugin_id);
+            }
+        }
+
+        Ok(removed_plugin_ids)
     }
 
     fn new_store(&self) -> Store<Host> {
@@ -230,6 +260,7 @@ impl PluginRegistry {
             .values()
             .any(|p| p.granted.contains(&Capability::Request));
         if !any_plugins {
+            info!("No plugins with request capability and matching CEL expression; skipping plugin processing");
             return HostHandleRequestResult::Noop(original_req);
         }
 
@@ -240,11 +271,14 @@ impl PluginRegistry {
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();
 
+        debug!("Starting plugin request processing loop for request: {:?}/{:?}", current_req.authority, current_req.path_with_query);
+
         while let Some(plugin) = {
             let cel_request = CelRequest::from(&current_req);
             self.find_first_unexecuted_plugin(cel_request, None, &executed_plugins)
         } {
             executed_plugins.insert(plugin.id());
+            debug!("Executing handle_request for plugin: {} against: {:?}/{:?}", plugin.id(), current_req.authority, current_req.path_with_query);
 
             let component = if let Some(c) = &plugin.component {
                 c
@@ -371,11 +405,7 @@ impl PluginRegistry {
                 }
             };
         }
-
-        current_req.headers.iter().for_each(|(k, v)| {
-            info!(target: "plugins", "Final request header: {}: {:?}", k, v);
-        });
-
+        
         match current_req.into_http(store, async { Ok(()) }) {
             Ok(req) => HostHandleRequestResult::Request(req),
             Err(_) => HostHandleRequestResult::None,
@@ -485,12 +515,24 @@ impl PluginRegistry {
 
             let inner = match guest_result {
                 Ok(Ok(res)) => res,
-                _ => {
-                    // If plugin execution failed, we currently can't recover the response since it was moved
-                    // Return None to indicate the response processing should stop
-                    // TODO: fix this, despite whatever overhead it might add, it's
-                    // probably worth it to duplicate the response before passing to each plugin
-                    // such that we can recover from individual plugin failures
+                Ok(Err(e)) => {
+                    warn!(
+                        target: "plugins",
+                        plugin_id = %plugin.id(),
+                        event_type = "response",
+                        error = ?e,
+                        "Guest function returned error during response handling"
+                    );
+                    return HostHandleResponseResult::None;
+                }
+                Err(e) => {
+                    warn!(
+                        target: "plugins",
+                        plugin_id = %plugin.id(),
+                        event_type = "response",
+                        error = %e,
+                        "Failed to run plugin response handler"
+                    );
                     return HostHandleResponseResult::None;
                 }
             };
@@ -891,5 +933,103 @@ mod tests {
                 "Should return None when all plugins have been executed"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_remove_plugin_with_namespace() {
+        let (mut registry, _temp_dir) = create_plugin_registry().await;
+
+        // Register a plugin
+        let cel_expression = "true";
+        register_test_plugin_with_cel_filter(&mut registry, cel_expression)
+            .await
+            .unwrap();
+
+        // Verify plugin is registered
+        assert_eq!(registry.plugins().len(), 1);
+        assert!(registry.plugins().contains_key("test/test_plugin_with_filter"));
+
+        // Remove plugin with specific namespace
+        let removed = registry.remove_plugin("test_plugin_with_filter", Some("test"))
+            .await
+            .unwrap();
+        
+        // Verify plugin was removed
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0], "test/test_plugin_with_filter");
+        assert_eq!(registry.plugins().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_remove_plugin_without_namespace() {
+        let (mut registry, _temp_dir) = create_plugin_registry().await;
+
+        // Register multiple plugins with same name but different namespaces
+        let wasm_path = test_component_path();
+        let component_bytes = std::fs::read(&wasm_path).unwrap();
+        
+        for (namespace, name) in [("ns1", "common_plugin"), ("ns2", "common_plugin")] {
+            let mut granted = CapabilitySet::new();
+            granted.insert(Capability::Request);
+            let requested = granted.clone();
+
+            let component = Some(wasmtime::component::Component::from_binary(
+                &registry.runtime.engine,
+                &component_bytes,
+            ).unwrap());
+
+            let cel_source = "true".to_string();
+            let cel_filter = Some(cel::Program::compile(&cel_source).unwrap());
+
+            let plugin = WitmPlugin {
+                name: name.to_string(),
+                component_bytes: component_bytes.clone(),
+                namespace: namespace.to_string(),
+                version: "0.0.0".into(),
+                author: "author".into(),
+                description: "description".into(),
+                license: "mit".into(),
+                enabled: true,
+                url: "https://example.com".into(),
+                publickey: vec![],
+                granted,
+                requested,
+                metadata: std::collections::HashMap::new(),
+                component,
+                cel_filter,
+                cel_source,
+            };
+            registry.register_plugin(plugin).await.unwrap();
+        }
+
+        // Verify both plugins are registered
+        assert_eq!(registry.plugins().len(), 2);
+        assert!(registry.plugins().contains_key("ns1/common_plugin"));
+        assert!(registry.plugins().contains_key("ns2/common_plugin"));
+
+        // Remove all plugins with name "common_plugin" regardless of namespace
+        let removed = registry.remove_plugin("common_plugin", None)
+            .await
+            .unwrap();
+        
+        // Verify both plugins were removed
+        assert_eq!(removed.len(), 2);
+        assert!(removed.contains(&"ns1/common_plugin".to_string()));
+        assert!(removed.contains(&"ns2/common_plugin".to_string()));
+        assert_eq!(registry.plugins().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_remove_nonexistent_plugin() {
+        let (mut registry, _temp_dir) = create_plugin_registry().await;
+
+        // Try to remove a plugin that doesn't exist
+        let removed = registry.remove_plugin("nonexistent_plugin", Some("test"))
+            .await
+            .unwrap();
+        
+        // Verify nothing was removed
+        assert_eq!(removed.len(), 0);
+        assert_eq!(registry.plugins().len(), 0);
     }
 }
