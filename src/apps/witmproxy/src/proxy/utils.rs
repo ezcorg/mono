@@ -157,8 +157,11 @@ pub fn convert_hyper_boxed_body_to_reqwest_request(
     let mut req_builder = client.request(method, &url);
 
     for (name, value) in parts.headers.iter() {
-        if let Ok(value_str) = value.to_str() {
-            req_builder = req_builder.header(name.as_str(), value_str);
+        // Filter headers to prevent HTTP/2 protocol errors
+        if should_forward_header(name) {
+            if let Ok(value_str) = value.to_str() {
+                req_builder = req_builder.header(name.as_str(), value_str);
+            }
         }
     }
 
@@ -224,9 +227,10 @@ pub fn convert_hyper_incoming_to_reqwest_request(
 
     let mut req_builder = client.request(method, &url);
 
-    // Copy headers, but skip Host header as reqwest will set it from the URL
+    // Copy headers, but filter out those that can cause HTTP/2 protocol errors
     for (name, value) in parts.headers.iter() {
-        if name != header::HOST {
+        // Skip headers that are invalid in HTTP/2 or handled by reqwest
+        if should_forward_header(name) {
             if let Ok(value_str) = value.to_str() {
                 req_builder = req_builder.header(name.as_str(), value_str);
             }
@@ -298,10 +302,21 @@ pub fn client(ca: CertificateAuthority) -> ProxyResult<UpstreamClient> {
         .map_err(|e| ProxyError::Cert(e.to_string().into()))?;
 
     let client = reqwest::Client::builder()
-        .pool_idle_timeout(std::time::Duration::from_secs(10))
-        .pool_max_idle_per_host(1)
+        // HTTP/2 compatible connection pooling
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .pool_max_idle_per_host(10) // Allow more connections for HTTP/2 multiplexing
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(60))
+        // Certificate setup
         .add_root_certificate(ca_cert)
-        .http1_title_case_headers()
+        // HTTP/2 specific configuration to avoid protocol errors
+        .http2_initial_stream_window_size(Some(1024 * 1024)) // 1MB stream window
+        .http2_initial_connection_window_size(Some(4 * 1024 * 1024)) // 4MB connection window
+        .http2_adaptive_window(true) // Let the client adapt window sizes
+        .http2_max_frame_size(Some(16384)) // Standard 16KB frame size
+        .http2_keep_alive_interval(Some(std::time::Duration::from_secs(60)))
+        .http2_keep_alive_timeout(std::time::Duration::from_secs(20))
+        .http2_keep_alive_while_idle(true)
         .build()
         .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest client: {}", e)))?;
     Ok(client)
@@ -357,6 +372,25 @@ pub async fn build_server_tls_for_host(
         .map_err(|e| ProxyError::Tls(rustls::Error::General(e.to_string())))?;
     cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(cfg)
+}
+
+/// Check if a header should be forwarded to avoid HTTP/2 protocol errors
+fn should_forward_header(name: &hyper::header::HeaderName) -> bool {
+    match name.as_str().to_lowercase().as_str() {
+        // Skip pseudo-headers (HTTP/2 specific, start with :)
+        h if h.starts_with(':') => false,
+        // Skip connection-specific headers that are invalid in HTTP/2
+        "host" => false, // reqwest sets this from URL
+        "connection" => false,
+        "proxy-connection" => false,
+        "keep-alive" => false,
+        "upgrade" => false,
+        "transfer-encoding" => false, // HTTP/2 doesn't use chunked encoding
+        "te" => false, // Only valid value in HTTP/2 is "trailers"
+        "http2-settings" => false, // HTTP/2 upgrade header
+        // Allow all other headers
+        _ => true,
+    }
 }
 
 /// Check if an error indicates a closed connection
