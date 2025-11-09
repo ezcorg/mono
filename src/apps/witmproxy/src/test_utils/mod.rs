@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Result;
 use http_body_util::BodyExt;
 use hyper_util::rt::TokioExecutor;
 use reqwest::Certificate;
@@ -19,9 +20,6 @@ use crate::PluginRegistry;
 use crate::ProxyServer;
 use crate::Runtime;
 use crate::WitmProxy;
-use crate::plugins::CapabilitySet;
-use crate::plugins::WitmPlugin;
-use crate::plugins::capability::Capability;
 use crate::{AppConfig, CertificateAuthority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,10 +55,10 @@ pub struct EchoResponse {
     pub body_error: Option<String>,
 }
 
-pub async fn create_plugin_registry() -> (PluginRegistry, tempfile::TempDir) {
+pub async fn create_plugin_registry() -> Result<(PluginRegistry, tempfile::TempDir)> {
     let (db, temp_dir) = create_db().await;
     let runtime = Runtime::default().unwrap();
-    (PluginRegistry::new(db, runtime), temp_dir)
+    Ok((PluginRegistry::new(db, runtime)?, temp_dir))
 }
 
 /// Register the `wasm-test-component` WASM plugin for testing.
@@ -86,18 +84,18 @@ pub async fn create_db() -> (Db, tempfile::TempDir) {
     (db, temp_dir)
 }
 
-pub async fn create_witmproxy() -> (
+pub async fn create_witmproxy() -> Result<(
     WitmProxy,
     Arc<RwLock<PluginRegistry>>,
     CertificateAuthority,
     AppConfig,
     tempfile::TempDir,
-) {
+)> {
     let (ca, config) = create_ca_and_config().await;
-    let (registry, temp_dir) = create_plugin_registry().await;
+    let (registry, temp_dir) = create_plugin_registry().await?;
     let registry = Arc::new(RwLock::new(registry));
     let proxy = WitmProxy::new(ca.clone(), Some(registry.clone()), config.clone());
-    (proxy, registry, ca, config, temp_dir)
+    Ok((proxy, registry, ca, config, temp_dir))
 }
 
 pub async fn create_proxy_server() -> (ProxyServer, CertificateAuthority, AppConfig) {

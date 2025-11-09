@@ -1,52 +1,21 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use ::cel::Program;
 use anyhow::Result;
 use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
 use tracing::error;
-// use wasmsign2::reexports::hmac_sha256::Hash;
 use wasmtime::Engine;
 use wasmtime::component::Component;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
 use crate::{
-    Runtime,
-    db::{Db, Insert},
-    plugins::capability::Capability,
-    wasm::{Host, generated::Plugin},
+    Runtime, db::{Db, Insert}, plugins::capabilities::{Capabilities, Capability, Filterable}, wasm::{Host, generated::Plugin}
 };
 
-pub mod capability;
 pub mod cel;
 pub mod registry;
-
-#[derive(Clone, Serialize, Deserialize, ToSchema)]
-pub struct CapabilitySet(HashSet<Capability>);
-
-impl CapabilitySet {
-    pub fn new() -> Self {
-        Self(HashSet::new())
-    }
-
-    pub fn insert(&mut self, cap: Capability) {
-        self.0.insert(cap);
-    }
-
-    pub fn contains(&self, cap: &Capability) -> bool {
-        self.0.contains(cap)
-    }
-}
-
-impl<'a> IntoIterator for &'a CapabilitySet {
-    type Item = &'a Capability;
-    type IntoIter = std::collections::hash_set::Iter<'a, Capability>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
-}
+pub mod capabilities;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[salvo(extract(default_source(from = "body")))]
@@ -61,9 +30,7 @@ pub struct WitmPlugin {
     pub publickey: Vec<u8>,
     pub enabled: bool,
     // Plugin capabilities
-    pub granted: CapabilitySet,
-    // TODO: simplify this
-    pub requested: CapabilitySet,
+    pub capabilities: Capabilities,
     // Plugin metadata
     pub metadata: HashMap<String, String>,
     // Compiled WASM component implementing the Plugin interface
@@ -72,10 +39,6 @@ pub struct WitmPlugin {
     // Raw bytes of the WASM component for storage
     // TODO: stream this when receiving from API
     pub component_bytes: Vec<u8>,
-    #[serde(skip)]
-    pub cel_filter: Option<Program>,
-    /// Source code for the CEL selector
-    pub cel_source: String,
 }
 
 impl WitmPlugin {
@@ -135,20 +98,43 @@ impl WitmPlugin {
         .bind(&plugin.name)
         .fetch_all(&db.pool)
         .await?;
-        let mut granted = CapabilitySet::new();
-        let mut requested = CapabilitySet::new();
+
         for row in capabilities {
             let cap_str: String = row.try_get("capability")?;
-            let cap = Capability::from(cap_str);
+            let config_str: String = row.try_get("config")?;
             let granted_flag: bool = row.try_get("granted")?;
-            if granted_flag {
-                granted.insert(cap);
-            } else {
-                requested.insert(cap);
+
+            match cap_str.as_str() {
+                "connect" => {
+                    let config: Filterable = serde_json::from_str(&config_str)?;
+                    plugin.capabilities.connect = Capability {
+                        config,
+                        granted: granted_flag,
+                    };
+                }
+                "request" => {
+                    let config: Filterable = serde_json::from_str(&config_str)?;
+                    plugin.capabilities.request = Some(Capability {
+                        config,
+                        granted: granted_flag,
+                    });
+                }
+                "response" => {
+                    let config: Filterable = serde_json::from_str(&config_str)?;
+                    plugin.capabilities.response = Some(Capability {
+                        config,
+                        granted: granted_flag,
+                    });
+                }
+                _ => {
+                    error!(
+                        "Unknown capability '{}' for plugin '{}'",
+                        cap_str,
+                        plugin.id()
+                    );
+                }
             }
         }
-        plugin.granted = granted;
-        plugin.requested = requested;
         Ok(plugin)
     }
 
@@ -217,26 +203,55 @@ impl Insert for WitmPlugin {
         .bind(self.publickey.clone())
         .bind(self.enabled)
         .bind(self.component_bytes.clone())
-        .bind(self.cel_source.clone())
         .execute(&mut *tx)
         .await?;
 
-        // Bulk insert capabilities
-        if !self.requested.0.is_empty() {
-            let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-                "INSERT INTO plugin_capabilities (namespace, name, capability, granted) ",
-            );
+        let mut plugin_capabilities: Vec<(String, String, String, String, bool)> = vec![];
 
-            query_builder.push_values(&self.requested, |mut b, capability| {
-                let granted = self.granted.contains(capability);
-                b.push_bind(&self.namespace)
-                    .push_bind(&self.name)
-                    .push_bind(capability.to_string())
-                    .push_bind(granted);
-            });
+        plugin_capabilities.push((
+            self.namespace.clone(),
+            self.name.clone(),
+            "connect".to_string(),
+            serde_json::to_string(&self.capabilities.connect.config)?,
+            self.capabilities.connect.granted,
+        ));
 
-            query_builder.build().execute(&mut *tx).await?;
+        if let Some(request) = &self.capabilities.request {
+            plugin_capabilities.push((
+                self.namespace.clone(),
+                self.name.clone(),
+                "request".to_string(),
+                serde_json::to_string(&request.config)?,
+                request.granted,
+            ));
         }
+
+        if let Some(response) = &self.capabilities.response {
+            plugin_capabilities.push((
+                self.namespace.clone(),
+                self.name.clone(),
+                "response".to_string(),
+                serde_json::to_string(&response.config)?,
+                response.granted,
+            ));
+        }
+
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            "INSERT INTO plugin_capabilities (namespace, name, capability, config, granted) ",
+        );
+
+        query_builder.push_values(
+            &plugin_capabilities,
+            |mut b, (namespace, name, capability, config, granted)| {
+                b.push_bind(namespace)
+                    .push_bind(name)
+                    .push_bind(capability)
+                    .push_bind(config)
+                    .push_bind(granted);
+            },
+        );
+
+        query_builder.build().execute(&mut *tx).await?;
 
         // Bulk insert metadata
         if !self.metadata.is_empty() {

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use bytes::Bytes;
-use cel::Value;
+use cel_cxx::Env;
 use http_body::Body;
 use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 use hyper::{Request, Response, body::Incoming};
@@ -34,6 +34,7 @@ pub struct PluginRegistry {
     plugins: HashMap<String, WitmPlugin>,
     pub db: Db,
     pub runtime: Runtime,
+    env: Env<'static>,
 }
 
 /// Result of handling a request through the plugin chain.
@@ -55,12 +56,15 @@ pub enum HostHandleResponseResult {
 }
 
 impl PluginRegistry {
-    pub fn new(db: Db, runtime: Runtime) -> Self {
-        Self {
+    pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
+        let env = Env::builder()
+            .declare_variable::<CelRequest>("request")?.build()?;
+        Ok(Self {
             plugins: HashMap::new(),
             db,
             runtime,
-        }
+            env,
+        })
     }
 
     pub fn plugins(&self) -> &HashMap<String, WitmPlugin> {
@@ -185,65 +189,14 @@ impl PluginRegistry {
         cel_response: Option<CelResponse>,
         executed_plugins: &HashSet<String>,
     ) -> Option<&WitmPlugin> {
-        // Determine which capability we need based on whether we have a response
-        let required_capability = match cel_response {
-            None => Capability::Request,
-            Some(_) => Capability::Response,
-        };
 
         self.plugins
             .values()
-            .find(|p| {
-                p.granted.contains(&required_capability) && !executed_plugins.contains(&p.id())
-            })
-            .filter(|p| {
-                if let Some(cel_selector) = &p.cel_filter {
-                    let mut ctx = cel::Context::empty();
-
-                    // Always add the CelRequest as "request"
-                    let context_result =
-                        ctx.add_variable("request", cel_request.clone())
-                            .and_then(|_| {
-                                // Add CelResponse as "response" if it's Some(), otherwise cel::Value::Null
-                                match &cel_response {
-                                    Some(cel_resp) => {
-                                        _ = ctx.add_variable("response", cel_resp);
-                                    }
-                                    None => {
-                                        _ = ctx.add_variable("response", cel::Value::Null);
-                                    }
-                                };
-                                Ok(())
-                            });
-
-                    if let Err(e) = context_result {
-                        warn!(
-                            target: "plugins",
-                            plugin_id = %p.id(),
-                            error = %e,
-                            "Failed to add variables to CEL context; skipping plugin"
-                        );
-                        return false;
-                    }
-
-                    let result = match cel_selector.execute(&ctx) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                plugin_id = %p.id(),
-                                error = %e,
-                                "Failed to execute CEL filter; skipping plugin"
-                            );
-                            Value::Bool(false)
-                        }
-                    };
-                    match result {
-                        Value::Bool(b) => b,
-                        _ => false,
-                    }
-                } else {
-                    false
+            .find(|p| { 
+                !executed_plugins.contains(&p.id()) &&
+                match &cel_response {
+                    Some(res) => p.capabilities.can_handle_response(&cel_request, res),
+                    None => p.capabilities.can_handle_request(&cel_request),
                 }
             })
     }
@@ -255,10 +208,11 @@ impl PluginRegistry {
         T: Body<Data = Bytes> + Send + Sync + 'static,
         T::Error: Into<ErrorCode>,
     {
+        let cel_request = CelRequest::from(&original_req);
         let any_plugins = self
             .plugins
             .values()
-            .any(|p| p.granted.contains(&Capability::Request));
+            .any(|p| p.capabilities.can_handle_request(&cel_request));
         if !any_plugins {
             info!("No plugins with request capability and matching CEL expression; skipping plugin processing");
             return HostHandleRequestResult::Noop(original_req);
@@ -419,10 +373,11 @@ impl PluginRegistry {
         original_res: Response<Full<Bytes>>,
         request_ctx: CelRequest,
     ) -> HostHandleResponseResult {
+        let cel_response = CelResponse::from(&original_res);
         let any_plugins = self
             .plugins
             .values()
-            .any(|p| p.granted.contains(&Capability::Response));
+            .any(|p| p.capabilities.can_handle_response(&request_ctx, &cel_response));
 
         if !any_plugins {
             return HostHandleResponseResult::Response(original_res);
@@ -598,7 +553,7 @@ impl PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::{Capability, CapabilitySet, WitmPlugin};
+    use crate::plugins::{Capability, WitmPlugin};
     use crate::test_utils::{create_plugin_registry, test_component_path};
     use bytes::Bytes;
     use http_body_util::Full;
@@ -637,12 +592,8 @@ mod tests {
             enabled: true,
             url: "https://example.com".into(),
             publickey: "todo".into(),
-            granted,
-            requested,
             metadata: std::collections::HashMap::new(),
             component,
-            cel_filter,
-            cel_source,
         };
         registry.register_plugin(plugin).await
     }

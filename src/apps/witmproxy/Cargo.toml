@@ -85,8 +85,9 @@ lazy_static = "1.5.0"
 bimap = "0.6.3"
 salvo = { version = "0.84.1", features = ["oapi", "quinn", "serve-static", "cors", "affix-state", "rustls", "force-https"] }
 rust-embed = "8.7.2"
-cel = "0.11.4"
 http-body = "1.0.1"
+webextension_pattern = { version = "0.3.0", features = ["serde"] }
+cel-cxx = { version = "0.2.1", features = ["tokio"] }
 
 [lib]
 name = "witmproxy"

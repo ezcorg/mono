@@ -63,11 +63,6 @@ mod tests {
     async fn test_migrations() {
         let temp_dir = tempdir().expect("Failed to create temp directory");
         let db_path = temp_dir.path().join("test.db");
-        let db_path_str = format!(
-            "sqlite://{}",
-            db_path.to_str().expect("Failed to convert path to string")
-        );
-
         let password = "test_password";
 
         let db = Db::from_path(db_path, password)
@@ -100,11 +95,6 @@ mod tests {
     async fn test_password_mismatch() {
         let temp_dir = tempdir().expect("Failed to create temp directory");
         let db_path = temp_dir.path().join("test.db");
-        let db_path_str = format!(
-            "sqlite://{}",
-            db_path.to_str().expect("Failed to convert path to string")
-        );
-
         let original_password = "correct_password";
         let wrong_password = "wrong_password";
 

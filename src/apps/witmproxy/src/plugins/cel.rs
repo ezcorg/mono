@@ -1,11 +1,23 @@
 use bytes::Bytes;
-use hyper::Request;
+use cel_cxx::Opaque;
+use http_body_util::Full;
+use hyper::{Request, Response};
 use salvo::http::uri::Scheme;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
+#[cel_cxx(type = "witmproxy::plugins::cel::CelConnect")]
+#[cel_cxx(display)]
+pub struct CelConnect {
+    pub scheme: String,
+    pub host: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
+#[cel_cxx(type = "witmproxy::plugins::cel::CelRequest")]
+#[cel_cxx(display)]
 pub struct CelRequest {
     pub scheme: String,
     pub host: String,
@@ -108,10 +120,32 @@ where
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
+#[cel_cxx(type = "witmproxy::plugins::cel::CelResponse")]
+#[cel_cxx(display)]
 pub struct CelResponse {
     pub status: u16,
     pub headers: HashMap<String, Vec<String>>,
+}
+
+impl From<&Response<Full<Bytes>>> for CelResponse {
+    fn from(res: &Response<Full<Bytes>>) -> Self {
+        let mut headers = HashMap::new();
+
+        for (name, value) in res.headers().iter() {
+            let entry = headers
+                .entry(name.as_str().to_string())
+                .or_insert_with(Vec::new);
+            if let Ok(val_str) = value.to_str() {
+                entry.push(val_str.to_string());
+            }
+        }
+
+        CelResponse {
+            status: res.status().as_u16(),
+            headers,
+        }
+    }
 }
 
 impl From<&WasiResponse> for CelResponse {

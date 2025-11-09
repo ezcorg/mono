@@ -21,6 +21,7 @@ CREATE TABLE plugin_capabilities (
     name TEXT NOT NULL,
     capability TEXT NOT NULL,
     granted BOOLEAN NOT NULL,
+    config TEXT NOT NULL DEFAULT '{}', -- JSON blob for capability-specific options
     PRIMARY KEY (namespace, name, capability),
     FOREIGN KEY (namespace, name) REFERENCES plugins(namespace, name) ON DELETE CASCADE
 );

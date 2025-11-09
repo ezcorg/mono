@@ -7,9 +7,10 @@ use anyhow::Result;
 
 mod runtime;
 
+use crate::plugins::capabilities::Capabilities;
 use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::Tag;
 use crate::{
-    plugins::{CapabilitySet, WitmPlugin},
+    plugins::{WitmPlugin},
     wasm::generated::{
         PluginManifest,
         witmproxy::plugin::capabilities::{
@@ -20,7 +21,8 @@ use crate::{
 pub use runtime::Runtime;
 
 pub mod generated {
-    pub use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::PluginManifest;
+
+    pub use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::{PluginManifest, Capabilities};
     pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient, Logger};
 
     wasmtime::component::bindgen!({
@@ -325,36 +327,8 @@ impl From<PluginManifest> for WitmPlugin {
             .cloned()
             .map(|Tag { key, value }| (key, value))
             .collect::<HashMap<String, String>>();
-
-        // Compile the CEL filter from the cel_source
-        let cel_filter = if !manifest.cel.is_empty() {
-            match cel::Program::compile(&manifest.cel) {
-                Ok(program) => Some(program),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to compile CEL expression '{}' for plugin {}: {}. Plugin will be disabled.",
-                        manifest.cel,
-                        manifest.name,
-                        e
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // TODO: implement proper capability negotiation
-        // Process capabilities from the manifest
-        let mut granted = CapabilitySet::new();
-        let mut requested = CapabilitySet::new();
         
-        for capability_str in &manifest.capabilities {
-            let capability = crate::plugins::capability::Capability::from(capability_str.clone());
-            // For now, grant all requested capabilities
-            granted.insert(capability.clone());
-            requested.insert(capability);
-        }
+        let capabilities = Capabilities::from(manifest.capabilities);
 
         WitmPlugin {
             namespace: manifest.namespace,
@@ -366,13 +340,10 @@ impl From<PluginManifest> for WitmPlugin {
             url: manifest.url,
             publickey: manifest.publickey,
             enabled: true,
-            granted,
-            requested,
             component: None,
             component_bytes: vec![],
             metadata,
-            cel_filter,
-            cel_source: manifest.cel,
+            capabilities,
         }
     }
 }

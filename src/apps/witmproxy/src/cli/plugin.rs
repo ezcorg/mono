@@ -1,4 +1,3 @@
-use crate::plugins::capability;
 use crate::{AppConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
 use cargo_generate::{GenerateArgs, TemplatePath, generate};
@@ -143,15 +142,22 @@ impl PluginHandler {
 
         // Create runtime and registry
         let runtime = Runtime::default()?;
-        let mut registry = PluginRegistry::new(db, runtime);
+        let mut registry = PluginRegistry::new(db, runtime)?;
 
         // Create plugin from component bytes (including signature verification)
         let mut plugin = registry.plugin_from_component(component_bytes).await?;
-        // TODO: granted capabilities
-        plugin.granted.insert(capability::Capability::Request);
-        plugin.granted.insert(capability::Capability::Response);
-        plugin.granted.insert(capability::Capability::Logger);
-        plugin.requested = plugin.granted.clone();
+        // TODO: DON'T GRANT ALL THE THINGS ALWAYS
+        plugin.capabilities.connect.granted = true;
+
+        match plugin.capabilities.request {
+            Some(ref mut r) => r.granted = true,
+            _ => {},
+        };
+
+        match plugin.capabilities.response {
+            Some(ref mut r) => r.granted = true,
+            _ => {},
+        };
 
         debug!(
             "Received plugin: {}/{}:{}",
@@ -170,7 +176,7 @@ impl PluginHandler {
         db.migrate().await?;
 
         let runtime = Runtime::default()?;
-        let mut registry = PluginRegistry::new(db, runtime);
+        let mut registry = PluginRegistry::new(db, runtime)?;
         
         let (name, namespace) = match plugin_name.split_once("/") {
             Some((ns, n)) => (n.to_string(), Some(ns.to_string())),

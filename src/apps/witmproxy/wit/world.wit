@@ -1,10 +1,34 @@
-package witmproxy:plugin@0.0.2;
+package witmproxy:plugin@0.0.3;
 
 interface capabilities {
     // resource http-client {}
     // resource key-value-client {}
     // resource sql-client {}
     // resource queue-client {}
+
+    record capabilities {
+        connect: connect-capability,
+        request: option<request-capability>,
+        response: option<response-capability>,
+    }
+
+    /// Capability required to MITM connections, all plugins must specify this to handle connections
+    record connect-capability {
+        /// CEL filter determining which connections the plugin wants to handle
+        filter: string,
+    }
+
+    /// Capability required to handle requests
+    record request-capability {
+        /// CEL filter determining which requests the plugin wants to handle
+        filter: string,
+    }
+
+    /// Capability required to handle responses
+    record response-capability {
+        /// CEL filter determining which responses the plugin wants to handle
+        filter: string,
+    }
 
     resource logger {
         info: func(message: string);
@@ -36,7 +60,7 @@ interface capabilities {
 
 interface witm-plugin {
     use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
-    use capabilities.{capability-provider};
+    use capabilities.{capability-provider, capabilities};
 
     record tag {
         key: string,
@@ -52,8 +76,7 @@ interface witm-plugin {
         license: string,
         url: string,
         publickey: list<u8>,
-        cel: string,
-        capabilities: list<string>,
+        capabilities: capabilities,
         metadata: list<tag>,
     }
 
