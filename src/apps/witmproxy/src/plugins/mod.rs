@@ -10,12 +10,18 @@ use wasmtime::component::Component;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
 use crate::{
-    Runtime, db::{Db, Insert}, plugins::capabilities::{Capabilities, Capability, Filterable}, wasm::{Host, generated::Plugin}
+    Runtime,
+    db::{Db, Insert},
+    plugins::capabilities::{Capabilities, Capability, Filterable},
+    wasm::{
+        Host,
+        generated::{Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag},
+    },
 };
 
+pub mod capabilities;
 pub mod cel;
 pub mod registry;
-pub mod capabilities;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[salvo(extract(default_source(from = "body")))]
@@ -56,8 +62,13 @@ impl WitmPlugin {
         self
     }
 
+    pub fn compile_capabilities(mut self, env: &'static cel_cxx::Env) -> Result<Self> {
+        self.capabilities.compile_filters(env)?;
+        Ok(self)
+    }
+
     /// Only needs the `component` column
-    pub async fn from_db_row(plugin_row: SqliteRow, db: &mut Db, engine: &Engine) -> Result<Self> {
+    pub async fn from_db_row(plugin_row: SqliteRow, db: &mut Db, engine: &Engine, env: &'static cel_cxx::Env<'static>) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
         let component = Component::from_binary(engine, &component_bytes)?;
@@ -86,10 +97,11 @@ impl WitmPlugin {
             })
             .await??;
 
-        let mut plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes);
+        let mut plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes)
+        .compile_capabilities(env)?;
         let capabilities = query(
             "
-            SELECT capability, granted
+            SELECT capability, config, granted
             FROM plugin_capabilities
             WHERE namespace = ? AND name = ?
             ",
@@ -138,7 +150,7 @@ impl WitmPlugin {
         Ok(plugin)
     }
 
-    pub async fn all(db: &mut Db, engine: &wasmtime::Engine) -> Result<Vec<Self>> {
+    pub async fn all(db: &mut Db, engine: &wasmtime::Engine, env: &'static cel_cxx::Env<'static>) -> Result<Vec<Self>> {
         let rows = query(
             "
             SELECT component
@@ -150,7 +162,7 @@ impl WitmPlugin {
 
         let mut plugins = Vec::new();
         for row in rows {
-            match WitmPlugin::from_db_row(row, db, engine).await {
+            match WitmPlugin::from_db_row(row, db, engine, env).await {
                 Ok(plugin) => plugins.push(plugin),
                 Err(e) => {
                     error!(
@@ -177,6 +189,35 @@ impl WitmPlugin {
     }
 }
 
+impl From<PluginManifest> for WitmPlugin {
+    fn from(manifest: PluginManifest) -> Self {
+        let metadata = manifest
+            .metadata
+            .iter()
+            .cloned()
+            .map(|Tag { key, value }| (key, value))
+            .collect::<HashMap<String, String>>();
+
+        let capabilities = Capabilities::from(manifest.capabilities);
+
+        WitmPlugin {
+            namespace: manifest.namespace,
+            name: manifest.name,
+            version: manifest.version,
+            author: manifest.author,
+            description: manifest.description,
+            license: manifest.license,
+            url: manifest.url,
+            publickey: manifest.publickey,
+            enabled: true,
+            component: None,
+            component_bytes: vec![],
+            metadata,
+            capabilities,
+        }
+    }
+}
+
 // Schema:
 // `plugins` (namespace, name, version, author, description, license, url, publickey, component)
 // `plugin_capabilities` (namespace, name, capability, granted)
@@ -189,8 +230,8 @@ impl Insert for WitmPlugin {
         // Insert or replace into plugins table (triggers on delete for related tables)
         query(
             "
-            INSERT OR REPLACE INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component, cel_filter)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
         .bind(self.namespace.clone())

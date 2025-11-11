@@ -12,21 +12,21 @@ interface capabilities {
         response: option<response-capability>,
     }
 
-    /// Capability required to MITM connections, all plugins must specify this to handle connections
+    // Capability required to MITM connections, all plugins must specify this to handle connections
     record connect-capability {
-        /// CEL filter determining which connections the plugin wants to handle
+        // CEL filter determining which connections the plugin wants to handle
         filter: string,
     }
 
-    /// Capability required to handle requests
+    // Capability required to handle requests
     record request-capability {
-        /// CEL filter determining which requests the plugin wants to handle
+        // CEL filter determining which requests the plugin wants to handle
         filter: string,
     }
 
-    /// Capability required to handle responses
+    // Capability required to handle responses
     record response-capability {
-        /// CEL filter determining which responses the plugin wants to handle
+        // CEL filter determining which responses the plugin wants to handle
         filter: string,
     }
 
@@ -60,7 +60,7 @@ interface capabilities {
 
 interface witm-plugin {
     use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
-    use capabilities.{capability-provider, capabilities};
+    use capabilities.{capability-provider, capabilities, connect-capability, request-capability, response-capability};
 
     record tag {
         key: string,

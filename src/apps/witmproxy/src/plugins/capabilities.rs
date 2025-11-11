@@ -1,11 +1,10 @@
-use anyhow::{Result};
+use anyhow::Result;
 use cel_cxx::{Activation, Env, Program};
 use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use crate::plugins::cel::{CelConnect, CelRequest, CelResponse};
-
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct Filterable {
@@ -30,7 +29,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    pub fn compile_cel_programs(&mut self, env: &'static Env) -> Result<()> {
+    pub fn compile_filters(&mut self, env: &Env<'static>) -> Result<()> {
         // Compile the CEL programs for each capability
         self.connect.config.cel = Some(env.compile(&self.connect.config.filter)?);
 

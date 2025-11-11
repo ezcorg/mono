@@ -232,7 +232,10 @@ impl ProxyHandler {
                 let url_without_protocol = proxy_url.strip_prefix("http://").unwrap_or(proxy_url);
                 let parts: Vec<&str> = url_without_protocol.split(':').collect();
                 let host = parts[0];
-                let port = parts.get(1).ok_or_else(|| anyhow!("Missing port in proxy URL"))?.to_string();
+                let port = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Missing port in proxy URL"))?
+                    .to_string();
 
                 // Enable HTTP proxy
                 let status = Command::new("sudo")

@@ -6,7 +6,7 @@ use cel_cxx::Env;
 use http_body::Body;
 use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 use hyper::{Request, Response, body::Incoming};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 use wasmtime::{Store, component::Resource};
 use wasmtime_wasi_http::p3::{
     Request as WasiRequest, Response as WasiResponse, WasiHttpView,
@@ -16,8 +16,8 @@ use wasmtime_wasi_http::p3::{
 use crate::{
     db::{Db, Insert},
     plugins::{
-        Capability, WitmPlugin,
-        cel::{CelRequest, CelResponse},
+        WitmPlugin,
+        cel::{CelConnect, CelRequest, CelResponse},
     },
     wasm::{
         CapabilityProvider, Host, Runtime,
@@ -34,7 +34,7 @@ pub struct PluginRegistry {
     plugins: HashMap<String, WitmPlugin>,
     pub db: Db,
     pub runtime: Runtime,
-    env: Env<'static>,
+    env: &'static Env<'static>,
 }
 
 /// Result of handling a request through the plugin chain.
@@ -57,8 +57,27 @@ pub enum HostHandleResponseResult {
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
+        // TODO: figure out why regular selection on struct isn't working
+        // Checkout https://github.com/xjasonli/cel-cxx/blob/17f81b6939b0cb0d0c2b65d1ee380c51722a19c1/src/env/mod.rs#L1048
         let env = Env::builder()
-            .declare_variable::<CelRequest>("request")?.build()?;
+            .declare_variable::<CelConnect>("connect")?
+            .register_member_function("host", CelConnect::host)?
+            .register_member_function("port", CelConnect::port)?
+            .declare_variable::<CelRequest>("request")?
+            .register_member_function("scheme", CelRequest::scheme)?
+            .register_member_function("host", CelRequest::host)?
+            .register_member_function("path", CelRequest::path)?
+            .register_member_function("query", CelRequest::query)?
+            .register_member_function("method", CelRequest::method)?
+            .register_member_function("headers", CelRequest::headers)?
+            .declare_variable::<CelResponse>("response")?
+            .register_member_function("status", CelResponse::status)?
+            .register_member_function("headers", CelResponse::headers)?
+            .build()?;
+        // Leak the env to get a static reference since it contains only static data
+        // and we want it to live for the program duration
+        // TODO: fix this with proper lifetime management
+        let env: &'static Env<'static> = Box::leak(Box::new(env));
         Ok(Self {
             plugins: HashMap::new(),
             db,
@@ -73,7 +92,7 @@ impl PluginRegistry {
 
     pub async fn load_plugins(&mut self) -> Result<()> {
         // TODO: select plugins from DB, verify signatures, compile WASM components
-        let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine).await?;
+        let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine, self.env).await?;
         for plugin in plugins.into_iter() {
             self.plugins.insert(plugin.id(), plugin);
         }
@@ -138,7 +157,9 @@ impl PluginRegistry {
             );
         }
 
-        let plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes);
+        let plugin = WitmPlugin::from(guest_result)
+            .with_component(component, component_bytes)
+            .compile_capabilities(&self.env)?;
         Ok(plugin)
     }
 
@@ -150,15 +171,21 @@ impl PluginRegistry {
         Ok(())
     }
 
-    pub async fn remove_plugin(&mut self, name: &str, namespace: Option<&str>) -> Result<Vec<String>> {
+    pub async fn remove_plugin(
+        &mut self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<String>> {
         // Delete from database and get the deleted records using RETURNING
         let deleted_plugins: Vec<(String, String)> = if let Some(namespace) = namespace {
             // Delete specific plugin with namespace
-            sqlx::query_as("DELETE FROM plugins WHERE namespace = ? AND name = ? RETURNING namespace, name")
-                .bind(namespace)
-                .bind(name)
-                .fetch_all(&self.db.pool)
-                .await?
+            sqlx::query_as(
+                "DELETE FROM plugins WHERE namespace = ? AND name = ? RETURNING namespace, name",
+            )
+            .bind(namespace)
+            .bind(name)
+            .fetch_all(&self.db.pool)
+            .await?
         } else {
             // Delete all plugins with this name regardless of namespace
             sqlx::query_as("DELETE FROM plugins WHERE name = ? RETURNING namespace, name")
@@ -189,16 +216,20 @@ impl PluginRegistry {
         cel_response: Option<CelResponse>,
         executed_plugins: &HashSet<String>,
     ) -> Option<&WitmPlugin> {
-
-        self.plugins
-            .values()
-            .find(|p| { 
-                !executed_plugins.contains(&p.id()) &&
-                match &cel_response {
+        self.plugins.values().find(|p| {
+            !executed_plugins.contains(&p.id())
+                && match &cel_response {
                     Some(res) => p.capabilities.can_handle_response(&cel_request, res),
                     None => p.capabilities.can_handle_request(&cel_request),
                 }
-            })
+        })
+    }
+
+    /// Check if any plugins can handle a connect request
+    pub fn can_handle_connect(&self, cel_connect: &crate::plugins::cel::CelConnect) -> bool {
+        self.plugins
+            .values()
+            .any(|p| p.capabilities.can_handle_connect(cel_connect))
     }
 
     /// Handle an incoming HTTP request by passing it through all registered plugins
@@ -214,7 +245,9 @@ impl PluginRegistry {
             .values()
             .any(|p| p.capabilities.can_handle_request(&cel_request));
         if !any_plugins {
-            info!("No plugins with request capability and matching CEL expression; skipping plugin processing");
+            info!(
+                "No plugins with request capability and matching CEL expression; skipping plugin processing"
+            );
             return HostHandleRequestResult::Noop(original_req);
         }
 
@@ -225,14 +258,22 @@ impl PluginRegistry {
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();
 
-        debug!("Starting plugin request processing loop for request: {:?}/{:?}", current_req.authority, current_req.path_with_query);
+        debug!(
+            "Starting plugin request processing loop for request: {:?}/{:?}",
+            current_req.authority, current_req.path_with_query
+        );
 
         while let Some(plugin) = {
             let cel_request = CelRequest::from(&current_req);
             self.find_first_unexecuted_plugin(cel_request, None, &executed_plugins)
         } {
             executed_plugins.insert(plugin.id());
-            debug!("Executing handle_request for plugin: {} against: {:?}/{:?}", plugin.id(), current_req.authority, current_req.path_with_query);
+            debug!(
+                "Executing handle_request for plugin: {} against: {:?}/{:?}",
+                plugin.id(),
+                current_req.authority,
+                current_req.path_with_query
+            );
 
             let component = if let Some(c) = &plugin.component {
                 c
@@ -359,7 +400,7 @@ impl PluginRegistry {
                 }
             };
         }
-        
+
         match current_req.into_http(store, async { Ok(()) }) {
             Ok((req, _)) => HostHandleRequestResult::Request(req),
             Err(_) => HostHandleRequestResult::None,
@@ -374,10 +415,10 @@ impl PluginRegistry {
         request_ctx: CelRequest,
     ) -> HostHandleResponseResult {
         let cel_response = CelResponse::from(&original_res);
-        let any_plugins = self
-            .plugins
-            .values()
-            .any(|p| p.capabilities.can_handle_response(&request_ctx, &cel_response));
+        let any_plugins = self.plugins.values().any(|p| {
+            p.capabilities
+                .can_handle_response(&request_ctx, &cel_response)
+        });
 
         if !any_plugins {
             return HostHandleResponseResult::Response(original_res);
@@ -553,7 +594,10 @@ impl PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::{Capability, WitmPlugin};
+    use crate::plugins::{
+        WitmPlugin,
+        capabilities::{Capabilities, Capability, Filterable},
+    };
     use crate::test_utils::{create_plugin_registry, test_component_path};
     use bytes::Bytes;
     use http_body_util::Full;
@@ -566,10 +610,6 @@ mod tests {
     ) -> Result<(), anyhow::Error> {
         let wasm_path = test_component_path();
         let component_bytes = std::fs::read(&wasm_path).unwrap();
-        let mut granted = CapabilitySet::new();
-        granted.insert(Capability::Request);
-        granted.insert(Capability::Response);
-        let requested = granted.clone();
 
         // Compile the component from bytes using the registry's runtime engine
         let component = Some(wasmtime::component::Component::from_binary(
@@ -577,9 +617,29 @@ mod tests {
             &component_bytes,
         )?);
 
-        // Use the provided CEL expression
-        let cel_source = cel_expression.to_string();
-        let cel_filter = Some(cel::Program::compile(&cel_source)?);
+        let capabilities = Capabilities {
+            connect: Capability {
+                config: Filterable {
+                    filter: "true".to_string(), // Connect always allowed for test
+                    cel: None,
+                },
+                granted: true,
+            },
+            request: Some(Capability {
+                config: Filterable {
+                    filter: cel_expression.to_string(),
+                    cel: None,
+                },
+                granted: true,
+            }),
+            response: Some(Capability {
+                config: Filterable {
+                    filter: cel_expression.to_string(),
+                    cel: None,
+                },
+                granted: true,
+            }),
+        };
 
         let plugin = WitmPlugin {
             name: "test_plugin_with_filter".into(),
@@ -591,7 +651,8 @@ mod tests {
             license: "mit".into(),
             enabled: true,
             url: "https://example.com".into(),
-            publickey: "todo".into(),
+            publickey: vec![],
+            capabilities,
             metadata: std::collections::HashMap::new(),
             component,
         };
@@ -599,14 +660,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_first_unexecuted_plugin_with_cel_filter() {
-        let (mut registry, _temp_dir) = create_plugin_registry().await;
+    async fn test_find_first_unexecuted_plugin_with_cel_filter() -> Result<(), anyhow::Error> {
+        let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin with the specific CEL expression
-        let cel_expression = "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression)
-            .await
-            .unwrap();
+        let cel_expression = "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])";
+        register_test_plugin_with_cel_filter(&mut registry, cel_expression).await?;
 
         let executed_plugins = HashSet::new();
 
@@ -715,11 +774,12 @@ mod tests {
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=true should not match"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_find_first_unexecuted_plugin_no_plugins() {
-        let (registry, _temp_dir) = create_plugin_registry().await;
+    async fn test_find_first_unexecuted_plugin_no_plugins() -> Result<(), anyhow::Error> {
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         let req = Request::builder()
             .method(Method::GET)
@@ -737,25 +797,41 @@ mod tests {
             matching_plugin.is_none(),
             "Should return no plugins when none are registered"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_find_first_unexecuted_plugin_no_request_capability() {
-        let (mut registry, _temp_dir) = create_plugin_registry().await;
+    async fn test_find_first_unexecuted_plugin_no_request_capability() -> Result<(), anyhow::Error>
+    {
+        let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin without Request capability
         let wasm_path = test_component_path();
         let component_bytes = std::fs::read(&wasm_path).unwrap();
-        let mut granted = CapabilitySet::new();
-        granted.insert(Capability::Response); // Only Response capability, not Request
-        let requested = granted.clone();
 
         let component = Some(
             wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)
                 .unwrap(),
         );
-        let cel_source = "true".to_string();
-        let cel_filter = Some(cel::Program::compile(&cel_source).unwrap());
+
+        let capabilities = Capabilities {
+            connect: Capability {
+                config: Filterable {
+                    filter: "true".to_string(),
+                    cel: None,
+                },
+                granted: true,
+            },
+            request: None, // No Request capability
+            response: Some(Capability {
+                // Only Response capability
+                config: Filterable {
+                    filter: "true".to_string(),
+                    cel: None,
+                },
+                granted: true,
+            }),
+        };
 
         let plugin = WitmPlugin {
             name: "response_only_plugin".into(),
@@ -767,15 +843,12 @@ mod tests {
             license: "mit".into(),
             enabled: true,
             url: "https://example.com".into(),
-            publickey: "todo".into(),
-            granted,
-            requested,
+            publickey: vec![],
+            capabilities,
             metadata: std::collections::HashMap::new(),
             component,
-            cel_filter,
-            cel_source,
         };
-        registry.register_plugin(plugin).await.unwrap();
+        registry.register_plugin(plugin).await?;
 
         let req = Request::builder()
             .method(Method::GET)
@@ -793,32 +866,50 @@ mod tests {
             matching_plugin.is_none(),
             "Should return no plugins when plugin doesn't have Request capability"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_find_first_unexecuted_plugin_excludes_executed_plugins() {
-        let (mut registry, _temp_dir) = create_plugin_registry().await;
+    async fn test_find_first_unexecuted_plugin_excludes_executed_plugins()
+    -> Result<(), anyhow::Error> {
+        let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register first plugin that matches all requests
         let cel_expression1 = "true";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression1)
-            .await
-            .unwrap();
+        register_test_plugin_with_cel_filter(&mut registry, cel_expression1).await?;
 
         // Create another plugin with a different name to test multiple plugins
         let wasm_path = test_component_path();
         let component_bytes = std::fs::read(&wasm_path).unwrap();
-        let mut granted = CapabilitySet::new();
-        granted.insert(Capability::Request);
-        granted.insert(Capability::Response);
-        let requested = granted.clone();
 
         let component = Some(
             wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)
                 .unwrap(),
         );
-        let cel_source = "true".to_string();
-        let cel_filter = Some(cel::Program::compile(&cel_source).unwrap());
+
+        let capabilities = Capabilities {
+            connect: Capability {
+                config: Filterable {
+                    filter: "true".to_string(),
+                    cel: None,
+                },
+                granted: true,
+            },
+            request: Some(Capability {
+                config: Filterable {
+                    filter: "true".to_string(),
+                    cel: None,
+                },
+                granted: true,
+            }),
+            response: Some(Capability {
+                config: Filterable {
+                    filter: "true".to_string(),
+                    cel: None,
+                },
+                granted: true,
+            }),
+        };
 
         let plugin2 = WitmPlugin {
             name: "second_test_plugin".into(),
@@ -830,15 +921,12 @@ mod tests {
             license: "mit".into(),
             enabled: true,
             url: "https://example.com".into(),
-            publickey: "todo".into(),
-            granted,
-            requested,
+            publickey: vec![],
+            capabilities,
             metadata: std::collections::HashMap::new(),
             component,
-            cel_filter,
-            cel_source,
         };
-        registry.register_plugin(plugin2).await.unwrap();
+        registry.register_plugin(plugin2).await?;
 
         // Test with a request that should match both plugins initially
         let req = Request::builder()
@@ -884,53 +972,71 @@ mod tests {
                 "Should return None when all plugins have been executed"
             );
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_remove_plugin_with_namespace() {
-        let (mut registry, _temp_dir) = create_plugin_registry().await;
+    async fn test_remove_plugin_with_namespace() -> Result<(), anyhow::Error> {
+        let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin
         let cel_expression = "true";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression)
-            .await
-            .unwrap();
+        register_test_plugin_with_cel_filter(&mut registry, cel_expression).await?;
 
         // Verify plugin is registered
         assert_eq!(registry.plugins().len(), 1);
-        assert!(registry.plugins().contains_key("test/test_plugin_with_filter"));
+        assert!(
+            registry
+                .plugins()
+                .contains_key("test/test_plugin_with_filter")
+        );
 
         // Remove plugin with specific namespace
-        let removed = registry.remove_plugin("test_plugin_with_filter", Some("test"))
-            .await
-            .unwrap();
-        
+        let removed = registry
+            .remove_plugin("test_plugin_with_filter", Some("test"))
+            .await?;
+
         // Verify plugin was removed
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0], "test/test_plugin_with_filter");
         assert_eq!(registry.plugins().len(), 0);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_remove_plugin_without_namespace() {
-        let (mut registry, _temp_dir) = create_plugin_registry().await;
+    async fn test_remove_plugin_without_namespace() -> Result<(), anyhow::Error> {
+        let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register multiple plugins with same name but different namespaces
         let wasm_path = test_component_path();
         let component_bytes = std::fs::read(&wasm_path).unwrap();
-        
+
         for (namespace, name) in [("ns1", "common_plugin"), ("ns2", "common_plugin")] {
-            let mut granted = CapabilitySet::new();
-            granted.insert(Capability::Request);
-            let requested = granted.clone();
+            let component = Some(
+                wasmtime::component::Component::from_binary(
+                    &registry.runtime.engine,
+                    &component_bytes,
+                )
+                .unwrap(),
+            );
 
-            let component = Some(wasmtime::component::Component::from_binary(
-                &registry.runtime.engine,
-                &component_bytes,
-            ).unwrap());
-
-            let cel_source = "true".to_string();
-            let cel_filter = Some(cel::Program::compile(&cel_source).unwrap());
+            let capabilities = Capabilities {
+                connect: Capability {
+                    config: Filterable {
+                        filter: "true".to_string(),
+                        cel: None,
+                    },
+                    granted: true,
+                },
+                request: Some(Capability {
+                    config: Filterable {
+                        filter: "true".to_string(),
+                        cel: None,
+                    },
+                    granted: true,
+                }),
+                response: None,
+            };
 
             let plugin = WitmPlugin {
                 name: name.to_string(),
@@ -943,14 +1049,11 @@ mod tests {
                 enabled: true,
                 url: "https://example.com".into(),
                 publickey: vec![],
-                granted,
-                requested,
+                capabilities,
                 metadata: std::collections::HashMap::new(),
                 component,
-                cel_filter,
-                cel_source,
             };
-            registry.register_plugin(plugin).await.unwrap();
+            registry.register_plugin(plugin).await?;
         }
 
         // Verify both plugins are registered
@@ -959,28 +1062,28 @@ mod tests {
         assert!(registry.plugins().contains_key("ns2/common_plugin"));
 
         // Remove all plugins with name "common_plugin" regardless of namespace
-        let removed = registry.remove_plugin("common_plugin", None)
-            .await
-            .unwrap();
-        
+        let removed = registry.remove_plugin("common_plugin", None).await?;
+
         // Verify both plugins were removed
         assert_eq!(removed.len(), 2);
         assert!(removed.contains(&"ns1/common_plugin".to_string()));
         assert!(removed.contains(&"ns2/common_plugin".to_string()));
         assert_eq!(registry.plugins().len(), 0);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_remove_nonexistent_plugin() {
-        let (mut registry, _temp_dir) = create_plugin_registry().await;
+    async fn test_remove_nonexistent_plugin() -> Result<(), anyhow::Error> {
+        let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Try to remove a plugin that doesn't exist
-        let removed = registry.remove_plugin("nonexistent_plugin", Some("test"))
-            .await
-            .unwrap();
-        
+        let removed = registry
+            .remove_plugin("nonexistent_plugin", Some("test"))
+            .await?;
+
         // Verify nothing was removed
         assert_eq!(removed.len(), 0);
         assert_eq!(registry.plugins().len(), 0);
+        Ok(())
     }
 }

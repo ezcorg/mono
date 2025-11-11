@@ -1,7 +1,6 @@
-use crate::exports::witmproxy::plugin::witm_plugin::{
-    CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, PluginManifest, Request,
-    Response,
-};
+use crate::{exports::witmproxy::plugin::witm_plugin::{
+    Capabilities, CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, PluginManifest, Request, Response
+}, witmproxy::plugin::capabilities::{ConnectCapability, RequestCapability, ResponseCapability}};
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
@@ -22,11 +21,17 @@ impl Guest for Plugin {
             version: "0.0.1".to_string(),
             description: "A test plugin".to_string(),
             metadata: vec![],
-            capabilities: vec![
-                "request".to_string(),
-                "response".to_string(),
-            ],
-            cel: "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])".to_string(),
+            capabilities: Capabilities {
+                connect: ConnectCapability {
+                    filter: "true".to_string(),
+                },
+                request: Some(RequestCapability {
+                    filter: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string()
+                }),
+                response: Some(ResponseCapability {
+                    filter: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string()
+                }),
+            },
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
             publickey: PUBLIC_KEY_BYTES.to_vec(),

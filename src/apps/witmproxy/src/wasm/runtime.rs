@@ -1,9 +1,6 @@
 use crate::wasm::{Host, WitmProxy};
 use anyhow::Result;
-use wasmtime::{
-    Config, Engine,
-    component::Linker,
-};
+use wasmtime::{Config, Engine, component::Linker};
 use wasmtime_wasi::p3::bindings::LinkOptions;
 
 pub struct Runtime {

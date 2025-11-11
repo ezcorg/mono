@@ -267,7 +267,6 @@ pub async fn convert_reqwest_to_hyper_response(
         .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
 }
 
-
 /// Convert a Response<BoxBody<Bytes, ErrorCode>> to a Response<Full<Bytes>>
 pub async fn convert_boxbody_to_full_response(
     response: Response<UnsyncBoxBody<Bytes, ErrorCode>>,
@@ -386,8 +385,8 @@ fn should_forward_header(name: &hyper::header::HeaderName) -> bool {
         "keep-alive" => false,
         "upgrade" => false,
         "transfer-encoding" => false, // HTTP/2 doesn't use chunked encoding
-        "te" => false, // Only valid value in HTTP/2 is "trailers"
-        "http2-settings" => false, // HTTP/2 upgrade header
+        "te" => false,                // Only valid value in HTTP/2 is "trailers"
+        "http2-settings" => false,    // HTTP/2 upgrade header
         // Allow all other headers
         _ => true,
     }

@@ -102,6 +102,7 @@ impl WebServer {
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
+        // TODO: get version from Cargo.toml
         let doc = OpenApi::new("witmproxy", "0.0.1").merge_router(&app);
         let app = app
             .unshift(doc.into_router("/api/docs/openapi.json"))
@@ -152,6 +153,7 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
         return;
     };
 
+    // TODO: return plugin details
     if let Some(registry) = registry {
         let registry = registry.read().await;
         let plugin_names: Vec<String> = registry

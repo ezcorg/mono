@@ -70,7 +70,7 @@ pub async fn create_plugin_registry() -> Result<(PluginRegistry, tempfile::TempD
 pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = test_component_path();
     let component_bytes = std::fs::read(&wasm_path).unwrap();
-    
+
     // Use the actual plugin_from_component method to test the real code path
     let plugin = registry.plugin_from_component(component_bytes).await?;
     registry.register_plugin(plugin).await

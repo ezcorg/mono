@@ -26,7 +26,7 @@ mod tests {
         let runtime = Runtime::default().unwrap();
 
         // Create plugin registry
-        let plugin_registry = Arc::new(RwLock::new(PluginRegistry::new(db, runtime)));
+        let plugin_registry = Arc::new(RwLock::new(PluginRegistry::new(db, runtime)?));
 
         let mut web_server = WebServer::new(ca.clone(), Some(plugin_registry), config);
         web_server.start().await.unwrap();

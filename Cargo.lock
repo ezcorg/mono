@@ -2760,13 +2760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ezfilter-block"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen",
-]
-
-[[package]]
 name = "ezfilter-rs"
 version = "0.1.0"
 dependencies = [

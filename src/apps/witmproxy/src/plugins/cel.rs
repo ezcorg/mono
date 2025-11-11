@@ -8,15 +8,23 @@ use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
-#[cel_cxx(type = "witmproxy::plugins::cel::CelConnect")]
 #[cel_cxx(display)]
 pub struct CelConnect {
-    pub scheme: String,
     pub host: String,
+    pub port: u16,
+}
+
+impl CelConnect {
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
-#[cel_cxx(type = "witmproxy::plugins::cel::CelRequest")]
 #[cel_cxx(display)]
 pub struct CelRequest {
     pub scheme: String,
@@ -25,6 +33,32 @@ pub struct CelRequest {
     pub query: HashMap<String, Vec<String>>,
     pub method: String,
     pub headers: HashMap<String, Vec<String>>,
+}
+
+impl CelRequest {
+    pub fn scheme(&self) -> &str {
+        &self.scheme
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn query(&self) -> &HashMap<String, Vec<String>> {
+        &self.query
+    }
+
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
+    pub fn headers(&self) -> &HashMap<String, Vec<String>> {
+        &self.headers
+    }
 }
 
 impl From<&WasiRequest> for CelRequest {
@@ -121,11 +155,20 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
-#[cel_cxx(type = "witmproxy::plugins::cel::CelResponse")]
 #[cel_cxx(display)]
 pub struct CelResponse {
     pub status: u16,
     pub headers: HashMap<String, Vec<String>>,
+}
+
+impl CelResponse {
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+
+    pub fn headers(&self) -> &HashMap<String, Vec<String>> {
+        &self.headers
+    }
 }
 
 impl From<&Response<Full<Bytes>>> for CelResponse {

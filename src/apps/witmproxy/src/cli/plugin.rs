@@ -3,7 +3,7 @@ use anyhow::Result;
 use cargo_generate::{GenerateArgs, TemplatePath, generate};
 use clap::Subcommand;
 use std::env;
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 #[derive(Subcommand)]
@@ -151,12 +151,12 @@ impl PluginHandler {
 
         match plugin.capabilities.request {
             Some(ref mut r) => r.granted = true,
-            _ => {},
+            _ => {}
         };
 
         match plugin.capabilities.response {
             Some(ref mut r) => r.granted = true,
-            _ => {},
+            _ => {}
         };
 
         debug!(
@@ -177,7 +177,7 @@ impl PluginHandler {
 
         let runtime = Runtime::default()?;
         let mut registry = PluginRegistry::new(db, runtime)?;
-        
+
         let (name, namespace) = match plugin_name.split_once("/") {
             Some((ns, n)) => (n.to_string(), Some(ns.to_string())),
             None => (plugin_name.to_string(), None),
