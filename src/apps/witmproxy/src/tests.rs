@@ -9,7 +9,7 @@ mod tests {
     #[tokio::test]
     async fn e2e_test() -> Result<()> {
         tracing_subscriber::fmt()
-            .with_env_filter(format!("witmproxy={},{}", "debug", "debug"))
+            .with_env_filter(format!("witmproxy={},{}", "info", "info"))
             .init();
         let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await?;
         proxy.start().await.unwrap();

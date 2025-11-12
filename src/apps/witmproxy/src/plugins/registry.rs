@@ -60,19 +60,22 @@ impl PluginRegistry {
         // TODO: figure out why regular selection on struct isn't working
         // Checkout https://github.com/xjasonli/cel-cxx/blob/17f81b6939b0cb0d0c2b65d1ee380c51722a19c1/src/env/mod.rs#L1048
         let env = Env::builder()
+            .with_standard(true)
+            .with_optional(true)
+            .with_ext_select_optimization(true)
             .declare_variable::<CelConnect>("connect")?
-            .register_member_function("host", CelConnect::host)?
-            .register_member_function("port", CelConnect::port)?
+            // .register_member_function("host", CelConnect::host)?
+            // .register_member_function("port", CelConnect::port)?
             .declare_variable::<CelRequest>("request")?
-            .register_member_function("scheme", CelRequest::scheme)?
-            .register_member_function("host", CelRequest::host)?
-            .register_member_function("path", CelRequest::path)?
-            .register_member_function("query", CelRequest::query)?
-            .register_member_function("method", CelRequest::method)?
-            .register_member_function("headers", CelRequest::headers)?
+            // .register_member_function("scheme", CelRequest::scheme)?
+            // .register_member_function("host", CelRequest::host)?
+            // .register_member_function("path", CelRequest::path)?
+            // .register_member_function("query", CelRequest::query)?
+            // .register_member_function("method", CelRequest::method)?
+            // .register_member_function("headers", CelRequest::headers)?
             .declare_variable::<CelResponse>("response")?
-            .register_member_function("status", CelResponse::status)?
-            .register_member_function("headers", CelResponse::headers)?
+            // .register_member_function("status", CelResponse::status)?
+            // .register_member_function("headers", CelResponse::headers)?
             .build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration
@@ -664,7 +667,7 @@ mod tests {
         let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin with the specific CEL expression
-        let cel_expression = "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])";
+        let cel_expression = "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])";
         register_test_plugin_with_cel_filter(&mut registry, cel_expression).await?;
 
         let executed_plugins = HashSet::new();
