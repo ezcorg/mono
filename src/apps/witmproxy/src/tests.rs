@@ -1,15 +1,17 @@
 mod tests {
+    use anyhow::Result;
+
     use crate::test_utils::{
         EchoResponse, Protocol, create_client, create_echo_server, create_witmproxy,
         register_test_component,
     };
 
     #[tokio::test]
-    async fn e2e_test() {
+    async fn e2e_test() -> Result<()> {
         tracing_subscriber::fmt()
-            .with_env_filter(format!("witmproxy={},{}", "debug", "debug"))
+            .with_env_filter(format!("witmproxy={},{}", "info", "info"))
             .init();
-        let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await;
+        let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await?;
         proxy.start().await.unwrap();
 
         // Register test component, ensure write lock is dropped after use to prevent deadlock
@@ -60,5 +62,6 @@ mod tests {
                 .unwrap()
                 .contains("res")
         );
+        Ok(())
     }
 }

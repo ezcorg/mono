@@ -1,11 +1,31 @@
 use bytes::Bytes;
-use hyper::Request;
+use cel_cxx::Opaque;
+use http_body_util::Full;
+use hyper::{Request, Response};
 use salvo::http::uri::Scheme;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
+#[cel_cxx(display)]
+pub struct CelConnect {
+    pub host: String,
+    pub port: u16,
+}
+
+impl CelConnect {
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
+#[cel_cxx(display)]
 pub struct CelRequest {
     pub scheme: String,
     pub host: String,
@@ -13,6 +33,32 @@ pub struct CelRequest {
     pub query: HashMap<String, Vec<String>>,
     pub method: String,
     pub headers: HashMap<String, Vec<String>>,
+}
+
+impl CelRequest {
+    pub fn scheme(&self) -> &str {
+        &self.scheme
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn query(&self) -> &HashMap<String, Vec<String>> {
+        &self.query
+    }
+
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
+    pub fn headers(&self) -> &HashMap<String, Vec<String>> {
+        &self.headers
+    }
 }
 
 impl From<&WasiRequest> for CelRequest {
@@ -108,10 +154,41 @@ where
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
+#[cel_cxx(display)]
 pub struct CelResponse {
     pub status: u16,
     pub headers: HashMap<String, Vec<String>>,
+}
+
+impl CelResponse {
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+
+    pub fn headers(&self) -> &HashMap<String, Vec<String>> {
+        &self.headers
+    }
+}
+
+impl From<&Response<Full<Bytes>>> for CelResponse {
+    fn from(res: &Response<Full<Bytes>>) -> Self {
+        let mut headers = HashMap::new();
+
+        for (name, value) in res.headers().iter() {
+            let entry = headers
+                .entry(name.as_str().to_string())
+                .or_insert_with(Vec::new);
+            if let Ok(val_str) = value.to_str() {
+                entry.push(val_str.to_string());
+            }
+        }
+
+        CelResponse {
+            status: res.status().as_u16(),
+            headers,
+        }
+    }
 }
 
 impl From<&WasiResponse> for CelResponse {

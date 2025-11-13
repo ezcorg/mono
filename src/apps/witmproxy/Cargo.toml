@@ -14,7 +14,7 @@ tokio-util = { version = "0.7.16", features = ["codec", "compat"] }
 # HTTP/HTTPS
 hyper = { version = "1.7.0", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.16", features = ["server", "client", "http1", "http2", "tokio"] }
-hyper-rustls = { version = "0.27.0", features = ["http2"] }
+hyper-rustls = { version = "0.27.0", features = ["http1", "http2"] }
 http-body-util = "0.1"
 
 # TLS
@@ -85,8 +85,9 @@ lazy_static = "1.5.0"
 bimap = "0.6.3"
 salvo = { version = "0.84.1", features = ["oapi", "quinn", "serve-static", "cors", "affix-state", "rustls", "force-https"] }
 rust-embed = "8.7.2"
-cel = "0.11.4"
 http-body = "1.0.1"
+webextension_pattern = { version = "0.3.0", features = ["serde"] }
+cel-cxx = { version = "0.2.1", features = ["tokio"] }
 
 [lib]
 name = "witmproxy"

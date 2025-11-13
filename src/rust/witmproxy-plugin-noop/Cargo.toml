@@ -1,0 +1,19 @@
+[package]
+name = "witmproxy-plugin-noop"
+version = "0.1.0"
+edition = "2024"
+authors = ["Theodore Brockman"]
+description = "noop"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.46.0"
+
+[package.metadata.component]
+package = "witmproxy:witmproxy-plugin-noop-plugin"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]

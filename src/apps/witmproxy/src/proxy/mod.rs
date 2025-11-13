@@ -1,6 +1,6 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
-use crate::plugins::cel::CelRequest;
+use crate::plugins::cel::{CelConnect, CelRequest};
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 
@@ -14,7 +14,7 @@ use hyper::{Response, upgrade};
 use tokio::sync::{Notify, RwLock};
 
 use std::{net::SocketAddr, sync::Arc};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, warn};
 
@@ -135,9 +135,84 @@ impl ProxyServer {
         self.shutdown_notify.notify_waiters();
     }
 
+    /// Determine whether any plugins want to handle this connection
+    /// Returns true if MITM should be performed, false if connection should be forwarded transparently
+    async fn handle_connect(&self, authority: &str) -> bool {
+        let Some(plugin_registry) = &self.plugin_registry else {
+            debug!("No plugin registry, skipping MITM for {}", authority);
+            return false;
+        };
+
+        let (host, port) = match parse_authority_host_port(authority, 443) {
+            Ok((h, p)) => (h, p),
+            Err(e) => {
+                warn!("Failed to parse authority '{}': {}", authority, e);
+                return false;
+            }
+        };
+
+        let cel_connect = CelConnect { host, port };
+        let has_matching_plugin = {
+            let registry = plugin_registry.read().await;
+            registry.can_handle_connect(&cel_connect)
+        };
+
+        if has_matching_plugin {
+            debug!(
+                "Found plugin(s) that can handle connection to {}, performing MITM",
+                authority
+            );
+            true
+        } else {
+            debug!(
+                "No plugins match connection to {}, forwarding transparently",
+                authority
+            );
+            false
+        }
+    }
+
+    /// Forward a connection transparently without MITM
+    async fn forward_connection_transparently(
+        &self,
+        upgraded: upgrade::Upgraded,
+        authority: String,
+    ) -> ProxyResult<()> {
+        debug!("Forwarding connection transparently to {}", authority);
+
+        // Parse host and port
+        let (host, port) = parse_authority_host_port(&authority, 443)?;
+
+        // Connect to the upstream server
+        let upstream = TcpStream::connect(format!("{}:{}", host, port)).await?;
+        debug!("Connected to upstream {}:{}", host, port);
+
+        // Wrap the upgraded connection with TokioIo for compatibility
+        let mut client_io = TokioIo::new(upgraded);
+        let mut upstream_io = upstream;
+
+        // Use bidirectional copy to tunnel the connection
+        match tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await {
+            Ok((client_to_upstream_bytes, upstream_to_client_bytes)) => {
+                debug!(
+                    "Transparent forwarding completed for {}: {} bytes client->upstream, {} bytes upstream->client",
+                    authority, client_to_upstream_bytes, upstream_to_client_bytes
+                );
+            }
+            Err(e) => {
+                debug!("Transparent forwarding error for {}: {}", authority, e);
+                return Err(ProxyError::Io(e));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Handles requests received on the cleartext proxy port.
     /// - Normal HTTP requests are proxied with the upstream client.
-    /// - CONNECT is acknowledged, then we hijack/upgrade and run TLS MITM with an auto (h1/h2) server.
+    /// - CONNECT is acknowledged, then we either:
+    ///   - Run TLS MITM with an auto (h1/h2) server if plugins want to handle the connection
+    ///   - Forward the connection transparently if no plugins match
     async fn handle_plain_http(
         &self,
         mut req: Request<Incoming>,
@@ -159,28 +234,65 @@ impl ProxyServer {
                 return Ok::<_, ProxyError>(resp);
             }
 
-            let ca = self.ca.clone();
-            let on_upgrade = upgrade::on(&mut req);
-            let upstream = self.upstream.clone();
-            let plugin_registry = self.plugin_registry.clone();
+            // Check if any plugins want to handle this connection
+            let should_mitm = self.handle_connect(&authority).await;
 
-            tokio::spawn(async move {
-                match on_upgrade.await {
-                    Ok(upgraded) => {
-                        if let Err(e) =
-                            run_tls_mitm(upstream, upgraded, authority.clone(), ca, plugin_registry).await
-                        {
-                            match &e {
-                                ProxyError::Io(ioe) if is_closed(ioe) => {
-                                    debug!("tls tunnel closed")
+            let on_upgrade = upgrade::on(&mut req);
+
+            if should_mitm {
+                // Perform MITM - existing behavior
+                let ca = self.ca.clone();
+                let upstream = self.upstream.clone();
+                let plugin_registry = self.plugin_registry.clone();
+
+                tokio::spawn(async move {
+                    match on_upgrade.await {
+                        Ok(upgraded) => {
+                            if let Err(e) = run_tls_mitm(
+                                upstream,
+                                upgraded,
+                                authority.clone(),
+                                ca,
+                                plugin_registry,
+                            )
+                            .await
+                            {
+                                match &e {
+                                    ProxyError::Io(ioe) if is_closed(ioe) => {
+                                        debug!("tls tunnel closed")
+                                    }
+                                    _ => warn!("tls mitm error for upstream {}: {}", authority, e),
                                 }
-                                _ => warn!("tls mitm error for upstream {}: {}", authority, e),
                             }
                         }
+                        Err(e) => warn!("upgrade error (CONNECT): {}", e),
                     }
-                    Err(e) => warn!("upgrade error (CONNECT): {}", e),
-                }
-            });
+                });
+            } else {
+                // Forward transparently - new behavior
+                let server = self.clone();
+                tokio::spawn(async move {
+                    match on_upgrade.await {
+                        Ok(upgraded) => {
+                            if let Err(e) = server
+                                .forward_connection_transparently(upgraded, authority.clone())
+                                .await
+                            {
+                                match &e {
+                                    ProxyError::Io(ioe) if is_closed(ioe) => {
+                                        debug!("transparent tunnel closed")
+                                    }
+                                    _ => warn!(
+                                        "transparent forwarding error for upstream {}: {}",
+                                        authority, e
+                                    ),
+                                }
+                            }
+                        }
+                        Err(e) => warn!("upgrade error (CONNECT): {}", e),
+                    }
+                });
+            }
 
             // Return 200 Connection Established for CONNECT
             return Ok(Response::builder()
@@ -246,6 +358,50 @@ pub(crate) async fn perform_upstream(
     }
 }
 
+/// Fix origin-form requests by adding authority from Host header to URI
+fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
+    // Check if URI has no authority but has a Host header (origin-form request)
+    if req.uri().authority().is_none() {
+        if let Some(host_header) = req.headers().get(hyper::header::HOST) {
+            if let Ok(host_str) = host_header.to_str() {
+                // Clone the host string to avoid borrowing conflicts
+                let host_string = host_str.to_string();
+
+                // Reconstruct URI with authority from Host header
+                let original_uri = req.uri();
+                let mut uri_builder = hyper::Uri::builder();
+
+                // Preserve scheme (default to https for TLS connections)
+                if let Some(scheme) = original_uri.scheme() {
+                    uri_builder = uri_builder.scheme(scheme.clone());
+                } else {
+                    uri_builder = uri_builder.scheme("https");
+                }
+
+                // Add authority from Host header
+                uri_builder = uri_builder.authority(host_string.as_str());
+
+                // Preserve path and query
+                if let Some(path_and_query) = original_uri.path_and_query() {
+                    uri_builder = uri_builder.path_and_query(path_and_query.clone());
+                } else {
+                    uri_builder = uri_builder.path_and_query("/");
+                }
+
+                // Build new URI and update request
+                if let Ok(new_uri) = uri_builder.build() {
+                    *req.uri_mut() = new_uri;
+                    debug!(
+                        "Fixed origin-form request: added authority '{}' to URI",
+                        host_string
+                    );
+                }
+            }
+        }
+    }
+    req
+}
+
 /// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
 /// with a Hyper auto server (h1 or h2) and forwards each request to the real upstream via `upstream`.
 async fn run_tls_mitm(
@@ -280,6 +436,7 @@ async fn run_tls_mitm(
             async move {
                 let method = req.method().clone();
                 let uri = req.uri().clone();
+                let req = fix_origin_form_request(req);
                 debug!("Handling TLS request: {} {}", method, uri);
                 let mut request_ctx = CelRequest::from(&req);
 

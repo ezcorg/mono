@@ -1,26 +1,22 @@
 use std::collections::HashMap;
 
+use anyhow::Result;
 use wasmtime::component::{HasData, Resource, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
-use anyhow::Result;
 
 mod runtime;
 
-use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::Tag;
-use crate::{
-    plugins::{CapabilitySet, WitmPlugin},
-    wasm::generated::{
-        PluginManifest,
-        witmproxy::plugin::capabilities::{
-            HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient, HostLogger,
-        },
-    },
+use crate::wasm::generated::witmproxy::plugin::capabilities::{
+    HostAnnotatorClient, HostCapabilityProvider, HostLocalStorageClient, HostLogger,
 };
 pub use runtime::Runtime;
 
 pub mod generated {
-    pub use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::PluginManifest;
+
+    pub use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::{
+        Capabilities, PluginManifest,
+    };
     pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient, Logger};
 
     wasmtime::component::bindgen!({
@@ -159,21 +155,12 @@ impl Default for Host {
 
 // Implement the Host traits using the wrapper pattern
 impl HostLocalStorageClient for WitmProxy<'_> {
-    fn set(
-        &mut self,
-        self_: Resource<LocalStorageClient>,
-        key: String,
-        value: Vec<u8>,
-    ) {
+    fn set(&mut self, self_: Resource<LocalStorageClient>, key: String, value: Vec<u8>) {
         let client = self.table.get_mut(&self_).unwrap();
         client.set(key, value);
     }
 
-    fn get(
-        &mut self,
-        self_: Resource<LocalStorageClient>,
-        key: String,
-    ) -> Option<Vec<u8>> {
+    fn get(&mut self, self_: Resource<LocalStorageClient>, key: String) -> Option<Vec<u8>> {
         let client = self.table.get(&self_).unwrap();
         client.get(key).cloned()
     }
@@ -183,10 +170,7 @@ impl HostLocalStorageClient for WitmProxy<'_> {
         client.delete(key);
     }
 
-    fn drop(
-        &mut self,
-        rep: Resource<LocalStorageClient>,
-    ) -> wasmtime::Result<()> {
+    fn drop(&mut self, rep: Resource<LocalStorageClient>) -> wasmtime::Result<()> {
         let _ = self.table.delete(rep);
         Ok(())
     }
@@ -198,10 +182,7 @@ impl HostAnnotatorClient for WitmProxy<'_> {
         annotator.annotate(data)
     }
 
-    fn drop(
-        &mut self,
-        rep: Resource<AnnotatorClient>,
-    ) -> wasmtime::Result<()> {
+    fn drop(&mut self, rep: Resource<AnnotatorClient>) -> wasmtime::Result<()> {
         let _ = self.table.delete(rep);
         Ok(())
     }
@@ -235,14 +216,11 @@ impl HostLogger for WitmProxy<'_> {
 }
 
 impl HostCapabilityProvider for WitmProxy<'_> {
-    fn logger(
-        &mut self,
-        _self: Resource<CapabilityProvider>,
-    ) -> Option<Resource<Logger>> {
+    fn logger(&mut self, _self: Resource<CapabilityProvider>) -> Option<Resource<Logger>> {
         let logger = Logger {};
         Some(self.table.push(logger).unwrap())
     }
-    
+
     fn local_storage(
         &mut self,
         _self: Resource<CapabilityProvider>,
@@ -259,10 +237,7 @@ impl HostCapabilityProvider for WitmProxy<'_> {
         Some(self.table.push(client).unwrap())
     }
 
-    fn drop(
-        &mut self,
-        rep: Resource<CapabilityProvider>,
-    ) -> wasmtime::Result<()> {
+    fn drop(&mut self, rep: Resource<CapabilityProvider>) -> wasmtime::Result<()> {
         let _ = self.table.delete(rep);
         Ok(())
     }
@@ -315,64 +290,4 @@ struct HasWitmProxy;
 
 impl HasData for HasWitmProxy {
     type Data<'a> = WitmProxy<'a>;
-}
-
-impl From<PluginManifest> for WitmPlugin {
-    fn from(manifest: PluginManifest) -> Self {
-        let metadata = manifest
-            .metadata
-            .iter()
-            .cloned()
-            .map(|Tag { key, value }| (key, value))
-            .collect::<HashMap<String, String>>();
-
-        // Compile the CEL filter from the cel_source
-        let cel_filter = if !manifest.cel.is_empty() {
-            match cel::Program::compile(&manifest.cel) {
-                Ok(program) => Some(program),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to compile CEL expression '{}' for plugin {}: {}. Plugin will be disabled.",
-                        manifest.cel,
-                        manifest.name,
-                        e
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // TODO: implement proper capability negotiation
-        // Process capabilities from the manifest
-        let mut granted = CapabilitySet::new();
-        let mut requested = CapabilitySet::new();
-        
-        for capability_str in &manifest.capabilities {
-            let capability = crate::plugins::capability::Capability::from(capability_str.clone());
-            // For now, grant all requested capabilities
-            granted.insert(capability.clone());
-            requested.insert(capability);
-        }
-
-        WitmPlugin {
-            namespace: manifest.namespace,
-            name: manifest.name,
-            version: manifest.version,
-            author: manifest.author,
-            description: manifest.description,
-            license: manifest.license,
-            url: manifest.url,
-            publickey: manifest.publickey,
-            enabled: true,
-            granted,
-            requested,
-            component: None,
-            component_bytes: vec![],
-            metadata,
-            cel_filter,
-            cel_source: manifest.cel,
-        }
-    }
 }

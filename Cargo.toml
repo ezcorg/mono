@@ -6,12 +6,16 @@ members = [
     "src/apps/eznote/src-tauri", 
     "src/rust/wasm-test-component",
     "src/rust/ezfilter-rs",
-    "src/rust/ezfilter-filter",
     "src/rust/ezfeature-rs",
     "src/rust/confique",
+    "src/rust/witmproxy-plugin-noop",
 ]
 
-exclude = ["src/apps/wasmtime", "src/apps/wasm-pkg-tools"]
+exclude = [
+    "src/apps/wasmtime", 
+    "src/apps/wasm-pkg-tools", 
+    "src/rust/ezfilter-filter",
+]
 
 # Workspace-wide configuration
 [profile.release]

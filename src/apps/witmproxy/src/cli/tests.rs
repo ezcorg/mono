@@ -3,12 +3,40 @@ mod tests {
         AppConfig, Db, Runtime,
         cli::{Commands, ResolvedCli, plugin::PluginCommands},
         config::confique_partial_app_config::PartialAppConfig,
-        plugins::WitmPlugin,
+        plugins::{
+            WitmPlugin,
+            cel::{CelConnect, CelRequest, CelResponse},
+        },
         test_utils::test_component_path,
     };
+    use anyhow::Result;
+    use cel_cxx::Env;
     use confique::{Config, Partial};
     use std::path::Path;
     use tempfile::tempdir;
+
+    /// Helper function to create a static CEL environment for tests
+    fn create_static_cel_env() -> Result<&'static Env<'static>> {
+        let env = Env::builder()
+            .with_standard(true)
+            .declare_variable::<CelConnect>("connect")?
+            .register_member_function("host", CelConnect::host)?
+            .register_member_function("port", CelConnect::port)?
+            .declare_variable::<CelRequest>("request")?
+            .register_member_function("scheme", CelRequest::scheme)?
+            .register_member_function("host", CelRequest::host)?
+            .register_member_function("path", CelRequest::path)?
+            .register_member_function("query", CelRequest::query)?
+            .register_member_function("method", CelRequest::method)?
+            .register_member_function("headers", CelRequest::headers)?
+            .declare_variable::<CelResponse>("response")?
+            .register_member_function("status", CelResponse::status)?
+            .register_member_function("headers", CelResponse::headers)?
+            .build()?;
+        // Leak the env to get a static reference since it contains only static data
+        // and we want it to live for the program duration
+        Ok(Box::leak(Box::new(env)))
+    }
 
     /// Test helper that creates a ResolvedCli with test configuration
     async fn create_test_cli(temp_path: &Path) -> ResolvedCli {
@@ -33,7 +61,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_witm_plugin_add_local_wasm() {
+    async fn test_witm_plugin_add_local_wasm() -> Result<()> {
         // Create a temporary directory for the test config
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
@@ -58,44 +86,39 @@ mod tests {
                 source: wasm_path.clone(),
             },
         };
-        let result = cli.handle_command(&command).await;
+        cli.handle_command(&command).await?;
+        // Verify the plugin was actually added to the database
+        let db_file_path = temp_path.join("test.db");
+        let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
-        match result {
-            Ok(()) => {
-                // Verify the plugin was actually added to the database
-                let db_file_path = temp_path.join("test.db");
-                let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
+        // Create runtime to check plugins
+        let runtime = Runtime::default().unwrap();
+        let env = create_static_cel_env()?;
+        let plugins = WitmPlugin::all(&mut db, &runtime.engine, env)
+            .await
+            .unwrap();
+        assert!(
+            !plugins.is_empty(),
+            "No plugins found in database after adding"
+        );
 
-                // Create runtime to check plugins
-                let runtime = Runtime::default().unwrap();
-                let plugins = WitmPlugin::all(&mut db, &runtime.engine).await.unwrap();
+        // Check that at least one plugin was added
+        let test_plugin = plugins
+            .iter()
+            .find(|p| p.name.contains("test") || p.namespace.contains("test"));
+        assert!(test_plugin.is_some(), "Test plugin not found in database");
 
-                assert!(
-                    !plugins.is_empty(),
-                    "No plugins found in database after adding"
-                );
-
-                // Check that at least one plugin was added
-                let test_plugin = plugins
-                    .iter()
-                    .find(|p| p.name.contains("test") || p.namespace.contains("test"));
-                assert!(test_plugin.is_some(), "Test plugin not found in database");
-
-                if let Some(plugin) = test_plugin {
-                    assert!(
-                        !plugin.component_bytes.is_empty(),
-                        "Plugin component bytes should not be empty"
-                    );
-                    assert!(
-                        !plugin.publickey.is_empty(),
-                        "Plugin should have a public key"
-                    );
-                }
-            }
-            Err(e) => {
-                panic!("Failed to add plugin: {}", e);
-            }
+        if let Some(plugin) = test_plugin {
+            assert!(
+                !plugin.component_bytes.is_empty(),
+                "Plugin component bytes should not be empty"
+            );
+            assert!(
+                !plugin.publickey.is_empty(),
+                "Plugin should have a public key"
+            );
         }
+        Ok(())
     }
 
     #[tokio::test]
@@ -153,7 +176,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_witm_plugin_remove_by_name() {
+    async fn test_witm_plugin_remove_by_name() -> Result<()> {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
 
@@ -185,7 +208,10 @@ mod tests {
         let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
         let runtime = Runtime::default().unwrap();
-        let plugins_before = WitmPlugin::all(&mut db, &runtime.engine).await.unwrap();
+        let env = create_static_cel_env()?;
+        let plugins_before = WitmPlugin::all(&mut db, &runtime.engine, env)
+            .await
+            .unwrap();
         assert!(!plugins_before.is_empty(), "No plugins found after adding");
 
         let test_plugin = &plugins_before[0];
@@ -205,15 +231,18 @@ mod tests {
         );
 
         // Verify plugin was removed
-        let plugins_after = WitmPlugin::all(&mut db, &runtime.engine).await.unwrap();
+        let plugins_after = WitmPlugin::all(&mut db, &runtime.engine, env)
+            .await
+            .unwrap();
         assert!(
             plugins_after.is_empty(),
             "Plugin was not removed from database"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_witm_plugin_remove_by_namespace_name() {
+    async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
 
@@ -245,7 +274,10 @@ mod tests {
         let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
         let runtime = Runtime::default().unwrap();
-        let plugins_before = WitmPlugin::all(&mut db, &runtime.engine).await.unwrap();
+        let env = create_static_cel_env()?;
+        let plugins_before = WitmPlugin::all(&mut db, &runtime.engine, env)
+            .await
+            .unwrap();
         assert!(!plugins_before.is_empty(), "No plugins found after adding");
 
         let test_plugin = &plugins_before[0];
@@ -265,11 +297,14 @@ mod tests {
         );
 
         // Verify plugin was removed
-        let plugins_after = WitmPlugin::all(&mut db, &runtime.engine).await.unwrap();
+        let plugins_after = WitmPlugin::all(&mut db, &runtime.engine, env)
+            .await
+            .unwrap();
         assert!(
             plugins_after.is_empty(),
             "Plugin was not removed from database"
         );
+        Ok(())
     }
 
     #[tokio::test]

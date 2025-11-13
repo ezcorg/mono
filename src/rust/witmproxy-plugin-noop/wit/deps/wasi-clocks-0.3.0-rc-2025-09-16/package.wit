@@ -1,0 +1,45 @@
+package wasi:clocks@0.3.0-rc-2025-09-16;
+
+interface types {
+  type duration = u64;
+}
+
+interface monotonic-clock {
+  use types.{duration};
+
+  type instant = u64;
+
+  now: func() -> instant;
+
+  get-resolution: func() -> duration;
+
+  wait-until: async func(when: instant);
+
+  wait-for: async func(how-long: duration);
+}
+
+interface wall-clock {
+  record datetime {
+    seconds: u64,
+    nanoseconds: u32,
+  }
+
+  now: func() -> datetime;
+
+  get-resolution: func() -> datetime;
+}
+
+interface timezone {
+  use wall-clock.{datetime};
+
+  record timezone-display {
+    utc-offset: s32,
+    name: string,
+    in-daylight-saving-time: bool,
+  }
+
+  display: func(when: datetime) -> timezone-display;
+
+  utc-offset: func(when: datetime) -> s32;
+}
+
