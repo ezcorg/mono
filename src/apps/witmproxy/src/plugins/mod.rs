@@ -68,7 +68,12 @@ impl WitmPlugin {
     }
 
     /// Only needs the `component` column
-    pub async fn from_db_row(plugin_row: SqliteRow, db: &mut Db, engine: &Engine, env: &'static cel_cxx::Env<'static>) -> Result<Self> {
+    pub async fn from_db_row(
+        plugin_row: SqliteRow,
+        db: &mut Db,
+        engine: &Engine,
+        env: &'static cel_cxx::Env<'static>,
+    ) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
         let component = Component::from_binary(engine, &component_bytes)?;
@@ -97,8 +102,9 @@ impl WitmPlugin {
             })
             .await??;
 
-        let mut plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes)
-        .compile_capabilities(env)?;
+        let mut plugin = WitmPlugin::from(guest_result)
+            .with_component(component, component_bytes)
+            .compile_capabilities(env)?;
         let capabilities = query(
             "
             SELECT capability, config, granted
@@ -150,7 +156,11 @@ impl WitmPlugin {
         Ok(plugin)
     }
 
-    pub async fn all(db: &mut Db, engine: &wasmtime::Engine, env: &'static cel_cxx::Env<'static>) -> Result<Vec<Self>> {
+    pub async fn all(
+        db: &mut Db,
+        engine: &wasmtime::Engine,
+        env: &'static cel_cxx::Env<'static>,
+    ) -> Result<Vec<Self>> {
         let rows = query(
             "
             SELECT component

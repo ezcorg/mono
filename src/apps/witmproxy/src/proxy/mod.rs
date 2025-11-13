@@ -366,32 +366,35 @@ fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
             if let Ok(host_str) = host_header.to_str() {
                 // Clone the host string to avoid borrowing conflicts
                 let host_string = host_str.to_string();
-                
+
                 // Reconstruct URI with authority from Host header
                 let original_uri = req.uri();
                 let mut uri_builder = hyper::Uri::builder();
-                
+
                 // Preserve scheme (default to https for TLS connections)
                 if let Some(scheme) = original_uri.scheme() {
                     uri_builder = uri_builder.scheme(scheme.clone());
                 } else {
                     uri_builder = uri_builder.scheme("https");
                 }
-                
+
                 // Add authority from Host header
                 uri_builder = uri_builder.authority(host_string.as_str());
-                
+
                 // Preserve path and query
                 if let Some(path_and_query) = original_uri.path_and_query() {
                     uri_builder = uri_builder.path_and_query(path_and_query.clone());
                 } else {
                     uri_builder = uri_builder.path_and_query("/");
                 }
-                
+
                 // Build new URI and update request
                 if let Ok(new_uri) = uri_builder.build() {
                     *req.uri_mut() = new_uri;
-                    debug!("Fixed origin-form request: added authority '{}' to URI", host_string);
+                    debug!(
+                        "Fixed origin-form request: added authority '{}' to URI",
+                        host_string
+                    );
                 }
             }
         }
@@ -540,4 +543,3 @@ async fn run_tls_mitm(
 
     Ok(())
 }
-

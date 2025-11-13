@@ -1,4 +1,12 @@
-use crate::{exports::witmproxy::plugin::witm_plugin::{CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, PluginManifest, Request, Response}, witmproxy::plugin::capabilities::{Capabilities, ConnectCapability, RequestCapability, ResponseCapability}};
+use crate::{
+    exports::witmproxy::plugin::witm_plugin::{
+        CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, PluginManifest,
+        Request, Response,
+    },
+    witmproxy::plugin::capabilities::{
+        Capabilities, ConnectCapability, RequestCapability, ResponseCapability,
+    },
+};
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
@@ -23,10 +31,10 @@ impl Guest for Plugin {
                     filter: "true".to_string(),
                 },
                 request: Some(RequestCapability {
-                    filter: "true".to_string()
+                    filter: "true".to_string(),
                 }),
                 response: Some(ResponseCapability {
-                    filter: "true".to_string()
+                    filter: "true".to_string(),
                 }),
             },
             license: "MIT".to_string(),
