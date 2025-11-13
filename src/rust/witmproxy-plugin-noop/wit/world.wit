@@ -1,0 +1,108 @@
+package witmproxy:plugin@0.0.3;
+
+interface capabilities {
+    // resource http-client {}
+    // resource key-value-client {}
+    // resource sql-client {}
+    // resource queue-client {}
+
+    record capabilities {
+        connect: connect-capability,
+        request: option<request-capability>,
+        response: option<response-capability>,
+    }
+
+    // Capability required to MITM connections, all plugins must specify this to handle connections
+    record connect-capability {
+        // CEL filter determining which connections the plugin wants to handle
+        filter: string,
+    }
+
+    // Capability required to handle requests
+    record request-capability {
+        // CEL filter determining which requests the plugin wants to handle
+        filter: string,
+    }
+
+    // Capability required to handle responses
+    record response-capability {
+        // CEL filter determining which responses the plugin wants to handle
+        filter: string,
+    }
+
+    resource logger {
+        info: func(message: string);
+        warn: func(message: string);
+        error: func(message: string);
+        debug: func(message: string);
+    }
+
+    resource annotator-client {
+        annotate: func(content: list<u8>);
+    }
+
+    resource local-storage-client {
+        set: func(key: string, value: list<u8>);
+        get: func(key: string) -> option<list<u8>>;
+        delete: func(key: string);
+    }
+
+    resource capability-provider {
+        // http: func() -> option<http-client>;
+        // kv: func() -> option<key-value-client>;
+        // sql: func() -> option<sql-client>;
+        // queue: func() -> option<queue-client>;
+        logger: func() -> option<logger>;
+        annotator: func() -> option<annotator-client>;
+        local-storage: func() -> option<local-storage-client>;
+    }
+}
+
+interface witm-plugin {
+    use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
+    use capabilities.{capability-provider, capabilities, connect-capability, request-capability, response-capability};
+
+    record tag {
+        key: string,
+        value: string,
+    }
+
+    record plugin-manifest {
+        name: string,
+        namespace: string,
+        author: string,
+        version: string,
+        description: string,
+        license: string,
+        url: string,
+        publickey: list<u8>,
+        capabilities: capabilities,
+        metadata: list<tag>,
+    }
+
+    manifest: func() -> plugin-manifest;
+
+    variant request-or-response {
+        request(request),
+        response(response),
+    }
+
+    variant handle-request-result {
+        next(request),
+        done(request-or-response),
+    }
+
+    handle-request: func(r: request, cp: capability-provider) -> handle-request-result;
+
+    variant handle-response-result {
+        next(response),
+        done(response),
+    }
+
+    handle-response: func(r: response, cp: capability-provider) -> handle-response-result;
+}
+
+world plugin {
+    import capabilities;
+    export witm-plugin;
+}

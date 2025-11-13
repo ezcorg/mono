@@ -8,9 +8,14 @@ members = [
     "src/rust/ezfilter-rs",
     "src/rust/ezfeature-rs",
     "src/rust/confique",
+    "src/rust/witmproxy-plugin-noop",
 ]
 
-exclude = ["src/apps/wasmtime", "src/apps/wasm-pkg-tools", "src/rust/ezfilter-filter"]
+exclude = [
+    "src/apps/wasmtime", 
+    "src/apps/wasm-pkg-tools", 
+    "src/rust/ezfilter-filter",
+]
 
 # Workspace-wide configuration
 [profile.release]

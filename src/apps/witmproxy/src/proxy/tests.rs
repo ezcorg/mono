@@ -1,6 +1,10 @@
 mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::RwLock;
+
     use crate::ProxyServer;
-    use crate::test_utils::{Protocol, create_ca_and_config, create_client, create_hello_server};
+    use crate::test_utils::{Protocol, create_ca_and_config, create_client, create_hello_server, create_plugin_registry, register_noop_plugin};
 
     struct TestCase {
         client_proto: Protocol,
@@ -14,11 +18,13 @@ mod tests {
         let (ca, mut config) = create_ca_and_config().await;
         let server_handle =
             create_hello_server("127.0.0.1", test.target_port, ca.clone(), test.server_proto).await;
+        let (mut registry, _temp_dir) = create_plugin_registry().await.unwrap();
+        register_noop_plugin(&mut registry).await.unwrap();
 
         // Set the specific proxy port for testing
         config.proxy.proxy_bind_addr = Some(format!("127.0.0.1:{}", test.proxy_port));
 
-        let mut proxy = ProxyServer::new(ca.clone(), None, config).unwrap();
+        let mut proxy = ProxyServer::new(ca.clone(), Some(Arc::new(RwLock::new(registry))), config).unwrap();
         proxy.start().await.unwrap();
         let actual_proxy_addr = proxy.listen_addr().unwrap();
         let client = create_client(

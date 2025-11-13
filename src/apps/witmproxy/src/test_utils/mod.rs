@@ -76,6 +76,15 @@ pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<()
     registry.register_plugin(plugin).await
 }
 
+pub async fn register_noop_plugin(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+    let wasm_path = noop_plugin_path();
+    let component_bytes = std::fs::read(&wasm_path).unwrap();
+
+    // Use the actual plugin_from_component method to test the real code path
+    let plugin = registry.plugin_from_component(component_bytes).await?;
+    registry.register_plugin(plugin).await
+}
+
 pub async fn create_db() -> (Db, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test.db");
@@ -392,6 +401,13 @@ pub async fn create_client(
 pub fn test_component_path() -> String {
     format!(
         "{}/../../../target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
+pub fn noop_plugin_path() -> String {
+    format!(
+        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noop.signed.wasm",
         env!("CARGO_MANIFEST_DIR")
     )
 }

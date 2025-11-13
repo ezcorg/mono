@@ -19,21 +19,19 @@ mod tests {
     fn create_static_cel_env() -> Result<&'static Env<'static>> {
         let env = Env::builder()
             .with_standard(true)
-            .with_optional(true)
-            .with_ext_select_optimization(true)
             .declare_variable::<CelConnect>("connect")?
-            // .register_member_function("host", CelConnect::host)?
-            // .register_member_function("port", CelConnect::port)?
+            .register_member_function("host", CelConnect::host)?
+            .register_member_function("port", CelConnect::port)?
             .declare_variable::<CelRequest>("request")?
-            // .register_member_function("scheme", CelRequest::scheme)?
-            // .register_member_function("host", CelRequest::host)?
-            // .register_member_function("path", CelRequest::path)?
-            // .register_member_function("query", CelRequest::query)?
-            // .register_member_function("method", CelRequest::method)?
-            // .register_member_function("headers", CelRequest::headers)?
+            .register_member_function("scheme", CelRequest::scheme)?
+            .register_member_function("host", CelRequest::host)?
+            .register_member_function("path", CelRequest::path)?
+            .register_member_function("query", CelRequest::query)?
+            .register_member_function("method", CelRequest::method)?
+            .register_member_function("headers", CelRequest::headers)?
             .declare_variable::<CelResponse>("response")?
-            // .register_member_function("status", CelResponse::status)?
-            // .register_member_function("headers", CelResponse::headers)?
+            .register_member_function("status", CelResponse::status)?
+            .register_member_function("headers", CelResponse::headers)?
             .build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration

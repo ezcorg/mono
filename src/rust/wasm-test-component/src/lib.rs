@@ -26,10 +26,10 @@ impl Guest for Plugin {
                     filter: "true".to_string(),
                 },
                 request: Some(RequestCapability {
-                    filter: "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])".to_string()
+                    filter: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string()
                 }),
                 response: Some(ResponseCapability {
-                    filter: "request.host != 'donotprocess.com' && !('skipthis' in request.headers && 'true' in request.headers['skipthis'])".to_string()
+                    filter: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string()
                 }),
             },
             license: "MIT".to_string(),

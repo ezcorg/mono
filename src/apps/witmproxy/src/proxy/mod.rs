@@ -152,10 +152,10 @@ impl ProxyServer {
         };
 
         let cel_connect = CelConnect { host, port };
-        let registry = plugin_registry.read().await;
-
-        // Check if any plugin can handle this connection
-        let has_matching_plugin = registry.can_handle_connect(&cel_connect);
+        let has_matching_plugin = {
+            let registry = plugin_registry.read().await;
+            registry.can_handle_connect(&cel_connect)
+        };
 
         if has_matching_plugin {
             debug!(
@@ -358,6 +358,47 @@ pub(crate) async fn perform_upstream(
     }
 }
 
+/// Fix origin-form requests by adding authority from Host header to URI
+fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
+    // Check if URI has no authority but has a Host header (origin-form request)
+    if req.uri().authority().is_none() {
+        if let Some(host_header) = req.headers().get(hyper::header::HOST) {
+            if let Ok(host_str) = host_header.to_str() {
+                // Clone the host string to avoid borrowing conflicts
+                let host_string = host_str.to_string();
+                
+                // Reconstruct URI with authority from Host header
+                let original_uri = req.uri();
+                let mut uri_builder = hyper::Uri::builder();
+                
+                // Preserve scheme (default to https for TLS connections)
+                if let Some(scheme) = original_uri.scheme() {
+                    uri_builder = uri_builder.scheme(scheme.clone());
+                } else {
+                    uri_builder = uri_builder.scheme("https");
+                }
+                
+                // Add authority from Host header
+                uri_builder = uri_builder.authority(host_string.as_str());
+                
+                // Preserve path and query
+                if let Some(path_and_query) = original_uri.path_and_query() {
+                    uri_builder = uri_builder.path_and_query(path_and_query.clone());
+                } else {
+                    uri_builder = uri_builder.path_and_query("/");
+                }
+                
+                // Build new URI and update request
+                if let Ok(new_uri) = uri_builder.build() {
+                    *req.uri_mut() = new_uri;
+                    debug!("Fixed origin-form request: added authority '{}' to URI", host_string);
+                }
+            }
+        }
+    }
+    req
+}
+
 /// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
 /// with a Hyper auto server (h1 or h2) and forwards each request to the real upstream via `upstream`.
 async fn run_tls_mitm(
@@ -392,6 +433,7 @@ async fn run_tls_mitm(
             async move {
                 let method = req.method().clone();
                 let uri = req.uri().clone();
+                let req = fix_origin_form_request(req);
                 debug!("Handling TLS request: {} {}", method, uri);
                 let mut request_ctx = CelRequest::from(&req);
 
@@ -498,3 +540,4 @@ async fn run_tls_mitm(
 
     Ok(())
 }
+

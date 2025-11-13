@@ -111,7 +111,7 @@ impl PluginHandler {
             define: vec![format!("plugin-name={}", plugin_name)],
             init: false,
             destination: Some(destination),
-            force_git_init: true,
+            force_git_init: false,
             allow_commands: false,
             overwrite: false,
             skip_submodules: false,
