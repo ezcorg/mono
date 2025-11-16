@@ -49,7 +49,6 @@ impl WitmProxy {
     /// * [`ca`](CertificateAuthority) - The certificate authority for TLS operations
     /// * [`plugin_registry`](PluginRegistry) - Optional plugin registry for WASM plugins
     /// * [`config`](AppConfig) - The application configuration
-    /// * `log_level` - The log level to use for the proxy (e.g. "info", "debug")
     pub fn new(
         ca: CertificateAuthority,
         plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,

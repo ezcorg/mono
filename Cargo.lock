@@ -2760,18 +2760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ezfilter-rs"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tokio",
-]
-
-[[package]]
 name = "eznote"
 version = "0.1.0"
 dependencies = [
@@ -2781,6 +2769,10 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
 ]
+
+[[package]]
+name = "ezvote"
+version = "0.1.0"
 
 [[package]]
 name = "fallible-iterator"
