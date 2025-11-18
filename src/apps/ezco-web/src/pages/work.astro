@@ -153,7 +153,7 @@ const projects = [
 				<div class="grid-item" data-project-title="new-project">
 					<a href="/newproject" class="block w-full h-full">
 						<div
-							class="work-item-card new-project-card h-full border-2 border-dashed border-[#666666] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden"
+							class="work-item-card new-project-card h-full hover:bg-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden"
 						>
 							<div class="p-6">
 								<div
@@ -391,8 +391,8 @@ function applyRainbowPatternBorder(element: HTMLElement, options: any = {}) {
     element.style.position = "relative";
   }
 
-  // Get element dimensions and create rainbow border
-  const createRainbowBorder = () => {
+  // Get element dimensions
+  const updateBorder = () => {
     const rect = element.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
@@ -419,7 +419,6 @@ function applyRainbowPatternBorder(element: HTMLElement, options: any = {}) {
     svg.style.top = "0";
     svg.style.left = "0";
     svg.style.pointerEvents = "none";
-    svg.style.opacity = "1";
     svg.style.zIndex = "1";
     element.appendChild(svg);
 
@@ -613,104 +612,22 @@ function applyRainbowPatternBorder(element: HTMLElement, options: any = {}) {
     leftAnimate.setAttribute("repeatCount", "indefinite");
     leftLine.appendChild(leftAnimate);
     svg.appendChild(leftLine);
-
-    return svg;
   };
 
-  // Track current state to avoid redundant operations
-  let isRainbowActive = false;
+  // Initial render
+  updateBorder();
 
-  // Event handlers for hover/focus/active states
-  const showRainbowBorder = () => {
-    if (isRainbowActive) return;
-    isRainbowActive = true;
-
-    // Create and show rainbow border
-    const svg = createRainbowBorder();
-  };
-
-  const hideRainbowBorder = () => {
-    if (!isRainbowActive) return;
-    isRainbowActive = false;
-
-    const svg = element.querySelector('.rainbow-border-svg') as SVGElement;
-	svg.remove();
-  };
-
-  // Check pseudo-class states (works with dev tools and natural interaction)
-  const checkPseudoClassStates = () => {
-    const isHover = element.matches(':hover');
-    const isFocus = element.matches(':focus');
-    const isActive = element.matches(':active');
-    const hasActiveClass = element.classList.contains('active');
-    
-    const shouldShowRainbow = isHover || isFocus || isActive || hasActiveClass;
-    
-    if (shouldShowRainbow && !isRainbowActive) {
-      showRainbowBorder();
-    } else if (!shouldShowRainbow && isRainbowActive) {
-      hideRainbowBorder();
-    }
-  };
-
-  // Poll for pseudo-class state changes using requestAnimationFrame
-  let animationFrameId: number;
-  const startPolling = () => {
-    const poll = () => {
-      checkPseudoClassStates();
-      animationFrameId = requestAnimationFrame(poll);
-    };
-    poll();
-  };
-
-  const stopPolling = () => {
-    if (animationFrameId) {
-      cancelAnimationFrame(animationFrameId);
-    }
-  };
-
-  // Start polling immediately
-  startPolling();
-
-  // Add event listeners as backup (for performance optimization)
-  element.addEventListener('mouseenter', showRainbowBorder);
-  element.addEventListener('mouseleave', hideRainbowBorder);
-  element.addEventListener('focus', showRainbowBorder);
-  element.addEventListener('blur', hideRainbowBorder);
-
-  // Handle active state through classes
-  const observeActiveState = () => {
-    const observer = new MutationObserver(() => {
-      checkPseudoClassStates();
-    });
-
-    observer.observe(element, { attributes: true, attributeFilter: ['class'] });
-    return observer;
-  };
-
-  const mutationObserver = observeActiveState();
-
-  // Resize observer to update border on size changes
+  // Observe resizing
   const resizeObserver = new ResizeObserver(() => {
-    const svg = element.querySelector('.rainbow-border-svg');
-    if (svg) {
-      // Recreate border if currently visible
-      hideRainbowBorder();
-      showRainbowBorder();
-    }
+    updateBorder();
   });
   resizeObserver.observe(element);
 
   // Return cleanup function
   return () => {
-    stopPolling();
-    element.removeEventListener('mouseenter', showRainbowBorder);
-    element.removeEventListener('mouseleave', hideRainbowBorder);
-    element.removeEventListener('focus', showRainbowBorder);
-    element.removeEventListener('blur', hideRainbowBorder);
-    mutationObserver.disconnect();
     resizeObserver.disconnect();
-    hideRainbowBorder();
+    const svg = element.querySelector('.rainbow-border-svg');
+    if (svg) svg.remove();
   };
 }
 
