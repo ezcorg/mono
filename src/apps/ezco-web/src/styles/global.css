@@ -85,19 +85,6 @@ body {
         cursor: pointer;
     }
 
-    h1,
-    h2,
-    h3,
-    h4,
-    h5,
-    h6,
-    p {
-        font-size: revert;
-        font-weight: revert;
-        line-height: revert;
-        margin: revert;
-    }
-
     li>p {
         margin-top: 0;
         margin-bottom: 0;

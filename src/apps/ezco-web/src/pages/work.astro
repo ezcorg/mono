@@ -1,44 +1,44 @@
 ---
-import Layout from '../layouts/Layout.astro';
-import Footer from '../components/Footer.astro';
-import Navbar from '../components/Navbar.astro';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import Layout from "../layouts/Layout.astro";
+import Footer from "../components/Footer.astro";
+import Navbar from "../components/Navbar.astro";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 // Read Packery script from public directory at build time
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const publicDir = join(__dirname, '../../public');
-const packeryScript = readFileSync(join(publicDir, 'packery.min.js'), 'utf-8');
+const publicDir = join(__dirname, "../../public");
+const packeryScript = readFileSync(join(publicDir, "packery.min.js"), "utf-8");
 
 // Inline Packery script to avoid FOUC, sure would be nice if browser supported Masonry grid natively
 const packeryLoad =
 	"<script type='module'>" + packeryScript + ";window.PackeryInit()</script>";
 const projects = [
 	{
-		title: 'markdown-editor',
-		icon: '📝',
-		description: 'An intuitive, minimal, extensible markdown editor component',
-		tags: ['TipTap', 'ProseMirror', 'TypeScript'],
-		link: 'https://github.com/join-ezco/mono/tree/main/src/typescript/markdown-editor',
+		title: "markdown-editor",
+		icon: "📝",
+		description:
+			"An intuitive, minimal, extensible markdown editor component",
+		tags: ["TipTap", "ProseMirror", "TypeScript"],
+		link: "https://github.com/join-ezco/mono/tree/main/src/typescript/markdown-editor",
 	},
 	{
-		title: 'codeblock',
-		icon: '💻',
+		title: "codeblock",
+		icon: "💻",
 		description:
-			'A codeblock component with language server and virtual filesystem support',
-		tags: ['CodeMirror', 'TypeScript'],
-		link: 'https://github.com/join-ezco/mono/tree/main/src/typescript/codeblock',
+			"A codeblock component with language server and virtual filesystem support",
+		tags: ["CodeMirror", "TypeScript"],
+		link: "https://github.com/join-ezco/mono/tree/main/src/typescript/codeblock",
 	},
 	{
-		title: 'witmproxy',
-		icon: '🌐',
-		description:
-			'A WASM-in-the-middle proxy',
-		tags: ['Rust', 'Plugins', 'WASM', 'mitmproxy'],
-		link: 'https://github.com/join-ezco/mono/tree/main/src/apps/witmproxy',
-	}
+		title: "witmproxy",
+		icon: "🌐",
+		description: "A WASM-in-the-middle proxy",
+		tags: ["Rust", "Plugins", "WASM", "mitmproxy"],
+		link: "https://github.com/join-ezco/mono/tree/main/src/apps/witmproxy",
+	},
 ];
 ---
 
@@ -75,22 +75,18 @@ const projects = [
 		});
 	}
 
-	waitForElm('#loading-skeleton').then(async (loadingSkeleton) => {
+	waitForElm("#loading-skeleton").then(async (loadingSkeleton) => {
 		await window.PackeryPromise;
 
 		window.skeletonPackery = new window.Packery(loadingSkeleton, {
-			itemSelector: '.grid-item',
-			sizer: '.grid-sizer',
+			itemSelector: ".grid-item",
+			sizer: ".grid-sizer",
 			gutter: 16,
 			percentPosition: true,
 		});
 	});
 </script>
-
-<Layout
-	title="Work | ez co"
-	description="A showcase of projects we've built."
->
+<Layout title="Work | ez co" description="A showcase of projects we've built.">
 	<section
 		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-4 md:px-8"
 	>
@@ -100,24 +96,28 @@ const projects = [
 			{/* Loading skeleton placeholders - using same grid structure */}
 			<div id="loading-skeleton" class="opacity-100">
 				<div class="grid-sizer"></div>
-				
-				{/* New Project skeleton - matches the actual new-project card */}
+
+				{
+					/* New Project skeleton - matches the actual new-project card */
+				}
 				<div class="grid-item skeleton-item">
-					<div class="skeleton-card border-2 border-dashed border-[#666666] overflow-hidden">
+					<div
+						class="skeleton-card border-2 border-dashed border-[#666666] overflow-hidden"
+					>
 						<div class="p-6">
 							<div class="flex items-center justify-between mb-3">
-								<div class="skeleton-title" />
-								<div class="skeleton-button" />
+								<div class="skeleton-title"></div>
+								<div class="skeleton-button"></div>
 							</div>
-							<div class="skeleton-description mb-4" />
-							<div class="skeleton-description-line mb-4" />
+							<div class="skeleton-description mb-4"></div>
+							<div class="skeleton-description-line mb-4"></div>
 							<div class="flex flex-wrap gap-2">
-								<div class="skeleton-tag" />
+								<div class="skeleton-tag"></div>
 							</div>
 						</div>
 					</div>
 				</div>
-				
+
 				{/* Regular project skeletons */}
 				{
 					projects.map((_, index) => (
@@ -151,23 +151,31 @@ const projects = [
 
 				{/* New Project Action Card - First Item */}
 				<div class="grid-item" data-project-title="new-project">
-					<a
-						href="/newproject"
-						class="block w-full h-full"
-					>
-						<div class="work-item-card new-project-card h-full border-2 border-dashed border-[#666666] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden">
+					<a href="/newproject" class="block w-full h-full">
+						<div
+							class="work-item-card new-project-card h-full border-2 border-dashed border-[#666666] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden"
+						>
 							<div class="p-6">
-								<div class="flex items-center justify-between mb-3">
-									<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title">
-										[ your project here ] 
+								<div
+									class="flex items-center justify-between mb-3"
+								>
+									<h3
+										class="text-2xl font-bold text-[#F5F5F5] work-item-title"
+									>
+										[ your project here ]
 									</h3>
 									<span>✨</span>
 								</div>
-								<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
-									Want to see your idea come to life? Let's build it together.
+								<p
+									class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description"
+								>
+									Want to see your idea come to life? Let's
+									build it together.
 								</p>
 								<div class="flex flex-wrap gap-2">
-									<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+									<span
+										class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag"
+									>
 										Start a new project
 									</span>
 								</div>
@@ -190,16 +198,36 @@ const projects = [
 											{project.title}
 										</h3>
 										{/* Only show toggle button if project has a demo */}
-										{(project.title === 'markdown-editor' || project.title === 'codeblock') && (
+										{(project.title === "markdown-editor" ||
+											project.title === "codeblock") && (
 											<button
 												class="expand-toggle relative flex items-center justify-center w-6 h-6 text-[#F5F5F5] text-xl transition-transform duration-300"
 												aria-label="Toggle project details"
 											>
-												<span class="toggle-icon absolute">+</span>
+												<span class="toggle-icon absolute">
+													+
+												</span>
 												<span class="loading-icon absolute hidden">
-													<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-														<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.3"></circle>
-														<path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+													<svg
+														class="w-5 h-5"
+														viewBox="0 0 24 24"
+														fill="none"
+														xmlns="http://www.w3.org/2000/svg"
+													>
+														<circle
+															cx="12"
+															cy="12"
+															r="10"
+															stroke="currentColor"
+															stroke-width="2"
+															stroke-opacity="0.3"
+														/>
+														<path
+															d="M12 2a10 10 0 0 1 10 10"
+															stroke="currentColor"
+															stroke-width="2"
+															stroke-linecap="round"
+														/>
 													</svg>
 												</span>
 											</button>
@@ -246,8 +274,8 @@ const projects = [
 	<Footer slot="footer" />
 
 	<script>
-		import { CodeblockFS } from '@joinezco/codeblock';
-		import { files } from './data/work.js';
+		import { CodeblockFS } from "@joinezco/codeblock";
+		import { files } from "./data/work.js";
 
 		let pckry: any | null = null;
 		let resizeObserver: ResizeObserver | null = null;
@@ -275,13 +303,13 @@ const projects = [
 		init();
 
 		const demos = {
-			'markdown-editor': async (
+			"markdown-editor": async (
 				containerEl: HTMLElement,
 				containerParent: HTMLElement,
 			) => {
 				try {
 					const { createEditor } = await import(
-						'@joinezco/markdown-editor'
+						"@joinezco/markdown-editor"
 					);
 					// Ensure fs is initialized before using it
 					await initPromise;
@@ -290,21 +318,21 @@ const projects = [
 						element: containerEl,
 						fs: {
 							fs,
-							filepath: 'hello.md',
+							filepath: "hello.md",
 						},
 					});
 					editor.view.dom.setAttribute(
-						'data-theme',
-						containerParent.matches(':hover') ? 'light' : 'dark',
+						"data-theme",
+						containerParent.matches(":hover") ? "light" : "dark",
 					);
-					containerParent.addEventListener('mouseover', () => {
-						editor.view.dom.setAttribute('data-theme', 'light');
+					containerParent.addEventListener("mouseover", () => {
+						editor.view.dom.setAttribute("data-theme", "light");
 					});
-					containerParent.addEventListener('mouseout', () => {
-						editor.view.dom.setAttribute('data-theme', 'dark');
+					containerParent.addEventListener("mouseout", () => {
+						editor.view.dom.setAttribute("data-theme", "dark");
 					});
 				} catch (error) {
-					console.error('Failed to load markdown editor:', error);
+					console.error("Failed to load markdown editor:", error);
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
 				}
 			},
@@ -314,7 +342,7 @@ const projects = [
 			) => {
 				try {
 					const { createCodeblock, SearchIndex } = await import(
-						'@joinezco/codeblock'
+						"@joinezco/codeblock"
 					);
 
 					// Ensure fs is initialized before using it
@@ -322,57 +350,397 @@ const projects = [
 
 					const index = await SearchIndex.get(
 						fs,
-						'.codeblock/index.json',
+						".codeblock/index.json",
 					);
 					const codeblock = createCodeblock({
 						parent: containerEl,
 						fs,
-						filepath: 'example.ts',
+						filepath: "example.ts",
 						index,
-						cwd: '/',
+						cwd: "/",
 					});
 					codeblock.dom.setAttribute(
-						'data-theme',
-						containerParent.matches(':hover') ? 'light' : 'dark',
+						"data-theme",
+						containerParent.matches(":hover") ? "light" : "dark",
 					);
-					containerParent.addEventListener('mouseover', () => {
-						codeblock.dom.setAttribute('data-theme', 'light');
+					containerParent.addEventListener("mouseover", () => {
+						codeblock.dom.setAttribute("data-theme", "light");
 					});
-					containerParent.addEventListener('mouseout', () => {
-						codeblock.dom.setAttribute('data-theme', 'dark');
+					containerParent.addEventListener("mouseout", () => {
+						codeblock.dom.setAttribute("data-theme", "dark");
 					});
 				} catch (error) {
-					console.error('Failed to load codeblock editor:', error);
+					console.error("Failed to load codeblock editor:", error);
 					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
 				}
 			},
 		};
 
-		document.addEventListener('DOMContentLoaded', () => {
+function applyRainbowPatternBorder(element: HTMLElement, options: any = {}) {
+  const {
+    dashWidth = 12,
+    dashGap = 6,
+    strokeWidth = 2,
+    rainbowSpeed = 4, // seconds for one full cycle
+    dashSpeed = 8,
+  } = options;
+
+  const svgNS = "http://www.w3.org/2000/svg";
+
+  if (getComputedStyle(element).position === "static") {
+    element.style.position = "relative";
+  }
+
+  // Get element dimensions and create rainbow border
+  const createRainbowBorder = () => {
+    const rect = element.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+
+    // Calculate total perimeter for dash alignment
+    const perimeter = 2 * (width + height - 2 * strokeWidth);
+    const dashPattern = dashWidth + dashGap;
+    const numDashes = Math.floor(perimeter / dashPattern);
+    const adjustedDashPattern = perimeter / numDashes;
+    const adjustedDashWidth = (adjustedDashPattern * dashWidth) / dashPattern;
+    const adjustedDashGap = (adjustedDashPattern * dashGap) / dashPattern;
+
+    // Remove old SVG if it exists
+    const oldSvg = element.querySelector('.rainbow-border-svg');
+    if (oldSvg) oldSvg.remove();
+
+    // Create SVG overlay - same size as element
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.classList.add('rainbow-border-svg');
+    svg.setAttribute("width", `${width}`);
+    svg.setAttribute("height", `${height}`);
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.style.position = "absolute";
+    svg.style.top = "0";
+    svg.style.left = "0";
+    svg.style.pointerEvents = "none";
+    svg.style.opacity = "1";
+    svg.style.zIndex = "1";
+    element.appendChild(svg);
+
+    // Create defs
+    const defs = document.createElementNS(svgNS, "defs");
+
+    // Create rainbow colors that will cycle
+    const colors = ["#ff0000", "#ff8800", "#ffff00", "#00ff00", "#0088ff", "#8800ff"];
+    const numColors = colors.length;
+
+    // Create 4 separate gradients for each side
+    const createGradient = (id: string, isHorizontal: boolean, length: number) => {
+      const gradient = document.createElementNS(svgNS, "linearGradient");
+      gradient.setAttribute("id", id);
+      gradient.setAttribute("gradientUnits", "userSpaceOnUse");
+      
+      if (isHorizontal) {
+        gradient.setAttribute("x1", "0");
+        gradient.setAttribute("y1", "0");
+        gradient.setAttribute("x2", `${length}`);
+        gradient.setAttribute("y2", "0");
+      } else {
+        gradient.setAttribute("x1", "0");
+        gradient.setAttribute("y1", "0");
+        gradient.setAttribute("x2", "0");
+        gradient.setAttribute("y2", `${length}`);
+      }
+      
+      // Create color stops with animated colors for cycling rainbow effect
+      const repetitions = 3;
+      const totalStops = repetitions * numColors;
+      
+      for (let rep = 0; rep < repetitions; rep++) {
+        for (let i = 0; i < numColors; i++) {
+          const stop = document.createElementNS(svgNS, "stop");
+          const offset = ((rep * numColors + i) / totalStops) * 100;
+          stop.setAttribute("offset", `${offset}%`);
+          stop.setAttribute("stop-color", colors[i]);
+          
+          // Create cycling color animation for each stop
+          const colorAnimate = document.createElementNS(svgNS, "animate");
+          colorAnimate.setAttribute("attributeName", "stop-color");
+          
+          // Create color values by cycling through rainbow colors
+          const animatedColors: string[] = [];
+          for (let cycle = 0; cycle < numColors; cycle++) {
+            const colorIndex = (i + cycle) % numColors;
+            animatedColors.push(colors[colorIndex]);
+          }
+          animatedColors.push(colors[i]); // Complete the cycle
+          
+          colorAnimate.setAttribute("values", animatedColors.join(";"));
+          colorAnimate.setAttribute("dur", `${rainbowSpeed}s`);
+          colorAnimate.setAttribute("repeatCount", "indefinite");
+          
+          stop.appendChild(colorAnimate);
+          gradient.appendChild(stop);
+        }
+      }
+      
+      // Add final stop to complete the cycle
+      const finalStop = document.createElementNS(svgNS, "stop");
+      finalStop.setAttribute("offset", "100%");
+      finalStop.setAttribute("stop-color", colors[0]);
+      
+      // Animate final stop color too
+      const finalColorAnimate = document.createElementNS(svgNS, "animate");
+      finalColorAnimate.setAttribute("attributeName", "stop-color");
+      const finalAnimatedColors: string[] = [];
+      for (let cycle = 0; cycle < numColors; cycle++) {
+        const colorIndex = cycle % numColors;
+        finalAnimatedColors.push(colors[colorIndex]);
+      }
+      finalAnimatedColors.push(colors[0]); // Complete the cycle
+      
+      finalColorAnimate.setAttribute("values", finalAnimatedColors.join(";"));
+      finalColorAnimate.setAttribute("dur", `${rainbowSpeed}s`);
+      finalColorAnimate.setAttribute("repeatCount", "indefinite");
+      
+      finalStop.appendChild(finalColorAnimate);
+      gradient.appendChild(finalStop);
+      
+      return gradient;
+    };
+
+    // Create gradients for each side
+    const topGradient = createGradient("top-gradient", true, width);
+    const rightGradient = createGradient("right-gradient", false, height);
+    const bottomGradient = createGradient("bottom-gradient", true, width);
+    const leftGradient = createGradient("left-gradient", false, height);
+
+    defs.appendChild(topGradient);
+    defs.appendChild(rightGradient);
+    defs.appendChild(bottomGradient);
+    defs.appendChild(leftGradient);
+    svg.appendChild(defs);
+
+    // Create 4 separate lines for each edge
+    // Lines are inset by half the stroke width to stay within bounds
+    const offset = strokeWidth / 2;
+    
+    // Calculate starting dash offset for each side to ensure corner alignment
+    let runningOffset = 0;
+    
+    // Top edge
+    const topLine = document.createElementNS(svgNS, "line");
+    topLine.setAttribute("x1", `${offset}`);
+    topLine.setAttribute("y1", `${offset}`);
+    topLine.setAttribute("x2", `${width - offset}`);
+    topLine.setAttribute("y2", `${offset}`);
+    topLine.setAttribute("stroke", "url(#top-gradient)");
+    topLine.setAttribute("stroke-width", `${strokeWidth}`);
+    topLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
+    topLine.setAttribute("stroke-linecap", "round");
+    topLine.setAttribute("stroke-dashoffset", `${runningOffset}`);
+    
+    const topAnimate = document.createElementNS(svgNS, "animate");
+    topAnimate.setAttribute("attributeName", "stroke-dashoffset");
+    topAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + runningOffset}`);
+    topAnimate.setAttribute("to", `${runningOffset}`);
+    topAnimate.setAttribute("dur", `${dashSpeed}s`);
+    topAnimate.setAttribute("repeatCount", "indefinite");
+    topLine.appendChild(topAnimate);
+    svg.appendChild(topLine);
+
+    runningOffset += width - strokeWidth;
+
+    // Right edge
+    const rightLine = document.createElementNS(svgNS, "line");
+    rightLine.setAttribute("x1", `${width - offset}`);
+    rightLine.setAttribute("y1", `${offset}`);
+    rightLine.setAttribute("x2", `${width - offset}`);
+    rightLine.setAttribute("y2", `${height - offset}`);
+    rightLine.setAttribute("stroke", "url(#right-gradient)");
+    rightLine.setAttribute("stroke-width", `${strokeWidth}`);
+    rightLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
+    rightLine.setAttribute("stroke-linecap", "round");
+    rightLine.setAttribute("stroke-dashoffset", `${runningOffset % adjustedDashPattern}`);
+    
+    const rightAnimate = document.createElementNS(svgNS, "animate");
+    rightAnimate.setAttribute("attributeName", "stroke-dashoffset");
+    rightAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`);
+    rightAnimate.setAttribute("to", `${runningOffset % adjustedDashPattern}`);
+    rightAnimate.setAttribute("dur", `${dashSpeed}s`);
+    rightAnimate.setAttribute("repeatCount", "indefinite");
+    rightLine.appendChild(rightAnimate);
+    svg.appendChild(rightLine);
+
+    runningOffset += height - strokeWidth;
+
+    // Bottom edge
+    const bottomLine = document.createElementNS(svgNS, "line");
+    bottomLine.setAttribute("x1", `${width - offset}`);
+    bottomLine.setAttribute("y1", `${height - offset}`);
+    bottomLine.setAttribute("x2", `${offset}`);
+    bottomLine.setAttribute("y2", `${height - offset}`);
+    bottomLine.setAttribute("stroke", "url(#bottom-gradient)");
+    bottomLine.setAttribute("stroke-width", `${strokeWidth}`);
+    bottomLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
+    bottomLine.setAttribute("stroke-linecap", "round");
+    bottomLine.setAttribute("stroke-dashoffset", `${runningOffset % adjustedDashPattern}`);
+    
+    const bottomAnimate = document.createElementNS(svgNS, "animate");
+    bottomAnimate.setAttribute("attributeName", "stroke-dashoffset");
+    bottomAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`);
+    bottomAnimate.setAttribute("to", `${runningOffset % adjustedDashPattern}`);
+    bottomAnimate.setAttribute("dur", `${dashSpeed}s`);
+    bottomAnimate.setAttribute("repeatCount", "indefinite");
+    bottomLine.appendChild(bottomAnimate);
+    svg.appendChild(bottomLine);
+
+    runningOffset += width - strokeWidth;
+
+    // Left edge
+    const leftLine = document.createElementNS(svgNS, "line");
+    leftLine.setAttribute("x1", `${offset}`);
+    leftLine.setAttribute("y1", `${height - offset}`);
+    leftLine.setAttribute("x2", `${offset}`);
+    leftLine.setAttribute("y2", `${offset}`);
+    leftLine.setAttribute("stroke", "url(#left-gradient)");
+    leftLine.setAttribute("stroke-width", `${strokeWidth}`);
+    leftLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
+    leftLine.setAttribute("stroke-linecap", "round");
+    leftLine.setAttribute("stroke-dashoffset", `${runningOffset % adjustedDashPattern}`);
+    
+    const leftAnimate = document.createElementNS(svgNS, "animate");
+    leftAnimate.setAttribute("attributeName", "stroke-dashoffset");
+    leftAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`);
+    leftAnimate.setAttribute("to", `${runningOffset % adjustedDashPattern}`);
+    leftAnimate.setAttribute("dur", `${dashSpeed}s`);
+    leftAnimate.setAttribute("repeatCount", "indefinite");
+    leftLine.appendChild(leftAnimate);
+    svg.appendChild(leftLine);
+
+    return svg;
+  };
+
+  // Track current state to avoid redundant operations
+  let isRainbowActive = false;
+
+  // Event handlers for hover/focus/active states
+  const showRainbowBorder = () => {
+    if (isRainbowActive) return;
+    isRainbowActive = true;
+
+    // Create and show rainbow border
+    const svg = createRainbowBorder();
+  };
+
+  const hideRainbowBorder = () => {
+    if (!isRainbowActive) return;
+    isRainbowActive = false;
+
+    const svg = element.querySelector('.rainbow-border-svg') as SVGElement;
+	svg.remove();
+  };
+
+  // Check pseudo-class states (works with dev tools and natural interaction)
+  const checkPseudoClassStates = () => {
+    const isHover = element.matches(':hover');
+    const isFocus = element.matches(':focus');
+    const isActive = element.matches(':active');
+    const hasActiveClass = element.classList.contains('active');
+    
+    const shouldShowRainbow = isHover || isFocus || isActive || hasActiveClass;
+    
+    if (shouldShowRainbow && !isRainbowActive) {
+      showRainbowBorder();
+    } else if (!shouldShowRainbow && isRainbowActive) {
+      hideRainbowBorder();
+    }
+  };
+
+  // Poll for pseudo-class state changes using requestAnimationFrame
+  let animationFrameId: number;
+  const startPolling = () => {
+    const poll = () => {
+      checkPseudoClassStates();
+      animationFrameId = requestAnimationFrame(poll);
+    };
+    poll();
+  };
+
+  const stopPolling = () => {
+    if (animationFrameId) {
+      cancelAnimationFrame(animationFrameId);
+    }
+  };
+
+  // Start polling immediately
+  startPolling();
+
+  // Add event listeners as backup (for performance optimization)
+  element.addEventListener('mouseenter', showRainbowBorder);
+  element.addEventListener('mouseleave', hideRainbowBorder);
+  element.addEventListener('focus', showRainbowBorder);
+  element.addEventListener('blur', hideRainbowBorder);
+
+  // Handle active state through classes
+  const observeActiveState = () => {
+    const observer = new MutationObserver(() => {
+      checkPseudoClassStates();
+    });
+
+    observer.observe(element, { attributes: true, attributeFilter: ['class'] });
+    return observer;
+  };
+
+  const mutationObserver = observeActiveState();
+
+  // Resize observer to update border on size changes
+  const resizeObserver = new ResizeObserver(() => {
+    const svg = element.querySelector('.rainbow-border-svg');
+    if (svg) {
+      // Recreate border if currently visible
+      hideRainbowBorder();
+      showRainbowBorder();
+    }
+  });
+  resizeObserver.observe(element);
+
+  // Return cleanup function
+  return () => {
+    stopPolling();
+    element.removeEventListener('mouseenter', showRainbowBorder);
+    element.removeEventListener('mouseleave', hideRainbowBorder);
+    element.removeEventListener('focus', showRainbowBorder);
+    element.removeEventListener('blur', hideRainbowBorder);
+    mutationObserver.disconnect();
+    resizeObserver.disconnect();
+    hideRainbowBorder();
+  };
+}
+
+
+
+		document.addEventListener("DOMContentLoaded", () => {
 			const grid = document.querySelector(
-				'#grid-container',
+				"#grid-container",
 			) as HTMLElement;
 			const loadingSkeleton = document.querySelector(
-				'#loading-skeleton',
+				"#loading-skeleton",
 			) as HTMLElement;
 
 			if (!grid) return;
 
 			// Handle project card expansion and collapse
 			async function handleProjectExpansion(item: HTMLElement) {
-				const isExpanded = item.classList.contains('is-expanded');
-				const isLoading = item.classList.contains('is-loading');
+				const isExpanded = item.classList.contains("is-expanded");
+				const isLoading = item.classList.contains("is-loading");
 				const contentDiv = item.querySelector(
-					'.project-content',
+					".project-content",
 				) as HTMLElement;
 				const toggleIcon = item.querySelector(
-					'.toggle-icon',
+					".toggle-icon",
 				) as HTMLElement;
 				const loadingIcon = item.querySelector(
-					'.loading-icon',
+					".loading-icon",
 				) as HTMLElement;
 				const expandButton = item.querySelector(
-					'.expand-toggle',
+					".expand-toggle",
 				) as HTMLButtonElement;
 
 				// Prevent interaction during loading
@@ -384,14 +752,14 @@ const projects = [
 					if (!projectTitle || !demos[projectTitle]) return;
 
 					// --- START LOADING ---
-					item.classList.add('is-loading');
+					item.classList.add("is-loading");
 					expandButton.disabled = true;
-					toggleIcon.classList.add('hidden');
-					loadingIcon.classList.remove('hidden');
+					toggleIcon.classList.add("hidden");
+					loadingIcon.classList.remove("hidden");
 
 					try {
 						const demoContainer = item.querySelector(
-							'.project-demo-container',
+							".project-demo-container",
 						) as HTMLElement;
 
 						// Call the appropriate demo loader once
@@ -402,19 +770,19 @@ const projects = [
 						demos[projectTitle] = () => result;
 
 						// --- END LOADING & EXPAND ---
-						item.classList.remove('is-loading');
+						item.classList.remove("is-loading");
 						expandButton.disabled = false;
-						loadingIcon.classList.add('hidden');
-						
+						loadingIcon.classList.add("hidden");
+
 						// Show the content
-						contentDiv.classList.remove('hidden');
+						contentDiv.classList.remove("hidden");
 
 						// Update UI
-						toggleIcon.textContent = '−';
-						toggleIcon.classList.remove('hidden');
+						toggleIcon.textContent = "−";
+						toggleIcon.classList.remove("hidden");
 
 						// Add expanded class
-						item.classList.add('is-expanded');
+						item.classList.add("is-expanded");
 
 						// ResizeObserver will automatically detect the expansion and trigger relayout
 						// Keep a small timeout to ensure content is rendered before observation
@@ -426,23 +794,23 @@ const projects = [
 						}, 50);
 					} catch (error) {
 						// --- ERROR HANDLING ---
-						console.error('Failed to load demo:', error);
-						item.classList.remove('is-loading');
+						console.error("Failed to load demo:", error);
+						item.classList.remove("is-loading");
 						expandButton.disabled = false;
-						loadingIcon.classList.add('hidden');
-						toggleIcon.classList.remove('hidden');
+						loadingIcon.classList.add("hidden");
+						toggleIcon.classList.remove("hidden");
 					}
 				} else {
 					// --- COLLAPSE ---
 					// Hide content first
-					contentDiv.classList.add('hidden');
+					contentDiv.classList.add("hidden");
 
 					// Update UI
-					toggleIcon.textContent = '+';
+					toggleIcon.textContent = "+";
 
 					// Remove expanded class after a brief delay to allow content to hide
 					setTimeout(() => {
-						item.classList.remove('is-expanded');
+						item.classList.remove("is-expanded");
 
 						// ResizeObserver will automatically detect the collapse and trigger relayout
 						// Force a size check by updating the dataset
@@ -456,7 +824,7 @@ const projects = [
 			// Initialize ResizeObserver for automatic relayout
 			const initResizeObserver = () => {
 				if (!window.ResizeObserver) {
-					console.warn('ResizeObserver not supported');
+					console.warn("ResizeObserver not supported");
 					return;
 				}
 
@@ -473,7 +841,7 @@ const projects = [
 						for (const entry of entries) {
 							const element = entry.target as HTMLElement;
 							const gridItem = element.closest(
-								'.grid-item',
+								".grid-item",
 							) as HTMLElement;
 
 							if (gridItem) {
@@ -496,7 +864,7 @@ const projects = [
 				});
 
 				// Observe all grid items and their content
-				const gridItems = grid.querySelectorAll('.grid-item');
+				const gridItems = grid.querySelectorAll(".grid-item");
 				gridItems.forEach((item) => {
 					resizeObserver?.observe(item);
 				});
@@ -504,27 +872,29 @@ const projects = [
 
 			// Initialize Packery
 			const initPackery = () => {
-				loadingSkeleton.style.display = 'none';
+				loadingSkeleton.style.display = "none";
 				// @ts-ignore
 				window.skeletonPackery.destroy();
 
 				// @ts-ignore
 				pckry = new (window.Packery as any)(grid, {
-					itemSelector: '.grid-item',
-					sizer: '.grid-sizer',
+					itemSelector: ".grid-item",
+					sizer: ".grid-sizer",
 					gutter: 16,
 					percentPosition: true,
 				});
 
 				// Use event delegation for expand/collapse clicks
-				grid.addEventListener('click', (event) => {
+				grid.addEventListener("click", (event) => {
 					const target = event.target as HTMLElement;
-					const button = target.closest('.expand-toggle') as HTMLButtonElement;
+					const button = target.closest(
+						".expand-toggle",
+					) as HTMLButtonElement;
 					if (button && !button.disabled) {
 						const item = target.closest(
-							'.grid-item',
+							".grid-item",
 						) as HTMLElement;
-						if (item && !item.classList.contains('is-loading')) {
+						if (item && !item.classList.contains("is-loading")) {
 							handleProjectExpansion(item);
 						}
 					}
@@ -534,8 +904,18 @@ const projects = [
 				initResizeObserver();
 
 				// Better transition: fade in grid while skeleton is still visible
-				grid.style.opacity = '1';
+				grid.style.opacity = "1";
 
+				const newProjectCard = grid.querySelector(
+					"[data-project-title='new-project']",
+				) as HTMLElement;
+				applyRainbowPatternBorder(newProjectCard, {
+					dashWidth: 8,
+					dashGap: 4,
+					strokeWidth: 2,
+					dashSpeed: 1,
+					rainbowSpeed: 4,
+				});
 			};
 
 			// Cleanup function for when the page is unloaded
@@ -547,7 +927,7 @@ const projects = [
 			};
 
 			// Add cleanup listener
-			window.addEventListener('beforeunload', cleanup);
+			window.addEventListener("beforeunload", cleanup);
 
 			// Wait for images to load before initializing to prevent overlap
 			initPackery();
@@ -743,6 +1123,12 @@ const projects = [
 			opacity: 1;
 		}
 
+		.new-project-card {
+			&:hover, &:focus, &:active {
+				border: none;
+			}
+		}
+
 		/* Hover effects for work items */
 		.work-item-card {
 			position: relative;
@@ -810,7 +1196,7 @@ const projects = [
 
 		/* Pulsing background animation for loading state - applied as overlay */
 		.grid-item.is-loading .work-item-card::before {
-			content: '';
+			content: "";
 			position: absolute;
 			top: 0;
 			left: 0;
