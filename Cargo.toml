@@ -7,7 +7,7 @@ members = [
     "src/rust/wasm-test-component",
     "src/rust/ezfeature-rs",
     "src/rust/confique",
-    "src/rust/witmproxy-plugin-noop", "src/apps/ezvote",
+    "src/rust/witmproxy-plugin-noop",
 ]
 
 exclude = [
