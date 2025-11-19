@@ -167,7 +167,7 @@ impl ResolvedCli {
 
         // Plugin registry which will be shared across the proxy and web server
         let plugin_registry = if self.config.plugins.enabled {
-            let runtime = Runtime::default()?;
+            let runtime = Runtime::try_default()?;
             let mut registry = PluginRegistry::new(db, runtime)?;
             registry.load_plugins().await?;
             info!("Number of plugins loaded: {}", registry.plugins().len());

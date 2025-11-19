@@ -96,7 +96,7 @@ impl ProxyServer {
                                     let svc = service_fn(move |req: Request<Incoming>| {
                                         let shared = shared.clone();
                                         async move {
-                                            shared.handle_plain_http(req).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                                            shared.handle_plain_http(req).await.map_err(|e| std::io::Error::other(e.to_string()))
                                         }
                                     });
 
@@ -361,42 +361,41 @@ pub(crate) async fn perform_upstream(
 /// Fix origin-form requests by adding authority from Host header to URI
 fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
     // Check if URI has no authority but has a Host header (origin-form request)
-    if req.uri().authority().is_none() {
-        if let Some(host_header) = req.headers().get(hyper::header::HOST) {
-            if let Ok(host_str) = host_header.to_str() {
-                // Clone the host string to avoid borrowing conflicts
-                let host_string = host_str.to_string();
+    if req.uri().authority().is_none()
+        && let Some(host_header) = req.headers().get(hyper::header::HOST)
+        && let Ok(host_str) = host_header.to_str()
+    {
+        // Clone the host string to avoid borrowing conflicts
+        let host_string = host_str.to_string();
 
-                // Reconstruct URI with authority from Host header
-                let original_uri = req.uri();
-                let mut uri_builder = hyper::Uri::builder();
+        // Reconstruct URI with authority from Host header
+        let original_uri = req.uri();
+        let mut uri_builder = hyper::Uri::builder();
 
-                // Preserve scheme (default to https for TLS connections)
-                if let Some(scheme) = original_uri.scheme() {
-                    uri_builder = uri_builder.scheme(scheme.clone());
-                } else {
-                    uri_builder = uri_builder.scheme("https");
-                }
+        // Preserve scheme (default to https for TLS connections)
+        if let Some(scheme) = original_uri.scheme() {
+            uri_builder = uri_builder.scheme(scheme.clone());
+        } else {
+            uri_builder = uri_builder.scheme("https");
+        }
 
-                // Add authority from Host header
-                uri_builder = uri_builder.authority(host_string.as_str());
+        // Add authority from Host header
+        uri_builder = uri_builder.authority(host_string.as_str());
 
-                // Preserve path and query
-                if let Some(path_and_query) = original_uri.path_and_query() {
-                    uri_builder = uri_builder.path_and_query(path_and_query.clone());
-                } else {
-                    uri_builder = uri_builder.path_and_query("/");
-                }
+        // Preserve path and query
+        if let Some(path_and_query) = original_uri.path_and_query() {
+            uri_builder = uri_builder.path_and_query(path_and_query.clone());
+        } else {
+            uri_builder = uri_builder.path_and_query("/");
+        }
 
-                // Build new URI and update request
-                if let Ok(new_uri) = uri_builder.build() {
-                    *req.uri_mut() = new_uri;
-                    debug!(
-                        "Fixed origin-form request: added authority '{}' to URI",
-                        host_string
-                    );
-                }
-            }
+        // Build new URI and update request
+        if let Ok(new_uri) = uri_builder.build() {
+            *req.uri_mut() = new_uri;
+            debug!(
+                "Fixed origin-form request: added authority '{}' to URI",
+                host_string
+            );
         }
     }
     req
@@ -417,7 +416,7 @@ async fn run_tls_mitm(
     let (host, _port) = parse_authority_host_port(&authority, 443)?;
 
     // --- Build a server TLS config for the client side (fake cert for `host`) ---
-    let server_tls = build_server_tls_for_host(&*ca, &host).await?;
+    let server_tls = build_server_tls_for_host(&ca, &host).await?;
     let acceptor = TlsAcceptor::from(Arc::new(server_tls));
 
     let tls = acceptor.accept(TokioIo::new(upgraded)).await?;
@@ -524,7 +523,7 @@ async fn run_tls_mitm(
                         .body(Full::new(Bytes::from("Response dropped by plugin")))
                         .map_err(|e| {
                             error!("Failed to build drop response: {}", e);
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                            std::io::Error::other(e.to_string())
                         }),
                     HostHandleResponseResult::Response(resp) => Ok::<_, std::io::Error>(resp),
                 }

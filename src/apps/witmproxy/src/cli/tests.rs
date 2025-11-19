@@ -92,7 +92,7 @@ mod tests {
         let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
         // Create runtime to check plugins
-        let runtime = Runtime::default().unwrap();
+        let runtime = Runtime::try_default().unwrap();
         let env = create_static_cel_env()?;
         let plugins = WitmPlugin::all(&mut db, &runtime.engine, env)
             .await
@@ -207,7 +207,7 @@ mod tests {
         let db_file_path = temp_path.join("test.db");
         let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
-        let runtime = Runtime::default().unwrap();
+        let runtime = Runtime::try_default().unwrap();
         let env = create_static_cel_env()?;
         let plugins_before = WitmPlugin::all(&mut db, &runtime.engine, env)
             .await
@@ -273,7 +273,7 @@ mod tests {
         let db_file_path = temp_path.join("test.db");
         let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
 
-        let runtime = Runtime::default().unwrap();
+        let runtime = Runtime::try_default().unwrap();
         let env = create_static_cel_env()?;
         let plugins_before = WitmPlugin::all(&mut db, &runtime.engine, env)
             .await

@@ -158,10 +158,10 @@ pub fn convert_hyper_boxed_body_to_reqwest_request(
 
     for (name, value) in parts.headers.iter() {
         // Filter headers to prevent HTTP/2 protocol errors
-        if should_forward_header(name) {
-            if let Ok(value_str) = value.to_str() {
-                req_builder = req_builder.header(name.as_str(), value_str);
-            }
+        if should_forward_header(name)
+            && let Ok(value_str) = value.to_str()
+        {
+            req_builder = req_builder.header(name.as_str(), value_str);
         }
     }
 
@@ -230,10 +230,10 @@ pub fn convert_hyper_incoming_to_reqwest_request(
     // Copy headers, but filter out those that can cause HTTP/2 protocol errors
     for (name, value) in parts.headers.iter() {
         // Skip headers that are invalid in HTTP/2 or handled by reqwest
-        if should_forward_header(name) {
-            if let Ok(value_str) = value.to_str() {
-                req_builder = req_builder.header(name.as_str(), value_str);
-            }
+        if should_forward_header(name)
+            && let Ok(value_str) = value.to_str()
+        {
+            req_builder = req_builder.header(name.as_str(), value_str);
         }
     }
 

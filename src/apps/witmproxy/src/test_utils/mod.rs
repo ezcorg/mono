@@ -57,7 +57,7 @@ pub struct EchoResponse {
 
 pub async fn create_plugin_registry() -> Result<(PluginRegistry, tempfile::TempDir)> {
     let (db, temp_dir) = create_db().await;
-    let runtime = Runtime::default().unwrap();
+    let runtime = Runtime::try_default().unwrap();
     Ok((PluginRegistry::new(db, runtime)?, temp_dir))
 }
 

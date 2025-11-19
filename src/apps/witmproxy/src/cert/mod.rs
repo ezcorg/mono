@@ -52,10 +52,10 @@ impl CertificateCache {
         let mut cache = self.cache.write().await;
 
         // Simple LRU eviction - remove oldest entries if cache is full
-        if cache.len() >= self.max_size {
-            if let Some(key) = cache.keys().next().cloned() {
-                cache.remove(&key);
-            }
+        if cache.len() >= self.max_size
+            && let Some(key) = cache.keys().next().cloned()
+        {
+            cache.remove(&key);
         }
 
         cache.insert(domain, cert);

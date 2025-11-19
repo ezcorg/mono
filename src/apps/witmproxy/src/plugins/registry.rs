@@ -132,7 +132,7 @@ impl PluginRegistry {
         // Verify the WASM component signature using wasmsign2
         let public_key_bytes = &guest_result.publickey;
         if !public_key_bytes.is_empty() {
-            let public_key = wasmsign2::PublicKey::from_bytes(&public_key_bytes)
+            let public_key = wasmsign2::PublicKey::from_bytes(public_key_bytes)
                 .map_err(|e| anyhow::anyhow!("Failed to parse public key: {}", e))?;
 
             let mut reader = std::io::Cursor::new(&component_bytes);
@@ -160,7 +160,7 @@ impl PluginRegistry {
 
         let plugin = WitmPlugin::from(guest_result)
             .with_component(component, component_bytes)
-            .compile_capabilities(&self.env)?;
+            .compile_capabilities(self.env)?;
         Ok(plugin)
     }
 
@@ -285,7 +285,7 @@ impl PluginRegistry {
             let instance = self
                 .runtime
                 .linker
-                .instantiate_async(&mut store, &component)
+                .instantiate_async(&mut store, component)
                 .await;
 
             if let Err(e) = instance {
@@ -450,7 +450,7 @@ impl PluginRegistry {
             let instance = self
                 .runtime
                 .linker
-                .instantiate_async(&mut store, &component)
+                .instantiate_async(&mut store, component)
                 .await;
 
             if let Err(e) = instance {

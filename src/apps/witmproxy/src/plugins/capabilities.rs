@@ -43,18 +43,18 @@ impl Capabilities {
     }
 
     pub fn can_handle_connect(&self, cel_connect: &CelConnect) -> bool {
-        if let Some(program) = &self.connect.config.cel {
-            if let Ok(activation) = Activation::new().bind_variable("connect", cel_connect) {
-                match program.evaluate(activation) {
-                    Ok(result) => {
-                        if let cel_cxx::Value::Bool(b) = result {
-                            return b;
-                        }
+        if let Some(program) = &self.connect.config.cel
+            && let Ok(activation) = Activation::new().bind_variable("connect", cel_connect)
+        {
+            match program.evaluate(activation) {
+                Ok(result) => {
+                    if let cel_cxx::Value::Bool(b) = result {
+                        return b;
                     }
-                    Err(e) => {
-                        error!("Error evaluating CEL connect filter: {}", e);
-                        return false;
-                    }
+                }
+                Err(e) => {
+                    error!("Error evaluating CEL connect filter: {}", e);
+                    return false;
                 }
             }
         }
@@ -62,20 +62,19 @@ impl Capabilities {
     }
 
     pub fn can_handle_request(&self, cel_request: &CelRequest) -> bool {
-        if let Some(request_cap) = &self.request {
-            if let Some(program) = &request_cap.config.cel {
-                if let Ok(activation) = Activation::new().bind_variable("request", cel_request) {
-                    match program.evaluate(activation) {
-                        Ok(result) => {
-                            if let cel_cxx::Value::Bool(b) = result {
-                                return b;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Error evaluating CEL request filter: {}", e);
-                            return false;
-                        }
+        if let Some(request_cap) = &self.request
+            && let Some(program) = &request_cap.config.cel
+            && let Ok(activation) = Activation::new().bind_variable("request", cel_request)
+        {
+            match program.evaluate(activation) {
+                Ok(result) => {
+                    if let cel_cxx::Value::Bool(b) = result {
+                        return b;
                     }
+                }
+                Err(e) => {
+                    error!("Error evaluating CEL request filter: {}", e);
+                    return false;
                 }
             }
         }
@@ -87,23 +86,21 @@ impl Capabilities {
         cel_request: &CelRequest,
         cel_response: &CelResponse,
     ) -> bool {
-        if let Some(response_cap) = &self.response {
-            if let Some(program) = &response_cap.config.cel {
-                if let Ok(activation) = Activation::new()
-                    .bind_variable("request", cel_request)
-                    .and_then(|a| a.bind_variable("response", cel_response))
-                {
-                    match program.evaluate(activation) {
-                        Ok(result) => {
-                            if let cel_cxx::Value::Bool(b) = result {
-                                return b;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Error evaluating CEL response filter: {}", e);
-                            return false;
-                        }
+        if let Some(response_cap) = &self.response
+            && let Some(program) = &response_cap.config.cel
+            && let Ok(activation) = Activation::new()
+                .bind_variable("request", cel_request)
+                .and_then(|a| a.bind_variable("response", cel_response))
+        {
+            match program.evaluate(activation) {
+                Ok(result) => {
+                    if let cel_cxx::Value::Bool(b) = result {
+                        return b;
                     }
+                }
+                Err(e) => {
+                    error!("Error evaluating CEL response filter: {}", e);
+                    return false;
                 }
             }
         }

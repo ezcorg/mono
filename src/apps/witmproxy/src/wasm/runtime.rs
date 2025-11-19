@@ -10,7 +10,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn default() -> Result<Self> {
+    pub fn try_default() -> Result<Self> {
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.wasm_component_model_async(true);

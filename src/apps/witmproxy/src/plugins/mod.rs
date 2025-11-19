@@ -77,7 +77,7 @@ impl WitmPlugin {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
         let component = Component::from_binary(engine, &component_bytes)?;
-        let runtime = Runtime::default()?;
+        let runtime = Runtime::try_default()?;
         let mut store = wasmtime::Store::new(engine, Host::default());
         let instance = runtime
             .linker

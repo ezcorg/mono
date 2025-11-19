@@ -34,6 +34,12 @@ pub mod generated {
 
 pub struct CapabilityProvider {}
 
+impl Default for CapabilityProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CapabilityProvider {
     pub fn new() -> Self {
         Self {}
@@ -121,14 +127,14 @@ impl WitmProxyCtx {
 
 /// A wrapper capturing the needed internal `witmproxy:plugin` state.
 pub struct WitmProxy<'a> {
-    ctx: &'a WitmProxyCtx,
+    _ctx: &'a WitmProxyCtx,
     table: &'a mut ResourceTable,
 }
 
 impl<'a> WitmProxy<'a> {
     /// Create a new view into the `witmproxy:plugin` state.
     pub fn new(ctx: &'a WitmProxyCtx, table: &'a mut ResourceTable) -> Self {
-        Self { ctx, table }
+        Self { _ctx: ctx, table }
     }
 }
 
@@ -216,14 +222,14 @@ impl HostLogger for WitmProxy<'_> {
 }
 
 impl HostCapabilityProvider for WitmProxy<'_> {
-    fn logger(&mut self, _self: Resource<CapabilityProvider>) -> Option<Resource<Logger>> {
+    fn logger(&mut self, _cap: Resource<CapabilityProvider>) -> Option<Resource<Logger>> {
         let logger = Logger {};
         Some(self.table.push(logger).unwrap())
     }
 
     fn local_storage(
         &mut self,
-        _self: Resource<CapabilityProvider>,
+        _cap: Resource<CapabilityProvider>,
     ) -> Option<Resource<LocalStorageClient>> {
         let client = LocalStorageClient::default();
         Some(self.table.push(client).unwrap())
@@ -231,7 +237,7 @@ impl HostCapabilityProvider for WitmProxy<'_> {
 
     fn annotator(
         &mut self,
-        _self: Resource<CapabilityProvider>,
+        _cap: Resource<CapabilityProvider>,
     ) -> Option<Resource<AnnotatorClient>> {
         let client = AnnotatorClient {};
         Some(self.table.push(client).unwrap())

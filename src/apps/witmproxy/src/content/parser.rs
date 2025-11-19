@@ -74,10 +74,10 @@ impl ContentParser {
                         document.title = Some(Self::get_text_content(handle));
                     }
                     "meta" => {
-                        if let Some(name_attr) = Self::get_attr(&attributes, "name") {
-                            if let Some(content_attr) = Self::get_attr(&attributes, "content") {
-                                document.meta.insert(name_attr, content_attr);
-                            }
+                        if let Some(name_attr) = Self::get_attr(&attributes, "name")
+                            && let Some(content_attr) = Self::get_attr(&attributes, "content")
+                        {
+                            document.meta.insert(name_attr, content_attr);
                         }
                     }
                     "a" => {

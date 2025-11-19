@@ -23,7 +23,7 @@ mod tests {
         db.migrate().await.unwrap();
 
         // Create runtime
-        let runtime = Runtime::default().unwrap();
+        let runtime = Runtime::try_default().unwrap();
 
         // Create plugin registry
         let plugin_registry = Arc::new(RwLock::new(PluginRegistry::new(db, runtime)?));

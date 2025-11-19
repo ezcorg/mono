@@ -130,7 +130,7 @@ impl PluginHandler {
             anyhow::bail!("File does not exist: {}", source);
         }
 
-        if !path.extension().map_or(false, |ext| ext == "wasm") {
+        if path.extension().is_none_or(|ext| ext != "wasm") {
             anyhow::bail!("Only .wasm files are supported for local installation");
         }
 
@@ -141,7 +141,7 @@ impl PluginHandler {
         db.migrate().await?;
 
         // Create runtime and registry
-        let runtime = Runtime::default()?;
+        let runtime = Runtime::try_default()?;
         let mut registry = PluginRegistry::new(db, runtime)?;
 
         // Create plugin from component bytes (including signature verification)
@@ -149,14 +149,12 @@ impl PluginHandler {
         // TODO: DON'T GRANT ALL THE THINGS ALWAYS
         plugin.capabilities.connect.granted = true;
 
-        match plugin.capabilities.request {
-            Some(ref mut r) => r.granted = true,
-            _ => {}
+        if let Some(ref mut r) = plugin.capabilities.request {
+            r.granted = true
         };
 
-        match plugin.capabilities.response {
-            Some(ref mut r) => r.granted = true,
-            _ => {}
+        if let Some(ref mut r) = plugin.capabilities.response {
+            r.granted = true
         };
 
         debug!(
@@ -175,7 +173,7 @@ impl PluginHandler {
         let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
         db.migrate().await?;
 
-        let runtime = Runtime::default()?;
+        let runtime = Runtime::try_default()?;
         let mut registry = PluginRegistry::new(db, runtime)?;
 
         let (name, namespace) = match plugin_name.split_once("/") {

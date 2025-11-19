@@ -70,7 +70,7 @@ impl WebServer {
             plugin_registry: self.plugin_registry.clone(),
         };
 
-        salvo::http::request::set_global_secure_max_size(1 * 1024 * 1024 * 1024); // 1 GB
+        salvo::http::request::set_global_secure_max_size(1024 * 1024 * 1024); // 1 GB
 
         // TODO: HTTPS when cert is trusted
         // Generate a certificate for the web server using our CA
@@ -144,7 +144,7 @@ async fn health_check(res: &mut salvo::Response) {
 // Plugin management endpoints
 #[endpoint]
 async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
-    let registry = if let Some(state) = depot.obtain::<AppState>().ok() {
+    let registry = if let Ok(state) = depot.obtain::<AppState>() {
         state.plugin_registry.clone()
     } else {
         warn!("Failed to obtain AppState in list_plugins");
@@ -156,11 +156,8 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
     // TODO: return plugin details
     if let Some(registry) = registry {
         let registry = registry.read().await;
-        let plugin_names: Vec<String> = registry
-            .plugins()
-            .iter()
-            .map(|(name, _)| name.clone())
-            .collect();
+        let plugin_names: Vec<String> =
+            registry.plugins().keys().map(|name| name.clone()).collect();
         res.status_code(salvo::http::StatusCode::OK);
         res.render(salvo::writing::Json(plugin_names));
     } else {
@@ -171,7 +168,7 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
 
 #[endpoint]
 async fn upsert_plugin(file: FormFile, depot: &mut Depot, res: &mut salvo::Response) {
-    let registry = if let Some(state) = depot.obtain::<AppState>().ok() {
+    let registry = if let Ok(state) = depot.obtain::<AppState>() {
         state.plugin_registry.clone()
     } else {
         warn!("Failed to obtain AppState in upsert_plugin");

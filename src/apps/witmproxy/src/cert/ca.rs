@@ -164,8 +164,7 @@ impl CertificateAuthority {
         }
 
         // If it's a wildcard domain, add the base domain too
-        if domain.starts_with("*.") {
-            let base_domain = &domain[2..];
+        if let Some(base_domain) = domain.strip_prefix("*.") {
             params.subject_alt_names.push(SanType::DnsName(
                 base_domain
                     .try_into()
@@ -194,7 +193,7 @@ impl CertificateAuthority {
         // Generate key pair and create certificate
         let key_pair = KeyPair::generate()?;
 
-        let cert = params.signed_by(&key_pair, &*self.root_cert, &*self.root_key)?;
+        let cert = params.signed_by(&key_pair, &self.root_cert, &self.root_key)?;
         let pem_cert = cert.pem();
         let cert_der = cert.der();
 
@@ -345,7 +344,7 @@ impl CertificateAuthority {
         info!("You may be prompted for your password to access the System keychain.");
 
         let output = Command::new("sudo")
-            .args(&[
+            .args([
                 "security",
                 "add-trusted-cert",
                 "-d",
@@ -383,7 +382,7 @@ impl CertificateAuthority {
             let dest_path = format!("/usr/local/share/ca-certificates/{}", cert_name);
 
             let output = Command::new("sudo")
-                .args(&["cp"])
+                .args(["cp"])
                 .arg(cert_path)
                 .arg(&dest_path)
                 .output()?;
@@ -396,7 +395,7 @@ impl CertificateAuthority {
             }
 
             let output = Command::new("sudo")
-                .args(&["update-ca-certificates"])
+                .args(["update-ca-certificates"])
                 .output()?;
 
             if output.status.success() {
@@ -417,7 +416,7 @@ impl CertificateAuthority {
             let dest_path = format!("/etc/pki/ca-trust/source/anchors/{}", cert_name);
 
             let output = Command::new("sudo")
-                .args(&["cp"])
+                .args(["cp"])
                 .arg(cert_path)
                 .arg(&dest_path)
                 .output()?;
@@ -429,7 +428,7 @@ impl CertificateAuthority {
                 ));
             }
 
-            let output = Command::new("sudo").args(&["update-ca-trust"]).output()?;
+            let output = Command::new("sudo").args(["update-ca-trust"]).output()?;
 
             if output.status.success() {
                 info!("✓ Certificate successfully installed via update-ca-trust");
@@ -455,7 +454,7 @@ impl CertificateAuthority {
         info!("You may see a User Account Control prompt.");
 
         let output = Command::new("certutil")
-            .args(&["-addstore", "-f", "Root"])
+            .args(["-addstore", "-f", "Root"])
             .arg(cert_path)
             .output()?;
 
@@ -479,7 +478,7 @@ impl CertificateAuthority {
         info!("Searching for witmproxy certificates in keychain...");
 
         let output = Command::new("sudo")
-            .args(&[
+            .args([
                 "security",
                 "delete-certificate",
                 "-c",
@@ -510,11 +509,11 @@ impl CertificateAuthority {
         if Path::new(cert_path).exists() {
             info!("Removing certificate from ca-certificates...");
 
-            let output = Command::new("sudo").args(&["rm", cert_path]).output()?;
+            let output = Command::new("sudo").args(["rm", cert_path]).output()?;
 
             if output.status.success() {
                 let _ = Command::new("sudo")
-                    .args(&["update-ca-certificates"])
+                    .args(["update-ca-certificates"])
                     .output()?;
                 removed = true;
                 info!("✓ Certificate removed via ca-certificates");
@@ -526,10 +525,10 @@ impl CertificateAuthority {
         if Path::new(cert_path).exists() {
             info!("Removing certificate from ca-trust...");
 
-            let output = Command::new("sudo").args(&["rm", cert_path]).output()?;
+            let output = Command::new("sudo").args(["rm", cert_path]).output()?;
 
             if output.status.success() {
-                let _ = Command::new("sudo").args(&["update-ca-trust"]).output()?;
+                let _ = Command::new("sudo").args(["update-ca-trust"]).output()?;
                 removed = true;
                 info!("✓ Certificate removed via ca-trust");
             }
@@ -546,7 +545,7 @@ impl CertificateAuthority {
         info!("Removing root certificate from Windows");
 
         let output = Command::new("certutil")
-            .args(&["-delstore", "Root", "MITM Proxy Root CA"])
+            .args(["-delstore", "Root", "MITM Proxy Root CA"])
             .output()?;
 
         if output.status.success() || output.stderr.is_empty() {
@@ -564,7 +563,7 @@ impl CertificateAuthority {
     // Platform-specific status checking methods
     async fn check_macos_status(&self) -> Result<()> {
         let output = Command::new("security")
-            .args(&[
+            .args([
                 "find-certificate",
                 "-c",
                 "MITM Proxy Root CA",
@@ -598,7 +597,7 @@ impl CertificateAuthority {
 
     async fn check_windows_status(&self) -> Result<()> {
         let output = Command::new("certutil")
-            .args(&["-store", "Root", "MITM Proxy Root CA"])
+            .args(["-store", "Root", "MITM Proxy Root CA"])
             .output()?;
 
         if output.status.success() && !String::from_utf8_lossy(&output.stdout).contains("ERROR") {
