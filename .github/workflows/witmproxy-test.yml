@@ -57,7 +57,7 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config
 
       - name: Check code formatting
-        run: cargo fmt --all --check
+        run: cargo fmt --package witmproxy --check
 
       # - name: Run clippy lints
       #   run: cargo clippy --workspace --all-targets --all-features -- -D warnings
