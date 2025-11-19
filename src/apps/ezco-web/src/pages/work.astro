@@ -54,7 +54,7 @@ const projects = [
 <Fragment set:html={packeryLoad} />
 <!-- Then, as soon as our skeleton element is available, we use Packery to layout the skeleton -->
 <script is:inline>
-	function waitForElm(selector) {
+	function waitForElement(selector) {
 		return new Promise((resolve) => {
 			if (document.querySelector(selector)) {
 				return resolve(document.querySelector(selector));
@@ -75,7 +75,7 @@ const projects = [
 		});
 	}
 
-	waitForElm("#loading-skeleton").then(async (loadingSkeleton) => {
+	waitForElement("#loading-skeleton").then(async (loadingSkeleton) => {
 		await window.PackeryPromise;
 
 		window.skeletonPackery = new window.Packery(loadingSkeleton, {
@@ -169,8 +169,8 @@ const projects = [
 								<p
 									class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description"
 								>
-									Want to see your idea come to life? Let's
-									build it together.
+									Want to see an idea come to life? See how we
+									can help.
 								</p>
 								<div class="flex flex-wrap gap-2">
 									<span
@@ -376,262 +376,473 @@ const projects = [
 			},
 		};
 
-function applyRainbowPatternBorder(element: HTMLElement, options: any = {}) {
-  const {
-    dashWidth = 12,
-    dashGap = 6,
-    strokeWidth = 2,
-    rainbowSpeed = 4, // seconds for one full cycle
-    dashSpeed = 8,
-  } = options;
+		function applyRainbowPatternBorder(
+			element: HTMLElement,
+			options: any = {},
+		) {
+			const {
+				dashWidth = 12,
+				dashGap = 6,
+				strokeWidth = 2,
+				rainbowSpeed = 4, // seconds for one full cycle
+				dashSpeed = 8,
+				hoverRainbowSpeed = rainbowSpeed * 0.2, // 3x faster on hover
+				hoverDashSpeed = dashSpeed * 0.2, // 3x faster on hover
+			} = options;
 
-  const svgNS = "http://www.w3.org/2000/svg";
+			const svgNS = "http://www.w3.org/2000/svg";
+			let animations: SVGAnimateElement[] = []; // Store animation references
 
-  if (getComputedStyle(element).position === "static") {
-    element.style.position = "relative";
-  }
+			if (getComputedStyle(element).position === "static") {
+				element.style.position = "relative";
+			}
 
-  // Get element dimensions
-  const updateBorder = () => {
-    const rect = element.getBoundingClientRect();
-    const width = rect.width;
-    const height = rect.height;
+			// Get element dimensions
+			const updateBorder = () => {
+				const rect = element.getBoundingClientRect();
+				const width = rect.width;
+				const height = rect.height;
 
-    // Calculate total perimeter for dash alignment
-    const perimeter = 2 * (width + height - 2 * strokeWidth);
-    const dashPattern = dashWidth + dashGap;
-    const numDashes = Math.floor(perimeter / dashPattern);
-    const adjustedDashPattern = perimeter / numDashes;
-    const adjustedDashWidth = (adjustedDashPattern * dashWidth) / dashPattern;
-    const adjustedDashGap = (adjustedDashPattern * dashGap) / dashPattern;
+				// Calculate total perimeter for dash alignment
+				const perimeter = 2 * (width + height - 2 * strokeWidth);
+				const dashPattern = dashWidth + dashGap;
+				const numDashes = Math.floor(perimeter / dashPattern);
+				const adjustedDashPattern = perimeter / numDashes;
+				const adjustedDashWidth =
+					(adjustedDashPattern * dashWidth) / dashPattern;
+				const adjustedDashGap =
+					(adjustedDashPattern * dashGap) / dashPattern;
 
-    // Remove old SVG if it exists
-    const oldSvg = element.querySelector('.rainbow-border-svg');
-    if (oldSvg) oldSvg.remove();
+				// Remove old SVG if it exists
+				const oldSvg = element.querySelector(".rainbow-border-svg");
+				if (oldSvg) oldSvg.remove();
 
-    // Create SVG overlay - same size as element
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.classList.add('rainbow-border-svg');
-    svg.setAttribute("width", `${width}`);
-    svg.setAttribute("height", `${height}`);
-    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    svg.style.position = "absolute";
-    svg.style.top = "0";
-    svg.style.left = "0";
-    svg.style.pointerEvents = "none";
-    svg.style.zIndex = "1";
-    element.appendChild(svg);
+				// Create SVG overlay - same size as element
+				const svg = document.createElementNS(svgNS, "svg");
+				svg.classList.add("rainbow-border-svg");
+				svg.setAttribute("width", `${width}`);
+				svg.setAttribute("height", `${height}`);
+				svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+				svg.style.position = "absolute";
+				svg.style.top = "0";
+				svg.style.left = "0";
+				svg.style.pointerEvents = "none";
+				svg.style.zIndex = "1";
+				element.appendChild(svg);
 
-    // Create defs
-    const defs = document.createElementNS(svgNS, "defs");
+				// Create defs
+				const defs = document.createElementNS(svgNS, "defs");
 
-    // Create rainbow colors that will cycle
-    const colors = ["#ff0000", "#ff8800", "#ffff00", "#00ff00", "#0088ff", "#8800ff"];
-    const numColors = colors.length;
+				// Create rainbow colors that will cycle
+				const colors = [
+					"#ff0000",
+					"#ff8800",
+					"#ffff00",
+					"#00ff00",
+					"#0088ff",
+					"#8800ff",
+				];
+				const numColors = colors.length;
 
-    // Create 4 separate gradients for each side
-    const createGradient = (id: string, isHorizontal: boolean, length: number) => {
-      const gradient = document.createElementNS(svgNS, "linearGradient");
-      gradient.setAttribute("id", id);
-      gradient.setAttribute("gradientUnits", "userSpaceOnUse");
-      
-      if (isHorizontal) {
-        gradient.setAttribute("x1", "0");
-        gradient.setAttribute("y1", "0");
-        gradient.setAttribute("x2", `${length}`);
-        gradient.setAttribute("y2", "0");
-      } else {
-        gradient.setAttribute("x1", "0");
-        gradient.setAttribute("y1", "0");
-        gradient.setAttribute("x2", "0");
-        gradient.setAttribute("y2", `${length}`);
-      }
-      
-      // Create color stops with animated colors for cycling rainbow effect
-      const repetitions = 3;
-      const totalStops = repetitions * numColors;
-      
-      for (let rep = 0; rep < repetitions; rep++) {
-        for (let i = 0; i < numColors; i++) {
-          const stop = document.createElementNS(svgNS, "stop");
-          const offset = ((rep * numColors + i) / totalStops) * 100;
-          stop.setAttribute("offset", `${offset}%`);
-          stop.setAttribute("stop-color", colors[i]);
-          
-          // Create cycling color animation for each stop
-          const colorAnimate = document.createElementNS(svgNS, "animate");
-          colorAnimate.setAttribute("attributeName", "stop-color");
-          
-          // Create color values by cycling through rainbow colors
-          const animatedColors: string[] = [];
-          for (let cycle = 0; cycle < numColors; cycle++) {
-            const colorIndex = (i + cycle) % numColors;
-            animatedColors.push(colors[colorIndex]);
-          }
-          animatedColors.push(colors[i]); // Complete the cycle
-          
-          colorAnimate.setAttribute("values", animatedColors.join(";"));
-          colorAnimate.setAttribute("dur", `${rainbowSpeed}s`);
-          colorAnimate.setAttribute("repeatCount", "indefinite");
-          
-          stop.appendChild(colorAnimate);
-          gradient.appendChild(stop);
-        }
-      }
-      
-      // Add final stop to complete the cycle
-      const finalStop = document.createElementNS(svgNS, "stop");
-      finalStop.setAttribute("offset", "100%");
-      finalStop.setAttribute("stop-color", colors[0]);
-      
-      // Animate final stop color too
-      const finalColorAnimate = document.createElementNS(svgNS, "animate");
-      finalColorAnimate.setAttribute("attributeName", "stop-color");
-      const finalAnimatedColors: string[] = [];
-      for (let cycle = 0; cycle < numColors; cycle++) {
-        const colorIndex = cycle % numColors;
-        finalAnimatedColors.push(colors[colorIndex]);
-      }
-      finalAnimatedColors.push(colors[0]); // Complete the cycle
-      
-      finalColorAnimate.setAttribute("values", finalAnimatedColors.join(";"));
-      finalColorAnimate.setAttribute("dur", `${rainbowSpeed}s`);
-      finalColorAnimate.setAttribute("repeatCount", "indefinite");
-      
-      finalStop.appendChild(finalColorAnimate);
-      gradient.appendChild(finalStop);
-      
-      return gradient;
-    };
+				// Create 4 separate gradients for each side
+				const createGradient = (
+					id: string,
+					isHorizontal: boolean,
+					length: number,
+				) => {
+					const gradient = document.createElementNS(
+						svgNS,
+						"linearGradient",
+					);
+					gradient.setAttribute("id", id);
+					gradient.setAttribute("gradientUnits", "userSpaceOnUse");
 
-    // Create gradients for each side
-    const topGradient = createGradient("top-gradient", true, width);
-    const rightGradient = createGradient("right-gradient", false, height);
-    const bottomGradient = createGradient("bottom-gradient", true, width);
-    const leftGradient = createGradient("left-gradient", false, height);
+					if (isHorizontal) {
+						gradient.setAttribute("x1", "0");
+						gradient.setAttribute("y1", "0");
+						gradient.setAttribute("x2", `${length}`);
+						gradient.setAttribute("y2", "0");
+					} else {
+						gradient.setAttribute("x1", "0");
+						gradient.setAttribute("y1", "0");
+						gradient.setAttribute("x2", "0");
+						gradient.setAttribute("y2", `${length}`);
+					}
 
-    defs.appendChild(topGradient);
-    defs.appendChild(rightGradient);
-    defs.appendChild(bottomGradient);
-    defs.appendChild(leftGradient);
-    svg.appendChild(defs);
+					// Create color stops with animated colors for cycling rainbow effect
+					const repetitions = 3;
+					const totalStops = repetitions * numColors;
 
-    // Create 4 separate lines for each edge
-    // Lines are inset by half the stroke width to stay within bounds
-    const offset = strokeWidth / 2;
-    
-    // Calculate starting dash offset for each side to ensure corner alignment
-    let runningOffset = 0;
-    
-    // Top edge
-    const topLine = document.createElementNS(svgNS, "line");
-    topLine.setAttribute("x1", `${offset}`);
-    topLine.setAttribute("y1", `${offset}`);
-    topLine.setAttribute("x2", `${width - offset}`);
-    topLine.setAttribute("y2", `${offset}`);
-    topLine.setAttribute("stroke", "url(#top-gradient)");
-    topLine.setAttribute("stroke-width", `${strokeWidth}`);
-    topLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
-    topLine.setAttribute("stroke-linecap", "round");
-    topLine.setAttribute("stroke-dashoffset", `${runningOffset}`);
-    
-    const topAnimate = document.createElementNS(svgNS, "animate");
-    topAnimate.setAttribute("attributeName", "stroke-dashoffset");
-    topAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + runningOffset}`);
-    topAnimate.setAttribute("to", `${runningOffset}`);
-    topAnimate.setAttribute("dur", `${dashSpeed}s`);
-    topAnimate.setAttribute("repeatCount", "indefinite");
-    topLine.appendChild(topAnimate);
-    svg.appendChild(topLine);
+					for (let rep = 0; rep < repetitions; rep++) {
+						for (let i = 0; i < numColors; i++) {
+							const stop = document.createElementNS(
+								svgNS,
+								"stop",
+							);
+							const offset =
+								((rep * numColors + i) / totalStops) * 100;
+							stop.setAttribute("offset", `${offset}%`);
+							stop.setAttribute("stop-color", colors[i]);
 
-    runningOffset += width - strokeWidth;
+							// Create cycling color animation for each stop
+							const colorAnimate = document.createElementNS(
+								svgNS,
+								"animate",
+							);
+							colorAnimate.setAttribute(
+								"attributeName",
+								"stop-color",
+							);
 
-    // Right edge
-    const rightLine = document.createElementNS(svgNS, "line");
-    rightLine.setAttribute("x1", `${width - offset}`);
-    rightLine.setAttribute("y1", `${offset}`);
-    rightLine.setAttribute("x2", `${width - offset}`);
-    rightLine.setAttribute("y2", `${height - offset}`);
-    rightLine.setAttribute("stroke", "url(#right-gradient)");
-    rightLine.setAttribute("stroke-width", `${strokeWidth}`);
-    rightLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
-    rightLine.setAttribute("stroke-linecap", "round");
-    rightLine.setAttribute("stroke-dashoffset", `${runningOffset % adjustedDashPattern}`);
-    
-    const rightAnimate = document.createElementNS(svgNS, "animate");
-    rightAnimate.setAttribute("attributeName", "stroke-dashoffset");
-    rightAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`);
-    rightAnimate.setAttribute("to", `${runningOffset % adjustedDashPattern}`);
-    rightAnimate.setAttribute("dur", `${dashSpeed}s`);
-    rightAnimate.setAttribute("repeatCount", "indefinite");
-    rightLine.appendChild(rightAnimate);
-    svg.appendChild(rightLine);
+							// Create color values by cycling through rainbow colors
+							const animatedColors: string[] = [];
+							for (let cycle = 0; cycle < numColors; cycle++) {
+								const colorIndex = (i + cycle) % numColors;
+								animatedColors.push(colors[colorIndex]);
+							}
+							animatedColors.push(colors[i]); // Complete the cycle
 
-    runningOffset += height - strokeWidth;
+							colorAnimate.setAttribute(
+								"values",
+								animatedColors.join(";"),
+							);
+							colorAnimate.setAttribute(
+								"dur",
+								`${rainbowSpeed}s`,
+							);
+							colorAnimate.setAttribute(
+								"repeatCount",
+								"indefinite",
+							);
 
-    // Bottom edge
-    const bottomLine = document.createElementNS(svgNS, "line");
-    bottomLine.setAttribute("x1", `${width - offset}`);
-    bottomLine.setAttribute("y1", `${height - offset}`);
-    bottomLine.setAttribute("x2", `${offset}`);
-    bottomLine.setAttribute("y2", `${height - offset}`);
-    bottomLine.setAttribute("stroke", "url(#bottom-gradient)");
-    bottomLine.setAttribute("stroke-width", `${strokeWidth}`);
-    bottomLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
-    bottomLine.setAttribute("stroke-linecap", "round");
-    bottomLine.setAttribute("stroke-dashoffset", `${runningOffset % adjustedDashPattern}`);
-    
-    const bottomAnimate = document.createElementNS(svgNS, "animate");
-    bottomAnimate.setAttribute("attributeName", "stroke-dashoffset");
-    bottomAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`);
-    bottomAnimate.setAttribute("to", `${runningOffset % adjustedDashPattern}`);
-    bottomAnimate.setAttribute("dur", `${dashSpeed}s`);
-    bottomAnimate.setAttribute("repeatCount", "indefinite");
-    bottomLine.appendChild(bottomAnimate);
-    svg.appendChild(bottomLine);
+							// Store animation reference for hover control
+							animations.push(colorAnimate);
 
-    runningOffset += width - strokeWidth;
+							stop.appendChild(colorAnimate);
+							gradient.appendChild(stop);
+						}
+					}
 
-    // Left edge
-    const leftLine = document.createElementNS(svgNS, "line");
-    leftLine.setAttribute("x1", `${offset}`);
-    leftLine.setAttribute("y1", `${height - offset}`);
-    leftLine.setAttribute("x2", `${offset}`);
-    leftLine.setAttribute("y2", `${offset}`);
-    leftLine.setAttribute("stroke", "url(#left-gradient)");
-    leftLine.setAttribute("stroke-width", `${strokeWidth}`);
-    leftLine.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
-    leftLine.setAttribute("stroke-linecap", "round");
-    leftLine.setAttribute("stroke-dashoffset", `${runningOffset % adjustedDashPattern}`);
-    
-    const leftAnimate = document.createElementNS(svgNS, "animate");
-    leftAnimate.setAttribute("attributeName", "stroke-dashoffset");
-    leftAnimate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`);
-    leftAnimate.setAttribute("to", `${runningOffset % adjustedDashPattern}`);
-    leftAnimate.setAttribute("dur", `${dashSpeed}s`);
-    leftAnimate.setAttribute("repeatCount", "indefinite");
-    leftLine.appendChild(leftAnimate);
-    svg.appendChild(leftLine);
-  };
+					// Add final stop to complete the cycle
+					const finalStop = document.createElementNS(svgNS, "stop");
+					finalStop.setAttribute("offset", "100%");
+					finalStop.setAttribute("stop-color", colors[0]);
 
-  // Initial render
-  updateBorder();
+					// Animate final stop color too
+					const finalColorAnimate = document.createElementNS(
+						svgNS,
+						"animate",
+					);
+					finalColorAnimate.setAttribute(
+						"attributeName",
+						"stop-color",
+					);
+					const finalAnimatedColors: string[] = [];
+					for (let cycle = 0; cycle < numColors; cycle++) {
+						const colorIndex = cycle % numColors;
+						finalAnimatedColors.push(colors[colorIndex]);
+					}
+					finalAnimatedColors.push(colors[0]); // Complete the cycle
 
-  // Observe resizing
-  const resizeObserver = new ResizeObserver(() => {
-    updateBorder();
-  });
-  resizeObserver.observe(element);
+					finalColorAnimate.setAttribute(
+						"values",
+						finalAnimatedColors.join(";"),
+					);
+					finalColorAnimate.setAttribute("dur", `${rainbowSpeed}s`);
+					finalColorAnimate.setAttribute("repeatCount", "indefinite");
 
-  // Return cleanup function
-  return () => {
-    resizeObserver.disconnect();
-    const svg = element.querySelector('.rainbow-border-svg');
-    if (svg) svg.remove();
-  };
-}
+					// Store animation reference for hover control
+					animations.push(finalColorAnimate);
 
+					finalStop.appendChild(finalColorAnimate);
+					gradient.appendChild(finalStop);
 
+					return gradient;
+				};
+
+				// Create gradients for each side
+				const topGradient = createGradient("top-gradient", true, width);
+				const rightGradient = createGradient(
+					"right-gradient",
+					false,
+					height,
+				);
+				const bottomGradient = createGradient(
+					"bottom-gradient",
+					true,
+					width,
+				);
+				const leftGradient = createGradient(
+					"left-gradient",
+					false,
+					height,
+				);
+
+				defs.appendChild(topGradient);
+				defs.appendChild(rightGradient);
+				defs.appendChild(bottomGradient);
+				defs.appendChild(leftGradient);
+				svg.appendChild(defs);
+
+				// Create 4 separate lines for each edge
+				// Lines are inset by half the stroke width to stay within bounds
+				const offset = strokeWidth / 2;
+
+				// Calculate starting dash offset for each side to ensure corner alignment
+				let runningOffset = 0;
+
+				// Top edge
+				const topLine = document.createElementNS(svgNS, "line");
+				topLine.setAttribute("x1", `${offset}`);
+				topLine.setAttribute("y1", `${offset}`);
+				topLine.setAttribute("x2", `${width - offset}`);
+				topLine.setAttribute("y2", `${offset}`);
+				topLine.setAttribute("stroke", "url(#top-gradient)");
+				topLine.setAttribute("stroke-width", `${strokeWidth}`);
+				topLine.setAttribute(
+					"stroke-dasharray",
+					`${adjustedDashWidth} ${adjustedDashGap}`,
+				);
+				topLine.setAttribute("stroke-linecap", "square");
+				topLine.setAttribute("stroke-dashoffset", `${runningOffset}`);
+
+				const topAnimate = document.createElementNS(svgNS, "animate");
+				topAnimate.setAttribute("attributeName", "stroke-dashoffset");
+				topAnimate.setAttribute(
+					"from",
+					`${adjustedDashWidth + adjustedDashGap + runningOffset}`,
+				);
+				topAnimate.setAttribute("to", `${runningOffset}`);
+				topAnimate.setAttribute("dur", `${dashSpeed}s`);
+				topAnimate.setAttribute("repeatCount", "indefinite");
+
+				// Store animation reference for hover control
+				animations.push(topAnimate);
+
+				topLine.appendChild(topAnimate);
+				svg.appendChild(topLine);
+
+				runningOffset += width - strokeWidth;
+
+				// Right edge
+				const rightLine = document.createElementNS(svgNS, "line");
+				rightLine.setAttribute("x1", `${width - offset}`);
+				rightLine.setAttribute("y1", `${offset}`);
+				rightLine.setAttribute("x2", `${width - offset}`);
+				rightLine.setAttribute("y2", `${height - offset}`);
+				rightLine.setAttribute("stroke", "url(#right-gradient)");
+				rightLine.setAttribute("stroke-width", `${strokeWidth}`);
+				rightLine.setAttribute(
+					"stroke-dasharray",
+					`${adjustedDashWidth} ${adjustedDashGap}`,
+				);
+				rightLine.setAttribute("stroke-linecap", "square");
+				rightLine.setAttribute(
+					"stroke-dashoffset",
+					`${runningOffset % adjustedDashPattern}`,
+				);
+
+				const rightAnimate = document.createElementNS(svgNS, "animate");
+				rightAnimate.setAttribute("attributeName", "stroke-dashoffset");
+				rightAnimate.setAttribute(
+					"from",
+					`${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`,
+				);
+				rightAnimate.setAttribute(
+					"to",
+					`${runningOffset % adjustedDashPattern}`,
+				);
+				rightAnimate.setAttribute("dur", `${dashSpeed}s`);
+				rightAnimate.setAttribute("repeatCount", "indefinite");
+
+				// Store animation reference for hover control
+				animations.push(rightAnimate);
+
+				rightLine.appendChild(rightAnimate);
+				svg.appendChild(rightLine);
+
+				runningOffset += height - strokeWidth;
+
+				// Bottom edge
+				const bottomLine = document.createElementNS(svgNS, "line");
+				bottomLine.setAttribute("x1", `${width - offset}`);
+				bottomLine.setAttribute("y1", `${height - offset}`);
+				bottomLine.setAttribute("x2", `${offset}`);
+				bottomLine.setAttribute("y2", `${height - offset}`);
+				bottomLine.setAttribute("stroke", "url(#bottom-gradient)");
+				bottomLine.setAttribute("stroke-width", `${strokeWidth}`);
+				bottomLine.setAttribute(
+					"stroke-dasharray",
+					`${adjustedDashWidth} ${adjustedDashGap}`,
+				);
+				bottomLine.setAttribute("stroke-linecap", "square");
+				bottomLine.setAttribute(
+					"stroke-dashoffset",
+					`${runningOffset % adjustedDashPattern}`,
+				);
+
+				const bottomAnimate = document.createElementNS(
+					svgNS,
+					"animate",
+				);
+				bottomAnimate.setAttribute(
+					"attributeName",
+					"stroke-dashoffset",
+				);
+				bottomAnimate.setAttribute(
+					"from",
+					`${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`,
+				);
+				bottomAnimate.setAttribute(
+					"to",
+					`${runningOffset % adjustedDashPattern}`,
+				);
+				bottomAnimate.setAttribute("dur", `${dashSpeed}s`);
+				bottomAnimate.setAttribute("repeatCount", "indefinite");
+
+				// Store animation reference for hover control
+				animations.push(bottomAnimate);
+
+				bottomLine.appendChild(bottomAnimate);
+				svg.appendChild(bottomLine);
+
+				runningOffset += width - strokeWidth;
+
+				// Left edge
+				const leftLine = document.createElementNS(svgNS, "line");
+				leftLine.setAttribute("x1", `${offset}`);
+				leftLine.setAttribute("y1", `${height - offset}`);
+				leftLine.setAttribute("x2", `${offset}`);
+				leftLine.setAttribute("y2", `${offset}`);
+				leftLine.setAttribute("stroke", "url(#left-gradient)");
+				leftLine.setAttribute("stroke-width", `${strokeWidth}`);
+				leftLine.setAttribute(
+					"stroke-dasharray",
+					`${adjustedDashWidth} ${adjustedDashGap}`,
+				);
+				leftLine.setAttribute("stroke-linecap", "square");
+				leftLine.setAttribute(
+					"stroke-dashoffset",
+					`${runningOffset % adjustedDashPattern}`,
+				);
+
+				const leftAnimate = document.createElementNS(svgNS, "animate");
+				leftAnimate.setAttribute("attributeName", "stroke-dashoffset");
+				leftAnimate.setAttribute(
+					"from",
+					`${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`,
+				);
+				leftAnimate.setAttribute(
+					"to",
+					`${runningOffset % adjustedDashPattern}`,
+				);
+				leftAnimate.setAttribute("dur", `${dashSpeed}s`);
+				leftAnimate.setAttribute("repeatCount", "indefinite");
+
+				// Store animation reference for hover control
+				animations.push(leftAnimate);
+
+				leftLine.appendChild(leftAnimate);
+				svg.appendChild(leftLine);
+			};
+
+			// Function to update animation speeds
+			const updateAnimationSpeeds = (
+				newRainbowSpeed: number,
+				newDashSpeed: number,
+			) => {
+				animations.forEach((animation) => {
+					const attributeName =
+						animation.getAttribute("attributeName");
+					if (attributeName === "stop-color") {
+						animation.setAttribute("dur", `${newRainbowSpeed}s`);
+					} else if (attributeName === "stroke-dashoffset") {
+						animation.setAttribute("dur", `${newDashSpeed}s`);
+					}
+				});
+			};
+
+			// Track pseudo-class states
+			let isHovered = false;
+			let isFocused = false;
+			let isActive = false;
+
+			// Function to determine if any pseudo-class is active and update speeds accordingly
+			const updateBorderState = () => {
+				if (isHovered || isFocused || isActive) {
+					updateAnimationSpeeds(hoverRainbowSpeed, hoverDashSpeed);
+				} else {
+					updateAnimationSpeeds(rainbowSpeed, dashSpeed);
+				}
+			};
+
+			// Mouse hover event listeners
+			const handleMouseEnter = () => {
+				isHovered = true;
+				updateBorderState();
+			};
+
+			const handleMouseLeave = () => {
+				isHovered = false;
+				updateBorderState();
+			};
+
+			// Focus event listeners
+			const handleFocus = () => {
+				isFocused = true;
+				updateBorderState();
+			};
+
+			const handleBlur = () => {
+				isFocused = false;
+				updateBorderState();
+			};
+
+			// Active state event listeners
+			const handleMouseDown = () => {
+				isActive = true;
+				updateBorderState();
+			};
+
+			const handleMouseUp = () => {
+				isActive = false;
+				updateBorderState();
+			};
+
+			// Add all event listeners
+			element.addEventListener("mouseenter", handleMouseEnter);
+			element.addEventListener("mouseleave", handleMouseLeave);
+			element.addEventListener("focus", handleFocus);
+			element.addEventListener("blur", handleBlur);
+			element.addEventListener("mousedown", handleMouseDown);
+			element.addEventListener("mouseup", handleMouseUp);
+			
+			// Also handle mouseup outside the element to reset active state
+			document.addEventListener("mouseup", handleMouseUp);
+
+			// Initial render
+			updateBorder();
+
+			// Observe resizing
+			const resizeObserver = new ResizeObserver(() => {
+				updateBorder();
+			});
+			resizeObserver.observe(element);
+
+			// Return cleanup function
+			return () => {
+				element.removeEventListener("mouseenter", handleMouseEnter);
+				element.removeEventListener("mouseleave", handleMouseLeave);
+				element.removeEventListener("focus", handleFocus);
+				element.removeEventListener("blur", handleBlur);
+				element.removeEventListener("mousedown", handleMouseDown);
+				element.removeEventListener("mouseup", handleMouseUp);
+				document.removeEventListener("mouseup", handleMouseUp);
+				resizeObserver.disconnect();
+				const svg = element.querySelector(".rainbow-border-svg");
+				if (svg) svg.remove();
+			};
+		}
 
 		document.addEventListener("DOMContentLoaded", () => {
 			const grid = document.querySelector(
@@ -824,14 +1035,15 @@ function applyRainbowPatternBorder(element: HTMLElement, options: any = {}) {
 				grid.style.opacity = "1";
 
 				const newProjectCard = grid.querySelector(
-					"[data-project-title='new-project']",
+					"[data-project-title='new-project'] > a",
 				) as HTMLElement;
 				applyRainbowPatternBorder(newProjectCard, {
-					dashWidth: 8,
-					dashGap: 4,
+					dashWidth: 4,
+					dashGap: 8,
 					strokeWidth: 2,
 					dashSpeed: 1,
-					rainbowSpeed: 4,
+					rainbowSpeed: 2,
+					hoverRainbowSpeed: 1,
 				});
 			};
 
@@ -1041,7 +1253,9 @@ function applyRainbowPatternBorder(element: HTMLElement, options: any = {}) {
 		}
 
 		.new-project-card {
-			&:hover, &:focus, &:active {
+			&:hover,
+			&:focus,
+			&:active {
 				border: none;
 			}
 		}

@@ -28,6 +28,69 @@ function processStatementText(text: string, links?: Array<{text: string, href: s
 }
 ---
 
+<style is:global>
+	/* Global styles for mission section links since they're dynamically inserted */
+	.mission-statement a {
+		color: #ffffff !important;
+		text-decoration: underline;
+		text-decoration-color: rgba(255, 255, 255, 0.5);
+		text-underline-offset: 2px;
+		transition: all 0.3s ease;
+	}
+
+	.mission-statement a:hover,
+	.mission-statement a:focus {
+		color: #ffffff !important;
+		text-decoration-color: #ffffff;
+		text-shadow: 0 0 4px rgba(255, 255, 255, 0.4);
+	}
+
+	.mission-statement a:active {
+		color: #cccccc !important;
+		text-decoration-color: #cccccc;
+	}
+
+	.mission-statement a:focus {
+		outline: 2px solid rgba(255, 255, 255, 0.8);
+		outline-offset: 2px;
+		border-radius: 2px;
+	}
+
+	/* When container is hovered, links become distinct in dark theme */
+	.mission-statement:hover a,
+	.mission-statement:focus a,
+	.mission-statement:active a {
+		color: #0066cc !important;
+		text-decoration-color: rgba(0, 102, 204, 0.6);
+	}
+
+	.mission-statement:hover a:hover,
+	.mission-statement:hover a:focus,
+	.mission-statement:focus a:hover,
+	.mission-statement:focus a:focus,
+	.mission-statement:active a:hover,
+	.mission-statement:active a:focus {
+		color: #004499 !important;
+		text-decoration-color: #004499;
+		text-shadow: 0 0 2px rgba(0, 68, 153, 0.3);
+	}
+
+	.mission-statement:hover a:active,
+	.mission-statement:focus a:active,
+	.mission-statement:active a:active {
+		color: #0033aa !important;
+		text-decoration-color: #0033aa;
+	}
+
+	.mission-statement:hover a:focus,
+	.mission-statement:focus a:focus,
+	.mission-statement:active a:focus {
+		outline: 2px solid #0066cc;
+		outline-offset: 2px;
+		border-radius: 2px;
+	}
+</style>
+
 <style>
 	h2 {
 		font-family: 'Times New Roman', Times, serif;
@@ -44,45 +107,73 @@ function processStatementText(text: string, links?: Array<{text: string, href: s
 		transition: all 0.3s ease;
 	}
 
-	.mission-statement:hover {
+	.mission-statement:hover,
+	.mission-statement:focus,
+	.mission-statement:active {
 		border-color: white;
-		background: linear-gradient(
-			135deg,
-			rgba(245, 245, 245, 0.08) 0%,
-			rgba(245, 245, 245, 0.04) 100%
-		);
+		background: white;
+	}
+
+	.mission-statement:hover *,
+	.mission-statement:focus *,
+	.mission-statement:active * {
+		color: #000000 !important;
+	}
+
+	.mission-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
 	}
 
 	.mission-item {
 		position: relative;
 		padding-left: 1.5rem;
+		margin-bottom: 1.5rem;
 		transition: all 0.3s ease;
 	}
 
-	.mission-item p {
-		font-family: 'Times New Roman', Times, serif;
-	}
-
-	.mission-item p > a {
-		color: rgb(177, 177, 177);
-	}
-
-	.mission-item p > a:hover {
-		color: white;
+	.mission-item:last-child {
+		margin-bottom: 0;
 	}
 
 	.mission-item::before {
 		content: '*';
 		position: absolute;
 		left: 0;
-		top: 0;
+		top: 0.5rem;
 		color: rgba(245, 245, 245, 0.6);
 		font-weight: bold;
 		transition: all 0.3s ease;
+		line-height: 1;
+	}
+
+	.mission-item p {
+		font-family: 'Times New Roman', Times, serif;
+		margin: 0;
+	}
+
+	/* Individual list item hover effects */
+	.mission-item:hover {
+		transform: scale(1.02);
 	}
 
 	.mission-item:hover::before {
 		color: #f5f5f5;
+	}
+
+	/* When container is hovered, make bullets faint grey instead of black */
+	.mission-statement:hover .mission-item::before,
+	.mission-statement:focus .mission-item::before,
+	.mission-statement:active .mission-item::before {
+		color: rgba(128, 128, 128, 0.6);
+	}
+
+	/* Individual item hover takes priority over container hover */
+	.mission-statement:hover .mission-item:hover::before,
+	.mission-statement:focus .mission-item:hover::before,
+	.mission-statement:active .mission-item:hover::before {
+		color: #000000;
 	}
 </style>
 
@@ -93,14 +184,16 @@ function processStatementText(text: string, links?: Array<{text: string, href: s
 	{heading}
 </h2>
 
-<div class="mission-statement p-8 md:p-12 space-y-6">
-	{statements.map((statement) => (
-		<div class="mission-item">
-			<p
-				class={`text-lg md:text-xl text-[#F5F5F5] leading-relaxed ${statement.emphasis ? 'font-medium' : ''}`}
-				set:html={processStatementText(statement.text, statement.links)}
-			>
-			</p>
-		</div>
-	))}
+<div class="mission-statement p-8 md:p-12">
+	<ul class="mission-list">
+		{statements.map((statement) => (
+			<li class="mission-item">
+				<p
+					class={`text-lg md:text-xl text-[#F5F5F5] leading-relaxed ${statement.emphasis ? 'font-medium' : ''}`}
+					set:html={processStatementText(statement.text, statement.links)}
+				>
+				</p>
+			</li>
+		))}
+	</ul>
 </div>
