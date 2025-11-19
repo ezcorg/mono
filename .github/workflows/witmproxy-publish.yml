@@ -1,0 +1,160 @@
+name: Publish witmproxy to crates.io
+
+on:
+  push:
+    tags:
+      - 'witmproxy-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.0.1)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Perform a dry run (do not actually publish)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Run tests before publishing
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            src/apps/wasmtime -> src/apps/wasmtime/target
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Check code formatting
+        run: cargo fmt --package witmproxy --check
+
+      - name: Run clippy lints
+        run: cargo clippy --package witmproxy --all-targets --all-features -- -D warnings
+
+      - name: Build witmproxy
+        run: cargo build --package witmproxy --all-targets
+
+      - name: Run tests
+        run: cargo test --package witmproxy
+
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            src/apps/wasmtime -> src/apps/wasmtime/target
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Extract version from tag
+        if: github.event_name == 'push'
+        run: |
+          # Extract version from tag (e.g., witmproxy-v1.0.0 -> 1.0.0)
+          VERSION=${GITHUB_REF#refs/tags/witmproxy-v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Publishing version: $VERSION"
+
+      - name: Set version from input
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          echo "Publishing version: ${{ github.event.inputs.version }}"
+
+      - name: Update version in Cargo.toml
+        run: |
+          cd src/apps/witmproxy
+          # Update the version in Cargo.toml
+          sed -i 's/^version = ".*"/version = "'${{ env.VERSION }}'"/' Cargo.toml
+          echo "Updated Cargo.toml version to ${{ env.VERSION }}"
+          cat Cargo.toml | grep -E "^version"
+
+      - name: Verify package can be built
+        run: |
+          cd src/apps/witmproxy
+          cargo build --release
+
+      - name: Verify package metadata
+        run: |
+          cd src/apps/witmproxy
+          cargo package --list
+
+      - name: Dry run publish (if enabled)
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          cd src/apps/witmproxy
+          cargo publish --dry-run
+
+      - name: Publish to crates.io
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          cd src/apps/witmproxy
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub release
+        if: github.event_name == 'push' && github.event.inputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: witmproxy-v${{ env.VERSION }}
+          name: witmproxy v${{ env.VERSION }}
+          body: |
+            ## witmproxy v${{ env.VERSION }}
+            
+            Published to [crates.io](https://crates.io/crates/witmproxy/${{ env.VERSION }})
+            
+            ### Installation
+            
+            ```bash
+            # Install from crates.io
+            cargo install witmproxy@${{ env.VERSION }}
+            
+            # Or add to your Cargo.toml
+            [dependencies]
+            witmproxy = "${{ env.VERSION }}"
+            ```
+            
+            ### Changes
+            
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/src/apps/witmproxy/CHANGELOG.md) for details.
+          draft: false
+          prerelease: ${{ contains(env.VERSION, 'alpha') || contains(env.VERSION, 'beta') || contains(env.VERSION, 'rc') }}
