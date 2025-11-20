@@ -116,6 +116,7 @@ impl PluginHandler {
             overwrite: false,
             skip_submodules: false,
             other_args: None,
+            no_workspace: false,
         };
 
         generate(args)?;

@@ -1,6 +1,5 @@
 [workspace]
 resolver = "2"
-license = "AGPLv3"
 members = [
     "src/apps/witmproxy",
     "src/apps/eznote/src-tauri", 
@@ -9,6 +8,7 @@ members = [
 ]
 exclude = [
     "src/apps/wasmtime", 
+    "src/apps/cargo-generate",
 ]
 
 # Workspace-wide configuration
