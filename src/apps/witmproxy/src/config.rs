@@ -20,94 +20,94 @@ pub fn expand_home_in_path(path: &PathBuf) -> Result<PathBuf> {
 }
 
 #[derive(Config, Clone, Default, Serialize, Deserialize)]
-#[config(partial_attr(derive(Args, Serialize, Clone)))]
+#[config(layer_attr(derive(Args, Serialize, Clone)))]
 pub struct AppConfig {
-    #[config(nested, partial_attr(command(flatten)))]
+    #[config(nested, layer_attr(command(flatten)))]
     pub proxy: ProxyConfig,
 
-    #[config(nested, partial_attr(command(flatten)))]
+    #[config(nested, layer_attr(command(flatten)))]
     pub db: DbConfig,
 
-    #[config(nested, partial_attr(command(flatten)))]
+    #[config(nested, layer_attr(command(flatten)))]
     pub tls: TlsConfig,
 
-    #[config(nested, partial_attr(command(flatten)))]
+    #[config(nested, layer_attr(command(flatten)))]
     pub plugins: PluginConfig,
 
-    #[config(nested, partial_attr(command(flatten)))]
+    #[config(nested, layer_attr(command(flatten)))]
     pub web: WebConfig,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Serialize,)))]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct ProxyConfig {
     /// The address the proxy server will bind to (optional, defaults to 127.0.0.1:0)
-    #[config(env = "PROXY_BIND_ADDR", partial_attr(arg(long)))]
+    #[config(env = "PROXY_BIND_ADDR", layer_attr(arg(long)))]
     pub proxy_bind_addr: Option<String>,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Serialize,)))]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct DbConfig {
     /// The database connection URL
     #[config(
         default = "$HOME/.witmproxy/db.sqlite",
-        partial_attr(arg(long, default_value = "$HOME/.witmproxy/db.sqlite"))
+        layer_attr(arg(long, default_value = "$HOME/.witmproxy/db.sqlite"))
     )]
     pub db_path: PathBuf,
 
     /// The database password
-    #[config(env = "DB_PASSWORD", partial_attr(arg(long)))]
+    #[config(env = "DB_PASSWORD", layer_attr(arg(long)))]
     pub db_password: String,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Serialize,)))]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct TlsConfig {
     /// The size of the generated key
-    #[config(default = 2048, partial_attr(arg(long, default_value = "2048")))]
+    #[config(default = 2048, layer_attr(arg(long, default_value = "2048")))]
     pub key_size: u32,
 
     /// The size of the cache for minted certificates
-    #[config(default = 1024, partial_attr(arg(long, default_value = "1024")))]
+    #[config(default = 1024, layer_attr(arg(long, default_value = "1024")))]
     pub cache_size: usize,
 
     /// The directory where root certificates are stored
     #[config(
         default = "$HOME/.witmproxy/certs",
-        partial_attr(arg(long, default_value = "$HOME/.witmproxy/certs"))
+        layer_attr(arg(long, default_value = "$HOME/.witmproxy/certs"))
     )]
     pub cert_dir: PathBuf,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Serialize,)))]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct PluginConfig {
     /// Whether or not plugins are enabled for the proxy
-    #[config(default = true, partial_attr(arg(long, default_value = "true")))]
+    #[config(default = true, layer_attr(arg(long, default_value = "true")))]
     pub enabled: bool,
 
     /// The timeout for plugin execution
-    #[config(default = 1000, partial_attr(arg(long, default_value = "1000")))]
+    #[config(default = 1000, layer_attr(arg(long, default_value = "1000")))]
     pub timeout_ms: u64,
 
     /// The maximum amount of memory a plugin can use
-    #[config(default = 1024, partial_attr(arg(long, default_value = "1024")))]
+    #[config(default = 1024, layer_attr(arg(long, default_value = "1024")))]
     pub max_memory_mb: u64,
 
     /// The maximum amount of fuel a plugin can use
     #[config(
         default = 1_000_000,
-        partial_attr(arg(long, default_value = "1000000"))
+        layer_attr(arg(long, default_value = "1000000"))
     )]
     pub max_fuel: u64,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
-#[config(partial_attr(derive(Args, Clone, Serialize,)))]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct WebConfig {
     /// The address the web frontend will bind to (optional, defaults to 127.0.0.1:0)
-    #[config(partial_attr(arg(long)))]
+    #[config(layer_attr(arg(long)))]
     pub web_bind_addr: Option<String>,
 }
 

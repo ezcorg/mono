@@ -1,17 +1,13 @@
 mod tests {
     use crate::{
-        AppConfig, Db, Runtime,
-        cli::{Commands, ResolvedCli, plugin::PluginCommands},
-        config::confique_partial_app_config::PartialAppConfig,
-        plugins::{
+        AppConfig, Db, Runtime, cli::{Commands, ResolvedCli, plugin::PluginCommands}, config::confique_app_config_layer::AppConfigLayer, plugins::{
             WitmPlugin,
             cel::{CelConnect, CelRequest, CelResponse},
-        },
-        test_utils::test_component_path,
+        }, test_utils::test_component_path
     };
     use anyhow::Result;
     use cel_cxx::Env;
-    use confique::{Config, Partial};
+    use confique::{Config, Layer};
     use std::path::Path;
     use tempfile::tempdir;
 
@@ -41,7 +37,7 @@ mod tests {
     /// Test helper that creates a ResolvedCli with test configuration
     async fn create_test_cli(temp_path: &Path) -> ResolvedCli {
         let db_path = temp_path.join("test.db");
-        let mut partial_config = PartialAppConfig::default_values();
+        let mut partial_config = AppConfigLayer::default_values();
         partial_config.db.db_path = Some(db_path);
         partial_config.db.db_password = Some("test_password".to_string());
 

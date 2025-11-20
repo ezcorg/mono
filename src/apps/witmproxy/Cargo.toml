@@ -5,6 +5,18 @@ edition = "2024"
 authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A WASM-in-the-middle proxy"
 license = "AGPLv3"
+readme = "README.md"
+repository = "https://github.com/ezcorg/mono"
+keywords = ["wasm", "wasmtime", "mitm", "proxy"]
+categories = ["network-programming", "wasm"]
+
+[lib]
+name = "witmproxy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "witm"
+path = "src/main.rs"
 
 [dependencies]
 # Async runtime
@@ -30,9 +42,9 @@ x509-parser = "0.17"
 time = { version = "0.3", features = ["macros"] }
 
 # WASM runtime (component-model + async)
-wasmtime = { path = "../wasmtime/crates/wasmtime", features = ["component-model-async"] }
-wasmtime-wasi = { path = "../wasmtime/crates/wasi", features = ["p3"] }
-wasmtime-wasi-http = { path = "../wasmtime/crates/wasi-http", features = ["p3"] }
+wasmtime = { git = "https://github.com/ezcorg/wasmtime", features = ["component-model-async"] }
+wasmtime-wasi = { git = "https://github.com/ezcorg/wasmtime", features = ["p3"] }
+wasmtime-wasi-http = { git = "https://github.com/ezcorg/wasmtime", features = ["p3"] }
 wit-bindgen = { version = "0.46.0", features = ["default"] }
 # WASM signature verification
 wasmsign2 = "0.2.6"
@@ -69,12 +81,12 @@ markup5ever_rcdom = "0.3"
 
 # Template engine
 askama = "0.12"
-cargo-generate = { path = "../cargo-generate" }
+cargo-generate = { git = "https://github.com/ezcorg/cargo-generate" }
 
 clap = { version = "4.5.47", features = ["derive"] }
 markup5ever = "0.35.0"
 either = "1.15.0"
-confique = { path = "../../rust/confique", features = ["toml"] }
+confique = { git = "https://github.com/ezcorg/confique", features = ["toml"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 # Must match version in sqlx
 libsqlite3-sys = { version = "0.30.1", features = [
@@ -89,10 +101,6 @@ http-body = "1.0.1"
 webextension_pattern = { version = "0.3.0", features = ["serde"] }
 cel-cxx = { version = "0.2.1", features = ["tokio"] }
 
-[lib]
-name = "witmproxy"
-path = "src/lib.rs"
-
 [dev-dependencies]
 # Test dependencies
 tokio-test = "0.4"
@@ -100,7 +108,3 @@ tempfile = "3.8"
 rcgen = "0.13.2"
 webpki-roots = "0.26"
 sqlx-cli = { version = "0.8.6", features = ["rustls"] }
-
-[[bin]]
-name = "witm"
-path = "src/main.rs"

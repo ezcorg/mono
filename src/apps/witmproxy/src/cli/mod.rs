@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, CertificateAuthority, WitmProxy, config::expand_home_in_path, db::Db,
+    AppConfig, CertificateAuthority, WitmProxy, config::{confique_app_config_layer::AppConfigLayer, expand_home_in_path}, db::Db,
     plugins::registry::PluginRegistry, wasm::Runtime,
 };
 use plugin::PluginCommands;
@@ -13,9 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::info;
-
-// Re-export PartialAppConfig for public usage
-pub use crate::config::confique_partial_app_config::PartialAppConfig;
 
 mod plugin;
 mod proxy;
@@ -37,7 +34,7 @@ pub struct Cli {
 
     /// Configuration object
     #[command(flatten)]
-    config: PartialAppConfig,
+    config: AppConfigLayer,
 
     /// Enable verbose logging
     #[arg(short, long)]

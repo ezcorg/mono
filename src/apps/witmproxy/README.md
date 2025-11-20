@@ -25,7 +25,7 @@ witmproxy stop # stop the service, until explictly restarted
 Plugins are how you can extend `witmproxy` with whatever functionality your heart desires.
 
 ```sh
-witmproxy add @ezco/hello # add a plugin from the witmproxy.rs registry
+witmproxy add @ezco/noop # add a plugin from the witmproxy.rs registry
 witmproxy add ./path/to/component.wasm # add a local plugin
 ```
 
@@ -48,7 +48,7 @@ See [WIT Publishing Documentation](../../docs/wit-publishing.md) for more inform
 
 ## Architecture
 
-A not entirely correct but pretty LLM-generated diagram:
+A not-entirely-accurate but pretty LLM-generated diagram:
 
 ```
 ┌─────────────────┐      ┌─────────────────────────────┐      ┌─────────────────┐
@@ -80,7 +80,7 @@ A not entirely correct but pretty LLM-generated diagram:
 
 ## Supporting the project
 
-Consider either [supporting the author directly](#todo), or supporting any of the maintainers of the projects that make `witmproxy` possible:
+Consider either [supporting the author directly](https://github.com/sponsors/tbrockman), or supporting any of the maintainers of the projects that make `witmproxy` possible:
 - [mitmproxy](https://github.com/sponsors/mhils) the inspiration for this project
 - [sqlite](https://sqlite.org/consortium.html) the database engine used for storage
 - [Tokio](https://github.com/sponsors/tokio-rs) the projects async runtime

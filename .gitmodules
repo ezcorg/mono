@@ -4,9 +4,6 @@
 [submodule "src/rust/hello-wasip3-http"]
 	path = src/rust/hello-wasip3-http
 	url = https://github.com/ezcorg/hello-wasip3-http
-[submodule "src/rust/confique"]
-	path = src/rust/confique
-	url = https://github.com/ezcorg/confique
 [submodule "src/typescript/tiptap-markdown"]
 	path = src/typescript/tiptap-markdown
 	url = https://github.com/ezcorg/tiptap-markdown
@@ -25,6 +22,3 @@
 [submodule "src/rust/witmproxy-plugin-template-rust"]
 	path = src/rust/witmproxy-plugin-template-rust
 	url = https://github.com/ezcorg/witmproxy-plugin-template-rust
-[submodule "src/apps/wasm-pkg-tools"]
-	path = src/apps/wasm-pkg-tools
-	url = https://github.com/ezcorg/wasm-pkg-tools

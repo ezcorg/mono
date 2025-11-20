@@ -1,19 +1,14 @@
 [workspace]
 resolver = "2"
+license = "AGPLv3"
 members = [
     "src/apps/witmproxy",
-#    "src/apps/ezfilter-client/src-tauri",
     "src/apps/eznote/src-tauri", 
     "src/rust/wasm-test-component",
-    "src/rust/ezfeature-rs",
-    "src/rust/confique",
     "src/rust/witmproxy-plugin-noop",
 ]
-
 exclude = [
     "src/apps/wasmtime", 
-    "src/apps/wasm-pkg-tools", 
-    "src/rust/ezfilter-filter",
 ]
 
 # Workspace-wide configuration
