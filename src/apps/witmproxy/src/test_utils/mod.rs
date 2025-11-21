@@ -1,5 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::path::Path;
+use std::process::Command;
 
 use anyhow::Result;
 use http_body_util::BodyExt;
@@ -68,8 +70,8 @@ pub async fn create_plugin_registry() -> Result<(PluginRegistry, tempfile::TempD
 /// In conjunction with our echo server, we can verify that the target server
 /// received the modified request, and that the client received the modified response.
 pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
-    let wasm_path = test_component_path();
-    let component_bytes = std::fs::read(&wasm_path).unwrap();
+    let wasm_path = test_component_path()?;
+    let component_bytes = std::fs::read(&wasm_path)?;
 
     // Use the actual plugin_from_component method to test the real code path
     let plugin = registry.plugin_from_component(component_bytes).await?;
@@ -77,8 +79,8 @@ pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<()
 }
 
 pub async fn register_noop_plugin(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
-    let wasm_path = noop_plugin_path();
-    let component_bytes = std::fs::read(&wasm_path).unwrap();
+    let wasm_path = noop_plugin_path()?;
+    let component_bytes = std::fs::read(&wasm_path)?;
 
     // Use the actual plugin_from_component method to test the real code path
     let plugin = registry.plugin_from_component(component_bytes).await?;
@@ -398,16 +400,62 @@ pub async fn create_client(
         .unwrap()
 }
 
-pub fn test_component_path() -> String {
-    format!(
+pub fn test_component_path() -> Result<String> {
+    let path = format!(
         "{}/../../../target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
         env!("CARGO_MANIFEST_DIR")
-    )
+    );
+    
+    if !Path::new(&path).exists() {
+        // Build the component
+        let component_dir = format!("{}/../../../src/rust/wasm-test-component", env!("CARGO_MANIFEST_DIR"));
+        let status = Command::new("make")
+            .current_dir(&component_dir)
+            .status()
+            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", component_dir, e))?;
+            
+        if !status.success() {
+            return Err(anyhow::anyhow!("Failed to build wasm-test-component: make exited with status {}", status));
+        }
+        
+        // Verify the file was created
+        if !Path::new(&path).exists() {
+            return Err(anyhow::anyhow!(
+                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
+                path
+            ));
+        }
+    }
+    
+    Ok(path)
 }
 
-pub fn noop_plugin_path() -> String {
-    format!(
+pub fn noop_plugin_path() -> Result<String> {
+    let path = format!(
         "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noop.signed.wasm",
         env!("CARGO_MANIFEST_DIR")
-    )
+    );
+    
+    if !Path::new(&path).exists() {
+        // Build the component
+        let plugin_dir = format!("{}/../../../src/rust/witmproxy-plugin-noop", env!("CARGO_MANIFEST_DIR"));
+        let status = Command::new("make")
+            .current_dir(&plugin_dir)
+            .status()
+            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", plugin_dir, e))?;
+            
+        if !status.success() {
+            return Err(anyhow::anyhow!("Failed to build witmproxy-plugin-noop: make exited with status {}", status));
+        }
+        
+        // Verify the file was created
+        if !Path::new(&path).exists() {
+            return Err(anyhow::anyhow!(
+                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
+                path
+            ));
+        }
+    }
+    
+    Ok(path)
 }

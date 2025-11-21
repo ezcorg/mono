@@ -66,15 +66,7 @@ mod tests {
         let cli = create_test_cli(temp_path).await;
 
         // Test path to the signed WASM component
-        let wasm_path = test_component_path();
-
-        // Check if the test WASM file exists before running the test
-        if !std::path::Path::new(&wasm_path).exists() {
-            panic!(
-                "WASM test component not found at {}, build it first",
-                wasm_path
-            );
-        }
+        let wasm_path = test_component_path()?;
 
         // Test adding the plugin
         let command = Commands::Plugin {
@@ -180,15 +172,7 @@ mod tests {
         let cli = create_test_cli(temp_path).await;
 
         // Test path to the signed WASM component
-        let wasm_path = test_component_path();
-
-        // Check if the test WASM file exists before running the test
-        if !std::path::Path::new(&wasm_path).exists() {
-            panic!(
-                "WASM test component not found at {}, build it first",
-                wasm_path
-            );
-        }
+        let wasm_path = test_component_path()?;
 
         // Add the plugin first
         let add_command = Commands::Plugin {
@@ -246,15 +230,7 @@ mod tests {
         let cli = create_test_cli(temp_path).await;
 
         // Test path to the signed WASM component
-        let wasm_path = test_component_path();
-
-        // Check if the test WASM file exists before running the test
-        if !std::path::Path::new(&wasm_path).exists() {
-            panic!(
-                "WASM test component not found at {}, build it first",
-                wasm_path
-            );
-        }
+        let wasm_path = test_component_path()?;
 
         // Add the plugin first
         let add_command = Commands::Plugin {

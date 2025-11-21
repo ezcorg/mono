@@ -605,8 +605,8 @@ mod tests {
         registry: &mut PluginRegistry,
         cel_expression: &str,
     ) -> Result<(), anyhow::Error> {
-        let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path).unwrap();
+        let wasm_path = test_component_path()?;
+        let component_bytes = std::fs::read(&wasm_path)?;
 
         // Compile the component from bytes using the registry's runtime engine
         let component = Some(wasmtime::component::Component::from_binary(
@@ -804,8 +804,8 @@ mod tests {
         let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin without Request capability
-        let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path).unwrap();
+        let wasm_path = test_component_path()?;
+        let component_bytes = std::fs::read(&wasm_path)?;
 
         let component = Some(
             wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)
@@ -877,8 +877,8 @@ mod tests {
         register_test_plugin_with_cel_filter(&mut registry, cel_expression1).await?;
 
         // Create another plugin with a different name to test multiple plugins
-        let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path).unwrap();
+        let wasm_path = test_component_path()?;
+        let component_bytes = std::fs::read(&wasm_path)?;
 
         let component = Some(
             wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)
@@ -1007,8 +1007,8 @@ mod tests {
         let (mut registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register multiple plugins with same name but different namespaces
-        let wasm_path = test_component_path();
-        let component_bytes = std::fs::read(&wasm_path).unwrap();
+        let wasm_path = test_component_path()?;
+        let component_bytes = std::fs::read(&wasm_path)?;
 
         for (namespace, name) in [("ns1", "common_plugin"), ("ns2", "common_plugin")] {
             let component = Some(
