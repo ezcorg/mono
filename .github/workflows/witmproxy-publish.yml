@@ -74,6 +74,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip2, wasm32-unknown-unknown 
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
