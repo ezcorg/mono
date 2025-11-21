@@ -42,7 +42,6 @@ pub struct PluginRegistry {
 pub enum HostHandleRequestResult<T = Incoming>
 where
     T: Body<Data = Bytes> + Send + Sync + 'static,
-    T::Error: Into<ErrorCode>,
 {
     None,
     Noop(Request<T>),
@@ -57,8 +56,6 @@ pub enum HostHandleResponseResult {
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
-        // TODO: figure out why regular selection on struct isn't working
-        // Checkout https://github.com/xjasonli/cel-cxx/blob/17f81b6939b0cb0d0c2b65d1ee380c51722a19c1/src/env/mod.rs#L1048
         let env = Env::builder()
             .with_standard(true)
             .declare_variable::<CelConnect>("connect")?
@@ -238,7 +235,6 @@ impl PluginRegistry {
     pub async fn handle_request<T>(&self, original_req: Request<T>) -> HostHandleRequestResult<T>
     where
         T: Body<Data = Bytes> + Send + Sync + 'static,
-        T::Error: Into<ErrorCode>,
     {
         let cel_request = CelRequest::from(&original_req);
         let any_plugins = self
@@ -253,7 +249,7 @@ impl PluginRegistry {
         }
 
         let (req, body) = original_req.into_parts();
-        let body = body.map_err(Into::into);
+        let body = body.map_err(|_| ErrorCode::HttpProtocolError);
         let req = Request::from_parts(req, body);
         let (mut current_req, _io) = WasiRequest::from_http(req);
         let mut store = self.new_store();

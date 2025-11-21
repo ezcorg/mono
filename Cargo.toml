@@ -2,13 +2,13 @@
 resolver = "2"
 members = [
     "src/apps/witmproxy",
+    "src/apps/ezfilter-client/src-tauri",
     "src/apps/eznote/src-tauri", 
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
 ]
 exclude = [
     "src/apps/wasmtime", 
-    "src/apps/cargo-generate",
 ]
 
 # Workspace-wide configuration
