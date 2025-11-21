@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::Result;
 use http_body_util::BodyExt;
@@ -405,19 +405,25 @@ pub fn test_component_path() -> Result<String> {
         "{}/../../../target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
-    
+
     if !Path::new(&path).exists() {
         // Build the component
-        let component_dir = format!("{}/../../../src/rust/wasm-test-component", env!("CARGO_MANIFEST_DIR"));
+        let component_dir = format!(
+            "{}/../../../src/rust/wasm-test-component",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let status = Command::new("make")
             .current_dir(&component_dir)
             .status()
             .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", component_dir, e))?;
-            
+
         if !status.success() {
-            return Err(anyhow::anyhow!("Failed to build wasm-test-component: make exited with status {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to build wasm-test-component: make exited with status {}",
+                status
+            ));
         }
-        
+
         // Verify the file was created
         if !Path::new(&path).exists() {
             return Err(anyhow::anyhow!(
@@ -426,7 +432,7 @@ pub fn test_component_path() -> Result<String> {
             ));
         }
     }
-    
+
     Ok(path)
 }
 
@@ -435,19 +441,25 @@ pub fn noop_plugin_path() -> Result<String> {
         "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noop.signed.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
-    
+
     if !Path::new(&path).exists() {
         // Build the component
-        let plugin_dir = format!("{}/../../../src/rust/witmproxy-plugin-noop", env!("CARGO_MANIFEST_DIR"));
+        let plugin_dir = format!(
+            "{}/../../../src/rust/witmproxy-plugin-noop",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let status = Command::new("make")
             .current_dir(&plugin_dir)
             .status()
             .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", plugin_dir, e))?;
-            
+
         if !status.success() {
-            return Err(anyhow::anyhow!("Failed to build witmproxy-plugin-noop: make exited with status {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to build witmproxy-plugin-noop: make exited with status {}",
+                status
+            ));
         }
-        
+
         // Verify the file was created
         if !Path::new(&path).exists() {
             return Err(anyhow::anyhow!(
@@ -456,6 +468,6 @@ pub fn noop_plugin_path() -> Result<String> {
             ));
         }
     }
-    
+
     Ok(path)
 }

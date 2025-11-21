@@ -1,9 +1,13 @@
 mod tests {
     use crate::{
-        AppConfig, Db, Runtime, cli::{Commands, ResolvedCli, plugin::PluginCommands}, config::confique_app_config_layer::AppConfigLayer, plugins::{
+        AppConfig, Db, Runtime,
+        cli::{Commands, ResolvedCli, plugin::PluginCommands},
+        config::confique_app_config_layer::AppConfigLayer,
+        plugins::{
             WitmPlugin,
             cel::{CelConnect, CelRequest, CelResponse},
-        }, test_utils::test_component_path
+        },
+        test_utils::test_component_path,
     };
     use anyhow::Result;
     use cel_cxx::Env;

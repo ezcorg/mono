@@ -1,6 +1,9 @@
 use crate::{
-    AppConfig, CertificateAuthority, WitmProxy, config::{confique_app_config_layer::AppConfigLayer, expand_home_in_path}, db::Db,
-    plugins::registry::PluginRegistry, wasm::Runtime,
+    AppConfig, CertificateAuthority, WitmProxy,
+    config::{confique_app_config_layer::AppConfigLayer, expand_home_in_path},
+    db::Db,
+    plugins::registry::PluginRegistry,
+    wasm::Runtime,
 };
 use plugin::PluginCommands;
 use proxy::ProxyCommands;

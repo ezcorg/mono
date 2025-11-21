@@ -96,10 +96,7 @@ pub struct PluginConfig {
     pub max_memory_mb: u64,
 
     /// The maximum amount of fuel a plugin can use
-    #[config(
-        default = 1_000_000,
-        layer_attr(arg(long, default_value = "1000000"))
-    )]
+    #[config(default = 1_000_000, layer_attr(arg(long, default_value = "1000000")))]
     pub max_fuel: u64,
 }
 
