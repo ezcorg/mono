@@ -6,6 +6,7 @@ members = [
     "src/apps/eznote/src-tauri", 
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
+    "src/rust/witmproxy-plugin-noshorts",
 ]
 exclude = [
     "src/apps/wasmtime", 

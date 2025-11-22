@@ -2,11 +2,11 @@ use anyhow::Result;
 use cel_cxx::{Activation, Env, Program};
 use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::plugins::cel::{CelConnect, CelRequest, CelResponse};
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Filterable {
     /// CEL filter expression, used to determine whether the capability applies
     pub filter: String,
@@ -15,13 +15,13 @@ pub struct Filterable {
     pub cel: Option<Program<'static>>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Capability<T> {
     pub config: T,
     pub granted: bool,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Capabilities {
     pub connect: Capability<Filterable>,
     pub request: Option<Capability<Filterable>>,
@@ -46,9 +46,11 @@ impl Capabilities {
         if let Some(program) = &self.connect.config.cel
             && let Ok(activation) = Activation::new().bind_variable("connect", cel_connect)
         {
+            debug!("Evaluating CEL connect filter: {}", self.connect.config.filter);
             match program.evaluate(activation) {
                 Ok(result) => {
                     if let cel_cxx::Value::Bool(b) = result {
+                        debug!("CEL connect filter result: {}", b);
                         return b;
                     }
                 }

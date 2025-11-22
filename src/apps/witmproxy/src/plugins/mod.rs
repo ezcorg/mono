@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
 use anyhow::Result;
 use salvo::oapi::ToSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
-use tracing::error;
+use tracing::{error};
 use wasmtime::Engine;
 use wasmtime::component::Component;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
@@ -103,8 +103,7 @@ impl WitmPlugin {
             .await??;
 
         let mut plugin = WitmPlugin::from(guest_result)
-            .with_component(component, component_bytes)
-            .compile_capabilities(env)?;
+            .with_component(component, component_bytes);
         let capabilities = query(
             "
             SELECT capability, config, granted
@@ -153,6 +152,7 @@ impl WitmPlugin {
                 }
             }
         }
+        plugin = plugin.compile_capabilities(env)?;
         Ok(plugin)
     }
 

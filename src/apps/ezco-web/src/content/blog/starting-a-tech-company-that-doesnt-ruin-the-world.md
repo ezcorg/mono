@@ -25,7 +25,7 @@ Conveniently, excessive layers of middle-management provide a way for non-decisi
 
 Even with the best of intentions, the pressure to perform, meet targets, or satisfy fiduciary duties can lead to decisions that prioritize local profits over global well-being.
 
-Maximizing growth above all has led to a pretty large tab for humanity to pay, with the ones who ordered fancy cocktails and multiple entrees now conveniently missing.
+Maximizing growth above all has led to a pretty large tab for humanity to pay, with the ones who ordered fancy cocktails and multiple entrees conveniently sitting it out in the restroom.
 
 
 ## The solution
@@ -34,7 +34,7 @@ Abolish the hierarchy.
 
 Or, at least, the unnatural kind that exists in most companies today.
 
-Create flat (_or other interestingly-shaped_) organizations to add checks and balances on power. Build communities where every member has a voice, and where decisions are made collaboratively rather than top-down. Incentivize participation, punish apathy and exploitation.
+Create flat (_or other interestingly-shaped_) organizations to add checks and balances on power. Build communities where every member has a voice, and where decisions are made collaboratively rather than top-down. Incentivize participation, punish apathy and exploitation. Make fair rules and update them in response to change.
 
 Let experts in their fields make decisions they're best equipped to make, and defer to others for those they're not.
 
