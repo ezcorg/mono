@@ -242,7 +242,7 @@ impl PluginRegistry {
             .values()
             .any(|p| p.capabilities.can_handle_request(&cel_request));
         if !any_plugins {
-            info!(
+            debug!(
                 "No plugins with request capability and matching CEL expression; skipping plugin processing"
             );
             return HostHandleRequestResult::Noop(original_req);

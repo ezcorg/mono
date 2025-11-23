@@ -80,7 +80,57 @@ interface witm-plugin {
         metadata: list<tag>,
     }
 
+    resource html {
+        bytes: func() -> list<u8>;
+        raw: func() -> string;
+    }
+    resource css {
+        bytes: func() -> list<u8>;
+        raw: func() -> string;
+    }
+    resource js {
+        bytes: func() -> list<u8>;
+        raw: func() -> string;
+    }
+    resource json {
+        bytes: func() -> list<u8>;
+        raw: func() -> string;
+    }
+
+    record selectable {
+        selector: string,
+    }
+
+    variant capability {
+        connect(connect-capability),
+        request(request-capability),
+        response(response-capability),
+        inbound-html(html-capability),
+        inbound-css(css-capability),
+        inbound-js(js-capability),
+        inbound-json(json-capability),
+        outbound-json(json-capability),
+    }
+
+    variant event {
+        connect,
+        request(request),
+        response(response),
+        inbound-html(html),
+        inbound-css(css),
+        inbound-js(js),
+        inbound-json(json),
+        outbound-json(json),
+    }
+
+    variant event-result {
+        next(event),
+        done(event),
+        none,
+    }
+
     manifest: func() -> plugin-manifest;
+    handle: func(ev: event, cp: capability-provider) -> event-result;
 
     variant request-or-response {
         request(request),
