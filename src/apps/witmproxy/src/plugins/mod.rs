@@ -9,6 +9,7 @@ use wasmtime::{Engine, Store};
 use wasmtime::component::Component;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use crate::{
     Runtime,
     db::{Db, Insert},
@@ -18,8 +19,8 @@ use crate::{
     },
     wasm::{
         Host,
-        generated::{
-            EventData, Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag, witmproxy::plugin::capabilities::{Capability as WitCapability, EventSelector}
+        bindgen::{
+            EventData, Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag, witmproxy::plugin::capabilities::{Capability as WitCapability}
         },
     },
 };
@@ -53,18 +54,19 @@ pub struct WitmPlugin {
 
 pub trait Event
 {
-    /// Returns the [Capability] required to handle events of this type
-    fn capability() -> Capability
+    /// Returns the [CapabilityKind] required to handle events of this type
+    fn capability() -> CapabilityKind
         where Self: Sized;
 
     /// Converts into EventData by consuming the event and storing it in the provided Store
-    fn as_event_data(self, store: &mut Store<Host>) -> Result<EventData>;
+    fn into_event_data(self, store: &mut Store<Host>) -> Result<EventData>;
     
     /// Register event-specific variables and functions with the CEL environment
-    fn register_in_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>;
+    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
+        where Self: Sized;
 
     /// Bind all event-specific variables into CEL activation
-    fn bind_to_activation<'a>(&'a self, a: Activation<'a>) -> Option<Activation<'a>>;
+    fn bind_to_cel_activation<'a>(&'a self, a: Activation<'a>) -> Option<Activation<'a>>;
 }
 
 pub enum CelContext<T>
@@ -93,10 +95,10 @@ impl WitmPlugin {
         self
     }
 
-    pub fn compile_capabilities(mut self, env: &'static cel_cxx::Env) -> Result<Self> {
+    pub fn compile_capability_scope_expressions(mut self, env: &'static cel_cxx::Env) -> Result<Self> {
         self.capabilities
             .iter_mut()
-            .try_for_each(|c| c.compile_selector(env))?;
+            .try_for_each(|c| c.compile_scope_expression(env))?;
         Ok(self)
     }
 
@@ -159,7 +161,7 @@ impl WitmPlugin {
             };
             plugin.capabilities.push(capability);
         }
-        plugin = plugin.compile_capabilities(env)?;
+        plugin = plugin.compile_capability_scope_expressions(env)?;
         Ok(plugin)
     }
 
@@ -209,7 +211,7 @@ impl WitmPlugin {
         self.capabilities
             .iter()
             // Have we been granted this capability?
-            .filter(|cap| cap.to_string() == E::capability().to_string())
+            .filter(|cap| cap.inner.kind == E::capability())
             .filter(|cap| cap.granted)
             .filter_map(|cap| {
                 let program: &cel_cxx::Program<'_> = cap.cel.as_ref()?;
@@ -217,8 +219,7 @@ impl WitmPlugin {
             })
             // Do we care about this event?
             .any(|program| {
-                let context = event.as_cel();
-                let activation = match context.bind_to_activation(Activation::new()) {
+                let activation = match event.bind_to_cel_activation(Activation::new()) {
                     Some(a) => a,
                     None => return false,
                 };

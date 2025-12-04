@@ -14,9 +14,9 @@ use wasmtime_wasi_http::p3::{
 };
 
 use crate::{
-    db::{Db, Insert}, plugins::{ Event, WitmPlugin, cel::{CelConnect, CelContent, CelRequest, CelResponse}
+    db::{Db, Insert}, plugins::{ Event, WitmPlugin, cel::{CelRequest, CelResponse}
     }, wasm::{
-        CapabilityProvider, Host, Runtime, generated::{Plugin, witmproxy::plugin::capabilities::{Capability, EventData, Selector}}
+        CapabilityProvider, Host, Runtime, bindgen::{Plugin, witmproxy::plugin::capabilities::{CapabilityKind, EventData, EventKind}}
     }
 };
 
@@ -54,49 +54,26 @@ where
     Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
 }
 
-impl Event for WasiResponse {
-    fn capability() -> Capability {
-        Capability::HandleEvent(Selector { expression: "true"})
-    }
-
-    fn as_event_data(self, store: &mut Store<Host>) -> Result<EventData> {
-        let handle: Resource<WasiResponse> = store.data_mut().http().table.push(self)?;
-        Ok(EventData::Response(handle))
-    }
-}
-
-impl Event for WasiRequest {
-    fn capability() -> Capability {
-        "handle-request".to_string()
-    }
-
-    fn as_event_data(self, store: &mut Store<Host>) -> Result<EventData> {
-        let handle: Resource<WasiRequest> = store.data_mut().http().table.push(self)?;
-        Ok(EventData::Request(handle))
-    }
-}
-
 pub struct WitmEvent {
     pub instance: &'static dyn Event,
 }
 
 impl EventData {
     pub fn register<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
-        let mut env = CelConnect::register_in_env(env)?;
-        env = CelContent::register_in_env(env)?;
-        env = CelRequest::register_in_env(env)?;
+        // TODO: do this better
+        let env = WasiRequest::register_in_cel_env(env)?;
+        let env = WasiResponse::register_in_cel_env(env)?;
+
         Ok(env)
     }
 }
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
-        let mut env = Env::builder()
-            .with_standard(true);
-        env = EventData::register(env)?;
-
-        let env = CelContent::register_in_env(env)?
-            .build()?;
+        let env = EventData::register(
+            Env::builder()
+            .with_standard(true)
+        )?.build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration
         // TODO: fix this with proper lifetime management
@@ -182,7 +159,7 @@ impl PluginRegistry {
 
         let plugin = WitmPlugin::from(guest_result)
             .with_component(component, component_bytes)
-            .compile_capabilities(self.env)?;
+            .compile_capability_scope_expressions(self.env)?;
         Ok(plugin)
     }
 
@@ -552,10 +529,11 @@ impl PluginRegistry {
 mod tests {
     use super::*;
     use crate::test_utils::{create_plugin_registry, test_component_path};
+    use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityScope;
     use crate::{
         plugins::{WitmPlugin, capabilities::Capability},
-        wasm::generated::witmproxy::plugin::capabilities::{
-            Capability as WitCapability, EventSelector, Selector,
+        wasm::bindgen::witmproxy::plugin::capabilities::{
+            Capability as WitCapability,
         },
     };
     use bytes::Bytes;
@@ -579,23 +557,32 @@ mod tests {
         let mut capabilities = Vec::new();
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
-                expression: "true".to_string(),
-            })),
+            inner: WitCapability {
+                kind: CapabilityKind::HandleEvent(EventKind::Request),
+                scope: CapabilityScope {
+                    expression: cel_expression.into(),
+                },
+            },
             cel: None,
         });
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Request(Selector {
-                expression: cel_expression.to_string(),
-            })),
+            inner: WitCapability {
+                kind: CapabilityKind::HandleEvent(EventKind::Request),
+                scope: CapabilityScope {
+                    expression: cel_expression.into(),
+                },
+            },
             cel: None,
         });
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Response(Selector {
-                expression: cel_expression.to_string(),
-            })),
+            inner: WitCapability {
+                kind: CapabilityKind::HandleEvent(EventKind::Request),
+                scope: CapabilityScope {
+                    expression: cel_expression.into(),
+                },
+            },
             cel: None,
         });
 
@@ -614,7 +601,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capabilities(&registry.env)?;
+        .compile_capability_scope_expressions(&registry.env)?;
         registry.register_plugin(plugin).await
     }
 
@@ -776,16 +763,23 @@ mod tests {
         let mut capabilities = Vec::new();
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
-                expression: "true".to_string(),
-            })),
+            inner: WitCapability {
+                kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                scope: CapabilityScope {
+                    expression: "true".
+into(),
+                }
+            },
             cel: None,
         });
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Response(Selector {
-                expression: "true".to_string(),
-            })),
+            inner: WitCapability {
+                kind: CapabilityKind::HandleEvent(EventKind::Response),
+                scope: CapabilityScope {
+                    expression: "true".to_string(),
+                }
+            },
             cel: None,
         });
 
@@ -815,7 +809,6 @@ mod tests {
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let executed_plugins = HashSet::new();
 
-        let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
             registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
@@ -845,23 +838,36 @@ mod tests {
         let mut capabilities = Vec::new();
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
-                expression: "true".to_string(),
-            })),
+            inner: WitCapability{
+
+                kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                scope: CapabilityScope {
+                    expression: "true".
+into(),
+
+                }
+                
+            },
             cel: None,
         });
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Request(Selector {
-                expression: "true".to_string(),
-            })),
+            inner: WitCapability {
+                kind: CapabilityKind::HandleEvent(EventKind::Request),
+                scope: CapabilityScope {
+                    expression: "true".to_string(),
+                }
+            },
             cel: None,
         });
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability::HandleEvent(EventSelector::Response(Selector {
-                expression: "true".to_string(),
-            })),
+            inner: WitCapability {
+                kind: CapabilityKind::HandleEvent(EventKind::Response),
+                scope: CapabilityScope {
+                    expression: "true".to_string(),
+                }
+            },
             cel: None,
         });
 
@@ -880,7 +886,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capabilities(&registry.env)?;
+        .compile_capability_scope_expressions(&registry.env)?;
         registry.register_plugin(plugin2).await?;
 
         // Test with a request that should match both plugins initially
@@ -978,18 +984,24 @@ mod tests {
             let mut capabilities = Vec::new();
             capabilities.push(Capability {
                 granted: true,
-                inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
-                    expression: "true".to_string(),
-                })),
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
+                },
                 cel: None,
             });
             capabilities.push(Capability {
                 granted: true,
-                inner: WitCapability::HandleEvent(EventSelector::Request(Selector {
-                    expression: "true".to_string(),
-                })),
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Request),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
+                },
                 cel: None,
-            });
+        });
 
             let plugin = WitmPlugin {
                 name: name.to_string(),

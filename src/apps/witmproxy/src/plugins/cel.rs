@@ -1,13 +1,12 @@
-use anyhow::Result;
 use bytes::Bytes;
-use cel_cxx::{Activation, Opaque};
+use cel_cxx::{Opaque};
 use hyper::{Request, Response};
 use salvo::http::uri::Scheme;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-use super::Celectable;
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::{Content};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
 #[cel_cxx(display)]
@@ -264,6 +263,14 @@ impl CelContent {
     }
 }
 
+impl From<&Content> for CelContent {
+    fn from(content: &Content) -> Self {
+        CelContent {
+            content_type: content.content_type(),
+        }
+    }
+}
+
 impl<B> From<&Response<B>> for CelContent
 where
     B: http_body::Body<Data = Bytes> + Send + 'static,
@@ -282,64 +289,5 @@ where
         CelContent {
             content_type
         }
-    }
-}
-
-impl Celectable for CelConnect {
-    fn register_in_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
-        let env = env
-            .declare_variable::<Self>("connect")?
-            .register_member_function("host", CelConnect::host)?
-            .register_member_function("port", CelConnect::port)?;
-        Ok(env)
-    }
-
-    fn bind_to_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
-        activation.bind_variable("connect", self).ok()
-    }
-}
-
-impl Celectable for CelRequest {
-    fn register_in_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
-        let env = env
-            .declare_variable::<Self>("request")?
-            .register_member_function("scheme", CelRequest::scheme)?
-            .register_member_function("host", CelRequest::host)?
-            .register_member_function("path", CelRequest::path)?
-            .register_member_function("query", CelRequest::query)?
-            .register_member_function("method", CelRequest::method)?
-            .register_member_function("headers", CelRequest::headers)?;
-        Ok(env)
-    }
-
-    fn bind_to_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
-        activation.bind_variable("request", self).ok()
-    }
-}
-
-impl Celectable for CelResponse {
-    fn register_in_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
-        let env = env
-            .declare_variable::<Self>("response")?
-            .register_member_function("status", CelResponse::status)?
-            .register_member_function("headers", CelResponse::headers)?;
-        Ok(env)
-    }
-
-    fn bind_to_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
-        activation.bind_variable("response", self).ok()
-    }
-}
-
-impl Celectable for CelContent {
-    fn register_in_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
-        let env = env
-            .declare_variable::<Self>("content")?
-            .register_member_function("content_type", CelContent::content_type)?;
-        Ok(env)
-    }
-
-    fn bind_to_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
-        activation.bind_variable("content", self).ok()
     }
 }

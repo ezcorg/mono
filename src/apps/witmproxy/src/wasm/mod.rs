@@ -2,36 +2,17 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use wasmtime::component::{HasData, Resource, ResourceTable, StreamReader};
+use wasmtime::component::{HasData, Resource, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
-use crate::wasm::generated::witmproxy::plugin::capabilities::{
-    HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient, HostLogger,
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient, HostLogger
 };
 pub use runtime::Runtime;
 
-pub mod generated {
-
-    pub use crate::wasm::generated::exports::witmproxy::plugin::witm_plugin::{
-        EventData, PluginManifest,
-    };
-    pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient, Logger};
-
-    wasmtime::component::bindgen!({
-        world: "witmproxy:plugin/plugin",
-        exports: { default: async | store | task_exit },
-        with: {
-            "witmproxy:plugin/capabilities.capability-provider": CapabilityProvider,
-            "witmproxy:plugin/capabilities.annotator-client": AnnotatorClient,
-            "witmproxy:plugin/capabilities.local-storage-client": LocalStorageClient,
-            "witmproxy:plugin/capabilities.logger": Logger,
-            "wasi:http/types@0.3.0-rc-2025-09-16": wasmtime_wasi_http::p3::bindings::http::types,
-        },
-    });
-}
+pub mod bindgen;
 
 pub struct CapabilityProvider {}
 
@@ -54,7 +35,23 @@ impl CapabilityProvider {
 pub struct AnnotatorClient {}
 
 impl AnnotatorClient {
-    pub fn annotate(&self, _content_type: String, _data: StreamReader<Vec<u8>>) {}
+    pub fn annotate(&self, content: &Content) {}
+}
+
+pub struct Content {}
+
+impl Content {
+    pub fn body(&self) -> Vec<u8> {
+        vec![]
+    }
+
+    pub fn content_type(&self) -> String {
+        "text/plain; charset=utf-8".to_string()
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8(self.body()).unwrap_or_default()
+    }
 }
 
 pub struct Logger {}
@@ -165,17 +162,27 @@ impl HostContent for WitmProxy<'_> {
 
     fn body(
         &mut self,
-        self_: wasmtime::component::Resource<generated::witmproxy::plugin::capabilities::Content>,
+        self_: wasmtime::component::Resource<bindgen::witmproxy::plugin::capabilities::Content>,
     ) -> wasmtime::component::StreamReader<wasmtime::component::__internal::Vec<u8>> {
         todo!()
     }
 
     fn drop(
         &mut self,
-        rep: wasmtime::component::Resource<generated::witmproxy::plugin::capabilities::Content>,
+        rep: wasmtime::component::Resource<bindgen::witmproxy::plugin::capabilities::Content>,
     ) -> wasmtime::Result<()> {
         let _ = self.table.delete(rep);
         Ok(())
+    }
+    
+    #[doc = " Returns the content as a stream of UTF-8 encoded text"]
+    fn text(&mut self,self_:wasmtime::component::Resource<Content>,) -> wasmtime::component::StreamReader<wasmtime::component::__internal::String> {
+        todo!()
+    }
+    
+    #[doc = " Returns the content type of the content, ex: \"text/html; charset=utf-8\""]
+    fn content_type(&mut self,self_:wasmtime::component::Resource<Content>,) -> wasmtime::component::__internal::String {
+        todo!()
     }
 }
 
@@ -205,11 +212,11 @@ impl HostAnnotatorClient for WitmProxy<'_> {
     fn annotate(
         &mut self,
         self_: Resource<AnnotatorClient>,
-        content_type: String,
-        data: StreamReader<Vec<u8>>,
+        content: Resource<Content>,
     ) {
         let annotator = self.table.get(&self_).unwrap();
-        annotator.annotate(content_type, data)
+        let content = self.table.get(&content).unwrap();
+        annotator.annotate(content)
     }
 
     fn drop(&mut self, rep: Resource<AnnotatorClient>) -> wasmtime::Result<()> {
@@ -274,7 +281,7 @@ impl HostCapabilityProvider for WitmProxy<'_> {
 }
 
 // Implement the generated capabilities::Host trait
-impl generated::witmproxy::plugin::capabilities::Host for WitmProxy<'_> {}
+impl bindgen::witmproxy::plugin::capabilities::Host for WitmProxy<'_> {}
 
 pub struct P3Ctx {}
 impl wasmtime_wasi_http::p3::WasiHttpCtx for P3Ctx {}
@@ -312,7 +319,7 @@ pub fn add_to_linker<T: Send + 'static>(
     l: &mut wasmtime::component::Linker<T>,
     f: fn(&mut T) -> WitmProxy<'_>,
 ) -> Result<()> {
-    generated::witmproxy::plugin::capabilities::add_to_linker::<_, HasWitmProxy>(l, f)?;
+    bindgen::witmproxy::plugin::capabilities::add_to_linker::<_, HasWitmProxy>(l, f)?;
     Ok(())
 }
 
@@ -320,252 +327,4 @@ struct HasWitmProxy;
 
 impl HasData for HasWitmProxy {
     type Data<'a> = WitmProxy<'a>;
-}
-
-// Implement Serialize and Deserialize for the generated Capability type
-impl Serialize for generated::witmproxy::plugin::capabilities::Capability {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use generated::witmproxy::plugin::capabilities::Capability::*;
-        match self {
-            HandleEvent(event_selector) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("handle-event", event_selector)?;
-                map.end()
-            }
-            Logger => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("logger", &())?;
-                map.end()
-            }
-            Annotator => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("annotator", &())?;
-                map.end()
-            }
-            LocalStorage => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("local-storage", &())?;
-                map.end()
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for generated::witmproxy::plugin::capabilities::Capability {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::{MapAccess, Visitor};
-        use std::fmt;
-
-        struct CapabilityVisitor;
-
-        impl<'de> Visitor<'de> for CapabilityVisitor {
-            type Value = generated::witmproxy::plugin::capabilities::Capability;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a capability variant")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                use generated::witmproxy::plugin::capabilities::Capability::*;
-                use serde::de::Error;
-
-                if let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "handle-event" => {
-                            let event_selector = map.next_value()?;
-                            Ok(HandleEvent(event_selector))
-                        }
-                        "logger" => {
-                            let _: () = map.next_value()?;
-                            Ok(Logger)
-                        }
-                        "annotator" => {
-                            let _: () = map.next_value()?;
-                            Ok(Annotator)
-                        }
-                        "local-storage" => {
-                            let _: () = map.next_value()?;
-                            Ok(LocalStorage)
-                        }
-                        _ => Err(A::Error::unknown_variant(
-                            &key,
-                            &["handle-event", "logger", "annotator", "local-storage"],
-                        )),
-                    }
-                } else {
-                    Err(A::Error::invalid_length(0, &"a non-empty map"))
-                }
-            }
-        }
-
-        deserializer.deserialize_map(CapabilityVisitor)
-    }
-}
-
-// Implement Serialize and Deserialize for EventSelector
-impl Serialize for generated::witmproxy::plugin::capabilities::EventSelector {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use generated::witmproxy::plugin::capabilities::EventSelector::*;
-        match self {
-            Connect(selector) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("connect", selector)?;
-                map.end()
-            }
-            Request(selector) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("request", selector)?;
-                map.end()
-            }
-            Response(selector) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("response", selector)?;
-                map.end()
-            }
-            InboundContent(selector) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("inbound-content", selector)?;
-                map.end()
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for generated::witmproxy::plugin::capabilities::EventSelector {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::{MapAccess, Visitor};
-        use std::fmt;
-
-        struct EventSelectorVisitor;
-
-        impl<'de> Visitor<'de> for EventSelectorVisitor {
-            type Value = generated::witmproxy::plugin::capabilities::EventSelector;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("an event selector variant")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                use generated::witmproxy::plugin::capabilities::EventSelector::*;
-                use serde::de::Error;
-
-                if let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "connect" => {
-                            let selector = map.next_value()?;
-                            Ok(Connect(selector))
-                        }
-                        "request" => {
-                            let selector = map.next_value()?;
-                            Ok(Request(selector))
-                        }
-                        "response" => {
-                            let selector = map.next_value()?;
-                            Ok(Response(selector))
-                        }
-                        "inbound-content" => {
-                            let selector = map.next_value()?;
-                            Ok(InboundContent(selector))
-                        }
-                        _ => Err(A::Error::unknown_variant(
-                            &key,
-                            &["connect", "request", "response", "inbound-content"],
-                        )),
-                    }
-                } else {
-                    Err(A::Error::invalid_length(0, &"a non-empty map"))
-                }
-            }
-        }
-
-        deserializer.deserialize_map(EventSelectorVisitor)
-    }
-}
-
-// Implement Serialize and Deserialize for Selector
-impl Serialize for generated::witmproxy::plugin::capabilities::Selector {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Selector", 1)?;
-        state.serialize_field("expression", &self.expression)?;
-        state.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for generated::witmproxy::plugin::capabilities::Selector {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::{MapAccess, Visitor};
-        use std::fmt;
-
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Expression,
-        }
-
-        struct SelectorVisitor;
-
-        impl<'de> Visitor<'de> for SelectorVisitor {
-            type Value = generated::witmproxy::plugin::capabilities::Selector;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("struct Selector")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut expression = None;
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Expression => {
-                            if expression.is_some() {
-                                return Err(serde::de::Error::duplicate_field("expression"));
-                            }
-                            expression = Some(map.next_value()?);
-                        }
-                    }
-                }
-                let expression =
-                    expression.ok_or_else(|| serde::de::Error::missing_field("expression"))?;
-                Ok(generated::witmproxy::plugin::capabilities::Selector { expression })
-            }
-        }
-
-        const FIELDS: &'static [&'static str] = &["expression"];
-        deserializer.deserialize_struct("Selector", FIELDS, SelectorVisitor)
-    }
 }

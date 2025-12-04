@@ -19,7 +19,7 @@ interface capabilities {
 
     /// A resource for annotating/labeling content
     resource annotator-client {
-        annotate: func(content-type: string, content: stream<list<u8>>);
+        annotate: func(content: content);
     }
 
     /// A resource for storing small key-value pairs local to the plugin
@@ -40,62 +40,44 @@ interface capabilities {
         local-storage: func() -> option<local-storage-client>;
     }
 
-    /// A type used to quickly evaluate whether a capability matches criteria for handling.
-    /// Used primarily to filter events before more expensive processing and overhead
-    record selector {
-        /// A CEL expression to match against a subset of event data
+    /// A type used to limit the scope in which granted capabilities can be used.
+    /// Used primarily to filter events before more expensive processing and overhead 
+    /// (such as instantiating and executing WASM components), but can also be used to limit
+    /// the context in which certain capabilities (like local storage) can be used.
+    record capability-scope {
+        /// A CEL expression to match against context in which the capability is used,
+        /// determining whether the capability applies.
         expression: string,
     }
 
-    /// Event selectors offer a way to specify which events a plugin is interested in handling,
-    /// and avoid any unnecessary processing (WASM component instantiation + execution) of events that are not relevant to a plugin.
-    /// 
-    /// [selector]'s offer a way to define criteria for matching events using CEL expressions,
-    /// allowing plugins to specify exactly which events they want to handle based on event attributes.
-    /// 
-    /// > `note`: 
-    variant event-selector {
-        /// Select whichs connections should be intercepted by the proxy (necessary for receiving any request/response events related to the connection)
-        connect(selector),
-        /// Select which HTTP requests should be handled
-        request(selector),
-        /// Select which HTTP responses should be handled
-        response(selector),
-        /// Select which inbound content should be handled
-        inbound-content(selector),
-        /// Select which inbound HTML documents should be handled
-        // inbound-html(selector),
-    }
-
     variant event-kind {
+        /// The associated capability determines which connections should be intercepted by the proxy (necessary for receiving any request/response events related to the connection)
         connect,
+        // The associated capability determines which HTTP requests should be handled by the plugin
         request,
+        // The associated capability determines which HTTP responses should be handled by the plugin
         response,
+        // The associated capability determines which inbound content should be handled by the plugin
         inbound-content,
     }
 
     variant capability-kind {
+        /// A capability to handle specific events
         handle-event(event-kind),
+        /// A capability to log messages
         logger,
+        /// A capability to annotate content (extract and store features + metadata) 
         annotator,
+        /// A capability to store local key-value pairs
         local-storage,
     }
 
+    /// A capability requested by the plugin
     record capability {
+        /// The kind of capability being requested
         kind: capability-kind,
-        selector: capability-selector,
-    }
-
-    /// Capabilities allow plugins to request access to narrowly-defined host resources
-    variant capability {
-        /// Grants access to corresponding `event-data` for a matching `event-selector`
-        handle-event(event-selector),
-        /// Grants access to a `logger`
-        logger,
-        /// Grants access to an `annotator-client`
-        annotator,
-        /// Grants access to a `local-storage-client`
-        local-storage,
+        /// The scope in which the capability applies (may be modified by the user)
+        scope: capability-scope,
     }
 
     /// The different types of events and their associated data that can be handled by plugins
@@ -111,8 +93,12 @@ interface capabilities {
     /// of the underlying body, providing a simple interface for plugins to interact with
     /// without worrying about conflicting transformations.
     resource content {
-        /// Returns the raw HTML content as a stream of bytes (UTF-8 encoded)
+        /// Returns the content as a stream of bytes
         body: func() -> stream<list<u8>>;
+        /// Returns the content as a stream of UTF-8 encoded text
+        text: func() -> stream<string>;
+        /// Returns the content type of the content, ex: "text/html; charset=utf-8"
+        content-type: func() -> string;
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::wasm::{Host, WitmProxy, generated::{Plugin}};
+use crate::wasm::{Host, WitmProxy, bindgen::Plugin};
 use anyhow::Result;
 use wasmtime::{Config, Engine, Store, component::{Component, Linker}};
 use wasmtime_wasi::{p3::bindings::LinkOptions};

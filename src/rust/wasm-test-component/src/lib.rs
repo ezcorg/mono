@@ -2,7 +2,7 @@ use crate::{
     exports::witmproxy::plugin::witm_plugin::{
         Capability, CapabilityProvider, Guest, PluginManifest
     },
-    witmproxy::plugin::capabilities::{EventData, EventSelector, Request, Response, Selector},
+    witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventData, EventKind, Request, Response},
 };
 
 wit_bindgen::generate!({
@@ -25,21 +25,24 @@ impl Guest for Plugin {
             description: "A test plugin".to_string(),
             metadata: vec![],
             capabilities: vec![
-                Capability::HandleEvent(EventSelector::Connect(
-                    Selector {
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: CapabilityScope {
                         expression: "true".to_string(),
                     }
-                )),
-                Capability::HandleEvent(EventSelector::Request(
-                    Selector {
+                },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Request),
+                    scope: CapabilityScope {
                         expression: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string(),
                     }
-                )),
-                Capability::HandleEvent(EventSelector::Response(
-                    Selector {
+                },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Response),
+                    scope: CapabilityScope {
                         expression: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string(),
                     }
-                )),
+                },
             ],
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
