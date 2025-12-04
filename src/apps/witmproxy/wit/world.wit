@@ -1,35 +1,15 @@
-package witmproxy:plugin@0.0.3;
+package witmproxy:plugin@0.0.4;
 
 interface capabilities {
+    use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
+
     // resource http-client {}
     // resource key-value-client {}
     // resource sql-client {}
     // resource queue-client {}
 
-    record capabilities {
-        connect: connect-capability,
-        request: option<request-capability>,
-        response: option<response-capability>,
-    }
-
-    // Capability required to MITM connections, all plugins must specify this to handle connections
-    record connect-capability {
-        // CEL filter determining which connections the plugin wants to handle
-        filter: string,
-    }
-
-    // Capability required to handle requests
-    record request-capability {
-        // CEL filter determining which requests the plugin wants to handle
-        filter: string,
-    }
-
-    // Capability required to handle responses
-    record response-capability {
-        // CEL filter determining which responses the plugin wants to handle
-        filter: string,
-    }
-
+    /// A dumb and simple logging resource for debugging
+    /// `TODO`: replace
     resource logger {
         info: func(message: string);
         warn: func(message: string);
@@ -37,16 +17,19 @@ interface capabilities {
         debug: func(message: string);
     }
 
+    /// A resource for annotating/labeling content
     resource annotator-client {
-        annotate: func(content: list<u8>);
+        annotate: func(content-type: string, content: stream<list<u8>>);
     }
 
+    /// A resource for storing small key-value pairs local to the plugin
     resource local-storage-client {
         set: func(key: string, value: list<u8>);
         get: func(key: string) -> option<list<u8>>;
         delete: func(key: string);
     }
 
+    /// The provider for any requested capabilities, which are only present if granted by the user
     resource capability-provider {
         // http: func() -> option<http-client>;
         // kv: func() -> option<key-value-client>;
@@ -56,50 +39,120 @@ interface capabilities {
         annotator: func() -> option<annotator-client>;
         local-storage: func() -> option<local-storage-client>;
     }
+
+    /// A type used to quickly evaluate whether a capability matches criteria for handling.
+    /// Used primarily to filter events before more expensive processing and overhead
+    record selector {
+        /// A CEL expression to match against a subset of event data
+        expression: string,
+    }
+
+    /// Event selectors offer a way to specify which events a plugin is interested in handling,
+    /// and avoid any unnecessary processing (WASM component instantiation + execution) of events that are not relevant to a plugin.
+    /// 
+    /// [selector]'s offer a way to define criteria for matching events using CEL expressions,
+    /// allowing plugins to specify exactly which events they want to handle based on event attributes.
+    /// 
+    /// > `note`: 
+    variant event-selector {
+        /// Select whichs connections should be intercepted by the proxy (necessary for receiving any request/response events related to the connection)
+        connect(selector),
+        /// Select which HTTP requests should be handled
+        request(selector),
+        /// Select which HTTP responses should be handled
+        response(selector),
+        /// Select which inbound content should be handled
+        inbound-content(selector),
+        /// Select which inbound HTML documents should be handled
+        // inbound-html(selector),
+    }
+
+    variant event-kind {
+        connect,
+        request,
+        response,
+        inbound-content,
+    }
+
+    variant capability-kind {
+        handle-event(event-kind),
+        logger,
+        annotator,
+        local-storage,
+    }
+
+    record capability {
+        kind: capability-kind,
+        selector: capability-selector,
+    }
+
+    /// Capabilities allow plugins to request access to narrowly-defined host resources
+    variant capability {
+        /// Grants access to corresponding `event-data` for a matching `event-selector`
+        handle-event(event-selector),
+        /// Grants access to a `logger`
+        logger,
+        /// Grants access to an `annotator-client`
+        annotator,
+        /// Grants access to a `local-storage-client`
+        local-storage,
+    }
+
+    /// The different types of events and their associated data that can be handled by plugins
+    variant event-data {
+        // connect(connection-info),
+        request(request),
+        response(response),
+        inbound-content(content),
+    }
+
+    /// A work-in-progress resource representing abstract content
+    /// Primarily exists to abstract away any compression and encoding details
+    /// of the underlying body, providing a simple interface for plugins to interact with
+    /// without worrying about conflicting transformations.
+    resource content {
+        /// Returns the raw HTML content as a stream of bytes (UTF-8 encoded)
+        body: func() -> stream<list<u8>>;
+    }
 }
 
 interface witm-plugin {
-    use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
-    use capabilities.{capability-provider, capabilities, connect-capability, request-capability, response-capability};
+    use capabilities.{capability, capability-provider, event-data};
 
     record tag {
         key: string,
         value: string,
     }
 
+    /// A manifest describing the plugin, any requested capabilities, and metadata.
     record plugin-manifest {
+        /// The name of the plugin
         name: string,
+        /// The plugin author's namespace (use for scoping)
         namespace: string,
+        /// The publishing plugin author
         author: string,
+        /// The plugin version
         version: string,
+        /// A short description of the plugin
         description: string,
+        /// The plugin license
         license: string,
+        /// The plugin homepage URL
         url: string,
+        /// The plugin public key (for verifying the plugin)
         publickey: list<u8>,
-        capabilities: capabilities,
+        /// The capabilities requested by the plugin
+        capabilities: list<capability>,
+        /// Additional plugin metadata
         metadata: list<tag>,
     }
 
+    /// Returns the plugin manifest
     manifest: func() -> plugin-manifest;
 
-    variant request-or-response {
-        request(request),
-        response(response),
-    }
-
-    variant handle-request-result {
-        next(request),
-        done(request-or-response),
-    }
-
-    handle-request: func(r: request, cp: capability-provider) -> handle-request-result;
-
-    variant handle-response-result {
-        next(response),
-        done(response),
-    }
-
-    handle-response: func(r: response, cp: capability-provider) -> handle-response-result;
+    /// Handles an event
+    handle: func(ev: event-data, cp: capability-provider) -> option<event-data>;
 }
 
 world plugin {

@@ -5,7 +5,6 @@
 pub mod cert;
 pub mod cli;
 pub mod config;
-pub mod content;
 pub mod db;
 pub mod plugins;
 pub mod proxy;

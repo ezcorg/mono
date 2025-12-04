@@ -1,10 +1,9 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
-        CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, PluginManifest,
-        Request, Response,
+        Capability, CapabilityProvider, Guest, PluginManifest,
     },
     witmproxy::plugin::capabilities::{
-        Capabilities, ConnectCapability, RequestCapability, ResponseCapability,
+        EventData, EventSelector, Selector,
     },
 };
 
@@ -26,29 +25,31 @@ impl Guest for Plugin {
             version: "0.0.0".to_string(),
             description: "noop".to_string(),
             metadata: vec![],
-            capabilities: Capabilities {
-                connect: ConnectCapability {
-                    filter: "true".to_string(),
-                },
-                request: Some(RequestCapability {
-                    filter: "true".to_string(),
-                }),
-                response: Some(ResponseCapability {
-                    filter: "true".to_string(),
-                }),
-            },
+            capabilities: vec![
+                Capability::HandleEvent(EventSelector::Connect(
+                    Selector {
+                        expression: "true".to_string(),
+                    }
+                )),
+                Capability::HandleEvent(EventSelector::Request(
+                    Selector {
+                        expression: "true".to_string(),
+                    }
+                )),
+                Capability::HandleEvent(EventSelector::Response(
+                    Selector {
+                        expression: "true".to_string(),
+                    }
+                )),
+            ],
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
             publickey: PUBLIC_KEY_BYTES.to_vec(),
         }
     }
 
-    fn handle_request(req: Request, cap: CapabilityProvider) -> HandleRequestResult {
-        HandleRequestResult::Next(req)
-    }
-
-    fn handle_response(res: Response, cap: CapabilityProvider) -> HandleResponseResult {
-        HandleResponseResult::Next(res)
+    fn handle(ev: EventData, _cp: CapabilityProvider) -> Option<EventData> {
+        Some(ev)
     }
 }
 

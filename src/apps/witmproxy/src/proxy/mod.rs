@@ -439,7 +439,6 @@ async fn run_tls_mitm(
                 debug!("Handling TLS request: {} {}", method, uri);
                 let mut request_ctx = CelRequest::from(&req);
 
-                // Step 1: Request event handling - move req into the event
                 let request_event_result = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
                     registry.handle_request(req).await
@@ -451,7 +450,6 @@ async fn run_tls_mitm(
                     "Handled request event, checking result and performing upstream call if needed"
                 );
 
-                // Act based on request event result
                 let initial_response = match request_event_result {
                     HostHandleRequestResult::None => Response::builder()
                         .status(StatusCode::FORBIDDEN)
@@ -504,19 +502,18 @@ async fn run_tls_mitm(
 
                 debug!("Initial response obtained, proceeding to response event handling");
 
-                // Step 3: Run response handlers and return final response
-                let final_response = if let Some(registry) = &plugin_registry {
+                let handled_response = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
                     registry
                         .handle_response(initial_response, request_ctx)
                         .await
                 } else {
-                    HostHandleResponseResult::Response(initial_response)
+                    HostHandleResponseResult::Noop(initial_response)
                 };
 
                 debug!("Final response ready, sending back to client");
 
-                match final_response {
+                let final_response = match handled_response {
                     // TODO: fix std::io::Error ugliness
                     HostHandleResponseResult::None => Response::builder()
                         .status(StatusCode::FORBIDDEN)
@@ -525,8 +522,29 @@ async fn run_tls_mitm(
                             error!("Failed to build drop response: {}", e);
                             std::io::Error::other(e.to_string())
                         }),
-                    HostHandleResponseResult::Response(resp) => Ok::<_, std::io::Error>(resp),
+                    HostHandleResponseResult::Noop(resp) => Ok::<_, std::io::Error>(resp),
+                    HostHandleResponseResult::Response(resp) => {
+                        match convert_boxbody_to_full_response(resp).await {
+                            Ok(converted_resp) => Ok::<_, std::io::Error>(converted_resp),
+                            Err(err) => {
+                                error!("Failed to convert plugin response: {}", err);
+                                Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(Full::new(Bytes::from(
+                                        "Failed to convert plugin response",
+                                    )))
+                                    .map_err(|e| std::io::Error::other(e.to_string()))
+                            }
+                        }
+                    },
+                };
+
+                if let Some(registry) = &plugin_registry {
+                    let registry = registry.read().await;
+                    let response = registry.handle_response_content(final_response.unwrap()).await;
+                    return Ok(response);
                 }
+                final_response
             }
         })
     };

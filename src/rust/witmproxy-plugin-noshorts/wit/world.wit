@@ -52,12 +52,14 @@ interface capabilities {
     variant event-selector {
         /// Select whichs connections should be intercepted by the proxy (necessary for receiving any request/response events related to the connection)
         connect(selector),
-        /// Select which HTTP requests should be handled (requires a matching `connect` selector)
+        /// Select which HTTP requests should be handled
         request(selector),
-        /// Select which HTTP responses should be handled (requires a matching `connect` selector)
+        /// Select which HTTP responses should be handled
         response(selector),
+        /// Select which inbound content should be handled
+        inbound-content(selector),
         /// Select which inbound HTML documents should be handled
-        inbound-html(selector),
+        // inbound-html(selector),
     }
 
     /// Capabilities allow plugins to request access to narrowly-defined host resources
@@ -77,36 +79,21 @@ interface capabilities {
         // connect(connection-info),
         request(request),
         response(response),
-        // inbound-body(body),
-        inbound-html(html),
-        // inbound-css(css),
-        // inbound-js(js),
-        // inbound-json(json),
-        // outbound-json(json),
+        inbound-content(content),
     }
 
-    /// The result of handling an event, determining further processing
-    variant event-result {
-        // Run the next handler in the chain with the provided event data
-        next(event-data),
-        // Return the provided event data and stop further processing
-        done(event-data),
-        // Drop the event and stop further processing
-        none,
-    }
-
-    /// A work-in-progress resource representing an HTML document.
+    /// A work-in-progress resource representing abstract content
     /// Primarily exists to abstract away any compression and encoding details
     /// of the underlying body, providing a simple interface for plugins to interact with
     /// without worrying about conflicting transformations.
-    resource html {
+    resource content {
         /// Returns the raw HTML content as a stream of bytes (UTF-8 encoded)
         body: func() -> stream<list<u8>>;
     }
 }
 
 interface witm-plugin {
-    use capabilities.{capability, capability-provider, event-data, event-result};
+    use capabilities.{capability, capability-provider, event-data};
 
     record tag {
         key: string,
@@ -141,7 +128,7 @@ interface witm-plugin {
     manifest: func() -> plugin-manifest;
 
     /// Handles an event
-    handle: func(ev: event-data, cp: capability-provider) -> result<event-result>;
+    handle: func(ev: event-data, cp: capability-provider) -> option<event-data>;
 }
 
 world plugin {

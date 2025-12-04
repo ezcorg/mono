@@ -148,15 +148,10 @@ impl PluginHandler {
         // Create plugin from component bytes (including signature verification)
         let mut plugin = registry.plugin_from_component(component_bytes).await?;
         // TODO: DON'T GRANT ALL THE THINGS ALWAYS
-        plugin.capabilities.connect.granted = true;
-
-        if let Some(ref mut r) = plugin.capabilities.request {
-            r.granted = true
-        };
-
-        if let Some(ref mut r) = plugin.capabilities.response {
-            r.granted = true
-        };
+        plugin
+            .capabilities
+            .iter_mut()
+            .for_each(|cap| cap.granted = true);
 
         debug!(
             "Received plugin: {}/{}:{}",

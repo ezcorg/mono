@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}};
 
 use anyhow::Result;
 use bytes::Bytes;
-use cel_cxx::Env;
+use cel_cxx::{Env};
 use http_body::Body;
 use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 use hyper::{Request, Response, body::Incoming};
@@ -14,20 +14,10 @@ use wasmtime_wasi_http::p3::{
 };
 
 use crate::{
-    db::{Db, Insert},
-    plugins::{
-        WitmPlugin,
-        cel::{CelConnect, CelRequest, CelResponse},
-    },
-    wasm::{
-        CapabilityProvider, Host, Runtime,
-        generated::{
-            Plugin,
-            exports::witmproxy::plugin::witm_plugin::{
-                HandleRequestResult, HandleResponseResult, RequestOrResponse,
-            },
-        },
-    },
+    db::{Db, Insert}, plugins::{ Event, WitmPlugin, cel::{CelConnect, CelContent, CelRequest, CelResponse}
+    }, wasm::{
+        CapabilityProvider, Host, Runtime, generated::{Plugin, witmproxy::plugin::capabilities::{Capability, EventData, Selector}}
+    }
 };
 
 pub struct PluginRegistry {
@@ -35,6 +25,12 @@ pub struct PluginRegistry {
     pub db: Db,
     pub runtime: Runtime,
     env: &'static Env<'static>,
+}
+
+pub enum HostHandleResult {
+    None,
+    Noop(EventData),
+    Event(EventData),
 }
 
 /// Result of handling a request through the plugin chain.
@@ -49,28 +45,57 @@ where
     Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
 }
 
-pub enum HostHandleResponseResult {
+pub enum HostHandleResponseResult<T = Full<Bytes>>
+where
+    T: Body<Data = Bytes> + Send + Sync + 'static,
+{
     None,
-    Response(Response<Full<Bytes>>),
+    Noop(Response<T>),
+    Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
+}
+
+impl Event for WasiResponse {
+    fn capability() -> Capability {
+        Capability::HandleEvent(Selector { expression: "true"})
+    }
+
+    fn as_event_data(self, store: &mut Store<Host>) -> Result<EventData> {
+        let handle: Resource<WasiResponse> = store.data_mut().http().table.push(self)?;
+        Ok(EventData::Response(handle))
+    }
+}
+
+impl Event for WasiRequest {
+    fn capability() -> Capability {
+        "handle-request".to_string()
+    }
+
+    fn as_event_data(self, store: &mut Store<Host>) -> Result<EventData> {
+        let handle: Resource<WasiRequest> = store.data_mut().http().table.push(self)?;
+        Ok(EventData::Request(handle))
+    }
+}
+
+pub struct WitmEvent {
+    pub instance: &'static dyn Event,
+}
+
+impl EventData {
+    pub fn register<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
+        let mut env = CelConnect::register_in_env(env)?;
+        env = CelContent::register_in_env(env)?;
+        env = CelRequest::register_in_env(env)?;
+        Ok(env)
+    }
 }
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
-        let env = Env::builder()
-            .with_standard(true)
-            .declare_variable::<CelConnect>("connect")?
-            .register_member_function("host", CelConnect::host)?
-            .register_member_function("port", CelConnect::port)?
-            .declare_variable::<CelRequest>("request")?
-            .register_member_function("scheme", CelRequest::scheme)?
-            .register_member_function("host", CelRequest::host)?
-            .register_member_function("path", CelRequest::path)?
-            .register_member_function("query", CelRequest::query)?
-            .register_member_function("method", CelRequest::method)?
-            .register_member_function("headers", CelRequest::headers)?
-            .declare_variable::<CelResponse>("response")?
-            .register_member_function("status", CelResponse::status)?
-            .register_member_function("headers", CelResponse::headers)?
+        let mut env = Env::builder()
+            .with_standard(true);
+        env = EventData::register(env)?;
+
+        let env = CelContent::register_in_env(env)?
             .build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration
@@ -205,21 +230,18 @@ impl PluginRegistry {
     }
 
     fn new_store(&self) -> Store<Host> {
+        // TODO: This is where we need to pass actual context
         Store::new(&self.runtime.engine, Host::default())
     }
 
     pub fn find_first_unexecuted_plugin(
         &self,
-        cel_request: CelRequest,
-        cel_response: Option<CelResponse>,
+        event: &impl Event,
         executed_plugins: &HashSet<String>,
     ) -> Option<&WitmPlugin> {
         self.plugins.values().find(|p| {
             !executed_plugins.contains(&p.id())
-                && match &cel_response {
-                    Some(res) => p.capabilities.can_handle_response(&cel_request, res),
-                    None => p.capabilities.can_handle_request(&cel_request),
-                }
+                && p.can_handle(event)
         })
     }
 
@@ -227,7 +249,11 @@ impl PluginRegistry {
     pub fn can_handle_connect(&self, cel_connect: &crate::plugins::cel::CelConnect) -> bool {
         self.plugins
             .values()
-            .any(|p| p.capabilities.can_handle_connect(cel_connect))
+            .any(|p| p.can_handle_connect(cel_connect))
+    }
+
+    pub async fn handle_event(&self, event: impl Into<EventData>) -> HostHandleResult {
+        HostHandleResult::Noop(event.into())
     }
 
     /// Handle an incoming HTTP request by passing it through all registered plugins
@@ -240,7 +266,7 @@ impl PluginRegistry {
         let any_plugins = self
             .plugins
             .values()
-            .any(|p| p.capabilities.can_handle_request(&cel_request));
+            .any(|p| p.can_handle_request(&cel_request));
         if !any_plugins {
             debug!(
                 "No plugins with request capability and matching CEL expression; skipping plugin processing"
@@ -252,7 +278,7 @@ impl PluginRegistry {
         let body = body.map_err(|_| ErrorCode::HttpProtocolError);
         let req = Request::from_parts(req, body);
         let (mut current_req, _io) = WasiRequest::from_http(req);
-        let mut store = self.new_store();
+        let mut current_store: Option<Store<Host>> = None;
         let mut executed_plugins = HashSet::new();
 
         debug!(
@@ -262,7 +288,7 @@ impl PluginRegistry {
 
         while let Some(plugin) = {
             let cel_request = CelRequest::from(&current_req);
-            self.find_first_unexecuted_plugin(cel_request, None, &executed_plugins)
+            self.find_first_unexecuted_plugin(&current_req, &executed_plugins)
         } {
             executed_plugins.insert(plugin.id());
             debug!(
@@ -278,127 +304,80 @@ impl PluginRegistry {
                 continue;
             };
 
-            let instance = self
-                .runtime
-                .linker
-                .instantiate_async(&mut store, component)
-                .await;
-
-            if let Err(e) = instance {
-                warn!(
-                    target: "plugins",
-                    plugin_id = %plugin.id(),
-                    event_type = "request",
-                    error = %e,
-                    "Failed to instantiate plugin; skipping"
-                );
-                continue;
-            }
-            let instance = instance.unwrap();
-
-            let plugin_instance = Plugin::new(&mut store, &instance);
-
-            if let Err(e) = plugin_instance {
-                warn!(
-                    target: "plugins",
-                    plugin_id = %plugin.id(),
-                    event_type = "request",
-                    error = %e,
-                    "Failed to access plugin event handler; skipping"
-                );
-                continue;
-            }
-
-            let plugin_instance = plugin_instance.unwrap();
-
-            // Push the current request and capability provider into the table
-            // The request is moved here, so we can't recover it if the plugin fails
-            let req_resource: Resource<WasiRequest> =
-                store.data_mut().http().table.push(current_req).unwrap();
+            let (plugin_instance, store) = match self.runtime.instantiate_plugin_component(component).await {
+                Ok(pi) => pi,
+                Err(e) => {
+                    warn!(
+                        target: "plugins",
+                        plugin_id = %plugin.id(),
+                        event_type = "request",
+                        error = %e,
+                        "Failed to instantiate plugin component; skipping"
+                    );
+                    continue;
+                }
+            };
+            current_store = Some(store);
+            let req_resource: Resource<WasiRequest> = current_store.as_mut().unwrap().data_mut().table.push(current_req).unwrap();
+            let event_data = EventData::Request(req_resource);
             // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
-            let cap_resource = store.data_mut().http().table.push(provider).unwrap();
-            // Call the plugin's handle_request function
-            let guest_result = store
-                .run_concurrent(
-                    async move |store| -> Result<HandleRequestResult, ErrorCode> {
-                        let (result, task) = match plugin_instance
-                            .witmproxy_plugin_witm_plugin()
-                            .call_handle_request(store, req_resource, cap_resource)
-                            .await
-                        {
-                            Ok(ok) => ok,
-                            Err(e) => {
-                                warn!(
-                                    target: "plugins",
-                                    event_type = "request",
-                                    error = %e,
-                                    "Error calling handle_request"
-                                );
-                                return Err(ErrorCode::DestinationUnavailable);
-                            }
-                        };
-                        task.block(store).await;
-                        Ok(result)
-                    },
-                )
+            let cap_resource = current_store.as_mut().unwrap().data_mut().table.push(provider).unwrap();
+            // Call the plugin's `handle` function
+            let guest_result = current_store.as_mut().unwrap()
+                .run_concurrent(async move |store| {
+                    let (result, task) = match plugin_instance
+                        .witmproxy_plugin_witm_plugin()
+                        .call_handle(store, event_data, cap_resource)
+                        .await
+                    {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_type = "request",
+                                error = %e,
+                                "Error calling handle_request"
+                            );
+                            return Err(ErrorCode::DestinationUnavailable);
+                        }
+                    };
+                    task.block(store).await;
+                    Ok(result)
+                })
                 .await;
 
             let inner = match guest_result {
-                Ok(Ok(res)) => res,
+                Ok(Ok(Some(res))) => res,
                 _ => {
                     // If plugin execution failed, we currently can't recover the request since it was moved
                     // Return Drop to indicate the request processing should stop
-                    // TODO: fix this, despite whatever overhead it might add, it's
-                    // probably worth it to duplicate the request before passing to each plugin
-                    // such that we can recover from individual plugin failures
+                    // TODO: consider a fix of some kind for this
                     return HostHandleRequestResult::None;
                 }
             };
             match inner {
-                HandleRequestResult::Done(req_or_res) => match req_or_res {
-                    RequestOrResponse::Request(r) => {
-                        let r = store
-                            .data_mut()
-                            .http()
-                            .table
-                            .delete(r)
-                            .expect("failed to delete request from table");
-                        let req_result = r.into_http(&mut store, async { Ok(()) });
-                        match req_result {
-                            Ok((req, _)) => return HostHandleRequestResult::Request(req),
-                            Err(_) => return HostHandleRequestResult::None,
-                        }
-                    }
-                    RequestOrResponse::Response(r) => {
-                        let r = store
-                            .data_mut()
-                            .http()
-                            .table
-                            .delete(r)
-                            .expect("failed to delete response from table");
-                        let r = r.into_http(&mut store, async { Ok(()) });
-                        match r {
-                            Err(_) => return HostHandleRequestResult::None,
-                            Ok(r) => {
-                                return HostHandleRequestResult::Response(r);
-                            }
-                        }
-                    }
-                },
-                HandleRequestResult::Next(new_req) => {
-                    // Extract the updated request from the table for the next iteration
-                    current_req = store
-                        .data_mut()
-                        .http()
-                        .table
-                        .delete(new_req)
-                        .expect("failed to retrieve new request from table");
+                EventData::Request(r) => {
+                    let r = current_store.as_mut().unwrap().data_mut().table.delete(r)
+                        .expect("failed to delete request from table");
+                    current_req = r;
                 }
+                EventData::Response(r) => {
+                    let r = current_store.as_mut().unwrap().data_mut().table.delete(r)
+                        .expect("failed to delete response from table");
+                    let r = r.into_http(&mut current_store.as_mut().unwrap(), async { Ok(()) });
+                    match r {
+                        Err(_) => return HostHandleRequestResult::None,
+                        Ok(r) => {
+                            return HostHandleRequestResult::Response(r);
+                        }
+                    }
+                }
+                EventData::InboundContent(_) => return HostHandleRequestResult::None,
             };
         }
 
-        match current_req.into_http(store, async { Ok(()) }) {
+        match current_req.into_http(current_store.unwrap(), async { Ok(()) }) {
             Ok((req, _)) => HostHandleRequestResult::Request(req),
             Err(_) => HostHandleRequestResult::None,
         }
@@ -406,22 +385,26 @@ impl PluginRegistry {
 
     /// Handle an incoming HTTP response by passing it through all registered plugins
     /// that have the `Response` capability.
-    pub async fn handle_response(
+    pub async fn handle_response<T>(
         &self,
-        original_res: Response<Full<Bytes>>,
+        original_res: Response<T>,
         request_ctx: CelRequest,
-    ) -> HostHandleResponseResult {
+    ) -> HostHandleResponseResult<T>
+    where
+        T: Body<Data = Bytes> + Send + Sync + 'static,
+    {
         let cel_response = CelResponse::from(&original_res);
-        let any_plugins = self.plugins.values().any(|p| {
-            p.capabilities
-                .can_handle_response(&request_ctx, &cel_response)
-        });
+        let any_plugins = self
+            .plugins
+            .values()
+            .any(|p| p.can_handle_response(&request_ctx, &cel_response));
 
         if !any_plugins {
-            return HostHandleResponseResult::Response(original_res);
+            return HostHandleResponseResult::Noop(original_res);
         }
 
         let (res, body) = original_res.into_parts();
+        let body = body.map_err(|_| ErrorCode::HttpProtocolError);
         let res = Response::from_parts(res, body);
         let (mut current_res, _io) = WasiResponse::from_http(res);
         let mut store = self.new_store();
@@ -430,8 +413,7 @@ impl PluginRegistry {
         while let Some(plugin) = {
             let cel_response = CelResponse::from(&current_res);
             self.find_first_unexecuted_plugin(
-                request_ctx.clone(),
-                Some(cel_response),
+                &current_res,
                 &executed_plugins,
             )
         } {
@@ -479,6 +461,7 @@ impl PluginRegistry {
             // The response is moved here, so we can't recover it if the plugin fails
             let res_resource: Resource<WasiResponse> =
                 store.data_mut().http().table.push(current_res).unwrap();
+            let event_data = EventData::Response(res_resource);
             // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
             let cap_resource = store.data_mut().http().table.push(provider).unwrap();
@@ -487,7 +470,7 @@ impl PluginRegistry {
                 .run_concurrent(async move |store| {
                     let (result, task) = match plugin_instance
                         .witmproxy_plugin_witm_plugin()
-                        .call_handle_response(store, res_resource, cap_resource)
+                        .call_handle(store, event_data, cap_resource)
                         .await
                     {
                         Ok(ok) => ok,
@@ -507,7 +490,7 @@ impl PluginRegistry {
                 .await;
 
             let inner = match guest_result {
-                Ok(Ok(res)) => res,
+                Ok(Ok(Some(res))) => res,
                 Ok(Err(e)) => {
                     warn!(
                         target: "plugins",
@@ -528,34 +511,12 @@ impl PluginRegistry {
                     );
                     return HostHandleResponseResult::None;
                 }
+                _ => {
+                    return HostHandleResponseResult::None;
+                }
             };
             match inner {
-                HandleResponseResult::Done(res) => {
-                    let res = store
-                        .data_mut()
-                        .http()
-                        .table
-                        .delete(res)
-                        .expect("failed to delete response from table");
-                    let res_result = res.into_http(&mut store, async { Ok(()) });
-                    match res_result {
-                        Ok(res) => {
-                            // Convert BoxBody to Full<Bytes>
-                            let (parts, body) = res.into_parts();
-                            // Collect the body asynchronously
-                            let collected = match body.collect().await {
-                                Ok(collected) => collected.to_bytes(),
-                                Err(_) => return HostHandleResponseResult::None,
-                            };
-                            let body = Full::new(collected);
-                            let res = Response::from_parts(parts, body);
-                            return HostHandleResponseResult::Response(res);
-                        }
-                        Err(_) => return HostHandleResponseResult::None,
-                    }
-                }
-
-                HandleResponseResult::Next(new_res) => {
+                EventData::Response(new_res) => {
                     // Extract the updated response from the table for the next iteration
                     current_res = store
                         .data_mut()
@@ -564,38 +525,39 @@ impl PluginRegistry {
                         .delete(new_res)
                         .expect("failed to retrieve new response from table");
                 }
+                _ => {
+                    return HostHandleResponseResult::None;
+                }
             };
         }
 
         match current_res.into_http(store, async { Ok(()) }) {
-            Ok(res) => {
-                // Convert BoxBody to Full<Bytes>
-                let (parts, body) = res.into_parts();
-                // Collect the body asynchronously
-                let collected = match body.collect().await {
-                    Ok(collected) => collected.to_bytes(),
-                    Err(_) => return HostHandleResponseResult::None,
-                };
-                let body = Full::new(collected);
-                let res = Response::from_parts(parts, body);
-                HostHandleResponseResult::Response(res)
-            }
+            Ok(res) => HostHandleResponseResult::Response(res),
             Err(e) => {
                 warn!("Failed to convert response to HTTP: {}", e);
                 HostHandleResponseResult::None
             }
         }
     }
+
+    pub async fn handle_response_content<T>(&self, res: Response<T>) -> Response<T>
+    where
+        T: Body<Data = Bytes> + Send + Sync + 'static, 
+    {
+        res
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::{
-        WitmPlugin,
-        capabilities::{Capabilities, Capability, Filterable},
-    };
     use crate::test_utils::{create_plugin_registry, test_component_path};
+    use crate::{
+        plugins::{WitmPlugin, capabilities::Capability},
+        wasm::generated::witmproxy::plugin::capabilities::{
+            Capability as WitCapability, EventSelector, Selector,
+        },
+    };
     use bytes::Bytes;
     use http_body_util::Full;
     use hyper::{Method, Request};
@@ -614,29 +576,28 @@ mod tests {
             &component_bytes,
         )?);
 
-        let capabilities = Capabilities {
-            connect: Capability {
-                config: Filterable {
-                    filter: "true".to_string(), // Connect always allowed for test
-                    cel: None,
-                },
-                granted: true,
-            },
-            request: Some(Capability {
-                config: Filterable {
-                    filter: cel_expression.to_string(),
-                    cel: None,
-                },
-                granted: true,
-            }),
-            response: Some(Capability {
-                config: Filterable {
-                    filter: cel_expression.to_string(),
-                    cel: None,
-                },
-                granted: true,
-            }),
-        };
+        let mut capabilities = Vec::new();
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
+                expression: "true".to_string(),
+            })),
+            cel: None,
+        });
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Request(Selector {
+                expression: cel_expression.to_string(),
+            })),
+            cel: None,
+        });
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Response(Selector {
+                expression: cel_expression.to_string(),
+            })),
+            cel: None,
+        });
 
         let plugin = WitmPlugin {
             name: "test_plugin_with_filter".into(),
@@ -678,7 +639,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com should return one plugin"
@@ -696,7 +657,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com with skipthis=false should return one plugin"
@@ -714,7 +675,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to example.com with skipthis=true should not match"
@@ -731,7 +692,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com should not match"
@@ -749,7 +710,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=false should not match"
@@ -767,7 +728,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=true should not match"
@@ -790,7 +751,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when none are registered"
@@ -812,24 +773,21 @@ mod tests {
                 .unwrap(),
         );
 
-        let capabilities = Capabilities {
-            connect: Capability {
-                config: Filterable {
-                    filter: "true".to_string(),
-                    cel: None,
-                },
-                granted: true,
-            },
-            request: None, // No Request capability
-            response: Some(Capability {
-                // Only Response capability
-                config: Filterable {
-                    filter: "true".to_string(),
-                    cel: None,
-                },
-                granted: true,
-            }),
-        };
+        let mut capabilities = Vec::new();
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
+                expression: "true".to_string(),
+            })),
+            cel: None,
+        });
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Response(Selector {
+                expression: "true".to_string(),
+            })),
+            cel: None,
+        });
 
         let plugin = WitmPlugin {
             name: "response_only_plugin".into(),
@@ -859,7 +817,7 @@ mod tests {
 
         let cel_request = CelRequest::from(&wasi_req);
         let matching_plugin =
-            registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when plugin doesn't have Request capability"
@@ -884,30 +842,28 @@ mod tests {
             wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)
                 .unwrap(),
         );
-
-        let capabilities = Capabilities {
-            connect: Capability {
-                config: Filterable {
-                    filter: "true".to_string(),
-                    cel: None,
-                },
-                granted: true,
-            },
-            request: Some(Capability {
-                config: Filterable {
-                    filter: "true".to_string(),
-                    cel: None,
-                },
-                granted: true,
-            }),
-            response: Some(Capability {
-                config: Filterable {
-                    filter: "true".to_string(),
-                    cel: None,
-                },
-                granted: true,
-            }),
-        };
+        let mut capabilities = Vec::new();
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
+                expression: "true".to_string(),
+            })),
+            cel: None,
+        });
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Request(Selector {
+                expression: "true".to_string(),
+            })),
+            cel: None,
+        });
+        capabilities.push(Capability {
+            granted: true,
+            inner: WitCapability::HandleEvent(EventSelector::Response(Selector {
+                expression: "true".to_string(),
+            })),
+            cel: None,
+        });
 
         let plugin2 = WitmPlugin {
             name: "second_test_plugin".into(),
@@ -941,7 +897,7 @@ mod tests {
         // First call should return a plugin
         let cel_request = CelRequest::from(&wasi_req);
         let first_plugin =
-            registry.find_first_unexecuted_plugin(cel_request.clone(), None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         assert!(
             first_plugin.is_some(),
             "Should find a plugin when none are executed"
@@ -952,7 +908,7 @@ mod tests {
 
         // Second call should return a different plugin (if there are multiple)
         let second_plugin =
-            registry.find_first_unexecuted_plugin(cel_request.clone(), None, &executed_plugins);
+            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
         if let Some(second_plugin) = second_plugin {
             assert_ne!(
                 first_plugin.unwrap().id(),
@@ -965,7 +921,7 @@ mod tests {
 
             // Third call should return None since all plugins are executed
             let third_plugin =
-                registry.find_first_unexecuted_plugin(cel_request, None, &executed_plugins);
+                registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
             assert!(
                 third_plugin.is_none(),
                 "Should return None when all plugins have been executed"
@@ -1019,23 +975,21 @@ mod tests {
                 .unwrap(),
             );
 
-            let capabilities = Capabilities {
-                connect: Capability {
-                    config: Filterable {
-                        filter: "true".to_string(),
-                        cel: None,
-                    },
-                    granted: true,
-                },
-                request: Some(Capability {
-                    config: Filterable {
-                        filter: "true".to_string(),
-                        cel: None,
-                    },
-                    granted: true,
-                }),
-                response: None,
-            };
+            let mut capabilities = Vec::new();
+            capabilities.push(Capability {
+                granted: true,
+                inner: WitCapability::HandleEvent(EventSelector::Connect(Selector {
+                    expression: "true".to_string(),
+                })),
+                cel: None,
+            });
+            capabilities.push(Capability {
+                granted: true,
+                inner: WitCapability::HandleEvent(EventSelector::Request(Selector {
+                    expression: "true".to_string(),
+                })),
+                cel: None,
+            });
 
             let plugin = WitmPlugin {
                 name: name.to_string(),
