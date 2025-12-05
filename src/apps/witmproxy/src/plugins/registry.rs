@@ -14,9 +14,9 @@ use wasmtime_wasi_http::p3::{
 };
 
 use crate::{
-    db::{Db, Insert}, plugins::{ Event, WitmPlugin, cel::{CelRequest, CelResponse}
+    db::{Db, Insert}, events::{Event, response::{ResponseEnum, ResponseWithRequestContext}}, plugins::{WitmPlugin, cel::CelRequest
     }, wasm::{
-        CapabilityProvider, Host, Runtime, bindgen::{Plugin, witmproxy::plugin::capabilities::{CapabilityKind, EventData, EventKind}}
+        CapabilityProvider, Host, Runtime, bindgen::{Plugin, witmproxy::plugin::capabilities::EventData}
     }
 };
 
@@ -54,15 +54,11 @@ where
     Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
 }
 
-pub struct WitmEvent {
-    pub instance: &'static dyn Event,
-}
-
 impl EventData {
     pub fn register<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
         // TODO: do this better
         let env = WasiRequest::register_in_cel_env(env)?;
-        let env = WasiResponse::register_in_cel_env(env)?;
+        let env = ResponseWithRequestContext::<http_body_util::Full<bytes::Bytes>>::register_in_cel_env(env)?;
 
         Ok(env)
     }
@@ -222,15 +218,16 @@ impl PluginRegistry {
         })
     }
 
-    /// Check if any plugins can handle a connect request
-    pub fn can_handle_connect(&self, cel_connect: &crate::plugins::cel::CelConnect) -> bool {
+    /// Check if any plugins can handle an event
+    pub fn can_handle<E: Event>(&self, event: &E) -> bool {
         self.plugins
             .values()
-            .any(|p| p.can_handle_connect(cel_connect))
+            .any(|p| p.can_handle(event))
     }
 
-    pub async fn handle_event(&self, event: impl Into<EventData>) -> HostHandleResult {
-        HostHandleResult::Noop(event.into())
+    pub async fn handle_event(&self, event: impl Event) -> HostHandleResult {
+        todo!()
+        // HostHandleResult::Noop(event.data(&mut self.runtime.new_store()).unwrap())
     }
 
     /// Handle an incoming HTTP request by passing it through all registered plugins
@@ -239,11 +236,10 @@ impl PluginRegistry {
     where
         T: Body<Data = Bytes> + Send + Sync + 'static,
     {
-        let cel_request = CelRequest::from(&original_req);
         let any_plugins = self
             .plugins
             .values()
-            .any(|p| p.can_handle_request(&cel_request));
+            .any(|p| p.can_handle(&original_req));
         if !any_plugins {
             debug!(
                 "No plugins with request capability and matching CEL expression; skipping plugin processing"
@@ -370,27 +366,38 @@ impl PluginRegistry {
     where
         T: Body<Data = Bytes> + Send + Sync + 'static,
     {
-        let cel_response = CelResponse::from(&original_res);
+        let event = ResponseWithRequestContext {
+            request_ctx: request_ctx.clone(),
+            response: ResponseEnum::HyperResponse(original_res),
+        };
         let any_plugins = self
             .plugins
             .values()
-            .any(|p| p.can_handle_response(&request_ctx, &cel_response));
+            .any(|p| p.can_handle(&event));
 
         if !any_plugins {
-            return HostHandleResponseResult::Noop(original_res);
+            match event.response {
+                ResponseEnum::HyperResponse(res) => {
+                    return HostHandleResponseResult::Noop(res);
+                },
+                _ => { unreachable!() },
+            }
         }
 
         let (res, body) = original_res.into_parts();
         let body = body.map_err(|_| ErrorCode::HttpProtocolError);
         let res = Response::from_parts(res, body);
         let (mut current_res, _io) = WasiResponse::from_http(res);
+        let mut response_event: ResponseWithRequestContext<T> = ResponseWithRequestContext {
+            request_ctx,
+            response: ResponseEnum::WasiResponse(current_res),
+        };
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();
 
         while let Some(plugin) = {
-            let cel_response = CelResponse::from(&current_res);
             self.find_first_unexecuted_plugin(
-                &current_res,
+                &response_event,
                 &executed_plugins,
             )
         } {
@@ -529,7 +536,7 @@ impl PluginRegistry {
 mod tests {
     use super::*;
     use crate::test_utils::{create_plugin_registry, test_component_path};
-    use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityScope;
+    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
     use crate::{
         plugins::{WitmPlugin, capabilities::Capability},
         wasm::bindgen::witmproxy::plugin::capabilities::{

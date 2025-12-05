@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::{Content};
+use crate::{events::response::ResponseEnum, wasm::bindgen::witmproxy::plugin::capabilities::Content};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
 #[cel_cxx(display)]
@@ -211,6 +211,16 @@ impl From<&WasiResponse> for CelResponse {
         CelResponse {
             status: res.status.as_u16(),
             headers,
+        }
+    }
+}
+
+impl<T> From<&ResponseEnum<T>> for CelResponse
+where T: http_body::Body<Data = bytes::Bytes> + Send + Sync + 'static, {
+    fn from(res_enum: &ResponseEnum<T>) -> Self {
+        match res_enum {
+            ResponseEnum::WasiResponse(wasi_res) => CelResponse::from(wasi_res),
+            ResponseEnum::HyperResponse(hyper_res) => CelResponse::from(hyper_res),
         }
     }
 }

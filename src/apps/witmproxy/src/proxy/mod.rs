@@ -1,5 +1,6 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
+use crate::events::connect::Connect;
 use crate::plugins::cel::{CelConnect, CelRequest};
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
@@ -151,10 +152,10 @@ impl ProxyServer {
             }
         };
 
-        let cel_connect = CelConnect { host, port };
+        let connect_event = Connect::new(host, port);
         let has_matching_plugin = {
             let registry = plugin_registry.read().await;
-            registry.can_handle_connect(&cel_connect)
+            registry.can_handle(&connect_event)
         };
 
         if has_matching_plugin {

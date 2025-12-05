@@ -3,7 +3,7 @@ use cel_cxx::{Env, Program};
 use serde::{Deserialize, Serialize};
 
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-    Capability as WitCapability,
+    Capability as WitCapability, CapabilityKind,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,19 +22,26 @@ impl Capability {
     }
 }
 
-// impl ToString for Capability {
-//     fn to_string(&self) -> String {
-//         match &self.inner {
-//             WitCapability::HandleEvent(EventSelector::Connect(_)) => "handle-connect".to_string(),
-//             WitCapability::HandleEvent(EventSelector::Request(_)) => "handle-request".to_string(),
-//             WitCapability::HandleEvent(EventSelector::Response(_)) => "handle-response".to_string(),
-//             WitCapability::HandleEvent(EventSelector::InboundContent(_)) => {
-//                 "handle-inbound-content".to_string()
-//             }
-//             WitCapability::Annotator => "annotator".to_string(),
-//             WitCapability::Logger => "logger".to_string(),
-//             WitCapability::LocalStorage => "local-storage".to_string(),
-//             _ => "unknown".to_string(),
-//         }
-//     }
-// }
+impl ToString for CapabilityKind {
+    fn to_string(&self) -> String {
+        match self {
+            CapabilityKind::Annotator => "annotator".to_string(),
+            CapabilityKind::Logger => "logger".to_string(),
+            CapabilityKind::LocalStorage => "local-storage".to_string(),
+            CapabilityKind::HandleEvent(event_kind) => match event_kind {
+                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::Connect => {
+                    "handle-connect".to_string()
+                }
+                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::Request => {
+                    "handle-request".to_string()
+                }
+                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::Response => {
+                    "handle-response".to_string()
+                }
+                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::InboundContent => {
+                    "handle-inbound-content".to_string()
+                }
+            },
+        }
+    }
+}

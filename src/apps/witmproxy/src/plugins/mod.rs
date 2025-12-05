@@ -9,13 +9,13 @@ use wasmtime::{Engine, Store};
 use wasmtime::component::Component;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
+use crate::events::Event;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use crate::{
     Runtime,
     db::{Db, Insert},
     plugins::{
         capabilities::Capability,
-        cel::{CelConnect, CelRequest, CelResponse},
     },
     wasm::{
         Host,
@@ -50,23 +50,6 @@ pub struct WitmPlugin {
     // Raw bytes of the WASM component for storage
     // TODO: stream this when receiving from API
     pub component_bytes: Vec<u8>,
-}
-
-pub trait Event
-{
-    /// Returns the [CapabilityKind] required to handle events of this type
-    fn capability() -> CapabilityKind
-        where Self: Sized;
-
-    /// Converts into EventData by consuming the event and storing it in the provided Store
-    fn into_event_data(self, store: &mut Store<Host>) -> Result<EventData>;
-    
-    /// Register event-specific variables and functions with the CEL environment
-    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
-        where Self: Sized;
-
-    /// Bind all event-specific variables into CEL activation
-    fn bind_to_cel_activation<'a>(&'a self, a: Activation<'a>) -> Option<Activation<'a>>;
 }
 
 pub enum CelContext<T>
@@ -238,109 +221,6 @@ impl WitmPlugin {
             })
     }
 
-    pub fn can_handle_connect(&self, cel_connect: &CelConnect) -> bool {
-        self.capabilities
-            .iter()
-            .filter(|cap| cap.granted)
-            .filter_map(|cap| {
-                if let WitCapability::HandleEvent(EventSelector::Connect(selector)) = &cap.inner {
-                    cap.cel.as_ref().map(|program| (program, selector))
-                } else {
-                    None
-                }
-            })
-            .any(|(program, selector)| {
-                Activation::new()
-                    .bind_variable("connect", cel_connect)
-                    .ok()
-                    .and_then(|activation| {
-                        debug!("Evaluating CEL connect filter: {}", selector.expression);
-                        match program.evaluate(activation) {
-                            Ok(cel_cxx::Value::Bool(true)) => {
-                                debug!("CEL connect filter result: true");
-                                Some(true)
-                            }
-                            Ok(_) => None,
-                            Err(e) => {
-                                error!("Error evaluating CEL connect filter: {}", e);
-                                None
-                            }
-                        }
-                    })
-                    .is_some()
-            })
-    }
-
-    pub fn can_handle_request(&self, cel_request: &CelRequest) -> bool {
-        self.capabilities
-            .iter()
-            .filter(|cap| cap.granted)
-            .filter_map(|cap| {
-                if let WitCapability::HandleEvent(EventSelector::Request(selector)) = &cap.inner {
-                    cap.cel.as_ref().map(|program| (program, selector))
-                } else {
-                    None
-                }
-            })
-            .any(|(program, selector)| {
-                Activation::new()
-                    .bind_variable("request", cel_request)
-                    .ok()
-                    .and_then(|activation| {
-                        debug!("Evaluating CEL request filter: {}", selector.expression);
-                        match program.evaluate(activation) {
-                            Ok(cel_cxx::Value::Bool(true)) => {
-                                debug!("CEL request filter result: true");
-                                Some(true)
-                            }
-                            Ok(_) => None,
-                            Err(e) => {
-                                error!("Error evaluating CEL request filter: {}", e);
-                                None
-                            }
-                        }
-                    })
-                    .is_some()
-            })
-    }
-
-    pub fn can_handle_response(
-        &self,
-        cel_request: &CelRequest,
-        cel_response: &CelResponse,
-    ) -> bool {
-        self.capabilities
-            .iter()
-            .filter(|cap| cap.granted)
-            .filter_map(|cap| {
-                if let WitCapability::HandleEvent(EventSelector::Response(selector)) = &cap.inner {
-                    cap.cel.as_ref().map(|program| (program, selector))
-                } else {
-                    None
-                }
-            })
-            .any(|(program, selector)| {
-                Activation::new()
-                    .bind_variable("request", cel_request)
-                    .and_then(|a| a.bind_variable("response", cel_response))
-                    .ok()
-                    .and_then(|activation| {
-                        debug!("Evaluating CEL response filter: {}", selector.expression);
-                        match program.evaluate(activation) {
-                            Ok(cel_cxx::Value::Bool(true)) => {
-                                debug!("CEL response filter result: true");
-                                Some(true)
-                            }
-                            Ok(_) => None,
-                            Err(e) => {
-                                error!("Error evaluating CEL response filter: {}", e);
-                                None
-                            }
-                        }
-                    })
-                    .is_some()
-            })
-    }
 }
 
 impl From<PluginManifest> for WitmPlugin {
@@ -413,7 +293,7 @@ impl Insert for WitmPlugin {
         let mut plugin_capabilities: Vec<(String, String, String, String, bool)> = vec![];
 
         self.capabilities.iter().for_each(|cap| {
-            let cap_str = cap.to_string();
+            let cap_str = cap.inner.kind.to_string();
             let config_str = match serde_json::to_string(&cap.inner) {
                 Ok(s) => s,
                 Err(e) => {

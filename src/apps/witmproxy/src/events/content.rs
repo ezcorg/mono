@@ -1,14 +1,14 @@
 use anyhow::Result;
 use wasmtime::{Store, component::Resource};
 
-use crate::{plugins::{Event, cel::CelContent}, wasm::{Content, Host, bindgen::{EventData, witmproxy::plugin::capabilities::{CapabilityKind, EventKind}}}};
+use crate::{events::Event, plugins::cel::CelContent, wasm::{Content, Host, bindgen::{EventData, witmproxy::plugin::capabilities::{CapabilityKind, EventKind}}}};
 
 impl Event for Content {
     fn capability() -> CapabilityKind {
         CapabilityKind::HandleEvent(EventKind::InboundContent)
     }
 
-    fn into_event_data(self, store: &mut Store<Host>) -> Result<EventData> {
+    fn data(self, store: &mut Store<Host>) -> Result<EventData> {
         let handle: Resource<Content> = store.data_mut().table.push(self)?;
         Ok(EventData::InboundContent(handle))
     }

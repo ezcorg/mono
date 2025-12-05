@@ -80,11 +80,33 @@ interface capabilities {
         scope: capability-scope,
     }
 
+    record keyed-values {
+        key: string,
+        values: list<string>,
+    }
+
+    type request-query = keyed-values;
+    type request-header = keyed-values;
+
+    record request-context {
+        scheme: string,
+        host: string,
+        path: string,
+        query: list<request-query>,
+        method: string,
+        headers: list<request-header>,
+    }
+
+    record response-with-request-context {
+        response: response,
+        request: request-context,
+    }
+
     /// The different types of events and their associated data that can be handled by plugins
     variant event-data {
-        // connect(connection-info),
+        connect,
         request(request),
-        response(response),
+        response(response-with-request-context),
         inbound-content(content),
     }
 
