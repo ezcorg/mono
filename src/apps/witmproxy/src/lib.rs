@@ -1,4 +1,5 @@
 #![feature(if_let_guard)]
+#![feature(impl_trait_in_bindings)]
 // Library interface for witmproxy
 // This exposes the internal modules for testing and external use
 

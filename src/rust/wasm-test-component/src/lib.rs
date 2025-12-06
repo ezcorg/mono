@@ -2,7 +2,7 @@ use crate::{
     exports::witmproxy::plugin::witm_plugin::{
         Capability, CapabilityProvider, Guest, PluginManifest
     },
-    witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventData, EventKind, Request, Response},
+    witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventData, EventKind, Request, Response, ContextualResponse},
 };
 
 wit_bindgen::generate!({
@@ -67,14 +67,15 @@ impl Guest for Plugin {
                 let _ = new_req.set_scheme(scheme.as_ref());
                 Some(EventData::Request(new_req))
             }
-            EventData::Response(res) => {
-                let headers = res.get_headers().clone();
+            EventData::Response(ContextualResponse { response, request }) => {
+
+                let headers = response.get_headers().clone();
                 let val = "res".as_bytes().to_vec();
                 let _ = headers.set("witmproxy", &[val]);
                 let (_, result_rx) = wit_future::new(|| Ok(()));
-                let (body, trailers) = Response::consume_body(res, result_rx);
+                let (body, trailers) = Response::consume_body(response, result_rx);
                 let (new_res, _) = Response::new(headers, Some(body), trailers);
-                Some(EventData::Response(new_res))
+                Some(EventData::Response(ContextualResponse { response: new_res, request }))
             }
             _ => {
                 None

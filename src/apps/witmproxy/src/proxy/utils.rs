@@ -338,8 +338,6 @@ pub fn strip_proxy_headers(h: &mut hyper::HeaderMap) {
     }
 }
 
-pub struct Connect((String, u16));
-
 /// Parse authority string into host and port components
 pub fn parse_authority_host_port(authority: &str, default_port: u16) -> ProxyResult<(String, u16)> {
     match authority.rsplit_once(':') {

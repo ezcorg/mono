@@ -18,7 +18,7 @@ impl Event for WasiRequest {
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn data(self, store: &mut Store<Host>) -> Result<EventData> {
+    fn event_data(self, store: &mut Store<Host>) -> Result<EventData> {
         let handle: Resource<WasiRequest> = store.data_mut().http().table.push(self)?;
         Ok(EventData::Request(handle))
     }
@@ -48,7 +48,7 @@ where
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn data(self, store: &mut Store<Host>) -> Result<crate::wasm::bindgen::EventData> {
+    fn event_data(self, store: &mut Store<Host>) -> Result<crate::wasm::bindgen::EventData> {
         anyhow::bail!("Conversion from Request<T> to EventData is not supported")
     }
 

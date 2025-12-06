@@ -80,11 +80,7 @@ interface capabilities {
         scope: capability-scope,
     }
 
-    record keyed-values {
-        key: string,
-        values: list<string>,
-    }
-
+    type keyed-values = tuple<string, list<string>>;
     type request-query = keyed-values;
     type request-header = keyed-values;
 
@@ -97,8 +93,9 @@ interface capabilities {
         headers: list<request-header>,
     }
 
-    record response-with-request-context {
+    record contextual-response {
         response: response,
+        // TODO: turn request-context into a resource to avoid copying and modifications
         request: request-context,
     }
 
@@ -106,7 +103,7 @@ interface capabilities {
     variant event-data {
         connect,
         request(request),
-        response(response-with-request-context),
+        response(contextual-response),
         inbound-content(content),
     }
 

@@ -8,7 +8,7 @@ impl Event for Content {
         CapabilityKind::HandleEvent(EventKind::InboundContent)
     }
 
-    fn data(self, store: &mut Store<Host>) -> Result<EventData> {
+    fn event_data(self, store: &mut Store<Host>) -> Result<EventData> {
         let handle: Resource<Content> = store.data_mut().table.push(self)?;
         Ok(EventData::InboundContent(handle))
     }

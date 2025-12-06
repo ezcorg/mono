@@ -9,7 +9,6 @@ pub mod response;
 pub mod connect;
 pub mod content;
 
-
 pub trait Event
 {
     /// Returns the [CapabilityKind] required to handle events of this type
@@ -26,7 +25,7 @@ pub trait Event
         }
 
     /// Converts into EventData by consuming the event and storing it in the provided Store
-    fn data(self, store: &mut Store<Host>) -> Result<EventData>;
+    fn event_data(self, store: &mut Store<Host>) -> Result<EventData>;
     
     /// Register event-specific variables and functions with the CEL environment
     fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>

@@ -1,9 +1,13 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
+use crate::events::Event;
 use crate::events::connect::Connect;
+use crate::events::response::ContextualResponse;
 use crate::plugins::cel::{CelConnect, CelRequest};
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
+use crate::wasm::bindgen::EventData;
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
 use bytes::Bytes;
 use http_body_util::Full;
@@ -13,6 +17,10 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, StatusCode};
 use hyper::{Response, upgrade};
 use tokio::sync::{Notify, RwLock};
+use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
+use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::p3::WasiHttpView;
+use http_body_util::BodyExt;
 
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
@@ -442,9 +450,26 @@ async fn run_tls_mitm(
 
                 let request_event_result = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
-                    registry.handle_request(req).await
+                    let (parts, body) = req.into_parts();
+                    let mapped_body = body.map_err(|e| ErrorCode::from_hyper_request_error(e));
+                    let req = Request::from_parts(parts, mapped_body);
+                    let (request, _io) = WasiRequest::from_http(req);
+                    let event: impl Event = request;
+
+                    registry.handle_event(event).await
                 } else {
-                    HostHandleRequestResult::Noop(req)
+                    let request_result = convert_hyper_incoming_to_reqwest_request(req, &upstream);
+                    match request_result {
+                        Ok(rq) => return Ok(perform_upstream(&upstream, rq).await),
+                        Err(err) => {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Full::new(Bytes::from(format!(
+                                    "Failed to convert request: {}",
+                                    err
+                                ))))
+                        }
+                    }
                 };
 
                 debug!(
@@ -452,52 +477,55 @@ async fn run_tls_mitm(
                 );
 
                 let initial_response = match request_event_result {
-                    HostHandleRequestResult::None => Response::builder()
-                        .status(StatusCode::FORBIDDEN)
-                        .body(Full::new(Bytes::from("Request dropped by plugin")))
-                        .unwrap(),
-                    HostHandleRequestResult::Noop(rq) => {
-                        request_ctx = CelRequest::from(&rq);
+                    Err(e) => {
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Full::new(Bytes::from(format!(
+                                "Plugin event handling error: {}",
+                                e
+                            )))).expect("Could not construct error Response")
+                    },
+                    Ok((event_data, mut store)) => match event_data {
+                        EventData::Request(rq) => {
+                            // TODO: no unwraps
+                            let rq = store.data_mut().http().table.delete(rq).unwrap();
+                            request_ctx = CelRequest::from(&rq);
+                            let (rq, _io) = rq.into_http(store, async { Ok(())}).unwrap();
 
-                        match convert_hyper_incoming_to_reqwest_request(rq, &upstream) {
-                            Ok(rq) => perform_upstream(&upstream, rq).await,
-                            Err(err) => Response::builder()
-                                .status(StatusCode::BAD_REQUEST)
-                                .body(Full::new(Bytes::from(format!(
-                                    "Failed to convert request: {}",
-                                    err
-                                ))))
-                                .unwrap(),
-                        }
-                    }
-                    HostHandleRequestResult::Request(rq) => {
-                        request_ctx = CelRequest::from(&rq);
-
-                        let rq = convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
-                        match rq {
-                            Ok(rq) => perform_upstream(&upstream, rq).await,
-                            Err(err) => Response::builder()
-                                .status(StatusCode::BAD_REQUEST)
-                                .body(Full::new(Bytes::from(format!(
-                                    "Failed to convert request: {}",
-                                    err
-                                ))))
-                                .unwrap(),
-                        }
-                    }
-                    HostHandleRequestResult::Response(resp) => {
-                        match convert_boxbody_to_full_response(resp).await {
-                            Ok(converted_resp) => converted_resp,
-                            Err(err) => {
-                                error!("Failed to convert plugin response: {}", err);
-                                Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(Full::new(Bytes::from(
-                                        "Failed to convert plugin response",
-                                    )))
-                                    .unwrap()
+                            let rq: Result<reqwest::Request, ProxyError> = convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
+                            match rq {
+                                Ok(rq) => perform_upstream(&upstream, rq).await,
+                                Err(err) => Response::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .body(Full::new(Bytes::from(format!(
+                                        "Failed to convert request: {}",
+                                        err
+                                    ))))
+                                    .unwrap(),
+                            }
+                        },
+                        EventData::Response(WasiContextualResponse { response, request}) => {
+                            let response = store.data_mut().http().table.delete(response).unwrap();
+                            let response = response.into_http(store, async { Ok(())}).unwrap();
+                            match convert_boxbody_to_full_response(response).await {
+                                Ok(converted_resp) => converted_resp,
+                                Err(err) => {
+                                    error!("Failed to convert plugin response: {}", err);
+                                    Response::builder()
+                                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                        .body(Full::new(Bytes::from(
+                                            "Failed to convert plugin response",
+                                        )))
+                                        .unwrap()
+                                }
                             }
                         }
+                        _ => Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Full::new(Bytes::from(
+                                "Unexpected event data type from plugin",
+                            )))
+                            .expect("Could not construct error Response"),
                     }
                 };
 
@@ -505,47 +533,61 @@ async fn run_tls_mitm(
 
                 let handled_response = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
-                    registry
-                        .handle_response(initial_response, request_ctx)
-                        .await
+                    let (response, _io) = WasiResponse::from_http(initial_response);
+                    let contextual_response = ContextualResponse {
+                        request: request_ctx.into(),
+                        response,
+                    };
+                    registry.handle_event(contextual_response).await
                 } else {
-                    HostHandleResponseResult::Noop(initial_response)
+                    return Ok(initial_response)
                 };
 
                 debug!("Final response ready, sending back to client");
 
                 let final_response = match handled_response {
-                    // TODO: fix std::io::Error ugliness
-                    HostHandleResponseResult::None => Response::builder()
-                        .status(StatusCode::FORBIDDEN)
-                        .body(Full::new(Bytes::from("Response dropped by plugin")))
-                        .map_err(|e| {
-                            error!("Failed to build drop response: {}", e);
-                            std::io::Error::other(e.to_string())
-                        }),
-                    HostHandleResponseResult::Noop(resp) => Ok::<_, std::io::Error>(resp),
-                    HostHandleResponseResult::Response(resp) => {
-                        match convert_boxbody_to_full_response(resp).await {
-                            Ok(converted_resp) => Ok::<_, std::io::Error>(converted_resp),
-                            Err(err) => {
-                                error!("Failed to convert plugin response: {}", err);
-                                Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(Full::new(Bytes::from(
-                                        "Failed to convert plugin response",
-                                    )))
-                                    .map_err(|e| std::io::Error::other(e.to_string()))
+                    Ok((event_data, mut store)) => match event_data {
+                        EventData::Response(WasiContextualResponse { response, .. }) => {
+                            let response = store.data_mut().http().table.delete(response).unwrap();
+                            let response = response.into_http(store, async { Ok(())}).unwrap();
+                            match convert_boxbody_to_full_response(response).await {
+                                Ok(converted_resp) => converted_resp,
+                                Err(err) => {
+                                    error!("Failed to convert plugin response: {}", err);
+                                    Response::builder()
+                                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                        .body(Full::new(Bytes::from(
+                                            "Failed to convert plugin response",
+                                        )))
+                                        .unwrap()
+                                }
                             }
                         }
+                        _ => Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Full::new(Bytes::from(
+                                "Unexpected event data type from plugin",
+                            )))
+                            .unwrap(),
+                    },
+                    Err(e) => {
+                        error!("Response event handling error: {}", e);
+                        Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Full::new(Bytes::from(format!(
+                            "Plugin response event handling error: {}",
+                            e
+                        ))))
+                        .unwrap()
                     },
                 };
 
-                if let Some(registry) = &plugin_registry {
-                    let registry = registry.read().await;
-                    let response = registry.handle_response_content(final_response.unwrap()).await;
-                    return Ok(response);
-                }
-                final_response
+                // if let Some(registry) = &plugin_registry {
+                //     let registry = registry.read().await;
+                //     let response = registry.handle_response_content(final_response.unwrap()).await;
+                //     return Ok(response);
+                // }
+                Ok(final_response)
             }
         })
     };
