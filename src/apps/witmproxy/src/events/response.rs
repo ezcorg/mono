@@ -14,11 +14,11 @@ pub struct ContextualResponse {
 
 impl Event for ContextualResponse
 {
-    fn capability() -> CapabilityKind {
+    fn capability(&self) -> CapabilityKind {
         CapabilityKind::HandleEvent(EventKind::Response)
     }
 
-    fn event_data(self, store: &mut Store<Host>) -> Result<EventData> {
+    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
         let handle = store.data_mut().http().table.push(self.response)?;
         let response = WasiContextualResponse { request: self.request, response: handle };
         Ok(EventData::Response(response))

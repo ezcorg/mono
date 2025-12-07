@@ -4,12 +4,12 @@ use wasmtime::{Store, component::Resource};
 use crate::{events::Event, plugins::cel::CelContent, wasm::{Content, Host, bindgen::{EventData, witmproxy::plugin::capabilities::{CapabilityKind, EventKind}}}};
 
 impl Event for Content {
-    fn capability() -> CapabilityKind {
+    fn capability(&self) -> CapabilityKind {
         CapabilityKind::HandleEvent(EventKind::InboundContent)
     }
 
-    fn event_data(self, store: &mut Store<Host>) -> Result<EventData> {
-        let handle: Resource<Content> = store.data_mut().table.push(self)?;
+    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+        let handle: Resource<Content> = store.data_mut().table.push(*self)?;
         Ok(EventData::InboundContent(handle))
     }
 

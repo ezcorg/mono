@@ -160,7 +160,7 @@ impl ProxyServer {
             }
         };
 
-        let connect_event = Connect::new(host, port);
+        let connect_event: Box<dyn Event> = Box::new(Connect::new(host, port));
         let has_matching_plugin = {
             let registry = plugin_registry.read().await;
             registry.can_handle(&connect_event)
@@ -454,7 +454,7 @@ async fn run_tls_mitm(
                     let mapped_body = body.map_err(|e| ErrorCode::from_hyper_request_error(e));
                     let req = Request::from_parts(parts, mapped_body);
                     let (request, _io) = WasiRequest::from_http(req);
-                    let event: impl Event = request;
+                    let event: Box<dyn Event> = Box::new(request);
 
                     registry.handle_event(event).await
                 } else {
@@ -538,7 +538,7 @@ async fn run_tls_mitm(
                         request: request_ctx.into(),
                         response,
                     };
-                    registry.handle_event(contextual_response).await
+                    registry.handle_event(Box::new(contextual_response)).await
                 } else {
                     return Ok(initial_response)
                 };

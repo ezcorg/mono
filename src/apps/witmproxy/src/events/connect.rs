@@ -29,11 +29,11 @@ impl From<&Connect> for CelConnect {
 }
 
 impl Event for Connect {
-    fn capability() -> CapabilityKind {
+    fn capability(&self) -> CapabilityKind {
         CapabilityKind::HandleEvent(EventKind::Connect)
     }
 
-    fn event_data(self, _store: &mut Store<Host>) -> Result<EventData> {
+    fn event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<EventData> {
         // No EventData conversion, as Connect events don't result in WASM handling
         anyhow::bail!("Connect events don't currently support conversion to EventData")
     }

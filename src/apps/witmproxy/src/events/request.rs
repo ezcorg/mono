@@ -14,12 +14,12 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use wasmtime_wasi_http::p3::WasiHttpView;
 
 impl Event for WasiRequest {
-    fn capability() -> CapabilityKind {
+    fn capability(&self) -> CapabilityKind {
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn event_data(self, store: &mut Store<Host>) -> Result<EventData> {
-        let handle: Resource<WasiRequest> = store.data_mut().http().table.push(self)?;
+    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+        let handle: Resource<WasiRequest> = store.data_mut().http().table.push(*self)?;
         Ok(EventData::Request(handle))
     }
 
@@ -44,11 +44,11 @@ impl<T> Event for Request<T>
 where
     T: Body<Data = bytes::Bytes> + Send + Sync + 'static,
 {
-    fn capability() -> CapabilityKind {
+    fn capability(&self) -> CapabilityKind {
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn event_data(self, store: &mut Store<Host>) -> Result<crate::wasm::bindgen::EventData> {
+    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<crate::wasm::bindgen::EventData> {
         anyhow::bail!("Conversion from Request<T> to EventData is not supported")
     }
 

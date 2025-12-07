@@ -6,6 +6,7 @@ use cel_cxx::{Env};
 use http_body::Body;
 use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 use hyper::{Request, Response, body::Incoming};
+use sqlx::mysql::any;
 use tracing::{debug, info, warn};
 use wasmtime::{Store, component::Resource};
 use wasmtime_wasi_http::p3::{
@@ -198,13 +199,12 @@ impl PluginRegistry {
     }
 
     fn new_store(&self) -> Store<Host> {
-        // TODO: This is where we need to pass actual context
-        Store::new(&self.runtime.engine, Host::default())
+        self.runtime.new_store()
     }
 
     pub fn find_first_unexecuted_plugin(
         &self,
-        event: &impl Event,
+        event: &Box<dyn Event>,
         executed_plugins: &HashSet<String>,
     ) -> Option<&WitmPlugin> {
         self.plugins.values().find(|p| {
@@ -214,318 +214,131 @@ impl PluginRegistry {
     }
 
     /// Check if any plugins can handle an event
-    pub fn can_handle<E: Event>(&self, event: &E) -> bool {
+    pub fn can_handle(&self, event: &Box<dyn Event>) -> bool {
         self.plugins
             .values()
             .any(|p| p.can_handle(event))
     }
 
-    /// Handle a generic event, passing it through all registered plugins, and returning the final [EventData] and [Store] (for resolving any resource handles on the host side)
-    pub async fn handle_event(&self, event: impl Event) -> Result<(EventData, Store<Host>)> {
-        todo!()
-        // HostHandleResult::Noop(event.data(&mut self.runtime.new_store()).unwrap())
+    /// Handle a generic event, passing it through all registered plugins, and returning the final [EventData] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
+    pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(EventData, Store<Host>)> {
+        let any_plugins = self
+            .plugins
+            .values()
+            .any(|p| p.can_handle(&event));
+        if !any_plugins {
+            debug!(
+                "No plugins with matching capability and scope; skipping plugin processing"
+            );
+            let mut store = self.new_store();
+            let event_data = event.event_data(&mut store)?;
+            return Ok((event_data, store));
+        }
+
+        let mut current_event = event;
+        let mut store = self.new_store();
+        let mut executed_plugins = HashSet::new();
+
+        while let Some(plugin) = {
+            self.find_first_unexecuted_plugin(
+                &current_event,
+                &executed_plugins,
+            )
+        } {
+            debug!(
+                "Executing handle_event for plugin: {}",
+                plugin.id(),
+            );
+
+            executed_plugins.insert(plugin.id());
+            let kind = current_event.kind();
+            let component = if let Some(c) = &plugin.component {
+                c
+            } else {
+                warn!(
+                    target: "plugins",
+                    plugin_id = %plugin.id(),
+                    event_kind = kind.to_string(),
+                    "Plugin component missing; skipping"
+                );
+                continue;
+            };
+            
+            let (plugin_instance, _) = match self.runtime.instantiate_plugin_component(component).await {
+                Ok(pi) => pi,
+                Err(e) => {
+                    warn!(
+                        target: "plugins",
+                        plugin_id = %plugin.id(),
+                        event_kind = kind.to_string(),
+                        error = %e,
+                        "Failed to instantiate plugin component; skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let mut store = self.new_store();
+            let event_data = current_event.event_data(&mut store)?;
+            // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
+            let provider = CapabilityProvider::new();
+            let cap_resource = store.data_mut().table.push(provider)?;
+            let guest_result = store
+                .run_concurrent(async move |store| {
+                    let (result, task) = match plugin_instance
+                        .witmproxy_plugin_witm_plugin()
+                        .call_handle(store, event_data, cap_resource)
+                        .await
+                    {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_kind = kind.to_string(),
+                                error = %e,
+                                "Error calling handle"
+                            );
+                            return Err(e);
+                        }
+                    };
+                    task.block(store).await;
+                    Ok(result)
+                })
+                .await??;
+            match guest_result {
+                Some(new_event_data) => {
+                    // Create a new event from the returned EventData for the next iteration
+                    current_event = match new_event_data {
+                        EventData::Connect => {
+                            anyhow::bail!("Connect events cannot be returned from plugins");
+                        },
+                        EventData::Request(r) => {
+                            let req = store.data_mut().http().table.delete(r)?;
+                            Box::new(req)
+                        },
+                        EventData::Response(r) => {
+                            let response = store.data_mut().http().table.delete(r.response)?;
+                            let request_ctx = r.request;
+                            Box::new(ContextualResponse {
+                                request: request_ctx,
+                                response,
+                            })
+                        },
+                        EventData::InboundContent(c) => {
+                            let content = store.data_mut().table.delete(c)?;
+                            Box::new(content)
+                        },
+                    };
+                },
+                None => {
+                    anyhow::bail!("Plugin returned no event data; cannot continue processing");
+                }
+            }
+        }
+        
+        let event_data = current_event.event_data(&mut store)?;
+        Ok((event_data, store))
     }
-
-    ///// Handle an incoming HTTP request by passing it through all registered plugins
-    ///// that have the `Request` capability.
-    // pub async fn handle_request<T>(&self, original_req: Request<T>) -> HostHandleRequestResult<T>
-    // where
-    //     T: Body<Data = Bytes> + Send + Sync + 'static,
-    // {
-    //     let any_plugins = self
-    //         .plugins
-    //         .values()
-    //         .any(|p| p.can_handle(&original_req));
-    //     if !any_plugins {
-    //         debug!(
-    //             "No plugins with request capability and matching CEL expression; skipping plugin processing"
-    //         );
-    //         return HostHandleRequestResult::Noop(original_req);
-    //     }
-
-    //     let (req, body) = original_req.into_parts();
-    //     let body = body.map_err(|_| ErrorCode::HttpProtocolError);
-    //     let req = Request::from_parts(req, body);
-    //     let (mut current_req, _io) = WasiRequest::from_http(req);
-    //     let mut current_store: Option<Store<Host>> = None;
-    //     let mut executed_plugins = HashSet::new();
-
-    //     debug!(
-    //         "Starting plugin request processing loop for request: {:?}/{:?}",
-    //         current_req.authority, current_req.path_with_query
-    //     );
-
-    //     while let Some(plugin) = {
-    //         let cel_request = CelRequest::from(&current_req);
-    //         self.find_first_unexecuted_plugin(&current_req, &executed_plugins)
-    //     } {
-    //         executed_plugins.insert(plugin.id());
-    //         debug!(
-    //             "Executing handle_request for plugin: {} against: {:?}/{:?}",
-    //             plugin.id(),
-    //             current_req.authority,
-    //             current_req.path_with_query
-    //         );
-
-    //         let component = if let Some(c) = &plugin.component {
-    //             c
-    //         } else {
-    //             continue;
-    //         };
-
-    //         let (plugin_instance, store) = match self.runtime.instantiate_plugin_component(component).await {
-    //             Ok(pi) => pi,
-    //             Err(e) => {
-    //                 warn!(
-    //                     target: "plugins",
-    //                     plugin_id = %plugin.id(),
-    //                     event_type = "request",
-    //                     error = %e,
-    //                     "Failed to instantiate plugin component; skipping"
-    //                 );
-    //                 continue;
-    //             }
-    //         };
-    //         current_store = Some(store);
-    //         let req_resource: Resource<WasiRequest> = current_store.as_mut().unwrap().data_mut().table.push(current_req).unwrap();
-    //         let event_data = EventData::Request(req_resource);
-    //         // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
-    //         let provider = CapabilityProvider::new();
-    //         let cap_resource = current_store.as_mut().unwrap().data_mut().table.push(provider).unwrap();
-    //         // Call the plugin's `handle` function
-    //         let guest_result = current_store.as_mut().unwrap()
-    //             .run_concurrent(async move |store| {
-    //                 let (result, task) = match plugin_instance
-    //                     .witmproxy_plugin_witm_plugin()
-    //                     .call_handle(store, event_data, cap_resource)
-    //                     .await
-    //                 {
-    //                     Ok(ok) => ok,
-    //                     Err(e) => {
-    //                         warn!(
-    //                             target: "plugins",
-    //                             event_type = "request",
-    //                             error = %e,
-    //                             "Error calling handle_request"
-    //                         );
-    //                         return Err(ErrorCode::DestinationUnavailable);
-    //                     }
-    //                 };
-    //                 task.block(store).await;
-    //                 Ok(result)
-    //             })
-    //             .await;
-
-    //         let inner = match guest_result {
-    //             Ok(Ok(Some(res))) => res,
-    //             _ => {
-    //                 // If plugin execution failed, we currently can't recover the request since it was moved
-    //                 // Return Drop to indicate the request processing should stop
-    //                 // TODO: consider a fix of some kind for this
-    //                 return HostHandleRequestResult::None;
-    //             }
-    //         };
-    //         match inner {
-    //             EventData::Connect => {
-    //                 return HostHandleRequestResult::None
-    //             },
-    //             EventData::Request(r) => {
-    //                 let r = current_store.as_mut().unwrap().data_mut().table.delete(r)
-    //                     .expect("failed to delete request from table");
-    //                 current_req = r;
-    //             }
-    //             EventData::Response(r) => {
-    //                 let response = current_store.as_mut().unwrap().data_mut().table.delete(r.response)
-    //                     .expect("failed to delete response from table");
-    //                 let r = response.into_http(&mut current_store.as_mut().unwrap(), async { Ok(()) });
-                    
-    //                 match r {
-    //                     Err(_) => return HostHandleRequestResult::None,
-    //                     Ok(r) => {
-    //                         return HostHandleRequestResult::Response(r);
-    //                     }
-    //                 }
-    //             }
-    //             EventData::InboundContent(_) => return HostHandleRequestResult::None,
-    //         };
-    //     }
-
-    //     match current_req.into_http(current_store.unwrap(), async { Ok(()) }) {
-    //         Ok((req, _)) => HostHandleRequestResult::Request(req),
-    //         Err(_) => HostHandleRequestResult::None,
-    //     }
-    // }
-
-    // /// Handle an incoming HTTP response by passing it through all registered plugins
-    // /// that have the `Response` capability.
-    // pub async fn handle_response<T>(
-    //     &self,
-    //     original_res: Response<T>,
-    //     request_ctx: CelRequest,
-    // ) -> HostHandleResponseResult<T>
-    // where
-    //     T: Body<Data = Bytes> + Send + Sync + 'static,
-    // {
-    //     let any_plugins = self
-    //         .plugins
-    //         .values()
-    //         .any(|p| p.can_handle(&event));
-
-    //     if !any_plugins {
-    //         match event.response {
-    //             ResponseEnum::HyperResponse(res) => {
-    //                 return HostHandleResponseResult::Noop(res);
-    //             },
-    //             _ => { unreachable!() },
-    //         }
-    //     }
-
-    //     let (res, body) = original_res.into_parts();
-    //     let body = body.map_err(|_| ErrorCode::HttpProtocolError);
-    //     let res = Response::from_parts(res, body);
-    //     let (mut current_res, _io) = WasiResponse::from_http(res);
-    //     let mut response_event: ResponseWithRequestContext<T> = ResponseWithRequestContext {
-    //         request_ctx,
-    //         response: ResponseEnum::WasiResponse(current_res),
-    //     };
-    //     let mut store = self.new_store();
-    //     let mut executed_plugins = HashSet::new();
-
-    //     while let Some(plugin) = {
-    //         self.find_first_unexecuted_plugin(
-    //             &response_event,
-    //             &executed_plugins,
-    //         )
-    //     } {
-    //         executed_plugins.insert(plugin.id());
-
-    //         let component = if let Some(c) = &plugin.component {
-    //             c
-    //         } else {
-    //             continue;
-    //         };
-
-    //         let instance = self
-    //             .runtime
-    //             .linker
-    //             .instantiate_async(&mut store, component)
-    //             .await;
-
-    //         if let Err(e) = instance {
-    //             warn!(
-    //                 target: "plugins",
-    //                 plugin_id = %plugin.id(),
-    //                 event_type = "response",
-    //                 error = %e,
-    //                 "Failed to instantiate plugin; skipping"
-    //             );
-    //             continue;
-    //         }
-    //         let instance = instance.unwrap();
-
-    //         let plugin_instance = match Plugin::new(&mut store, &instance) {
-    //             Ok(pi) => pi,
-    //             Err(e) => {
-    //                 warn!(
-    //                     target: "plugins",
-    //                     plugin_id = %plugin.id(),
-    //                     event_type = "response",
-    //                     error = %e,
-    //                     "Failed to access plugin event handler; skipping"
-    //                 );
-    //                 continue;
-    //             }
-    //         };
-
-    //         // Push the current response and capability provider into the table
-    //         // The response is moved here, so we can't recover it if the plugin fails
-    //         let res_resource: Resource<WasiResponse> =
-    //             store.data_mut().http().table.push(current_res).unwrap();
-    //         let event_data = EventData::Response(res_resource);
-    //         // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
-    //         let provider = CapabilityProvider::new();
-    //         let cap_resource = store.data_mut().http().table.push(provider).unwrap();
-    //         // Call the plugin's handle_response function
-    //         let guest_result = store
-    //             .run_concurrent(async move |store| {
-    //                 let (result, task) = match plugin_instance
-    //                     .witmproxy_plugin_witm_plugin()
-    //                     .call_handle(store, event_data, cap_resource)
-    //                     .await
-    //                 {
-    //                     Ok(ok) => ok,
-    //                     Err(e) => {
-    //                         warn!(
-    //                             target: "plugins",
-    //                             event_type = "response",
-    //                             error = %e,
-    //                             "Error calling handle_response"
-    //                         );
-    //                         return Err(ErrorCode::DestinationUnavailable);
-    //                     }
-    //                 };
-    //                 task.block(store).await;
-    //                 Ok(result)
-    //             })
-    //             .await;
-
-    //         let inner = match guest_result {
-    //             Ok(Ok(Some(res))) => res,
-    //             Ok(Err(e)) => {
-    //                 warn!(
-    //                     target: "plugins",
-    //                     plugin_id = %plugin.id(),
-    //                     event_type = "response",
-    //                     error = ?e,
-    //                     "Guest function returned error during response handling"
-    //                 );
-    //                 return HostHandleResponseResult::None;
-    //             }
-    //             Err(e) => {
-    //                 warn!(
-    //                     target: "plugins",
-    //                     plugin_id = %plugin.id(),
-    //                     event_type = "response",
-    //                     error = %e,
-    //                     "Failed to run plugin response handler"
-    //                 );
-    //                 return HostHandleResponseResult::None;
-    //             }
-    //             _ => {
-    //                 return HostHandleResponseResult::None;
-    //             }
-    //         };
-    //         match inner {
-    //             EventData::Response(new_res) => {
-    //                 // Extract the updated response from the table for the next iteration
-    //                 current_res = store
-    //                     .data_mut()
-    //                     .http()
-    //                     .table
-    //                     .delete(new_res)
-    //                     .expect("failed to retrieve new response from table");
-    //             }
-    //             _ => {
-    //                 return HostHandleResponseResult::None;
-    //             }
-    //         };
-    //     }
-
-    //     match current_res.into_http(store, async { Ok(()) }) {
-    //         Ok(res) => HostHandleResponseResult::Response(res),
-    //         Err(e) => {
-    //             warn!("Failed to convert response to HTTP: {}", e);
-    //             HostHandleResponseResult::None
-    //         }
-    //     }
-    // }
-
-    // pub async fn handle_response_content<T>(&self, res: Response<T>) -> Response<T>
-    // where
-    //     T: Body<Data = Bytes> + Send + Sync + 'static, 
-    // {
-    //     res
-    // }
 }
 
 #[cfg(test)]

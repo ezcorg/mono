@@ -190,17 +190,17 @@ impl WitmPlugin {
         Ok(())
     }
 
-    pub fn can_handle<E: Event>(&self, event: &E) -> bool {
+    pub fn can_handle(&self, event: &Box<dyn Event>) -> bool {
         self.capabilities
             .iter()
-            // Have we been granted this capability?
-            .filter(|cap| cap.inner.kind == E::capability())
+            // Have we been granted the associated event capability?
+            .filter(|cap| cap.inner.kind == event.capability())
             .filter(|cap| cap.granted)
             .filter_map(|cap| {
                 let program: &cel_cxx::Program<'_> = cap.cel.as_ref()?;
                 Some(program)
             })
-            // Do we care about this event?
+            // Are we interested in and permitted to handle this event?
             .any(|program| {
                 let activation = match event.bind_to_cel_activation(Activation::new()) {
                     Some(a) => a,
