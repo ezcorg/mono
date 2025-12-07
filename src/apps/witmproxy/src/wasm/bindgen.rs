@@ -178,12 +178,10 @@ impl Serialize for witmproxy::plugin::capabilities::CapabilityKind {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
         match self {
             witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(event) => {
-                let mut state = serializer.serialize_struct("CapabilityKind", 1)?;
-                state.serialize_field("handle_event", event)?;
-                state.end()
+                let s = format!("handle_event_{}", event.as_str());
+                serializer.serialize_str(&s)
             }
             witmproxy::plugin::capabilities::CapabilityKind::Logger => {
                 serializer.serialize_str("logger")
@@ -222,45 +220,62 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                 match value {
                     "logger" => Ok(witmproxy::plugin::capabilities::CapabilityKind::Logger),
                     "annotator" => Ok(witmproxy::plugin::capabilities::CapabilityKind::Annotator),
-                    "local_storage" => {
-                        Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage)
-                    }
+                    "local_storage" => Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage),
+
+                    // New flat snake_case event handlers
+                    "handle_event_connect" => Ok(
+                        witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
+                            witmproxy::plugin::capabilities::EventKind::Connect
+                        )
+                    ),
+                    "handle_event_request" => Ok(
+                        witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
+                            witmproxy::plugin::capabilities::EventKind::Request
+                        )
+                    ),
+                    "handle_event_response" => Ok(
+                        witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
+                            witmproxy::plugin::capabilities::EventKind::Response
+                        )
+                    ),
+                    "handle_event_inbound_content" => Ok(
+                        witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
+                            witmproxy::plugin::capabilities::EventKind::InboundContent
+                        )
+                    ),
+
                     _ => Err(de::Error::unknown_variant(
                         value,
-                        &["logger", "annotator", "local_storage", "handle_event"],
+                        &[
+                            "logger",
+                            "annotator",
+                            "local_storage",
+                            "handle_event_connect",
+                            "handle_event_request",
+                            "handle_event_response",
+                            "handle_event_inbound_content"
+                        ],
                     )),
                 }
             }
 
-            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            fn visit_map<V>(self, _map: V) -> Result<Self::Value, V::Error>
             where
                 V: MapAccess<'de>,
             {
-                let key: String = map
-                    .next_key()?
-                    .ok_or_else(|| de::Error::missing_field("variant"))?;
-                match key.as_str() {
-                    "handle_event" => {
-                        let event = map.next_value()?;
-                        Ok(witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(event))
-                    }
-                    "logger" => {
-                        let _: serde::de::IgnoredAny = map.next_value()?;
-                        Ok(witmproxy::plugin::capabilities::CapabilityKind::Logger)
-                    }
-                    "annotator" => {
-                        let _: serde::de::IgnoredAny = map.next_value()?;
-                        Ok(witmproxy::plugin::capabilities::CapabilityKind::Annotator)
-                    }
-                    "local_storage" => {
-                        let _: serde::de::IgnoredAny = map.next_value()?;
-                        Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage)
-                    }
-                    _ => Err(de::Error::unknown_variant(
-                        &key,
-                        &["logger", "annotator", "local_storage", "handle_event"],
-                    )),
-                }
+                // Map-based input is deprecated and now treated as an unknown variant
+                Err(de::Error::unknown_variant(
+                    "map",
+                    &[
+                        "logger",
+                        "annotator",
+                        "local_storage",
+                        "handle_event_connect",
+                        "handle_event_request",
+                        "handle_event_response",
+                        "handle_event_inbound_content"
+                    ],
+                ))
             }
         }
 
@@ -327,6 +342,18 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::EventKind {
         }
 
         deserializer.deserialize_str(EventKindVisitor)
+    }
+}
+
+// Added helper for unified snake_case serialization
+impl witmproxy::plugin::capabilities::EventKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            witmproxy::plugin::capabilities::EventKind::Connect => "connect",
+            witmproxy::plugin::capabilities::EventKind::Request => "request",
+            witmproxy::plugin::capabilities::EventKind::Response => "response",
+            witmproxy::plugin::capabilities::EventKind::InboundContent => "inbound_content",
+        }
     }
 }
 

@@ -3,7 +3,7 @@ use cel_cxx::{Env, Program};
 use serde::{Deserialize, Serialize};
 
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-    Capability as WitCapability, CapabilityKind,
+    Capability as WitCapability, CapabilityKind
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,21 +27,8 @@ impl ToString for CapabilityKind {
         match self {
             CapabilityKind::Annotator => "annotator".to_string(),
             CapabilityKind::Logger => "logger".to_string(),
-            CapabilityKind::LocalStorage => "local-storage".to_string(),
-            CapabilityKind::HandleEvent(event_kind) => match event_kind {
-                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::Connect => {
-                    "handle-connect".to_string()
-                }
-                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::Request => {
-                    "handle-request".to_string()
-                }
-                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::Response => {
-                    "handle-response".to_string()
-                }
-                crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind::InboundContent => {
-                    "handle-inbound-content".to_string()
-                }
-            },
+            CapabilityKind::LocalStorage => "local_storage".to_string(),
+            CapabilityKind::HandleEvent(event_kind) => format!("handle_event_{}", event_kind.to_string()),
         }
     }
 }

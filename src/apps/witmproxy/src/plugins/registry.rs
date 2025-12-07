@@ -247,7 +247,7 @@ impl PluginRegistry {
                 continue;
             };
 
-            let (plugin_instance, _) =
+            let (plugin_instance, component_store) =
                 match self.runtime.instantiate_plugin_component(component).await {
                     Ok(pi) => pi,
                     Err(e) => {
@@ -262,7 +262,7 @@ impl PluginRegistry {
                     }
                 };
 
-            let mut store = self.new_store();
+            store = component_store;
             let event_data = current_event.event_data(&mut store)?;
             // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
@@ -358,7 +358,7 @@ mod tests {
         capabilities.push(Capability {
             granted: true,
             inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Request),
+                kind: CapabilityKind::HandleEvent(EventKind::Connect),
                 scope: CapabilityScope {
                     expression: cel_expression.into(),
                 },
@@ -378,7 +378,7 @@ mod tests {
         capabilities.push(Capability {
             granted: true,
             inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Request),
+                kind: CapabilityKind::HandleEvent(EventKind::Response),
                 scope: CapabilityScope {
                     expression: cel_expression.into(),
                 },
