@@ -7,11 +7,11 @@ pub mod cert;
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod events;
 pub mod plugins;
 pub mod proxy;
 pub mod wasm;
 pub mod web;
-pub mod events;
 
 #[cfg(test)]
 pub mod test_utils;

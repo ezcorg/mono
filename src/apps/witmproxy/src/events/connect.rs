@@ -1,10 +1,16 @@
 use anyhow::Result;
 use cel_cxx::Activation;
-use wasmtime::{Store};
+use wasmtime::Store;
 
 use crate::events::Event;
-use crate::plugins::{cel::CelConnect};
-use crate::wasm::{Host, bindgen::{EventData, witmproxy::plugin::capabilities::{CapabilityKind, EventKind}}};
+use crate::plugins::cel::CelConnect;
+use crate::wasm::{
+    Host,
+    bindgen::{
+        EventData,
+        witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
+    },
+};
 
 /// Connect event represents a connection attempt to a host:port
 #[derive(Debug, Clone)]
@@ -39,7 +45,9 @@ impl Event for Connect {
     }
 
     fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
-        where Self: Sized {
+    where
+        Self: Sized,
+    {
         let env = env
             .declare_variable::<CelConnect>("connect")?
             .register_member_function("host", CelConnect::host)?
@@ -48,6 +56,8 @@ impl Event for Connect {
     }
 
     fn bind_to_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
-        activation.bind_variable("connect", CelConnect::from(self)).ok()
+        activation
+            .bind_variable("connect", CelConnect::from(self))
+            .ok()
     }
 }

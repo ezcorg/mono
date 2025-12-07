@@ -10,6 +10,7 @@ use crate::wasm::bindgen::EventData;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
@@ -17,10 +18,9 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, StatusCode};
 use hyper::{Response, upgrade};
 use tokio::sync::{Notify, RwLock};
-use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
-use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::WasiHttpView;
-use http_body_util::BodyExt;
+use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
@@ -462,12 +462,12 @@ async fn run_tls_mitm(
                     match request_result {
                         Ok(rq) => return Ok(perform_upstream(&upstream, rq).await),
                         Err(err) => {
-                            return Response::builder()
-                                .status(StatusCode::BAD_REQUEST)
-                                .body(Full::new(Bytes::from(format!(
+                            return Response::builder().status(StatusCode::BAD_REQUEST).body(
+                                Full::new(Bytes::from(format!(
                                     "Failed to convert request: {}",
                                     err
-                                ))))
+                                ))),
+                            );
                         }
                     }
                 };
@@ -477,22 +477,22 @@ async fn run_tls_mitm(
                 );
 
                 let initial_response = match request_event_result {
-                    Err(e) => {
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from(format!(
-                                "Plugin event handling error: {}",
-                                e
-                            )))).expect("Could not construct error Response")
-                    },
+                    Err(e) => Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Full::new(Bytes::from(format!(
+                            "Plugin event handling error: {}",
+                            e
+                        ))))
+                        .expect("Could not construct error Response"),
                     Ok((event_data, mut store)) => match event_data {
                         EventData::Request(rq) => {
                             // TODO: no unwraps
                             let rq = store.data_mut().http().table.delete(rq).unwrap();
                             request_ctx = CelRequest::from(&rq);
-                            let (rq, _io) = rq.into_http(store, async { Ok(())}).unwrap();
+                            let (rq, _io) = rq.into_http(store, async { Ok(()) }).unwrap();
 
-                            let rq: Result<reqwest::Request, ProxyError> = convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
+                            let rq: Result<reqwest::Request, ProxyError> =
+                                convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
                             match rq {
                                 Ok(rq) => perform_upstream(&upstream, rq).await,
                                 Err(err) => Response::builder()
@@ -503,10 +503,10 @@ async fn run_tls_mitm(
                                     ))))
                                     .unwrap(),
                             }
-                        },
+                        }
                         EventData::Response(WasiContextualResponse { response, .. }) => {
                             let response = store.data_mut().http().table.delete(response).unwrap();
-                            let response = response.into_http(store, async { Ok(())}).unwrap();
+                            let response = response.into_http(store, async { Ok(()) }).unwrap();
                             match convert_boxbody_to_full_response(response).await {
                                 Ok(converted_resp) => converted_resp,
                                 Err(err) => {
@@ -526,7 +526,7 @@ async fn run_tls_mitm(
                                 "Unexpected event data type from plugin",
                             )))
                             .expect("Could not construct error Response"),
-                    }
+                    },
                 };
 
                 debug!("Initial response obtained, proceeding to response event handling");
@@ -540,7 +540,7 @@ async fn run_tls_mitm(
                     };
                     registry.handle_event(Box::new(contextual_response)).await
                 } else {
-                    return Ok(initial_response)
+                    return Ok(initial_response);
                 };
 
                 debug!("Final response ready, sending back to client");
@@ -549,7 +549,7 @@ async fn run_tls_mitm(
                     Ok((event_data, mut store)) => match event_data {
                         EventData::Response(WasiContextualResponse { response, .. }) => {
                             let response = store.data_mut().http().table.delete(response).unwrap();
-                            let response = response.into_http(store, async { Ok(())}).unwrap();
+                            let response = response.into_http(store, async { Ok(()) }).unwrap();
                             match convert_boxbody_to_full_response(response).await {
                                 Ok(converted_resp) => converted_resp,
                                 Err(err) => {
@@ -573,13 +573,13 @@ async fn run_tls_mitm(
                     Err(e) => {
                         error!("Response event handling error: {}", e);
                         Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Full::new(Bytes::from(format!(
-                            "Plugin response event handling error: {}",
-                            e
-                        ))))
-                        .unwrap()
-                    },
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Full::new(Bytes::from(format!(
+                                "Plugin response event handling error: {}",
+                                e
+                            ))))
+                            .unwrap()
+                    }
                 };
 
                 // if let Some(registry) = &plugin_registry {

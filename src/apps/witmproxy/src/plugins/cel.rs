@@ -1,12 +1,12 @@
 use bytes::Bytes;
-use cel_cxx::{Opaque};
+use cel_cxx::Opaque;
 use hyper::{Request, Response};
 use salvo::http::uri::Scheme;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-use crate::{wasm::bindgen::witmproxy::plugin::capabilities::{Content, RequestContext}};
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::{Content, RequestContext};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
 #[cel_cxx(display)]
@@ -64,8 +64,16 @@ impl CelRequest {
 
 impl Into<RequestContext> for CelRequest {
     fn into(self) -> RequestContext {
-        let query = self.query.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        let headers = self.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let query = self
+            .query
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let headers = self
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
 
         RequestContext {
             scheme: self.scheme,
@@ -80,8 +88,16 @@ impl Into<RequestContext> for CelRequest {
 
 impl From<&RequestContext> for CelRequest {
     fn from(ctx: &RequestContext) -> Self {
-        let query = ctx.query.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        let headers = ctx.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let query = ctx
+            .query
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let headers = ctx
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
 
         CelRequest {
             scheme: ctx.scheme.clone(),
@@ -286,7 +302,7 @@ impl From<&reqwest::Request> for CelRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
 #[cel_cxx(display)]
 pub struct CelContent {
-    content_type: String
+    content_type: String,
 }
 
 impl CelContent {
@@ -318,8 +334,6 @@ where
             "unknown".to_string()
         };
 
-        CelContent {
-            content_type
-        }
+        CelContent { content_type }
     }
 }

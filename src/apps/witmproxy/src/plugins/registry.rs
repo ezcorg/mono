@@ -1,24 +1,25 @@
-use std::{collections::{HashMap, HashSet}};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use bytes::Bytes;
-use cel_cxx::{Env};
+use cel_cxx::Env;
 use http_body::Body;
-use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
+use http_body_util::{Full, combinators::UnsyncBoxBody};
 use hyper::{Request, Response, body::Incoming};
-use sqlx::mysql::any;
 use tracing::{debug, info, warn};
-use wasmtime::{Store, component::Resource};
+use wasmtime::Store;
 use wasmtime_wasi_http::p3::{
-    Request as WasiRequest, Response as WasiResponse, WasiHttpView,
-    bindings::http::handler::ErrorCode,
+    Request as WasiRequest, WasiHttpView, bindings::http::handler::ErrorCode,
 };
 
 use crate::{
-    db::{Db, Insert}, events::{Event, connect::Connect, response::ContextualResponse}, plugins::{WitmPlugin, cel::CelRequest
-    }, wasm::{
-        CapabilityProvider, Content, Host, Runtime, bindgen::{Plugin, witmproxy::plugin::capabilities::EventData}
-    }
+    db::{Db, Insert},
+    events::{Event, connect::Connect, response::ContextualResponse},
+    plugins::WitmPlugin,
+    wasm::{
+        CapabilityProvider, Content, Host, Runtime,
+        bindgen::{Plugin, witmproxy::plugin::capabilities::EventData},
+    },
 };
 
 pub struct PluginRegistry {
@@ -62,10 +63,7 @@ impl EventData {
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
-        let env = EventData::register(
-            Env::builder()
-            .with_standard(true)
-        )?.build()?;
+        let env = EventData::register(Env::builder().with_standard(true))?.build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration
         // TODO: fix this with proper lifetime management
@@ -83,7 +81,6 @@ impl PluginRegistry {
     }
 
     pub async fn load_plugins(&mut self) -> Result<()> {
-        // TODO: select plugins from DB, verify signatures, compile WASM components
         let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine, self.env).await?;
         for plugin in plugins.into_iter() {
             self.plugins.insert(plugin.id(), plugin);
@@ -207,29 +204,21 @@ impl PluginRegistry {
         event: &Box<dyn Event>,
         executed_plugins: &HashSet<String>,
     ) -> Option<&WitmPlugin> {
-        self.plugins.values().find(|p| {
-            !executed_plugins.contains(&p.id())
-                && p.can_handle(event)
-        })
+        self.plugins
+            .values()
+            .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
     }
 
     /// Check if any plugins can handle an event
     pub fn can_handle(&self, event: &Box<dyn Event>) -> bool {
-        self.plugins
-            .values()
-            .any(|p| p.can_handle(event))
+        self.plugins.values().any(|p| p.can_handle(event))
     }
 
     /// Handle a generic event, passing it through all registered plugins, and returning the final [EventData] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(EventData, Store<Host>)> {
-        let any_plugins = self
-            .plugins
-            .values()
-            .any(|p| p.can_handle(&event));
+        let any_plugins = self.plugins.values().any(|p| p.can_handle(&event));
         if !any_plugins {
-            debug!(
-                "No plugins with matching capability and scope; skipping plugin processing"
-            );
+            debug!("No plugins with matching capability and scope; skipping plugin processing");
             let mut store = self.new_store();
             let event_data = event.event_data(&mut store)?;
             return Ok((event_data, store));
@@ -239,16 +228,10 @@ impl PluginRegistry {
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();
 
-        while let Some(plugin) = {
-            self.find_first_unexecuted_plugin(
-                &current_event,
-                &executed_plugins,
-            )
-        } {
-            debug!(
-                "Executing handle_event for plugin: {}",
-                plugin.id(),
-            );
+        while let Some(plugin) =
+            { self.find_first_unexecuted_plugin(&current_event, &executed_plugins) }
+        {
+            debug!("Executing handle_event for plugin: {}", plugin.id(),);
 
             executed_plugins.insert(plugin.id());
             let kind = current_event.kind();
@@ -263,20 +246,21 @@ impl PluginRegistry {
                 );
                 continue;
             };
-            
-            let (plugin_instance, _) = match self.runtime.instantiate_plugin_component(component).await {
-                Ok(pi) => pi,
-                Err(e) => {
-                    warn!(
-                        target: "plugins",
-                        plugin_id = %plugin.id(),
-                        event_kind = kind.to_string(),
-                        error = %e,
-                        "Failed to instantiate plugin component; skipping"
-                    );
-                    continue;
-                }
-            };
+
+            let (plugin_instance, _) =
+                match self.runtime.instantiate_plugin_component(component).await {
+                    Ok(pi) => pi,
+                    Err(e) => {
+                        warn!(
+                            target: "plugins",
+                            plugin_id = %plugin.id(),
+                            event_kind = kind.to_string(),
+                            error = %e,
+                            "Failed to instantiate plugin component; skipping"
+                        );
+                        continue;
+                    }
+                };
 
             let mut store = self.new_store();
             let event_data = current_event.event_data(&mut store)?;
@@ -311,11 +295,11 @@ impl PluginRegistry {
                     current_event = match new_event_data {
                         EventData::Connect => {
                             anyhow::bail!("Connect events cannot be returned from plugins");
-                        },
+                        }
                         EventData::Request(r) => {
                             let req = store.data_mut().http().table.delete(r)?;
                             Box::new(req)
-                        },
+                        }
                         EventData::Response(r) => {
                             let response = store.data_mut().http().table.delete(r.response)?;
                             let request_ctx = r.request;
@@ -323,19 +307,19 @@ impl PluginRegistry {
                                 request: request_ctx,
                                 response,
                             })
-                        },
+                        }
                         EventData::InboundContent(c) => {
                             let content = store.data_mut().table.delete(c)?;
                             Box::new(content)
-                        },
+                        }
                     };
-                },
+                }
                 None => {
                     anyhow::bail!("Plugin returned no event data; cannot continue processing");
                 }
             }
         }
-        
+
         let event_data = current_event.event_data(&mut store)?;
         Ok((event_data, store))
     }
@@ -345,12 +329,12 @@ impl PluginRegistry {
 mod tests {
     use super::*;
     use crate::test_utils::{create_plugin_registry, test_component_path};
-    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
+    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
+        CapabilityKind, CapabilityScope, EventKind,
+    };
     use crate::{
         plugins::{WitmPlugin, capabilities::Capability},
-        wasm::bindgen::witmproxy::plugin::capabilities::{
-            Capability as WitCapability,
-        },
+        wasm::bindgen::witmproxy::plugin::capabilities::Capability as WitCapability,
     };
     use bytes::Bytes;
     use http_body_util::Full;
@@ -439,10 +423,8 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
-
-        let cel_request = CelRequest::from(&wasi_req);
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com should return one plugin"
@@ -457,10 +439,8 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
-
-        let cel_request = CelRequest::from(&wasi_req);
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com with skipthis=false should return one plugin"
@@ -475,10 +455,8 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
-
-        let cel_request = CelRequest::from(&wasi_req);
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to example.com with skipthis=true should not match"
@@ -492,10 +470,8 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
-
-        let cel_request = CelRequest::from(&wasi_req);
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com should not match"
@@ -510,10 +486,8 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
-
-        let cel_request = CelRequest::from(&wasi_req);
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=false should not match"
@@ -528,10 +502,8 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
-
-        let cel_request = CelRequest::from(&wasi_req);
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=true should not match"
@@ -551,10 +523,8 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let executed_plugins = HashSet::new();
-
-        let cel_request = CelRequest::from(&wasi_req);
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when none are registered"
@@ -582,9 +552,8 @@ mod tests {
             inner: WitCapability {
                 kind: CapabilityKind::HandleEvent(EventKind::Connect),
                 scope: CapabilityScope {
-                    expression: "true".
-into(),
-                }
+                    expression: "true".into(),
+                },
             },
             cel: None,
         });
@@ -594,7 +563,7 @@ into(),
                 kind: CapabilityKind::HandleEvent(EventKind::Response),
                 scope: CapabilityScope {
                     expression: "true".to_string(),
-                }
+                },
             },
             cel: None,
         });
@@ -625,8 +594,8 @@ into(),
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let executed_plugins = HashSet::new();
 
-        let matching_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when plugin doesn't have Request capability"
@@ -654,15 +623,11 @@ into(),
         let mut capabilities = Vec::new();
         capabilities.push(Capability {
             granted: true,
-            inner: WitCapability{
-
+            inner: WitCapability {
                 kind: CapabilityKind::HandleEvent(EventKind::Connect),
                 scope: CapabilityScope {
-                    expression: "true".
-into(),
-
-                }
-                
+                    expression: "true".into(),
+                },
             },
             cel: None,
         });
@@ -672,7 +637,7 @@ into(),
                 kind: CapabilityKind::HandleEvent(EventKind::Request),
                 scope: CapabilityScope {
                     expression: "true".to_string(),
-                }
+                },
             },
             cel: None,
         });
@@ -682,7 +647,7 @@ into(),
                 kind: CapabilityKind::HandleEvent(EventKind::Response),
                 scope: CapabilityScope {
                     expression: "true".to_string(),
-                }
+                },
             },
             cel: None,
         });
@@ -717,9 +682,8 @@ into(),
         let mut executed_plugins = HashSet::new();
 
         // First call should return a plugin
-        let cel_request = CelRequest::from(&wasi_req);
-        let first_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let event: Box<dyn Event> = Box::new(wasi_req);
+        let first_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         assert!(
             first_plugin.is_some(),
             "Should find a plugin when none are executed"
@@ -729,8 +693,7 @@ into(),
         executed_plugins.insert(first_plugin.unwrap().id());
 
         // Second call should return a different plugin (if there are multiple)
-        let second_plugin =
-            registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+        let second_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
         if let Some(second_plugin) = second_plugin {
             assert_ne!(
                 first_plugin.unwrap().id(),
@@ -742,8 +705,7 @@ into(),
             executed_plugins.insert(second_plugin.id());
 
             // Third call should return None since all plugins are executed
-            let third_plugin =
-                registry.find_first_unexecuted_plugin(&wasi_req, &executed_plugins);
+            let third_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
             assert!(
                 third_plugin.is_none(),
                 "Should return None when all plugins have been executed"
@@ -817,7 +779,7 @@ into(),
                     },
                 },
                 cel: None,
-        });
+            });
 
             let plugin = WitmPlugin {
                 name: name.to_string(),

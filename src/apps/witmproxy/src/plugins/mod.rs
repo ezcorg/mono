@@ -1,12 +1,12 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use cel_cxx::{Activation, Opaque};
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
 use tracing::{debug, error};
-use wasmtime::{Engine, Store};
 use wasmtime::component::Component;
+use wasmtime::{Engine, Store};
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
 use crate::events::Event;
@@ -14,13 +14,12 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use crate::{
     Runtime,
     db::{Db, Insert},
-    plugins::{
-        capabilities::Capability,
-    },
+    plugins::capabilities::Capability,
     wasm::{
         Host,
         bindgen::{
-            EventData, Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag, witmproxy::plugin::capabilities::{Capability as WitCapability}
+            EventData, Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag,
+            witmproxy::plugin::capabilities::Capability as WitCapability,
         },
     },
 };
@@ -60,8 +59,7 @@ where
 }
 
 /// Trait for events that can be handled by plugins via CEL filtering
-pub trait Celectable: Opaque + Clone {
-}
+pub trait Celectable: Opaque + Clone {}
 
 impl WitmPlugin {
     fn make_id(namespace: &str, name: &str) -> String {
@@ -78,7 +76,10 @@ impl WitmPlugin {
         self
     }
 
-    pub fn compile_capability_scope_expressions(mut self, env: &'static cel_cxx::Env) -> Result<Self> {
+    pub fn compile_capability_scope_expressions(
+        mut self,
+        env: &'static cel_cxx::Env,
+    ) -> Result<Self> {
         self.capabilities
             .iter_mut()
             .try_for_each(|c| c.compile_scope_expression(env))?;
@@ -220,7 +221,6 @@ impl WitmPlugin {
                 }
             })
     }
-
 }
 
 impl From<PluginManifest> for WitmPlugin {

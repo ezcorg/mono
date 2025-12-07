@@ -1,16 +1,16 @@
+use crate::events::Event;
+use crate::plugins::cel::CelRequest;
+use crate::wasm::Host;
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::EventData;
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind;
+use anyhow::Result;
 use cel_cxx::Activation;
 use http_body::Body;
 use hyper::Request;
+use wasmtime::Store;
 use wasmtime::component::Resource;
 use wasmtime_wasi_http::p3::Request as WasiRequest;
-use crate::events::Event;
-use crate::plugins::cel::CelRequest;
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::EventData;
-use anyhow::Result;
-use crate::wasm::Host;
-use wasmtime::Store;
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind;
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use wasmtime_wasi_http::p3::WasiHttpView;
 
 impl Event for WasiRequest {
@@ -36,7 +36,9 @@ impl Event for WasiRequest {
     }
 
     fn bind_to_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
-        activation.bind_variable("request", CelRequest::from(self)).ok()
+        activation
+            .bind_variable("request", CelRequest::from(self))
+            .ok()
     }
 }
 
@@ -48,17 +50,24 @@ where
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<crate::wasm::bindgen::EventData> {
+    fn event_data(
+        self: Box<Self>,
+        store: &mut Store<Host>,
+    ) -> Result<crate::wasm::bindgen::EventData> {
         anyhow::bail!("Conversion from Request<T> to EventData is not supported")
     }
 
     fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
-        where Self: Sized {
+    where
+        Self: Sized,
+    {
         // No-op as this is handled by WasiRequest
         Ok(env)
     }
 
     fn bind_to_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
-        activation.bind_variable("request", CelRequest::from(self)).ok()
+        activation
+            .bind_variable("request", CelRequest::from(self))
+            .ok()
     }
 }

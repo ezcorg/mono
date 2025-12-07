@@ -1,7 +1,10 @@
 use crate::wasm::{Host, WitmProxy, bindgen::Plugin};
 use anyhow::Result;
-use wasmtime::{Config, Engine, Store, component::{Component, Linker}};
-use wasmtime_wasi::{p3::bindings::LinkOptions};
+use wasmtime::{
+    Config, Engine, Store,
+    component::{Component, Linker},
+};
+use wasmtime_wasi::p3::bindings::LinkOptions;
 
 pub struct Runtime {
     pub engine: Engine,
@@ -47,7 +50,10 @@ impl Runtime {
         Store::new(&self.engine, Host::default())
     }
 
-    pub async fn instantiate_plugin_component(&self, component: &Component) -> Result<(Plugin, Store<Host>)> {
+    pub async fn instantiate_plugin_component(
+        &self,
+        component: &Component,
+    ) -> Result<(Plugin, Store<Host>)> {
         let mut store = self.new_store();
         let instance = self.linker.instantiate_async(&mut store, component).await?;
         let plugin = Plugin::new(&mut store, &instance)?;

@@ -7,7 +7,8 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::{HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient, HostLogger
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
+    HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient, HostLogger,
 };
 pub use runtime::Runtime;
 
@@ -82,7 +83,7 @@ impl LocalStorageClient {
     pub fn set(&mut self, key: String, value: Vec<u8>) {
         let _ = self.store.insert(key, value);
     }
-    
+
     pub fn get(&self, key: String) -> Option<&Vec<u8>> {
         self.store.get(&key)
     }
@@ -158,7 +159,6 @@ impl Default for Host {
 }
 
 impl HostContent for WitmProxy<'_> {
-
     fn body(
         &mut self,
         self_: wasmtime::component::Resource<bindgen::witmproxy::plugin::capabilities::Content>,
@@ -173,14 +173,20 @@ impl HostContent for WitmProxy<'_> {
         let _ = self.table.delete(rep);
         Ok(())
     }
-    
+
     #[doc = " Returns the content as a stream of UTF-8 encoded text"]
-    fn text(&mut self,self_:wasmtime::component::Resource<Content>,) -> wasmtime::component::StreamReader<wasmtime::component::__internal::String> {
+    fn text(
+        &mut self,
+        self_: wasmtime::component::Resource<Content>,
+    ) -> wasmtime::component::StreamReader<wasmtime::component::__internal::String> {
         todo!()
     }
-    
+
     #[doc = " Returns the content type of the content, ex: \"text/html; charset=utf-8\""]
-    fn content_type(&mut self,self_:wasmtime::component::Resource<Content>,) -> wasmtime::component::__internal::String {
+    fn content_type(
+        &mut self,
+        self_: wasmtime::component::Resource<Content>,
+    ) -> wasmtime::component::__internal::String {
         todo!()
     }
 }
@@ -208,11 +214,7 @@ impl HostLocalStorageClient for WitmProxy<'_> {
     }
 }
 impl HostAnnotatorClient for WitmProxy<'_> {
-    fn annotate(
-        &mut self,
-        self_: Resource<AnnotatorClient>,
-        content: Resource<Content>,
-    ) {
+    fn annotate(&mut self, self_: Resource<AnnotatorClient>, content: Resource<Content>) {
         let annotator = self.table.get(&self_).unwrap();
         let content = self.table.get(&content).unwrap();
         annotator.annotate(content)

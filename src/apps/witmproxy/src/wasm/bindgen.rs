@@ -1,7 +1,7 @@
 pub use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
     EventData, PluginManifest,
 };
-pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient, Logger, Content};
+pub use crate::wasm::{AnnotatorClient, CapabilityProvider, Content, LocalStorageClient, Logger};
 
 wasmtime::component::bindgen!({
     world: "witmproxy:plugin/plugin",
@@ -162,7 +162,8 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityScope 
                         }
                     }
                 }
-                let expression = expression.ok_or_else(|| de::Error::missing_field("expression"))?;
+                let expression =
+                    expression.ok_or_else(|| de::Error::missing_field("expression"))?;
                 Ok(witmproxy::plugin::capabilities::CapabilityScope { expression })
             }
         }
@@ -221,8 +222,13 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                 match value {
                     "logger" => Ok(witmproxy::plugin::capabilities::CapabilityKind::Logger),
                     "annotator" => Ok(witmproxy::plugin::capabilities::CapabilityKind::Annotator),
-                    "local_storage" => Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage),
-                    _ => Err(de::Error::unknown_variant(value, &["logger", "annotator", "local_storage", "handle_event"])),
+                    "local_storage" => {
+                        Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage)
+                    }
+                    _ => Err(de::Error::unknown_variant(
+                        value,
+                        &["logger", "annotator", "local_storage", "handle_event"],
+                    )),
                 }
             }
 
@@ -230,7 +236,9 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
             where
                 V: MapAccess<'de>,
             {
-                let key: String = map.next_key()?.ok_or_else(|| de::Error::missing_field("variant"))?;
+                let key: String = map
+                    .next_key()?
+                    .ok_or_else(|| de::Error::missing_field("variant"))?;
                 match key.as_str() {
                     "handle_event" => {
                         let event = map.next_value()?;
@@ -248,7 +256,10 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                         let _: serde::de::IgnoredAny = map.next_value()?;
                         Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage)
                     }
-                    _ => Err(de::Error::unknown_variant(&key, &["logger", "annotator", "local_storage", "handle_event"])),
+                    _ => Err(de::Error::unknown_variant(
+                        &key,
+                        &["logger", "annotator", "local_storage", "handle_event"],
+                    )),
                 }
             }
         }
@@ -304,8 +315,13 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::EventKind {
                     "connect" => Ok(witmproxy::plugin::capabilities::EventKind::Connect),
                     "request" => Ok(witmproxy::plugin::capabilities::EventKind::Request),
                     "response" => Ok(witmproxy::plugin::capabilities::EventKind::Response),
-                    "inbound_content" => Ok(witmproxy::plugin::capabilities::EventKind::InboundContent),
-                    _ => Err(de::Error::unknown_variant(value, &["connect", "request", "response", "inbound_content"])),
+                    "inbound_content" => {
+                        Ok(witmproxy::plugin::capabilities::EventKind::InboundContent)
+                    }
+                    _ => Err(de::Error::unknown_variant(
+                        value,
+                        &["connect", "request", "response", "inbound_content"],
+                    )),
                 }
             }
         }
@@ -317,10 +333,22 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::EventKind {
 impl PartialEq for witmproxy::plugin::capabilities::EventKind {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (witmproxy::plugin::capabilities::EventKind::Connect, witmproxy::plugin::capabilities::EventKind::Connect) => true,
-            (witmproxy::plugin::capabilities::EventKind::Request, witmproxy::plugin::capabilities::EventKind::Request) => true,
-            (witmproxy::plugin::capabilities::EventKind::Response, witmproxy::plugin::capabilities::EventKind::Response) => true,
-            (witmproxy::plugin::capabilities::EventKind::InboundContent, witmproxy::plugin::capabilities::EventKind::InboundContent) => true,
+            (
+                witmproxy::plugin::capabilities::EventKind::Connect,
+                witmproxy::plugin::capabilities::EventKind::Connect,
+            ) => true,
+            (
+                witmproxy::plugin::capabilities::EventKind::Request,
+                witmproxy::plugin::capabilities::EventKind::Request,
+            ) => true,
+            (
+                witmproxy::plugin::capabilities::EventKind::Response,
+                witmproxy::plugin::capabilities::EventKind::Response,
+            ) => true,
+            (
+                witmproxy::plugin::capabilities::EventKind::InboundContent,
+                witmproxy::plugin::capabilities::EventKind::InboundContent,
+            ) => true,
             _ => false,
         }
     }

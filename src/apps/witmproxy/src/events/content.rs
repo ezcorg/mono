@@ -1,7 +1,17 @@
 use anyhow::Result;
 use wasmtime::{Store, component::Resource};
 
-use crate::{events::Event, plugins::cel::CelContent, wasm::{Content, Host, bindgen::{EventData, witmproxy::plugin::capabilities::{CapabilityKind, EventKind}}}};
+use crate::{
+    events::Event,
+    plugins::cel::CelContent,
+    wasm::{
+        Content, Host,
+        bindgen::{
+            EventData,
+            witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
+        },
+    },
+};
 
 impl Event for Content {
     fn capability(&self) -> CapabilityKind {
@@ -14,14 +24,21 @@ impl Event for Content {
     }
 
     fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
-            where Self: Sized {
-                let env = env
+    where
+        Self: Sized,
+    {
+        let env = env
             .declare_variable::<CelContent>("content")?
             .register_member_function("content_type", CelContent::content_type)?;
         Ok(env)
     }
 
-    fn bind_to_cel_activation<'a>(&'a self, activation: cel_cxx::Activation<'a>) -> Option<cel_cxx::Activation<'a>> {
-        activation.bind_variable("content", CelContent::from(self)).ok()
+    fn bind_to_cel_activation<'a>(
+        &'a self,
+        activation: cel_cxx::Activation<'a>,
+    ) -> Option<cel_cxx::Activation<'a>> {
+        activation
+            .bind_variable("content", CelContent::from(self))
+            .ok()
     }
 }
