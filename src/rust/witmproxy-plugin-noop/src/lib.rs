@@ -3,7 +3,7 @@ use crate::{
         Capability, CapabilityProvider, Guest, PluginManifest,
     },
     witmproxy::plugin::capabilities::{
-        EventData, EventSelector, Selector,
+        EventData, CapabilityKind, EventKind, CapabilityScope,
     },
 };
 
@@ -26,21 +26,24 @@ impl Guest for Plugin {
             description: "noop".to_string(),
             metadata: vec![],
             capabilities: vec![
-                Capability::HandleEvent(EventSelector::Connect(
-                    Selector {
-                        expression: "true".to_string(),
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
                     }
-                )),
-                Capability::HandleEvent(EventSelector::Request(
-                    Selector {
-                        expression: "true".to_string(),
+                },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Request),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
                     }
-                )),
-                Capability::HandleEvent(EventSelector::Response(
-                    Selector {
-                        expression: "true".to_string(),
+                },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Response),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
                     }
-                )),
+                },
             ],
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
