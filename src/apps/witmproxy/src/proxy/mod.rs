@@ -504,7 +504,7 @@ async fn run_tls_mitm(
                                     .unwrap(),
                             }
                         },
-                        EventData::Response(WasiContextualResponse { response, request}) => {
+                        EventData::Response(WasiContextualResponse { response, .. }) => {
                             let response = store.data_mut().http().table.delete(response).unwrap();
                             let response = response.into_http(store, async { Ok(())}).unwrap();
                             match convert_boxbody_to_full_response(response).await {
