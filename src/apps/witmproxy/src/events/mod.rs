@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use cel_cxx::Activation;
 use wasmtime::Store;
 
@@ -39,15 +39,30 @@ pub trait Event: Send {
     fn bind_to_cel_activation<'a>(&'a self, a: Activation<'a>) -> Option<Activation<'a>>;
 }
 
+macro_rules! ensure_matches {
+    ($expr:expr, $pat:pat $(if $guard:expr)? $(,)?) => {
+        match $expr {
+            $pat $(if $guard)? => Ok(()),
+            _ => Err(anyhow::anyhow!(
+                "pattern did not match, expected to find one of: {}",
+                stringify!($pat)
+            )),
+        }
+    };
+}
+
 impl EventKind {
-    pub fn validate_output(&self, event_data: &EventData) -> bool {
+    /// Validates that the received EventData is a valid output variant for this EventKind
+    pub fn validate_output(&self, event_data: &EventData) -> Result<()> {
         match self {
             EventKind::Request => {
-                matches!(event_data, EventData::Request(_) | EventData::Response(_))
+                ensure_matches!(event_data, EventData::Request(_) | EventData::Response(_))
             }
-            EventKind::Response => matches!(event_data, EventData::Response(_)),
-            EventKind::Connect => false, // Connect events do not return EventData (no guest handling)
-            EventKind::InboundContent => matches!(event_data, EventData::InboundContent(_)),
+            EventKind::Response => ensure_matches!(event_data, EventData::Response(_)),
+            EventKind::Connect => {
+                bail!("Connect events do not return EventData (no guest handling)")
+            }
+            EventKind::InboundContent => ensure_matches!(event_data, EventData::InboundContent(_)),
         }
     }
 }

@@ -6,6 +6,7 @@ use crate::events::response::ContextualResponse;
 use crate::plugins::cel::{CelConnect, CelRequest};
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
+use crate::wasm::Content;
 use crate::wasm::bindgen::EventData;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
@@ -140,6 +141,7 @@ impl ProxyServer {
         self.shutdown_notify.notified().await;
     }
 
+    /// Signal the server to shutdown.
     pub async fn shutdown(&self) {
         self.shutdown_notify.notify_waiters();
     }
@@ -540,54 +542,62 @@ async fn run_tls_mitm(
                     };
                     registry.handle_event(Box::new(contextual_response)).await
                 } else {
+                    // No plugin registry, just return the initial response
                     return Ok(initial_response);
                 };
 
-                debug!("Final response ready, sending back to client");
+                debug!("Response handlers invoked, checking for specific content-type handling");
 
-                let final_response = match handled_response {
-                    Ok((event_data, mut store)) => match event_data {
-                        EventData::Response(WasiContextualResponse { response, .. }) => {
-                            let response = store.data_mut().http().table.delete(response).unwrap();
-                            let response = response.into_http(store, async { Ok(()) }).unwrap();
-                            match convert_boxbody_to_full_response(response).await {
-                                Ok(converted_resp) => converted_resp,
-                                Err(err) => {
-                                    error!("Failed to convert plugin response: {}", err);
-                                    Response::builder()
-                                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                        .body(Full::new(Bytes::from(
-                                            "Failed to convert plugin response",
-                                        )))
-                                        .unwrap()
-                                }
+                // Check response content-type for content-specific handling
+                let (content, store) = if let Some(registry) = &plugin_registry {
+                    let registry = registry.read().await;
+                    let response = match handled_response {
+                        Ok((event_data, mut store)) => match event_data {
+                            EventData::Response(WasiContextualResponse { response, .. }) => {
+                                // TODO: no unwraps
+                                let response =
+                                    store.data_mut().http().table.delete(response).unwrap();
+                                let content = Content::new(response);
+                                (content, store)
                             }
+                            _ => {
+                                return Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(Full::new(Bytes::from(
+                                        "Unexpected event data type from plugin",
+                                    )));
+                            }
+                        },
+                        Err(e) => {
+                            error!("Response event handling error: {}", e);
+                            return Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(Full::new(Bytes::from(format!(
+                                    "Plugin response event handling error: {}",
+                                    e
+                                ))));
                         }
-                        _ => Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from(
-                                "Unexpected event data type from plugin",
-                            )))
-                            .unwrap(),
-                    },
-                    Err(e) => {
-                        error!("Response event handling error: {}", e);
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from(format!(
-                                "Plugin response event handling error: {}",
-                                e
-                            ))))
-                            .unwrap()
-                    }
+                    };
+                    response
+                } else {
+                    unreachable!()
                 };
 
-                // if let Some(registry) = &plugin_registry {
-                //     let registry = registry.read().await;
-                //     let response = registry.handle_response_content(final_response.unwrap()).await;
-                //     return Ok(response);
-                // }
-                Ok(final_response)
+                let response = content
+                    .consume()
+                    .into_http(store, async { Ok(()) })
+                    .unwrap();
+                let final_response = convert_boxbody_to_full_response(response).await;
+
+                match final_response {
+                    Ok(resp) => Ok(resp),
+                    Err(err) => Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Full::new(Bytes::from(format!(
+                            "Failed to convert final response: {}",
+                            err
+                        )))),
+                }
             }
         })
     };

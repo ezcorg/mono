@@ -1,8 +1,11 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
-        Capability, CapabilityProvider, Guest, PluginManifest
+        Capability, CapabilityProvider, Guest, PluginManifest,
     },
-    witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventData, EventKind, Request, Response, ContextualResponse},
+    witmproxy::plugin::capabilities::{
+        CapabilityKind, CapabilityScope, ContextualResponse, EventData, EventKind, Request,
+        Response,
+    },
 };
 
 wit_bindgen::generate!({
@@ -68,18 +71,27 @@ impl Guest for Plugin {
                 Some(EventData::Request(new_req))
             }
             EventData::Response(ContextualResponse { response, request }) => {
-
                 let headers = response.get_headers().clone();
                 let val = "res".as_bytes().to_vec();
                 let _ = headers.set("witmproxy", &[val]);
                 let (_, result_rx) = wit_future::new(|| Ok(()));
                 let (body, trailers) = Response::consume_body(response, result_rx);
                 let (new_res, _) = Response::new(headers, Some(body), trailers);
-                Some(EventData::Response(ContextualResponse { response: new_res, request }))
+                Some(EventData::Response(ContextualResponse {
+                    response: new_res,
+                    request,
+                }))
             }
-            _ => {
-                None
+            EventData::InboundContent(content) => {
+                let html = content.text();
+                let new_html =
+                    format!("<!-- Processed by wasm-test-component plugin -->\n{}", html);
+
+                // let content = Content::new(rx);
+                // tx.write(vec![new_html.as_bytes().to_vec()]);
+                Some(EventData::InboundContent(content))
             }
+            e => Some(e),
         }
     }
 }

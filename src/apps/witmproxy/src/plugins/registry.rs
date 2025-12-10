@@ -320,7 +320,9 @@ impl PluginRegistry {
             }
         }
 
+        let kind = current_event.kind();
         let event_data = current_event.event_data(&mut store)?;
+        kind.validate_output(&event_data)?;
         Ok((event_data, store))
     }
 }

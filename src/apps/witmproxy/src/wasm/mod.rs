@@ -1,14 +1,23 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
-use wasmtime::component::{HasData, Resource, ResourceTable};
+use http_body::Body;
+use http_body_util::{BodyStream, combinators::BoxBody};
+use tokio::sync::Mutex;
+use wasmtime::component::{HasData, Resource, ResourceTable, StreamReader};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::{
+    WasiHttpCtx, WasiHttpView, bindings::http::types::ErrorCode, p3::Response,
+};
 
 mod runtime;
 
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-    HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient, HostLogger,
+use crate::{
+    events::content,
+    wasm::bindgen::witmproxy::plugin::capabilities::{
+        HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient,
+        HostLogger,
+    },
 };
 pub use runtime::Runtime;
 
@@ -38,11 +47,50 @@ impl AnnotatorClient {
     pub fn annotate(&self, content: &Content) {}
 }
 
-pub struct Content {}
+#[derive(PartialEq, Eq)]
+pub enum ContentEncoding {
+    Gzip,
+    Deflate,
+    Br,
+    None,
+    Unknown,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum ContentState {
+    /// Original body as received
+    Raw,
+    /// Body after decoding (if any decoding was applied)
+    Decoded,
+    /// Body after modification
+    Modified,
+    /// Body in encoded form
+    Encoded,
+}
+
+pub struct Content {
+    response: Response,
+    encoding: ContentEncoding,
+    state: ContentState,
+}
 
 impl Content {
-    pub fn body(&self) -> Vec<u8> {
-        vec![]
+    pub fn new(response: Response) -> Self {
+        let encoding = response.encoding();
+        let state = match encoding {
+            ContentEncoding::None => ContentState::Decoded,
+            ContentEncoding::Unknown => ContentState::Raw,
+            _ => ContentState::Encoded,
+        };
+        Self {
+            response,
+            encoding,
+            state,
+        }
+    }
+
+    pub fn consume(self) -> Response {
+        self.response
     }
 
     pub fn content_type(&self) -> String {
@@ -50,7 +98,11 @@ impl Content {
     }
 
     pub fn text(&self) -> String {
-        String::from_utf8(self.body()).unwrap_or_default()
+        "todo!".into()
+    }
+
+    pub fn set_text(&mut self, _text: String) {
+        todo!()
     }
 }
 
@@ -158,36 +210,59 @@ impl Default for Host {
     }
 }
 
+pub trait Encoded {
+    fn encoding(&self) -> ContentEncoding;
+}
+
+impl Encoded for Response {
+    fn encoding(&self) -> ContentEncoding {
+        for value in self.headers.get_all("content-encoding") {
+            if let Ok(value_str) = value.to_str() {
+                match value_str.to_lowercase().as_str() {
+                    "gzip" => return ContentEncoding::Gzip,
+                    "deflate" => return ContentEncoding::Deflate,
+                    "br" => return ContentEncoding::Br,
+                    "identity" => return ContentEncoding::None,
+                    _ => return ContentEncoding::Unknown,
+                }
+            }
+        }
+        ContentEncoding::None
+    }
+}
+
 impl HostContent for WitmProxy<'_> {
-    fn body(
-        &mut self,
-        self_: wasmtime::component::Resource<bindgen::witmproxy::plugin::capabilities::Content>,
-    ) -> wasmtime::component::StreamReader<wasmtime::component::__internal::Vec<u8>> {
-        todo!()
+    fn new(&mut self, response: Resource<Response>) -> wasmtime::component::Resource<Content> {
+        let response = self.table.delete(response).unwrap();
+        let content = Content::new(response);
+        self.table.push(content).unwrap()
     }
 
-    fn drop(
-        &mut self,
-        rep: wasmtime::component::Resource<bindgen::witmproxy::plugin::capabilities::Content>,
-    ) -> wasmtime::Result<()> {
+    fn drop(&mut self, rep: wasmtime::component::Resource<Content>) -> wasmtime::Result<()> {
         let _ = self.table.delete(rep);
         Ok(())
     }
 
+    fn set_text(&mut self, self_: wasmtime::component::Resource<Content>, text: String) {
+        todo!()
+    }
+
     #[doc = " Returns the content as a stream of UTF-8 encoded text"]
-    fn text(
-        &mut self,
-        self_: wasmtime::component::Resource<Content>,
-    ) -> wasmtime::component::StreamReader<wasmtime::component::__internal::String> {
+    fn text(&mut self, self_: wasmtime::component::Resource<Content>) -> String {
         todo!()
     }
 
     #[doc = " Returns the content type of the content, ex: \"text/html; charset=utf-8\""]
-    fn content_type(
+    fn content_type(&mut self, self_: wasmtime::component::Resource<Content>) -> String {
+        todo!()
+    }
+
+    fn response(
         &mut self,
         self_: wasmtime::component::Resource<Content>,
-    ) -> wasmtime::component::__internal::String {
-        todo!()
+    ) -> wasmtime::component::Resource<Response> {
+        let content = self.table.delete(self_).unwrap();
+        self.table.push(content.response).unwrap()
     }
 }
 
