@@ -6,9 +6,9 @@ use crate::events::response::ContextualResponse;
 use crate::plugins::cel::{CelConnect, CelRequest};
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
-use crate::wasm::Content;
 use crate::wasm::bindgen::EventData;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
+use crate::wasm::{Host, InboundContent};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -19,6 +19,8 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, StatusCode};
 use hyper::{Response, upgrade};
 use tokio::sync::{Notify, RwLock};
+use wasmtime::StoreContextMut;
+use wasmtime::component::Accessor;
 use wasmtime_wasi_http::p3::WasiHttpView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
@@ -550,15 +552,10 @@ async fn run_tls_mitm(
 
                 // Check response content-type for content-specific handling
                 let (content, store) = if let Some(registry) = &plugin_registry {
-                    let registry = registry.read().await;
-                    let response = match handled_response {
-                        Ok((event_data, mut store)) => match event_data {
+                    let (response, mut store) = match handled_response {
+                        Ok((event_data, store)) => match event_data {
                             EventData::Response(WasiContextualResponse { response, .. }) => {
-                                // TODO: no unwraps
-                                let response =
-                                    store.data_mut().http().table.delete(response).unwrap();
-                                let content = Content::new(response);
-                                (content, store)
+                                (response, store)
                             }
                             _ => {
                                 return Response::builder()
@@ -578,13 +575,30 @@ async fn run_tls_mitm(
                                 ))));
                         }
                     };
-                    response
+                    let registry = registry.read().await;
+                    let response = store.data_mut().http().table.delete(response).unwrap();
+                    let content = Box::new(InboundContent::new(response));
+                    let (event, mut store) = registry.handle_event(content).await.unwrap();
+
+                    match event {
+                        EventData::InboundContent(content) => {
+                            let content = store.data_mut().table.delete(content).unwrap();
+                            (content, store)
+                        }
+                        _ => {
+                            return Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(Full::new(Bytes::from(
+                                    "Unexpected event data type from plugin",
+                                )));
+                        }
+                    }
                 } else {
                     unreachable!()
                 };
 
                 let response = content
-                    .consume()
+                    .consume_response()
                     .into_http(store, async { Ok(()) })
                     .unwrap();
                 let final_response = convert_boxbody_to_full_response(response).await;

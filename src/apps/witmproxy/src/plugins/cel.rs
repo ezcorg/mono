@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::{Content, RequestContext};
+use crate::wasm::InboundContent;
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::RequestContext;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
 #[cel_cxx(display)]
@@ -311,10 +312,12 @@ impl CelContent {
     }
 }
 
-impl From<&Content> for CelContent {
-    fn from(content: &Content) -> Self {
+impl From<&InboundContent> for CelContent {
+    fn from(content: &InboundContent) -> Self {
         CelContent {
-            content_type: content.content_type(),
+            content_type: content
+                .content_type()
+                .unwrap_or_else(|| "unknown".to_string()),
         }
     }
 }

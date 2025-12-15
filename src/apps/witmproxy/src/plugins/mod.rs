@@ -5,12 +5,11 @@ use cel_cxx::{Activation, Opaque};
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
 use tracing::{debug, error};
+use wasmtime::Engine;
 use wasmtime::component::Component;
-use wasmtime::{Engine, Store};
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
 use crate::events::Event;
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use crate::{
     Runtime,
     db::{Db, Insert},
@@ -18,7 +17,7 @@ use crate::{
     wasm::{
         Host,
         bindgen::{
-            EventData, Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag,
+            Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag,
             witmproxy::plugin::capabilities::Capability as WitCapability,
         },
     },
@@ -203,7 +202,7 @@ impl WitmPlugin {
             })
             // Are we interested in and permitted to handle this event?
             .any(|program| {
-                let activation = match event.bind_to_cel_activation(Activation::new()) {
+                let activation = match event.bind_cel_activation(Activation::new()) {
                     Some(a) => a,
                     None => return false,
                 };

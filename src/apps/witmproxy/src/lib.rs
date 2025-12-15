@@ -8,6 +8,7 @@ pub mod cli;
 pub mod config;
 pub mod db;
 pub mod events;
+pub mod http;
 pub mod plugins;
 pub mod proxy;
 pub mod wasm;

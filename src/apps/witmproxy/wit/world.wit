@@ -107,20 +107,17 @@ interface capabilities {
         inbound-content(content),
     }
 
+    /// A work-in-progress resource representing abstract content
+    /// Primarily exists to abstract away any compression and encoding details
+    /// of the underlying body, providing a simple interface for plugins to interact with
+    /// without worrying about conflicting or wasteful transformations.
     resource content {
-        /// A work-in-progress resource representing abstract content
-        /// Primarily exists to abstract away any compression and encoding details
-        /// of the underlying body, providing a simple interface for plugins to interact with
-        /// without worrying about conflicting or wasteful transformations.
-        new: static func(body: response) -> content;
-        /// Returns the original response associated with the content
-        response: func() -> response;
-        /// Returns the content as UTF-8 encoded text
-        text: func() -> string;
+        /// Returns the content as a stream of UTF-8 encoded text
+        text: func() -> stream<string>;
         /// Returns the content type of the content, ex: "text/html; charset=utf-8"
         content-type: func() -> string;
-        /// Replace the content body with new UTF-8 encoded text
-        set-text: func(text: string);
+        /// Replace the content body with new stream of UTF-8 encoded text
+        set-text: func(text: stream<string>);
     }
 }
 

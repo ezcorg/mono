@@ -39,12 +39,12 @@ impl Event for Connect {
         CapabilityKind::HandleEvent(EventKind::Connect)
     }
 
-    fn event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<EventData> {
+    fn into_event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<EventData> {
         // No EventData conversion, as Connect events don't result in WASM handling
         anyhow::bail!("Connect events don't currently support conversion to EventData")
     }
 
-    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
+    fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
     where
         Self: Sized,
     {
@@ -55,7 +55,7 @@ impl Event for Connect {
         Ok(env)
     }
 
-    fn bind_to_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
+    fn bind_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
         activation
             .bind_variable("connect", CelConnect::from(self))
             .ok()

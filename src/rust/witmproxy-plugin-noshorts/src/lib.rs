@@ -1,5 +1,7 @@
-use crate::exports::witmproxy::plugin::witm_plugin::{Capability, CapabilityProvider, EventData, EventResult, Guest, PluginManifest};
-use crate::witmproxy::plugin::capabilities::{Selector, EventSelector};
+use crate::exports::witmproxy::plugin::witm_plugin::{
+    Capability, CapabilityProvider, EventData, Guest, PluginManifest,
+};
+use crate::witmproxy::plugin::capabilities::{EventSelector, Selector};
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
@@ -11,7 +13,6 @@ const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 struct Plugin;
 
 impl Guest for Plugin {
-
     fn manifest() -> PluginManifest {
         PluginManifest {
             name: "witmproxy-plugin-noshorts".to_string(),

@@ -17,7 +17,7 @@ use crate::{
     events::{Event, connect::Connect, response::ContextualResponse},
     plugins::WitmPlugin,
     wasm::{
-        CapabilityProvider, Content, Host, Runtime,
+        CapabilityProvider, Host, InboundContent, Runtime,
         bindgen::{Plugin, witmproxy::plugin::capabilities::EventData},
     },
 };
@@ -53,10 +53,10 @@ where
 impl EventData {
     pub fn register<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
         // TODO: do this better
-        let env = WasiRequest::register_in_cel_env(env)?;
-        let env = ContextualResponse::register_in_cel_env(env)?;
-        let env = Content::register_in_cel_env(env)?;
-        let env = Connect::register_in_cel_env(env)?;
+        let env = WasiRequest::register_cel_env(env)?;
+        let env = ContextualResponse::register_cel_env(env)?;
+        let env = InboundContent::register_cel_env(env)?;
+        let env = Connect::register_cel_env(env)?;
         Ok(env)
     }
 }
@@ -215,12 +215,13 @@ impl PluginRegistry {
     }
 
     /// Handle a generic event, passing it through all registered plugins, and returning the final [EventData] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
+    /// Validates that the final [EventData] matches the expected output type for its event kind, returning an error if not
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(EventData, Store<Host>)> {
         let any_plugins = self.plugins.values().any(|p| p.can_handle(&event));
         if !any_plugins {
             debug!("No plugins with matching capability and scope; skipping plugin processing");
             let mut store = self.new_store();
-            let event_data = event.event_data(&mut store)?;
+            let event_data = event.into_event_data(&mut store)?;
             return Ok((event_data, store));
         }
 
@@ -263,7 +264,7 @@ impl PluginRegistry {
                 };
 
             store = component_store;
-            let event_data = current_event.event_data(&mut store)?;
+            let event_data = current_event.into_event_data(&mut store)?;
             // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
             let provider = CapabilityProvider::new();
             let cap_resource = store.data_mut().table.push(provider)?;
@@ -321,7 +322,7 @@ impl PluginRegistry {
         }
 
         let kind = current_event.kind();
-        let event_data = current_event.event_data(&mut store)?;
+        let event_data = current_event.into_event_data(&mut store)?;
         kind.validate_output(&event_data)?;
         Ok((event_data, store))
     }

@@ -28,15 +28,15 @@ pub trait Event: Send {
     }
 
     /// Converts into EventData by consuming the event and storing it in the provided Store
-    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData>;
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData>;
 
     /// Register event-specific variables and functions with the CEL environment
-    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
+    fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
     where
         Self: Sized;
 
-    /// Bind all event-specific variables into CEL activation
-    fn bind_to_cel_activation<'a>(&'a self, a: Activation<'a>) -> Option<Activation<'a>>;
+    /// Bind all event-specific variables for the CEL activation
+    fn bind_cel_activation<'a>(&'a self, a: Activation<'a>) -> Option<Activation<'a>>;
 }
 
 macro_rules! ensure_matches {

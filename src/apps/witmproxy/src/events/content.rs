@@ -5,7 +5,7 @@ use crate::{
     events::Event,
     plugins::cel::CelContent,
     wasm::{
-        Content, Host,
+        Host, InboundContent,
         bindgen::{
             EventData,
             witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
@@ -13,17 +13,17 @@ use crate::{
     },
 };
 
-impl Event for Content {
+impl Event for InboundContent {
     fn capability(&self) -> CapabilityKind {
         CapabilityKind::HandleEvent(EventKind::InboundContent)
     }
 
-    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
-        let handle: Resource<Content> = store.data_mut().table.push(*self)?;
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+        let handle: Resource<InboundContent> = store.data_mut().table.push(*self)?;
         Ok(EventData::InboundContent(handle))
     }
 
-    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
+    fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
     where
         Self: Sized,
     {
@@ -33,7 +33,7 @@ impl Event for Content {
         Ok(env)
     }
 
-    fn bind_to_cel_activation<'a>(
+    fn bind_cel_activation<'a>(
         &'a self,
         activation: cel_cxx::Activation<'a>,
     ) -> Option<cel_cxx::Activation<'a>> {

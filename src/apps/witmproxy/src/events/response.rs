@@ -25,7 +25,7 @@ impl Event for ContextualResponse {
         CapabilityKind::HandleEvent(EventKind::Response)
     }
 
-    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
         let handle = store.data_mut().http().table.push(self.response)?;
         let response = WasiContextualResponse {
             request: self.request,
@@ -34,7 +34,7 @@ impl Event for ContextualResponse {
         Ok(EventData::Response(response))
     }
 
-    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
+    fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
     where
         Self: Sized,
     {
@@ -45,7 +45,7 @@ impl Event for ContextualResponse {
         Ok(env)
     }
 
-    fn bind_to_cel_activation<'a>(
+    fn bind_cel_activation<'a>(
         &'a self,
         activation: cel_cxx::Activation<'a>,
     ) -> Option<cel_cxx::Activation<'a>> {

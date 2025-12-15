@@ -46,6 +46,12 @@ impl Guest for Plugin {
                         expression: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string(),
                     }
                 },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::InboundContent),
+                    scope: CapabilityScope {
+                        expression: "true".to_string(),
+                    }
+                }
             ],
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
@@ -83,12 +89,28 @@ impl Guest for Plugin {
                 }))
             }
             EventData::InboundContent(content) => {
-                let html = content.text();
-                let new_html =
-                    format!("<!-- Processed by wasm-test-component plugin -->\n{}", html);
+                let mut stream = content.text();
+                let (mut tx, rx) = wit_stream::new();
+                let new_html = "<!-- Processed by wasm-test-component plugin -->\n".to_string();
 
-                // let content = Content::new(rx);
-                // tx.write(vec![new_html.as_bytes().to_vec()]);
+                // Spawn a task to prepend new_html to the original content
+                wit_bindgen::spawn(async move {
+                    // Write the prepended HTML first
+                    let _ = tx.write_one(new_html).await;
+
+                    // Stream the original content chunk by chunk
+                    loop {
+                        match stream.next().await {
+                            Some(chunk) => {
+                                let _ = tx.write_one(chunk).await;
+                            }
+                            None => break,
+                        }
+                    }
+                });
+
+                // Return new content with the modified stream
+                content.set_text(rx);
                 Some(EventData::InboundContent(content))
             }
             e => Some(e),

@@ -1,7 +1,9 @@
 pub use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
     EventData, PluginManifest,
 };
-pub use crate::wasm::{AnnotatorClient, CapabilityProvider, Content, LocalStorageClient, Logger};
+pub use crate::wasm::{
+    AnnotatorClient, CapabilityProvider, InboundContent, LocalStorageClient, Logger,
+};
 
 wasmtime::component::bindgen!({
     world: "witmproxy:plugin/plugin",
@@ -11,7 +13,7 @@ wasmtime::component::bindgen!({
         "witmproxy:plugin/capabilities.annotator-client": AnnotatorClient,
         "witmproxy:plugin/capabilities.local-storage-client": LocalStorageClient,
         "witmproxy:plugin/capabilities.logger": Logger,
-        "witmproxy:plugin/capabilities.content": Content,
+        "witmproxy:plugin/capabilities.content": InboundContent,
         "wasi:http/types@0.3.0-rc-2025-09-16": wasmtime_wasi_http::p3::bindings::http::types,
     },
 });
@@ -220,28 +222,30 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                 match value {
                     "logger" => Ok(witmproxy::plugin::capabilities::CapabilityKind::Logger),
                     "annotator" => Ok(witmproxy::plugin::capabilities::CapabilityKind::Annotator),
-                    "local_storage" => Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage),
+                    "local_storage" => {
+                        Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage)
+                    }
 
                     // New flat snake_case event handlers
                     "handle_event_connect" => Ok(
                         witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
-                            witmproxy::plugin::capabilities::EventKind::Connect
-                        )
+                            witmproxy::plugin::capabilities::EventKind::Connect,
+                        ),
                     ),
                     "handle_event_request" => Ok(
                         witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
-                            witmproxy::plugin::capabilities::EventKind::Request
-                        )
+                            witmproxy::plugin::capabilities::EventKind::Request,
+                        ),
                     ),
                     "handle_event_response" => Ok(
                         witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
-                            witmproxy::plugin::capabilities::EventKind::Response
-                        )
+                            witmproxy::plugin::capabilities::EventKind::Response,
+                        ),
                     ),
                     "handle_event_inbound_content" => Ok(
                         witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
-                            witmproxy::plugin::capabilities::EventKind::InboundContent
-                        )
+                            witmproxy::plugin::capabilities::EventKind::InboundContent,
+                        ),
                     ),
 
                     _ => Err(de::Error::unknown_variant(
@@ -253,7 +257,7 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                             "handle_event_connect",
                             "handle_event_request",
                             "handle_event_response",
-                            "handle_event_inbound_content"
+                            "handle_event_inbound_content",
                         ],
                     )),
                 }
@@ -273,7 +277,7 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                         "handle_event_connect",
                         "handle_event_request",
                         "handle_event_response",
-                        "handle_event_inbound_content"
+                        "handle_event_inbound_content",
                     ],
                 ))
             }

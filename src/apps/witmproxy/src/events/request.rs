@@ -18,12 +18,12 @@ impl Event for WasiRequest {
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
         let handle: Resource<WasiRequest> = store.data_mut().http().table.push(*self)?;
         Ok(EventData::Request(handle))
     }
 
-    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
+    fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
         let env = env
             .declare_variable::<CelRequest>("request")?
             .register_member_function("scheme", CelRequest::scheme)?
@@ -35,7 +35,7 @@ impl Event for WasiRequest {
         Ok(env)
     }
 
-    fn bind_to_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
+    fn bind_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
         activation
             .bind_variable("request", CelRequest::from(self))
             .ok()
@@ -50,14 +50,16 @@ where
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn event_data(
+    fn into_event_data(
         self: Box<Self>,
-        store: &mut Store<Host>,
+        _store: &mut Store<Host>,
     ) -> Result<crate::wasm::bindgen::EventData> {
-        anyhow::bail!("Conversion from Request<T> to EventData is not supported")
+        anyhow::bail!(
+            "Conversion from Request<T> to EventData is possible, but not supported. Use `wasmtime_wasi_http::p3::Request` instead."
+        );
     }
 
-    fn register_in_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
+    fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
     where
         Self: Sized,
     {
@@ -65,7 +67,7 @@ where
         Ok(env)
     }
 
-    fn bind_to_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
+    fn bind_cel_activation<'a>(&'a self, activation: Activation<'a>) -> Option<Activation<'a>> {
         activation
             .bind_variable("request", CelRequest::from(self))
             .ok()

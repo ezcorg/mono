@@ -1,23 +1,24 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::io::Cursor;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use anyhow::Result;
-use http_body::Body;
-use http_body_util::{BodyStream, combinators::BoxBody};
-use tokio::sync::Mutex;
-use wasmtime::component::{HasData, Resource, ResourceTable, StreamReader};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::{
-    WasiHttpCtx, WasiHttpView, bindings::http::types::ErrorCode, p3::Response,
+use bytes::Bytes;
+use http_body::Body as _;
+use http_body_util::combinators::UnsyncBoxBody;
+use wasmtime::component::{
+    Destination, HasData, Resource, ResourceTable, StreamProducer, StreamReader, StreamResult,
 };
+use wasmtime::{Store, StoreContextMut};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView, p3::Response};
 
 mod runtime;
 
-use crate::{
-    events::content,
-    wasm::bindgen::witmproxy::plugin::capabilities::{
-        HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient,
-        HostLogger,
-    },
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
+    HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient, HostLogger,
 };
 pub use runtime::Runtime;
 
@@ -44,64 +45,128 @@ impl CapabilityProvider {
 pub struct AnnotatorClient {}
 
 impl AnnotatorClient {
-    pub fn annotate(&self, content: &Content) {}
+    pub fn annotate(&self, content: &InboundContent) {}
 }
 
-#[derive(PartialEq, Eq)]
-pub enum ContentEncoding {
-    Gzip,
-    Deflate,
-    Br,
-    None,
-    Unknown,
+/// Custom StreamProducer for body streaming
+struct BodyStreamProducer {
+    body: UnsyncBoxBody<Bytes, ErrorCode>,
 }
 
-#[derive(PartialEq, Eq)]
-pub enum ContentState {
-    /// Original body as received
-    Raw,
-    /// Body after decoding (if any decoding was applied)
-    Decoded,
-    /// Body after modification
-    Modified,
-    /// Body in encoded form
-    Encoded,
-}
+impl<D> StreamProducer<D> for BodyStreamProducer
+where
+    D: 'static,
+{
+    type Item = u8;
+    type Buffer = Cursor<Bytes>;
 
-pub struct Content {
-    response: Response,
-    encoding: ContentEncoding,
-    state: ContentState,
-}
+    fn poll_produce<'a>(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut store: StoreContextMut<'a, D>,
+        mut dst: Destination<'a, Self::Item, Self::Buffer>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        use core::num::NonZeroUsize;
 
-impl Content {
-    pub fn new(response: Response) -> Self {
-        let encoding = response.encoding();
-        let state = match encoding {
-            ContentEncoding::None => ContentState::Decoded,
-            ContentEncoding::Unknown => ContentState::Raw,
-            _ => ContentState::Encoded,
+        let cap = match dst.remaining(&mut store).map(NonZeroUsize::new) {
+            Some(Some(cap)) => Some(cap),
+            Some(None) => {
+                // On 0-length, check if the stream has ended
+                if self.body.is_end_stream() {
+                    return Poll::Ready(Ok(StreamResult::Dropped));
+                } else {
+                    return Poll::Ready(Ok(StreamResult::Completed));
+                }
+            }
+            None => None,
         };
-        Self {
-            response,
-            encoding,
-            state,
+
+        match Pin::new(&mut self.body).poll_frame(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                // Try to extract data from the frame
+                match frame.into_data() {
+                    Ok(mut data_frame) => {
+                        if let Some(cap) = cap {
+                            let n = data_frame.len();
+                            let cap_usize = cap.into();
+                            if n > cap_usize {
+                                // Data doesn't fit, buffer the rest
+                                dst.set_buffer(Cursor::new(data_frame.split_off(cap_usize)));
+                                let mut dst_direct = dst.as_direct(store, cap_usize);
+                                dst_direct.remaining().copy_from_slice(&data_frame);
+                                dst_direct.mark_written(cap_usize);
+                            } else {
+                                // Copy the whole frame
+                                let mut dst_direct = dst.as_direct(store, n);
+                                dst_direct.remaining()[..n].copy_from_slice(&data_frame);
+                                dst_direct.mark_written(n);
+                            }
+                        } else {
+                            // No capacity info, just buffer it
+                            dst.set_buffer(Cursor::new(data_frame));
+                        }
+                        Poll::Ready(Ok(StreamResult::Completed))
+                    }
+                    Err(_frame) => {
+                        // Frame is trailers or something else, we're done with data
+                        Poll::Ready(Ok(StreamResult::Dropped))
+                    }
+                }
+            }
+            Poll::Ready(Some(Err(_err))) => Poll::Ready(Ok(StreamResult::Dropped)),
+            Poll::Ready(None) => Poll::Ready(Ok(StreamResult::Dropped)),
+            Poll::Pending => Poll::Pending,
         }
     }
+}
 
-    pub fn consume(self) -> Response {
+pub struct InboundContent {
+    response: Response,
+}
+
+/// [`InboundContent`] is a wrapper around a WASI HTTP [`Response`]
+/// that provides a convenient interface for accessing and modifying
+/// the content of the response (without worrying about any encoding or decoding).
+impl InboundContent {
+    pub fn new(response: Response) -> Self {
+        Self { response }
+    }
+
+    /// Consumes the Content and returns the underlying Response
+    pub fn consume_response(self) -> Response {
         self.response
     }
 
-    pub fn content_type(&self) -> String {
-        "text/plain; charset=utf-8".to_string()
+    pub fn content_type(&self) -> Option<String> {
+        self.response.content_type()
     }
 
-    pub fn text(&self) -> String {
-        "todo!".into()
+    fn body_to_stream_reader(self, store: &mut Store<Host>) -> Result<StreamReader<u8>> {
+        // Create a result future for the response processing
+        let result_fut = async { Ok(()) };
+
+        // Convert Response to http::Response to access the body
+        let http_response =
+            self.response
+                .into_http_with_getter(&mut *store, result_fut, host_getter)?;
+
+        // Extract the body from the http::Response
+        let (_parts, body) = http_response.into_parts();
+
+        // Create a BodyStreamProducer to wrap the body
+        let producer = BodyStreamProducer { body };
+
+        // Create and return the StreamReader
+        let reader = StreamReader::new(store, producer);
+        Ok(reader)
     }
 
-    pub fn set_text(&mut self, _text: String) {
+    pub fn text(self, store: &mut Store<Host>) -> Result<StreamReader<u8>> {
+        self.body_to_stream_reader(store)
+    }
+
+    pub fn set_text(&mut self, _text: StreamReader<String>, store: &mut Store<Host>) {
         todo!()
     }
 }
@@ -210,6 +275,26 @@ impl Default for Host {
     }
 }
 
+/// Helper function to get WasiHttpCtxView from Host
+fn host_getter(host: &mut Host) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
+    wasmtime_wasi_http::p3::WasiHttpCtxView {
+        ctx: &mut host.p3_http,
+        table: &mut host.table,
+    }
+}
+
+#[derive(PartialEq, Eq)]
+pub enum ContentEncoding {
+    Gzip,    // gzip
+    Deflate, // deflate
+    Br,      // br
+    Zstd,    // zstd
+    None,    // identity
+    // Dcb,
+    // Dcz,
+    Unknown,
+}
+
 pub trait Encoded {
     fn encoding(&self) -> ContentEncoding;
 }
@@ -231,38 +316,53 @@ impl Encoded for Response {
     }
 }
 
-impl HostContent for WitmProxy<'_> {
-    fn new(&mut self, response: Resource<Response>) -> wasmtime::component::Resource<Content> {
-        let response = self.table.delete(response).unwrap();
-        let content = Content::new(response);
-        self.table.push(content).unwrap()
-    }
+pub trait ContentTyped {
+    fn content_type(&self) -> Option<String>;
+}
 
-    fn drop(&mut self, rep: wasmtime::component::Resource<Content>) -> wasmtime::Result<()> {
+impl ContentTyped for Response {
+    fn content_type(&self) -> Option<String> {
+        let joined = self
+            .headers
+            .get_all("content-type")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect::<Vec<&str>>()
+            .join(", ");
+
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        }
+    }
+}
+
+impl HostContent for WitmProxy<'_> {
+    fn drop(&mut self, rep: wasmtime::component::Resource<InboundContent>) -> wasmtime::Result<()> {
         let _ = self.table.delete(rep);
         Ok(())
     }
 
-    fn set_text(&mut self, self_: wasmtime::component::Resource<Content>, text: String) {
+    fn set_text(
+        &mut self,
+        self_: wasmtime::component::Resource<InboundContent>,
+        text: StreamReader<String>,
+    ) {
         todo!()
     }
 
     #[doc = " Returns the content as a stream of UTF-8 encoded text"]
-    fn text(&mut self, self_: wasmtime::component::Resource<Content>) -> String {
+    fn text(
+        &mut self,
+        self_: wasmtime::component::Resource<InboundContent>,
+    ) -> StreamReader<String> {
         todo!()
     }
 
     #[doc = " Returns the content type of the content, ex: \"text/html; charset=utf-8\""]
-    fn content_type(&mut self, self_: wasmtime::component::Resource<Content>) -> String {
+    fn content_type(&mut self, self_: wasmtime::component::Resource<InboundContent>) -> String {
         todo!()
-    }
-
-    fn response(
-        &mut self,
-        self_: wasmtime::component::Resource<Content>,
-    ) -> wasmtime::component::Resource<Response> {
-        let content = self.table.delete(self_).unwrap();
-        self.table.push(content.response).unwrap()
     }
 }
 
@@ -289,7 +389,7 @@ impl HostLocalStorageClient for WitmProxy<'_> {
     }
 }
 impl HostAnnotatorClient for WitmProxy<'_> {
-    fn annotate(&mut self, self_: Resource<AnnotatorClient>, content: Resource<Content>) {
+    fn annotate(&mut self, self_: Resource<AnnotatorClient>, content: Resource<InboundContent>) {
         let annotator = self.table.get(&self_).unwrap();
         let content = self.table.get(&content).unwrap();
         annotator.annotate(content)
