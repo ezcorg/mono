@@ -8,6 +8,10 @@ pub use crate::wasm::{
 wasmtime::component::bindgen!({
     world: "witmproxy:plugin/plugin",
     exports: { default: async | store | task_exit },
+    imports: {
+        "witmproxy:plugin/capabilities": async | store | trappable | tracing,
+        default: trappable | tracing,
+    },
     with: {
         "witmproxy:plugin/capabilities.capability-provider": CapabilityProvider,
         "witmproxy:plugin/capabilities.annotator-client": AnnotatorClient,

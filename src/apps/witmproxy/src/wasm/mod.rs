@@ -7,8 +7,10 @@ use anyhow::Result;
 use bytes::Bytes;
 use http_body::Body as _;
 use http_body_util::combinators::UnsyncBoxBody;
+use wasmtime::AsContextMut;
 use wasmtime::component::{
-    Destination, HasData, Resource, ResourceTable, StreamProducer, StreamReader, StreamResult,
+    Accessor, Destination, HasData, Resource, ResourceTable, StreamProducer, StreamReader,
+    StreamResult,
 };
 use wasmtime::{Store, StoreContextMut};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -18,7 +20,9 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView, p3::Response};
 mod runtime;
 
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-    HostAnnotatorClient, HostCapabilityProvider, HostContent, HostLocalStorageClient, HostLogger,
+    HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
+    HostCapabilityProviderWithStore, HostContent, HostContentWithStore, HostLocalStorageClient,
+    HostLocalStorageClientWithStore, HostLogger, HostLoggerWithStore,
 };
 pub use runtime::Runtime;
 
@@ -242,12 +246,12 @@ impl WitmProxyCtx {
 }
 
 /// A wrapper capturing the needed internal `witmproxy:plugin` state.
-pub struct WitmProxy<'a> {
+pub struct WitmProxyCtxView<'a> {
     _ctx: &'a WitmProxyCtx,
     table: &'a mut ResourceTable,
 }
 
-impl<'a> WitmProxy<'a> {
+impl<'a> WitmProxyCtxView<'a> {
     /// Create a new view into the `witmproxy:plugin` state.
     pub fn new(ctx: &'a WitmProxyCtx, table: &'a mut ResourceTable) -> Self {
         Self { _ctx: ctx, table }
@@ -338,126 +342,273 @@ impl ContentTyped for Response {
     }
 }
 
-impl HostContent for WitmProxy<'_> {
-    fn drop(&mut self, rep: wasmtime::component::Resource<InboundContent>) -> wasmtime::Result<()> {
-        let _ = self.table.delete(rep);
+impl HostContentWithStore for WitmProxy {
+    async fn drop<T>(
+        accessor: &Accessor<T, Self>,
+        rep: wasmtime::component::Resource<InboundContent>,
+    ) -> wasmtime::Result<()> {
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            state.table.delete(rep)
+        })?;
         Ok(())
     }
 
-    fn set_text(
-        &mut self,
+    async fn set_text<T>(
+        accessor: &Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
-        text: StreamReader<String>,
-    ) {
+        _text: StreamReader<String>,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let _content = state.table.get_mut(&self_)?;
+            // content.set_text(text, store);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        });
         todo!()
     }
 
-    #[doc = " Returns the content as a stream of UTF-8 encoded text"]
-    fn text(
-        &mut self,
+    async fn text<T>(
+        accessor: &Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
-    ) -> StreamReader<String> {
+    ) -> wasmtime::Result<StreamReader<String>> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let _content = state.table.get(&self_)?;
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        });
         todo!()
     }
 
-    #[doc = " Returns the content type of the content, ex: \"text/html; charset=utf-8\""]
-    fn content_type(&mut self, self_: wasmtime::component::Resource<InboundContent>) -> String {
+    async fn content_type<T>(
+        accessor: &Accessor<T, Self>,
+        self_: wasmtime::component::Resource<InboundContent>,
+    ) -> wasmtime::Result<String> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let _content = state.table.get(&self_)?;
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        });
         todo!()
     }
 }
 
-// Implement the Host traits using the wrapper pattern
-impl HostLocalStorageClient for WitmProxy<'_> {
-    fn set(&mut self, self_: Resource<LocalStorageClient>, key: String, value: Vec<u8>) {
-        let client = self.table.get_mut(&self_).unwrap();
-        client.set(key, value);
-    }
-
-    fn get(&mut self, self_: Resource<LocalStorageClient>, key: String) -> Option<Vec<u8>> {
-        let client = self.table.get(&self_).unwrap();
-        client.get(key).cloned()
-    }
-
-    fn delete(&mut self, self_: Resource<LocalStorageClient>, key: String) {
-        let client = self.table.get_mut(&self_).unwrap();
-        client.delete(key);
-    }
-
-    fn drop(&mut self, rep: Resource<LocalStorageClient>) -> wasmtime::Result<()> {
-        let _ = self.table.delete(rep);
+// Implement the Host traits using the accessor pattern
+impl HostLocalStorageClientWithStore for WitmProxy {
+    async fn set<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<LocalStorageClient>,
+        key: String,
+        value: Vec<u8>,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get_mut(&self_)?;
+            client.set(key, value);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        })?;
         Ok(())
     }
-}
-impl HostAnnotatorClient for WitmProxy<'_> {
-    fn annotate(&mut self, self_: Resource<AnnotatorClient>, content: Resource<InboundContent>) {
-        let annotator = self.table.get(&self_).unwrap();
-        let content = self.table.get(&content).unwrap();
-        annotator.annotate(content)
+
+    async fn get<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<LocalStorageClient>,
+        key: String,
+    ) -> wasmtime::Result<Option<Vec<u8>>> {
+        Ok(accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get(&self_)?;
+            Ok::<Option<Vec<u8>>, wasmtime::component::ResourceTableError>(client.get(key).cloned())
+        })?)
     }
 
-    fn drop(&mut self, rep: Resource<AnnotatorClient>) -> wasmtime::Result<()> {
-        let _ = self.table.delete(rep);
+    async fn delete<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<LocalStorageClient>,
+        key: String,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get_mut(&self_)?;
+            client.delete(key);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        })?;
         Ok(())
     }
-}
 
-impl HostLogger for WitmProxy<'_> {
-    fn info(&mut self, self_: Resource<Logger>, message: String) {
-        let logger = self.table.get(&self_).unwrap();
-        logger.info(message);
-    }
-
-    fn warn(&mut self, self_: Resource<Logger>, message: String) {
-        let logger = self.table.get(&self_).unwrap();
-        logger.warn(message);
-    }
-
-    fn error(&mut self, self_: Resource<Logger>, message: String) {
-        let logger = self.table.get(&self_).unwrap();
-        logger.error(message);
-    }
-
-    fn debug(&mut self, self_: Resource<Logger>, message: String) {
-        let logger = self.table.get(&self_).unwrap();
-        logger.debug(message);
-    }
-
-    fn drop(&mut self, rep: Resource<Logger>) -> wasmtime::Result<()> {
-        let _ = self.table.delete(rep);
+    async fn drop<T>(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<LocalStorageClient>,
+    ) -> wasmtime::Result<()> {
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            state.table.delete(rep)
+        })?;
         Ok(())
     }
 }
 
-impl HostCapabilityProvider for WitmProxy<'_> {
-    fn logger(&mut self, _cap: Resource<CapabilityProvider>) -> Option<Resource<Logger>> {
-        let logger = Logger {};
-        Some(self.table.push(logger).unwrap())
+impl HostAnnotatorClientWithStore for WitmProxy {
+    async fn annotate<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<AnnotatorClient>,
+        content: Resource<InboundContent>,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let annotator = state.table.get(&self_)?;
+            let content = state.table.get(&content)?;
+            annotator.annotate(content);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        });
+        Ok(())
     }
 
-    fn local_storage(
-        &mut self,
+    async fn drop<T>(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<AnnotatorClient>,
+    ) -> wasmtime::Result<()> {
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            state.table.delete(rep)
+        })?;
+        Ok(())
+    }
+}
+
+impl HostLoggerWithStore for WitmProxy {
+    async fn info<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<Logger>,
+        message: String,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let logger = state.table.get(&self_)?;
+            logger.info(message);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        });
+        Ok(())
+    }
+
+    async fn warn<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<Logger>,
+        message: String,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let logger = state.table.get(&self_)?;
+            logger.warn(message);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        })?;
+        Ok(())
+    }
+
+    async fn error<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<Logger>,
+        message: String,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let logger = state.table.get(&self_)?;
+            logger.error(message);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        })?;
+        Ok(())
+    }
+
+    async fn debug<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<Logger>,
+        message: String,
+    ) -> wasmtime::Result<()> {
+        let _ = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let logger = state.table.get(&self_)?;
+            logger.debug(message);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        })?;
+        Ok(())
+    }
+
+    async fn drop<T>(accessor: &Accessor<T, Self>, rep: Resource<Logger>) -> wasmtime::Result<()> {
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            state.table.delete(rep)
+        })?;
+        Ok(())
+    }
+}
+
+impl HostCapabilityProviderWithStore for WitmProxy {
+    async fn logger<T>(
+        accessor: &Accessor<T, Self>,
         _cap: Resource<CapabilityProvider>,
-    ) -> Option<Resource<LocalStorageClient>> {
-        let client = LocalStorageClient::default();
-        Some(self.table.push(client).unwrap())
+    ) -> wasmtime::Result<Option<Resource<Logger>>> {
+        Ok(accessor
+            .with(|mut access| {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                let logger = Logger {};
+                Ok::<Option<Resource<Logger>>, wasmtime::component::ResourceTableError>(Some(
+                    state.table.push(logger)?,
+                ))
+            })
+            .unwrap_or(None))
     }
 
-    fn annotator(
-        &mut self,
+    async fn local_storage<T>(
+        accessor: &Accessor<T, Self>,
         _cap: Resource<CapabilityProvider>,
-    ) -> Option<Resource<AnnotatorClient>> {
-        let client = AnnotatorClient {};
-        Some(self.table.push(client).unwrap())
+    ) -> wasmtime::Result<Option<Resource<LocalStorageClient>>> {
+        Ok(accessor
+            .with(|mut access| {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                let client = LocalStorageClient::default();
+                Ok::<Option<Resource<LocalStorageClient>>, wasmtime::component::ResourceTableError>(
+                    Some(state.table.push(client)?),
+                )
+            })
+            .unwrap_or(None))
     }
 
-    fn drop(&mut self, rep: Resource<CapabilityProvider>) -> wasmtime::Result<()> {
-        let _ = self.table.delete(rep);
+    async fn annotator<T>(
+        accessor: &Accessor<T, Self>,
+        _cap: Resource<CapabilityProvider>,
+    ) -> wasmtime::Result<Option<Resource<AnnotatorClient>>> {
+        Ok(accessor
+            .with(|mut access| {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                let client = AnnotatorClient {};
+                Ok::<Option<Resource<AnnotatorClient>>, wasmtime::component::ResourceTableError>(
+                    Some(state.table.push(client)?),
+                )
+            })
+            .unwrap_or(None))
+    }
+
+    async fn drop<T>(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<CapabilityProvider>,
+    ) -> wasmtime::Result<()> {
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            state.table.delete(rep)
+        })?;
         Ok(())
     }
 }
 
 // Implement the generated capabilities::Host trait
-impl bindgen::witmproxy::plugin::capabilities::Host for WitmProxy<'_> {}
+impl bindgen::witmproxy::plugin::capabilities::Host for WitmProxyCtxView<'_> {}
+
+// Implement the non-WithStore traits for WitmProxyCtxView
+impl HostContent for WitmProxyCtxView<'_> {}
+impl HostCapabilityProvider for WitmProxyCtxView<'_> {}
+impl HostLocalStorageClient for WitmProxyCtxView<'_> {}
+impl HostAnnotatorClient for WitmProxyCtxView<'_> {}
+impl HostLogger for WitmProxyCtxView<'_> {}
 
 pub struct P3Ctx {}
 impl wasmtime_wasi_http::p3::WasiHttpCtx for P3Ctx {}
@@ -493,14 +644,16 @@ impl wasmtime_wasi_http::p3::WasiHttpView for Host {
 /// Add all the `witmproxy:plugin` world's interfaces to a [`wasmtime::component::Linker`].
 pub fn add_to_linker<T: Send + 'static>(
     l: &mut wasmtime::component::Linker<T>,
-    f: fn(&mut T) -> WitmProxy<'_>,
+    f: fn(&mut T) -> WitmProxyCtxView<'_>,
 ) -> Result<()> {
-    bindgen::witmproxy::plugin::capabilities::add_to_linker::<_, HasWitmProxy>(l, f)?;
+    bindgen::witmproxy::plugin::capabilities::add_to_linker::<_, WitmProxy>(l, f)?;
     Ok(())
 }
 
-struct HasWitmProxy;
+struct WitmProxy {
+    table: ResourceTable,
+}
 
-impl HasData for HasWitmProxy {
-    type Data<'a> = WitmProxy<'a>;
+impl HasData for WitmProxy {
+    type Data<'a> = WitmProxyCtxView<'a>;
 }
