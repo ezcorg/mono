@@ -8,7 +8,7 @@ use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 use crate::wasm::bindgen::EventData;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
-use crate::wasm::{Host, InboundContent};
+use crate::wasm::{BodyStreamProducer, ContentTyped, Host, InboundContent};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -20,7 +20,7 @@ use hyper::{Method, Request, StatusCode};
 use hyper::{Response, upgrade};
 use tokio::sync::{Notify, RwLock};
 use wasmtime::StoreContextMut;
-use wasmtime::component::Accessor;
+use wasmtime::component::{Accessor, StreamReader};
 use wasmtime_wasi_http::p3::WasiHttpView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
@@ -577,10 +577,13 @@ async fn run_tls_mitm(
                     };
                     let registry = registry.read().await;
                     let response = store.data_mut().http().table.delete(response).unwrap();
+                    let content_type = response.content_type();
                     let response = response.into_http(store, async { Ok(()) }).unwrap();
                     let (parts, body) = response.into_parts();
-                    body.into_data_stream();
-                    let content = Box::new(InboundContent::new(response));
+                    let producer = BodyStreamProducer::new(body);
+                    let reader = StreamReader::new(store, producer);
+                    // TODO: don't hardcode
+                    let content = Box::new(InboundContent::new(parts, content_type, reader));
                     let (event, mut store) = registry.handle_event(content).await.unwrap();
 
                     match event {

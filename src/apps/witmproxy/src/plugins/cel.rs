@@ -315,9 +315,7 @@ impl CelContent {
 impl From<&InboundContent> for CelContent {
     fn from(content: &InboundContent) -> Self {
         CelContent {
-            content_type: content
-                .content_type()
-                .unwrap_or_else(|| "unknown".to_string()),
+            content_type: content.content_type(),
         }
     }
 }

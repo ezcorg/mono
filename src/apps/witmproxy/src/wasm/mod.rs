@@ -7,13 +7,16 @@ use anyhow::Result;
 use bytes::Bytes;
 use http_body::Body as _;
 use http_body_util::combinators::UnsyncBoxBody;
-use wasmtime::AsContextMut;
+use reqwest::Body;
+use salvo::http::response::Parts;
 use wasmtime::component::{
     Accessor, Destination, HasData, Resource, ResourceTable, StreamProducer, StreamReader,
     StreamResult,
 };
+use wasmtime::{AsContext, AsContextMut};
 use wasmtime::{Store, StoreContextMut};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::p3::WasiHttpCtxView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView, p3::Response};
 
@@ -53,8 +56,14 @@ impl AnnotatorClient {
 }
 
 /// Custom StreamProducer for body streaming
-struct BodyStreamProducer {
+pub struct BodyStreamProducer {
     body: UnsyncBoxBody<Bytes, ErrorCode>,
+}
+
+impl BodyStreamProducer {
+    pub fn new(body: UnsyncBoxBody<Bytes, ErrorCode>) -> Self {
+        Self { body }
+    }
 }
 
 impl<D> StreamProducer<D> for BodyStreamProducer
@@ -126,54 +135,33 @@ where
 }
 
 pub struct InboundContent {
-    response: Response,
+    parts: Parts,
+    content_type: String,
+    data: StreamReader<u8>,
 }
 
 /// [`InboundContent`] is a wrapper around a WASI HTTP [`Response`]
 /// that provides a convenient interface for accessing and modifying
 /// the content of the response (without worrying about any encoding or decoding).
 impl InboundContent {
-    pub fn new(response: Response) -> Self {
-        Self { response }
+    pub fn new(parts: Parts, content_type: String, data: StreamReader<u8>) -> Self {
+        Self {
+            parts,
+            content_type,
+            data,
+        }
     }
 
-    /// Consumes the Content and returns the underlying Response
-    pub fn consume_response(self) -> Response {
-        self.response
+    pub fn content_type(&self) -> String {
+        self.content_type.clone()
     }
 
-    pub fn content_type(&self) -> Option<String> {
-        self.response.content_type()
+    pub fn data(self) -> Result<StreamReader<u8>> {
+        Ok(self.data)
     }
 
-    fn body_to_stream_reader<T>(self, mut store: T) -> Result<StreamReader<u8>>
-    where
-        T: AsContextMut,
-        T::Data: wasmtime_wasi_http::p3::WasiHttpView,
-    {
-        // Create a result future for the response processing
-        let result_fut = async { Ok(()) };
-
-        // Convert Response to http::Response to access the body
-        let http_response = self.response.into_http(store, result_fut)?;
-
-        // Extract the body from the http::Response
-        let (_parts, body) = http_response.into_parts();
-
-        // Create a BodyStreamProducer to wrap the body
-        let producer = BodyStreamProducer { body };
-
-        // Create and return the StreamReader
-        let reader = StreamReader::new(store, producer);
-        Ok(reader)
-    }
-
-    pub fn text(self, store: &mut Store<Host>) -> Result<StreamReader<u8>> {
-        self.body_to_stream_reader(store)
-    }
-
-    pub fn set_text(&mut self, _text: StreamReader<String>, store: &mut Store<Host>) {
-        todo!()
+    pub fn set_data(&mut self, data: StreamReader<u8>) {
+        self.data = data;
     }
 }
 
@@ -250,13 +238,34 @@ impl WitmProxyCtx {
 /// A wrapper capturing the needed internal `witmproxy:plugin` state.
 pub struct WitmProxyCtxView<'a> {
     _ctx: &'a WitmProxyCtx,
-    table: &'a mut ResourceTable,
+    http: &'a mut WasiHttpCtx,
+    p3_http: &'a mut P3Ctx,
+    pub table: &'a mut ResourceTable,
 }
 
 impl<'a> WitmProxyCtxView<'a> {
     /// Create a new view into the `witmproxy:plugin` state.
-    pub fn new(ctx: &'a WitmProxyCtx, table: &'a mut ResourceTable) -> Self {
-        Self { _ctx: ctx, table }
+    pub fn new(
+        ctx: &'a WitmProxyCtx,
+        http: &'a mut WasiHttpCtx,
+        p3_http: &'a mut P3Ctx,
+        table: &'a mut ResourceTable,
+    ) -> Self {
+        Self {
+            _ctx: ctx,
+            http,
+            p3_http,
+            table,
+        }
+    }
+}
+
+impl<'a> wasmtime_wasi_http::p3::WasiHttpView for WitmProxyCtxView<'a> {
+    fn http(&mut self) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
+        wasmtime_wasi_http::p3::WasiHttpCtxView {
+            table: self.table,
+            ctx: self.p3_http,
+        }
     }
 }
 
@@ -323,11 +332,11 @@ impl Encoded for Response {
 }
 
 pub trait ContentTyped {
-    fn content_type(&self) -> Option<String>;
+    fn content_type(&self) -> String;
 }
 
 impl ContentTyped for Response {
-    fn content_type(&self) -> Option<String> {
+    fn content_type(&self) -> String {
         let joined = self
             .headers
             .get_all("content-type")
@@ -337,9 +346,9 @@ impl ContentTyped for Response {
             .join(", ");
 
         if joined.is_empty() {
-            None
+            "unknown".to_string()
         } else {
-            Some(joined)
+            joined
         }
     }
 }
@@ -378,10 +387,10 @@ impl HostContentWithStore for WitmProxy {
             Ok::<InboundContent, wasmtime::component::ResourceTableError>(content)
         })?;
 
-        let stream = accessor.with(|mut access| {
-            let store = access.as_context_mut();
-            content.body_to_stream_reader(store)
-        })?;
+        // We need Store<T> access for body_to_stream_reader, not just WitmProxyCtxView
+        // So we get the store from access.as_context_mut()
+        let stream =
+            accessor.with(|mut access| content.body_to_stream_reader(access.as_context_mut()))?;
 
         Ok(stream)
     }
@@ -652,9 +661,7 @@ pub fn add_to_linker<T: Send + 'static>(
     Ok(())
 }
 
-struct WitmProxy {
-    table: ResourceTable,
-}
+struct WitmProxy;
 
 impl HasData for WitmProxy {
     type Data<'a> = WitmProxyCtxView<'a>;
