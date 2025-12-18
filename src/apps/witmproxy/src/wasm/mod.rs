@@ -146,14 +146,16 @@ impl InboundContent {
         self.response.content_type()
     }
 
-    fn body_to_stream_reader(self, store: &mut Store<Host>) -> Result<StreamReader<u8>> {
+    fn body_to_stream_reader<T>(self, mut store: T) -> Result<StreamReader<u8>>
+    where
+        T: AsContextMut,
+        T::Data: wasmtime_wasi_http::p3::WasiHttpView,
+    {
         // Create a result future for the response processing
         let result_fut = async { Ok(()) };
 
         // Convert Response to http::Response to access the body
-        let http_response =
-            self.response
-                .into_http_with_getter(&mut *store, result_fut, host_getter)?;
+        let http_response = self.response.into_http(store, result_fut)?;
 
         // Extract the body from the http::Response
         let (_parts, body) = http_response.into_parts();
@@ -354,32 +356,6 @@ impl HostContentWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn set_text<T>(
-        accessor: &Accessor<T, Self>,
-        self_: wasmtime::component::Resource<InboundContent>,
-        _text: StreamReader<String>,
-    ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let _content = state.table.get_mut(&self_)?;
-            // content.set_text(text, store);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        });
-        todo!()
-    }
-
-    async fn text<T>(
-        accessor: &Accessor<T, Self>,
-        self_: wasmtime::component::Resource<InboundContent>,
-    ) -> wasmtime::Result<StreamReader<String>> {
-        let _ = accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let _content = state.table.get(&self_)?;
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        });
-        todo!()
-    }
-
     async fn content_type<T>(
         accessor: &Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
@@ -389,6 +365,32 @@ impl HostContentWithStore for WitmProxy {
             let _content = state.table.get(&self_)?;
             Ok::<(), wasmtime::component::ResourceTableError>(())
         });
+        todo!()
+    }
+
+    async fn data<T>(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        self_: wasmtime::component::Resource<InboundContent>,
+    ) -> wasmtime::Result<wasmtime::component::StreamReader<u8>> {
+        let content = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let content = state.table.delete(self_)?;
+            Ok::<InboundContent, wasmtime::component::ResourceTableError>(content)
+        })?;
+
+        let stream = accessor.with(|mut access| {
+            let store = access.as_context_mut();
+            content.body_to_stream_reader(store)
+        })?;
+
+        Ok(stream)
+    }
+
+    async fn set_data<T>(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        self_: wasmtime::component::Resource<InboundContent>,
+        data: wasmtime::component::StreamReader<u8>,
+    ) -> wasmtime::Result<()> {
         todo!()
     }
 }

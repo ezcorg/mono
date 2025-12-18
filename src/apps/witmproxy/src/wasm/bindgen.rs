@@ -43,7 +43,7 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::Capability {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+        use serde::de::{self, MapAccess, SeqAccess, Visitor};
         use std::fmt;
 
         #[derive(Deserialize)]
@@ -125,7 +125,7 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityScope 
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+        use serde::de::{self, MapAccess, SeqAccess, Visitor};
         use std::fmt;
 
         #[derive(Deserialize)]
@@ -207,7 +207,7 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{self, Deserializer, MapAccess, Visitor};
+        use serde::de::{self, MapAccess, Visitor};
         use std::fmt;
 
         struct CapabilityKindVisitor;

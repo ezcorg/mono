@@ -113,11 +113,11 @@ interface capabilities {
     /// without worrying about conflicting or wasteful transformations.
     resource content {
         /// Returns the content as a stream of UTF-8 encoded text
-        text: func() -> stream<string>;
+        data: func() -> stream<u8>;
         /// Returns the content type of the content, ex: "text/html; charset=utf-8"
         content-type: func() -> string;
         /// Replace the content body with new stream of UTF-8 encoded text
-        set-text: func(text: stream<string>);
+        set-data: func(data: stream<u8>);
     }
 }
 

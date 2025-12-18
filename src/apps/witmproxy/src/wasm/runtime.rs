@@ -1,4 +1,4 @@
-use crate::wasm::{Host, WitmProxyCtxView, bindgen::Plugin};
+use crate::wasm::{Host, WitmProxyCtxView, bindgen::Plugin, host_getter};
 use anyhow::Result;
 use wasmtime::{
     Config, Engine, Store,
@@ -36,7 +36,12 @@ impl Runtime {
 
         // Add our custom host capabilities using the wrapper pattern
         crate::wasm::add_to_linker(&mut linker, |host: &mut Host| {
-            WitmProxyCtxView::new(&host.witmproxy_ctx, &mut host.table)
+            WitmProxyCtxView::new(
+                &host.witmproxy_ctx,
+                &mut host.http,
+                &mut host.p3_http,
+                &mut host.table,
+            )
         })?;
 
         Ok(Self {

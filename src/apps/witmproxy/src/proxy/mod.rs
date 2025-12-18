@@ -577,6 +577,9 @@ async fn run_tls_mitm(
                     };
                     let registry = registry.read().await;
                     let response = store.data_mut().http().table.delete(response).unwrap();
+                    let response = response.into_http(store, async { Ok(()) }).unwrap();
+                    let (parts, body) = response.into_parts();
+                    body.into_data_stream();
                     let content = Box::new(InboundContent::new(response));
                     let (event, mut store) = registry.handle_event(content).await.unwrap();
 
