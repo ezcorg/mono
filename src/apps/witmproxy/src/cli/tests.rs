@@ -8,31 +8,17 @@ mod tests {
             cel::{CelConnect, CelRequest, CelResponse},
         },
         test_utils::test_component_path,
+        wasm::bindgen::EventData,
     };
     use anyhow::Result;
-    use cel_cxx::Env;
+    use cel_cxx::{Env, EnvBuilder};
     use confique::{Config, Layer};
     use std::path::Path;
     use tempfile::tempdir;
 
     /// Helper function to create a static CEL environment for tests
     fn create_static_cel_env() -> Result<&'static Env<'static>> {
-        let env = Env::builder()
-            .with_standard(true)
-            .declare_variable::<CelConnect>("connect")?
-            .register_member_function("host", CelConnect::host)?
-            .register_member_function("port", CelConnect::port)?
-            .declare_variable::<CelRequest>("request")?
-            .register_member_function("scheme", CelRequest::scheme)?
-            .register_member_function("host", CelRequest::host)?
-            .register_member_function("path", CelRequest::path)?
-            .register_member_function("query", CelRequest::query)?
-            .register_member_function("method", CelRequest::method)?
-            .register_member_function("headers", CelRequest::headers)?
-            .declare_variable::<CelResponse>("response")?
-            .register_member_function("status", CelResponse::status)?
-            .register_member_function("headers", CelResponse::headers)?
-            .build()?;
+        let env = EventData::register(EnvBuilder::new())?.build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration
         Ok(Box::leak(Box::new(env)))
