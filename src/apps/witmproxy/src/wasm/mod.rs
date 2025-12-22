@@ -8,20 +8,17 @@ use bytes::Bytes;
 use http_body::Body as _;
 use http_body_util::BodyExt;
 use http_body_util::combinators::UnsyncBoxBody;
-use hyper::Response;
-use salvo::http::response::Parts;
 use tokio::sync::mpsc;
 use tokio_util::sync::PollSender;
+use wasmtime::AsContextMut;
+use wasmtime::StoreContextMut;
 use wasmtime::component::{
-    Accessor, Destination, HasData, Resource, ResourceTable, Source, StreamConsumer,
-    StreamProducer, StreamReader, StreamResult,
+    Accessor, Destination, HasData, Resource, ResourceTable, Source, StreamProducer, StreamReader,
+    StreamResult,
 };
-use wasmtime::{AsContext, AsContextMut};
-use wasmtime::{Store, StoreContextMut};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::p3::WasiHttpCtxView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView, p3::Response as WasiResponse};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
@@ -56,7 +53,7 @@ impl CapabilityProvider {
 pub struct AnnotatorClient {}
 
 impl AnnotatorClient {
-    pub fn annotate(&self, content: &InboundContent) {}
+    pub fn annotate(&self, _content: &InboundContent) {}
 }
 
 /// Custom StreamProducer for body streaming
