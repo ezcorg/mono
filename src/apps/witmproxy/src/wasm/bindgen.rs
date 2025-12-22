@@ -1,9 +1,8 @@
+pub use crate::events::content::InboundContent;
 pub use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
     EventData, PluginManifest,
 };
-pub use crate::wasm::{
-    AnnotatorClient, CapabilityProvider, InboundContent, LocalStorageClient, Logger,
-};
+pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient, Logger};
 
 wasmtime::component::bindgen!({
     world: "witmproxy:plugin/plugin",

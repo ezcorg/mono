@@ -14,10 +14,10 @@ use wasmtime_wasi_http::p3::{
 
 use crate::{
     db::{Db, Insert},
-    events::{Event, connect::Connect, response::ContextualResponse},
+    events::{Event, connect::Connect, content::InboundContent, response::ContextualResponse},
     plugins::WitmPlugin,
     wasm::{
-        CapabilityProvider, Host, InboundContent, Runtime,
+        CapabilityProvider, Host, Runtime,
         bindgen::{Plugin, witmproxy::plugin::capabilities::EventData},
     },
 };

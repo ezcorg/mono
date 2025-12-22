@@ -2,13 +2,15 @@ use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::events::Event;
 use crate::events::connect::Connect;
+use crate::events::content::InboundContent;
 use crate::events::response::ContextualResponse;
+use crate::http::utils::ContentTyped;
 use crate::plugins::cel::{CelConnect, CelRequest};
 use crate::plugins::registry::{HostHandleRequestResult, HostHandleResponseResult, PluginRegistry};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 use crate::wasm::bindgen::EventData;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
-use crate::wasm::{BodyStreamProducer, ContentTyped, Host, InboundContent};
+use crate::wasm::{BodyStreamProducer, Host};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -550,6 +552,7 @@ async fn run_tls_mitm(
 
                 debug!("Response handlers invoked, checking for specific content-type handling");
 
+                // TODO:
                 // Check response content-type for content-specific handling
                 let (content, store) = if let Some(registry) = &plugin_registry {
                     let (response, mut store) = match handled_response {
@@ -578,17 +581,14 @@ async fn run_tls_mitm(
                     let registry = registry.read().await;
                     let response = store.data_mut().http().table.delete(response).unwrap();
                     let content_type = response.content_type();
-                    let response = response.into_http(store, async { Ok(()) }).unwrap();
+                    let response = response.into_http(&mut store, async { Ok(()) }).unwrap();
                     let (parts, body) = response.into_parts();
-                    let producer = BodyStreamProducer::new(body);
-                    let reader = StreamReader::new(store, producer);
-                    // TODO: don't hardcode
-                    let content = Box::new(InboundContent::new(parts, content_type, reader));
+                    let content = Box::new(InboundContent::new(parts, content_type, body).unwrap());
                     let (event, mut store) = registry.handle_event(content).await.unwrap();
 
                     match event {
-                        EventData::InboundContent(content) => {
-                            let content = store.data_mut().table.delete(content).unwrap();
+                        EventData::InboundContent(content_resource) => {
+                            let content = store.data_mut().table.delete(content_resource).unwrap();
                             (content, store)
                         }
                         _ => {
@@ -604,7 +604,8 @@ async fn run_tls_mitm(
                 };
 
                 let response = content
-                    .consume_response()
+                    .into_wasi()
+                    .unwrap()
                     .into_http(store, async { Ok(()) })
                     .unwrap();
                 let final_response = convert_boxbody_to_full_response(response).await;

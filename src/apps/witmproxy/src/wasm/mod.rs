@@ -6,22 +6,26 @@ use std::task::{Context, Poll};
 use anyhow::Result;
 use bytes::Bytes;
 use http_body::Body as _;
+use http_body_util::BodyExt;
 use http_body_util::combinators::UnsyncBoxBody;
-use reqwest::Body;
+use hyper::Response;
 use salvo::http::response::Parts;
+use tokio::sync::mpsc;
+use tokio_util::sync::PollSender;
 use wasmtime::component::{
-    Accessor, Destination, HasData, Resource, ResourceTable, StreamProducer, StreamReader,
-    StreamResult,
+    Accessor, Destination, HasData, Resource, ResourceTable, Source, StreamConsumer,
+    StreamProducer, StreamReader, StreamResult,
 };
 use wasmtime::{AsContext, AsContextMut};
 use wasmtime::{Store, StoreContextMut};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::p3::WasiHttpCtxView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView, p3::Response};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView, p3::Response as WasiResponse};
 
 mod runtime;
 
+use crate::events::content::InboundContent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
     HostCapabilityProviderWithStore, HostContent, HostContentWithStore, HostLocalStorageClient,
@@ -134,37 +138,6 @@ where
     }
 }
 
-pub struct InboundContent {
-    parts: Parts,
-    content_type: String,
-    data: StreamReader<u8>,
-}
-
-/// [`InboundContent`] is a wrapper around a WASI HTTP [`Response`]
-/// that provides a convenient interface for accessing and modifying
-/// the content of the response (without worrying about any encoding or decoding).
-impl InboundContent {
-    pub fn new(parts: Parts, content_type: String, data: StreamReader<u8>) -> Self {
-        Self {
-            parts,
-            content_type,
-            data,
-        }
-    }
-
-    pub fn content_type(&self) -> String {
-        self.content_type.clone()
-    }
-
-    pub fn data(self) -> Result<StreamReader<u8>> {
-        Ok(self.data)
-    }
-
-    pub fn set_data(&mut self, data: StreamReader<u8>) {
-        self.data = data;
-    }
-}
-
 pub struct Logger {}
 
 impl Logger {
@@ -238,34 +211,13 @@ impl WitmProxyCtx {
 /// A wrapper capturing the needed internal `witmproxy:plugin` state.
 pub struct WitmProxyCtxView<'a> {
     _ctx: &'a WitmProxyCtx,
-    http: &'a mut WasiHttpCtx,
-    p3_http: &'a mut P3Ctx,
     pub table: &'a mut ResourceTable,
 }
 
 impl<'a> WitmProxyCtxView<'a> {
     /// Create a new view into the `witmproxy:plugin` state.
-    pub fn new(
-        ctx: &'a WitmProxyCtx,
-        http: &'a mut WasiHttpCtx,
-        p3_http: &'a mut P3Ctx,
-        table: &'a mut ResourceTable,
-    ) -> Self {
-        Self {
-            _ctx: ctx,
-            http,
-            p3_http,
-            table,
-        }
-    }
-}
-
-impl<'a> wasmtime_wasi_http::p3::WasiHttpView for WitmProxyCtxView<'a> {
-    fn http(&mut self) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
-        wasmtime_wasi_http::p3::WasiHttpCtxView {
-            table: self.table,
-            ctx: self.p3_http,
-        }
+    pub fn new(ctx: &'a WitmProxyCtx, table: &'a mut ResourceTable) -> Self {
+        Self { _ctx: ctx, table }
     }
 }
 
@@ -286,69 +238,6 @@ impl Default for Host {
             http: WasiHttpCtx::new(),
             p3_http: P3Ctx {},
             witmproxy_ctx: WitmProxyCtxBuilder::new().build(),
-        }
-    }
-}
-
-/// Helper function to get WasiHttpCtxView from Host
-fn host_getter(host: &mut Host) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
-    wasmtime_wasi_http::p3::WasiHttpCtxView {
-        ctx: &mut host.p3_http,
-        table: &mut host.table,
-    }
-}
-
-#[derive(PartialEq, Eq)]
-pub enum ContentEncoding {
-    Gzip,    // gzip
-    Deflate, // deflate
-    Br,      // br
-    Zstd,    // zstd
-    None,    // identity
-    // Dcb,
-    // Dcz,
-    Unknown,
-}
-
-pub trait Encoded {
-    fn encoding(&self) -> ContentEncoding;
-}
-
-impl Encoded for Response {
-    fn encoding(&self) -> ContentEncoding {
-        for value in self.headers.get_all("content-encoding") {
-            if let Ok(value_str) = value.to_str() {
-                match value_str.to_lowercase().as_str() {
-                    "gzip" => return ContentEncoding::Gzip,
-                    "deflate" => return ContentEncoding::Deflate,
-                    "br" => return ContentEncoding::Br,
-                    "identity" => return ContentEncoding::None,
-                    _ => return ContentEncoding::Unknown,
-                }
-            }
-        }
-        ContentEncoding::None
-    }
-}
-
-pub trait ContentTyped {
-    fn content_type(&self) -> String;
-}
-
-impl ContentTyped for Response {
-    fn content_type(&self) -> String {
-        let joined = self
-            .headers
-            .get_all("content-type")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .collect::<Vec<&str>>()
-            .join(", ");
-
-        if joined.is_empty() {
-            "unknown".to_string()
-        } else {
-            joined
         }
     }
 }
@@ -377,30 +266,114 @@ impl HostContentWithStore for WitmProxy {
         todo!()
     }
 
-    async fn data<T>(
+    async fn body<T>(
         accessor: &wasmtime::component::Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
     ) -> wasmtime::Result<wasmtime::component::StreamReader<u8>> {
-        let content = accessor.with(|mut access| {
+        // Get mutable access to extract the data without consuming the resource
+        let data = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
-            let content = state.table.delete(self_)?;
-            Ok::<InboundContent, wasmtime::component::ResourceTableError>(content)
+            let content = state.table.get_mut(&self_)?;
+            // Take the data out, leaving None in its place
+            // body() returns Result<Option<...>, Error> but we can unwrap the Result part
+            Ok::<Option<UnsyncBoxBody<Bytes, ErrorCode>>, wasmtime::component::ResourceTableError>(
+                content.body().unwrap_or(None),
+            )
         })?;
 
-        // We need Store<T> access for body_to_stream_reader, not just WitmProxyCtxView
-        // So we get the store from access.as_context_mut()
-        let stream =
-            accessor.with(|mut access| content.body_to_stream_reader(access.as_context_mut()))?;
+        // If data is None, it was already taken
+        let body = data.ok_or_else(|| {
+            wasmtime::Error::msg(
+                "Content data has already been consumed. Use set_data to refill it.",
+            )
+        })?;
 
-        Ok(stream)
+        let reader = accessor.with(|mut access| {
+            let store = &mut access.as_context_mut();
+            let stream_reader = StreamReader::new(store, BodyStreamProducer::new(body));
+            Ok::<wasmtime::component::StreamReader<u8>, wasmtime::component::ResourceTableError>(
+                stream_reader,
+            )
+        })?;
+        Ok(reader)
     }
-
-    async fn set_data<T>(
+    async fn set_body<T>(
         accessor: &wasmtime::component::Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
-        data: wasmtime::component::StreamReader<u8>,
+        content: wasmtime::component::StreamReader<u8>,
     ) -> wasmtime::Result<()> {
-        todo!()
+        // Convert StreamReader back to UnsyncBoxBody
+        // This requires reading the stream and converting it to a body
+        // using a channel-based approach
+
+        use http_body::Frame;
+        use http_body_util::StreamBody;
+
+        let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, ErrorCode>>(32);
+        let body = StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed_unsync();
+
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let content = state.table.get_mut(&self_)?;
+            content.set_body(body);
+            Ok::<(), wasmtime::component::ResourceTableError>(())
+        })?;
+
+        // Create a StreamConsumer that forwards data to the channel
+        struct ChannelStreamConsumer {
+            tx: PollSender<Result<Frame<Bytes>, ErrorCode>>,
+        }
+
+        impl<D> wasmtime::component::StreamConsumer<D> for ChannelStreamConsumer {
+            type Item = u8;
+
+            fn poll_consume(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+                mut store: StoreContextMut<D>,
+                source: Source<Self::Item>,
+                _finish: bool,
+            ) -> Poll<wasmtime::Result<StreamResult>> {
+                let available = source.remaining(store.as_context_mut());
+                if available == 0 {
+                    return Poll::Ready(Ok(StreamResult::Completed));
+                }
+
+                // Read all available bytes
+                let mut source_direct = source.as_direct(store);
+                let data = source_direct.remaining().to_vec();
+                source_direct.mark_read(data.len());
+
+                // Send to channel
+                let bytes = Bytes::from(data);
+                match Pin::new(&mut self.tx).poll_reserve(cx) {
+                    Poll::Ready(Ok(())) => {
+                        if let Err(_) = self.tx.send_item(Ok(Frame::data(bytes))) {
+                            // Receiver dropped
+                            return Poll::Ready(Ok(StreamResult::Dropped));
+                        }
+                        Poll::Ready(Ok(StreamResult::Completed))
+                    }
+                    Poll::Ready(Err(_)) => {
+                        // Channel closed
+                        Poll::Ready(Ok(StreamResult::Dropped))
+                    }
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+
+        // Pipe the stream reader to the channel consumer
+        accessor.with(|mut access| {
+            content.pipe(
+                &mut access,
+                ChannelStreamConsumer {
+                    tx: PollSender::new(tx),
+                },
+            );
+        });
+
+        Ok(())
     }
 }
 

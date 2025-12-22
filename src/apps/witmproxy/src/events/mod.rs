@@ -15,6 +15,7 @@ pub mod content;
 pub mod request;
 pub mod response;
 
+/// Trait representing an event that can be handled by the plugin system
 pub trait Event: Send {
     /// Returns the [CapabilityKind] required to handle events of this type
     fn capability(&self) -> CapabilityKind;

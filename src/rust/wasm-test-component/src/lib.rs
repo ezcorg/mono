@@ -49,7 +49,7 @@ impl Guest for Plugin {
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::InboundContent),
                     scope: CapabilityScope {
-                        expression: "true".to_string(),
+                        expression: "content.content_type() == 'text/html'".to_string(),
                     }
                 }
             ],
@@ -89,18 +89,20 @@ impl Guest for Plugin {
                 }))
             }
             EventData::InboundContent(content) => {
-                let mut stream = content.text();
+                let mut data = content.body();
                 let (mut tx, rx) = wit_stream::new();
-                let new_html = "<!-- Processed by wasm-test-component plugin -->\n".to_string();
 
                 // Spawn a task to prepend new_html to the original content
                 wit_bindgen::spawn(async move {
                     // Write the prepended HTML first
-                    let _ = tx.write_one(new_html).await;
+                    let new_html = "<!-- Processed by `wasm-test-component` plugin -->\n"
+                        .as_bytes()
+                        .to_vec();
+                    let _ = tx.write_all(new_html).await;
 
                     // Stream the original content chunk by chunk
                     loop {
-                        match stream.next().await {
+                        match data.next().await {
                             Some(chunk) => {
                                 let _ = tx.write_one(chunk).await;
                             }
@@ -110,7 +112,7 @@ impl Guest for Plugin {
                 });
 
                 // Return new content with the modified stream
-                content.set_text(rx);
+                content.set_body(rx);
                 Some(EventData::InboundContent(content))
             }
             e => Some(e),

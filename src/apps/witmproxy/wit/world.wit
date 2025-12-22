@@ -112,12 +112,12 @@ interface capabilities {
     /// of the underlying body, providing a simple interface for plugins to interact with
     /// without worrying about conflicting or wasteful transformations.
     resource content {
-        /// Returns the content as a stream of UTF-8 encoded text
-        data: func() -> stream<u8>;
+        /// Returns the content as a stream of bytes
+        body: func() -> stream<u8>;
         /// Returns the content type of the content, ex: "text/html; charset=utf-8"
         content-type: func() -> string;
-        /// Replace the content body with new stream of UTF-8 encoded text
-        set-data: func(data: stream<u8>);
+        /// Replace the content body with the provided stream of bytes
+        set-body: func(content: stream<u8>);
     }
 }
 

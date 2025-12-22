@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-use crate::wasm::InboundContent;
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::RequestContext;
+use crate::{
+    events::content::InboundContent, wasm::bindgen::witmproxy::plugin::capabilities::RequestContext,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
 #[cel_cxx(display)]

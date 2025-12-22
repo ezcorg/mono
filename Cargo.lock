@@ -1350,6 +1350,8 @@ dependencies = [
  "deflate64",
  "flate2",
  "memchr",
+ "zstd",
+ "zstd-safe",
 ]
 
 [[package]]
@@ -10665,6 +10667,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls 0.26.4",
+ "tokio-stream",
  "tokio-test",
  "tokio-util",
  "toml 0.9.8",
