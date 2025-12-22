@@ -3,10 +3,7 @@ mod tests {
         AppConfig, Db, Runtime,
         cli::{Commands, ResolvedCli, plugin::PluginCommands},
         config::confique_app_config_layer::AppConfigLayer,
-        plugins::{
-            WitmPlugin,
-            cel::{CelConnect, CelRequest, CelResponse},
-        },
+        plugins::{ WitmPlugin},
         test_utils::test_component_path,
         wasm::bindgen::EventData,
     };
