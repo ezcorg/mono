@@ -12,6 +12,7 @@ use crate::wasm::bindgen::EventData;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
 use bytes::Bytes;
+use futures::try_join;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::body::Incoming;
@@ -24,6 +25,7 @@ use wasmtime_wasi_http::p3::WasiHttpView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
+use anyhow::Context;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
@@ -551,7 +553,7 @@ async fn run_tls_mitm(
 
                 // TODO:
                 // Check response content-type for content-specific handling
-                let (content, store) = if let Some(registry) = &plugin_registry {
+                let (content, mut store) = if let Some(registry) = &plugin_registry {
                     let (response, mut store) = match handled_response {
                         Ok((event_data, store)) => match event_data {
                             EventData::Response(WasiContextualResponse { response, .. }) => {
@@ -578,10 +580,17 @@ async fn run_tls_mitm(
                     let registry = registry.read().await;
                     let response = store.data_mut().http().table.delete(response).unwrap();
                     let content_type = response.content_type();
+                    debug!("Content type for InboundContent: {}", content_type);
                     let response = response.into_http(&mut store, async { Ok(()) }).unwrap();
                     let (parts, body) = response.into_parts();
-                    let content = Box::new(InboundContent::new(parts, content_type, body).unwrap());
+                    let content =
+                        Box::new(InboundContent::new(parts, content_type.clone(), body).unwrap());
+                    debug!(
+                        "Created InboundContent event with content-type: {}",
+                        content_type
+                    );
                     let (event, mut store) = registry.handle_event(content).await.unwrap();
+                    debug!("InboundContent event handled");
 
                     match event {
                         EventData::InboundContent(content_resource) => {
@@ -600,21 +609,24 @@ async fn run_tls_mitm(
                     unreachable!()
                 };
 
-                let response = content
-                    .into_wasi()
-                    .unwrap()
-                    .into_http(store, async { Ok(()) })
-                    .unwrap();
-                let final_response = convert_boxbody_to_full_response(response).await;
-
-                match final_response {
-                    Ok(resp) => Ok(resp),
-                    Err(err) => Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Full::new(Bytes::from(format!(
-                            "Failed to convert final response: {}",
-                            err
-                        )))),
+                debug!("Converting final InboundContent directly to full HTTP response");
+                // Don't convert back to WASI - directly convert to final response.
+                // This avoids deadlocks where the guest's spawned task needs the store
+                // to be polled but we're trying to collect the body outside run_concurrent.
+                match content.into_full_response().await {
+                    Ok(resp) => {
+                        debug!("Converted final response successfully");
+                        Ok(resp)
+                    }
+                    Err(err) => {
+                        error!("Error converting final response: {}", err);
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Full::new(Bytes::from(format!(
+                                "Failed to convert final response: {}",
+                                err
+                            ))))
+                    }
                 }
             }
         })

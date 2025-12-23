@@ -10,6 +10,7 @@ use crate::{
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
+    async: true,
     path: "../../apps/witmproxy/wit",
     generate_all
 });
@@ -19,7 +20,7 @@ const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 struct Plugin;
 
 impl Guest for Plugin {
-    fn manifest() -> PluginManifest {
+    async fn manifest() -> PluginManifest {
         PluginManifest {
             name: "wasm-test-component".to_string(),
             namespace: "ezco".to_string(),
@@ -59,37 +60,51 @@ impl Guest for Plugin {
         }
     }
 
-    fn handle(ev: EventData, _cp: CapabilityProvider) -> Option<EventData> {
+    async fn handle(ev: EventData, _cp: CapabilityProvider) -> Option<EventData> {
         match ev {
             EventData::Request(req) => {
-                let authority = req.get_authority().clone();
-                let path_with_query = req.get_path_with_query().clone();
-                let scheme = req.get_scheme().clone();
-                let headers = req.get_headers().clone();
+                let authority = req.get_authority().await;
+                let path_with_query = req.get_path_with_query().await;
+                let scheme = req.get_scheme().await;
+                let old_headers = req.get_headers().await;
+
+                // Clone to get mutable headers
+                let headers = old_headers.clone().await;
                 let val = "req".as_bytes().to_vec();
-                let _ = headers.set("witmproxy", &[val]);
+                headers
+                    .set("witmproxy".to_string(), [val].to_vec())
+                    .await
+                    .unwrap();
+
                 let (_, result_rx) = wit_future::new(|| Ok(()));
-                let (body, trailers) = Request::consume_body(req, result_rx);
-                let (new_req, _) = Request::new(headers, Some(body), trailers, None);
-                let _ = new_req.set_authority(authority.as_deref());
-                let _ = new_req.set_path_with_query(path_with_query.as_deref());
-                let _ = new_req.set_scheme(scheme.as_ref());
+                let (body, trailers) = Request::consume_body(req, result_rx).await;
+                let (new_req, _) = Request::new(headers, Some(body), trailers, None).await;
+                let _ = new_req.set_authority(authority).await;
+                let _ = new_req.set_path_with_query(path_with_query).await;
+                let _ = new_req.set_scheme(scheme).await;
                 Some(EventData::Request(new_req))
             }
             EventData::Response(ContextualResponse { response, request }) => {
-                let headers = response.get_headers().clone();
+                let old_headers = response.get_headers().await;
+
+                // Clone to get mutable headers
+                let headers = old_headers.clone().await;
                 let val = "res".as_bytes().to_vec();
-                let _ = headers.set("witmproxy", &[val]);
+                headers
+                    .set("witmproxy".to_string(), [val].to_vec())
+                    .await
+                    .unwrap();
+
                 let (_, result_rx) = wit_future::new(|| Ok(()));
-                let (body, trailers) = Response::consume_body(response, result_rx);
-                let (new_res, _) = Response::new(headers, Some(body), trailers);
+                let (body, trailers) = Response::consume_body(response, result_rx).await;
+                let (new_res, _) = Response::new(headers, Some(body), trailers).await;
                 Some(EventData::Response(ContextualResponse {
                     response: new_res,
                     request,
                 }))
             }
             EventData::InboundContent(content) => {
-                let mut data = content.body();
+                let data = content.body().await;
                 let (mut tx, rx) = wit_stream::new();
 
                 // Spawn a task to prepend new_html to the original content
@@ -99,20 +114,12 @@ impl Guest for Plugin {
                         .as_bytes()
                         .to_vec();
                     let _ = tx.write_all(new_html).await;
-
-                    // Stream the original content chunk by chunk
-                    loop {
-                        match data.next().await {
-                            Some(chunk) => {
-                                let _ = tx.write_one(chunk).await;
-                            }
-                            None => break,
-                        }
-                    }
+                    let collected = data.collect().await;
+                    let _ = tx.write_all(collected).await;
                 });
 
                 // Return new content with the modified stream
-                content.set_body(rx);
+                content.set_body(rx).await;
                 Some(EventData::InboundContent(content))
             }
             e => Some(e),

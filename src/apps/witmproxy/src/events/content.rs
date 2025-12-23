@@ -215,7 +215,9 @@ impl InboundContent {
         self.body = Some(content);
     }
 
-    pub fn into_wasi(self) -> Result<WasiResponse> {
+    pub async fn into_full_response(self) -> Result<hyper::Response<http_body_util::Full<Bytes>>> {
+        use http_body_util::BodyExt;
+
         // Build the HTTP response using the parts
         // If data was taken, provide an empty body
         let body = self.body.unwrap_or_else(|| {
@@ -225,11 +227,49 @@ impl InboundContent {
                 .boxed_unsync()
         });
         let body = InboundContent::compress(&self.parts, body)?;
-        let response = Response::from_parts(self.parts, body);
+
+        // Collect the body
+        let collected = body
+            .collect()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to collect body: {:?}", e))?;
+
+        // Remove content-length header since the body may have been modified
+        let mut parts = self.parts;
+        parts.headers.remove(hyper::header::CONTENT_LENGTH);
+
+        let full_body = http_body_util::Full::new(collected.to_bytes());
+        let response = Response::from_parts(parts, full_body);
+
+        Ok(response)
+    }
+
+    pub fn into_wasi(
+        self,
+    ) -> Result<(
+        WasiResponse,
+        impl futures::Future<Output = Result<(), ErrorCode>> + Send,
+    )> {
+        // Build the HTTP response using the parts
+        // If data was taken, provide an empty body
+        let body = self.body.unwrap_or_else(|| {
+            use http_body_util::Empty;
+            Empty::<Bytes>::new()
+                .map_err(|_| ErrorCode::InternalError(Some("empty body".to_string())))
+                .boxed_unsync()
+        });
+        let body = InboundContent::compress(&self.parts, body)?;
+
+        // Remove content-length header since the body may have been modified
+        // and we're using chunked transfer encoding for the streaming body
+        let mut parts = self.parts;
+        parts.headers.remove(hyper::header::CONTENT_LENGTH);
+
+        let response = Response::from_parts(parts, body);
 
         // Convert to WASI HTTP Response
-        let (wasi_response, _io_future) = WasiResponse::from_http(response);
+        let (wasi_response, io_future) = WasiResponse::from_http(response);
 
-        Ok(wasi_response)
+        Ok((wasi_response, io_future))
     }
 }

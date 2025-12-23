@@ -47,7 +47,7 @@ impl ServerHandle {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EchoResponse {
     pub method: String,
     pub path: String,
@@ -123,7 +123,8 @@ pub async fn create_ca_and_config() -> (CertificateAuthority, AppConfig) {
     (ca, config)
 }
 
-pub async fn create_echo_server(
+/// Creates an echo server that converts the received request into a JSON response.
+pub async fn create_json_echo_server(
     host: &str,
     port: Option<u16>,
     ca: CertificateAuthority,
@@ -228,6 +229,119 @@ pub async fn create_echo_server(
                                         hyper::Response::builder()
                                             .header("content-type", "application/json")
                                             .body(http_body_util::Full::new(bytes::Bytes::from(response_body)))
+                                            .unwrap()
+                                    )
+                                });
+
+                                match proto {
+                                    Protocol::Http1 => {
+                                        if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                            .serve_connection(io, svc)
+                                            .await
+                                        {
+                                            error!("http1 error: {e}");
+                                        }
+                                    }
+                                    Protocol::Http2 => {
+                                        if let Err(e) = hyper::server::conn::http2::Builder::new(
+                                            TokioExecutor::new(),
+                                        )
+                                        .serve_connection(io, svc)
+                                        .await
+                                        {
+                                            error!("http2 error: {e}");
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("tls accept error: {e}");
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    });
+
+    ServerHandle {
+        listen_addr,
+        shutdown_tx,
+        task,
+    }
+}
+
+/// Creates a static HTML server that returns a simple HTML document.
+pub async fn create_html_server(
+    host: &str,
+    port: Option<u16>,
+    ca: CertificateAuthority,
+    proto: Protocol,
+) -> ServerHandle {
+    let port = port.unwrap_or(0); // Use OS-assigned port if None
+
+    let cert = ca
+        .get_certificate_for_domain(host)
+        .await
+        .expect("CA mint failed");
+
+    let cert_chain = vec![
+        cert.cert_der.clone(),
+        ca.get_root_certificate_der().unwrap().into(),
+    ];
+
+    let mut cfg = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, cert.key_der)
+        .expect("server cert");
+    cfg.alpn_protocols = match proto {
+        Protocol::Http1 => vec![b"http/1.1".to_vec()],
+        Protocol::Http2 => vec![b"h2".to_vec()],
+    };
+
+    let acceptor = TlsAcceptor::from(Arc::new(cfg));
+    let listener = TcpListener::bind((host, port))
+        .await
+        .expect("bind target listener");
+    let listen_addr = listener.local_addr().unwrap();
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    break;
+                }
+                result = listener.accept() => {
+                    let (stream, _) = match result {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!("accept error: {e}");
+                            continue;
+                        }
+                    };
+
+                    let acceptor = acceptor.clone();
+                    tokio::spawn(async move {
+                        match acceptor.accept(stream).await {
+                            Ok(tls) => {
+                                let io = hyper_util::rt::TokioIo::new(tls);
+
+                                let svc = hyper::service::service_fn(|_req| async {
+                                    let html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+</head>
+<body>
+    <h1>Hello from test server</h1>
+</body>
+</html>"#;
+
+                                    Ok::<_, hyper::Error>(
+                                        hyper::Response::builder()
+                                            .header("content-type", "text/html")
+                                            .body(http_body_util::Full::new(bytes::Bytes::from(html)))
                                             .unwrap()
                                     )
                                 });

@@ -255,12 +255,12 @@ impl HostContentWithStore for WitmProxy {
         accessor: &Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
     ) -> wasmtime::Result<String> {
-        let _ = accessor.with(|mut access| {
+        let content_type = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
-            let _content = state.table.get(&self_)?;
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        });
-        todo!()
+            let content = state.table.get(&self_)?;
+            Ok::<String, wasmtime::component::ResourceTableError>(content.content_type())
+        })?;
+        Ok(content_type)
     }
 
     async fn body<T>(
@@ -294,6 +294,7 @@ impl HostContentWithStore for WitmProxy {
         })?;
         Ok(reader)
     }
+
     async fn set_body<T>(
         accessor: &wasmtime::component::Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
