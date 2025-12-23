@@ -294,9 +294,6 @@ impl PluginRegistry {
                 Some(new_event_data) => {
                     // Create a new event from the returned EventData for the next iteration
                     current_event = match new_event_data {
-                        EventData::Connect => {
-                            anyhow::bail!("Connect events cannot be returned from plugins");
-                        }
                         EventData::Request(r) => {
                             let req = store.data_mut().http().table.delete(r)?;
                             Box::new(req)

@@ -104,12 +104,12 @@ impl Guest for Plugin {
                 }))
             }
             EventData::InboundContent(content) => {
-                let data = content.body().await;
                 let (mut tx, rx) = wit_stream::new();
+                let data = content.body().await;
 
                 // Spawn a task to prepend new_html to the original content
+                // Because writing to `tx` will block until `rx` is read
                 wit_bindgen::spawn(async move {
-                    // Write the prepended HTML first
                     let new_html = "<!-- Processed by `wasm-test-component` plugin -->\n"
                         .as_bytes()
                         .to_vec();
@@ -118,11 +118,10 @@ impl Guest for Plugin {
                     let _ = tx.write_all(collected).await;
                 });
 
-                // Return new content with the modified stream
+                // Return the modified stream
                 content.set_body(rx).await;
                 Some(EventData::InboundContent(content))
             }
-            e => Some(e),
         }
     }
 }

@@ -12,7 +12,6 @@ use crate::wasm::bindgen::EventData;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
 use bytes::Bytes;
-use futures::try_join;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::body::Incoming;
@@ -25,7 +24,6 @@ use wasmtime_wasi_http::p3::WasiHttpView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
-use anyhow::Context;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
@@ -553,7 +551,7 @@ async fn run_tls_mitm(
 
                 // TODO:
                 // Check response content-type for content-specific handling
-                let (content, mut store) = if let Some(registry) = &plugin_registry {
+                let (content, _store) = if let Some(registry) = &plugin_registry {
                     let (response, mut store) = match handled_response {
                         Ok((event_data, store)) => match event_data {
                             EventData::Response(WasiContextualResponse { response, .. }) => {
@@ -583,26 +581,31 @@ async fn run_tls_mitm(
                     debug!("Content type for InboundContent: {}", content_type);
                     let response = response.into_http(&mut store, async { Ok(()) }).unwrap();
                     let (parts, body) = response.into_parts();
-                    let content =
-                        Box::new(InboundContent::new(parts, content_type.clone(), body).unwrap());
-                    debug!(
-                        "Created InboundContent event with content-type: {}",
-                        content_type
-                    );
-                    let (event, mut store) = registry.handle_event(content).await.unwrap();
-                    debug!("InboundContent event handled");
+                    let content = InboundContent::new(parts, content_type.clone(), body).unwrap();
+                    if content_type.eq("unknown") {
+                        (content, store)
+                    } else {
+                        let content = Box::new(content) as Box<dyn Event>;
+                        debug!(
+                            "Created InboundContent event with content-type: {}",
+                            content_type
+                        );
+                        let (event, mut store) = registry.handle_event(content).await.unwrap();
+                        debug!("InboundContent event handled");
 
-                    match event {
-                        EventData::InboundContent(content_resource) => {
-                            let content = store.data_mut().table.delete(content_resource).unwrap();
-                            (content, store)
-                        }
-                        _ => {
-                            return Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(Full::new(Bytes::from(
-                                    "Unexpected event data type from plugin",
-                                )));
+                        match event {
+                            EventData::InboundContent(content_resource) => {
+                                let content =
+                                    store.data_mut().table.delete(content_resource).unwrap();
+                                (content, store)
+                            }
+                            _ => {
+                                return Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(Full::new(Bytes::from(
+                                        "Unexpected event data type from plugin",
+                                    )));
+                            }
                         }
                     }
                 } else {
@@ -610,9 +613,6 @@ async fn run_tls_mitm(
                 };
 
                 debug!("Converting final InboundContent directly to full HTTP response");
-                // Don't convert back to WASI - directly convert to final response.
-                // This avoids deadlocks where the guest's spawned task needs the store
-                // to be polled but we're trying to collect the body outside run_concurrent.
                 match content.into_full_response().await {
                     Ok(resp) => {
                         debug!("Converted final response successfully");

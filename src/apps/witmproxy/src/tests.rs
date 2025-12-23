@@ -1,7 +1,6 @@
 mod tests {
     use anyhow::Result;
     use tracing::debug;
-    use tracing_subscriber::field::debug;
 
     use crate::test_utils::{
         EchoResponse, Protocol, create_client, create_html_server, create_json_echo_server,
@@ -98,14 +97,7 @@ mod tests {
             .send()
             .await
             .unwrap();
-
-        // Debug: check response status and headers
-        eprintln!("Response status: {}", resp.status());
-        eprintln!("Response headers: {:?}", resp.headers());
-
         let response_text = resp.text().await.unwrap();
-        eprintln!("Response text length: {}", response_text.len());
-        eprintln!("Response text: {}", response_text);
 
         // Verify that the original HTML content is still present
         assert!(
