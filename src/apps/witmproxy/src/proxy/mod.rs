@@ -14,6 +14,7 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use http_body_util::Full;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -340,22 +341,33 @@ impl ProxyServer {
 pub(crate) async fn perform_upstream(
     upstream: &reqwest::Client,
     req: reqwest::Request,
-) -> Response<Full<Bytes>> {
+) -> Response<UnsyncBoxBody<Bytes, ErrorCode>> {
     match upstream.execute(req).await {
         Ok(resp) => {
             debug!("Upstream response status: {}", resp.status());
             match convert_reqwest_to_hyper_response(resp).await {
                 Ok(mut response) => {
                     strip_proxy_headers(response.headers_mut());
-                    response
+                    // Convert Full<Bytes> to UnsyncBoxBody
+                    let (parts, body) = response.into_parts();
+                    let boxed_body = body
+                        .map_err(|_| {
+                            ErrorCode::InternalError(Some("body conversion error".to_string()))
+                        })
+                        .boxed_unsync();
+                    Response::from_parts(parts, boxed_body)
                 }
                 Err(err) => {
                     error!("Failed to convert response: {}", err);
                     Response::builder()
                         .status(StatusCode::BAD_GATEWAY)
-                        .body(Full::new(Bytes::from(
-                            "Failed to convert upstream response",
-                        )))
+                        .body(
+                            Full::new(Bytes::from("Failed to convert upstream response"))
+                                .map_err(|_| {
+                                    ErrorCode::InternalError(Some("conversion error".to_string()))
+                                })
+                                .boxed_unsync(),
+                        )
                         .unwrap()
                 }
             }
@@ -364,7 +376,11 @@ pub(crate) async fn perform_upstream(
             error!("Upstream request failed with detailed error: {:?}", err);
             Response::builder()
                 .status(StatusCode::BAD_GATEWAY)
-                .body(Full::new(Bytes::from(err.to_string())))
+                .body(
+                    Full::new(Bytes::from(err.to_string()))
+                        .map_err(|_| ErrorCode::InternalError(Some("conversion error".to_string())))
+                        .boxed_unsync(),
+                )
                 .unwrap()
         }
     }
@@ -469,7 +485,11 @@ async fn run_tls_mitm(
                                 Full::new(Bytes::from(format!(
                                     "Failed to convert request: {}",
                                     err
-                                ))),
+                                )))
+                                .map_err(|_| {
+                                    ErrorCode::InternalError(Some("conversion error".to_string()))
+                                })
+                                .boxed_unsync(),
                             );
                         }
                     }
@@ -482,10 +502,13 @@ async fn run_tls_mitm(
                 let initial_response = match request_event_result {
                     Err(e) => Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Full::new(Bytes::from(format!(
-                            "Plugin event handling error: {}",
-                            e
-                        ))))
+                        .body(
+                            Full::new(Bytes::from(format!("Plugin event handling error: {}", e)))
+                                .map_err(|_| {
+                                    ErrorCode::InternalError(Some("conversion error".to_string()))
+                                })
+                                .boxed_unsync(),
+                        )
                         .expect("Could not construct error Response"),
                     Ok((event_data, mut store)) => match event_data {
                         WasmEvent::Request(rq) => {
@@ -500,34 +523,38 @@ async fn run_tls_mitm(
                                 Ok(rq) => perform_upstream(&upstream, rq).await,
                                 Err(err) => Response::builder()
                                     .status(StatusCode::BAD_REQUEST)
-                                    .body(Full::new(Bytes::from(format!(
-                                        "Failed to convert request: {}",
-                                        err
-                                    ))))
+                                    .body(
+                                        Full::new(Bytes::from(format!(
+                                            "Failed to convert request: {}",
+                                            err
+                                        )))
+                                        .map_err(|_| {
+                                            ErrorCode::InternalError(Some(
+                                                "conversion error".to_string(),
+                                            ))
+                                        })
+                                        .boxed_unsync(),
+                                    )
                                     .unwrap(),
                             }
                         }
                         WasmEvent::Response(WasiContextualResponse { response, .. }) => {
                             let response = store.data_mut().http().table.delete(response).unwrap();
                             let response = response.into_http(store, async { Ok(()) }).unwrap();
-                            match convert_boxbody_to_full_response(response).await {
-                                Ok(converted_resp) => converted_resp,
-                                Err(err) => {
-                                    error!("Failed to convert plugin response: {}", err);
-                                    Response::builder()
-                                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                        .body(Full::new(Bytes::from(
-                                            "Failed to convert plugin response",
-                                        )))
-                                        .unwrap()
-                                }
-                            }
+                            // Return the UnsyncBoxBody directly without collecting
+                            response
                         }
                         _ => Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from(
-                                "Unexpected event data type from plugin",
-                            )))
+                            .body(
+                                Full::new(Bytes::from("Unexpected event data type from plugin"))
+                                    .map_err(|_| {
+                                        ErrorCode::InternalError(Some(
+                                            "conversion error".to_string(),
+                                        ))
+                                    })
+                                    .boxed_unsync(),
+                            )
                             .expect("Could not construct error Response"),
                     },
                 };
@@ -551,7 +578,7 @@ async fn run_tls_mitm(
 
                 // TODO:
                 // Check response content-type for content-specific handling
-                let (content, _store) = if let Some(registry) = &plugin_registry {
+                let (content, mut store) = if let Some(registry) = &plugin_registry {
                     let (response, mut store) = match handled_response {
                         Ok((event_data, store)) => match event_data {
                             WasmEvent::Response(WasiContextualResponse { response, .. }) => {
@@ -560,19 +587,35 @@ async fn run_tls_mitm(
                             _ => {
                                 return Response::builder()
                                     .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(Full::new(Bytes::from(
-                                        "Unexpected event data type from plugin",
-                                    )));
+                                    .body(
+                                        Full::new(Bytes::from(
+                                            "Unexpected event data type from plugin",
+                                        ))
+                                        .map_err(|_| {
+                                            ErrorCode::InternalError(Some(
+                                                "conversion error".to_string(),
+                                            ))
+                                        })
+                                        .boxed_unsync(),
+                                    );
                             }
                         },
                         Err(e) => {
                             error!("Response event handling error: {}", e);
                             return Response::builder()
                                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(Full::new(Bytes::from(format!(
-                                    "Plugin response event handling error: {}",
-                                    e
-                                ))));
+                                .body(
+                                    Full::new(Bytes::from(format!(
+                                        "Plugin response event handling error: {}",
+                                        e
+                                    )))
+                                    .map_err(|_| {
+                                        ErrorCode::InternalError(Some(
+                                            "conversion error".to_string(),
+                                        ))
+                                    })
+                                    .boxed_unsync(),
+                                );
                         }
                     };
                     let registry = registry.read().await;
@@ -613,9 +656,17 @@ async fn run_tls_mitm(
                             _ => {
                                 return Response::builder()
                                     .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(Full::new(Bytes::from(
-                                        "Unexpected event data type from plugin",
-                                    )));
+                                    .body(
+                                        Full::new(Bytes::from(
+                                            "Unexpected event data type from plugin",
+                                        ))
+                                        .map_err(|_| {
+                                            ErrorCode::InternalError(Some(
+                                                "conversion error".to_string(),
+                                            ))
+                                        })
+                                        .boxed_unsync(),
+                                    );
                             }
                         }
                     }
@@ -623,24 +674,61 @@ async fn run_tls_mitm(
                     unreachable!()
                 };
 
-                debug!("Converting final InboundContent directly to full HTTP response");
+                debug!("Converting final InboundContent to streaming HTTP response");
                 let start_final_conversion = std::time::Instant::now();
-                match content.into_full_response().await {
-                    Ok(resp) => {
-                        debug!(
-                            "Converted final response successfully in {:?}",
-                            start_final_conversion.elapsed()
-                        );
-                        Ok(resp)
+
+                // Use into_wasi to get streaming response instead of collecting
+                match content.into_wasi() {
+                    Ok((wasi_response, io_future)) => {
+                        // Spawn the IO future to handle background stcoming
+                        tokio::spawn(async move {
+                            if let Err(e) = io_future.await {
+                                error!("Response IO error: {:?}", e);
+                            }
+                        });
+
+                        // Convert WASI response to hyper response
+                        match wasi_response.into_http(&mut store, async { Ok(()) }) {
+                            Ok(response) => {
+                                debug!(
+                                    "Converted to streaming response in {:?}",
+                                    start_final_conversion.elapsed()
+                                );
+                                Ok(response)
+                            }
+                            Err(err) => {
+                                error!("Error converting WASI response: {:?}", err);
+                                Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(
+                                        http_body_util::Full::new(Bytes::from(format!(
+                                            "Failed to convert WASI res response: {:?}",
+                                            err
+                                        )))
+                                        .map_err(|_| {
+                                            ErrorCode::InternalError(Some(
+                                                "conversion error".to_string(),
+                                            ))
+                                        })
+                                        .boxed_unsync(),
+                                    )
+                            }
+                        }
                     }
                     Err(err) => {
-                        error!("Error converting final response: {}", err);
+                        error!("Error getting streaming response: {}", err);
                         Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from(format!(
-                                "Failed to convert final response: {}",
-                                err
-                            ))))
+                            .body(
+                                http_body_util::Full::new(Bytes::from(format!(
+                                    "Failed to get streaming response: {}",
+                                    err
+                                )))
+                                .map_err(|_| {
+                                    ErrorCode::InternalError(Some("conversion error".to_string()))
+                                })
+                                .boxed_unsync(),
+                            )
                     }
                 }
             }
