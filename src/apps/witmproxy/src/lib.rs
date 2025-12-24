@@ -14,8 +14,10 @@ pub mod proxy;
 pub mod wasm;
 pub mod web;
 
-#[cfg(test)]
+// Make test_utils available for both internal tests and external integration tests
+#[cfg(any(test, feature = "test-helpers"))]
 pub mod test_utils;
+
 #[cfg(test)]
 mod tests;
 

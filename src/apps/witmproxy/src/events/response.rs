@@ -10,7 +10,7 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
 use crate::wasm::{
     Host,
     bindgen::{
-        EventData,
+        Event as WasmEvent,
         witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
     },
 };
@@ -25,13 +25,13 @@ impl Event for ContextualResponse {
         CapabilityKind::HandleEvent(EventKind::Response)
     }
 
-    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent> {
         let handle = store.data_mut().http().table.push(self.response)?;
         let response = WasiContextualResponse {
             request: self.request,
             response: handle,
         };
-        Ok(EventData::Response(response))
+        Ok(WasmEvent::Response(response))
     }
 
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>

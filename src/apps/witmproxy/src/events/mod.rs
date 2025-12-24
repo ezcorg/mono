@@ -5,7 +5,7 @@ use wasmtime::Store;
 use crate::wasm::{
     Host,
     bindgen::{
-        EventData,
+        Event as WasmEvent,
         witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
     },
 };
@@ -28,8 +28,8 @@ pub trait Event: Send {
         }
     }
 
-    /// Converts into EventData by consuming the event and storing it in the provided Store
-    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData>;
+    /// Converts into Event by consuming the event and storing it in the provided Store
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent>;
 
     /// Register event-specific variables and functions with the CEL environment
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
@@ -53,17 +53,17 @@ macro_rules! ensure_matches {
 }
 
 impl EventKind {
-    /// Validates that the received EventData is a valid output variant for this EventKind
-    pub fn validate_output(&self, event_data: &EventData) -> Result<()> {
+    /// Validates that the received Event is a valid output variant for this EventKind
+    pub fn validate_output(&self, event_data: &WasmEvent) -> Result<()> {
         match self {
             EventKind::Request => {
-                ensure_matches!(event_data, EventData::Request(_) | EventData::Response(_))
+                ensure_matches!(event_data, WasmEvent::Request(_) | WasmEvent::Response(_))
             }
-            EventKind::Response => ensure_matches!(event_data, EventData::Response(_)),
+            EventKind::Response => ensure_matches!(event_data, WasmEvent::Response(_)),
             EventKind::Connect => {
-                bail!("Connect events do not return EventData (no guest handling)")
+                bail!("Connect events do not return Event (no guest handling)")
             }
-            EventKind::InboundContent => ensure_matches!(event_data, EventData::InboundContent(_)),
+            EventKind::InboundContent => ensure_matches!(event_data, WasmEvent::InboundContent(_)),
         }
     }
 }

@@ -307,7 +307,7 @@ impl HostContentWithStore for WitmProxy {
         use http_body::Frame;
         use http_body_util::StreamBody;
 
-        let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, ErrorCode>>(32);
+        let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, ErrorCode>>(65536);
         let body = StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed_unsync();
 
         accessor.with(|mut access| {

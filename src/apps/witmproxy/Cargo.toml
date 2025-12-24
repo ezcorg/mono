@@ -103,6 +103,9 @@ cel-cxx = { version = "0.2.1", features = ["tokio"] }
 async-compression = { version = "0.4.35", features = ["brotli", "deflate", "deflate64", "futures-io", "gzip", "tokio", "zstd"] }
 tokio-stream = "0.1.17"
 
+# Optional test helper dependencies
+tempfile = { version = "3.8", optional = true }
+
 [dev-dependencies]
 # Test dependencies
 tokio-test = "0.4"
@@ -110,3 +113,7 @@ tempfile = "3.8"
 rcgen = "0.13.2"
 webpki-roots = "0.26"
 sqlx-cli = { version = "0.8.6", features = ["rustls"] }
+
+[features]
+# Feature to expose test utilities for integration tests in other crates
+test-helpers = ["dep:tempfile"]

@@ -7,7 +7,7 @@ use crate::plugins::cel::CelConnect;
 use crate::wasm::{
     Host,
     bindgen::{
-        EventData,
+        Event as WasmEvent,
         witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
     },
 };
@@ -39,8 +39,8 @@ impl Event for Connect {
         CapabilityKind::HandleEvent(EventKind::Connect)
     }
 
-    fn into_event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<EventData> {
-        // No EventData conversion, as Connect events don't result in WASM handling
+    fn into_event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<WasmEvent> {
+        // No Event conversion, as Connect events don't result in WASM handling
         unreachable!()
     }
 

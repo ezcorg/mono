@@ -3,10 +3,12 @@ package witmproxy:plugin@0.0.5;
 interface capabilities {
     use wasi:http/types@0.3.0-rc-2025-09-16.{request, response};
 
-    // resource http-client {}
-    // resource key-value-client {}
-    // resource sql-client {}
-    // resource queue-client {}
+    // TODO:
+    // resource http-client {} <- an HTTP client for making outbound requests
+    // resource key-value-client {} <- a simple key-value store client
+    // resource sql-client {} <- a SQLite/? database client
+    // resource queue-client {} <- a mpsc queue
+    // resource custom {} <- for user-defined capabilities
 
     /// A dumb and simple logging resource (for writing to stdout/stderr)
     /// TODO: replace with official wasi-logging when available
@@ -19,6 +21,7 @@ interface capabilities {
 
     /// A resource for annotating/labeling content
     resource annotator-client {
+        /// Annotate the provided content (extract and store features + metadata)
         annotate: func(content: content);
     }
 
@@ -48,8 +51,16 @@ interface capabilities {
     /// Capability scopes can be configured by the user and may not necessarily match
     /// the requested scope from the plugin.
     record capability-scope {
-        /// A CEL expression to match against context in which the capability is used,
+        /// A CEL expression, evaluating to `true` or `false` (whether or not a given capability should be granted), matching against the context provided to the capability,
         /// determining whether the capability applies.
+        /// 
+        /// See [CelRequest], [CelResponse], and [CelContent] for the context available to each expression.
+        /// 
+        /// ```rs
+        /// fn evaluate(request: CelRequest) -> bool { request.path() == "/example" } // for request events
+        /// fn evaluate(response: CelResponse, request: CelRequest) -> bool { response.status() == 200 && request.path() == "/example" } // for response events
+        /// fn evaluate(content: CelContent) -> bool { content.content_type() == "text/html" } // for inbound-content events
+        /// ```
         expression: string,
     }
 
@@ -110,8 +121,8 @@ interface capabilities {
         request: request-context,
     }
 
-    /// The different types of event data that can be handled (and returned) by plugins
-    variant event-data {
+    /// The different types of events that can be handled (and returned) by plugins
+    variant event {
         request(request),
         response(contextual-response),
         inbound-content(content),
@@ -132,7 +143,7 @@ interface capabilities {
 }
 
 interface witm-plugin {
-    use capabilities.{capability, capability-provider, event-data};
+    use capabilities.{capability, capability-provider, event};
 
     /// A tag representing a key-value pair of metadata
     record tag {
@@ -175,18 +186,18 @@ interface witm-plugin {
     /// If the manifest is invalid or cannot be verified, the host will not load the plugin.
     manifest: func() -> plugin-manifest;
 
-    /// A function called by the host to handle events matching the plugin's granted `handle-event` capabilities.
+    /// A function called by the host to handle events granted by the plugin's given capabilities.
     /// 
-    /// The capability provider can be used to access any granted capabilities (for example, logging or local storage) within the plugin.
-    /// Because request capabilities may not necessarily be granted, the plugin is responsible for checking and handling whether the capability is available.
+    /// The capability provider can be used to access additional host capabilities (for example, logging or local storage) within the plugin.
+    /// Because requested capabilities may not necessarily be granted, the plugin is responsible for checking and handling whether a capability they require is available.
     /// 
-    /// The plugin may return the event as is, perform modifications, return a new event entirely (so long as the event output is valid given the input),
-    /// or return `none` to abandon any further event processing (likely resulting in an HTTP error from the perspective of the host).
+    /// The handler may return the event as is, perform modifications, return a new event entirely (so long as the event output is valid given the input),
+    /// or return `None` to abandon any further event processing (likely resulting in an HTTP error from the perspective of the host).
     /// 
-    /// `request` events may return either `request` or `response` events.
-    /// `response` events must return `response` events.
-    /// `inbound-content` events must return `inbound-content` events.
-    handle: func(ev: event-data, cp: capability-provider) -> option<event-data>;
+    /// * [Request] events must return either [Request] or [Response] events.
+    /// * [Response] events must return [Response] events.
+    /// * [InboundContent] events must return [InboundContent] events.
+    handle: func(ev: event, cp: capability-provider) -> option<event>;
 }
 
 world plugin {

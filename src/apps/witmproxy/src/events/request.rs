@@ -2,7 +2,7 @@ use crate::events::Event;
 use crate::plugins::cel::CelRequest;
 use crate::wasm::Host;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::EventData;
+use crate::wasm::bindgen::witmproxy::plugin::capabilities::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind;
 use anyhow::Result;
 use cel_cxx::Activation;
@@ -18,9 +18,9 @@ impl Event for WasiRequest {
         CapabilityKind::HandleEvent(EventKind::Request)
     }
 
-    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent> {
         let handle: Resource<WasiRequest> = store.data_mut().http().table.push(*self)?;
-        Ok(EventData::Request(handle))
+        Ok(WasmEvent::Request(handle))
     }
 
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
@@ -53,9 +53,9 @@ where
     fn into_event_data(
         self: Box<Self>,
         _store: &mut Store<Host>,
-    ) -> Result<crate::wasm::bindgen::EventData> {
+    ) -> Result<crate::wasm::bindgen::Event> {
         anyhow::bail!(
-            "Conversion from Request<T> to EventData is possible, but not supported. Use `wasmtime_wasi_http::p3::Request` instead."
+            "Conversion from Request<T> to Event is possible, but not supported. Use `wasmtime_wasi_http::p3::Request` instead."
         );
     }
 

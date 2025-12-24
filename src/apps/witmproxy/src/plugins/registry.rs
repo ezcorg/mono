@@ -18,7 +18,7 @@ use crate::{
     plugins::WitmPlugin,
     wasm::{
         CapabilityProvider, Host, Runtime,
-        bindgen::{Plugin, witmproxy::plugin::capabilities::EventData},
+        bindgen::{Plugin, witmproxy::plugin::capabilities::Event as WasmEvent},
     },
 };
 
@@ -50,7 +50,7 @@ where
     Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
 }
 
-impl EventData {
+impl WasmEvent {
     pub fn register<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>> {
         // TODO: do this better
         let env = WasiRequest::register_cel_env(env)?;
@@ -63,7 +63,7 @@ impl EventData {
 
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
-        let env = EventData::register(Env::builder().with_standard(true))?.build()?;
+        let env = WasmEvent::register(Env::builder().with_standard(true))?.build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration
         // TODO: fix this with proper lifetime management
@@ -214,9 +214,9 @@ impl PluginRegistry {
         self.plugins.values().any(|p| p.can_handle(event))
     }
 
-    /// Handle a generic event, passing it through all registered plugins, and returning the final [EventData] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
-    /// Validates that the final [EventData] matches the expected output type for its event kind, returning an error if not
-    pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(EventData, Store<Host>)> {
+    /// Handle a generic event, passing it through all registered plugins, and returning the final [Event] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
+    /// Validates that the final [Event] matches the expected output type for its event kind, returning an error if not
+    pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
         let any_plugins = self.plugins.values().any(|p| p.can_handle(&event));
         if !any_plugins {
             debug!("No plugins with matching capability and scope; skipping plugin processing");
@@ -292,13 +292,13 @@ impl PluginRegistry {
                 .await??;
             match guest_result {
                 Some(new_event_data) => {
-                    // Create a new event from the returned EventData for the next iteration
+                    // Create a new event from the returned Event for the next iteration
                     current_event = match new_event_data {
-                        EventData::Request(r) => {
+                        WasmEvent::Request(r) => {
                             let req = store.data_mut().http().table.delete(r)?;
                             Box::new(req)
                         }
-                        EventData::Response(r) => {
+                        WasmEvent::Response(r) => {
                             let response = store.data_mut().http().table.delete(r.response)?;
                             let request_ctx = r.request;
                             Box::new(ContextualResponse {
@@ -306,7 +306,7 @@ impl PluginRegistry {
                                 response,
                             })
                         }
-                        EventData::InboundContent(c) => {
+                        WasmEvent::InboundContent(c) => {
                             let content = store.data_mut().table.delete(c)?;
                             Box::new(content)
                         }

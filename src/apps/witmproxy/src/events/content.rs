@@ -15,7 +15,7 @@ use crate::{
     wasm::{
         Host,
         bindgen::{
-            EventData,
+            Event as WasmEvent,
             witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
         },
     },
@@ -33,9 +33,9 @@ impl Event for InboundContent {
         CapabilityKind::HandleEvent(EventKind::InboundContent)
     }
 
-    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<EventData> {
+    fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent> {
         let handle: Resource<InboundContent> = store.data_mut().table.push(*self)?;
-        Ok(EventData::InboundContent(handle))
+        Ok(WasmEvent::InboundContent(handle))
     }
 
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
@@ -220,25 +220,39 @@ impl InboundContent {
 
         // Build the HTTP response using the parts
         // If data was taken, provide an empty body
+        let start = std::time::Instant::now();
         let body = self.body.unwrap_or_else(|| {
             use http_body_util::Empty;
             Empty::<Bytes>::new()
                 .map_err(|_| ErrorCode::InternalError(Some("empty body".to_string())))
                 .boxed_unsync()
         });
+        tracing::debug!("Body unwrap took {:?}", start.elapsed());
+
+        let start_compress = std::time::Instant::now();
         let body = InboundContent::compress(&self.parts, body)?;
+        tracing::debug!("Compression setup took {:?}", start_compress.elapsed());
 
         // Collect the body
+        tracing::debug!("Starting body collection...");
+        let start_collect = std::time::Instant::now();
         let collected = body
             .collect()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to collect body: {:?}", e))?;
+        tracing::debug!("Body collection took {:?}", start_collect.elapsed(),);
 
         // Remove content-length header since the body may have been modified
         let mut parts = self.parts;
         parts.headers.remove(hyper::header::CONTENT_LENGTH);
 
-        let full_body = http_body_util::Full::new(collected.to_bytes());
+        let bytes = collected.to_bytes();
+        tracing::debug!(
+            "Total bytes in final body: {}, total processing took {:?}",
+            bytes.len(),
+            start.elapsed()
+        );
+        let full_body = http_body_util::Full::new(bytes);
         let response = Response::from_parts(parts, full_body);
 
         Ok(response)

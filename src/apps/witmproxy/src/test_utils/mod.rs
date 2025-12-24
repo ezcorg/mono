@@ -87,6 +87,15 @@ pub async fn register_noop_plugin(registry: &mut PluginRegistry) -> Result<(), a
     registry.register_plugin(plugin).await
 }
 
+pub async fn register_noshorts_plugin(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+    let wasm_path = noshorts_plugin_path()?;
+    let component_bytes = std::fs::read(&wasm_path)?;
+
+    // Use the actual plugin_from_component method to test the real code path
+    let plugin = registry.plugin_from_component(component_bytes).await?;
+    registry.register_plugin(plugin).await
+}
+
 pub async fn create_db() -> (Db, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test.db");
@@ -534,6 +543,42 @@ pub fn test_component_path() -> Result<String> {
         if !status.success() {
             return Err(anyhow::anyhow!(
                 "Failed to build wasm-test-component: make exited with status {}",
+                status
+            ));
+        }
+
+        // Verify the file was created
+        if !Path::new(&path).exists() {
+            return Err(anyhow::anyhow!(
+                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
+                path
+            ));
+        }
+    }
+
+    Ok(path)
+}
+
+pub fn noshorts_plugin_path() -> Result<String> {
+    let path = format!(
+        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noshorts.signed.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    if !Path::new(&path).exists() {
+        // Build the component
+        let plugin_dir = format!(
+            "{}/../../../src/rust/witmproxy-plugin-noshorts",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let status = Command::new("make")
+            .current_dir(&plugin_dir)
+            .status()
+            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", plugin_dir, e))?;
+
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "Failed to build witmproxy-plugin-noshorts: make exited with status {}",
                 status
             ));
         }

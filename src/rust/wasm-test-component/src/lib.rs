@@ -3,8 +3,7 @@ use crate::{
         Capability, CapabilityProvider, Guest, PluginManifest,
     },
     witmproxy::plugin::capabilities::{
-        CapabilityKind, CapabilityScope, ContextualResponse, EventData, EventKind, Request,
-        Response,
+        CapabilityKind, CapabilityScope, ContextualResponse, Event, EventKind, Request, Response,
     },
 };
 
@@ -60,9 +59,9 @@ impl Guest for Plugin {
         }
     }
 
-    async fn handle(ev: EventData, _cp: CapabilityProvider) -> Option<EventData> {
+    async fn handle(ev: Event, _cp: CapabilityProvider) -> Option<Event> {
         match ev {
-            EventData::Request(req) => {
+            Event::Request(req) => {
                 let authority = req.get_authority().await;
                 let path_with_query = req.get_path_with_query().await;
                 let scheme = req.get_scheme().await;
@@ -82,9 +81,9 @@ impl Guest for Plugin {
                 let _ = new_req.set_authority(authority).await;
                 let _ = new_req.set_path_with_query(path_with_query).await;
                 let _ = new_req.set_scheme(scheme).await;
-                Some(EventData::Request(new_req))
+                Some(Event::Request(new_req))
             }
-            EventData::Response(ContextualResponse { response, request }) => {
+            Event::Response(ContextualResponse { response, request }) => {
                 let old_headers = response.get_headers().await;
 
                 // Clone to get mutable headers
@@ -98,12 +97,12 @@ impl Guest for Plugin {
                 let (_, result_rx) = wit_future::new(|| Ok(()));
                 let (body, trailers) = Response::consume_body(response, result_rx).await;
                 let (new_res, _) = Response::new(headers, Some(body), trailers).await;
-                Some(EventData::Response(ContextualResponse {
+                Some(Event::Response(ContextualResponse {
                     response: new_res,
                     request,
                 }))
             }
-            EventData::InboundContent(content) => {
+            Event::InboundContent(content) => {
                 let (mut tx, rx) = wit_stream::new();
                 let data = content.body().await;
 
@@ -120,7 +119,7 @@ impl Guest for Plugin {
 
                 // Return the modified stream
                 content.set_body(rx).await;
-                Some(EventData::InboundContent(content))
+                Some(Event::InboundContent(content))
             }
         }
     }

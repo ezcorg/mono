@@ -5,7 +5,7 @@ mod tests {
         config::confique_app_config_layer::AppConfigLayer,
         plugins::{ WitmPlugin},
         test_utils::test_component_path,
-        wasm::bindgen::EventData,
+        wasm::bindgen::Event,
     };
     use anyhow::Result;
     use cel_cxx::{Env, EnvBuilder};
@@ -15,7 +15,7 @@ mod tests {
 
     /// Helper function to create a static CEL environment for tests
     fn create_static_cel_env() -> Result<&'static Env<'static>> {
-        let env = EventData::register(EnvBuilder::new())?.build()?;
+        let env = Event::register(EnvBuilder::new())?.build()?;
         // Leak the env to get a static reference since it contains only static data
         // and we want it to live for the program duration
         Ok(Box::leak(Box::new(env)))

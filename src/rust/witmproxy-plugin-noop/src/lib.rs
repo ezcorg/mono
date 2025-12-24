@@ -2,9 +2,7 @@ use crate::{
     exports::witmproxy::plugin::witm_plugin::{
         Capability, CapabilityProvider, Guest, PluginManifest,
     },
-    witmproxy::plugin::capabilities::{
-        EventData, CapabilityKind, EventKind, CapabilityScope,
-    },
+    witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Event, EventKind},
 };
 
 wit_bindgen::generate!({
@@ -30,19 +28,19 @@ impl Guest for Plugin {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
                     scope: CapabilityScope {
                         expression: "true".into(),
-                    }
+                    },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
                     scope: CapabilityScope {
                         expression: "true".into(),
-                    }
+                    },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
                     scope: CapabilityScope {
                         expression: "true".into(),
-                    }
+                    },
                 },
             ],
             license: "MIT".to_string(),
@@ -51,7 +49,7 @@ impl Guest for Plugin {
         }
     }
 
-    fn handle(ev: EventData, _cp: CapabilityProvider) -> Option<EventData> {
+    fn handle(ev: Event, _cp: CapabilityProvider) -> Option<Event> {
         Some(ev)
     }
 }

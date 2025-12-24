@@ -8,7 +8,7 @@ use crate::http::utils::ContentTyped;
 use crate::plugins::cel::CelRequest;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
-use crate::wasm::bindgen::EventData;
+use crate::wasm::bindgen::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
 use bytes::Bytes;
@@ -292,10 +292,10 @@ impl ProxyServer {
                             {
                                 match &e {
                                     ProxyError::Io(ioe) if is_closed(ioe) => {
-                                        debug!("transparent tunnel closed")
+                                        debug!("Transparent tunnel closed")
                                     }
                                     _ => warn!(
-                                        "transparent forwarding error for upstream {}: {}",
+                                        "Transparent forwarding error for upstream {}: {}",
                                         authority, e
                                     ),
                                 }
@@ -488,7 +488,7 @@ async fn run_tls_mitm(
                         ))))
                         .expect("Could not construct error Response"),
                     Ok((event_data, mut store)) => match event_data {
-                        EventData::Request(rq) => {
+                        WasmEvent::Request(rq) => {
                             // TODO: no unwraps
                             let rq = store.data_mut().http().table.delete(rq).unwrap();
                             request_ctx = CelRequest::from(&rq);
@@ -507,7 +507,7 @@ async fn run_tls_mitm(
                                     .unwrap(),
                             }
                         }
-                        EventData::Response(WasiContextualResponse { response, .. }) => {
+                        WasmEvent::Response(WasiContextualResponse { response, .. }) => {
                             let response = store.data_mut().http().table.delete(response).unwrap();
                             let response = response.into_http(store, async { Ok(()) }).unwrap();
                             match convert_boxbody_to_full_response(response).await {
@@ -554,7 +554,7 @@ async fn run_tls_mitm(
                 let (content, _store) = if let Some(registry) = &plugin_registry {
                     let (response, mut store) = match handled_response {
                         Ok((event_data, store)) => match event_data {
-                            EventData::Response(WasiContextualResponse { response, .. }) => {
+                            WasmEvent::Response(WasiContextualResponse { response, .. }) => {
                                 (response, store)
                             }
                             _ => {
@@ -579,9 +579,16 @@ async fn run_tls_mitm(
                     let response = store.data_mut().http().table.delete(response).unwrap();
                     let content_type = response.content_type();
                     debug!("Content type for InboundContent: {}", content_type);
+                    let start_into_http = std::time::Instant::now();
                     let response = response.into_http(&mut store, async { Ok(()) }).unwrap();
+                    debug!("into_http completed in {:?}", start_into_http.elapsed());
                     let (parts, body) = response.into_parts();
+                    let start_content_new = std::time::Instant::now();
                     let content = InboundContent::new(parts, content_type.clone(), body).unwrap();
+                    debug!(
+                        "InboundContent::new completed in {:?}",
+                        start_content_new.elapsed()
+                    );
                     if content_type.eq("unknown") {
                         (content, store)
                     } else {
@@ -590,11 +597,15 @@ async fn run_tls_mitm(
                             "Created InboundContent event with content-type: {}",
                             content_type
                         );
+                        let start_handle = std::time::Instant::now();
                         let (event, mut store) = registry.handle_event(content).await.unwrap();
-                        debug!("InboundContent event handled");
+                        debug!(
+                            "InboundContent event handled in {:?}",
+                            start_handle.elapsed()
+                        );
 
                         match event {
-                            EventData::InboundContent(content_resource) => {
+                            WasmEvent::InboundContent(content_resource) => {
                                 let content =
                                     store.data_mut().table.delete(content_resource).unwrap();
                                 (content, store)
@@ -613,9 +624,13 @@ async fn run_tls_mitm(
                 };
 
                 debug!("Converting final InboundContent directly to full HTTP response");
+                let start_final_conversion = std::time::Instant::now();
                 match content.into_full_response().await {
                     Ok(resp) => {
-                        debug!("Converted final response successfully");
+                        debug!(
+                            "Converted final response successfully in {:?}",
+                            start_final_conversion.elapsed()
+                        );
                         Ok(resp)
                     }
                     Err(err) => {

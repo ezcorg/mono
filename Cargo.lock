@@ -10701,7 +10701,10 @@ dependencies = [
  "anyhow",
  "brotli",
  "flate2",
+ "tokio",
+ "tracing-subscriber",
  "wit-bindgen",
+ "witmproxy",
 ]
 
 [[package]]
