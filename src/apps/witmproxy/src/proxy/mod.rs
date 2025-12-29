@@ -138,7 +138,6 @@ impl ProxyServer {
     }
 
     /// Returns a future that resolves when the server stops.
-    /// Currently this is never unless shutdown is implemented.
     pub async fn join(&self) {
         self.shutdown_notify.notified().await;
     }
@@ -229,7 +228,7 @@ impl ProxyServer {
     async fn handle_plain_http(
         &self,
         mut req: Request<Incoming>,
-    ) -> Result<Response<Full<Bytes>>, ProxyError> {
+    ) -> Result<Response<UnsyncBoxBody<Bytes, ErrorCode>>, ProxyError> {
         if req.method() == Method::CONNECT {
             debug!("Handling CONNECT request");
 
@@ -241,9 +240,11 @@ impl ProxyServer {
                 .unwrap_or_default();
             debug!("CONNECT request authority: {}", authority);
             if authority.is_empty() {
-                let resp = Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(Full::new(Bytes::from("CONNECT missing authority")))?;
+                let resp = Response::builder().status(StatusCode::BAD_REQUEST).body(
+                    Full::new(Bytes::from("CONNECT missing authority"))
+                        .map_err(|_| ErrorCode::InternalError(Some("conversion error".to_string())))
+                        .boxed_unsync(),
+                )?;
                 return Ok::<_, ProxyError>(resp);
             }
 
@@ -308,9 +309,11 @@ impl ProxyServer {
             }
 
             // Return 200 Connection Established for CONNECT
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .body(Full::new(Bytes::new()))?);
+            return Ok(Response::builder().status(StatusCode::OK).body(
+                Full::new(Bytes::new())
+                    .map_err(|_| ErrorCode::InternalError(Some("conversion error".to_string())))
+                    .boxed_unsync(),
+            )?);
         }
 
         // ----- Plain HTTP proxying (request line is absolute-form from clients) -----
@@ -348,14 +351,7 @@ pub(crate) async fn perform_upstream(
             match convert_reqwest_to_hyper_response(resp).await {
                 Ok(mut response) => {
                     strip_proxy_headers(response.headers_mut());
-                    // Convert Full<Bytes> to UnsyncBoxBody
-                    let (parts, body) = response.into_parts();
-                    let boxed_body = body
-                        .map_err(|_| {
-                            ErrorCode::InternalError(Some("body conversion error".to_string()))
-                        })
-                        .boxed_unsync();
-                    Response::from_parts(parts, boxed_body)
+                    response
                 }
                 Err(err) => {
                     error!("Failed to convert response: {}", err);
@@ -461,10 +457,12 @@ async fn run_tls_mitm(
             let plugin_registry = plugin_registry.clone();
 
             async move {
+                let service_fn_start = std::time::Instant::now();
                 let method = req.method().clone();
                 let uri = req.uri().clone();
                 let req = fix_origin_form_request(req);
                 debug!("Handling TLS request: {} {}", method, uri);
+                debug!("🕐 SERVICE_FN START: {} {}", method, uri);
                 let mut request_ctx = CelRequest::from(&req);
 
                 let request_event_result = if let Some(registry) = &plugin_registry {
@@ -495,10 +493,13 @@ async fn run_tls_mitm(
                     }
                 };
 
+                let request_event_elapsed = service_fn_start.elapsed();
                 debug!(
-                    "Handled request event, checking result and performing upstream call if needed"
+                    "🕐 REQUEST_EVENT handled in {:?}, checking result and performing upstream call if needed",
+                    request_event_elapsed
                 );
 
+                let upstream_start = std::time::Instant::now();
                 let initial_response = match request_event_result {
                     Err(e) => Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -541,7 +542,6 @@ async fn run_tls_mitm(
                         WasmEvent::Response(WasiContextualResponse { response, .. }) => {
                             let response = store.data_mut().http().table.delete(response).unwrap();
                             let response = response.into_http(store, async { Ok(()) }).unwrap();
-                            // Return the UnsyncBoxBody directly without collecting
                             response
                         }
                         _ => Response::builder()
@@ -559,8 +559,13 @@ async fn run_tls_mitm(
                     },
                 };
 
-                debug!("Initial response obtained, proceeding to response event handling");
+                let upstream_elapsed = upstream_start.elapsed();
+                debug!(
+                    "🕐 INITIAL_RESPONSE obtained in {:?}, proceeding to response event handling",
+                    upstream_elapsed
+                );
 
+                let response_event_start = std::time::Instant::now();
                 let handled_response = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
                     let (response, _io) = WasiResponse::from_http(initial_response);
@@ -574,7 +579,11 @@ async fn run_tls_mitm(
                     return Ok(initial_response);
                 };
 
-                debug!("Response handlers invoked, checking for specific content-type handling");
+                let response_event_elapsed = response_event_start.elapsed();
+                debug!(
+                    "🕐 RESPONSE_EVENT handled in {:?}, checking for specific content-type handling",
+                    response_event_elapsed
+                );
 
                 // TODO:
                 // Check response content-type for content-specific handling
@@ -674,13 +683,20 @@ async fn run_tls_mitm(
                     unreachable!()
                 };
 
+                let content_handling_elapsed = service_fn_start.elapsed()
+                    - request_event_elapsed
+                    - upstream_elapsed
+                    - response_event_elapsed;
+                debug!(
+                    "🕐 CONTENT_HANDLING completed in {:?}",
+                    content_handling_elapsed
+                );
                 debug!("Converting final InboundContent to streaming HTTP response");
                 let start_final_conversion = std::time::Instant::now();
 
                 // Use into_wasi to get streaming response instead of collecting
                 match content.into_wasi() {
                     Ok((wasi_response, io_future)) => {
-                        // Spawn the IO future to handle background stcoming
                         tokio::spawn(async move {
                             if let Err(e) = io_future.await {
                                 error!("Response IO error: {:?}", e);
@@ -690,9 +706,22 @@ async fn run_tls_mitm(
                         // Convert WASI response to hyper response
                         match wasi_response.into_http(&mut store, async { Ok(()) }) {
                             Ok(response) => {
+                                let final_conversion_elapsed = start_final_conversion.elapsed();
+                                let total_elapsed = service_fn_start.elapsed();
                                 debug!(
-                                    "Converted to streaming response in {:?}",
-                                    start_final_conversion.elapsed()
+                                    "🕐 FINAL_CONVERSION completed in {:?}",
+                                    final_conversion_elapsed
+                                );
+                                debug!(
+                                    "🕐 SERVICE_FN TOTAL: {:?} for {} {} (request: {:?}, upstream: {:?}, response: {:?}, content: {:?}, final: {:?})",
+                                    total_elapsed,
+                                    method,
+                                    uri,
+                                    request_event_elapsed,
+                                    upstream_elapsed,
+                                    response_event_elapsed,
+                                    content_handling_elapsed,
+                                    final_conversion_elapsed
                                 );
                                 Ok(response)
                             }

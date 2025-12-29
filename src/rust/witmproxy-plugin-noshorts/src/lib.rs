@@ -1,3 +1,5 @@
+use wit_bindgen::StreamResult;
+
 use crate::exports::witmproxy::plugin::witm_plugin::{
     Capability, CapabilityProvider, Event, Guest, PluginManifest,
 };
@@ -20,6 +22,10 @@ pub const STYLES: &str = r#"
     }
 
     [is-shorts="true"] {
+        display: none !important;
+    }
+
+    ytd-guide-entry-renderer a[title="Shorts"] {
         display: none !important;
     }
 </style>
@@ -75,7 +81,7 @@ impl Guest for Plugin {
                     .await;
 
                 let start_body_retrieval = std::time::Instant::now();
-                let body = content.body().await;
+                let mut body = content.body().await;
                 logger
                     .info(
                         format!(
@@ -87,91 +93,26 @@ impl Guest for Plugin {
                     .await;
 
                 wit_bindgen::spawn(async move {
-                    let start_collect = std::time::Instant::now();
-                    // Collect all data (unavoidable with current API)
-                    let data = body.collect().await;
-                    logger
-                        .info(
-                            format!(
-                                "[noshorts] Body collected ({} bytes) in {:?}",
-                                data.len(),
-                                start_collect.elapsed()
-                            )
-                            .into(),
-                        )
-                        .await;
-                    // Write in chunks to reduce cross-boundary transfer overhead
-                    const CHUNK_SIZE: usize = 65536; // 64KB chunks
-
-                    let start_processing = std::time::Instant::now();
-                    // Search for <head> tag
-                    let head_search_start = std::time::Instant::now();
-                    let head_pos_opt = data
-                        .windows(5)
-                        .position(|w| w.eq_ignore_ascii_case(b"<head"));
-                    logger
-                        .info(
-                            format!(
-                                "[noshorts] Head tag search completed in {:?}",
-                                head_search_start.elapsed()
-                            )
-                            .into(),
-                        )
-                        .await;
-
-                    let start_write = std::time::Instant::now();
-                    if let Some(head_start) = head_pos_opt {
-                        // Find the closing '>' of the head tag
-                        if let Some(relative_close) =
-                            data[head_start..].iter().position(|&b| b == b'>')
-                        {
-                            let injection_pos = head_start + relative_close + 1;
-                            logger
-                                .info(
-                                    format!(
-                                        "[noshorts] Injecting styles at position {}",
-                                        injection_pos
-                                    )
-                                    .into(),
-                                )
-                                .await;
-
-                            // Write everything before injection point
-                            let before = &data[..injection_pos];
-                            for chunk in before.chunks(CHUNK_SIZE) {
-                                tx.write_all(chunk.to_vec()).await;
+                    let start_streaming = std::time::Instant::now();
+                    let mut chunk = Vec::with_capacity(1024);
+                    loop {
+                        let (status, buf) = body.read(chunk).await;
+                        chunk = buf;
+                        match status {
+                            StreamResult::Complete(_) => {
+                                chunk = tx.write_all(chunk).await;
+                                assert!(chunk.is_empty());
                             }
-
-                            // Write styles
-                            tx.write_all(STYLES.as_bytes().to_vec()).await;
-
-                            // Write everything after injection point
-                            let after = &data[injection_pos..];
-                            for chunk in after.chunks(CHUNK_SIZE) {
-                                tx.write_all(chunk.to_vec()).await;
-                            }
-                        } else {
-                            // No closing '>', write original in chunks
-                            logger
-                                .info(
-                                    "[noshorts] No head tag closing found, writing original".into(),
-                                )
-                                .await;
-                            for chunk in data.chunks(CHUNK_SIZE) {
-                                tx.write_all(chunk.to_vec()).await;
-                            }
-                        }
-                    } else {
-                        // No <head> tag, write original in chunks
-                        logger
-                            .info("[noshorts] No head tag found, writing original".into())
-                            .await;
-                        for chunk in data.chunks(CHUNK_SIZE) {
-                            tx.write_all(chunk.to_vec()).await;
+                            StreamResult::Dropped | StreamResult::Cancelled => break,
                         }
                     }
+                    drop(tx);
+
                     logger
-                        .info(format!("[noshorts] All content written to stream in {:?} (total processing: {:?})", start_write.elapsed(), start_processing.elapsed()).into())
+                        .info(format!(
+                            "[noshorts] stream finished writing in {:?}",
+                            start_streaming.elapsed()
+                        ))
                         .await;
                 });
 
