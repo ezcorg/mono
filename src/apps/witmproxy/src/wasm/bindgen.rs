@@ -1,7 +1,5 @@
 pub use crate::events::content::InboundContent;
-pub use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
-    Event, PluginManifest,
-};
+pub use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{Event, PluginManifest};
 pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient, Logger};
 
 wasmtime::component::bindgen!({

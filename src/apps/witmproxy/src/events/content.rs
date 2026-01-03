@@ -5,6 +5,7 @@ use http_body_util::combinators::UnsyncBoxBody;
 use hyper::Response;
 use salvo::http::response::Parts;
 use wasmtime::{Store, component::Resource};
+use wasmtime_wasi::runtime::with_ambient_tokio_runtime;
 
 use crate::http::utils::ContentEncoding;
 use crate::http::utils::Encoded;
@@ -99,40 +100,46 @@ impl InboundContent {
                 anyhow::bail!("Unsupported content encoding")
             }
             _ => {
-                // Convert body to a stream of Result<Bytes, ErrorCode>
-                let stream = http_body_util::BodyStream::new(body);
+                // IMPORTANT: Wrap the entire adapter chain creation in with_ambient_tokio_runtime
+                // to ensure proper waker integration between futures and tokio async primitives.
+                // Without this, the compression stream may not wake properly when data is available,
+                // causing long delays (10+ seconds) before data is sent to the client.
+                let encoded_body = with_ambient_tokio_runtime(|| {
+                    // Convert body to a stream of Result<Bytes, ErrorCode>
+                    let stream = http_body_util::BodyStream::new(body);
 
-                // Convert to a futures::io::AsyncRead
-                let async_read = stream
-                    .map_ok(|frame| frame.into_data().unwrap_or_else(|_| Bytes::new()))
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-                    .into_async_read();
+                    // Convert to a futures::io::AsyncRead
+                    let async_read = stream
+                        .map_ok(|frame| frame.into_data().unwrap_or_else(|_| Bytes::new()))
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                        .into_async_read();
 
-                let buf_reader = BufReader::new(async_read);
+                    let buf_reader = BufReader::new(async_read);
 
-                // Apply the appropriate encoder
-                let encoded: Box<dyn futures::io::AsyncRead + Send + Unpin> = match encoding {
-                    ContentEncoding::Gzip => Box::new(GzipEncoder::new(buf_reader)),
-                    ContentEncoding::Deflate => Box::new(DeflateEncoder::new(buf_reader)),
-                    ContentEncoding::Br => Box::new(BrotliEncoder::new(buf_reader)),
-                    ContentEncoding::Zstd => Box::new(ZstdEncoder::new(buf_reader)),
-                    _ => unreachable!(),
-                };
+                    // Apply the appropriate encoder
+                    let encoded: Box<dyn futures::io::AsyncRead + Send + Unpin> = match encoding {
+                        ContentEncoding::Gzip => Box::new(GzipEncoder::new(buf_reader)),
+                        ContentEncoding::Deflate => Box::new(DeflateEncoder::new(buf_reader)),
+                        ContentEncoding::Br => Box::new(BrotliEncoder::new(buf_reader)),
+                        ContentEncoding::Zstd => Box::new(ZstdEncoder::new(buf_reader)),
+                        _ => unreachable!(),
+                    };
 
-                // Convert AsyncRead back to a stream of Bytes
-                use tokio_util::io::ReaderStream;
+                    // Convert AsyncRead back to a stream of Bytes
+                    use tokio_util::io::ReaderStream;
 
-                // Convert futures::io::AsyncRead to tokio::io::AsyncRead
-                let tokio_compat = tokio_util::compat::FuturesAsyncReadCompatExt::compat(encoded);
-                let byte_stream = ReaderStream::new(tokio_compat);
+                    // Convert futures::io::AsyncRead to tokio::io::AsyncRead
+                    let tokio_compat =
+                        tokio_util::compat::FuturesAsyncReadCompatExt::compat(encoded);
+                    let byte_stream = ReaderStream::new(tokio_compat);
 
-                // Convert to http_body stream
-                let frame_stream = byte_stream.map_ok(|bytes| http_body::Frame::data(bytes));
-                let encoded_body =
+                    // Convert to http_body stream
+                    let frame_stream = byte_stream.map_ok(|bytes| http_body::Frame::data(bytes));
                     http_body_util::BodyExt::map_err(StreamBody::new(frame_stream), |e| {
                         ErrorCode::InternalError(Some(format!("Compression error: {}", e)))
                     })
-                    .boxed_unsync();
+                    .boxed_unsync()
+                });
                 Ok(encoded_body)
             }
         }
@@ -162,40 +169,45 @@ impl InboundContent {
                 anyhow::bail!("Unsupported content encoding")
             }
             _ => {
-                // Convert body to a stream of Result<Bytes, ErrorCode>
-                let stream = http_body_util::BodyStream::new(body);
+                // IMPORTANT: Wrap the entire adapter chain creation in with_ambient_tokio_runtime
+                // to ensure proper waker integration between futures and tokio async primitives.
+                // This ensures decompressed body streams wake properly when data is available.
+                let decoded_body = with_ambient_tokio_runtime(|| {
+                    // Convert body to a stream of Result<Bytes, ErrorCode>
+                    let stream = http_body_util::BodyStream::new(body);
 
-                // Convert to a futures::io::AsyncRead
-                let async_read = stream
-                    .map_ok(|frame| frame.into_data().unwrap_or_else(|_| Bytes::new()))
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-                    .into_async_read();
+                    // Convert to a futures::io::AsyncRead
+                    let async_read = stream
+                        .map_ok(|frame| frame.into_data().unwrap_or_else(|_| Bytes::new()))
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                        .into_async_read();
 
-                let buf_reader = BufReader::new(async_read);
+                    let buf_reader = BufReader::new(async_read);
 
-                // Apply the appropriate decoder
-                let decoded: Box<dyn futures::io::AsyncRead + Send + Unpin> = match encoding {
-                    ContentEncoding::Gzip => Box::new(GzipDecoder::new(buf_reader)),
-                    ContentEncoding::Deflate => Box::new(DeflateDecoder::new(buf_reader)),
-                    ContentEncoding::Br => Box::new(BrotliDecoder::new(buf_reader)),
-                    ContentEncoding::Zstd => Box::new(ZstdDecoder::new(buf_reader)),
-                    _ => unreachable!(),
-                };
+                    // Apply the appropriate decoder
+                    let decoded: Box<dyn futures::io::AsyncRead + Send + Unpin> = match encoding {
+                        ContentEncoding::Gzip => Box::new(GzipDecoder::new(buf_reader)),
+                        ContentEncoding::Deflate => Box::new(DeflateDecoder::new(buf_reader)),
+                        ContentEncoding::Br => Box::new(BrotliDecoder::new(buf_reader)),
+                        ContentEncoding::Zstd => Box::new(ZstdDecoder::new(buf_reader)),
+                        _ => unreachable!(),
+                    };
 
-                // Convert AsyncRead back to a stream of Bytes
-                use tokio_util::io::ReaderStream;
+                    // Convert AsyncRead back to a stream of Bytes
+                    use tokio_util::io::ReaderStream;
 
-                // Convert futures::io::AsyncRead to tokio::io::AsyncRead
-                let tokio_compat = tokio_util::compat::FuturesAsyncReadCompatExt::compat(decoded);
-                let byte_stream = ReaderStream::new(tokio_compat);
+                    // Convert futures::io::AsyncRead to tokio::io::AsyncRead
+                    let tokio_compat =
+                        tokio_util::compat::FuturesAsyncReadCompatExt::compat(decoded);
+                    let byte_stream = ReaderStream::new(tokio_compat);
 
-                // Convert to http_body stream
-                let frame_stream = byte_stream.map_ok(|bytes| http_body::Frame::data(bytes));
-                let decoded_body =
+                    // Convert to http_body stream
+                    let frame_stream = byte_stream.map_ok(|bytes| http_body::Frame::data(bytes));
                     http_body_util::BodyExt::map_err(StreamBody::new(frame_stream), |e| {
                         ErrorCode::InternalError(Some(format!("Decompression error: {}", e)))
                     })
-                    .boxed_unsync();
+                    .boxed_unsync()
+                });
 
                 Ok(decoded_body)
             }
@@ -223,12 +235,14 @@ impl InboundContent {
                 .map_err(|_| ErrorCode::InternalError(Some("empty body".to_string())))
                 .boxed_unsync()
         });
-        let body = InboundContent::compress(&self.parts, body)?;
+        // let body = InboundContent::compress(&self.parts, body)?;
 
         // Remove content-length header since the body may have been modified
         // and we're using chunked transfer encoding for the streaming body
         let mut parts = self.parts;
         parts.headers.remove(hyper::header::CONTENT_LENGTH);
+        parts.headers.remove(hyper::header::TRANSFER_ENCODING);
+        parts.headers.remove(hyper::header::CONTENT_ENCODING);
         Ok(Response::from_parts(parts, body))
     }
 }

@@ -219,7 +219,10 @@ impl PluginRegistry {
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
         let any_plugins = self.plugins.values().any(|p| p.can_handle(&event));
         if !any_plugins {
-            debug!("No plugins with matching capability and scope; skipping plugin processing");
+            debug!(
+                "No plugins with matching capability and scope; skipping plugin processing for event of kind: {:?}",
+                event.kind()
+            );
             let mut store = self.new_store();
             let event_data = event.into_event_data(&mut store)?;
             return Ok((event_data, store));

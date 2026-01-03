@@ -17,8 +17,8 @@ struct Plugin;
 impl Guest for Plugin {
     fn manifest() -> PluginManifest {
         PluginManifest {
-            name: "witmproxy-plugin-noop".to_string(),
-            namespace: "Theodore Brockman".to_string(),
+            name: "noop".to_string(),
+            namespace: "witmproxy".to_string(),
             author: "Theodore Brockman".to_string(),
             version: "0.0.0".to_string(),
             description: "noop".to_string(),

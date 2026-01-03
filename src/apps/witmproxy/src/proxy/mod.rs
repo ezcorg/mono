@@ -639,16 +639,9 @@ async fn run_tls_mitm(
                     );
 
                     debug!("Content type for InboundContent: {}", content_type);
-                    let start_into_http = std::time::Instant::now();
                     let response = response.into_http(&mut store, async { Ok(()) }).unwrap();
-                    debug!("into_http completed in {:?}", start_into_http.elapsed());
                     let (parts, body) = response.into_parts();
-                    let start_content_new = std::time::Instant::now();
                     let content = InboundContent::new(parts, content_type.clone(), body).unwrap();
-                    debug!(
-                        "InboundContent::new completed in {:?}",
-                        start_content_new.elapsed()
-                    );
                     // Skip content event processing if:
                     // 1. Content-type is unknown (no Content-Type header)
                     // 2. Response status indicates no content should be present
@@ -706,7 +699,7 @@ async fn run_tls_mitm(
                     "🕐 CONTENT_HANDLING completed in {:?}",
                     content_handling_elapsed
                 );
-                debug!("Converting final InboundContent to streaming HTTP response");
+                debug!("Converting final InboundContent to HTTP response");
 
                 match content.into_response() {
                     Ok(response) => Ok(response),

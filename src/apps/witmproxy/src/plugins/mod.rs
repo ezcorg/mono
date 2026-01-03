@@ -208,10 +208,7 @@ impl WitmPlugin {
                 };
 
                 match program.evaluate(activation) {
-                    Ok(cel_cxx::Value::Bool(true)) => {
-                        debug!("CEL filter result: true");
-                        true
-                    }
+                    Ok(cel_cxx::Value::Bool(true)) => true,
                     Ok(_) => false,
                     Err(e) => {
                         error!("Error evaluating CEL filter: {}", e);
