@@ -1,3 +1,7 @@
+use encoding_rs::Encoding;
+use lol_html::{AsciiCompatibleEncoding, HtmlRewriter, Settings, element};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use wit_bindgen::StreamResult;
 
 use crate::exports::witmproxy::plugin::witm_plugin::{
@@ -73,11 +77,26 @@ impl Guest for Plugin {
     async fn handle(ev: Event, cap: CapabilityProvider) -> Option<Event> {
         match ev {
             Event::InboundContent(content) => {
-                let (mut tx, rx) = wit_stream::new();
+                let (body_tx, body_rx) = wit_stream::new();
                 let logger = cap.logger().await.unwrap();
 
                 logger
                     .info("[noshorts] START: Processing InboundContent event".into())
+                    .await;
+
+                // Extract charset from content-type header
+                let content_type = content.content_type().await;
+                let encoding = extract_charset_from_content_type(&content_type);
+
+                logger
+                    .info(
+                        format!(
+                            "[noshorts] Content-Type: {}, Encoding: {}",
+                            content_type,
+                            encoding.name()
+                        )
+                        .into(),
+                    )
                     .await;
 
                 let start_body_retrieval = std::time::Instant::now();
@@ -92,21 +111,111 @@ impl Guest for Plugin {
                     )
                     .await;
 
+                // Use a buffer to collect rewriter output without blocking
+                // The buffer is shared between the rewriter callback and the async task
+                let output_buffer: Arc<Mutex<VecDeque<Vec<u8>>>> =
+                    Arc::new(Mutex::new(VecDeque::new()));
+                let output_buffer_clone = Arc::clone(&output_buffer);
+
+                // Create HTML rewriter to inject styles
+                let mut rewriter = HtmlRewriter::new(
+                    Settings {
+                        element_content_handlers: vec![
+                            // Inject styles into <head>
+                            element!("head", |el| {
+                                el.append(STYLES, lol_html::html_content::ContentType::Html);
+                                Ok(())
+                            }),
+                        ],
+                        encoding: AsciiCompatibleEncoding::new(encoding).unwrap(),
+                        ..Settings::default()
+                    },
+                    move |c: &[u8]| {
+                        // Buffer the output instead of using block_on
+                        // This avoids deadlock with the async runtime
+                        if !c.is_empty() {
+                            let mut buffer = output_buffer_clone.lock().unwrap();
+                            buffer.push_back(c.to_vec());
+                        }
+                    },
+                );
+
                 wit_bindgen::spawn(async move {
                     let start_streaming = std::time::Instant::now();
+                    let mut body_tx = body_tx;
+
                     let mut chunk = Vec::with_capacity(1024);
                     loop {
                         let (status, buf) = body.read(chunk).await;
                         chunk = buf;
+
                         match status {
                             StreamResult::Complete(_) => {
-                                chunk = tx.write_all(chunk).await;
-                                assert!(chunk.is_empty());
+                                if let Err(e) = rewriter.write(&chunk) {
+                                    logger
+                                        .error(format!(
+                                            "[noshorts] HtmlRewriter write error: {:?}",
+                                            e
+                                        ))
+                                        .await;
+                                }
+
+                                // Drain any buffered output and write it asynchronously
+                                loop {
+                                    let chunk_to_write = {
+                                        let mut buffer = output_buffer.lock().unwrap();
+                                        buffer.pop_front()
+                                    };
+                                    match chunk_to_write {
+                                        Some(data) => {
+                                            let mut remaining = data;
+                                            loop {
+                                                remaining = body_tx.write_all(remaining).await;
+                                                if remaining.is_empty() {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        None => break,
+                                    }
+                                }
                             }
-                            StreamResult::Dropped | StreamResult::Cancelled => break,
+                            StreamResult::Dropped | StreamResult::Cancelled => {
+                                logger.info("[noshorts] Input stream ended".into()).await;
+                                break;
+                            }
                         }
                     }
-                    drop(tx);
+
+                    // Finalize the rewriter
+                    if let Err(e) = rewriter.end() {
+                        logger
+                            .error(format!("[noshorts] HtmlRewriter end error: {:?}", e))
+                            .await;
+                    }
+
+                    // Drain any remaining buffered output after end()
+                    loop {
+                        let chunk_to_write = {
+                            let mut buffer = output_buffer.lock().unwrap();
+                            buffer.pop_front()
+                        };
+                        match chunk_to_write {
+                            Some(data) => {
+                                let mut remaining = data;
+                                loop {
+                                    remaining = body_tx.write_all(remaining).await;
+                                    if remaining.is_empty() {
+                                        break;
+                                    }
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+
+                    // Drop body_tx to signal end of stream
+                    drop(body_tx);
 
                     logger
                         .info(format!(
@@ -117,7 +226,7 @@ impl Guest for Plugin {
                 });
 
                 let start_set_body = std::time::Instant::now();
-                content.set_body(rx).await;
+                content.set_body(body_rx).await;
                 let logger = cap.logger().await.unwrap();
                 logger
                     .info(
@@ -140,6 +249,24 @@ impl Guest for Plugin {
 }
 
 export!(Plugin);
+
+/// Extract charset from Content-Type header
+/// e.g., "text/html; charset=utf-8" -> UTF_8
+/// Defaults to UTF-8 if not specified
+fn extract_charset_from_content_type(content_type: &str) -> &'static Encoding {
+    // Look for charset parameter in content-type
+    for part in content_type.split(';') {
+        let part = part.trim();
+        if part.to_lowercase().starts_with("charset=") {
+            let charset = part[8..].trim().trim_matches('"');
+            if let Some(encoding) = Encoding::for_label(charset.as_bytes()) {
+                return encoding;
+            }
+        }
+    }
+    // Default to UTF-8
+    encoding_rs::UTF_8
+}
 
 #[cfg(test)]
 mod tests {

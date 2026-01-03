@@ -79,14 +79,15 @@ where
         cx: &mut Context<'_>,
         mut store: StoreContextMut<'a, D>,
         mut dst: Destination<'a, Self::Item, Self::Buffer>,
-        _finish: bool,
+        finish: bool,
     ) -> Poll<wasmtime::Result<StreamResult>> {
         use core::num::NonZeroUsize;
 
         let cap = match dst.remaining(&mut store).map(NonZeroUsize::new) {
             Some(Some(cap)) => Some(cap),
             Some(None) => {
-                // On 0-length, check if the stream has ended
+                // On 0-length the best we can do is check that underlying stream has not
+                // reached the end yet
                 if self.body.is_end_stream() {
                     return Poll::Ready(Ok(StreamResult::Dropped));
                 } else {
@@ -99,7 +100,7 @@ where
         match Pin::new(&mut self.body).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 // Try to extract data from the frame
-                match frame.into_data() {
+                match frame.into_data().map_err(http_body::Frame::into_trailers) {
                     Ok(mut data_frame) => {
                         if let Some(cap) = cap {
                             let n = data_frame.len();
@@ -122,14 +123,21 @@ where
                         }
                         Poll::Ready(Ok(StreamResult::Completed))
                     }
-                    Err(_frame) => {
-                        // Frame is trailers or something else, we're done with data
+                    Err(Ok(_trailers)) => {
+                        // Trailers received - we're done with body data
+                        // Note: In a full implementation, trailers would be stored in the resource table
+                        // For now, we just signal completion
+                        Poll::Ready(Ok(StreamResult::Dropped))
+                    }
+                    Err(Err(..)) => {
+                        // Frame is neither data nor trailers - protocol error
                         Poll::Ready(Ok(StreamResult::Dropped))
                     }
                 }
             }
             Poll::Ready(Some(Err(_err))) => Poll::Ready(Ok(StreamResult::Dropped)),
             Poll::Ready(None) => Poll::Ready(Ok(StreamResult::Dropped)),
+            Poll::Pending if finish => Poll::Ready(Ok(StreamResult::Cancelled)),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -328,33 +336,43 @@ impl HostContentWithStore for WitmProxy {
             fn poll_consume(
                 mut self: Pin<&mut Self>,
                 cx: &mut Context<'_>,
-                mut store: StoreContextMut<D>,
+                store: StoreContextMut<D>,
                 source: Source<Self::Item>,
-                _finish: bool,
+                finish: bool,
             ) -> Poll<wasmtime::Result<StreamResult>> {
-                let available = source.remaining(store.as_context_mut());
-                if available == 0 {
-                    return Poll::Ready(Ok(StreamResult::Completed));
-                }
-
-                // Read all available bytes
-                let mut source_direct = source.as_direct(store);
-                let data = source_direct.remaining().to_vec();
-                source_direct.mark_read(data.len());
-
-                // Send to channel
-                let bytes = Bytes::from(data);
-                match Pin::new(&mut self.tx).poll_reserve(cx) {
+                // First check if channel is ready to receive data
+                match self.tx.poll_reserve(cx) {
                     Poll::Ready(Ok(())) => {
-                        if let Err(_) = self.tx.send_item(Ok(Frame::data(bytes))) {
-                            // Receiver dropped
-                            return Poll::Ready(Ok(StreamResult::Dropped));
+                        // Channel is ready, read from source
+                        let mut src = source.as_direct(store);
+                        let buf = src.remaining();
+                        let n = buf.len();
+
+                        // Only send frame if there's data
+                        if n > 0 {
+                            let buf = Bytes::copy_from_slice(buf);
+                            match self.tx.send_item(Ok(Frame::data(buf))) {
+                                Ok(()) => {
+                                    src.mark_read(n);
+                                    Poll::Ready(Ok(StreamResult::Completed))
+                                }
+                                Err(..) => {
+                                    // Receiver dropped
+                                    Poll::Ready(Ok(StreamResult::Dropped))
+                                }
+                            }
+                        } else {
+                            // No data available, signal completion
+                            Poll::Ready(Ok(StreamResult::Completed))
                         }
-                        Poll::Ready(Ok(StreamResult::Completed))
                     }
-                    Poll::Ready(Err(_)) => {
+                    Poll::Ready(Err(..)) => {
                         // Channel closed
                         Poll::Ready(Ok(StreamResult::Dropped))
+                    }
+                    Poll::Pending if finish => {
+                        // Stream is finishing but channel not ready
+                        Poll::Ready(Ok(StreamResult::Cancelled))
                     }
                     Poll::Pending => Poll::Pending,
                 }

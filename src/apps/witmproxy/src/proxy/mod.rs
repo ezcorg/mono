@@ -587,7 +587,7 @@ async fn run_tls_mitm(
 
                 // TODO:
                 // Check response content-type for content-specific handling
-                let (content, mut store) = if let Some(registry) = &plugin_registry {
+                let (content, _store) = if let Some(registry) = &plugin_registry {
                     let (response, mut store) = match handled_response {
                         Ok((event_data, store)) => match event_data {
                             WasmEvent::Response(WasiContextualResponse { response, .. }) => {
@@ -630,6 +630,14 @@ async fn run_tls_mitm(
                     let registry = registry.read().await;
                     let response = store.data_mut().http().table.delete(response).unwrap();
                     let content_type = response.content_type();
+
+                    // Check if this response should have content based on status code
+                    let should_have_content = !matches!(
+                        response.status.as_u16(),
+                        // 1xx informational, 204 No Content, 304 Not Modified
+                        100..=199 | 204 | 304
+                    );
+
                     debug!("Content type for InboundContent: {}", content_type);
                     let start_into_http = std::time::Instant::now();
                     let response = response.into_http(&mut store, async { Ok(()) }).unwrap();
@@ -641,7 +649,14 @@ async fn run_tls_mitm(
                         "InboundContent::new completed in {:?}",
                         start_content_new.elapsed()
                     );
-                    if content_type.eq("unknown") {
+                    // Skip content event processing if:
+                    // 1. Content-type is unknown (no Content-Type header)
+                    // 2. Response status indicates no content should be present
+                    if content_type.eq("unknown") || !should_have_content {
+                        debug!(
+                            "Skipping InboundContent event processing (content_type={}, should_have_content={})",
+                            content_type, should_have_content
+                        );
                         (content, store)
                     } else {
                         let content = Box::new(content) as Box<dyn Event>;
@@ -692,58 +707,9 @@ async fn run_tls_mitm(
                     content_handling_elapsed
                 );
                 debug!("Converting final InboundContent to streaming HTTP response");
-                let start_final_conversion = std::time::Instant::now();
 
-                // Use into_wasi to get streaming response instead of collecting
-                match content.into_wasi() {
-                    Ok((wasi_response, io_future)) => {
-                        tokio::spawn(async move {
-                            if let Err(e) = io_future.await {
-                                error!("Response IO error: {:?}", e);
-                            }
-                        });
-
-                        // Convert WASI response to hyper response
-                        match wasi_response.into_http(&mut store, async { Ok(()) }) {
-                            Ok(response) => {
-                                let final_conversion_elapsed = start_final_conversion.elapsed();
-                                let total_elapsed = service_fn_start.elapsed();
-                                debug!(
-                                    "🕐 FINAL_CONVERSION completed in {:?}",
-                                    final_conversion_elapsed
-                                );
-                                debug!(
-                                    "🕐 SERVICE_FN TOTAL: {:?} for {} {} (request: {:?}, upstream: {:?}, response: {:?}, content: {:?}, final: {:?})",
-                                    total_elapsed,
-                                    method,
-                                    uri,
-                                    request_event_elapsed,
-                                    upstream_elapsed,
-                                    response_event_elapsed,
-                                    content_handling_elapsed,
-                                    final_conversion_elapsed
-                                );
-                                Ok(response)
-                            }
-                            Err(err) => {
-                                error!("Error converting WASI response: {:?}", err);
-                                Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(
-                                        http_body_util::Full::new(Bytes::from(format!(
-                                            "Failed to convert WASI res response: {:?}",
-                                            err
-                                        )))
-                                        .map_err(|_| {
-                                            ErrorCode::InternalError(Some(
-                                                "conversion error".to_string(),
-                                            ))
-                                        })
-                                        .boxed_unsync(),
-                                    )
-                            }
-                        }
-                    }
+                match content.into_response() {
+                    Ok(response) => Ok(response),
                     Err(err) => {
                         error!("Error getting streaming response: {}", err);
                         Response::builder()

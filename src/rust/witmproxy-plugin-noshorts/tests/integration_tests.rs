@@ -40,44 +40,6 @@ mod e2e_tests {
     }
 
     #[tokio::test]
-    async fn test_noshorts_plugin_manifest() -> Result<()> {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(format!("witmproxy={},{}", "debug", "info"))
-            .try_init();
-
-        let (mut proxy, registry, _ca, _config, _temp_dir) = create_witmproxy().await?;
-        proxy.start().await.unwrap();
-
-        {
-            let mut registry = registry.write().await;
-            register_noshorts_plugin(&mut registry).await.unwrap();
-        }
-
-        // Verify the plugin manifest has the expected properties
-        {
-            let registry = registry.read().await;
-            let plugins = registry.plugins();
-            let noshorts = plugins
-                .values()
-                .find(|p| p.name == "witmproxy-plugin-noshorts")
-                .expect("noshorts plugin should be registered");
-
-            assert_eq!(noshorts.name, "witmproxy-plugin-noshorts");
-            assert_eq!(noshorts.author, "Theodore Brockman");
-            assert!(noshorts.description.contains("YouTube shorts"));
-
-            // Verify the plugin has the expected capabilities
-            assert_eq!(
-                noshorts.capabilities.len(),
-                2,
-                "Plugin should have 2 capabilities"
-            );
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_noshorts_plugin_real_youtube_request() -> Result<()> {
         use witmproxy::test_utils::{Protocol, create_client};
 

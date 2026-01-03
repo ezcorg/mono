@@ -13,6 +13,8 @@ wit-bindgen = "0.46.0"
 flate2 = "1.0"
 brotli = "8.0.2"
 anyhow = "1.0.100"
+lol_html = "2.7.0"
+encoding_rs = "0.8.35"
 
 [dev-dependencies]
 witmproxy = { path = "../../apps/witmproxy", features = ["test-helpers"] }

@@ -30,6 +30,7 @@ impl Encoded for Parts {
                     "gzip" => return ContentEncoding::Gzip,
                     "deflate" => return ContentEncoding::Deflate,
                     "br" => return ContentEncoding::Br,
+                    "zstd" => return ContentEncoding::Zstd,
                     "identity" => return ContentEncoding::None,
                     _ => found_but_unknown = true,
                 }
