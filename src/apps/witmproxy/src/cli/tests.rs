@@ -1,17 +1,19 @@
 mod tests {
     use crate::{
         AppConfig, Db, Runtime,
-        cli::{Commands, ResolvedCli, plugin::PluginCommands},
+        cli::{Commands, ResolvedCli, load_plugins_from_directory, plugin::PluginCommands},
         config::confique_app_config_layer::AppConfigLayer,
-        plugins::{ WitmPlugin},
+        plugins::{WitmPlugin, registry::PluginRegistry},
         test_utils::test_component_path,
         wasm::bindgen::Event,
     };
     use anyhow::Result;
     use cel_cxx::{Env, EnvBuilder};
     use confique::{Config, Layer};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use tempfile::tempdir;
+    use tokio::sync::RwLock;
 
     /// Helper function to create a static CEL environment for tests
     fn create_static_cel_env() -> Result<&'static Env<'static>> {
@@ -23,6 +25,15 @@ mod tests {
 
     /// Test helper that creates a ResolvedCli with test configuration
     async fn create_test_cli(temp_path: &Path) -> ResolvedCli {
+        create_test_cli_with_options(temp_path, None, false).await
+    }
+
+    /// Test helper that creates a ResolvedCli with test configuration and options
+    async fn create_test_cli_with_options(
+        temp_path: &Path,
+        plugin_dir: Option<PathBuf>,
+        auto: bool,
+    ) -> ResolvedCli {
         let db_path = temp_path.join("test.db");
         let mut partial_config = AppConfigLayer::default_values();
         partial_config.db.db_path = Some(db_path);
@@ -40,6 +51,8 @@ mod tests {
             command: None,
             config,
             verbose: true,
+            plugin_dir,
+            auto,
         }
     }
 
@@ -285,5 +298,147 @@ mod tests {
             remove_result.is_ok(),
             "Should not fail when removing nonexistent plugin"
         );
+    }
+
+    #[tokio::test]
+    async fn test_plugin_dir_loading() -> Result<()> {
+        // Create temporary directories
+        let temp_dir = tempdir().unwrap();
+        let temp_path = temp_dir.path();
+        let plugin_dir = temp_path.join("plugins");
+        std::fs::create_dir_all(&plugin_dir)?;
+
+        // Initialize database
+        let db_path = temp_path.join("test.db");
+        let db = Db::from_path(db_path, "test_password").await?;
+        db.migrate().await?;
+
+        // Create runtime and plugin registry
+        let runtime = Runtime::try_default()?;
+        let registry = PluginRegistry::new(db, runtime)?;
+        let registry = Arc::new(RwLock::new(registry));
+
+        // Initially, plugin directory is empty, so no plugins should be loaded
+        load_plugins_from_directory(&plugin_dir, registry.clone()).await?;
+        {
+            let reg = registry.read().await;
+            assert!(
+                reg.plugins().is_empty(),
+                "No plugins should be loaded from empty directory"
+            );
+        }
+
+        // Copy test component to plugin directory
+        let wasm_path = test_component_path()?;
+        let dest_path = plugin_dir.join("test_plugin.wasm");
+        std::fs::copy(&wasm_path, &dest_path)?;
+
+        // Load plugins again - should find the plugin now
+        load_plugins_from_directory(&plugin_dir, registry.clone()).await?;
+        {
+            let reg = registry.read().await;
+            assert_eq!(
+                reg.plugins().len(),
+                1,
+                "Expected exactly one plugin to be loaded from directory"
+            );
+
+            // Verify plugin was loaded correctly
+            let plugin = reg.plugins().values().next().unwrap();
+            assert!(
+                !plugin.component_bytes.is_empty(),
+                "Plugin component bytes should not be empty"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_plugin_dir_invalid_wasm_skipped() -> Result<()> {
+        // Create temporary directories
+        let temp_dir = tempdir().unwrap();
+        let temp_path = temp_dir.path();
+        let plugin_dir = temp_path.join("plugins");
+        std::fs::create_dir_all(&plugin_dir)?;
+
+        // Initialize database
+        let db_path = temp_path.join("test.db");
+        let db = Db::from_path(db_path, "test_password").await?;
+        db.migrate().await?;
+
+        // Create runtime and plugin registry
+        let runtime = Runtime::try_default()?;
+        let registry = PluginRegistry::new(db, runtime)?;
+        let registry = Arc::new(RwLock::new(registry));
+
+        // Create an invalid wasm file
+        let invalid_path = plugin_dir.join("invalid.wasm");
+        std::fs::write(&invalid_path, b"not a valid wasm file")?;
+
+        // Also copy a valid plugin
+        let wasm_path = test_component_path()?;
+        let valid_path = plugin_dir.join("valid_plugin.wasm");
+        std::fs::copy(&wasm_path, &valid_path)?;
+
+        // Load plugins - should load valid one and skip invalid
+        let result = load_plugins_from_directory(&plugin_dir, registry.clone()).await;
+        assert!(
+            result.is_ok(),
+            "Should not fail even with invalid wasm files"
+        );
+
+        {
+            let reg = registry.read().await;
+            assert_eq!(
+                reg.plugins().len(),
+                1,
+                "Should load only the valid plugin, skipping invalid"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_plugin_dir_non_wasm_files_ignored() -> Result<()> {
+        // Create temporary directories
+        let temp_dir = tempdir().unwrap();
+        let temp_path = temp_dir.path();
+        let plugin_dir = temp_path.join("plugins");
+        std::fs::create_dir_all(&plugin_dir)?;
+
+        // Initialize database
+        let db_path = temp_path.join("test.db");
+        let db = Db::from_path(db_path, "test_password").await?;
+        db.migrate().await?;
+
+        // Create runtime and plugin registry
+        let runtime = Runtime::try_default()?;
+        let registry = PluginRegistry::new(db, runtime)?;
+        let registry = Arc::new(RwLock::new(registry));
+
+        // Create non-wasm files that should be ignored
+        std::fs::write(plugin_dir.join("readme.txt"), b"readme content")?;
+        std::fs::write(plugin_dir.join("config.json"), b"{}")?;
+
+        // Copy a valid plugin
+        let wasm_path = test_component_path()?;
+        let valid_path = plugin_dir.join("plugin.wasm");
+        std::fs::copy(&wasm_path, &valid_path)?;
+
+        // Load plugins - should only load .wasm files
+        load_plugins_from_directory(&plugin_dir, registry.clone()).await?;
+
+        {
+            let reg = registry.read().await;
+            assert_eq!(
+                reg.plugins().len(),
+                1,
+                "Should only load .wasm files, ignoring other extensions"
+            );
+        }
+
+        Ok(())
     }
 }

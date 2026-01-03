@@ -12,10 +12,11 @@ use trust::TrustCommands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use confique::Config;
+use notify::{Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
-use tokio::sync::RwLock;
-use tracing::info;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use tokio::sync::{RwLock, mpsc};
+use tracing::{error, info, warn};
 
 mod plugin;
 mod proxy;
@@ -42,6 +43,14 @@ pub struct Cli {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Directory to load plugins from (watched for changes)
+    #[arg(long)]
+    plugin_dir: Option<PathBuf>,
+
+    /// Automatically trust the proxy CA and configure system proxy settings on startup
+    #[arg(long)]
+    auto: bool,
 }
 
 /// Internal helper struct that holds the resolved configuration
@@ -49,6 +58,8 @@ pub struct ResolvedCli {
     command: Option<Commands>,
     config: AppConfig,
     verbose: bool,
+    plugin_dir: Option<PathBuf>,
+    auto: bool,
 }
 
 #[derive(Subcommand)]
@@ -108,10 +119,19 @@ impl Cli {
             .load()?
             .with_resolved_paths()?;
 
+        // Resolve plugin_dir path if provided
+        let plugin_dir = if let Some(ref dir) = self.plugin_dir {
+            Some(expand_home_in_path(dir)?)
+        } else {
+            None
+        };
+
         Ok(ResolvedCli {
             command: self.command,
             config,
             verbose: self.verbose,
+            plugin_dir,
+            auto: self.auto,
         })
     }
 }
@@ -153,6 +173,12 @@ impl ResolvedCli {
         let ca = CertificateAuthority::new(self.config.tls.cert_dir.clone()).await?;
         info!("Certificate Authority initialized");
 
+        // Handle --auto flag: trust CA if needed
+        if self.auto {
+            info!("Auto mode enabled: checking CA trust status");
+            ca.install_root_certificate(true, false).await?;
+        }
+
         // Initialize database using pre-resolved path
         if let Some(parent) = self.config.db.db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -176,7 +202,22 @@ impl ResolvedCli {
             None
         };
 
-        let mut proxy = WitmProxy::new(ca, plugin_registry, self.config.clone());
+        // Clone for plugin_dir loading to transfer ownership
+        let plugin_registry = plugin_registry;
+
+        // If --plugin-dir is specified, load plugins from directory
+        if let Some(ref plugin_dir) = self.plugin_dir {
+            if let Some(ref registry) = plugin_registry {
+                info!("Loading plugins from directory: {:?}", plugin_dir);
+                std::fs::create_dir_all(plugin_dir)?;
+                load_plugins_from_directory(plugin_dir, registry.clone()).await?;
+            } else {
+                warn!("--plugin-dir specified but plugins are disabled in configuration");
+            }
+        }
+
+        let ca_for_proxy = CertificateAuthority::new(self.config.tls.cert_dir.clone()).await?;
+        let mut proxy = WitmProxy::new(ca_for_proxy, plugin_registry.clone(), self.config.clone());
         proxy.start().await?;
 
         // Capture the bound addresses
@@ -199,10 +240,225 @@ impl ResolvedCli {
         std::fs::write(&services_path, services_json)?;
         info!("Services information written to: {:?}", services_path);
 
+        // Handle --auto flag: enable system proxy
+        if self.auto {
+            info!("Auto mode: enabling system proxy");
+            let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
+            proxy_handler.enable_proxy_internal(false).await?;
+        }
+
+        // Set up file watcher for plugin directory if specified
+        let _watcher = if let Some(ref plugin_dir) = self.plugin_dir {
+            if let Some(ref registry) = plugin_registry {
+                Some(setup_plugin_dir_watcher(
+                    plugin_dir.clone(),
+                    registry.clone(),
+                )?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Continue running the proxy
         proxy.join().await?;
+
+        // Handle --auto flag: disable system proxy on shutdown
+        if self.auto {
+            info!("Auto mode: disabling system proxy on shutdown");
+            let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
+            proxy_handler.disable_proxy_internal(false).await?;
+        }
+
         proxy.shutdown().await;
 
         Ok(())
+    }
+}
+
+/// Load all .wasm plugins from a directory into the registry
+pub async fn load_plugins_from_directory(
+    dir: &PathBuf,
+    registry: Arc<RwLock<PluginRegistry>>,
+) -> Result<()> {
+    let entries = std::fs::read_dir(dir)?;
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "wasm") {
+            match load_plugin_from_file(&path, &registry).await {
+                Ok(plugin_id) => {
+                    info!("Loaded plugin from file: {:?} ({})", path, plugin_id);
+                }
+                Err(e) => {
+                    warn!("Failed to load plugin from {:?}: {}", path, e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Load a single plugin from a .wasm file
+async fn load_plugin_from_file(
+    path: &PathBuf,
+    registry: &Arc<RwLock<PluginRegistry>>,
+) -> Result<String> {
+    let component_bytes = std::fs::read(path)?;
+    let mut registry = registry.write().await;
+    let plugin = registry.plugin_from_component(component_bytes).await?;
+    let plugin_id = plugin.id();
+    registry.register_plugin(plugin).await?;
+    Ok(plugin_id)
+}
+
+/// Set up a file watcher for the plugin directory
+fn setup_plugin_dir_watcher(
+    plugin_dir: PathBuf,
+    registry: Arc<RwLock<PluginRegistry>>,
+) -> Result<RecommendedWatcher> {
+    let (tx, mut rx) = mpsc::channel::<notify::Result<NotifyEvent>>(100);
+
+    let mut watcher = notify::recommended_watcher(move |res| {
+        let _ = tx.blocking_send(res);
+    })?;
+
+    watcher.watch(&plugin_dir, RecursiveMode::NonRecursive)?;
+    info!("Watching plugin directory for changes: {:?}", plugin_dir);
+
+    // Track file -> plugin_id mapping for deletion handling
+    let file_plugin_map: Arc<RwLock<HashMap<PathBuf, String>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Initialize the file map with current plugins
+    let registry_clone = registry.clone();
+    let plugin_dir_clone = plugin_dir.clone();
+    let file_plugin_map_clone = file_plugin_map.clone();
+
+    tokio::spawn(async move {
+        // Initial scan to populate file_plugin_map
+        if let Ok(entries) = std::fs::read_dir(&plugin_dir_clone) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "wasm") {
+                    if let Ok(component_bytes) = std::fs::read(&path) {
+                        let reg = registry_clone.read().await;
+                        if let Ok(plugin) = reg.plugin_from_component(component_bytes).await {
+                            let mut map = file_plugin_map_clone.write().await;
+                            map.insert(path, plugin.id());
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Spawn task to handle file events
+    let registry_for_handler = registry.clone();
+    let file_plugin_map_for_handler = file_plugin_map;
+
+    tokio::spawn(async move {
+        while let Some(res) = rx.recv().await {
+            match res {
+                Ok(event) => {
+                    handle_plugin_file_event(
+                        event,
+                        &registry_for_handler,
+                        &file_plugin_map_for_handler,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    error!("File watcher error: {}", e);
+                }
+            }
+        }
+    });
+
+    Ok(watcher)
+}
+
+/// Handle a file system event for the plugin directory
+async fn handle_plugin_file_event(
+    event: NotifyEvent,
+    registry: &Arc<RwLock<PluginRegistry>>,
+    file_plugin_map: &Arc<RwLock<HashMap<PathBuf, String>>>,
+) {
+    use notify::EventKind;
+
+    for path in event.paths {
+        // Only handle .wasm files
+        if !path.extension().is_some_and(|ext| ext == "wasm") {
+            continue;
+        }
+
+        match event.kind {
+            EventKind::Create(_) | EventKind::Modify(ModifyKind::Data(_)) => {
+                info!("Plugin file created/modified: {:?}", path);
+
+                // Remove old plugin if it exists
+                {
+                    let map = file_plugin_map.read().await;
+                    if let Some(old_plugin_id) = map.get(&path) {
+                        let parts: Vec<&str> = old_plugin_id.split('/').collect();
+                        if parts.len() == 2 {
+                            let mut reg = registry.write().await;
+                            match reg.remove_plugin(parts[1], Some(parts[0])).await {
+                                Ok(removed) => {
+                                    if !removed.is_empty() {
+                                        info!("Removed old plugin version: {}", old_plugin_id);
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to remove old plugin {}: {}", old_plugin_id, e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Load new plugin
+                match load_plugin_from_file(&path, registry).await {
+                    Ok(plugin_id) => {
+                        info!("Loaded/updated plugin: {} from {:?}", plugin_id, path);
+                        let mut map = file_plugin_map.write().await;
+                        map.insert(path.clone(), plugin_id);
+                    }
+                    Err(e) => {
+                        warn!("Failed to load plugin from {:?}: {}", path, e);
+                    }
+                }
+            }
+            EventKind::Remove(_) => {
+                info!("Plugin file removed: {:?}", path);
+
+                let plugin_id = {
+                    let mut map = file_plugin_map.write().await;
+                    map.remove(&path)
+                };
+
+                if let Some(plugin_id) = plugin_id {
+                    let parts: Vec<&str> = plugin_id.split('/').collect();
+                    if parts.len() == 2 {
+                        let mut reg = registry.write().await;
+                        match reg.remove_plugin(parts[1], Some(parts[0])).await {
+                            Ok(removed) => {
+                                if !removed.is_empty() {
+                                    info!("Removed plugin: {}", plugin_id);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to remove plugin {}: {}", plugin_id, e);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }

@@ -102,6 +102,7 @@ webextension_pattern = { version = "0.3.0", features = ["serde"] }
 cel-cxx = { version = "0.2.1", features = ["tokio"] }
 async-compression = { version = "0.4.35", features = ["brotli", "deflate", "deflate64", "futures-io", "gzip", "tokio", "zstd"] }
 tokio-stream = "0.1.17"
+notify = { version = "8.2.0" }
 
 # Optional test helper dependencies
 tempfile = { version = "3.8", optional = true }
