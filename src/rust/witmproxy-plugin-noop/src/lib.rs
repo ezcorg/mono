@@ -21,7 +21,7 @@ impl Guest for Plugin {
             namespace: "witmproxy".to_string(),
             author: "Theodore Brockman".to_string(),
             version: "0.0.0".to_string(),
-            description: "noop".to_string(),
+            description: "an example plugin which does nothing".to_string(),
             metadata: vec![],
             capabilities: vec![
                 Capability {
