@@ -16,7 +16,6 @@ use wasmtime::component::{
     Accessor, Destination, HasData, Resource, ResourceTable, Source, StreamProducer, StreamReader,
     StreamResult,
 };
-use wasmtime_wasi::runtime::with_ambient_tokio_runtime;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
@@ -312,21 +311,13 @@ impl HostContentWithStore for WitmProxy {
         // Convert StreamReader back to UnsyncBoxBody
         // This requires reading the stream and converting it to a body
         // using a channel-based approach
-        //
-        // IMPORTANT: We use with_ambient_tokio_runtime to ensure the tokio
-        // runtime context is properly established when creating channels and
-        // PollSender. This is required for proper waker integration between
-        // WIT streams and tokio's async primitives.
 
         use http_body::Frame;
         use http_body_util::StreamBody;
 
         // Create the channel within the ambient tokio runtime context
-        let (tx, rx) =
-            with_ambient_tokio_runtime(|| mpsc::channel::<Result<Frame<Bytes>, ErrorCode>>(65536));
-        let body = with_ambient_tokio_runtime(|| {
-            StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed_unsync()
-        });
+        let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, ErrorCode>>(65536);
+        let body = StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed_unsync();
 
         accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
@@ -351,9 +342,6 @@ impl HostContentWithStore for WitmProxy {
                 finish: bool,
             ) -> Poll<wasmtime::Result<StreamResult>> {
                 // First check if channel is ready to receive data
-                // Note: poll_reserve uses the provided context's waker, which
-                // should now be properly integrated with tokio thanks to
-                // with_ambient_tokio_runtime during PollSender creation
                 match self.tx.poll_reserve(cx) {
                     Poll::Ready(Ok(())) => {
                         // Channel is ready, read from source
@@ -393,8 +381,7 @@ impl HostContentWithStore for WitmProxy {
         }
 
         // Pipe the stream reader to the channel consumer
-        // Create PollSender within ambient tokio runtime for proper waker integration
-        let poll_sender = with_ambient_tokio_runtime(|| PollSender::new(tx));
+        let poll_sender = PollSender::new(tx);
         accessor.with(|mut access| {
             content.pipe(&mut access, ChannelStreamConsumer { tx: poll_sender });
         });

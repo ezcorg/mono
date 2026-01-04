@@ -33,6 +33,42 @@ pub const STYLES: &str = r#"
     ytd-guide-entry-renderer a[title="Shorts"] {
         display: none !important;
     }
+
+    yt-thumbnail-view-model {
+        display: none !important;
+    }
+
+    #dismissible {
+        display: none !important;
+    }
+
+    ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
+    ytd-rich-item-renderer:has(ad-badge-view-model),
+    ytd-rich-item-renderer:has([class*="Ad"]):has([class*="ad"])
+    {
+        display: none !important;
+    }
+
+    #masthead-ad {
+        display: none !important;
+    }
+
+    .yt-lockup-metadata-view-model__avatar {
+        display: none !important;
+    }
+
+    .yt-lockup-view-model__content-image {
+        display: none !important;
+    }
+
+    #contents {
+        flex-direction: column;
+        gap: 4rem;
+    }
+
+    #contents > ytd-rich-item-renderer {
+        margin: 0 0 0 3rem;
+    }
 </style>
 "#;
 
@@ -132,7 +168,7 @@ impl Guest for Plugin {
 
                 wit_bindgen::spawn(async move {
                     let mut body_tx = body_tx;
-                    let mut chunk = Vec::with_capacity(8192); // Increased buffer size
+                    let mut chunk = Vec::with_capacity(65536);
                     let start_time = std::time::Instant::now();
 
                     logger

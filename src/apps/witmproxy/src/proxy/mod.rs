@@ -631,11 +631,13 @@ async fn run_tls_mitm(
                     let response = store.data_mut().http().table.delete(response).unwrap();
                     let content_type = response.content_type();
 
-                    // Check if this response should have content based on status code
-                    let should_have_content = !matches!(
+                    // Check if this response should have content that plugins should process
+                    // Only process 2xx success responses (except 204 No Content)
+                    // Skip: 1xx informational, 204 No Content, 3xx redirects, 4xx client errors, 5xx server errors
+                    let should_process_content = matches!(
                         response.status.as_u16(),
-                        // 1xx informational, 204 No Content, 304 Not Modified
-                        100..=199 | 204 | 304
+                        // Only 2xx success responses (except 204 No Content)
+                        200..=203 | 205..=299
                     );
 
                     debug!("Content type for InboundContent: {}", content_type);
@@ -644,11 +646,12 @@ async fn run_tls_mitm(
                     let content = InboundContent::new(parts, content_type.clone(), body).unwrap();
                     // Skip content event processing if:
                     // 1. Content-type is unknown (no Content-Type header)
-                    // 2. Response status indicates no content should be present
-                    if content_type.eq("unknown") || !should_have_content {
+                    // 2. Response status indicates content should not be processed by plugins
+                    //    (only 2xx success responses are processed, excluding 204 No Content)
+                    if content_type.eq("unknown") || !should_process_content {
                         debug!(
-                            "Skipping InboundContent event processing (content_type={}, should_have_content={})",
-                            content_type, should_have_content
+                            "Skipping InboundContent event processing (content_type={}, should_process_content={})",
+                            content_type, should_process_content
                         );
                         (content, store)
                     } else {
