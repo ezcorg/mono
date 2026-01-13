@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use cel_cxx::{Activation, Opaque};
+use cel_cxx::Activation;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
-use tracing::{debug, error};
+use tracing::error;
 use wasmtime::Engine;
 use wasmtime::component::Component;
 pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
@@ -49,16 +49,6 @@ pub struct WitmPlugin {
     // TODO: stream this when receiving from API
     pub component_bytes: Vec<u8>,
 }
-
-pub enum CelContext<T>
-where
-    T: Celectable,
-{
-    Inner(T),
-}
-
-/// Trait for events that can be handled by plugins via CEL filtering
-pub trait Celectable: Opaque + Clone {}
 
 impl WitmPlugin {
     fn make_id(namespace: &str, name: &str) -> String {

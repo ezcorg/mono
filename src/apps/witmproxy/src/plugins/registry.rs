@@ -268,8 +268,9 @@ impl PluginRegistry {
 
             store = component_store;
             let event_data = current_event.into_event_data(&mut store)?;
-            // TODO: the behavior of the capability provider should be configured based on the plugin's granted capabilities
-            let provider = CapabilityProvider::new();
+
+            // Build the capability provider based on the plugin's granted capabilities
+            let provider = CapabilityProvider::from(&plugin.capabilities);
             let cap_resource = store.data_mut().table.push(provider)?;
             let guest_result = store
                 .run_concurrent(async move |store| {

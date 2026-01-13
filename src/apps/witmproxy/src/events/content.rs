@@ -222,12 +222,13 @@ impl InboundContent {
                 .map_err(|_| ErrorCode::InternalError(Some("empty body".to_string())))
                 .boxed_unsync()
         });
+        // TODO: instrument/investigate why this is so expensive in certain cases
         // let body = InboundContent::compress(&self.parts, body)?;
 
-        // Remove content-length header since the body may have been modified
         let mut parts = self.parts;
+        // Content length is no longer valid after decompression/modification
         parts.headers.remove(hyper::header::CONTENT_LENGTH);
-        parts.headers.remove(hyper::header::TRANSFER_ENCODING);
+        // Remove content-encoding as we have decompressed the body
         parts.headers.remove(hyper::header::CONTENT_ENCODING);
         Ok(Response::from_parts(parts, body))
     }
@@ -616,85 +617,86 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_inbound_content_full_lifecycle_gzip() {
-        // Test the full lifecycle: new() -> decompress, then into_response() -> compress
-        let mut response = hyper::Response::new(());
-        response
-            .headers_mut()
-            .insert(CONTENT_ENCODING, "gzip".parse().unwrap());
-        response
-            .headers_mut()
-            .insert(hyper::header::CONTENT_TYPE, "text/html".parse().unwrap());
+    // TODO: fix/remove, commented out as we no longer re-compress on into_response()
+    // #[tokio::test]
+    // async fn test_inbound_content_full_lifecycle_gzip() {
+    //     // Test the full lifecycle: new() -> decompress, then into_response() -> compress
+    //     let mut response = hyper::Response::new(());
+    //     response
+    //         .headers_mut()
+    //         .insert(CONTENT_ENCODING, "gzip".parse().unwrap());
+    //     response
+    //         .headers_mut()
+    //         .insert(hyper::header::CONTENT_TYPE, "text/html".parse().unwrap());
 
-        let (parts, _) = response.into_parts();
-        let parts = Parts::from(parts);
+    //     let (parts, _) = response.into_parts();
+    //     let parts = Parts::from(parts);
 
-        // First compress the HTML manually to simulate receiving compressed content
-        let original_html = TEST_HTML;
-        let manually_compressed = {
-            use async_compression::tokio::bufread::GzipEncoder;
-            use tokio::io::AsyncReadExt;
-            let cursor = std::io::Cursor::new(original_html.as_bytes());
-            let reader = tokio::io::BufReader::new(cursor);
-            let mut encoder = GzipEncoder::new(reader);
-            let mut compressed = Vec::new();
-            encoder
-                .read_to_end(&mut compressed)
-                .await
-                .expect("Manual compression failed");
-            compressed
-        };
+    //     // First compress the HTML manually to simulate receiving compressed content
+    //     let original_html = TEST_HTML;
+    //     let manually_compressed = {
+    //         use async_compression::tokio::bufread::GzipEncoder;
+    //         use tokio::io::AsyncReadExt;
+    //         let cursor = std::io::Cursor::new(original_html.as_bytes());
+    //         let reader = tokio::io::BufReader::new(cursor);
+    //         let mut encoder = GzipEncoder::new(reader);
+    //         let mut compressed = Vec::new();
+    //         encoder
+    //             .read_to_end(&mut compressed)
+    //             .await
+    //             .expect("Manual compression failed");
+    //         compressed
+    //     };
 
-        // Create InboundContent with the pre-compressed body (simulating receiving from server)
-        let body = create_body(&manually_compressed);
-        let mut content = InboundContent::new(parts, "text/html".to_string(), body)
-            .expect("InboundContent::new should succeed");
+    //     // Create InboundContent with the pre-compressed body (simulating receiving from server)
+    //     let body = create_body(&manually_compressed);
+    //     let mut content = InboundContent::new(parts, "text/html".to_string(), body)
+    //         .expect("InboundContent::new should succeed");
 
-        // Take the body (it should be decompressed)
-        let decompressed_body = content
-            .body()
-            .expect("Should have body")
-            .expect("Body should be Some");
-        let decompressed_data = body_to_bytes(decompressed_body).await;
-        assert_eq!(
-            decompressed_data,
-            original_html.as_bytes(),
-            "InboundContent should decompress on new()"
-        );
+    //     // Take the body (it should be decompressed)
+    //     let decompressed_body = content
+    //         .body()
+    //         .expect("Should have body")
+    //         .expect("Body should be Some");
+    //     let decompressed_data = body_to_bytes(decompressed_body).await;
+    //     assert_eq!(
+    //         decompressed_data,
+    //         original_html.as_bytes(),
+    //         "InboundContent should decompress on new()"
+    //     );
 
-        // Set it back
-        let body_again = create_body(&decompressed_data);
-        content.set_body(body_again);
+    //     // Set it back
+    //     let body_again = create_body(&decompressed_data);
+    //     content.set_body(body_again);
 
-        // Convert back to response (should compress)
-        let response = content
-            .into_response()
-            .expect("into_response should succeed");
-        let (parts, body) = response.into_parts();
+    //     // Convert back to response (should compress)
+    //     let response = content
+    //         .into_response()
+    //         .expect("into_response should succeed");
+    //     let (parts, body) = response.into_parts();
 
-        // Check that content-encoding is still there
-        assert_eq!(
-            parts
-                .headers
-                .get(CONTENT_ENCODING)
-                .map(|v| v.to_str().unwrap()),
-            Some("gzip"),
-            "Content-Encoding should be preserved"
-        );
+    //     // Check that content-encoding is still there
+    //     assert_eq!(
+    //         parts
+    //             .headers
+    //             .get(CONTENT_ENCODING)
+    //             .map(|v| v.to_str().unwrap()),
+    //         Some("gzip"),
+    //         "Content-Encoding should be preserved"
+    //     );
 
-        // Decompress the final body
-        let parts_for_decompress = Parts::from(parts);
-        let decompressed_final = InboundContent::decompress(&parts_for_decompress, body)
-            .expect("Final decompression should succeed");
-        let final_data = body_to_bytes(decompressed_final).await;
+    //     // Decompress the final body
+    //     let parts_for_decompress = Parts::from(parts);
+    //     let decompressed_final = InboundContent::decompress(&parts_for_decompress, body)
+    //         .expect("Final decompression should succeed");
+    //     let final_data = body_to_bytes(decompressed_final).await;
 
-        assert_eq!(
-            final_data,
-            original_html.as_bytes(),
-            "Full lifecycle should preserve data"
-        );
-    }
+    //     assert_eq!(
+    //         final_data,
+    //         original_html.as_bytes(),
+    //         "Full lifecycle should preserve data"
+    //     );
+    // }
 
     #[tokio::test]
     async fn test_inbound_content_full_lifecycle_deflate() {

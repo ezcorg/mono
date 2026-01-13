@@ -10,9 +10,6 @@
 [submodule "src/typescript/jswasi"]
 	path = src/typescript/jswasi
 	url = https://github.com/ezcorg/jswasi
-[submodule "src/apps/wasmtime"]
-	path = src/apps/wasmtime
-	url = https://github.com/ezcorg/wasmtime
 [submodule "src/typescript/codemirror-languageserver"]
 	path = src/typescript/codemirror-languageserver
 	url = https://github.com/ezcorg/codemirror-languageserver

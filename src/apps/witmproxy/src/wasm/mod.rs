@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use anyhow::Result;
@@ -8,7 +9,7 @@ use bytes::Bytes;
 use http_body::Body as _;
 use http_body_util::BodyExt;
 use http_body_util::combinators::UnsyncBoxBody;
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::PollSender;
 use wasmtime::AsContextMut;
 use wasmtime::StoreContextMut;
@@ -23,8 +24,9 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 mod runtime;
 
 use crate::events::content::InboundContent;
+use crate::plugins::capabilities::Capability;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-    HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
+    CapabilityKind, HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
     HostCapabilityProviderWithStore, HostContent, HostContentWithStore, HostLocalStorageClient,
     HostLocalStorageClientWithStore, HostLogger, HostLoggerWithStore,
 };
@@ -32,28 +34,105 @@ pub use runtime::Runtime;
 
 pub mod bindgen;
 
-pub struct CapabilityProvider {}
+/// A capability provider that holds the capability instances granted to a plugin.
+/// The caller/builder is responsible for providing the necessary objects.
+/// The provider simply returns what it has access to when called.
+pub struct CapabilityProvider {
+    logger: Option<Logger>,
+    annotator: Option<AnnotatorClient>,
+    local_storage: Option<LocalStorageClient>,
+}
 
 impl Default for CapabilityProvider {
     fn default() -> Self {
-        Self::new()
+        Self {
+            logger: None,
+            annotator: None,
+            local_storage: None,
+        }
     }
 }
 
 impl CapabilityProvider {
+    /// Create a new CapabilityProvider with no capabilities granted
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the logger capability
+    pub fn with_logger(mut self, logger: Logger) -> Self {
+        self.logger = Some(logger);
+        self
+    }
+
+    /// Set the annotator capability
+    pub fn with_annotator(mut self, annotator: AnnotatorClient) -> Self {
+        self.annotator = Some(annotator);
+        self
+    }
+
+    /// Set the local storage capability
+    pub fn with_local_storage(mut self, local_storage: LocalStorageClient) -> Self {
+        self.local_storage = Some(local_storage);
+        self
+    }
+
+    /// Returns a clone of the logger if granted
+    pub fn logger(&self) -> Option<Logger> {
+        self.logger.clone()
+    }
+
+    /// Returns a clone of the annotator client if granted
+    pub fn annotator(&self) -> Option<AnnotatorClient> {
+        self.annotator.clone()
+    }
+
+    /// Returns a clone of the local storage client if granted
+    pub fn local_storage(&self) -> Option<LocalStorageClient> {
+        self.local_storage.clone()
+    }
+}
+
+impl From<&Vec<Capability>> for CapabilityProvider {
+    fn from(capabilities: &Vec<Capability>) -> Self {
+        let mut provider = CapabilityProvider::new();
+        for cap in capabilities {
+            if cap.granted {
+                match &cap.inner.kind {
+                    CapabilityKind::Logger => {
+                        provider = provider.with_logger(Logger::new());
+                    }
+                    CapabilityKind::Annotator => {
+                        provider = provider.with_annotator(AnnotatorClient::new());
+                    }
+                    CapabilityKind::LocalStorage => {
+                        provider = provider.with_local_storage(LocalStorageClient::new());
+                    }
+                    CapabilityKind::HandleEvent(_) => {
+                        // Event handling capabilities are managed separately
+                    }
+                }
+            }
+        }
+        provider
+    }
+}
+
+#[derive(Clone)]
+pub struct AnnotatorClient {}
+
+impl AnnotatorClient {
     pub fn new() -> Self {
         Self {}
     }
 
-    pub fn logger(&self) -> Option<Logger> {
-        Some(Logger {})
-    }
+    pub fn annotate(&self, _content: &InboundContent) {}
 }
 
-pub struct AnnotatorClient {}
-
-impl AnnotatorClient {
-    pub fn annotate(&self, _content: &InboundContent) {}
+impl Default for AnnotatorClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Custom StreamProducer for body streaming
@@ -143,9 +222,14 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct Logger {}
 
 impl Logger {
+    pub fn new() -> Self {
+        Self {}
+    }
+
     pub fn info(&self, message: String) {
         tracing::info!("{}", message);
     }
@@ -163,21 +247,46 @@ impl Logger {
     }
 }
 
-#[derive(Default)]
+impl Default for Logger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A local storage client with shared mutable state via Arc<RwLock<>>.
+/// Clone is cheap (just Arc clone) and all clones share the same storage.
+/// Uses Bytes internally for efficient storage and cheap cloning.
+#[derive(Clone)]
 pub struct LocalStorageClient {
-    pub store: HashMap<String, Vec<u8>>,
+    store: Arc<RwLock<HashMap<String, Bytes>>>,
+}
+
+impl Default for LocalStorageClient {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LocalStorageClient {
-    pub fn set(&mut self, key: String, value: Vec<u8>) {
-        let _ = self.store.insert(key, value);
+    pub fn new() -> Self {
+        Self {
+            store: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
-    pub fn get(&self, key: String) -> Option<&Vec<u8>> {
-        self.store.get(&key)
+    /// Set a key-value pair in the store (async)
+    pub async fn set(&self, key: String, value: Vec<u8>) {
+        self.store.write().await.insert(key, Bytes::from(value));
     }
-    pub fn delete(&mut self, key: String) {
-        let _ = self.store.remove(&key);
+
+    /// Get a value by key (async). Returns cloned Bytes which is cheap.
+    pub async fn get(&self, key: &str) -> Option<Bytes> {
+        self.store.read().await.get(key).cloned()
+    }
+
+    /// Delete a key from the store (async)
+    pub async fn delete(&self, key: &str) {
+        self.store.write().await.remove(key);
     }
 }
 
@@ -398,12 +507,14 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         key: String,
         value: Vec<u8>,
     ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
+        // Clone the client (cheap Arc clone) to use outside the accessor closure
+        let client = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
-            let client = state.table.get_mut(&self_)?;
-            client.set(key, value);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
+            let client = state.table.get(&self_)?;
+            Ok::<LocalStorageClient, wasmtime::component::ResourceTableError>(client.clone())
         })?;
+        // Call async method on the cloned client (shares Arc storage)
+        client.set(key, value).await;
         Ok(())
     }
 
@@ -412,11 +523,14 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         self_: Resource<LocalStorageClient>,
         key: String,
     ) -> wasmtime::Result<Option<Vec<u8>>> {
-        Ok(accessor.with(|mut access| {
+        // Clone the client (cheap Arc clone) to use outside the accessor closure
+        let client = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let client = state.table.get(&self_)?;
-            Ok::<Option<Vec<u8>>, wasmtime::component::ResourceTableError>(client.get(key).cloned())
-        })?)
+            Ok::<LocalStorageClient, wasmtime::component::ResourceTableError>(client.clone())
+        })?;
+        // Call async method and convert Bytes to Vec<u8> for WIT interface
+        Ok(client.get(&key).await.map(|bytes| bytes.to_vec()))
     }
 
     async fn delete<T>(
@@ -424,12 +538,14 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         self_: Resource<LocalStorageClient>,
         key: String,
     ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
+        // Clone the client (cheap Arc clone) to use outside the accessor closure
+        let client = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
-            let client = state.table.get_mut(&self_)?;
-            client.delete(key);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
+            let client = state.table.get(&self_)?;
+            Ok::<LocalStorageClient, wasmtime::component::ResourceTableError>(client.clone())
         })?;
+        // Call async method on the cloned client (shares Arc storage)
+        client.delete(&key).await;
         Ok(())
     }
 
@@ -542,45 +658,60 @@ impl HostLoggerWithStore for WitmProxy {
 impl HostCapabilityProviderWithStore for WitmProxy {
     async fn logger<T>(
         accessor: &Accessor<T, Self>,
-        _cap: Resource<CapabilityProvider>,
+        cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<Logger>>> {
         Ok(accessor
             .with(|mut access| {
                 let state: &mut WitmProxyCtxView = &mut access.get();
-                let logger = Logger {};
-                Ok::<Option<Resource<Logger>>, wasmtime::component::ResourceTableError>(Some(
-                    state.table.push(logger)?,
-                ))
+                let provider = state.table.get(&cap)?;
+                // Get a clone of the logger if granted (cheap clone)
+                match provider.logger() {
+                    Some(logger) => Ok::<
+                        Option<Resource<Logger>>,
+                        wasmtime::component::ResourceTableError,
+                    >(Some(state.table.push(logger)?)),
+                    None => Ok(None),
+                }
             })
             .unwrap_or(None))
     }
 
     async fn local_storage<T>(
         accessor: &Accessor<T, Self>,
-        _cap: Resource<CapabilityProvider>,
+        cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<LocalStorageClient>>> {
         Ok(accessor
             .with(|mut access| {
                 let state: &mut WitmProxyCtxView = &mut access.get();
-                let client = LocalStorageClient::default();
-                Ok::<Option<Resource<LocalStorageClient>>, wasmtime::component::ResourceTableError>(
-                    Some(state.table.push(client)?),
-                )
+                let provider = state.table.get(&cap)?;
+                // Get a clone of the local storage client if granted (cheap Arc clone)
+                match provider.local_storage() {
+                    Some(client) => Ok::<
+                        Option<Resource<LocalStorageClient>>,
+                        wasmtime::component::ResourceTableError,
+                    >(Some(state.table.push(client)?)),
+                    None => Ok(None),
+                }
             })
             .unwrap_or(None))
     }
 
     async fn annotator<T>(
         accessor: &Accessor<T, Self>,
-        _cap: Resource<CapabilityProvider>,
+        cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<AnnotatorClient>>> {
         Ok(accessor
             .with(|mut access| {
                 let state: &mut WitmProxyCtxView = &mut access.get();
-                let client = AnnotatorClient {};
-                Ok::<Option<Resource<AnnotatorClient>>, wasmtime::component::ResourceTableError>(
-                    Some(state.table.push(client)?),
-                )
+                let provider = state.table.get(&cap)?;
+                // Get a clone of the annotator client if granted (cheap clone)
+                match provider.annotator() {
+                    Some(client) => Ok::<
+                        Option<Resource<AnnotatorClient>>,
+                        wasmtime::component::ResourceTableError,
+                    >(Some(state.table.push(client)?)),
+                    None => Ok(None),
+                }
             })
             .unwrap_or(None))
     }
