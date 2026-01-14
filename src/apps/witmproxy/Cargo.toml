@@ -106,6 +106,7 @@ notify = { version = "8.2.0" }
 
 # Optional test helper dependencies
 tempfile = { version = "3.8", optional = true }
+service-manager = "0.10.0"
 
 [dev-dependencies]
 # Test dependencies
