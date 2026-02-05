@@ -83,6 +83,10 @@ impl Guest for Plugin {
             metadata: vec![],
             capabilities: vec![
                 Capability {
+                    kind: CapabilityKind::Logger,
+                    scope: CapabilityScope { expression: "true".into()}
+                },
+                Capability {
                     kind: CapabilityKind::Annotator,
                     scope: CapabilityScope { expression: "true".into()}
                 },

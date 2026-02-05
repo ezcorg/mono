@@ -75,16 +75,11 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 
-# HTML parsing
-html5ever = "0.27"
-markup5ever_rcdom = "0.3"
-
 # Template engine
 askama = "0.12"
 cargo-generate = "0.23.7"
 
 clap = { version = "4.5.47", features = ["derive"] }
-markup5ever = "0.35.0"
 either = "1.15.0"
 confique = { version = "0.4.0", features = ["toml"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
@@ -98,7 +93,6 @@ bimap = "0.6.3"
 salvo = { version = "0.84.1", features = ["oapi", "quinn", "serve-static", "cors", "affix-state", "rustls", "force-https"] }
 rust-embed = "8.7.2"
 http-body = "1.0.1"
-webextension_pattern = { version = "0.3.0", features = ["serde"] }
 cel-cxx = { version = "0.2.1", features = ["tokio"] }
 async-compression = { version = "0.4.35", features = ["brotli", "deflate", "deflate64", "futures-io", "gzip", "tokio", "zstd"] }
 tokio-stream = "0.1.17"

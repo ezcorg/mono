@@ -128,10 +128,13 @@ interface capabilities {
         inbound-content(content),
     }
 
-    /// A work-in-progress resource representing abstract content
-    /// Primarily exists to abstract away any compression and encoding details
-    /// of the underlying body, providing a simple interface for plugins to interact with
-    /// without worrying about conflicting or wasteful transformations.
+    /// A work-in-progress resource representing abstract byte stream content
+    /// Primarily exists to hide compression of the underlying body, 
+    /// providing a simple interface for plugins to interact with 
+    /// without having to worry about compression details 
+    /// (which could be wasteful or conflicting in the case of serial plugin execution).
+    /// 
+    /// Still requires handling content encodings (UTF-8, UTF-16, etc) manually.
     resource content {
         /// Returns the content as a stream of bytes
         body: func() -> stream<u8>;
