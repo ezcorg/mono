@@ -9,7 +9,7 @@ description = "Blocks YouTube and Instagram shorts"
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "0.46.0"
+wit-bindgen = { version = "0.52.0", features = ["async-spawn"] }
 flate2 = "1.0"
 brotli = "8.0.2"
 anyhow = "1.0.100"

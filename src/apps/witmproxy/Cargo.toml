@@ -45,7 +45,7 @@ time = { version = "0.3", features = ["macros"] }
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["component-model-async"], version = "40.0.0" }
 wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["p3"], version = "40.0.0" }
 wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["p3"], version = "40.0.0" }
-wit-bindgen = { version = "0.46.0", features = ["default"] }
+wit-bindgen = { version = "0.52.0", features = ["default"] }
 # WASM signature verification
 wasmsign2 = "0.2.6"
 
@@ -77,7 +77,7 @@ url = "2.5"
 
 # Template engine
 askama = "0.12"
-cargo-generate = "0.23.7"
+cargo-generate = { version = "0.23.7", features = ["vendored-openssl"] }
 
 clap = { version = "4.5.47", features = ["derive"] }
 either = "1.15.0"
@@ -85,7 +85,7 @@ confique = { version = "0.4.0", features = ["toml"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 # Must match version in sqlx
 libsqlite3-sys = { version = "0.30.1", features = [
-    "bundled-sqlcipher"
+    "bundled-sqlcipher-vendored-openssl"
 ] }
 dirs = "6.0.0"
 lazy_static = "1.5.0"
