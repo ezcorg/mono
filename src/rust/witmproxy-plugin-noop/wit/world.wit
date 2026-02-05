@@ -13,23 +13,23 @@ interface capabilities {
     /// A dumb and simple logging resource (for writing to stdout/stderr)
     /// TODO: replace with official wasi-logging when available
     resource logger {
-        info: func(message: string);
-        warn: func(message: string);
-        error: func(message: string);
-        debug: func(message: string);
+        info: async func(message: string);
+        warn: async func(message: string);
+        error: async func(message: string);
+        debug: async func(message: string);
     }
 
     /// A resource for annotating/labeling content
     resource annotator-client {
         /// Annotate the provided content (extract and store features + metadata)
-        annotate: func(content: content);
+        annotate: async func(content: content);
     }
 
     /// A resource for storing key-value pairs local to the plugin (sandboxed and inaccessible elsewhere)
     resource local-storage-client {
-        set: func(key: string, value: list<u8>);
-        get: func(key: string) -> option<list<u8>>;
-        delete: func(key: string);
+        set: async func(key: string, value: list<u8>);
+        get: async func(key: string) -> option<list<u8>>;
+        delete: async func(key: string);
     }
 
     /// A capability provider, which only returns capabilities that have been granted by the user
@@ -38,9 +38,9 @@ interface capabilities {
         // kv: func() -> option<key-value-client>;
         // sql: func() -> option<sql-client>;
         // queue: func() -> option<queue-client>;
-        logger: func() -> option<logger>;
-        annotator: func() -> option<annotator-client>;
-        local-storage: func() -> option<local-storage-client>;
+        logger: async func() -> option<logger>;
+        annotator: async func() -> option<annotator-client>;
+        local-storage: async func() -> option<local-storage-client>;
     }
 
     /// A type used to limit the scope in which granted capabilities can be used.
@@ -137,11 +137,11 @@ interface capabilities {
     /// Still requires handling content encodings (UTF-8, UTF-16, etc) manually.
     resource content {
         /// Returns the content as a stream of bytes
-        body: func() -> stream<u8>;
+        body: async func() -> stream<u8>;
         /// Returns the content type of the content, ex: "text/html; charset=utf-8"
-        content-type: func() -> string;
+        content-type: async func() -> string;
         /// Replace the content body with the provided stream of bytes
-        set-body: func(content: stream<u8>);
+        set-body: async func(content: stream<u8>);
     }
 }
 
