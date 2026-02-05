@@ -15,7 +15,7 @@ wasmtime::component::bindgen!({
         "witmproxy:plugin/capabilities.local-storage-client": LocalStorageClient,
         "witmproxy:plugin/capabilities.logger": Logger,
         "witmproxy:plugin/capabilities.content": InboundContent,
-        "wasi:http/types@0.3.0-rc-2025-09-16": wasmtime_wasi_http::p3::bindings::http::types,
+        "wasi:http/types@0.3.0-rc-2026-01-06": wasmtime_wasi_http::p3::bindings::http::types,
     },
 });
 

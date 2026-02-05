@@ -42,9 +42,9 @@ x509-parser = "0.17"
 time = { version = "0.3", features = ["macros"] }
 
 # WASM runtime (component-model + async)
-wasmtime = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["component-model-async"], version = "40.0.0" }
-wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["p3"], version = "40.0.0" }
-wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["p3"], version = "40.0.0" }
+wasmtime = { features = ["component-model-async"], version = "41.0.2" }
+wasmtime-wasi = { features = ["p3"], version = "41.0.2" }
+wasmtime-wasi-http = { features = ["p3"], version = "41.0.2" }
 wit-bindgen = { version = "0.52.0", features = ["default"] }
 # WASM signature verification
 wasmsign2 = "0.2.6"
@@ -108,7 +108,7 @@ tokio-test = "0.4"
 tempfile = "3.8"
 rcgen = "0.13.2"
 webpki-roots = "0.26"
-sqlx-cli = { version = "0.8.6", features = ["rustls"] }
+sqlx-cli = { version = "0.8.6", default-features = false, features = ["rustls", "sqlite"] }
 
 [features]
 # Feature to expose test utilities for integration tests in other crates

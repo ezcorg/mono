@@ -9,7 +9,7 @@ use hyper::{Request, Response, body::Incoming};
 use tracing::{debug, info, warn};
 use wasmtime::Store;
 use wasmtime_wasi_http::p3::{
-    Request as WasiRequest, WasiHttpView, bindings::http::handler::ErrorCode,
+    Request as WasiRequest, WasiHttpView, bindings::http::types::ErrorCode,
 };
 
 use crate::{

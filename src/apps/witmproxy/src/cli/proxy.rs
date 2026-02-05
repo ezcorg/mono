@@ -4,7 +4,9 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
+#[cfg(target_os = "macos")]
+use tracing::{error};
 
 #[derive(Subcommand)]
 pub enum ProxyCommands {

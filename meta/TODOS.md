@@ -1,6 +1,7 @@
 # `witmproxy`
 
 - [ ] Add note somewhere to its README that `witmproxy` requires nightly Rust for development, and plugins require `rustup target add wasm32-wasip2`
+- [ ] Add note somewhere that `wkg` is required for updating/fetching `wit` files
 - [ ] Ensure that `witm plugin add` can be used after the proxy is running (i.e, should likely make a request to the web service instead of starting a plugin registry with a connection to the embedded sqlite database)
 - [ ] Create GitHub Action infrastructure to test `witmproxy` across a matrix of build targets (Windows/macOS/Ubuntu/etc.)
 - [ ] Look at base options passed to `witm` CLI, do they make sense to always be available (i.e, apply to all commands), or should some of them be refactored to only apply to certain command invocations?
