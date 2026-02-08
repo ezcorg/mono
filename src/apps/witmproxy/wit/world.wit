@@ -154,6 +154,19 @@ interface witm-plugin {
         value: string,
     }
 
+    variant input-type {
+        str,
+        boolean,
+        number,
+        select(list<string>),
+    }
+
+    record input {
+        input-type: input-type,
+        default: option<string>,
+        description: option<string>,
+    }
+
     /// A manifest describing the plugin, any requested capabilities, and metadata.
     record plugin-manifest {
         /// The name of the plugin
@@ -176,6 +189,8 @@ interface witm-plugin {
         capabilities: list<capability>,
         /// Additional plugin metadata
         metadata: list<tag>,
+        /// Configuration options available to the user, declared as [Input]s
+        configuration: list<input>,
     }
 
     /// A function called by the host to retrieve the plugins manifest.
