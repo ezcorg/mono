@@ -159,12 +159,35 @@ interface witm-plugin {
         boolean,
         number,
         select(list<string>),
+        datetime,
+        daterange,
+    }
+
+    variant actual-input {
+        str(string),
+        boolean(bool),
+        number(f64),
+        select(string),
+        datetime(string),
+        daterange(tuple<string, string>),
     }
 
     record input {
+        name: string,
         input-type: input-type,
-        default: option<string>,
+        optional: bool,
+        default: option<actual-input>,
         description: option<string>,
+    }
+
+    record user-input {
+        name: string,
+        value: actual-input,
+    }
+
+    variant configure-error {
+        invalid-inputs(list<user-input>),
+        other(string),
     }
 
     /// A manifest describing the plugin, any requested capabilities, and metadata.

@@ -10,8 +10,8 @@ interface capabilities {
     // resource queue-client {} <- a mpsc queue
     // resource custom {} <- for user-defined capabilities
 
-    /// A dumb and simple logging resource (for writing to stdout/stderr)
-    /// TODO: replace with official wasi-logging when available
+    // A dumb and simple logging resource (for writing to stdout/stderr)
+    // TODO: replace with official wasi-logging when available
     resource logger {
         info: async func(message: string);
         warn: async func(message: string);
@@ -19,20 +19,20 @@ interface capabilities {
         debug: async func(message: string);
     }
 
-    /// A resource for annotating/labeling content
+    // A resource for annotating/labeling content
     resource annotator-client {
-        /// Annotate the provided content (extract and store features + metadata)
+        // Annotate the provided content (extract and store features + metadata)
         annotate: async func(content: content);
     }
 
-    /// A resource for storing key-value pairs local to the plugin (sandboxed and inaccessible elsewhere)
+    // A resource for storing key-value pairs local to the plugin (sandboxed and inaccessible elsewhere)
     resource local-storage-client {
         set: async func(key: string, value: list<u8>);
         get: async func(key: string) -> option<list<u8>>;
         delete: async func(key: string);
     }
 
-    /// A capability provider, which only returns capabilities that have been granted by the user
+    // A capability provider, which only returns capabilities that have been granted by the user
     resource capability-provider {
         // http: func() -> option<http-client>;
         // kv: func() -> option<key-value-client>;
@@ -43,33 +43,33 @@ interface capabilities {
         local-storage: async func() -> option<local-storage-client>;
     }
 
-    /// A type used to limit the scope in which granted capabilities can be used.
-    /// Used primarily to filter events before more expensive processing and overhead 
-    /// (such as instantiating and executing WASM components), but can also be used to limit
-    /// the context in which certain capabilities (like local storage) can be used.
-    /// 
-    /// Capability scopes can be configured by the user and may not necessarily match
-    /// the requested scope from the plugin.
+    // A type used to limit the scope in which granted capabilities can be used.
+    // Used primarily to filter events before more expensive processing and overhead 
+    // (such as instantiating and executing WASM components), but can also be used to limit
+    // the context in which certain capabilities (like local storage) can be used.
+    // 
+    // Capability scopes can be configured by the user and may not necessarily match
+    // the requested scope from the plugin.
     record capability-scope {
-        /// A CEL expression, evaluating to `true` or `false` (whether or not a given capability should be granted), matching against the context provided to the capability,
-        /// determining whether the capability applies.
-        /// 
-        /// See [CelRequest], [CelResponse], and [CelContent] for the context available to each expression.
-        /// 
-        /// ```rs
-        /// fn evaluate(request: CelRequest) -> bool { request.path() == "/example" } // for request events
-        /// fn evaluate(response: CelResponse, request: CelRequest) -> bool { response.status() == 200 && request.path() == "/example" } // for response events
-        /// fn evaluate(content: CelContent) -> bool { content.content_type() == "text/html" } // for inbound-content events
-        /// ```
+        // A CEL expression, evaluating to `true` or `false` (whether or not a given capability should be granted), matching against the context provided to the capability,
+        // determining whether the capability applies.
+        // 
+        // See [CelRequest], [CelResponse], and [CelContent] for the context available to each expression.
+        // 
+        // ```rs
+        // fn evaluate(request: CelRequest) -> bool { request.path() == "/example" } // for request events
+        // fn evaluate(response: CelResponse, request: CelRequest) -> bool { response.status() == 200 && request.path() == "/example" } // for response events
+        // fn evaluate(content: CelContent) -> bool { content.content_type() == "text/html" } // for inbound-content events
+        // ```
         expression: string,
     }
 
-    /// The different kinds of events that can be handled by plugins
+    // The different kinds of events that can be handled by plugins
     variant event-kind {
-        /// The associated capability determines which connections should be intercepted by the proxy 
-        /// 
-        /// If you do not request this capability, you are not guaranteed to receive any further
-        /// request/response events related to connections you wish to handle.
+        // The associated capability determines which connections should be intercepted by the proxy 
+        // 
+        // If you do not request this capability, you are not guaranteed to receive any further
+        // request/response events related to connections you wish to handle.
         connect,
         // The associated capability determines which HTTP requests should be handled by the plugin
         request,
@@ -79,23 +79,23 @@ interface capabilities {
         inbound-content,
     }
 
-    /// The different kinds of capabilities that can be requested by plugins
+    // The different kinds of capabilities that can be requested by plugins
     variant capability-kind {
-        /// A capability to handle specific events
+        // A capability to handle specific events
         handle-event(event-kind),
-        /// A capability to log messages
+        // A capability to log messages
         logger,
-        /// A capability to annotate content (extract and store features + metadata) 
+        // A capability to annotate content (extract and store features + metadata) 
         annotator,
-        /// A capability to store local key-value pairs
+        // A capability to store local key-value pairs
         local-storage,
     }
 
-    /// A capability requested by the plugin
+    // A capability requested by the plugin
     record capability {
-        /// The kind of capability being requested
+        // The kind of capability being requested
         kind: capability-kind,
-        /// The scope in which the capability applies (may be modified by the user)
+        // The scope in which the capability applies (may be modified by the user)
         scope: capability-scope,
     }
 
@@ -103,7 +103,7 @@ interface capabilities {
     type request-query = keyed-values;
     type request-header = keyed-values;
 
-    /// The context of an HTTP request (essentially, everything except the body)
+    // The context of an HTTP request (essentially, everything except the body)
     record request-context {
         scheme: string,
         host: string,
@@ -113,34 +113,34 @@ interface capabilities {
         headers: list<request-header>,
     }
 
-    /// A response along with its associated request context
+    // A response along with its associated request context
     record contextual-response {
-        /// The HTTP response
+        // The HTTP response
         response: response,
         // TODO: turn request-context into a resource to avoid copying and modifications
         request: request-context,
     }
 
-    /// The different types of events that can be handled (and returned) by plugins
+    // The different types of events that can be handled (and returned) by plugins
     variant event {
         request(request),
         response(contextual-response),
         inbound-content(content),
     }
 
-    /// A work-in-progress resource representing abstract byte stream content
-    /// Primarily exists to hide compression of the underlying body, 
-    /// providing a simple interface for plugins to interact with 
-    /// without having to worry about compression details 
-    /// (which could be wasteful or conflicting in the case of serial plugin execution).
-    /// 
-    /// Still requires handling content encodings (UTF-8, UTF-16, etc) manually.
+    // A work-in-progress resource representing abstract byte stream content
+    // Primarily exists to hide compression of the underlying body, 
+    // providing a simple interface for plugins to interact with 
+    // without having to worry about compression details 
+    // (which could be wasteful or conflicting in the case of serial plugin execution).
+    // 
+    // Still requires handling content encodings (UTF-8, UTF-16, etc) manually.
     resource content {
-        /// Returns the content as a stream of bytes
+        // Returns the content as a stream of bytes
         body: async func() -> stream<u8>;
-        /// Returns the content type of the content, ex: "text/html; charset=utf-8"
+        // Returns the content type of the content, ex: "text/html; charset=utf-8"
         content-type: async func() -> string;
-        /// Replace the content body with the provided stream of bytes
+        // Replace the content body with the provided stream of bytes
         set-body: async func(content: stream<u8>);
     }
 }
@@ -148,58 +148,58 @@ interface capabilities {
 interface witm-plugin {
     use capabilities.{capability, capability-provider, event};
 
-    /// A tag representing a key-value pair of metadata
+    // A tag representing a key-value pair of metadata
     record tag {
         key: string,
         value: string,
     }
 
-    /// A manifest describing the plugin, any requested capabilities, and metadata.
+    // A manifest describing the plugin, any requested capabilities, and metadata.
     record plugin-manifest {
-        /// The name of the plugin
+        // The name of the plugin
         name: string,
-        /// The plugin author's namespace (use for scoping)
+        // The plugin author's namespace (use for scoping)
         namespace: string,
-        /// The publishing plugin author
+        // The publishing plugin author
         author: string,
-        /// The plugin version
+        // The plugin version
         version: string,
-        /// A short description of the plugin
+        // A short description of the plugin
         description: string,
-        /// The plugin license
+        // The plugin license
         license: string,
-        /// The plugin homepage URL
+        // The plugin homepage URL
         url: string,
-        /// The plugin author's public key (for verifying the plugin)
+        // The plugin author's public key (for verifying the plugin)
         publickey: list<u8>,
-        /// The capabilities requested by the plugin
+        // The capabilities requested by the plugin
         capabilities: list<capability>,
-        /// Additional plugin metadata
+        // Additional plugin metadata
         metadata: list<tag>,
     }
 
-    /// A function called by the host to retrieve the plugins manifest.
-    /// 
-    /// Used by the host to fetch (and verify) all necessary information about the plugin,
-    /// including requested capabilities, before instantiating and executing it.
-    /// 
-    /// The public key will be used by the host to verify the WASM components signature,
-    /// ensuring the plugin has not been tampered with.
-    /// 
-    /// If the manifest is invalid or cannot be verified, the host will not load the plugin.
+    // A function called by the host to retrieve the plugins manifest.
+    // 
+    // Used by the host to fetch (and verify) all necessary information about the plugin,
+    // including requested capabilities, before instantiating and executing it.
+    // 
+    // The public key will be used by the host to verify the WASM components signature,
+    // ensuring the plugin has not been tampered with.
+    // 
+    // If the manifest is invalid or cannot be verified, the host will not load the plugin.
     manifest: func() -> plugin-manifest;
 
-    /// A function called by the host to handle events granted by the plugin's given capabilities.
-    /// 
-    /// The capability provider can be used to access additional host capabilities (for example, logging or local storage) within the plugin.
-    /// Because requested capabilities may not necessarily be granted, the plugin is responsible for checking and handling whether a capability they require is available.
-    /// 
-    /// The handler may return the event as is, perform modifications, return a new event entirely (so long as the event output is valid given the input),
-    /// or return `None` to abandon any further event processing (likely resulting in an HTTP error from the perspective of the host).
-    /// 
-    /// * [Request] events must return either [Request] or [Response] events.
-    /// * [Response] events must return [Response] events.
-    /// * [InboundContent] events must return [InboundContent] events.
+    // A function called by the host to handle events granted by the plugin's given capabilities.
+    // 
+    // The capability provider can be used to access additional host capabilities (for example, logging or local storage) within the plugin.
+    // Because requested capabilities may not necessarily be granted, the plugin is responsible for checking and handling whether a capability they require is available.
+    // 
+    // The handler may return the event as is, perform modifications, return a new event entirely (so long as the event output is valid given the input),
+    // or return `None` to abandon any further event processing (likely resulting in an HTTP error from the perspective of the host).
+    // 
+    // * [Request] events must return either [Request] or [Response] events.
+    // * [Response] events must return [Response] events.
+    // * [InboundContent] events must return [InboundContent] events.
     handle: func(ev: event, cp: capability-provider) -> option<event>;
 }
 

@@ -103,7 +103,7 @@ impl Guest for Plugin {
                     },
                 },
             ],
-            license: "AGPLv3".to_string(),
+            license: "AGPL-3.0-only".to_string(),
             url: "https://joinez.co".to_string(),
             publickey: PUBLIC_KEY_BYTES.to_vec(),
         }
