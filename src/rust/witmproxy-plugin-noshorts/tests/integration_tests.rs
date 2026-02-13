@@ -29,9 +29,7 @@ mod e2e_tests {
             let registry = registry.read().await;
             let plugins = registry.plugins();
             assert!(
-                plugins
-                    .values()
-                    .any(|p| p.name == "noshorts"),
+                plugins.values().any(|p| p.name == "noshorts"),
                 "noshorts plugin should be registered"
             );
         }

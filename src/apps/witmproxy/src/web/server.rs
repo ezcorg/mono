@@ -99,9 +99,7 @@ impl WebServer {
                     .get(list_plugins)
                     .post(upsert_plugin),
             )
-            .push(
-                Router::with_path("/api/plugins/<namespace>/<name>").delete(delete_plugin),
-            )
+            .push(Router::with_path("/api/plugins/<namespace>/<name>").delete(delete_plugin))
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 

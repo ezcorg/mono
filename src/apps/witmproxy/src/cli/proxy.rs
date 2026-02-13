@@ -4,9 +4,9 @@ use anyhow::Result;
 use clap::Subcommand;
 use std::path::PathBuf;
 use std::process::Command;
-use tracing::{info, warn};
 #[cfg(target_os = "macos")]
-use tracing::{error};
+use tracing::error;
+use tracing::{info, warn};
 
 #[derive(Subcommand)]
 pub enum ProxyCommands {

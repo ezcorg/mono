@@ -291,10 +291,7 @@ impl PluginHandler {
         };
 
         // Try the web API first (daemon may be running)
-        match self
-            .try_remove_via_web(&name, namespace.as_deref())
-            .await
-        {
+        match self.try_remove_via_web(&name, namespace.as_deref()).await {
             Ok(true) => return Ok(()),
             Ok(false) => {
                 warn!("Daemon not reachable, falling back to direct DB access");

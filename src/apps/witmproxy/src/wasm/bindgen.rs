@@ -466,7 +466,14 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                     "daterange" => Ok(InputType::Daterange),
                     _ => Err(de::Error::unknown_variant(
                         value,
-                        &["str", "boolean", "number", "select", "datetime", "daterange"],
+                        &[
+                            "str",
+                            "boolean",
+                            "number",
+                            "select",
+                            "datetime",
+                            "daterange",
+                        ],
                     )),
                 }
             }
@@ -485,7 +492,14 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                     }
                     _ => Err(de::Error::unknown_variant(
                         &key,
-                        &["str", "boolean", "number", "select", "datetime", "daterange"],
+                        &[
+                            "str",
+                            "boolean",
+                            "number",
+                            "select",
+                            "datetime",
+                            "daterange",
+                        ],
                     )),
                 }
             }
@@ -549,7 +563,14 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::ActualIn
                     "daterange" => Ok(ActualInput::Daterange(map.next_value()?)),
                     _ => Err(de::Error::unknown_variant(
                         &key,
-                        &["str", "boolean", "number", "select", "datetime", "daterange"],
+                        &[
+                            "str",
+                            "boolean",
+                            "number",
+                            "select",
+                            "datetime",
+                            "daterange",
+                        ],
                     )),
                 }
             }

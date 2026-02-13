@@ -17,8 +17,7 @@ use crate::{
     wasm::{
         Host,
         bindgen::{
-            Plugin, PluginManifest, UserInput,
-            exports::witmproxy::plugin::witm_plugin::Tag,
+            Plugin, PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
             witmproxy::plugin::capabilities::Capability as WitCapability,
         },
     },
