@@ -17,7 +17,8 @@ use crate::{
     wasm::{
         Host,
         bindgen::{
-            Plugin, PluginManifest, exports::witmproxy::plugin::witm_plugin::Tag,
+            Plugin, PluginManifest, UserInput,
+            exports::witmproxy::plugin::witm_plugin::Tag,
             witmproxy::plugin::capabilities::Capability as WitCapability,
         },
     },
@@ -42,6 +43,8 @@ pub struct WitmPlugin {
     pub capabilities: Vec<Capability>,
     // Plugin metadata
     pub metadata: HashMap<String, String>,
+    // User-supplied configuration values passed to plugin on each event
+    pub configuration: Vec<UserInput>,
     // Compiled WASM component implementing the Plugin interface
     #[serde(skip)]
     pub component: Option<Component>,
@@ -134,6 +137,29 @@ impl WitmPlugin {
             };
             plugin.capabilities.push(capability);
         }
+
+        let config_rows = query(
+            "
+            SELECT input_name, input_value
+            FROM plugin_configuration
+            WHERE namespace = ? AND name = ?
+            ",
+        )
+        .bind(&plugin.namespace)
+        .bind(&plugin.name)
+        .fetch_all(&db.pool)
+        .await?;
+
+        for row in config_rows {
+            let input_name: String = row.try_get("input_name")?;
+            let input_value_str: String = row.try_get("input_value")?;
+            let value = serde_json::from_str(&input_value_str)?;
+            plugin.configuration.push(UserInput {
+                name: input_name,
+                value,
+            });
+        }
+
         plugin = plugin.compile_capability_scope_expressions(env)?;
         Ok(plugin)
     }
@@ -239,6 +265,7 @@ impl From<PluginManifest> for WitmPlugin {
             url: manifest.url,
             publickey: manifest.publickey,
             enabled: true,
+            configuration: vec![],
             component: None,
             component_bytes: vec![],
             metadata,
@@ -315,6 +342,23 @@ impl Insert for WitmPlugin {
         );
 
         query_builder.build().execute(&mut *tx).await?;
+
+        // Bulk insert configuration
+        if !self.configuration.is_empty() {
+            let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+                "INSERT INTO plugin_configuration (namespace, name, input_name, input_value) ",
+            );
+
+            query_builder.push_values(&self.configuration, |mut b, input| {
+                let value_str = serde_json::to_string(&input.value).unwrap_or_default();
+                b.push_bind(&self.namespace)
+                    .push_bind(&self.name)
+                    .push_bind(&input.name)
+                    .push_bind(value_str);
+            });
+
+            query_builder.build().execute(&mut *tx).await?;
+        }
 
         // Bulk insert metadata
         if !self.metadata.is_empty() {

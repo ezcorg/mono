@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use wit_bindgen::StreamResult;
 
 use crate::exports::witmproxy::plugin::witm_plugin::{
-    Capability, CapabilityProvider, Event, Guest, PluginManifest,
+    Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
+    Plugin as PluginResource, PluginManifest, UserInput,
 };
 use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
 
@@ -18,7 +19,7 @@ wit_bindgen::generate!({
 
 const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 
-struct Plugin;
+struct Component;
 
 pub const STYLES: &str = r#"
 <style>
@@ -72,7 +73,9 @@ pub const STYLES: &str = r#"
 </style>
 "#;
 
-impl Guest for Plugin {
+impl Guest for Component {
+    type Plugin = PluginInstance;
+
     async fn manifest() -> PluginManifest {
         PluginManifest {
             name: "noshorts".to_string(),
@@ -106,10 +109,21 @@ impl Guest for Plugin {
             license: "AGPL-3.0-only".to_string(),
             url: "https://joinez.co".to_string(),
             publickey: PUBLIC_KEY_BYTES.to_vec(),
+            configuration: vec![],
         }
     }
+}
 
-    async fn handle(ev: Event, cap: CapabilityProvider) -> Option<Event> {
+struct PluginInstance {
+    _config: Vec<UserInput>,
+}
+
+impl GuestPlugin for PluginInstance {
+    async fn create(config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
+        Ok(PluginResource::new(PluginInstance { _config: config }))
+    }
+
+    async fn handle(&self, ev: Event, cap: CapabilityProvider) -> Option<Event> {
         match ev {
             Event::InboundContent(content) => {
                 let (body_tx, body_rx) = wit_stream::new();
@@ -406,7 +420,7 @@ impl Guest for Plugin {
     }
 }
 
-export!(Plugin);
+export!(Component);
 
 /// Extract charset from Content-Type header
 /// e.g., "text/html; charset=utf-8" -> UTF_8

@@ -1,6 +1,7 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
-        Capability, CapabilityProvider, Guest, PluginManifest,
+        Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin,
+        Plugin as PluginResource, PluginManifest, UserInput,
     },
     witmproxy::plugin::capabilities::{
         CapabilityKind, CapabilityScope, ContextualResponse, Event, EventKind, Request, Response,
@@ -16,9 +17,11 @@ wit_bindgen::generate!({
 
 const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 
-struct Plugin;
+struct Component;
 
-impl Guest for Plugin {
+impl Guest for Component {
+    type Plugin = PluginInstance;
+
     async fn manifest() -> PluginManifest {
         PluginManifest {
             name: "wasm-test-component".to_string(),
@@ -56,10 +59,21 @@ impl Guest for Plugin {
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
             publickey: PUBLIC_KEY_BYTES.to_vec(),
+            configuration: vec![],
         }
     }
+}
 
-    async fn handle(ev: Event, _cp: CapabilityProvider) -> Option<Event> {
+struct PluginInstance {
+    _config: Vec<UserInput>,
+}
+
+impl GuestPlugin for PluginInstance {
+    async fn create(config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
+        Ok(PluginResource::new(PluginInstance { _config: config }))
+    }
+
+    async fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
         match ev {
             Event::Request(req) => {
                 let authority = req.get_authority().await;
@@ -125,4 +139,4 @@ impl Guest for Plugin {
     }
 }
 
-export!(Plugin);
+export!(Component);

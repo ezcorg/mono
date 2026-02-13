@@ -1,6 +1,7 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
-        Capability, CapabilityProvider, Guest, PluginManifest,
+        Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin,
+        Plugin as PluginResource, PluginManifest, UserInput,
     },
     witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Event, EventKind},
 };
@@ -12,9 +13,11 @@ wit_bindgen::generate!({
 
 const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 
-struct Plugin;
+struct Component;
 
-impl Guest for Plugin {
+impl Guest for Component {
+    type Plugin = PluginInstance;
+
     fn manifest() -> PluginManifest {
         PluginManifest {
             name: "noop".to_string(),
@@ -46,12 +49,21 @@ impl Guest for Plugin {
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
             publickey: PUBLIC_KEY_BYTES.to_vec(),
+            configuration: vec![],
         }
     }
+}
 
-    fn handle(ev: Event, _cp: CapabilityProvider) -> Option<Event> {
+struct PluginInstance;
+
+impl GuestPlugin for PluginInstance {
+    fn create(_config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
+        Ok(PluginResource::new(PluginInstance))
+    }
+
+    fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
         Some(ev)
     }
 }
 
-export!(Plugin);
+export!(Component);

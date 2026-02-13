@@ -40,9 +40,11 @@ mod tests {
         detach: bool,
     ) -> ResolvedCli {
         let db_path = temp_path.join("test.db");
+        let cert_dir = temp_path.join("certs");
         let mut partial_config = AppConfigLayer::default_values();
         partial_config.db.db_path = Some(db_path);
         partial_config.db.db_password = Some("test_password".to_string());
+        partial_config.tls.cert_dir = Some(cert_dir);
 
         // Create a resolved config directly for testing
         let config = AppConfig::builder()

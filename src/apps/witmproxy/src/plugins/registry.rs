@@ -272,11 +272,48 @@ impl PluginRegistry {
             // Build the capability provider based on the plugin's granted capabilities
             let provider = CapabilityProvider::from(&plugin.capabilities);
             let cap_resource = store.data_mut().table.push(provider)?;
+            let config = plugin.configuration.clone();
+
             let guest_result = store
                 .run_concurrent(async move |store| {
+                    // Create the plugin resource with user-supplied configuration
+                    let (create_result, task) = match plugin_instance
+                        .witmproxy_plugin_witm_plugin()
+                        .plugin()
+                        .call_create(store, config)
+                        .await
+                    {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_kind = kind.to_string(),
+                                error = %e,
+                                "Error calling plugin create"
+                            );
+                            return Err(e);
+                        }
+                    };
+                    task.block(store).await;
+
+                    let plugin_resource = match create_result {
+                        Ok(resource) => resource,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_kind = kind.to_string(),
+                                error = ?e,
+                                "Plugin create returned configure error"
+                            );
+                            return Ok(None);
+                        }
+                    };
+
+                    // Handle the event using the plugin resource
                     let (result, task) = match plugin_instance
                         .witmproxy_plugin_witm_plugin()
-                        .call_handle(store, event_data, cap_resource)
+                        .plugin()
+                        .call_handle(store, plugin_resource, event_data, cap_resource)
                         .await
                     {
                         Ok(ok) => ok,
@@ -402,6 +439,7 @@ mod tests {
             url: "https://example.com".into(),
             publickey: vec![],
             capabilities,
+            configuration: vec![],
             metadata: std::collections::HashMap::new(),
             component,
         }
@@ -584,6 +622,7 @@ mod tests {
             url: "https://example.com".into(),
             publickey: vec![],
             capabilities,
+            configuration: vec![],
             metadata: std::collections::HashMap::new(),
             component,
         };
@@ -668,6 +707,7 @@ mod tests {
             url: "https://example.com".into(),
             publickey: vec![],
             capabilities,
+            configuration: vec![],
             metadata: std::collections::HashMap::new(),
             component,
         }
@@ -797,6 +837,7 @@ mod tests {
                 url: "https://example.com".into(),
                 publickey: vec![],
                 capabilities,
+                configuration: vec![],
                 metadata: std::collections::HashMap::new(),
                 component,
             };

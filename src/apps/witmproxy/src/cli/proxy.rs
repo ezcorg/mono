@@ -1,7 +1,7 @@
+use super::Services;
 use crate::config::AppConfig;
 use anyhow::Result;
 use clap::Subcommand;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 use tracing::{info, warn};
@@ -24,12 +24,6 @@ pub enum ProxyCommands {
     },
     /// Show current proxy status
     Status,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Services {
-    proxy: String,
-    web: String,
 }
 
 pub struct ProxyHandler {

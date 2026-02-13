@@ -106,9 +106,9 @@ enum Commands {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Services {
-    proxy: String,
-    web: String,
+pub(crate) struct Services {
+    pub proxy: String,
+    pub web: String,
 }
 
 impl Cli {

@@ -31,7 +31,7 @@ mod e2e_tests {
             assert!(
                 plugins
                     .values()
-                    .any(|p| p.name == "witmproxy-plugin-noshorts"),
+                    .any(|p| p.name == "noshorts"),
                 "noshorts plugin should be registered"
             );
         }

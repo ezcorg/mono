@@ -1,4 +1,4 @@
-package witmproxy:plugin@0.0.5;
+package witmproxy:plugin@0.0.6;
 
 interface capabilities {
     use wasi:http/types@0.3.0-rc-2026-01-06.{request, response};
@@ -172,7 +172,7 @@ interface witm-plugin {
         daterange(tuple<string, string>),
     }
 
-    record input {
+    record input-schema {
         name: string,
         input-type: input-type,
         optional: bool,
@@ -212,33 +212,40 @@ interface witm-plugin {
         capabilities: list<capability>,
         /// Additional plugin metadata
         metadata: list<tag>,
-        /// Configuration options available to the user, declared as [Input]s
-        configuration: list<input>,
+        /// Configuration options available to the user, declared as [InputSchema]s
+        configuration: list<input-schema>,
     }
 
     /// A function called by the host to retrieve the plugins manifest.
-    /// 
+    ///
     /// Used by the host to fetch (and verify) all necessary information about the plugin,
     /// including requested capabilities, before instantiating and executing it.
-    /// 
+    ///
     /// The public key will be used by the host to verify the WASM components signature,
     /// ensuring the plugin has not been tampered with.
-    /// 
+    ///
     /// If the manifest is invalid or cannot be verified, the host will not load the plugin.
     manifest: func() -> plugin-manifest;
 
-    /// A function called by the host to handle events granted by the plugin's given capabilities.
-    /// 
-    /// The capability provider can be used to access additional host capabilities (for example, logging or local storage) within the plugin.
-    /// Because requested capabilities may not necessarily be granted, the plugin is responsible for checking and handling whether a capability they require is available.
-    /// 
-    /// The handler may return the event as is, perform modifications, return a new event entirely (so long as the event output is valid given the input),
-    /// or return `None` to abandon any further event processing (likely resulting in an HTTP error from the perspective of the host).
-    /// 
-    /// * [Request] events must return either [Request] or [Response] events.
-    /// * [Response] events must return [Response] events.
-    /// * [InboundContent] events must return [InboundContent] events.
-    handle: func(ev: event, cp: capability-provider) -> option<event>;
+    /// A plugin resource, instantiated per-event with user-supplied configuration.
+    resource plugin {
+        /// Create a new plugin instance with the given configuration.
+        /// Called by the host before each event is handled.
+        create: static func(config: list<user-input>) -> result<plugin, configure-error>;
+
+        /// Handle an event using this plugin instance.
+        ///
+        /// The capability provider can be used to access additional host capabilities (for example, logging or local storage) within the plugin.
+        /// Because requested capabilities may not necessarily be granted, the plugin is responsible for checking and handling whether a capability they require is available.
+        ///
+        /// The handler may return the event as is, perform modifications, return a new event entirely (so long as the event output is valid given the input),
+        /// or return `None` to abandon any further event processing (likely resulting in an HTTP error from the perspective of the host).
+        ///
+        /// * [Request] events must return either [Request] or [Response] events.
+        /// * [Response] events must return [Response] events.
+        /// * [InboundContent] events must return [InboundContent] events.
+        handle: func(ev: event, cp: capability-provider) -> option<event>;
+    }
 }
 
 world plugin {

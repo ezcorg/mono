@@ -13,16 +13,17 @@
 
 ## Medium
 
-- [ ] Ensure that `witm plugin add` can be used after the proxy is running (i.e, should likely make a request to the web service instead of starting a plugin registry with a connection to the embedded sqlite database)
-- [ ] Create GitHub Action infrastructure to test `witmproxy` across a matrix of build targets (Windows/macOS/Ubuntu/etc.)
+- [x] Ensure that `witm plugin add` can be used after the proxy is running (i.e, should likely make a request to the web service instead of starting a plugin registry with a connection to the embedded sqlite database)
+- [x] Create GitHub Action infrastructure to test `witmproxy` across a matrix of build targets (Windows/macOS/Ubuntu/etc.)
 - [ ] A clock `capability-kind` (wasi:clocks) to allow plugins to request current system time
 
 ## Bigger tasks
-- [ ] A code editor extension for syntax highlighting capability CEL expressions
+
 - [ ] Platform-specific secret handling of sensitive credentials (database password) that is compatible with the `witmproxy` daemon
 - [ ] Add a layer on-top of `witmproxy` to allow it to spawn a backend which can be used as a complete network interface/device, so that we can capture and handle all network traffic (if this makes sense)
 - [ ] Consider what architectural changes would be needed in order to allow something like the following: It would be convenient to deploy `witmproxy` to external hosts (which can be reached by a VPN/tunnel of some kind), and have multiple clients (like mobile phones, tablets, PCs, etc.) able to share the same instance. It should still be possible to remotely (and securely) manage the proxy. What are ways we could accomplish this? How could we change the CLI (should it operate more as a client)? In some ways, `tailscale` is a good model to follow for this kind of functionality/architecture.
 - [ ] Consider whether it is possible to use WIT to express a system where plugins may register custom "capabilities" (interfaces?) that other plugins may request access to, and if it is possible, how that system would integrate into `witmproxy` (and what changes would be required)
+- [ ] A code editor extension for syntax highlighting capability CEL expressions
 
 # `ezfilter`
 
@@ -63,3 +64,6 @@ Our company, [`ez co`](https://joinez.co), is a worker-owned _democratic collect
 - [ ] Payment infrastructure:
   * How do we allow payments in our system? Do we use Stripe? Do we accept stable coins?
   * How do we charge our users? What information do we retain (if any)?
+
+
+In `src/apps/witmproxy/wit/world.wit`, can you finish refactoring the WIT interface to expose a `plugin` resource, which will have a constructor(`list<user-input>`) (accepting user-input for plugin configuration) and the existing `handle()` method? This is desired so that guest plugins may reference supplied configuration for execution. We will then need to update the current Rust host (`witmproxy`) WASM component usage, and add tests to ensure things function as expected (which involve updating current example guests with the new interface and APIs).
