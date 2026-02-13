@@ -9,7 +9,7 @@ description = "noop"
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "0.46.0"
+wit-bindgen = "0.52.0"
 
 [package.metadata.component]
 package = "witmproxy:witmproxy-plugin-noop-plugin"

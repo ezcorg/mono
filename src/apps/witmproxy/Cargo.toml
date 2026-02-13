@@ -1,14 +1,14 @@
 [package]
 name = "witmproxy"
-version = "0.0.1"
+version = "0.0.2-alpha"
 edition = "2024"
 authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A WASM-in-the-middle proxy"
-license = "AGPLv3"
+license = "AGPL-3.0-only"
 readme = "README.md"
 repository = "https://github.com/ezcorg/mono"
-keywords = ["wasm", "wasmtime", "mitm", "proxy"]
-categories = ["network-programming", "wasm"]
+keywords = ["wasm", "mitm", "proxy"]
+categories = ["network-programming", "wasm", "web-programming"]
 
 [lib]
 name = "witmproxy"
@@ -30,7 +30,7 @@ hyper-rustls = { version = "0.27.0", features = ["http1", "http2"] }
 http-body-util = "0.1"
 
 # TLS
-rustls = { version = "0.23.4", features = ["ring"] }
+rustls = { version = "0.23.36", features = ["ring"] }
 rustls-pemfile = "2.0"
 rustls-native-certs = "0.8.0"
 tokio-rustls = "0.26"
@@ -42,10 +42,10 @@ x509-parser = "0.17"
 time = { version = "0.3", features = ["macros"] }
 
 # WASM runtime (component-model + async)
-wasmtime = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["component-model-async"], version = "40.0.0" }
-wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["p3"], version = "40.0.0" }
-wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime/", features = ["p3"], version = "40.0.0" }
-wit-bindgen = { version = "0.46.0", features = ["default"] }
+wasmtime = { features = ["component-model-async"], version = "41.0.2" }
+wasmtime-wasi = { features = ["p3"], version = "41.0.2" }
+wasmtime-wasi-http = { features = ["p3"], version = "41.0.2" }
+wit-bindgen = { version = "0.52.0", features = ["default"] }
 # WASM signature verification
 wasmsign2 = "0.2.6"
 
@@ -75,22 +75,17 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 
-# HTML parsing
-html5ever = "0.27"
-markup5ever_rcdom = "0.3"
-
 # Template engine
 askama = "0.12"
-cargo-generate = "0.23.7"
+cargo-generate = { version = "0.23.7", features = ["vendored-openssl"] }
 
 clap = { version = "4.5.47", features = ["derive"] }
-markup5ever = "0.35.0"
 either = "1.15.0"
 confique = { version = "0.4.0", features = ["toml"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 # Must match version in sqlx
 libsqlite3-sys = { version = "0.30.1", features = [
-    "bundled-sqlcipher"
+    "bundled-sqlcipher-vendored-openssl"
 ] }
 dirs = "6.0.0"
 lazy_static = "1.5.0"
@@ -98,8 +93,14 @@ bimap = "0.6.3"
 salvo = { version = "0.84.1", features = ["oapi", "quinn", "serve-static", "cors", "affix-state", "rustls", "force-https"] }
 rust-embed = "8.7.2"
 http-body = "1.0.1"
-webextension_pattern = { version = "0.3.0", features = ["serde"] }
-cel-cxx = { version = "0.2.1", features = ["tokio"] }
+cel-cxx = { version = "0.2.4", features = ["tokio"] }
+async-compression = { version = "0.4.35", features = ["brotli", "deflate", "deflate64", "futures-io", "gzip", "tokio", "zstd"] }
+tokio-stream = "0.1.17"
+notify = { version = "8.2.0" }
+
+# Optional test helper dependencies
+tempfile = { version = "3.8", optional = true }
+service-manager = "0.10.0"
 
 [dev-dependencies]
 # Test dependencies
@@ -107,4 +108,8 @@ tokio-test = "0.4"
 tempfile = "3.8"
 rcgen = "0.13.2"
 webpki-roots = "0.26"
-sqlx-cli = { version = "0.8.6", features = ["rustls"] }
+sqlx-cli = { version = "0.8.6", default-features = false, features = ["rustls", "sqlite"] }
+
+[features]
+# Feature to expose test utilities for integration tests in other crates
+test-helpers = ["dep:tempfile"]

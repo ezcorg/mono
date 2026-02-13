@@ -5,9 +5,7 @@ import Footer from '../components/Footer.astro';
 ---
 
 <Layout title="ez co | building easier">
-	<section
-		class="w-[min(80ch,100vw)] min-h-screen mt-[6rem] md:mt-[8rem] flex items-start justify-center px-4 md:px-6 lg:px-8 relative z-10"
-	>
+	<section>
 		<div class="w-full mx-auto flex flex-col gap-6 md:gap-8">
 			<Navbar currentPath="/" />
 			<div class="text-container">
@@ -21,10 +19,11 @@ import Footer from '../components/Footer.astro';
 					<span
 						class="inline-block font-bold relative text-[#F5F5F5]"
 						id="dynamic-text"
+						style="overflow: visible; padding-right: 4px;"
 					>
 						<span class="inline-block" id="text-content">{''}</span>
 						<span
-							class="absolute top-0 ml-[2px] md:ml-[4px] w-[1.5px] md:w-[2px] h-[1em] bg-[#F5F5F5] animate-blink"
+							class="absolute top-0 w-[1.5px] md:w-[2px] ml-[2px] h-[1em] bg-[#F5F5F5] animate-blink"
 							id="cursor"></span>
 					</span>
 				</h1>
@@ -39,14 +38,16 @@ import Footer from '../components/Footer.astro';
 						<span
 							class="inline-block font-bold relative text-[#F5F5F5]"
 							id="dynamic-text-reflection"
+							style="overflow: visible; padding-right: 6px;"
 						>
 							<span
 								class="inline-block"
 								id="text-content-reflection">{''}</span
 							>
 							<span
-								class="absolute top-0 ml-[2px] md:ml-[4px] w-[1.5px] md:w-[2px] h-[1em] bg-[#F5F5F5] animate-blink"
-								id="cursor-reflection"></span>
+								class="absolute top-0 w-[1.5px] md:w-[2px] h-[1em] bg-[#F5F5F5] animate-blink"
+								id="cursor-reflection"
+								style="margin-left: 2px;"></span>
 						</span>
 					</h1>
 				</div>
@@ -55,9 +56,9 @@ import Footer from '../components/Footer.astro';
 				class="text-lg sm:text-xl md:text-2xl text-[#F5F5F5] max-w-2xl mb-8 md:mb-12"
 				style="font-family: Times;"
 			>
-				For those seeking simple, open, user-friendly solutions.
+				Simple, honest, user-friendly solutions.
 			</p>
-			<div class="flex flex-col sm:flex-row gap-3 md:gap-4">
+			<div class="flex flex-col xs:flex-row w-full xs:size-auto gap-3 md:gap-4">
 				<a
 					href="/newproject"
 					class="inline-block bg-[#F5F5F5] text-black px-6 md:px-8 py-3 md:py-4 text-base md:text-lg transition-all duration-300 hover:bg-opacity-90 text-center sm:text-left"
@@ -153,7 +154,7 @@ import Footer from '../components/Footer.astro';
 
 <script>
 	// Dynamic text animation with water effects
-	const words = ['easier', 'smarter', 'minimal', 'transparently', 'the future', 'humanity',];
+	const words = ['easier', 'smarter', 'simple', 'open', 'the future', 'scalable', 'secure', 'humane'];
 	let currentIndex = 0;
 
 	const dynamicTextElement = document.getElementById(
@@ -183,31 +184,20 @@ import Footer from '../components/Footer.astro';
 		cursorReflection &&
 		dynamicTextReflection
 	) {
-		// Calculate the minimum width needed for the longest word to prevent layout shifts
-		const longestWord = words.reduce((a, b) =>
-			a.length > b.length ? a : b,
-		);
-
-		// Create invisible placeholder element to reserve space for longest word
-		const placeholder = document.createElement('span');
-		placeholder.style.visibility = 'hidden';
-		placeholder.style.position = 'absolute';
-		placeholder.style.pointerEvents = 'none';
-		placeholder.style.fontSize = getComputedStyle(textSpan).fontSize;
-		placeholder.style.fontFamily = getComputedStyle(textSpan).fontFamily;
-		placeholder.style.fontWeight = getComputedStyle(textSpan).fontWeight;
-		placeholder.textContent = longestWord;
-		dynamicTextElement.appendChild(placeholder);
 
 		// Function to update cursor position based on text content
 		const updateCursorPosition = () => {
 			if (textSpan && cursor) {
 				const textWidth = textSpan.offsetWidth;
 				cursor.style.left = `${textWidth}px`;
+				cursor.style.position = 'absolute';
+				cursor.style.top = '0';
 			}
 			if (textSpanReflection && cursorReflection) {
 				const textWidth = textSpanReflection.offsetWidth;
-				cursorReflection.style.left = `${textWidth}px`;
+				// cursorReflection.style.left = `${textWidth}px`;
+				cursorReflection.style.position = 'absolute';
+				cursorReflection.style.top = '0';
 			}
 		};
 

@@ -1,11 +1,9 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
-        CapabilityProvider, Guest, HandleRequestResult, HandleResponseResult, PluginManifest,
-        Request, Response,
+        Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin,
+        Plugin as PluginResource, PluginManifest, UserInput,
     },
-    witmproxy::plugin::capabilities::{
-        Capabilities, ConnectCapability, RequestCapability, ResponseCapability,
-    },
+    witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Event, EventKind},
 };
 
 wit_bindgen::generate!({
@@ -15,41 +13,57 @@ wit_bindgen::generate!({
 
 const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 
-struct Plugin;
+struct Component;
 
-impl Guest for Plugin {
+impl Guest for Component {
+    type Plugin = PluginInstance;
+
     fn manifest() -> PluginManifest {
         PluginManifest {
-            name: "witmproxy-plugin-noop".to_string(),
-            namespace: "Theodore Brockman".to_string(),
+            name: "noop".to_string(),
+            namespace: "witmproxy".to_string(),
             author: "Theodore Brockman".to_string(),
             version: "0.0.0".to_string(),
-            description: "noop".to_string(),
+            description: "an example plugin which does nothing".to_string(),
             metadata: vec![],
-            capabilities: Capabilities {
-                connect: ConnectCapability {
-                    filter: "true".to_string(),
+            capabilities: vec![
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
                 },
-                request: Some(RequestCapability {
-                    filter: "true".to_string(),
-                }),
-                response: Some(ResponseCapability {
-                    filter: "true".to_string(),
-                }),
-            },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Request),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
+                },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Response),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
+                },
+            ],
             license: "MIT".to_string(),
             url: "https://example.com".to_string(),
             publickey: PUBLIC_KEY_BYTES.to_vec(),
+            configuration: vec![],
         }
-    }
-
-    fn handle_request(req: Request, cap: CapabilityProvider) -> HandleRequestResult {
-        HandleRequestResult::Next(req)
-    }
-
-    fn handle_response(res: Response, cap: CapabilityProvider) -> HandleResponseResult {
-        HandleResponseResult::Next(res)
     }
 }
 
-export!(Plugin);
+struct PluginInstance;
+
+impl GuestPlugin for PluginInstance {
+    fn create(_config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
+        Ok(PluginResource::new(PluginInstance))
+    }
+
+    fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
+        Some(ev)
+    }
+}
+
+export!(Component);

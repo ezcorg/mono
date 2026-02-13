@@ -16,30 +16,56 @@ A WASM-in-the-middle proxy, written in Rust.
 
 ```sh
 cargo install witmproxy
-witmproxy # starts in the background, restarts on startup
-witmproxy stop # stop the service, until explictly restarted
+witm              # First run: installs daemon and attaches to logs
+witm -d           # Run detached (start daemon without attaching to logs)
 ```
 
-### 2. Add plugins
+On first run, `witm` automatically:
+1. Installs the proxy as a system daemon (using launchd on macOS, systemd on Linux, or Windows Services)
+2. Starts the daemon service
+3. Attaches to the daemon's log output (unless `-d`/`--detach` is specified)
+
+### 2. Daemon management
+
+```sh
+# View daemon status
+witm daemon status
+
+# Control the daemon
+witm daemon start    # Start the daemon
+witm daemon stop     # Stop the daemon
+witm daemon restart  # Restart the daemon
+
+# View logs
+witm daemon logs          # Show last 50 lines of logs
+witm daemon logs -f       # Follow logs in real-time (like tail -f)
+witm daemon logs -l 100   # Show last 100 lines
+
+# Manage installation
+witm daemon install    # Manually install the daemon
+witm daemon uninstall  # Remove the daemon from the system
+```
+
+### 3. Add plugins
 
 Plugins are how you can extend `witmproxy` with whatever functionality your heart desires.
 
 ```sh
-witmproxy add @ezco/noop # add a plugin from the witmproxy.rs registry
-witmproxy add ./path/to/component.wasm # add a local plugin
+witm plugin add @ezco/noop # add a plugin from the witmproxy.rs registry
+witm plugin add ./path/to/component.wasm # add a local plugin
 ```
 
-### 3. Creating a new plugin
+### 4. Creating a new plugin
 
 ```sh
-witmproxy new plugin <name> [...options] # creates plugin scaffolding
+witm plugin new <name> [...options] # creates plugin scaffolding
 ```
 
 The witmproxy plugin WIT interface is automatically published to [GitHub Container Registry](https://ghcr.io) and can be consumed using [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools):
 
 ```sh
 # Fetch the WIT interface for plugin development
-wkg get --format wit witmproxy:plugin@0.0.3 --output plugin.wit
+wkg get --format wit witmproxy:plugin@0.0.5 --output plugin.wit
 ```
 
 See [WIT Publishing Documentation](../../docs/wit-publishing.md) for more information.

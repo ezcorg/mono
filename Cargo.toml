@@ -6,10 +6,9 @@ members = [
     "src/apps/eznote/src-tauri", 
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
+    "src/rust/witmproxy-plugin-noshorts",
 ]
-exclude = [
-    "src/apps/wasmtime", 
-]
+exclude = []
 
 # Workspace-wide configuration
 [profile.release]
@@ -20,3 +19,4 @@ codegen-units = 1
 [profile.dev]
 opt-level = 0
 debug = true
+incremental = true

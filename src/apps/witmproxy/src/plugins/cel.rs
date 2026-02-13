@@ -1,11 +1,14 @@
 use bytes::Bytes;
 use cel_cxx::Opaque;
-use http_body_util::Full;
 use hyper::{Request, Response};
 use salvo::http::uri::Scheme;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
+
+use crate::{
+    events::content::InboundContent, wasm::bindgen::witmproxy::plugin::capabilities::RequestContext,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
 #[cel_cxx(display)]
@@ -58,6 +61,54 @@ impl CelRequest {
 
     pub fn headers(&self) -> &HashMap<String, Vec<String>> {
         &self.headers
+    }
+}
+
+impl Into<RequestContext> for CelRequest {
+    fn into(self) -> RequestContext {
+        let query = self
+            .query
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let headers = self
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        RequestContext {
+            scheme: self.scheme,
+            host: self.host,
+            path: self.path,
+            query,
+            method: self.method,
+            headers,
+        }
+    }
+}
+
+impl From<&RequestContext> for CelRequest {
+    fn from(ctx: &RequestContext) -> Self {
+        let query = ctx
+            .query
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let headers = ctx
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        CelRequest {
+            scheme: ctx.scheme.clone(),
+            host: ctx.host.clone(),
+            path: ctx.path.clone(),
+            query,
+            method: ctx.method.clone(),
+            headers,
+        }
     }
 }
 
@@ -171,8 +222,11 @@ impl CelResponse {
     }
 }
 
-impl From<&Response<Full<Bytes>>> for CelResponse {
-    fn from(res: &Response<Full<Bytes>>) -> Self {
+impl<B> From<&Response<B>> for CelResponse
+where
+    B: http_body::Body<Data = Bytes> + Send + 'static,
+{
+    fn from(res: &Response<B>) -> Self {
         let mut headers = HashMap::new();
 
         for (name, value) in res.headers().iter() {
@@ -244,5 +298,44 @@ impl From<&reqwest::Request> for CelRequest {
             method,
             headers,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Opaque)]
+#[cel_cxx(display)]
+pub struct CelContent {
+    content_type: String,
+}
+
+impl CelContent {
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+}
+
+impl From<&InboundContent> for CelContent {
+    fn from(content: &InboundContent) -> Self {
+        CelContent {
+            content_type: content.content_type(),
+        }
+    }
+}
+
+impl<B> From<&Response<B>> for CelContent
+where
+    B: http_body::Body<Data = Bytes> + Send + 'static,
+{
+    fn from(res: &Response<B>) -> Self {
+        let content_type = if let Some(values) = res.headers().get("content-type") {
+            if let Ok(val_str) = values.to_str() {
+                val_str.to_string()
+            } else {
+                "unknown".to_string()
+            }
+        } else {
+            "unknown".to_string()
+        };
+
+        CelContent { content_type }
     }
 }

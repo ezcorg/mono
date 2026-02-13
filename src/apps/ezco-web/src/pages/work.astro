@@ -87,9 +87,7 @@ const projects = [
 	});
 </script>
 <Layout title="Work | ez co" description="A showcase of projects we've built.">
-	<section
-		class="w-[min(80ch,100vw)] min-h-screen mt-[8rem] flex items-start justify-center px-4 md:px-8"
-	>
+	<section>
 		<div class="w-full mx-auto flex flex-col gap-8">
 			<Navbar currentPath="/work" />
 
@@ -251,22 +249,6 @@ const projects = [
 						</div>
 					))
 				}
-			</div>
-
-			{/* Bottom content - initially hidden */}
-			<div
-				id="bottom-content"
-				class="mb-24 px-2 opacity-0 transition-opacity duration-400"
-			>
-				<p class="text-lg text-[#F5F5F5] opacity-70 mb-8">
-					Want to see yours here?
-				</p>
-				<a
-					href="/newproject"
-					class="inline-block bg-[#F5F5F5] text-black px-8 py-4 text-lg transition-all duration-300 hover:bg-opacity-90"
-				>
-					Start a project
-				</a>
 			</div>
 		</div>
 	</section>
@@ -1180,6 +1162,7 @@ const projects = [
 		/* Skeleton container styles */
 		#loading-skeleton {
 			transition: opacity 0.3s ease-in-out;
+			width: 100%;
 		}
 
 		/* Base styles for the grid container and items */
@@ -1187,13 +1170,11 @@ const projects = [
 			position: relative;
 		}
 
-		#bottom-content {
-			transition: opacity 0.4s ease-in-out;
-		}
 		.grid-item {
 			box-sizing: border-box;
 			width: 100%; /* Full width on mobile */
 		}
+
 		.grid-sizer {
 			width: 100%;
 		}

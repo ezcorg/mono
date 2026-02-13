@@ -7,7 +7,7 @@ use rust_embed::RustEmbed;
 use salvo::Writer;
 use salvo::conn::rustls::{Keycert, RustlsConfig};
 use salvo::oapi::endpoint;
-use salvo::oapi::extract::FormFile;
+use salvo::oapi::extract::{FormFile, PathParam};
 use salvo::prelude::ForceHttps;
 use salvo::serve_static::static_embed;
 use salvo::server::ServerHandle;
@@ -99,6 +99,7 @@ impl WebServer {
                     .get(list_plugins)
                     .post(upsert_plugin),
             )
+            .push(Router::with_path("/api/plugins/<namespace>/<name>").delete(delete_plugin))
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
@@ -225,6 +226,55 @@ async fn upsert_plugin(file: FormFile, depot: &mut Depot, res: &mut salvo::Respo
             res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
             res.render(salvo::writing::Text::Plain(format!(
                 "Failed to add/update plugin: {}",
+                e
+            )));
+        }
+    }
+}
+
+#[endpoint]
+async fn delete_plugin(
+    namespace: PathParam<String>,
+    name: PathParam<String>,
+    depot: &mut Depot,
+    res: &mut salvo::Response,
+) {
+    let registry = if let Ok(state) = depot.obtain::<AppState>() {
+        state.plugin_registry.clone()
+    } else {
+        warn!("Failed to obtain AppState in delete_plugin");
+        res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(salvo::writing::Text::Plain("Internal server error"));
+        return;
+    };
+
+    let registry = if let Some(r) = registry {
+        r
+    } else {
+        res.status_code(salvo::http::StatusCode::BAD_REQUEST);
+        res.render(salvo::writing::Text::Plain("Plugin system is disabled"));
+        return;
+    };
+
+    let mut registry = registry.write().await;
+    match registry
+        .remove_plugin(&name.into_inner(), Some(&namespace.into_inner()))
+        .await
+    {
+        Ok(removed) => {
+            if removed.is_empty() {
+                res.status_code(salvo::http::StatusCode::NOT_FOUND);
+                res.render(salvo::writing::Text::Plain("Plugin not found"));
+            } else {
+                res.status_code(salvo::http::StatusCode::OK);
+                res.render(salvo::writing::Text::Plain("Plugin removed successfully"));
+            }
+        }
+        Err(e) => {
+            warn!("Failed to remove plugin: {}", e);
+            res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(salvo::writing::Text::Plain(format!(
+                "Failed to remove plugin: {}",
                 e
             )));
         }

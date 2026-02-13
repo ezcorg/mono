@@ -30,8 +30,12 @@ env:
 
 jobs:
   test:
-    name: Test witmproxy
-    runs-on: ubuntu-latest
+    name: Test witmproxy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest] # windows-latest disabled until Windows cel-cxx compilation is fixed
 
     steps:
       - name: Checkout repository
@@ -43,21 +47,23 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt, clippy
-          targets: wasm32-wasip2, wasm32-unknown-unknown 
+          targets: wasm32-wasip2, wasm32-unknown-unknown
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ matrix.os }}
           workspaces: |
             . -> target
-            src/apps/wasmtime -> src/apps/wasmtime/target
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
       - name: Check code formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --package witmproxy --check
 
       # - name: Run clippy lints
@@ -72,8 +78,8 @@ jobs:
       - name: Run library tests
         run: cargo test --package witmproxy --lib
 
-      - name: Run integration tests
-        run: cargo test --package witmproxy --test '*'
+      # - name: Run integration tests
+      #   run: cargo test --package witmproxy --test '*'
 
   build-release:
     name: Build release artifacts

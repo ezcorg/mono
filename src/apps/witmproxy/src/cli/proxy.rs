@@ -1,39 +1,29 @@
+use super::Services;
 use crate::config::AppConfig;
 use anyhow::Result;
 use clap::Subcommand;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
-use tracing::{error, info, warn};
+#[cfg(target_os = "macos")]
+use tracing::error;
+use tracing::{info, warn};
 
 #[derive(Subcommand)]
 pub enum ProxyCommands {
     /// Enable system HTTP proxy to route through witmproxy
     Enable {
-        /// Skip confirmation prompts
-        #[arg(short, long)]
-        yes: bool,
         /// Show what would be done without actually doing it
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
     /// Disable system HTTP proxy
     Disable {
-        /// Skip confirmation prompts
-        #[arg(short, long)]
-        yes: bool,
         /// Show what would be done without actually doing it
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
     /// Show current proxy status
     Status,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Services {
-    proxy: String,
-    web: String,
 }
 
 pub struct ProxyHandler {
@@ -47,35 +37,25 @@ impl ProxyHandler {
 
     pub async fn handle(&self, command: &ProxyCommands) -> Result<()> {
         match command {
-            ProxyCommands::Enable { yes, dry_run } => self.enable_proxy(*yes, *dry_run).await,
-            ProxyCommands::Disable { yes, dry_run } => self.disable_proxy(*yes, *dry_run).await,
+            ProxyCommands::Enable { dry_run } => self.enable_proxy(*dry_run).await,
+            ProxyCommands::Disable { dry_run } => self.disable_proxy(*dry_run).await,
             ProxyCommands::Status => self.show_proxy_status().await,
         }
     }
 
-    async fn enable_proxy(&self, yes: bool, dry_run: bool) -> Result<()> {
+    async fn enable_proxy(&self, dry_run: bool) -> Result<()> {
         let proxy_url = self.get_proxy_url().await?;
-
-        if !yes && !dry_run {
-            println!(
-                "This will configure your system to proxy HTTP traffic through: {}",
-                proxy_url
-            );
-            print!("Continue? [y/N]: ");
-            use std::io::{self, Write};
-            io::stdout().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if !input.trim().to_lowercase().starts_with('y') {
-                println!("Cancelled.");
-                return Ok(());
-            }
-        }
 
         if dry_run {
             println!("Would enable system proxy with URL: {}", proxy_url);
             return Ok(());
         }
+
+        println!(
+            "This will configure your system to proxy HTTP traffic through: {}",
+            proxy_url
+        );
+        warn!("This action requires administrator privileges and may prompt for your password.");
 
         info!("Enabling system proxy: {}", proxy_url);
         self.set_system_proxy(&proxy_url, true).await?;
@@ -83,28 +63,46 @@ impl ProxyHandler {
         Ok(())
     }
 
-    async fn disable_proxy(&self, yes: bool, dry_run: bool) -> Result<()> {
-        if !yes && !dry_run {
-            println!("This will disable your system HTTP proxy settings.");
-            print!("Continue? [y/N]: ");
-            use std::io::{self, Write};
-            io::stdout().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if !input.trim().to_lowercase().starts_with('y') {
-                println!("Cancelled.");
-                return Ok(());
-            }
-        }
-
+    async fn disable_proxy(&self, dry_run: bool) -> Result<()> {
         if dry_run {
             println!("Would disable system proxy");
             return Ok(());
         }
 
+        println!("This will disable your system HTTP proxy settings.");
+        warn!("This action requires administrator privileges and may prompt for your password.");
+
         info!("Disabling system proxy");
         self.set_system_proxy("", false).await?;
         println!("System proxy disabled");
+        Ok(())
+    }
+
+    /// Internal method for enabling proxy without warning messages (used by --auto mode)
+    pub async fn enable_proxy_internal(&self, dry_run: bool) -> Result<()> {
+        let proxy_url = self.get_proxy_url().await?;
+
+        if dry_run {
+            info!("Would enable system proxy with URL: {}", proxy_url);
+            return Ok(());
+        }
+
+        info!("Enabling system proxy: {}", proxy_url);
+        self.set_system_proxy(&proxy_url, true).await?;
+        info!("System proxy enabled: {}", proxy_url);
+        Ok(())
+    }
+
+    /// Internal method for disabling proxy without warning messages (used by --auto mode)
+    pub async fn disable_proxy_internal(&self, dry_run: bool) -> Result<()> {
+        if dry_run {
+            info!("Would disable system proxy");
+            return Ok(());
+        }
+
+        info!("Disabling system proxy");
+        self.set_system_proxy("", false).await?;
+        info!("System proxy disabled");
         Ok(())
     }
 

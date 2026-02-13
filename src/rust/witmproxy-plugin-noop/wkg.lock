@@ -4,9 +4,9 @@ version = 1
 
 [[packages]]
 name = "wasi:http"
-registry = "wasi"
+registry = "wasi.dev"
 
 [[packages.versions]]
-requirement = "=0.3.0-rc-2025-09-16"
-version = "0.3.0-rc-2025-09-16"
-digest = "sha256:9d25fe248865fb28655d62d14a7cb983ffb90f2d36c04b9b56142bd49053697a"
+requirement = "=0.3.0-rc-2026-01-06"
+version = "0.3.0-rc-2026-01-06"
+digest = "sha256:7ad86c4dea99c4cd63790483f26903ac7538f7d8be4d3f4e6fb4ef10123dbdeb"

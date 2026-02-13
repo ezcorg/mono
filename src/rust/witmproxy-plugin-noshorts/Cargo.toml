@@ -1,0 +1,29 @@
+[package]
+name = "witmproxy-plugin-noshorts"
+version = "0.1.0"
+edition = "2024"
+authors = ["Theodore Brockman"]
+description = "Blocks YouTube and Instagram shorts"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.52.0", features = ["async-spawn"] }
+flate2 = "1.0"
+brotli = "8.0.2"
+anyhow = "1.0.100"
+lol_html = "2.7.0"
+encoding_rs = "0.8.35"
+
+[dev-dependencies]
+witmproxy = { path = "../../apps/witmproxy", features = ["test-helpers"] }
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[package.metadata.component]
+package = "witmproxy:witmproxy-plugin-noshorts-plugin"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]

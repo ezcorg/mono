@@ -247,13 +247,21 @@ pub fn convert_hyper_incoming_to_reqwest_request(
         .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest request: {}", e)))
 }
 
-/// Convert a reqwest Response to a hyper Response
+/// Convert a reqwest Response to a hyper Response with streaming body
 pub async fn convert_reqwest_to_hyper_response(
     reqwest_resp: reqwest::Response,
-) -> ProxyResult<Response<Full<Bytes>>> {
+) -> ProxyResult<Response<UnsyncBoxBody<Bytes, ErrorCode>>> {
     let status = reqwest_resp.status();
     let headers = reqwest_resp.headers().clone();
-    let body_bytes = reqwest_resp.bytes().await?;
+
+    // Convert reqwest bytes stream to a body stream
+    let stream = reqwest_resp
+        .bytes_stream()
+        .map_err(|e| ErrorCode::InternalError(Some(format!("Stream error: {}", e))));
+
+    // Create a streaming body from the stream
+    let body = http_body_util::StreamBody::new(stream.map_ok(hyper::body::Frame::data));
+    let boxed = body.boxed_unsync();
 
     let mut response = Response::builder().status(status);
 
@@ -263,7 +271,7 @@ pub async fn convert_reqwest_to_hyper_response(
     }
 
     response
-        .body(Full::new(body_bytes))
+        .body(boxed)
         .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
 }
 

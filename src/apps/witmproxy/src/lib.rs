@@ -1,19 +1,23 @@
 #![feature(if_let_guard)]
+#![feature(impl_trait_in_bindings)]
 // Library interface for witmproxy
 // This exposes the internal modules for testing and external use
 
 pub mod cert;
 pub mod cli;
 pub mod config;
-pub mod content;
 pub mod db;
+pub mod events;
+pub mod http;
 pub mod plugins;
 pub mod proxy;
 pub mod wasm;
 pub mod web;
 
-#[cfg(test)]
+// Make test_utils available for both internal tests and external integration tests
+#[cfg(any(test, feature = "test-helpers"))]
 pub mod test_utils;
+
 #[cfg(test)]
 mod tests;
 

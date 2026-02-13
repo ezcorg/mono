@@ -1,6 +1,9 @@
-use crate::wasm::{Host, WitmProxy};
+use crate::wasm::{Host, WitmProxyCtxView, bindgen::Plugin};
 use anyhow::Result;
-use wasmtime::{Config, Engine, component::Linker};
+use wasmtime::{
+    Config, Engine, Store,
+    component::{Component, Linker},
+};
 use wasmtime_wasi::p3::bindings::LinkOptions;
 
 pub struct Runtime {
@@ -33,7 +36,7 @@ impl Runtime {
 
         // Add our custom host capabilities using the wrapper pattern
         crate::wasm::add_to_linker(&mut linker, |host: &mut Host| {
-            WitmProxy::new(&host.witmproxy_ctx, &mut host.table)
+            WitmProxyCtxView::new(&host.witmproxy_ctx, &mut host.table)
         })?;
 
         Ok(Self {
@@ -41,5 +44,19 @@ impl Runtime {
             config,
             linker,
         })
+    }
+
+    pub fn new_store(&self) -> Store<Host> {
+        Store::new(&self.engine, Host::default())
+    }
+
+    pub async fn instantiate_plugin_component(
+        &self,
+        component: &Component,
+    ) -> Result<(Plugin, Store<Host>)> {
+        let mut store = self.new_store();
+        let instance = self.linker.instantiate_async(&mut store, component).await?;
+        let plugin = Plugin::new(&mut store, &instance)?;
+        Ok((plugin, store))
     }
 }
