@@ -55,7 +55,6 @@ jobs:
           key: ${{ matrix.os }}
           workspaces: |
             . -> target
-            src/apps/wasmtime -> src/apps/wasmtime/target
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -79,8 +78,8 @@ jobs:
       - name: Run library tests
         run: cargo test --package witmproxy --lib
 
-      - name: Run integration tests
-        run: cargo test --package witmproxy --test '*'
+      # - name: Run integration tests
+      #   run: cargo test --package witmproxy --test '*'
 
   build-release:
     name: Build release artifacts

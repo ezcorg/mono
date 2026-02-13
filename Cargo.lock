@@ -1075,9 +1075,9 @@ dependencies = [
 
 [[package]]
 name = "cel-build-utils"
-version = "0.2.1"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "575de4079fd29224014b01d8612207600e6ef3071dcb485bfb47a64752d14599"
+checksum = "cd0b298d4b185cd1ce5989d3d5c15274d109c76b66b1f7706afb9cc72f51805b"
 dependencies = [
  "anyhow",
  "downloader",
@@ -1089,9 +1089,9 @@ dependencies = [
 
 [[package]]
 name = "cel-cxx"
-version = "0.2.1"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aeae55625d5160c4b108c55a0719acb2d4612c1bceab653d03f6051b810d6250"
+checksum = "1d29ca688f843a1de79321f98f993cb30dc2a2dbd69332a041ec2a4ed3fc7e6f"
 dependencies = [
  "arc-slice",
  "async-scoped",
@@ -1111,9 +1111,9 @@ dependencies = [
 
 [[package]]
 name = "cel-cxx-ffi"
-version = "0.2.1"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a6a9c5bb9e2b207a0949c357fd737ea2e04996442ccfdc8f82df740a41ce837"
+checksum = "1df997151f12174c8a0930de31121a196439e07df3e1fde11cebcc68815cf436"
 dependencies = [
  "anyhow",
  "cel-build-utils",
@@ -1127,9 +1127,9 @@ dependencies = [
 
 [[package]]
 name = "cel-cxx-macros"
-version = "0.2.1"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a782f4a1127dfccbc4f8091a4f7dfcf1fbf9a15de5f58241cb8d97254243482"
+checksum = "4ec1987b1614ad8ab85afd4bb986c41ebcb8741e8c53526683dc7caa7fc7cc75"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1882,9 +1882,9 @@ dependencies = [
 
 [[package]]
 name = "cxx"
-version = "1.0.188"
+version = "1.0.194"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47ac4eaf7ebe29e92f1b091ceefec7710a53a6f6154b2460afda626c113b65b9"
+checksum = "747d8437319e3a2f43d93b341c137927ca70c0f5dabeea7a005a73665e247c7e"
 dependencies = [
  "cc",
  "cxx-build",
@@ -1897,9 +1897,9 @@ dependencies = [
 
 [[package]]
 name = "cxx-build"
-version = "1.0.188"
+version = "1.0.194"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2abd4c3021eefbac5149f994c117b426852bca3a0aad227698527bca6d4ea657"
+checksum = "b0f4697d190a142477b16aef7da8a99bfdc41e7e8b1687583c0d23a79c7afc1e"
 dependencies = [
  "cc",
  "codespan-reporting",
@@ -1912,9 +1912,9 @@ dependencies = [
 
 [[package]]
 name = "cxxbridge-cmd"
-version = "1.0.188"
+version = "1.0.194"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f12fbc5888b2311f23e52a601e11ad7790d8f0dbb903ec26e2513bf5373ed70"
+checksum = "d0956799fa8678d4c50eed028f2de1c0552ae183c76e976cf7ca8c4e36a7c328"
 dependencies = [
  "clap",
  "codespan-reporting",
@@ -1926,15 +1926,15 @@ dependencies = [
 
 [[package]]
 name = "cxxbridge-flags"
-version = "1.0.188"
+version = "1.0.194"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83d3dd7870af06e283f3f8ce0418019c96171c9ce122cfb9c8879de3d84388fd"
+checksum = "23384a836ab4f0ad98ace7e3955ad2de39de42378ab487dc28d3990392cb283a"
 
 [[package]]
 name = "cxxbridge-macro"
-version = "1.0.188"
+version = "1.0.194"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a26f0d82da663316786791c3d0e9f9edc7d1ee1f04bdad3d2643086a69d6256c"
+checksum = "e6acc6b5822b9526adfb4fc377b67128fdd60aac757cc4a741a6278603f763cf"
 dependencies = [
  "indexmap 2.12.0",
  "proc-macro2",
