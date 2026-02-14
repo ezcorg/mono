@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Utility function to expand $HOME in a PathBuf
-pub fn expand_home_in_path(path: &PathBuf) -> Result<PathBuf> {
+pub fn expand_home_in_path(path: &Path) -> Result<PathBuf> {
     let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let path_str = path
         .to_str()
@@ -15,7 +15,7 @@ pub fn expand_home_in_path(path: &PathBuf) -> Result<PathBuf> {
         let expanded = path_str.replace("$HOME", home_dir.to_str().unwrap_or("."));
         Ok(PathBuf::from(expanded))
     } else {
-        Ok(path.clone())
+        Ok(path.to_path_buf())
     }
 }
 

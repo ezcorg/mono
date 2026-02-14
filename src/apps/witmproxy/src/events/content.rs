@@ -81,6 +81,7 @@ impl InboundContent {
         })
     }
 
+    #[cfg(test)]
     fn compress(
         parts: &Parts,
         body: UnsyncBoxBody<Bytes, ErrorCode>,
@@ -108,7 +109,7 @@ impl InboundContent {
                     // Convert to a stream of Result<Bytes, std::io::Error> for StreamReader
                     let byte_stream = stream
                         .map_ok(|frame| frame.into_data().unwrap_or_else(|_| Bytes::new()))
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+                        .map_err(std::io::Error::other);
 
                     // Convert to a tokio::io::AsyncRead using StreamReader
                     let async_read = StreamReader::new(byte_stream);
@@ -127,7 +128,7 @@ impl InboundContent {
                     let byte_stream = ReaderStream::new(encoded);
 
                     // Convert to http_body stream
-                    let frame_stream = byte_stream.map_ok(|bytes| http_body::Frame::data(bytes));
+                    let frame_stream = byte_stream.map_ok(http_body::Frame::data);
                     http_body_util::BodyExt::map_err(StreamBody::new(frame_stream), |e| {
                         ErrorCode::InternalError(Some(format!("Compression error: {}", e)))
                     })
@@ -170,7 +171,7 @@ impl InboundContent {
                     // Convert to a stream of Result<Bytes, std::io::Error> for StreamReader
                     let byte_stream = stream
                         .map_ok(|frame| frame.into_data().unwrap_or_else(|_| Bytes::new()))
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+                        .map_err(std::io::Error::other);
 
                     // Convert to a tokio::io::AsyncRead using StreamReader
                     let async_read = StreamReader::new(byte_stream);
@@ -189,7 +190,7 @@ impl InboundContent {
                     let byte_stream = ReaderStream::new(decoded);
 
                     // Convert to http_body stream
-                    let frame_stream = byte_stream.map_ok(|bytes| http_body::Frame::data(bytes));
+                    let frame_stream = byte_stream.map_ok(http_body::Frame::data);
                     http_body_util::BodyExt::map_err(StreamBody::new(frame_stream), |e| {
                         ErrorCode::InternalError(Some(format!("Decompression error: {}", e)))
                     })
@@ -251,7 +252,7 @@ mod tests {
                 .insert(CONTENT_ENCODING, encoding.parse().unwrap());
         }
         let (parts, _) = response.into_parts();
-        Parts::from(parts)
+        parts
     }
 
     /// Helper to create a body from bytes
@@ -709,7 +710,7 @@ mod tests {
             .insert(hyper::header::CONTENT_TYPE, "text/html".parse().unwrap());
 
         let (parts, _) = response.into_parts();
-        let parts = Parts::from(parts);
+        // parts already has the correct type
 
         // First compress the HTML manually to simulate receiving compressed content
         let original_html = TEST_HTML;
@@ -750,7 +751,7 @@ mod tests {
             .expect("into_response should succeed");
         let (parts, body) = response.into_parts();
 
-        let parts_for_decompress = Parts::from(parts);
+        let parts_for_decompress = parts;
         let decompressed_final = InboundContent::decompress(&parts_for_decompress, body)
             .expect("Final decompression should succeed");
         let final_data = body_to_bytes(decompressed_final).await;
@@ -773,7 +774,7 @@ mod tests {
             .insert(hyper::header::CONTENT_TYPE, "text/html".parse().unwrap());
 
         let (parts, _) = response.into_parts();
-        let parts = Parts::from(parts);
+        // parts already has the correct type
 
         let original_html = TEST_HTML;
         let manually_compressed = {
@@ -813,7 +814,7 @@ mod tests {
             .expect("into_response should succeed");
         let (parts, body) = response.into_parts();
 
-        let parts_for_decompress = Parts::from(parts);
+        let parts_for_decompress = parts;
         let decompressed_final = InboundContent::decompress(&parts_for_decompress, body)
             .expect("Final decompression should succeed");
         let final_data = body_to_bytes(decompressed_final).await;

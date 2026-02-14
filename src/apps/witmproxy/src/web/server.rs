@@ -157,8 +157,7 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
     // TODO: return plugin details
     if let Some(registry) = registry {
         let registry = registry.read().await;
-        let plugin_names: Vec<String> =
-            registry.plugins().keys().map(|name| name.clone()).collect();
+        let plugin_names: Vec<String> = registry.plugins().keys().cloned().collect();
         res.status_code(salvo::http::StatusCode::OK);
         res.render(salvo::writing::Json(plugin_names));
     } else {

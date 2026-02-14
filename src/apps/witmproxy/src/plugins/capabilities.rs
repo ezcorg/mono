@@ -22,14 +22,14 @@ impl Capability {
     }
 }
 
-impl ToString for CapabilityKind {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for CapabilityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CapabilityKind::Annotator => "annotator".to_string(),
-            CapabilityKind::Logger => "logger".to_string(),
-            CapabilityKind::LocalStorage => "local_storage".to_string(),
+            CapabilityKind::Annotator => write!(f, "annotator"),
+            CapabilityKind::Logger => write!(f, "logger"),
+            CapabilityKind::LocalStorage => write!(f, "local_storage"),
             CapabilityKind::HandleEvent(event_kind) => {
-                format!("handle_event_{}", event_kind.to_string())
+                write!(f, "handle_event_{event_kind}")
             }
         }
     }

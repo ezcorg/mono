@@ -68,13 +68,13 @@ impl EventKind {
     }
 }
 
-impl ToString for EventKind {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for EventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EventKind::Request => "request".to_string(),
-            EventKind::Response => "response".to_string(),
-            EventKind::Connect => "connect".to_string(),
-            EventKind::InboundContent => "inbound_content".to_string(),
+            EventKind::Request => write!(f, "request"),
+            EventKind::Response => write!(f, "response"),
+            EventKind::Connect => write!(f, "connect"),
+            EventKind::InboundContent => write!(f, "inbound_content"),
         }
     }
 }

@@ -37,20 +37,11 @@ pub mod bindgen;
 /// A capability provider that holds the capability instances granted to a plugin.
 /// The caller/builder is responsible for providing the necessary objects.
 /// The provider simply returns what it has access to when called.
+#[derive(Default)]
 pub struct CapabilityProvider {
     logger: Option<Logger>,
     annotator: Option<AnnotatorClient>,
     local_storage: Option<LocalStorageClient>,
-}
-
-impl Default for CapabilityProvider {
-    fn default() -> Self {
-        Self {
-            logger: None,
-            annotator: None,
-            local_storage: None,
-        }
-    }
 }
 
 impl CapabilityProvider {
@@ -609,7 +600,7 @@ impl HostLoggerWithStore for WitmProxy {
         self_: Resource<Logger>,
         message: String,
     ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
+        accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let logger = state.table.get(&self_)?;
             logger.warn(message);
@@ -623,7 +614,7 @@ impl HostLoggerWithStore for WitmProxy {
         self_: Resource<Logger>,
         message: String,
     ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
+        accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let logger = state.table.get(&self_)?;
             logger.error(message);
@@ -637,7 +628,7 @@ impl HostLoggerWithStore for WitmProxy {
         self_: Resource<Logger>,
         message: String,
     ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
+        accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let logger = state.table.get(&self_)?;
             logger.debug(message);

@@ -201,7 +201,7 @@ impl PluginRegistry {
 
     pub fn find_first_unexecuted_plugin(
         &self,
-        event: &Box<dyn Event>,
+        event: &dyn Event,
         executed_plugins: &HashSet<String>,
     ) -> Option<&WitmPlugin> {
         self.plugins
@@ -210,14 +210,14 @@ impl PluginRegistry {
     }
 
     /// Check if any plugins can handle an event
-    pub fn can_handle(&self, event: &Box<dyn Event>) -> bool {
+    pub fn can_handle(&self, event: &dyn Event) -> bool {
         self.plugins.values().any(|p| p.can_handle(event))
     }
 
     /// Handle a generic event, passing it through all registered plugins, and returning the final [Event] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
     /// Validates that the final [Event] matches the expected output type for its event kind, returning an error if not
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
-        let any_plugins = self.plugins.values().any(|p| p.can_handle(&event));
+        let any_plugins = self.plugins.values().any(|p| p.can_handle(&*event));
         if !any_plugins {
             debug!(
                 "No plugins with matching capability and scope; skipping plugin processing for event of kind: {:?}",
@@ -233,7 +233,7 @@ impl PluginRegistry {
         let mut executed_plugins = HashSet::new();
 
         while let Some(plugin) =
-            { self.find_first_unexecuted_plugin(&current_event, &executed_plugins) }
+            { self.find_first_unexecuted_plugin(&*current_event, &executed_plugins) }
         {
             debug!("Executing handle_event for plugin: {}", plugin.id(),);
 
@@ -395,37 +395,38 @@ mod tests {
             &component_bytes,
         )?);
 
-        let mut capabilities = Vec::new();
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                scope: CapabilityScope {
-                    expression: cel_expression.into(),
+        let capabilities = vec![
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: CapabilityScope {
+                        expression: cel_expression.into(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Request),
-                scope: CapabilityScope {
-                    expression: cel_expression.into(),
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Request),
+                    scope: CapabilityScope {
+                        expression: cel_expression.into(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Response),
-                scope: CapabilityScope {
-                    expression: cel_expression.into(),
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Response),
+                    scope: CapabilityScope {
+                        expression: cel_expression.into(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
+        ];
 
         let plugin = WitmPlugin {
             name: "test_plugin_with_filter".into(),
@@ -443,7 +444,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(&registry.env)?;
+        .compile_capability_scope_expressions(registry.env)?;
         registry.register_plugin(plugin).await
     }
 
@@ -466,7 +467,7 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com should return one plugin"
@@ -482,7 +483,7 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_some(),
             "Request to example.com with skipthis=false should return one plugin"
@@ -498,7 +499,7 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to example.com with skipthis=true should not match"
@@ -513,7 +514,7 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com should not match"
@@ -529,7 +530,7 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=false should not match"
@@ -545,7 +546,7 @@ mod tests {
             .unwrap();
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Request to donotprocess.com with skipthis=true should not match"
@@ -566,7 +567,7 @@ mod tests {
         let (wasi_req, _io) = WasiRequest::from_http(req);
         let executed_plugins = HashSet::new();
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when none are registered"
@@ -588,27 +589,28 @@ mod tests {
                 .unwrap(),
         );
 
-        let mut capabilities = Vec::new();
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                scope: CapabilityScope {
-                    expression: "true".into(),
+        let capabilities = vec![
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Response),
-                scope: CapabilityScope {
-                    expression: "true".to_string(),
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Response),
+                    scope: CapabilityScope {
+                        expression: "true".to_string(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
+        ];
 
         let plugin = WitmPlugin {
             name: "response_only_plugin".into(),
@@ -638,7 +640,7 @@ mod tests {
         let executed_plugins = HashSet::new();
 
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let matching_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             matching_plugin.is_none(),
             "Should return no plugins when plugin doesn't have Request capability"
@@ -663,37 +665,38 @@ mod tests {
             wasmtime::component::Component::from_binary(&registry.runtime.engine, &component_bytes)
                 .unwrap(),
         );
-        let mut capabilities = Vec::new();
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                scope: CapabilityScope {
-                    expression: "true".into(),
+        let capabilities = vec![
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Request),
-                scope: CapabilityScope {
-                    expression: "true".to_string(),
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Request),
+                    scope: CapabilityScope {
+                        expression: "true".to_string(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
-        capabilities.push(Capability {
-            granted: true,
-            inner: WitCapability {
-                kind: CapabilityKind::HandleEvent(EventKind::Response),
-                scope: CapabilityScope {
-                    expression: "true".to_string(),
+            Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Response),
+                    scope: CapabilityScope {
+                        expression: "true".to_string(),
+                    },
                 },
+                cel: None,
             },
-            cel: None,
-        });
+        ];
 
         let plugin2 = WitmPlugin {
             name: "second_test_plugin".into(),
@@ -711,7 +714,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(&registry.env)?;
+        .compile_capability_scope_expressions(registry.env)?;
         registry.register_plugin(plugin2).await?;
 
         // Test with a request that should match both plugins initially
@@ -727,7 +730,7 @@ mod tests {
 
         // First call should return a plugin
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let first_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let first_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
             first_plugin.is_some(),
             "Should find a plugin when none are executed"
@@ -737,7 +740,7 @@ mod tests {
         executed_plugins.insert(first_plugin.unwrap().id());
 
         // Second call should return a different plugin (if there are multiple)
-        let second_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+        let second_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         if let Some(second_plugin) = second_plugin {
             assert_ne!(
                 first_plugin.unwrap().id(),
@@ -749,7 +752,7 @@ mod tests {
             executed_plugins.insert(second_plugin.id());
 
             // Third call should return None since all plugins are executed
-            let third_plugin = registry.find_first_unexecuted_plugin(&event, &executed_plugins);
+            let third_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
             assert!(
                 third_plugin.is_none(),
                 "Should return None when all plugins have been executed"
@@ -803,27 +806,28 @@ mod tests {
                 .unwrap(),
             );
 
-            let mut capabilities = Vec::new();
-            capabilities.push(Capability {
-                granted: true,
-                inner: WitCapability {
-                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+            let capabilities = vec![
+                Capability {
+                    granted: true,
+                    inner: WitCapability {
+                        kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                        scope: CapabilityScope {
+                            expression: "true".into(),
+                        },
                     },
+                    cel: None,
                 },
-                cel: None,
-            });
-            capabilities.push(Capability {
-                granted: true,
-                inner: WitCapability {
-                    kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                Capability {
+                    granted: true,
+                    inner: WitCapability {
+                        kind: CapabilityKind::HandleEvent(EventKind::Request),
+                        scope: CapabilityScope {
+                            expression: "true".into(),
+                        },
                     },
+                    cel: None,
                 },
-                cel: None,
-            });
+            ];
 
             let plugin = WitmPlugin {
                 name: name.to_string(),

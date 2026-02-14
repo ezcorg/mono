@@ -205,7 +205,7 @@ impl WitmPlugin {
         Ok(())
     }
 
-    pub fn can_handle(&self, event: &Box<dyn Event>) -> bool {
+    pub fn can_handle(&self, event: &dyn Event) -> bool {
         self.capabilities
             .iter()
             // Have we been granted the associated event capability?

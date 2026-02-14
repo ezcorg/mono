@@ -325,7 +325,7 @@ impl ProxyHandler {
                     "set",
                     "org.gnome.system.proxy.http",
                     "host",
-                    &proxy_url
+                    proxy_url
                         .split("://")
                         .last()
                         .unwrap_or(proxy_url)
@@ -335,7 +335,7 @@ impl ProxyHandler {
                 ])
                 .status();
 
-            let port = proxy_url.split(':').last().unwrap_or("8080");
+            let port = proxy_url.split(':').next_back().unwrap_or("8080");
             let _ = Command::new("gsettings")
                 .args(["set", "org.gnome.system.proxy.http", "port", port])
                 .status();

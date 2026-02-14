@@ -64,25 +64,25 @@ impl CelRequest {
     }
 }
 
-impl Into<RequestContext> for CelRequest {
-    fn into(self) -> RequestContext {
-        let query = self
+impl From<CelRequest> for RequestContext {
+    fn from(val: CelRequest) -> Self {
+        let query = val
             .query
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        let headers = self
+        let headers = val
             .headers
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
         RequestContext {
-            scheme: self.scheme,
-            host: self.host,
-            path: self.path,
+            scheme: val.scheme,
+            host: val.host,
+            path: val.path,
             query,
-            method: self.method,
+            method: val.method,
             headers,
         }
     }

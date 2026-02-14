@@ -166,7 +166,7 @@ impl ProxyServer {
         let connect_event: Box<dyn Event> = Box::new(Connect::new(host, port));
         let has_matching_plugin = {
             let registry = plugin_registry.read().await;
-            registry.can_handle(&connect_event)
+            registry.can_handle(&*connect_event)
         };
 
         if has_matching_plugin {
@@ -468,7 +468,7 @@ async fn run_tls_mitm(
                 let request_event_result = if let Some(registry) = &plugin_registry {
                     let registry = registry.read().await;
                     let (parts, body) = req.into_parts();
-                    let mapped_body = body.map_err(|e| ErrorCode::from_hyper_request_error(e));
+                    let mapped_body = body.map_err(ErrorCode::from_hyper_request_error);
                     let req = Request::from_parts(parts, mapped_body);
                     let (request, _io) = WasiRequest::from_http(req);
                     let event: Box<dyn Event> = Box::new(request);
@@ -541,8 +541,7 @@ async fn run_tls_mitm(
                         }
                         WasmEvent::Response(WasiContextualResponse { response, .. }) => {
                             let response = store.data_mut().http().table.delete(response).unwrap();
-                            let response = response.into_http(store, async { Ok(()) }).unwrap();
-                            response
+                            response.into_http(store, async { Ok(()) }).unwrap()
                         }
                         _ => Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)

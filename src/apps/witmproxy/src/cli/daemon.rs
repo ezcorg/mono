@@ -6,7 +6,7 @@ use service_manager::{
     ServiceUninstallCtx,
 };
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
 
 #[cfg(target_os = "macos")]
@@ -358,10 +358,10 @@ impl DaemonHandler {
                 let systemd_system_path =
                     PathBuf::from(format!("/etc/systemd/system/{}.service", SERVICE_LABEL));
 
-                if let Some(user_path) = systemd_user_path {
-                    if user_path.exists() {
-                        return true;
-                    }
+                if let Some(user_path) = systemd_user_path
+                    && user_path.exists()
+                {
+                    return true;
                 }
                 if systemd_system_path.exists() {
                     return true;
@@ -402,16 +402,16 @@ impl DaemonHandler {
         // This is a simplified check - actual implementation would vary by platform
         let log_path = self.get_log_path();
         if log_path.exists() {
-            if let Ok(metadata) = std::fs::metadata(&log_path) {
-                if let Ok(modified) = metadata.modified() {
-                    let duration = std::time::SystemTime::now()
-                        .duration_since(modified)
-                        .unwrap_or_default();
-                    if duration.as_secs() < 60 {
-                        println!("Service appears to be: Running (log recently updated)");
-                    } else {
-                        println!("Service appears to be: Stopped (log not recently updated)");
-                    }
+            if let Ok(metadata) = std::fs::metadata(&log_path)
+                && let Ok(modified) = metadata.modified()
+            {
+                let duration = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or_default();
+                if duration.as_secs() < 60 {
+                    println!("Service appears to be: Running (log recently updated)");
+                } else {
+                    println!("Service appears to be: Stopped (log not recently updated)");
                 }
             }
         } else {
@@ -423,12 +423,12 @@ impl DaemonHandler {
 
         // Show services.json if it exists
         let services_path = self.get_app_dir().join("services.json");
-        if services_path.exists() {
-            if let Ok(contents) = std::fs::read_to_string(&services_path) {
-                println!();
-                println!("Active services:");
-                println!("{}", contents);
-            }
+        if services_path.exists()
+            && let Ok(contents) = std::fs::read_to_string(&services_path)
+        {
+            println!();
+            println!("Active services:");
+            println!("{}", contents);
         }
 
         Ok(())
@@ -507,23 +507,23 @@ impl DaemonHandler {
 }
 
 /// Check if the daemon is already running by checking the services.json file
-pub fn is_daemon_running(app_dir: &PathBuf) -> bool {
+pub fn is_daemon_running(app_dir: &Path) -> bool {
     let services_path = app_dir.join("services.json");
     if !services_path.exists() {
         return false;
     }
 
     // Check if services.json was recently modified (within last minute)
-    if let Ok(metadata) = std::fs::metadata(&services_path) {
-        if let Ok(modified) = metadata.modified() {
-            let duration = std::time::SystemTime::now()
-                .duration_since(modified)
-                .unwrap_or_default();
-            // If modified within last 5 minutes, assume running
-            // This is a heuristic - the actual check would be to connect to the service
-            if duration.as_secs() < 300 {
-                return true;
-            }
+    if let Ok(metadata) = std::fs::metadata(&services_path)
+        && let Ok(modified) = metadata.modified()
+    {
+        let duration = std::time::SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or_default();
+        // If modified within last 5 minutes, assume running
+        // This is a heuristic - the actual check would be to connect to the service
+        if duration.as_secs() < 300 {
+            return true;
         }
     }
 

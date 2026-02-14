@@ -1,72 +1,70 @@
-mod tests {
-    use crate::db::Db;
-    use crate::plugins::registry::PluginRegistry;
-    use crate::test_utils::{create_ca_and_config, test_component_path};
-    use crate::wasm::Runtime;
-    use crate::web::WebServer;
-    use anyhow::Result;
-    use std::sync::Arc;
-    use tempfile::tempdir;
-    use tokio::sync::RwLock;
+use crate::db::Db;
+use crate::plugins::registry::PluginRegistry;
+use crate::test_utils::{create_ca_and_config, test_component_path};
+use crate::wasm::Runtime;
+use crate::web::WebServer;
+use anyhow::Result;
+use std::sync::Arc;
+use tempfile::tempdir;
+use tokio::sync::RwLock;
 
-    #[tokio::test]
-    async fn test_plugin_upsert() -> Result<()> {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+#[tokio::test]
+async fn test_plugin_upsert() -> Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
-        // Create CA and config
-        let (ca, config) = create_ca_and_config().await;
+    // Create CA and config
+    let (ca, config) = create_ca_and_config().await;
 
-        // Create a temporary database for testing
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-        let db = Db::from_path(db_path, "test_password").await.unwrap();
-        db.migrate().await.unwrap();
+    // Create a temporary database for testing
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+    let db = Db::from_path(db_path, "test_password").await.unwrap();
+    db.migrate().await.unwrap();
 
-        // Create runtime
-        let runtime = Runtime::try_default().unwrap();
+    // Create runtime
+    let runtime = Runtime::try_default().unwrap();
 
-        // Create plugin registry
-        let plugin_registry = Arc::new(RwLock::new(PluginRegistry::new(db, runtime)?));
+    // Create plugin registry
+    let plugin_registry = Arc::new(RwLock::new(PluginRegistry::new(db, runtime)?));
 
-        let mut web_server = WebServer::new(ca.clone(), Some(plugin_registry), config);
-        web_server.start().await.unwrap();
-        let bind_addr = web_server.listen_addr().unwrap();
+    let mut web_server = WebServer::new(ca.clone(), Some(plugin_registry), config);
+    web_server.start().await.unwrap();
+    let bind_addr = web_server.listen_addr().unwrap();
 
-        let wasm_path = test_component_path()?;
-        let component_bytes = std::fs::read(&wasm_path)?;
+    let wasm_path = test_component_path()?;
+    let component_bytes = std::fs::read(&wasm_path)?;
 
-        // Create a temporary file with the component bytes for upload
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(temp_file.path(), &component_bytes).unwrap();
+    // Create a temporary file with the component bytes for upload
+    let temp_file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(temp_file.path(), &component_bytes).unwrap();
 
-        // Create form with file upload
-        let form = reqwest::multipart::Form::new()
-            .file("file", temp_file.path())
+    // Create form with file upload
+    let form = reqwest::multipart::Form::new()
+        .file("file", temp_file.path())
+        .await
+        .unwrap();
+
+    // Create HTTP client that accepts self-signed certificates
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+
+    let response = client
+        .post(format!("https://{}/api/plugins", bind_addr))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert!(
+        response.status().is_success(),
+        "Expected successful response, got: {} - {}",
+        response.status(),
+        response
+            .text()
             .await
-            .unwrap();
-
-        // Create HTTP client that accepts self-signed certificates
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-            .unwrap();
-
-        let response = client
-            .post(format!("https://{}/api/plugins", bind_addr))
-            .multipart(form)
-            .send()
-            .await
-            .unwrap();
-
-        assert!(
-            response.status().is_success(),
-            "Expected successful response, got: {} - {}",
-            response.status(),
-            response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unable to read response body".to_string())
-        );
-        Ok(())
-    }
+            .unwrap_or_else(|_| "Unable to read response body".to_string())
+    );
+    Ok(())
 }

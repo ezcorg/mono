@@ -366,25 +366,22 @@ impl witmproxy::plugin::capabilities::EventKind {
 
 impl PartialEq for witmproxy::plugin::capabilities::EventKind {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
+        matches!(
+            (self, other),
             (
                 witmproxy::plugin::capabilities::EventKind::Connect,
                 witmproxy::plugin::capabilities::EventKind::Connect,
-            ) => true,
-            (
+            ) | (
                 witmproxy::plugin::capabilities::EventKind::Request,
                 witmproxy::plugin::capabilities::EventKind::Request,
-            ) => true,
-            (
+            ) | (
                 witmproxy::plugin::capabilities::EventKind::Response,
                 witmproxy::plugin::capabilities::EventKind::Response,
-            ) => true,
-            (
+            ) | (
                 witmproxy::plugin::capabilities::EventKind::InboundContent,
                 witmproxy::plugin::capabilities::EventKind::InboundContent,
-            ) => true,
-            _ => false,
-        }
+            )
+        )
     }
 }
 

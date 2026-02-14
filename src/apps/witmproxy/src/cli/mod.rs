@@ -484,13 +484,14 @@ fn setup_plugin_dir_watcher(
         if let Ok(entries) = std::fs::read_dir(&plugin_dir_clone) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.extension().is_some_and(|ext| ext == "wasm") {
-                    if let Ok(component_bytes) = std::fs::read(&path) {
-                        let reg = registry_clone.read().await;
-                        if let Ok(plugin) = reg.plugin_from_component(component_bytes).await {
-                            let mut map = file_plugin_map_clone.write().await;
-                            map.insert(path, plugin.id());
-                        }
+                if path.is_file()
+                    && path.extension().is_some_and(|ext| ext == "wasm")
+                    && let Ok(component_bytes) = std::fs::read(&path)
+                {
+                    let reg = registry_clone.read().await;
+                    if let Ok(plugin) = reg.plugin_from_component(component_bytes).await {
+                        let mut map = file_plugin_map_clone.write().await;
+                        map.insert(path, plugin.id());
                     }
                 }
             }
@@ -532,7 +533,7 @@ async fn handle_plugin_file_event(
 
     for path in event.paths {
         // Only handle .wasm files
-        if !path.extension().is_some_and(|ext| ext == "wasm") {
+        if path.extension().is_none_or(|ext| ext != "wasm") {
             continue;
         }
 
