@@ -1,0 +1,27 @@
+package ezco:democrateam@0.0.1;
+
+interface vote {
+    record form {}
+    record ballot {}
+    record tally {}
+    record entity {
+        id: string,
+        publickey: string,
+    }
+    record vote-config {
+        description: string,
+        created-by: entity,
+        owned-by: list<entity>,
+        start-timestamp-ms: u64,
+        end-timestamp-ms: u64,
+        form: form,
+    }
+    config: func() -> vote-config;
+    on-start: func();
+    on-vote: func(b: ballot, t: tally) -> tally;
+    on-finish: func(t: tally);
+}
+
+world democrateam-vote {
+    export vote;
+}
