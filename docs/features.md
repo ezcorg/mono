@@ -1,2 +1,0 @@
-- [ ] AI (bring your own LLM) autocompletion:
-  - [ ] 
