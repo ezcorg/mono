@@ -21,6 +21,12 @@ export class SearchIndex {
 
     constructor(public index: MiniSearch) { }
 
+    add(path: string) {
+        if (!this.index.has(path)) {
+            this.index.add({ path });
+        }
+    }
+
     search(...params: Parameters<MiniSearch['search']>): HighlightedSearch[] {
         const results = this.index.search(...params);
         const highlights = this.highlight(results)

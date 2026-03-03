@@ -135,6 +135,7 @@ impl GuestPlugin for PluginInstance {
                 content.set_body(rx).await;
                 Some(Event::InboundContent(content))
             }
+            Event::Timer(ctx) => Some(Event::Timer(ctx)),
         }
     }
 }

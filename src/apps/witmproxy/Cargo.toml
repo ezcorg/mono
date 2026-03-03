@@ -94,6 +94,7 @@ salvo = { version = "0.84.1", features = ["oapi", "quinn", "serve-static", "cors
 rust-embed = "8.7.2"
 http-body = "1.0.1"
 cel-cxx = { version = "0.2.4", features = ["tokio"] }
+cron = "0.15.0"
 async-compression = { version = "0.4.35", features = ["brotli", "deflate", "deflate64", "futures-io", "gzip", "tokio", "zstd"] }
 tokio-stream = "0.1.17"
 notify = { version = "8.2.0" }

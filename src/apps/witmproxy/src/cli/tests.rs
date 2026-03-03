@@ -670,7 +670,7 @@ async fn test_daemon_handler_log_path() {
     let temp_path = temp_dir.path();
     let cli = create_test_cli(temp_path).await;
 
-    let daemon_handler = crate::cli::daemon::DaemonHandler::new(cli.config.clone());
+    let daemon_handler = crate::cli::daemon::DaemonHandler::new(cli.config.clone(), false, None, false);
     let log_path = daemon_handler.get_log_path();
 
     // Log path should be in the app directory
@@ -683,7 +683,7 @@ async fn test_daemon_handler_is_service_installed_when_not_installed() {
     let temp_path = temp_dir.path();
     let cli = create_test_cli(temp_path).await;
 
-    let daemon_handler = crate::cli::daemon::DaemonHandler::new(cli.config.clone());
+    let daemon_handler = crate::cli::daemon::DaemonHandler::new(cli.config.clone(), false, None, false);
 
     // Service should not be installed in a fresh temp directory
     // Note: This test may vary depending on actual system state

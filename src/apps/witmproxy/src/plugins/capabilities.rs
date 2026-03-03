@@ -28,6 +28,7 @@ impl std::fmt::Display for CapabilityKind {
             CapabilityKind::Annotator => write!(f, "annotator"),
             CapabilityKind::Logger => write!(f, "logger"),
             CapabilityKind::LocalStorage => write!(f, "local_storage"),
+            CapabilityKind::Clock => write!(f, "clock"),
             CapabilityKind::HandleEvent(event_kind) => {
                 write!(f, "handle_event_{event_kind}")
             }

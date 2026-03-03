@@ -46,15 +46,15 @@ pub struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Directory to load plugins from (watched for changes)
+    /// Directory to load plugins from, watched for changes (only applies when running the proxy)
     #[arg(long)]
     plugin_dir: Option<PathBuf>,
 
-    /// Automatically trust the proxy CA and configure system proxy settings on startup
+    /// Automatically trust the proxy CA and configure system proxy settings on startup (only applies when running the proxy)
     #[arg(long)]
     auto: bool,
 
-    /// Detach from the daemon after starting (don't attach to logs)
+    /// Detach from the daemon after starting, don't attach to logs (only applies to default startup behavior)
     #[arg(short, long)]
     detach: bool,
 }
@@ -184,7 +184,12 @@ impl ResolvedCli {
                 proxy_handler.handle(command).await
             }
             Commands::Daemon { command } => {
-                let daemon_handler = daemon::DaemonHandler::new(self.config.clone());
+                let daemon_handler = daemon::DaemonHandler::new(
+                    self.config.clone(),
+                    self.verbose,
+                    self.plugin_dir.clone(),
+                    self.auto,
+                );
                 daemon_handler.handle(command).await
             }
             Commands::Run => self.run_foreground().await,
@@ -193,28 +198,30 @@ impl ResolvedCli {
     }
 
     /// Default behavior when no subcommand is provided:
-    /// - Install the service if not already installed (first run)
-    /// - Start the service
+    /// - Install (or reinstall) the service with current CLI arguments
+    /// - Restart the daemon so it picks up current config and newly added plugins
     /// - Unless --detach is specified, attach to the daemon's logs
     async fn run_default(&self) -> Result<()> {
-        let daemon_handler = daemon::DaemonHandler::new(self.config.clone());
+        let daemon_handler = daemon::DaemonHandler::new(
+            self.config.clone(),
+            self.verbose,
+            self.plugin_dir.clone(),
+            self.auto,
+        );
 
-        // Check if service is already installed
-        let is_installed = daemon_handler.is_service_installed();
+        let was_installed = daemon_handler.is_service_installed();
 
-        if !is_installed {
-            // First run - install the service
-            info!("Service not installed. Installing witmproxy daemon...");
+        // Always (re)install the service to ensure the service file reflects
+        // the current CLI arguments (e.g. --plugin-dir, --verbose, --auto)
+        if !was_installed {
             println!("First run detected. Installing witmproxy as a daemon service...");
-            daemon_handler.install_service(true).await?; // Skip confirmation for first run
         }
+        daemon_handler.install_service(true).await?;
 
-        // Start the service
+        // Restart the daemon so it picks up the latest service file,
+        // configuration, and any plugins added since the last start
         info!("Starting witmproxy daemon...");
-        if let Err(e) = daemon_handler.start_service().await {
-            // If start fails, it might already be running, which is fine
-            warn!("Note: {}", e);
-        }
+        daemon_handler.restart_service().await?;
 
         // Wait a moment for the service to start
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;

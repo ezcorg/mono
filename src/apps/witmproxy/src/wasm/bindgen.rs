@@ -2,7 +2,7 @@ pub use crate::events::content::InboundContent;
 pub use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
     ActualInput, ConfigureError, Event, InputSchema, InputType, PluginManifest, UserInput,
 };
-pub use crate::wasm::{AnnotatorClient, CapabilityProvider, LocalStorageClient, Logger};
+pub use crate::wasm::{AnnotatorClient, CapabilityProvider, ClockClient, LocalStorageClient, Logger};
 
 wasmtime::component::bindgen!({
     world: "witmproxy:plugin/plugin",
@@ -16,6 +16,7 @@ wasmtime::component::bindgen!({
         "witmproxy:plugin/capabilities.annotator-client": AnnotatorClient,
         "witmproxy:plugin/capabilities.local-storage-client": LocalStorageClient,
         "witmproxy:plugin/capabilities.logger": Logger,
+        "witmproxy:plugin/capabilities.clock-client": ClockClient,
         "witmproxy:plugin/capabilities.content": InboundContent,
         "wasi:http/types@0.3.0-rc-2026-01-06": wasmtime_wasi_http::p3::bindings::http::types,
     },
@@ -197,6 +198,9 @@ impl Serialize for witmproxy::plugin::capabilities::CapabilityKind {
             witmproxy::plugin::capabilities::CapabilityKind::LocalStorage => {
                 serializer.serialize_str("local_storage")
             }
+            witmproxy::plugin::capabilities::CapabilityKind::Clock => {
+                serializer.serialize_str("clock")
+            }
         }
     }
 }
@@ -228,6 +232,7 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                     "local_storage" => {
                         Ok(witmproxy::plugin::capabilities::CapabilityKind::LocalStorage)
                     }
+                    "clock" => Ok(witmproxy::plugin::capabilities::CapabilityKind::Clock),
 
                     // New flat snake_case event handlers
                     "handle_event_connect" => Ok(
@@ -250,6 +255,11 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                             witmproxy::plugin::capabilities::EventKind::InboundContent,
                         ),
                     ),
+                    "handle_event_timer" => Ok(
+                        witmproxy::plugin::capabilities::CapabilityKind::HandleEvent(
+                            witmproxy::plugin::capabilities::EventKind::Timer,
+                        ),
+                    ),
 
                     _ => Err(de::Error::unknown_variant(
                         value,
@@ -257,10 +267,12 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                             "logger",
                             "annotator",
                             "local_storage",
+                            "clock",
                             "handle_event_connect",
                             "handle_event_request",
                             "handle_event_response",
                             "handle_event_inbound_content",
+                            "handle_event_timer",
                         ],
                     )),
                 }
@@ -277,10 +289,12 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityKind {
                         "logger",
                         "annotator",
                         "local_storage",
+                        "clock",
                         "handle_event_connect",
                         "handle_event_request",
                         "handle_event_response",
                         "handle_event_inbound_content",
+                        "handle_event_timer",
                     ],
                 ))
             }
@@ -307,6 +321,9 @@ impl Serialize for witmproxy::plugin::capabilities::EventKind {
             }
             witmproxy::plugin::capabilities::EventKind::InboundContent => {
                 serializer.serialize_str("inbound_content")
+            }
+            witmproxy::plugin::capabilities::EventKind::Timer => {
+                serializer.serialize_str("timer")
             }
         }
     }
@@ -340,9 +357,10 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::EventKind {
                     "inbound_content" => {
                         Ok(witmproxy::plugin::capabilities::EventKind::InboundContent)
                     }
+                    "timer" => Ok(witmproxy::plugin::capabilities::EventKind::Timer),
                     _ => Err(de::Error::unknown_variant(
                         value,
-                        &["connect", "request", "response", "inbound_content"],
+                        &["connect", "request", "response", "inbound_content", "timer"],
                     )),
                 }
             }
@@ -360,6 +378,7 @@ impl witmproxy::plugin::capabilities::EventKind {
             witmproxy::plugin::capabilities::EventKind::Request => "request",
             witmproxy::plugin::capabilities::EventKind::Response => "response",
             witmproxy::plugin::capabilities::EventKind::InboundContent => "inbound_content",
+            witmproxy::plugin::capabilities::EventKind::Timer => "timer",
         }
     }
 }
@@ -380,6 +399,9 @@ impl PartialEq for witmproxy::plugin::capabilities::EventKind {
             ) | (
                 witmproxy::plugin::capabilities::EventKind::InboundContent,
                 witmproxy::plugin::capabilities::EventKind::InboundContent,
+            ) | (
+                witmproxy::plugin::capabilities::EventKind::Timer,
+                witmproxy::plugin::capabilities::EventKind::Timer,
             )
         )
     }
@@ -403,6 +425,10 @@ impl PartialEq for witmproxy::plugin::capabilities::CapabilityKind {
             (
                 witmproxy::plugin::capabilities::CapabilityKind::LocalStorage,
                 witmproxy::plugin::capabilities::CapabilityKind::LocalStorage,
+            ) => true,
+            (
+                witmproxy::plugin::capabilities::CapabilityKind::Clock,
+                witmproxy::plugin::capabilities::CapabilityKind::Clock,
             ) => true,
             _ => false,
         }

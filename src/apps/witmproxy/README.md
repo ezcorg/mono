@@ -116,6 +116,14 @@ Consider either [supporting the author directly](https://github.com/sponsors/tbr
 
 ## Contributing
 
+### Prerequisites
+
+- **Nightly Rust**: `witmproxy` requires nightly Rust for development (`rustup default nightly` or use `+nightly` with cargo commands)
+- **WASM target**: Plugin development requires the `wasm32-wasip2` target: `rustup target add wasm32-wasip2`
+- **wkg**: The [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) CLI is required for updating and fetching WIT (WebAssembly Interface Type) files used by the plugin interface
+
+### Steps
+
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes

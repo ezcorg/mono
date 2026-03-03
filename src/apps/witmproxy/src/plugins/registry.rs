@@ -18,7 +18,10 @@ use crate::{
     plugins::WitmPlugin,
     wasm::{
         CapabilityProvider, Host, Runtime,
-        bindgen::{Plugin, witmproxy::plugin::capabilities::Event as WasmEvent},
+        bindgen::{
+            Plugin,
+            witmproxy::plugin::capabilities::{Event as WasmEvent, EventKind},
+        },
     },
 };
 
@@ -57,6 +60,8 @@ impl WasmEvent {
         let env = ContextualResponse::register_cel_env(env)?;
         let env = InboundContent::register_cel_env(env)?;
         let env = Connect::register_cel_env(env)?;
+        let env = crate::events::timer::TimerEvent::register_cel_env(env)?;
+        let env = crate::plugins::cel::CelTime::register_cel_env(env)?;
         Ok(env)
     }
 }
@@ -351,9 +356,21 @@ impl PluginRegistry {
                             let content = store.data_mut().table.delete(c)?;
                             Box::new(content)
                         }
+                        WasmEvent::Timer(ctx) => {
+                            Box::new(crate::events::timer::TimerEvent {
+                                timestamp: ctx.timestamp,
+                            })
+                        }
                     };
                 }
                 None => {
+                    // Timer events may legitimately return None (side-effect only)
+                    if kind == EventKind::Timer {
+                        debug!("Timer plugin returned None; stopping timer chain");
+                        let timer_event = crate::events::timer::TimerEvent::now();
+                        let event_data = Box::new(timer_event).into_event_data(&mut store)?;
+                        return Ok((event_data, store));
+                    }
                     anyhow::bail!("Plugin returned no event data; cannot continue processing");
                 }
             }

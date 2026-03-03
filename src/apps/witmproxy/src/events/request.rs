@@ -1,5 +1,5 @@
 use crate::events::Event;
-use crate::plugins::cel::CelRequest;
+use crate::plugins::cel::{CelRequest, CelTime};
 use crate::wasm::Host;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::Event as WasmEvent;
@@ -39,6 +39,7 @@ impl Event for WasiRequest {
         activation
             .bind_variable("request", CelRequest::from(self))
             .ok()
+            .and_then(|a| a.bind_variable("time", CelTime::now()).ok())
     }
 }
 
@@ -71,5 +72,6 @@ where
         activation
             .bind_variable("request", CelRequest::from(self))
             .ok()
+            .and_then(|a| a.bind_variable("time", CelTime::now()).ok())
     }
 }

@@ -522,6 +522,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else if (event.key === "Enter" && results.length && selectedIndex >= 0) {
             event.preventDefault();
             selectResult(results[selectedIndex]);
+        } else if (event.key === "Escape") {
+            event.preventDefault();
+            safeDispatch(view, { effects: setSearchResults.of([]) });
+            input.blur();
         }
     });
 

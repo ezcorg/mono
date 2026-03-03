@@ -27,8 +27,9 @@ use crate::events::content::InboundContent;
 use crate::plugins::capabilities::Capability;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     CapabilityKind, HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
-    HostCapabilityProviderWithStore, HostContent, HostContentWithStore, HostLocalStorageClient,
-    HostLocalStorageClientWithStore, HostLogger, HostLoggerWithStore,
+    HostCapabilityProviderWithStore, HostClockClient, HostClockClientWithStore, HostContent,
+    HostContentWithStore, HostLocalStorageClient, HostLocalStorageClientWithStore, HostLogger,
+    HostLoggerWithStore,
 };
 pub use runtime::Runtime;
 
@@ -42,6 +43,7 @@ pub struct CapabilityProvider {
     logger: Option<Logger>,
     annotator: Option<AnnotatorClient>,
     local_storage: Option<LocalStorageClient>,
+    clock: Option<ClockClient>,
 }
 
 impl CapabilityProvider {
@@ -68,6 +70,12 @@ impl CapabilityProvider {
         self
     }
 
+    /// Set the clock capability
+    pub fn with_clock(mut self, clock: ClockClient) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
     /// Returns a clone of the logger if granted
     pub fn logger(&self) -> Option<Logger> {
         self.logger.clone()
@@ -81,6 +89,11 @@ impl CapabilityProvider {
     /// Returns a clone of the local storage client if granted
     pub fn local_storage(&self) -> Option<LocalStorageClient> {
         self.local_storage.clone()
+    }
+
+    /// Returns a clone of the clock client if granted
+    pub fn clock(&self) -> Option<ClockClient> {
+        self.clock.clone()
     }
 }
 
@@ -98,6 +111,9 @@ impl From<&Vec<Capability>> for CapabilityProvider {
                     }
                     CapabilityKind::LocalStorage => {
                         provider = provider.with_local_storage(LocalStorageClient::new());
+                    }
+                    CapabilityKind::Clock => {
+                        provider = provider.with_clock(ClockClient::new());
                     }
                     CapabilityKind::HandleEvent(_) => {
                         // Event handling capabilities are managed separately
@@ -278,6 +294,38 @@ impl LocalStorageClient {
     /// Delete a key from the store (async)
     pub async fn delete(&self, key: &str) {
         self.store.write().await.remove(key);
+    }
+}
+
+/// A clock client providing access to the current system time.
+#[derive(Clone)]
+pub struct ClockClient {}
+
+impl ClockClient {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    /// Returns the current time as a Unix timestamp in seconds
+    pub fn now_seconds(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
+    /// Returns the current time as a Unix timestamp in milliseconds
+    pub fn now_millis(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+}
+
+impl Default for ClockClient {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -646,6 +694,43 @@ impl HostLoggerWithStore for WitmProxy {
     }
 }
 
+impl HostClockClientWithStore for WitmProxy {
+    async fn now_seconds<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<ClockClient>,
+    ) -> wasmtime::Result<u64> {
+        let result = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get(&self_)?;
+            Ok::<u64, wasmtime::component::ResourceTableError>(client.now_seconds())
+        })?;
+        Ok(result)
+    }
+
+    async fn now_millis<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<ClockClient>,
+    ) -> wasmtime::Result<u64> {
+        let result = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get(&self_)?;
+            Ok::<u64, wasmtime::component::ResourceTableError>(client.now_millis())
+        })?;
+        Ok(result)
+    }
+
+    async fn drop<T>(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<ClockClient>,
+    ) -> wasmtime::Result<()> {
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            state.table.delete(rep)
+        })?;
+        Ok(())
+    }
+}
+
 impl HostCapabilityProviderWithStore for WitmProxy {
     async fn logger<T>(
         accessor: &Accessor<T, Self>,
@@ -707,6 +792,25 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
+    async fn clock<T>(
+        accessor: &Accessor<T, Self>,
+        cap: Resource<CapabilityProvider>,
+    ) -> wasmtime::Result<Option<Resource<ClockClient>>> {
+        Ok(accessor
+            .with(|mut access| {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                let provider = state.table.get(&cap)?;
+                match provider.clock() {
+                    Some(client) => Ok::<
+                        Option<Resource<ClockClient>>,
+                        wasmtime::component::ResourceTableError,
+                    >(Some(state.table.push(client)?)),
+                    None => Ok(None),
+                }
+            })
+            .unwrap_or(None))
+    }
+
     async fn drop<T>(
         accessor: &Accessor<T, Self>,
         rep: Resource<CapabilityProvider>,
@@ -728,6 +832,7 @@ impl HostCapabilityProvider for WitmProxyCtxView<'_> {}
 impl HostLocalStorageClient for WitmProxyCtxView<'_> {}
 impl HostAnnotatorClient for WitmProxyCtxView<'_> {}
 impl HostLogger for WitmProxyCtxView<'_> {}
+impl HostClockClient for WitmProxyCtxView<'_> {}
 
 pub struct P3Ctx {}
 impl wasmtime_wasi_http::p3::WasiHttpCtx for P3Ctx {}

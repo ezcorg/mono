@@ -15,6 +15,7 @@ import { lintKeymap } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
 import { SearchIndex } from "./utils/search";
 import { LSP, LSPClientExtension } from "./utils/lsp";
+import { prefillTypescriptDefaults, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
@@ -29,6 +30,10 @@ export type CodeblockConfig = {
     index?: SearchIndex;
     language?: ExtensionOrLanguage;
     dark?: boolean;
+    typescript?: TypescriptDefaultsConfig & {
+        /** Resolves a TypeScript lib name (e.g. "es5") to its `.d.ts` file content */
+        resolveLib: (name: string) => Promise<string>;
+    };
 };
 export type CreateCodeblockArgs = CodeblockConfig & {
     parent: HTMLElement;
@@ -122,8 +127,8 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index }: CodeblockConfig) => [
-    configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index })),
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, typescript }: CodeblockConfig) => [
+    configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, typescript })),
     currentFileField,
     languageSupportCompartment.of([]),
     languageServerCompartment.of([]),
@@ -188,7 +193,18 @@ const codeblockView = ViewPlugin.define((view) => {
 
             const exists = await fs.exists(path);
             const content = exists ? await fs.readFile(path) : "";
+
+            // Add new files to the search index so they appear in future searches
+            const { index } = view.state.facet(CodeblockFacet);
+            if (index) index.add(path);
             const unit = detectIndentationUnit(content) || "    ";
+
+            // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
+            const tsExtensions = ['ts', 'tsx', 'js', 'jsx'];
+            const { typescript } = view.state.facet(CodeblockFacet);
+            if (typescript?.resolveLib && ext && tsExtensions.includes(ext)) {
+                await prefillTypescriptDefaults(fs, typescript.resolveLib, typescript);
+            }
 
             let lsp: LSPClientExtension | null = lang ? await LSP.client({ view, language: lang as any, path, fs }) : null;
 
@@ -279,10 +295,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, typescript })]
     });
     return new EditorView({ state, parent });
 }

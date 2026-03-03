@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -15,20 +16,26 @@ vi.mock('../lsps', () => ({
     }
 }));
 
-vi.mock('../editor', () => ({
-    CodeblockFacet: {
-        of: vi.fn(),
-    },
-    currentFileField: {
-        init: vi.fn(() => ({ path: null, content: '', language: null, loading: false }))
-    },
-    openFileEffect: {
-        of: vi.fn()
-    }
-}));
+vi.mock('../editor', async () => {
+    const { Facet, StateField, StateEffect } = await import('@codemirror/state');
+    return {
+        CodeblockFacet: Facet.define({
+            combine: (values: any[]) => values[0],
+        }),
+        currentFileField: StateField.define({
+            create() {
+                return { path: null, content: '', language: null, loading: false };
+            },
+            update(value: any) {
+                return value;
+            },
+        }),
+        openFileEffect: StateEffect.define(),
+    };
+});
 
 describe('Toolbar Panel', () => {
-    let view: EditorView;
+    const ctx: { view: EditorView | null } = { view: null };
     let mockFs: any;
 
     beforeEach(() => {
@@ -55,11 +62,10 @@ describe('Toolbar Panel', () => {
             ]
         });
 
-        view = new EditorView({
+        ctx.view = new EditorView({
             state,
             parent: document.createElement('div')
         });
-        console.log(view)
     });
 
     describe('Command Results Generation', () => {

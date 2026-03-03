@@ -56,11 +56,19 @@ pub enum DaemonCommands {
 
 pub struct DaemonHandler {
     config: AppConfig,
+    verbose: bool,
+    plugin_dir: Option<PathBuf>,
+    auto: bool,
 }
 
 impl DaemonHandler {
-    pub fn new(config: AppConfig) -> Self {
-        Self { config }
+    pub fn new(config: AppConfig, verbose: bool, plugin_dir: Option<PathBuf>, auto: bool) -> Self {
+        Self {
+            config,
+            verbose,
+            plugin_dir,
+            auto,
+        }
     }
 
     /// Get the service label
@@ -212,6 +220,30 @@ impl DaemonHandler {
         args.push("--config-path".into());
         args.push(config_path.into());
 
+        // Forward verbose flag
+        if self.verbose {
+            args.push("--verbose".into());
+        }
+
+        // Forward plugin-dir (canonicalize to absolute path since the daemon's
+        // working directory differs from the user's current directory)
+        if let Some(ref plugin_dir) = self.plugin_dir {
+            let absolute_dir = if plugin_dir.is_relative() {
+                std::env::current_dir()
+                    .context("Failed to get current directory for resolving plugin-dir")?
+                    .join(plugin_dir)
+            } else {
+                plugin_dir.clone()
+            };
+            args.push("--plugin-dir".into());
+            args.push(absolute_dir.into());
+        }
+
+        // Forward auto flag
+        if self.auto {
+            args.push("--auto".into());
+        }
+
         // Add the serve subcommand
         args.push("serve".into());
 
@@ -351,12 +383,21 @@ impl DaemonHandler {
 
             #[cfg(target_os = "linux")]
             {
+                // The service-manager crate converts dotted labels like "co.joinez.witmproxy"
+                // to hyphenated filenames by stripping the first segment: "joinez-witmproxy.service"
+                let label_parts: Vec<&str> = SERVICE_LABEL.split('.').collect();
+                let systemd_name = if label_parts.len() > 1 {
+                    label_parts[1..].join("-")
+                } else {
+                    SERVICE_LABEL.to_string()
+                };
+
                 let systemd_user_path = dirs::home_dir().map(|h| {
                     h.join(".config/systemd/user")
-                        .join(format!("{}.service", SERVICE_LABEL))
+                        .join(format!("{}.service", systemd_name))
                 });
                 let systemd_system_path =
-                    PathBuf::from(format!("/etc/systemd/system/{}.service", SERVICE_LABEL));
+                    PathBuf::from(format!("/etc/systemd/system/{}.service", systemd_name));
 
                 if let Some(user_path) = systemd_user_path
                     && user_path.exists()

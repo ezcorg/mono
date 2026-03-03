@@ -31,6 +31,14 @@ pub enum PluginCommands {
         /// Plugin name or namespace/name to remove
         plugin_name: String,
     },
+    /// View or set configuration values for an installed plugin
+    Configure {
+        /// Plugin name or namespace/name (e.g. "@ezco/noop")
+        plugin_name: String,
+        /// Set a configuration value (format: key=value), may be repeated
+        #[arg(short, long = "set", value_name = "KEY=VALUE")]
+        set_values: Vec<String>,
+    },
 }
 
 /// Plugin command handler that contains the resolved configuration and verbose flag
@@ -53,6 +61,10 @@ impl PluginHandler {
             } => self.create_new_plugin(plugin_name, language, dest).await,
             PluginCommands::Add { source } => self.add_plugin(source).await,
             PluginCommands::Remove { plugin_name } => self.remove_plugin(plugin_name).await,
+            PluginCommands::Configure {
+                plugin_name,
+                set_values,
+            } => self.configure_plugin(plugin_name, set_values).await,
         }
     }
 
@@ -281,6 +293,71 @@ impl PluginHandler {
         registry.register_plugin(plugin).await?;
 
         info!("Plugin successfully added from {}", source);
+        Ok(())
+    }
+
+    async fn configure_plugin(&self, plugin_name: &str, set_values: &[String]) -> Result<()> {
+        let (name, namespace) = match plugin_name.split_once("/") {
+            Some((ns, n)) => (n.to_string(), ns.to_string()),
+            None => (plugin_name.to_string(), "default".to_string()),
+        };
+
+        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        db.migrate().await?;
+
+        if set_values.is_empty() {
+            // List current configuration
+            let rows = sqlx::query(
+                "SELECT input_name, input_value FROM plugin_configuration WHERE namespace = ? AND name = ?",
+            )
+            .bind(&namespace)
+            .bind(&name)
+            .fetch_all(&db.pool)
+            .await?;
+
+            if rows.is_empty() {
+                println!("No configuration set for plugin {}/{}.", namespace, name);
+            } else {
+                println!("Configuration for {}/{}:", namespace, name);
+                for row in rows {
+                    let input_name: String = sqlx::Row::try_get(&row, "input_name")?;
+                    let input_value: String = sqlx::Row::try_get(&row, "input_value")?;
+                    println!("  {} = {}", input_name, input_value);
+                }
+            }
+        } else {
+            // Set configuration values
+            for kv in set_values {
+                let (key, value) = kv.split_once('=').ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Invalid format '{}': expected key=value",
+                        kv
+                    )
+                })?;
+
+                // Store as a JSON-serialized ActualInput::Str by default
+                let value_json = serde_json::to_string(
+                    &crate::wasm::bindgen::ActualInput::Str(value.to_string()),
+                )?;
+
+                sqlx::query(
+                    "INSERT OR REPLACE INTO plugin_configuration (namespace, name, input_name, input_value) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&namespace)
+                .bind(&name)
+                .bind(key)
+                .bind(&value_json)
+                .execute(&db.pool)
+                .await?;
+
+                info!("Set {}/{} config: {} = {}", namespace, name, key, value);
+            }
+            println!(
+                "Configuration updated for {}/{}. Restart the daemon for changes to take effect.",
+                namespace, name
+            );
+        }
+
         Ok(())
     }
 

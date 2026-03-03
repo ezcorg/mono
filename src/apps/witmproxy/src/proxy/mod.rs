@@ -94,6 +94,31 @@ impl ProxyServer {
         let shutdown = self.shutdown_notify.clone();
         let server = self.clone();
 
+        // Spawn the timer scheduler (checks every 30 seconds for timer-capable plugins)
+        if let Some(ref registry) = self.plugin_registry {
+            let timer_registry = Arc::clone(registry);
+            let timer_shutdown = self.shutdown_notify.clone();
+            tokio::spawn(async move {
+                use crate::events::timer::TimerEvent;
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    tokio::select! {
+                        _ = timer_shutdown.notified() => break,
+                        _ = interval.tick() => {
+                            let timer_event = TimerEvent::now();
+                            let registry = timer_registry.read().await;
+                            if registry.can_handle(&timer_event) {
+                                debug!("Timer tick: dispatching timer event to plugins");
+                                if let Err(e) = registry.handle_event(Box::new(timer_event)).await {
+                                    warn!("Timer event handling error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         // Spawn the accept loop
         tokio::spawn(async move {
             loop {
