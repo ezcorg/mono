@@ -4,4 +4,4 @@ export * from './utils/snapshot';
 export * from './types';
 export * from './utils/search';
 export * from './lsps';
-export { prefillTypescriptDefaults, getRequiredLibs, type TypescriptDefaultsConfig } from './utils/typescript-defaults';
+export { prefillTypescriptDefaults, getCachedLibFiles, getRequiredLibs, getLibFieldForTarget, type TypescriptDefaultsConfig } from './utils/typescript-defaults';

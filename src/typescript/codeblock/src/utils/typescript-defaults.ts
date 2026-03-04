@@ -118,7 +118,31 @@ export function getRequiredLibs(target: string = 'es2020'): string[] {
     return TARGET_LIBS[target.toLowerCase()] || TARGET_LIBS.es2020;
 }
 
+/**
+ * Returns all individual lib names for the tsconfig `lib` field.
+ *
+ * Lists every individual lib file (e.g. "es5", "es2015.promise") instead of
+ * just the top-level entry (e.g. "ES2020"). This is critical for browser-based
+ * TypeScript via Volar: the virtual filesystem is async, so each
+ * `/// <reference lib="..." />` chain level requires a separate async round-trip.
+ * By listing all libs explicitly, TypeScript loads them all in a single pass.
+ */
+export function getLibFieldForTarget(target: string = 'es2020'): string[] {
+    const t = target.toLowerCase();
+    return TARGET_LIBS[t] || TARGET_LIBS.es2020;
+}
+
 let prefilled = false;
+let cachedLibFiles: Record<string, string> | undefined;
+
+/**
+ * Returns the cached lib file contents from the last prefill, if available.
+ * These are keyed by full path (e.g. "/node_modules/typescript/lib/lib.es5.d.ts").
+ * Includes the tsconfig.json content as well.
+ */
+export function getCachedLibFiles(): Record<string, string> | undefined {
+    return cachedLibFiles;
+}
 
 /**
  * Pre-fills the virtual filesystem with TypeScript default lib definitions and tsconfig.
@@ -128,6 +152,9 @@ let prefilled = false;
  * - Skips files that already exist on the filesystem
  * - Only runs once per session (subsequent calls are no-ops)
  * - Should be called lazily when a TypeScript file is first opened
+ *
+ * Returns a map of file paths to their contents for direct use by the LSP worker,
+ * bypassing the need for the worker to read through nested Comlink proxies.
  *
  * @param fs - Virtual filesystem to write to
  * @param resolveLib - Function that resolves a lib name to its `.d.ts` content.
@@ -139,25 +166,32 @@ export async function prefillTypescriptDefaults(
     fs: VfsInterface,
     resolveLib: (name: string) => Promise<string>,
     config: TypescriptDefaultsConfig = {},
-): Promise<void> {
-    if (prefilled) return;
+): Promise<Record<string, string>> {
+    if (prefilled) {
+        return cachedLibFiles || {};
+    }
     prefilled = true;
 
     const target = config.target || 'ES2020';
+    const fileContents: Record<string, string> = {};
 
     // Write tsconfig.json if it doesn't exist
-    if (!await fs.exists(TSCONFIG_PATH)) {
-        const tsconfig = {
-            compilerOptions: {
-                target,
-                module: "ESNext",
-                moduleResolution: "bundler",
-                strict: true,
-                skipLibCheck: true,
-                ...config.compilerOptions,
-            }
-        };
-        await fs.writeFile(TSCONFIG_PATH, JSON.stringify(tsconfig, null, 2));
+    const tsconfigExists = await fs.exists(TSCONFIG_PATH);
+    const tsconfigContent = JSON.stringify({
+        compilerOptions: {
+            target,
+            lib: getLibFieldForTarget(target),
+            module: "ESNext",
+            moduleResolution: "bundler",
+            strict: true,
+            skipLibCheck: true,
+            ...config.compilerOptions,
+        }
+    }, null, 2);
+    fileContents[TSCONFIG_PATH] = tsconfigContent;
+
+    if (!tsconfigExists) {
+        await fs.writeFile(TSCONFIG_PATH, tsconfigContent);
     }
 
     // Write lib files to the path Volar expects in browser environments
@@ -166,14 +200,19 @@ export async function prefillTypescriptDefaults(
 
     await Promise.all(libs.map(async (name) => {
         const path = `${LIB_DIR}/lib.${name}.d.ts`;
-        if (await fs.exists(path)) return;
         try {
             const content = await resolveLib(name);
-            await fs.writeFile(path, content);
+            fileContents[path] = content;
+            if (!(await fs.exists(path))) {
+                await fs.writeFile(path, content);
+            }
         } catch (e) {
             console.error(`Failed to load TypeScript lib: ${name}`, e);
         }
     }));
+
+    cachedLibFiles = fileContents;
+    return fileContents;
 }
 
 /**

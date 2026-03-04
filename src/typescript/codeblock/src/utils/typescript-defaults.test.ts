@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { getRequiredLibs, prefillTypescriptDefaults, resetPrefillState } from './typescript-defaults';
+import { getRequiredLibs, getLibFieldForTarget, prefillTypescriptDefaults, resetPrefillState } from './typescript-defaults';
 import { VfsInterface } from '../types';
 
 function createMockFs(): VfsInterface {
@@ -60,6 +60,33 @@ describe('getRequiredLibs', () => {
     });
 });
 
+describe('getLibFieldForTarget', () => {
+    it('returns all individual lib names for a target', () => {
+        const libs = getLibFieldForTarget('es2020');
+        expect(libs).toContain('es5');
+        expect(libs).toContain('es2015');
+        expect(libs).toContain('es2015.promise');
+        expect(libs).toContain('es2020');
+        expect(libs).toContain('es2020.bigint');
+        expect(libs).toEqual(getRequiredLibs('es2020'));
+    });
+
+    it('returns es2015 libs for es2015 target', () => {
+        const libs = getLibFieldForTarget('ES2015');
+        expect(libs).toContain('es5');
+        expect(libs).toContain('es2015');
+        expect(libs).not.toContain('es2016');
+    });
+
+    it('defaults to es2020 libs for unknown targets', () => {
+        expect(getLibFieldForTarget('unknown')).toEqual(getRequiredLibs('es2020'));
+    });
+
+    it('defaults to es2020 libs when no target is provided', () => {
+        expect(getLibFieldForTarget()).toEqual(getRequiredLibs('es2020'));
+    });
+});
+
 describe('prefillTypescriptDefaults', () => {
     let mockFs: VfsInterface;
     const mockResolveLib = vi.fn(async (name: string) => `// lib.${name}.d.ts content`);
@@ -83,6 +110,7 @@ describe('prefillTypescriptDefaults', () => {
         );
         const tsconfig = JSON.parse(tsconfigCall![1]);
         expect(tsconfig.compilerOptions.target).toBe('ES2020');
+        expect(tsconfig.compilerOptions.lib).toEqual(getRequiredLibs('es2020'));
         expect(tsconfig.compilerOptions.module).toBe('ESNext');
         expect(tsconfig.compilerOptions.strict).toBe(true);
     });
@@ -149,21 +177,37 @@ describe('prefillTypescriptDefaults', () => {
 
         await prefillTypescriptDefaults(mockFs, mockResolveLib, { target: 'es5' });
 
-        // es5 should not be resolved since it already exists
-        expect(mockResolveLib).not.toHaveBeenCalledWith('es5');
-        // But the other two should still be written
+        // resolveLib is called for all libs (to populate the return cache)
+        expect(mockResolveLib).toHaveBeenCalledWith('es5');
+        // But the existing file should NOT be overwritten in the VFS
+        const es5Writes = vi.mocked(mockFs.writeFile).mock.calls.filter(
+            ([path]) => path === '/node_modules/typescript/lib/lib.es5.d.ts'
+        );
+        expect(es5Writes).toHaveLength(0);
+        // Other libs should still be written
         expect(mockResolveLib).toHaveBeenCalledWith('decorators');
         expect(mockResolveLib).toHaveBeenCalledWith('decorators.legacy');
     });
 
     it('only runs once per session', async () => {
-        await prefillTypescriptDefaults(mockFs, mockResolveLib, { target: 'es5' });
+        const result1 = await prefillTypescriptDefaults(mockFs, mockResolveLib, { target: 'es5' });
         const firstCallCount = mockResolveLib.mock.calls.length;
 
-        await prefillTypescriptDefaults(mockFs, mockResolveLib, { target: 'es5' });
+        const result2 = await prefillTypescriptDefaults(mockFs, mockResolveLib, { target: 'es5' });
 
         // Should not have been called again
         expect(mockResolveLib).toHaveBeenCalledTimes(firstCallCount);
+        // Second call returns cached result
+        expect(result2).toEqual(result1);
+    });
+
+    it('returns lib file contents keyed by path', async () => {
+        const result = await prefillTypescriptDefaults(mockFs, mockResolveLib, { target: 'es5' });
+
+        expect(result['/tsconfig.json']).toBeDefined();
+        expect(result['/node_modules/typescript/lib/lib.es5.d.ts']).toBe('// lib.es5.d.ts content');
+        expect(result['/node_modules/typescript/lib/lib.decorators.d.ts']).toBe('// lib.decorators.d.ts content');
+        expect(result['/node_modules/typescript/lib/lib.decorators.legacy.d.ts']).toBe('// lib.decorators.legacy.d.ts content');
     });
 
     it('handles resolveLib errors gracefully', async () => {

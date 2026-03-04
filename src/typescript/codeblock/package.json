@@ -32,6 +32,7 @@
     "@types/sharedworker": "^0.0.181",
     "multimatch": "^7.0.0",
     "process": "^0.11.10",
+    "puppeteer-core": "^24.37.5",
     "tsx": "^4.19.4",
     "vite": "^7.0.6",
     "vitest": "^3.2.4"
@@ -61,8 +62,8 @@
     "@codemirror/search": "^6.5.10",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.7",
-    "@joinezco/memfs": "workspace:*",
     "@joinezco/jswasi": "workspace:*",
+    "@joinezco/memfs": "workspace:*",
     "@jsonjoy.com/json-pack": "^1.2.0",
     "@jsonjoy.com/util": "^1.6.0",
     "@lezer/highlight": "^1.2.1",

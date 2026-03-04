@@ -15,7 +15,7 @@ import { lintKeymap } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
 import { SearchIndex } from "./utils/search";
 import { LSP, LSPClientExtension } from "./utils/lsp";
-import { prefillTypescriptDefaults, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
+import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
@@ -168,7 +168,10 @@ const codeblockView = ViewPlugin.define((view) => {
 
     async function setLanguageSupport(language: ExtensionOrLanguage) {
         if (!language) return;
-        const langSupport = await getLanguageSupport(extOrLanguageToLanguageId[language]);
+        const langSupport = await getLanguageSupport(extOrLanguageToLanguageId[language]).catch((e) => {
+            console.error(`Failed to load language support for ${language}`, e);
+            return null;
+        });
         safeDispatch(view, {
             effects: [
                 languageSupportCompartment.reconfigure(langSupport || []),
@@ -183,7 +186,10 @@ const codeblockView = ViewPlugin.define((view) => {
         try {
             const ext = path.split('.').pop()?.toLowerCase();
             const lang = (ext ? (extOrLanguageToLanguageId)[ext] ?? null : language) || 'markdown';
-            let langSupport = lang ? await getLanguageSupport(lang as any) : null;
+            let langSupport = lang ? await getLanguageSupport(lang as any).catch((e) => {
+                console.error(`Failed to load language support for ${lang}`, e);
+                return null;
+            }) : null;
 
             safeDispatch(view, {
                 effects: [
@@ -194,6 +200,15 @@ const codeblockView = ViewPlugin.define((view) => {
             const exists = await fs.exists(path);
             const content = exists ? await fs.readFile(path) : "";
 
+            // Ensure the file exists on VFS before LSP initialization.
+            // The LSP uses readDirectory to find source files and match them
+            // against tsconfig. If the file doesn't exist yet, Volar falls
+            // back to an inferred project that lacks lib file configuration.
+            if (!exists) {
+                await fs.mkdir(dirname(path), { recursive: true }).catch(() => {});
+                await fs.writeFile(path, content);
+            }
+
             // Add new files to the search index so they appear in future searches
             const { index } = view.state.facet(CodeblockFacet);
             if (index) index.add(path);
@@ -202,11 +217,14 @@ const codeblockView = ViewPlugin.define((view) => {
             // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
             const tsExtensions = ['ts', 'tsx', 'js', 'jsx'];
             const { typescript } = view.state.facet(CodeblockFacet);
+            let libFiles: Record<string, string> | undefined;
             if (typescript?.resolveLib && ext && tsExtensions.includes(ext)) {
-                await prefillTypescriptDefaults(fs, typescript.resolveLib, typescript);
+                libFiles = await prefillTypescriptDefaults(fs, typescript.resolveLib, typescript);
+            } else {
+                libFiles = getCachedLibFiles();
             }
 
-            let lsp: LSPClientExtension | null = lang ? await LSP.client({ view, language: lang as any, path, fs }) : null;
+            let lsp: LSPClientExtension | null = lang ? await LSP.client({ view, language: lang as any, path, fs, libFiles }) : null;
 
             safeDispatch(view, {
                 changes: { from: 0, to: view.state.doc.length, insert: content },

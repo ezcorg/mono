@@ -3,7 +3,6 @@ import * as Comlink from 'comlink';
 import { LanguageServerClient, languageServerWithClient } from "@marimo-team/codemirror-languageserver";
 import { Extension } from "@codemirror/state";
 import MessagePortTransport from "../rpc/transport";
-import { LanguageServer } from "@volar/language-server";
 import { HighlightStyle, LanguageSupport } from "@codemirror/language";
 import { languageSupportCompartment, renderMarkdownCode } from "../editor";
 import { EditorView } from "@codemirror/view";
@@ -21,52 +20,54 @@ export type ClientOptions = {
     language: string,
     path: string,
     fs: VfsInterface
+    libFiles?: Record<string, string>
 }
 
-// TODO: better fix for this reference sticking around to prevent Comlink from releasing the port
-export const languageServerFactory: Map<string, (args: { fs: VfsInterface }) => Promise<{ server: LanguageServer }>> = new Map();
+// Cached factory (Comlink-wrapped) and LSP port per language
+const languageServerFactory: Map<string, (fs: VfsInterface, libFiles?: Record<string, string>) => Promise<MessagePort>> = new Map();
+const lspPorts: Map<string, MessagePort> = new Map();
 export const lspWorkers: Map<string, SharedWorker> = new Map()
 
 export namespace LSP {
-    export async function worker(language: string, fs: VfsInterface): Promise<{ worker: SharedWorker }> {
-        let factory, worker;
-
-        console.debug('language', { language })
+    export async function worker(language: string, fs: VfsInterface, libFiles?: Record<string, string>): Promise<{ worker: SharedWorker, lspPort: MessagePort }> {
+        let factory: ((fs: VfsInterface, libFiles?: Record<string, string>) => Promise<MessagePort>) | undefined;
+        let worker: SharedWorker | undefined;
 
         switch (language) {
             case 'javascript':
             case 'typescript':
                 factory = languageServerFactory.get('javascript')
                 worker = lspWorkers.get('javascript')
-                console.debug('got worker', { worker, factory })
 
                 if (!factory) {
                     worker = new SharedWorker(new URL('../workers/javascript.worker.js', import.meta.url), { type: 'module' });
                     worker.port.start();
                     lspWorkers.set('javascript', worker)
-                    const { createLanguageServer } = Comlink.wrap<{ createLanguageServer: (args: { fs: VfsInterface }) => Promise<{ server: LanguageServer }> }>(worker.port);
-                    factory = createLanguageServer
+                    const wrapped = Comlink.wrap<{ createLanguageServer: (fs: VfsInterface, libFiles?: Record<string, string>) => Promise<MessagePort> }>(worker.port);
+                    factory = wrapped.createLanguageServer
                     languageServerFactory.set('javascript', factory)
                 }
                 break;
         }
-        await factory?.(Comlink.proxy({ fs }))
-        return { worker }
+        // fs is proxied (has methods), libFiles is plain data (structured clone)
+        // The factory returns a MessagePort for the LSP connection (separate from Comlink's port)
+        const lspPort = await factory!(Comlink.proxy(fs), libFiles);
+        lspPort.start();
+        lspPorts.set(language, lspPort);
+        return { worker: worker!, lspPort }
     }
 
-    export async function client({ fs, language, path, view }: ClientOptions): Promise<LSPClientExtension> {
+    export async function client({ fs, language, path, view, libFiles }: ClientOptions): Promise<LSPClientExtension> {
         let client = clients.get(language);
         let clientExtension: LSPClientExtension | undefined;
         const uri = `file:///${path}`;
 
         if (!client) {
-            const { worker } = await LSP.worker(language, fs);
-            if (!worker) return null;
-
-            console.debug('got worker', { worker });
+            const { lspPort } = await LSP.worker(language, fs, libFiles);
+            if (!lspPort) return null;
 
             client = new LanguageServerClient({
-                transport: new MessagePortTransport(worker.port),
+                transport: new MessagePortTransport(lspPort),
                 rootUri: 'file:///',
                 workspaceFolders: [{ name: 'workspace', uri: 'file:///' }]
             });
