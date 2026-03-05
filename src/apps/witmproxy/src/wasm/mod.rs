@@ -172,8 +172,8 @@ where
         let cap = match dst.remaining(&mut store).map(NonZeroUsize::new) {
             Some(Some(cap)) => Some(cap),
             Some(None) => {
-                // On 0-length the best we can do is check that underlying stream has not
-                // reached the end yet
+                // Zero-length read: guest is checking readiness without consuming.
+                // Return Completed (we may have data) or Dropped (stream ended).
                 if self.body.is_end_stream() {
                     return Poll::Ready(Ok(StreamResult::Dropped));
                 } else {
@@ -183,48 +183,58 @@ where
             None => None,
         };
 
-        match Pin::new(&mut self.body).poll_frame(cx) {
-            Poll::Ready(Some(Ok(frame))) => {
-                // Try to extract data from the frame
-                match frame.into_data().map_err(http_body::Frame::into_trailers) {
-                    Ok(mut data_frame) => {
-                        if let Some(cap) = cap {
-                            let n = data_frame.len();
-                            let cap_usize = cap.into();
-                            if n > cap_usize {
-                                // Data doesn't fit, buffer the rest
-                                dst.set_buffer(Cursor::new(data_frame.split_off(cap_usize)));
-                                let mut dst_direct = dst.as_direct(store, cap_usize);
-                                dst_direct.remaining().copy_from_slice(&data_frame);
-                                dst_direct.mark_written(cap_usize);
-                            } else {
-                                // Copy the whole frame
-                                let mut dst_direct = dst.as_direct(store, n);
-                                dst_direct.remaining()[..n].copy_from_slice(&data_frame);
-                                dst_direct.mark_written(n);
+        // Loop to skip empty data frames from the HTTP body.
+        // HTTP/2 can produce zero-length DATA frames which would cause
+        // wasmtime to error with "Completed without producing any items"
+        // if we returned without writing anything.
+        loop {
+            match Pin::new(&mut self.body).poll_frame(cx) {
+                Poll::Ready(Some(Ok(frame))) => {
+                    // Try to extract data from the frame
+                    match frame.into_data().map_err(http_body::Frame::into_trailers) {
+                        Ok(mut data_frame) => {
+                            // Skip empty data frames and poll again
+                            if data_frame.is_empty() {
+                                continue;
                             }
-                        } else {
-                            // No capacity info, just buffer it
-                            dst.set_buffer(Cursor::new(data_frame));
+                            if let Some(cap) = cap {
+                                let n = data_frame.len();
+                                let cap_usize = cap.into();
+                                if n > cap_usize {
+                                    // Data doesn't fit, buffer the rest
+                                    dst.set_buffer(Cursor::new(
+                                        data_frame.split_off(cap_usize),
+                                    ));
+                                    let mut dst_direct = dst.as_direct(store, cap_usize);
+                                    dst_direct.remaining().copy_from_slice(&data_frame);
+                                    dst_direct.mark_written(cap_usize);
+                                } else {
+                                    // Copy the whole frame
+                                    let mut dst_direct = dst.as_direct(store, n);
+                                    dst_direct.remaining()[..n].copy_from_slice(&data_frame);
+                                    dst_direct.mark_written(n);
+                                }
+                            } else {
+                                // No capacity info, just buffer it
+                                dst.set_buffer(Cursor::new(data_frame));
+                            }
+                            return Poll::Ready(Ok(StreamResult::Completed));
                         }
-                        Poll::Ready(Ok(StreamResult::Completed))
-                    }
-                    Err(Ok(_trailers)) => {
-                        // Trailers received - we're done with body data
-                        // Note: In a full implementation, trailers would be stored in the resource table
-                        // For now, we just signal completion
-                        Poll::Ready(Ok(StreamResult::Dropped))
-                    }
-                    Err(Err(..)) => {
-                        // Frame is neither data nor trailers - protocol error
-                        Poll::Ready(Ok(StreamResult::Dropped))
+                        Err(Ok(_trailers)) => {
+                            // Trailers received - we're done with body data
+                            return Poll::Ready(Ok(StreamResult::Dropped));
+                        }
+                        Err(Err(..)) => {
+                            // Frame is neither data nor trailers - protocol error
+                            return Poll::Ready(Ok(StreamResult::Dropped));
+                        }
                     }
                 }
+                Poll::Ready(Some(Err(_err))) => return Poll::Ready(Ok(StreamResult::Dropped)),
+                Poll::Ready(None) => return Poll::Ready(Ok(StreamResult::Dropped)),
+                Poll::Pending if finish => return Poll::Ready(Ok(StreamResult::Cancelled)),
+                Poll::Pending => return Poll::Pending,
             }
-            Poll::Ready(Some(Err(_err))) => Poll::Ready(Ok(StreamResult::Dropped)),
-            Poll::Ready(None) => Poll::Ready(Ok(StreamResult::Dropped)),
-            Poll::Pending if finish => Poll::Ready(Ok(StreamResult::Cancelled)),
-            Poll::Pending => Poll::Pending,
         }
     }
 }

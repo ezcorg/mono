@@ -149,15 +149,20 @@ describe('prefillTypescriptDefaults', () => {
             { recursive: true }
         );
 
-        // ES5 needs 3 libs: es5, decorators, decorators.legacy
+        // ES5 needs 3 target libs + 5 default env libs (dom, dom.iterable, etc.)
         const libWrites = vi.mocked(mockFs.writeFile).mock.calls.filter(
             ([path]) => path.startsWith('/node_modules/typescript/lib/')
         );
-        expect(libWrites).toHaveLength(3);
+        expect(libWrites).toHaveLength(8);
         expect(libWrites.map(([path]) => path)).toEqual(expect.arrayContaining([
             '/node_modules/typescript/lib/lib.es5.d.ts',
             '/node_modules/typescript/lib/lib.decorators.d.ts',
             '/node_modules/typescript/lib/lib.decorators.legacy.d.ts',
+            '/node_modules/typescript/lib/lib.dom.d.ts',
+            '/node_modules/typescript/lib/lib.dom.iterable.d.ts',
+            '/node_modules/typescript/lib/lib.dom.asynciterable.d.ts',
+            '/node_modules/typescript/lib/lib.webworker.importscripts.d.ts',
+            '/node_modules/typescript/lib/lib.scripthost.d.ts',
         ]));
     });
 
@@ -167,6 +172,11 @@ describe('prefillTypescriptDefaults', () => {
         expect(mockResolveLib).toHaveBeenCalledWith('es5');
         expect(mockResolveLib).toHaveBeenCalledWith('decorators');
         expect(mockResolveLib).toHaveBeenCalledWith('decorators.legacy');
+        expect(mockResolveLib).toHaveBeenCalledWith('dom');
+        expect(mockResolveLib).toHaveBeenCalledWith('dom.iterable');
+        expect(mockResolveLib).toHaveBeenCalledWith('dom.asynciterable');
+        expect(mockResolveLib).toHaveBeenCalledWith('webworker.importscripts');
+        expect(mockResolveLib).toHaveBeenCalledWith('scripthost');
     });
 
     it('does not overwrite existing lib files', async () => {
@@ -208,6 +218,8 @@ describe('prefillTypescriptDefaults', () => {
         expect(result['/node_modules/typescript/lib/lib.es5.d.ts']).toBe('// lib.es5.d.ts content');
         expect(result['/node_modules/typescript/lib/lib.decorators.d.ts']).toBe('// lib.decorators.d.ts content');
         expect(result['/node_modules/typescript/lib/lib.decorators.legacy.d.ts']).toBe('// lib.decorators.legacy.d.ts content');
+        expect(result['/node_modules/typescript/lib/lib.dom.d.ts']).toBe('// lib.dom.d.ts content');
+        expect(result['/node_modules/typescript/lib/lib.dom.iterable.d.ts']).toBe('// lib.dom.iterable.d.ts content');
     });
 
     it('handles resolveLib errors gracefully', async () => {

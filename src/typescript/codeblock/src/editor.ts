@@ -49,6 +49,7 @@ export const languageSupportCompartment = new Compartment();
 export const languageServerCompartment = new Compartment();
 export const indentationCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
+export const lineWrappingCompartment = new Compartment();
 
 // Effects + Fields for async file handling
 export const openFileEffect = StateEffect.define<{ path: string }>();
@@ -134,6 +135,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     languageServerCompartment.of([]),
     indentationCompartment.of(indentUnit.of("    ")),
     readOnlyCompartment.of(EditorState.readOnly.of(false)),
+    lineWrappingCompartment.of([]),
     tooltips({ position: "fixed" }),
     showPanel.of(toolbar ? toolbarPanel : null),
     showPanel.of(toolbar ? footerPanel : null),

@@ -1,46 +1,25 @@
 - [ ] Autocompletion functionality could likely help autofill valid local variables into method calls
 - [ ] Autocompletion in Typescript seems to recommend syntactically valid items, but not semantically correct (recommended `case`, `continue`, `const`, `class` after typing `c` in a method call). Figure out if there's something we can do to improve this. In any given language, we should only make suggestions which are syntactically and semantically correct at a given position.
-- [ ] Provide a mechanism for importing a file/folder from the host within the code editor (should likely result in a corresponding picker dialog, and should be persisted to the filesystem) and include it in the search options
-- [ ] Prioritize opening existing files (if any returned) over creating/renaming them in the search toolbar autocomplete
-- [ ] Create a footer toolbar for the component (its height should be roughly equal to one code editor row), then inside (arranged start to end):
-  - [ ] Add a simple light/dark/system toggle
-  - [ ] Add a settings cog which allows changing code editor configuration
-    - [ ] Theme
-      - [ ] Font size
-      - [ ] Colors
-      - [ ] ...etc.
-    - [ ] Autosave (enabled by default)
-    - [ ] OpenAPI API-compatible agent URL (research what existing codemirror plugins exist for this)
-    - [ ] Terminal (WASM `ghostty` build connected to a lazily loaded `wanix` host? -- leave as a stub for now)
-    - [ ] Any others that seem relevant?
-- [ ] Change the color of cm-search-results to black from their current light grey.
-- [ ] Have an intermediate state/indicator for when file opening/saving/etc.
-- [ ] Develop a plan for integrating nerdfonts (Ubuntu Mono? see: https://www.nerdfonts.com/#features) into the code editor
-  - [ ] Replace existing file icons with the appropriate nerdfont icon.
+- [ ] Autocompletion in LSP does not provide `console`/`document`/`window` autocompletes (something missing from LSP VFS? an issue with the LSP itself?)
 
-- [ ] The theme toggle icon should be aligned horizontally with cm-toolbar-state-icon (currently, the toggle icon is more aligned to the right)
-- [ ] The settings page overlay is not currently visible (it attaches to the top of the container, and extends off screen), it might be better to have settings act as a complete overlay to the editor
-- [ ] Add footer toolbar icon for viewing log of language server output (limit the retained log size to a sensible configuration -- disable server output by default in settings)
-- [ ] This error now occurs when clicking the toolbar:
-```console
-Module "node:path" has been externalized for browser compatibility. Cannot access "node:path.parse" in client code. See https://vite.dev/guide/troubleshooting.html#module-externalized-for-browser-compatibility for more details. @m234_nerd-fonts_fs.js:13:19
-Uncaught TypeError: import_node_path.parse is not a function
-    fromPath http://localhost:5175/node_modules/.vite/deps/@m234_nerd-fonts_fs.js?v=804599b4:11265
-    fromPath2 http://localhost:5175/node_modules/.vite/deps/@m234_nerd-fonts_fs.js?v=804599b4:11295
-    getFileIcon http://localhost:5175/src/panels/toolbar.ts:37
-    getLanguageIcon http://localhost:5175/src/panels/toolbar.ts:41
-    createCommandResults http://localhost:5175/src/panels/toolbar.ts:51
-    toolbarPanel http://localhost:5175/src/panels/toolbar.ts:286
-    toolbarPanel http://localhost:5175/src/panels/toolbar.ts:280
-    panels http://localhost:5175/node_modules/.vite/deps/chunk-LZZTHNIC.js?v=519efa79:9970
-    <anonymous> http://localhost:5175/node_modules/.vite/deps/chunk-LZZTHNIC.js?v=519efa79:9970
-    fromClass http://localhost:5175/node_modules/.vite/deps/chunk-LZZTHNIC.js?v=519efa79:1358
-    update http://localhost:5175/node_modules/.vite/deps/chunk-LZZTHNIC.js?v=519efa79:1374
-    _EditorView http://localhost:5175/node_modules/.vite/deps/chunk-LZZTHNIC.js?v=519efa79:7341
-    createCodeblock http://localhost:5175/src/editor.ts:263
-    <anonymous> http://localhost:5175/example.ts:41
-@m234_nerd-fonts_fs.js:11265:79
-```
-- [ ] Don't support creation of anonymous/unnamed Markdown files (i.e ```ts ... ```, ```py ... ```) anymore, require that they reference a real file on disc. We should still be able to parse them, but when entered force the user to name the file.
+- [ ] Migrate the theme toggle from the footer to the far right (end) of the search toolbar
+- [ ] In the search bar the "Import files/folder" option should always be visible (currently isn't visible when first clicking the search toolbar with a file already open)
+- [ ] Pressing the down key in the search bar (when there's no dropdown open) should transition the cursor from the search bar to the code editor body
+- [ ] Change the resting search toolbar icon to be an appropriate search icon (i.e magnifying glass)
+- [ ] Change the LSP server log icon to be the same icon as the icon for the mimetype of the currently open file
+- [ ] For the import files/folder option, on Ubuntu Firefox it didn't seem possible for me to open a specific file, it imported an entire folder (even when I double-clicked one .txt specifically). If necessary, split into two separate options of "Import local file(s)" and "Import local folder(s)" (or whatever the browser actually allows)
+- [ ] I'm not sure what the loading state icon is supposed to be, but it currently just renders like an unmoving semi-circle. It would be better if it were an animated spinner of some type. Ensure that it has a sensible minimum animation duration so that files which are already loaded don't cause it to flicker by loading too quickly
+- [ ] Changing the base font size in the settings should impact the font size of all text in the codeblock (including the size of settings itself). If necessary, make style changes such that all font sizes are calculated relative to the base font size, so this can happen automatically.
+- [ ] Add a boolean setting to the editor for toggling editor line-wrap
+- [ ] When modifying text in the search toolbar, but then closing it without confirming any action, the search toolbar text contents should reset to the filepath of the currently open file
+
+- [ ] Importing local file(s) changes the editor content, but does not sync the search toolbar text as the filepath (though it does properly reset after toggling the search bar)
+- [ ] The search toolbar loading spinner point of rotation (origin) is incorrect (it seems to be offset from the center of the semi-circle)
+- [ ] Changing the exports of a file, say writing `const foo = 1, export { foo }` in `test.ts`, and then `import { foo } from './test'` in `test2.ts`, results in a LSP error being emitted that `test.ts` does not export foo. Re-opening `test.ts`, and then `test2.ts`, fixes the issue. Investigate and fix this bug.
+
+Might be hard:
 - [ ] Consider whether it should be possible to synchronize a Dropbox folder in the filesystem (bi-directionally)
-- [ ] 
+- [ ] It should probably be possible to export the entire VFS as a (compressed?) archive
+
+Maybe unnecessary:
+- [ ] Don't support creation of anonymous/unnamed Markdown files (i.e ```ts ... ```, ```py ... ```) anymore, require that they reference a real file on disc. We should still be able to parse them, but when entered force the user to name the file.

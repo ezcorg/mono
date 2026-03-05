@@ -1,5 +1,13 @@
 import { EditorView } from '@codemirror/view';
 
+// Font size helpers — all relative to --cm-font-size so changing the
+// base font size in settings automatically scales the entire UI.
+const FS = 'var(--cm-font-size, 16px)';
+const FS_75 = `calc(${FS} * 0.75)`;   // 12px at base 16
+const FS_85 = `calc(${FS} * 0.85)`;   // ~14px at base 16
+const FS_875 = `calc(${FS} * 0.875)`; // 14px at base 16
+const LH_FOOTER = `calc(${FS} * 1.375)`; // 22px at base 16
+
 export const codeblockTheme = EditorView.theme({
     "&:not(.cm-focused)": {
         '& .cm-activeLine, & .cm-activeLineGutter': {
@@ -13,7 +21,7 @@ export const codeblockTheme = EditorView.theme({
         border: 'none',
         background: 'transparent',
         outline: 'none',
-        fontSize: '16px',
+        fontSize: FS,
         color: 'var(--cm-toolbar-color)',
         padding: '0 2px 0 6px',
         width: '100%',
@@ -45,7 +53,7 @@ export const codeblockTheme = EditorView.theme({
             width: 'var(--cm-gutter-width)',
 
             '& > .cm-search-result-icon': {
-                fontSize: '16px',
+                fontSize: FS,
                 textAlign: 'right',
                 boxSizing: 'border-box',
                 width: 'var(--cm-gutter-lineno-width)',
@@ -70,14 +78,16 @@ export const codeblockTheme = EditorView.theme({
     },
     '.cm-toolbar-state-icon-container': {
         width: 'var(--cm-gutter-width)',
+        display: 'flex',
+        justifyContent: 'center',
     },
     '.cm-toolbar-state-icon': {
-        fontSize: '16px',
-        textAlign: 'right',
-        boxSizing: 'border-box',
+        fontSize: FS,
         color: 'var(--cm-foreground)',
-        width: 'var(--cm-gutter-lineno-width)',
         fontFamily: 'var(--cm-icon-font-family)',
+    },
+    '&': {
+        fontSize: FS,
     },
     '.cm-content': {
         padding: 0,
@@ -87,7 +97,7 @@ export const codeblockTheme = EditorView.theme({
         flexDirection: 'column',
         fontFamily: 'var(--cm-font-family)',
         boxShadow: '-12px 12px 1px rgba(0,0,0,0.3)',
-        fontSize: '1rem',
+        fontSize: FS,
         maxWidth: 'min(calc(100% - 2rem), 62ch)',
         border: '2px solid var(--cm-tooltip-border)',
         overflow: 'auto',
@@ -127,7 +137,7 @@ export const codeblockTheme = EditorView.theme({
     '.documentation > *': {
         margin: 0,
         padding: '0.25rem 6px',
-        fontSize: '1rem',
+        fontSize: FS,
     },
     '.documentation > p > code': {
         backgroundColor: 'var(--cm-comment-bg)',
@@ -155,84 +165,86 @@ export const codeblockTheme = EditorView.theme({
         padding: 0,
         background: 'var(--cm-toolbar-background)',
         fontFamily: 'var(--cm-font-family)',
-        fontSize: '1rem',
+        fontSize: FS,
         listStyleType: 'none',
         width: '100%',
         maxHeight: '25vh',
         overflowY: 'auto',
+        zIndex: 200,
     },
     '.cm-gutters': {
         borderRight: 'none',
     },
     '.cm-panels-top': {
-        borderBottom: 'none'
+        borderBottom: 'none',
+        zIndex: 301,
     },
+    // Animated spinner (rotation) for file loading indicator
     '.cm-loading': {
-        animation: 'cm-pulse 1.2s ease-in-out infinite',
+        display: 'inline-block',
+        animation: 'cm-spin 1s linear infinite',
     },
-    '@keyframes cm-pulse': {
-        '0%, 100%': { opacity: '1' },
-        '50%': { opacity: '0.4' },
+    '@keyframes cm-spin': {
+        '0%': { transform: 'rotate(0deg)' },
+        '100%': { transform: 'rotate(360deg)' },
     },
     // Footer panel
     '.cm-footer-panel': {
         display: 'flex',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-end',
         alignItems: 'center',
         background: 'var(--cm-toolbar-background)',
         color: 'var(--cm-toolbar-color)',
-        height: '22px',
+        height: LH_FOOTER,
         padding: '0 4px',
-        fontSize: '12px',
+        fontSize: FS_75,
         fontFamily: 'var(--cm-font-family)',
     },
-    '.cm-footer-left, .cm-footer-right': {
+    '.cm-footer-right': {
         display: 'flex',
         alignItems: 'center',
         gap: '4px',
-    },
-    '.cm-footer-toggle-container': {
-        width: 'var(--cm-gutter-width)',
-    },
-    '.cm-footer-theme-toggle': {
-        border: 'none',
-        background: 'transparent',
-        color: 'inherit',
-        cursor: 'pointer',
-        padding: 0,
-        fontSize: '14px',
-        lineHeight: '22px',
-        textAlign: 'right',
-        boxSizing: 'border-box',
-        width: 'var(--cm-gutter-lineno-width)',
-        display: 'block',
     },
     '.cm-footer-settings-cog, .cm-footer-lsp-log': {
         border: 'none',
         background: 'transparent',
         color: 'inherit',
         cursor: 'pointer',
-        padding: '0 4px',
-        fontSize: '14px',
-        lineHeight: '22px',
+        padding: '0 2px',
+        fontSize: FS_75,
+        lineHeight: LH_FOOTER,
+        verticalAlign: 'middle',
+    },
+    // Theme toggle in toolbar (far right)
+    '.cm-toolbar-theme-toggle': {
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+        padding: '0 6px',
+        fontSize: FS_875,
+        lineHeight: 'inherit',
+        flexShrink: '0',
     },
     '.cm-panels-bottom': {
         borderTop: 'none',
     },
-    // Settings overlay — full editor cover
+    // Settings / log overlay — anchored at top, grows downward
     '.cm-settings-overlay': {
-        position: 'absolute',
-        inset: 0,
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        maxHeight: '70%',
         overflowY: 'auto',
         background: 'var(--cm-toolbar-background)',
         color: 'var(--cm-toolbar-color)',
-        zIndex: 100,
+        zIndex: 1000,
         fontFamily: 'var(--cm-font-family)',
-        fontSize: '13px',
+        fontSize: FS,
     },
     '.cm-settings-header': {
         display: 'flex',
-        justifyContent: 'space-between',
         alignItems: 'center',
         padding: '8px 12px',
         fontWeight: 'bold',
@@ -243,7 +255,7 @@ export const codeblockTheme = EditorView.theme({
         background: 'transparent',
         color: 'inherit',
         cursor: 'pointer',
-        fontSize: '14px',
+        fontSize: FS_875,
     },
     '.cm-settings-section': {
         padding: '8px 12px',
@@ -251,13 +263,12 @@ export const codeblockTheme = EditorView.theme({
     '.cm-settings-section-title': {
         fontWeight: 'bold',
         marginBottom: '6px',
-        fontSize: '12px',
+        fontSize: FS_85,
         textTransform: 'uppercase',
         opacity: '0.7',
     },
     '.cm-settings-row': {
         display: 'flex',
-        justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: '6px',
         gap: '8px',
@@ -274,7 +285,6 @@ export const codeblockTheme = EditorView.theme({
     '.cm-settings-value': {
         minWidth: '36px',
         textAlign: 'right',
-        fontSize: '12px',
     },
     '.cm-settings-select': {
         background: 'var(--cm-background)',
@@ -282,14 +292,13 @@ export const codeblockTheme = EditorView.theme({
         border: '1px solid var(--cm-tooltip-border)',
         borderRadius: '2px',
         padding: '2px 4px',
-        fontSize: '12px',
+        fontSize: 'inherit',
         fontFamily: 'var(--cm-font-family)',
     },
     '.cm-settings-radio-group': {
         display: 'flex',
         gap: '4px',
         alignItems: 'center',
-        fontSize: '12px',
     },
     '.cm-settings-radio-group label': {
         marginRight: '6px',
@@ -300,7 +309,7 @@ export const codeblockTheme = EditorView.theme({
         border: '1px solid var(--cm-tooltip-border)',
         borderRadius: '2px',
         padding: '2px 6px',
-        fontSize: '12px',
+        fontSize: 'inherit',
         fontFamily: 'var(--cm-font-family)',
         flex: 1,
         minWidth: 0,
@@ -311,7 +320,7 @@ export const codeblockTheme = EditorView.theme({
         border: '1px solid var(--cm-tooltip-border)',
         borderRadius: '2px',
         padding: '4px 8px',
-        fontSize: '12px',
+        fontSize: 'inherit',
         cursor: 'pointer',
     },
     '.cm-settings-button-disabled': {
@@ -322,7 +331,7 @@ export const codeblockTheme = EditorView.theme({
     '.cm-lsp-log-content': {
         padding: '8px 12px',
         fontFamily: 'var(--cm-font-family)',
-        fontSize: '12px',
+        fontSize: FS_75,
         lineHeight: 1.5,
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-all',

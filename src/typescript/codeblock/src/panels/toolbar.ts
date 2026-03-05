@@ -1,10 +1,11 @@
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
-import { CodeblockFacet, openFileEffect, currentFileField } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect } from "../editor";
 import { extOrLanguageToLanguageId } from "../lsps";
 import { LSP, FileChangeType } from "../utils/lsp";
 import { Seti } from "@m234/nerd-fonts/fs";
+import { settingsField, updateSettingsEffect, resolveThemeDark, themeIcons, themeCycle } from "./footer";
 
 type NerdIcon = { value: string; hexCode: number; color?: string };
 
@@ -35,7 +36,7 @@ function setiIconForPath(filePath: string): NerdIcon {
 // Command result types for the first section
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'rename-file' | 'import-files';
+    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder';
     icon: string;
     iconColor?: string;
     query: string;
@@ -88,8 +89,10 @@ function isValidProgrammingLanguage(query: string): boolean {
         extOrLanguageToLanguageId[key].toLowerCase() === lowerQuery
     );
 }
-// Default file icon (nf-seti-text)
-const DEFAULT_FILE_ICON = '\ue64e';
+
+// Icons
+const SEARCH_ICON = '\uf002'; // nf-fa-search (magnifying glass)
+const DEFAULT_FILE_ICON = '\ue64e'; // nf-seti-text
 
 // Get nerd font icon for a file path
 function getFileIcon(path: string): { glyph: string; color: string } {
@@ -141,16 +144,19 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         }
     }
 
-    // Import files/folder command — always shown when query is empty or matches "import"
-    const lowerQuery = query.toLowerCase().trim();
-    if (!lowerQuery || lowerQuery === 'import' || 'import files'.startsWith(lowerQuery)) {
-        commands.push({
-            id: 'Import files/folder from device...',
-            type: 'import-files',
-            icon: '\ue613', // nf-seti-folder
-            query: '',
-        });
-    }
+    // Import commands — always shown
+    commands.push({
+        id: 'Import file(s)',
+        type: 'import-local-files',
+        icon: '\uf15b', // nf-fa-file
+        query: '',
+    });
+    commands.push({
+        id: 'Import folder(s)',
+        type: 'import-local-folder',
+        icon: '\ue613', // nf-seti-folder
+        query: '',
+    });
 
     return commands;
 }
@@ -173,6 +179,8 @@ async function importFiles(files: FileList, view: EditorView) {
     }
 }
 
+const MIN_LOADING_MS = 400;
+
 // Toolbar Panel
 export const toolbarPanel = (view: EditorView): Panel => {
     let { filepath, language, index } = view.state.facet(CodeblockFacet);
@@ -180,10 +188,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
     const dom = document.createElement("div");
     dom.className = "cm-toolbar-panel";
 
-    // Create state icon (left side)
+    // Create state icon (left side) — magnifying glass at rest
     const stateIcon = document.createElement("div");
     stateIcon.className = "cm-toolbar-state-icon";
-    stateIcon.textContent = DEFAULT_FILE_ICON;
+    stateIcon.textContent = SEARCH_ICON;
 
     // Create container for state icon to help with alignment
     const stateIconContainer = document.createElement("div");
@@ -202,12 +210,31 @@ export const toolbarPanel = (view: EditorView): Panel => {
     input.className = "cm-toolbar-input";
     inputContainer.appendChild(input);
 
+    // Theme toggle button (far right of toolbar)
+    const themeToggle = document.createElement("button");
+    themeToggle.className = "cm-toolbar-theme-toggle";
+    const initialSettings = view.state.field(settingsField);
+    themeToggle.textContent = themeIcons[initialSettings.theme];
+
+    themeToggle.addEventListener("click", () => {
+        const current = view.state.field(settingsField);
+        const next = themeCycle[current.theme];
+        view.dispatch({
+            effects: [
+                updateSettingsEffect.of({ theme: next }),
+                setThemeEffect.of({ dark: resolveThemeDark(next) }),
+            ]
+        });
+    });
+    dom.appendChild(themeToggle);
+
     const resultsList = document.createElement("ul");
     resultsList.className = "cm-search-results";
     dom.appendChild(resultsList);
 
     let selectedIndex = 0;
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
+    let loadingStartTime: number | null = null;
 
     // Tracks gutter width for toolbar/footer alignment
     function updateGutterWidthVariables() {
@@ -305,7 +332,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
         if (namingMode.active) {
             stateIcon.textContent = namingMode.type === 'create-file' ? DEFAULT_FILE_ICON : '\uf044';
         } else {
-            stateIcon.textContent = DEFAULT_FILE_ICON;
+            stateIcon.textContent = SEARCH_ICON;
         }
     }
 
@@ -328,6 +355,23 @@ export const toolbarPanel = (view: EditorView): Panel => {
         namingMode = { active: false, type: 'create-file', originalQuery: '' };
         updateStateIcon();
         input.placeholder = '';
+    }
+
+    function triggerFileImport(folder: boolean) {
+        safeDispatch(view, { effects: setSearchResults.of([]) });
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        if (folder) {
+            fileInput.setAttribute('webkitdirectory', '');
+        } else {
+            fileInput.multiple = true;
+        }
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files?.length) {
+                importFiles(fileInput.files, view);
+            }
+        });
+        fileInput.click();
     }
 
     function handleCommandResult(command: CommandResult) {
@@ -355,18 +399,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
                     effects: [setSearchResults.of([]), openFileEffect.of({ path: newPath })]
                 });
             }
-        } else if (command.type === 'import-files') {
-            safeDispatch(view, { effects: setSearchResults.of([]) });
-            const fileInput = document.createElement('input');
-            fileInput.type = 'file';
-            fileInput.multiple = true;
-            fileInput.setAttribute('webkitdirectory', '');
-            fileInput.addEventListener('change', () => {
-                if (fileInput.files?.length) {
-                    importFiles(fileInput.files, view);
-                }
-            });
-            fileInput.click();
+        } else if (command.type === 'import-local-files') {
+            triggerFileImport(false);
+        } else if (command.type === 'import-local-folder') {
+            triggerFileImport(true);
         }
     }
 
@@ -405,10 +441,16 @@ export const toolbarPanel = (view: EditorView): Panel => {
         exitNamingMode();
     }
 
+    function resetInputToCurrentFile() {
+        const currentFile = view.state.field(currentFileField);
+        input.value = currentFile.path || '';
+    }
+
     // Close dropdown when clicking outside
     function handleClickOutside(event: Event) {
         if (!dom.contains(event.target as Node)) {
             safeDispatch(view, { effects: setSearchResults.of([]) });
+            resetInputToCurrentFile();
         }
     }
 
@@ -428,7 +470,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 // Search results first, then commands
                 results = searchResults.concat(commands);
             } else {
-                // Show import command when dropdown opens with empty query
+                // Show import commands when dropdown opens with empty query
                 results = createCommandResults('', view, []);
             }
 
@@ -460,6 +502,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
             // Search results first, then commands
             results.push(...searchResults);
             results.push(...commands);
+        } else {
+            // Show import commands even with empty query
+            results = createCommandResults('', view, []);
         }
 
         safeDispatch(view, { effects: setSearchResults.of(results) });
@@ -486,6 +531,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
             if (results.length) {
                 selectedIndex = mod(selectedIndex + 1, results.length);
                 updateDropdown();
+            } else {
+                // No dropdown open — move cursor to editor body
+                view.focus();
             }
         } else if (event.key === "ArrowUp") {
             event.preventDefault();
@@ -499,6 +547,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else if (event.key === "Escape") {
             event.preventDefault();
             safeDispatch(view, { effects: setSearchResults.of([]) });
+            resetInputToCurrentFile();
             input.blur();
         }
     });
@@ -519,17 +568,37 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 }
             }
 
-            // Update loading indicator
+            // Update theme toggle when settings change
+            const prevSettings = update.startState.field(settingsField);
+            const nextSettings = update.state.field(settingsField);
+            if (prevSettings.theme !== nextSettings.theme) {
+                themeToggle.textContent = themeIcons[nextSettings.theme];
+            }
+
+            // Update loading indicator with minimum animation duration
             const prevFile = update.startState.field(currentFileField);
             const nextFile = update.state.field(currentFileField);
             if (prevFile.loading !== nextFile.loading) {
                 if (nextFile.loading) {
+                    loadingStartTime = Date.now();
                     stateIcon.textContent = '\ueb19'; // nf-cod-loading
                     stateIcon.classList.add('cm-loading');
                 } else {
-                    stateIcon.textContent = DEFAULT_FILE_ICON;
-                    stateIcon.classList.remove('cm-loading');
+                    const elapsed = loadingStartTime ? Date.now() - loadingStartTime : Infinity;
+                    const remaining = Math.max(0, MIN_LOADING_MS - elapsed);
+                    loadingStartTime = null;
+                    setTimeout(() => {
+                        if (!view.state.field(currentFileField).loading) {
+                            stateIcon.textContent = SEARCH_ICON;
+                            stateIcon.classList.remove('cm-loading');
+                        }
+                    }, remaining);
                 }
+            }
+
+            // Sync input value when file path changes externally (and input is not focused)
+            if (prevFile.path !== nextFile.path && document.activeElement !== input) {
+                input.value = nextFile.path || '';
             }
         },
         destroy() {

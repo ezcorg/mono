@@ -39,7 +39,7 @@
 When developing generally, consider that we're aiming to build a system which can be self-hosted or managed, with the minimal self-hosted layer containing most/all the primitives which the managed layer composes, and the managed layer provides sensible defaults which relieves the user from worrying about operating the proxy themselves (but does not necessarily implement anything users couldn't implement themselves).
 
 - [ ] Consider whether it is possible to use WIT to express a system where plugins may register custom "capabilities" (interfaces?) that other plugins may request access to, and if it is possible, how that system would integrate into `witmproxy` (and what changes would be required)
-- [ ] A code editor extension for syntax highlighting CEL expressions 
+- [ ] A code editor extension for syntax highlighting CEL expressions
 
 # `ezfilter`
 

@@ -1,13 +1,15 @@
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { setThemeEffect } from "../editor";
+import { setThemeEffect, currentFileField, lineWrappingCompartment } from "../editor";
 import { LspLog } from "../utils/lsp";
+import { Seti } from "@m234/nerd-fonts/fs";
 
 export interface EditorSettings {
     theme: 'light' | 'dark' | 'system';
     fontSize: number;
     fontFamily: string;
     autosave: boolean;
+    lineWrap: boolean;
     lspLogEnabled: boolean;
     agentUrl: string;
     terminalEnabled: boolean;
@@ -18,6 +20,7 @@ const defaultSettings: EditorSettings = {
     fontSize: 16,
     fontFamily: '',
     autosave: true,
+    lineWrap: false,
     lspLogEnabled: false,
     agentUrl: '',
     terminalEnabled: false,
@@ -39,24 +42,44 @@ export const settingsField = StateField.define<EditorSettings>({
     }
 });
 
-function resolveThemeDark(theme: EditorSettings['theme']): boolean {
+export function resolveThemeDark(theme: EditorSettings['theme']): boolean {
     if (theme === 'system') {
         return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
     return theme === 'dark';
 }
 
-const themeIcons: Record<EditorSettings['theme'], string> = {
-    light: '\u2600\uFE0F',  // ☀️
-    dark: '\uD83C\uDF19',   // 🌙
-    system: '\uD83D\uDCBB', // 💻
+export const themeIcons: Record<EditorSettings['theme'], string> = {
+    light: '☀️',
+    dark: '🌙',
+    system: '🌓',
 };
 
-const themeCycle: Record<EditorSettings['theme'], EditorSettings['theme']> = {
+export const themeCycle: Record<EditorSettings['theme'], EditorSettings['theme']> = {
     light: 'dark',
     dark: 'system',
     system: 'light',
 };
+
+const FALLBACK_ICON = '\ue64e'; // nf-seti-text
+
+function getFileIconForPath(filePath: string): { glyph: string; color: string } {
+    const base = filePath.split('/').pop() || filePath;
+    const byBase = Seti.byBaseSeti.get(base);
+    if (byBase) return { glyph: byBase.value, color: byBase.color || '' };
+    let dot = base.indexOf('.');
+    if (dot >= 0) {
+        let ext = base.slice(dot);
+        for (;;) {
+            const byExt = Seti.byExtensionSeti.get(ext);
+            if (byExt) return { glyph: byExt.value, color: byExt.color || '' };
+            dot = ext.indexOf('.', 1);
+            if (dot === -1) break;
+            ext = ext.slice(dot);
+        }
+    }
+    return { glyph: FALLBACK_ICON, color: '' };
+}
 
 // Settings overlay component
 function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLElement {
@@ -71,7 +94,7 @@ function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLEleme
     header.textContent = "Settings";
     const closeBtn = document.createElement("button");
     closeBtn.className = "cm-settings-close";
-    closeBtn.textContent = "\u2715"; // ✕
+    closeBtn.textContent = "✕";
     closeBtn.addEventListener("click", onClose);
     header.appendChild(closeBtn);
     overlay.appendChild(header);
@@ -197,6 +220,28 @@ function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLEleme
     autosaveRow.appendChild(autosaveCheckbox);
     editorSection.appendChild(autosaveRow);
 
+    // Line wrap toggle
+    const lineWrapRow = document.createElement("div");
+    lineWrapRow.className = "cm-settings-row";
+    const lineWrapLabel = document.createElement("label");
+    lineWrapLabel.textContent = "Line wrap";
+    lineWrapLabel.htmlFor = "cm-line-wrap";
+    const lineWrapCheckbox = document.createElement("input");
+    lineWrapCheckbox.type = "checkbox";
+    lineWrapCheckbox.id = "cm-line-wrap";
+    lineWrapCheckbox.checked = settings.lineWrap;
+    lineWrapCheckbox.addEventListener("change", () => {
+        view.dispatch({
+            effects: [
+                updateSettingsEffect.of({ lineWrap: lineWrapCheckbox.checked }),
+                lineWrappingCompartment.reconfigure(lineWrapCheckbox.checked ? EditorView.lineWrapping : []),
+            ]
+        });
+    });
+    lineWrapRow.appendChild(lineWrapLabel);
+    lineWrapRow.appendChild(lineWrapCheckbox);
+    editorSection.appendChild(lineWrapRow);
+
     // LSP log toggle
     const lspLogRow = document.createElement("div");
     lspLogRow.className = "cm-settings-row";
@@ -271,29 +316,17 @@ export const footerPanel = (view: EditorView): Panel => {
     const dom = document.createElement("div");
     dom.className = "cm-footer-panel";
 
-    const left = document.createElement("div");
-    left.className = "cm-footer-left";
-
-    // Mirror the toolbar gutter-width container so the toggle aligns with the state icon
-    const toggleContainer = document.createElement("div");
-    toggleContainer.className = "cm-footer-toggle-container";
-
     const right = document.createElement("div");
     right.className = "cm-footer-right";
 
-    // Theme toggle button
-    const themeToggle = document.createElement("button");
-    themeToggle.className = "cm-footer-theme-toggle";
     const settings = view.state.field(settingsField);
-    themeToggle.textContent = themeIcons[settings.theme];
 
-    // System theme media query listener
+    // System theme media query listener (no UI, just reacts to OS changes)
     let mediaQuery: MediaQueryList | null = null;
     let mediaHandler: ((e: MediaQueryListEvent) => void) | null = null;
 
     function setupSystemThemeListener() {
         const currentSettings = view.state.field(settingsField);
-        // Clean up previous listener
         if (mediaQuery && mediaHandler) {
             mediaQuery.removeEventListener('change', mediaHandler);
             mediaHandler = null;
@@ -310,20 +343,6 @@ export const footerPanel = (view: EditorView): Panel => {
     }
 
     setupSystemThemeListener();
-
-    themeToggle.addEventListener("click", () => {
-        const current = view.state.field(settingsField);
-        const next = themeCycle[current.theme];
-        view.dispatch({
-            effects: [
-                updateSettingsEffect.of({ theme: next }),
-                setThemeEffect.of({ dark: resolveThemeDark(next) }),
-            ]
-        });
-    });
-
-    toggleContainer.appendChild(themeToggle);
-    left.appendChild(toggleContainer);
 
     // Settings cog button
     const settingsCog = document.createElement("button");
@@ -356,13 +375,22 @@ export const footerPanel = (view: EditorView): Panel => {
         }
     });
 
-    // LSP log button
+    // LSP log button — icon matches current file's mimetype
     const lspLogBtn = document.createElement("button");
     lspLogBtn.className = "cm-footer-lsp-log";
-    lspLogBtn.textContent = "\ueb9d"; // nf-cod-output
     lspLogBtn.title = "LSP Server Log";
     lspLogBtn.style.fontFamily = 'var(--cm-icon-font-family)';
     lspLogBtn.style.display = settings.lspLogEnabled ? '' : 'none';
+
+    // Set initial LSP icon based on current file
+    const currentFile = view.state.field(currentFileField);
+    if (currentFile.path) {
+        const icon = getFileIconForPath(currentFile.path);
+        lspLogBtn.textContent = icon.glyph;
+        if (icon.color) lspLogBtn.style.color = icon.color;
+    } else {
+        lspLogBtn.textContent = FALLBACK_ICON;
+    }
 
     let logUnsubscribe: (() => void) | null = null;
 
@@ -432,7 +460,6 @@ export const footerPanel = (view: EditorView): Panel => {
     right.appendChild(lspLogBtn);
     right.appendChild(settingsCog);
 
-    dom.appendChild(left);
     dom.appendChild(right);
 
     return {
@@ -442,9 +469,6 @@ export const footerPanel = (view: EditorView): Panel => {
             const prev = update.startState.field(settingsField);
             const next = update.state.field(settingsField);
             if (prev !== next) {
-                // Update theme toggle icon
-                themeToggle.textContent = themeIcons[next.theme];
-
                 // Update system theme listener
                 if (prev.theme !== next.theme) {
                     setupSystemThemeListener();
@@ -467,10 +491,23 @@ export const footerPanel = (view: EditorView): Panel => {
                 // Show/hide LSP log button
                 if (prev.lspLogEnabled !== next.lspLogEnabled) {
                     lspLogBtn.style.display = next.lspLogEnabled ? '' : 'none';
-                    // Close log overlay if logging was disabled
                     if (!next.lspLogEnabled && activeOverlay === 'log') {
                         closeOverlay();
                     }
+                }
+            }
+
+            // Update LSP log icon when current file changes
+            const prevFile = update.startState.field(currentFileField);
+            const nextFile = update.state.field(currentFileField);
+            if (prevFile.path !== nextFile.path) {
+                if (nextFile.path) {
+                    const icon = getFileIconForPath(nextFile.path);
+                    lspLogBtn.textContent = icon.glyph;
+                    lspLogBtn.style.color = icon.color || '';
+                } else {
+                    lspLogBtn.textContent = FALLBACK_ICON;
+                    lspLogBtn.style.color = '';
                 }
             }
         },
