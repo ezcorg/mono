@@ -16,6 +16,7 @@ import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
+import { footerPanel, settingsField } from "./panels/footer";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult } from "./panels/toolbar";
@@ -135,6 +136,8 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     readOnlyCompartment.of(EditorState.readOnly.of(false)),
     tooltips({ position: "fixed" }),
     showPanel.of(toolbar ? toolbarPanel : null),
+    showPanel.of(toolbar ? footerPanel : null),
+    settingsField,
     codeblockTheme,
     codeblockView,
     keymap.of(navigationKeymap.concat([indentWithTab])),
@@ -143,8 +146,25 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
 ];
 
 // ViewPlugin reacts to field state & effects, with microtask scheduling to avoid nested updates
+// Inject @font-face for Nerd Font icons (idempotent)
+let nerdFontInjected = false;
+function injectNerdFontFace() {
+    if (nerdFontInjected) return;
+    nerdFontInjected = true;
+    const style = document.createElement('style');
+    style.textContent = `@font-face {
+  font-family: 'UbuntuMono NF';
+  src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}`;
+    document.head.appendChild(style);
+}
+
 const codeblockView = ViewPlugin.define((view) => {
     StyleModule.mount(document, vscodeStyleMod);
+    injectNerdFontFace();
 
     let { fs } = view.state.facet(CodeblockFacet);
 
@@ -279,7 +299,7 @@ const codeblockView = ViewPlugin.define((view) => {
                 safeDispatch(view, { effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(next.loading)) });
             }
 
-            if (u.docChanged) save();
+            if (u.docChanged && u.state.field(settingsField).autosave) save();
 
             // If fs changed via facet reconfig, refresh handle references
             const newFs = u.state.facet(CodeblockFacet).fs;

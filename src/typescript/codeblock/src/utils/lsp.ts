@@ -9,6 +9,38 @@ const clients: Map<string, LSPClient> = new Map();
 // FileChangeType from LSP spec
 export const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
 
+// LSP log buffer
+export interface LspLogEntry {
+    timestamp: number;
+    level: 'error' | 'warn' | 'info' | 'log';
+    message: string;
+}
+
+const MAX_LOG_ENTRIES = 200;
+const lspLogBuffer: LspLogEntry[] = [];
+const lspLogListeners: Set<() => void> = new Set();
+
+export namespace LspLog {
+    export function entries(): readonly LspLogEntry[] {
+        return lspLogBuffer;
+    }
+    export function push(level: LspLogEntry['level'], message: string) {
+        lspLogBuffer.push({ timestamp: Date.now(), level, message });
+        if (lspLogBuffer.length > MAX_LOG_ENTRIES) {
+            lspLogBuffer.splice(0, lspLogBuffer.length - MAX_LOG_ENTRIES);
+        }
+        for (const listener of lspLogListeners) listener();
+    }
+    export function clear() {
+        lspLogBuffer.length = 0;
+        for (const listener of lspLogListeners) listener();
+    }
+    export function subscribe(fn: () => void) {
+        lspLogListeners.add(fn);
+        return () => { lspLogListeners.delete(fn); };
+    }
+}
+
 export type ClientOptions = {
     language: string,
     path: string,
@@ -64,6 +96,13 @@ export namespace LSP {
             client = new LSPClient({
                 rootUri: 'file:///',
                 extensions: languageServerExtensions(),
+                notificationHandlers: {
+                    "window/logMessage": (_client, params: { type: number; message: string }) => {
+                        const level = params.type === 1 ? 'error' : params.type === 2 ? 'warn' : params.type === 3 ? 'info' : 'log';
+                        LspLog.push(level, params.message);
+                        return false; // fall through to default handler (console)
+                    }
+                },
             });
             client.connect(messagePortTransport(lspPort));
             clients.set(language, client);

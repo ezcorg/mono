@@ -168,7 +168,7 @@ importers:
         version: 7.27.1
       '@codemirror/autocomplete':
         specifier: ^6.18.6
-        version: 6.18.6
+        version: 6.20.1
       '@codemirror/commands':
         specifier: ^6.8.1
         version: 6.8.1
@@ -253,6 +253,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.1
         version: 1.2.1
+      '@m234/nerd-fonts':
+        specifier: ^0.5.0
+        version: 0.5.0
       '@typescript/vfs':
         specifier: ^1.6.1
         version: 1.6.1(typescript@5.9.2)
@@ -364,7 +367,7 @@ importers:
     dependencies:
       '@codemirror/autocomplete':
         specifier: ^6.18.4
-        version: 6.18.6
+        version: 6.20.1
       '@codemirror/lint':
         specifier: ^6.8.4
         version: 6.8.5
@@ -373,7 +376,7 @@ importers:
         version: 1.8.1
       marked:
         specifier: ^15.0.6
-        version: 15.0.11
+        version: 15.0.12
       vscode-languageserver-protocol:
         specifier: ^3.17.5
         version: 3.17.5
@@ -1721,9 +1724,6 @@ packages:
   '@cloudflare/workers-types@4.20250703.0':
     resolution: {integrity: sha512-6ITY5VL2eDkwFVWtF4OSsLIalyuwAE8/eH76fFn1KNGsH5V8JdjYriFTa/3YaJ+mzt4n4X6Hv06zrg00IKBTIA==}
 
-  '@codemirror/autocomplete@6.18.6':
-    resolution: {integrity: sha512-PHHBXFomUs5DF+9tCOM/UoW6XQ4R44lLNNhRaW9PKPTU0D7lIjRg3ElxaJnTwsl/oHiR93WSXDBrekhoUGCPtg==}
-
   '@codemirror/autocomplete@6.20.1':
     resolution: {integrity: sha512-1cvg3Vz1dSSToCNlJfRA2WSI4ht3K+WplO0UMOgmUYPivCyy2oueZY6Lx7M9wThm7SDUBViRmuT+OG/i8+ON9A==}
 
@@ -3009,6 +3009,9 @@ packages:
 
   '@lezer/yaml@1.0.3':
     resolution: {integrity: sha512-GuBLekbw9jDBDhGur82nuwkxKQ+a3W5H0GfaAthDXcAu+XdpS43VlnxA9E9hllkpSP5ellRDKjLLj7Lu9Wr6xA==}
+
+  '@m234/nerd-fonts@0.5.0':
+    resolution: {integrity: sha512-iUxTuio4VhqSDz3AM0pWrVpasjWsvPediicMhAWB+SNIuypy/BLiiM4f5eKsa1oZbSrOWcSQxq1mks0fTfQs9g==}
 
   '@marijn/buildtool@1.2.0':
     resolution: {integrity: sha512-ytEK7n4NVrq6Rhq2J+N/CcvJLl6NX0bZ1qSi3w8lxZVcI4L6Y6vj1pugcTnv+YdyFNwFuACSdDesetZmQqSy1w==}
@@ -7603,11 +7606,6 @@ packages:
     peerDependencies:
       marked: ^1.0.0 || ^2.0.0 || ^3.0.0 || ^4.0.0 || ^5.0.0
 
-  marked@15.0.11:
-    resolution: {integrity: sha512-1BEXAU2euRCG3xwgLVT1y0xbJEld1XOrmRJpUwRCcy7rxhSCwMrmEu9LXoPhHSCJG41V7YcQ2mjKRr5BA3ITIA==}
-    engines: {node: '>= 18'}
-    hasBin: true
-
   marked@15.0.12:
     resolution: {integrity: sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==}
     engines: {node: '>= 18'}
@@ -11997,13 +11995,6 @@ snapshots:
 
   '@cloudflare/workers-types@4.20250703.0': {}
 
-  '@codemirror/autocomplete@6.18.6':
-    dependencies:
-      '@codemirror/language': 6.11.0
-      '@codemirror/state': 6.5.2
-      '@codemirror/view': 6.39.16
-      '@lezer/common': 1.2.3
-
   '@codemirror/autocomplete@6.20.1':
     dependencies:
       '@codemirror/language': 6.11.0
@@ -12035,7 +12026,7 @@ snapshots:
 
   '@codemirror/lang-css@6.3.1':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/language': 6.11.0
       '@codemirror/state': 6.5.2
       '@lezer/common': 1.2.3
@@ -12043,7 +12034,7 @@ snapshots:
 
   '@codemirror/lang-html@6.4.9':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/lang-css': 6.3.1
       '@codemirror/lang-javascript': 6.2.4
       '@codemirror/language': 6.11.0
@@ -12060,7 +12051,7 @@ snapshots:
 
   '@codemirror/lang-javascript@6.2.4':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/language': 6.11.0
       '@codemirror/lint': 6.8.5
       '@codemirror/state': 6.5.2
@@ -12083,7 +12074,7 @@ snapshots:
 
   '@codemirror/lang-markdown@6.3.4':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/lang-html': 6.4.9
       '@codemirror/language': 6.11.0
       '@codemirror/state': 6.5.2
@@ -12101,7 +12092,7 @@ snapshots:
 
   '@codemirror/lang-python@6.2.0':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/language': 6.11.0
       '@codemirror/state': 6.5.2
       '@lezer/common': 1.2.3
@@ -12122,7 +12113,7 @@ snapshots:
 
   '@codemirror/lang-sql@6.9.1':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/language': 6.11.0
       '@codemirror/state': 6.5.2
       '@lezer/common': 1.2.3
@@ -12131,7 +12122,7 @@ snapshots:
 
   '@codemirror/lang-xml@6.1.0':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/language': 6.11.0
       '@codemirror/state': 6.5.2
       '@codemirror/view': 6.39.16
@@ -12140,7 +12131,7 @@ snapshots:
 
   '@codemirror/lang-yaml@6.1.2':
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/language': 6.11.0
       '@codemirror/state': 6.5.2
       '@lezer/common': 1.2.3
@@ -13175,6 +13166,8 @@ snapshots:
       '@lezer/common': 1.2.3
       '@lezer/highlight': 1.2.1
       '@lezer/lr': 1.4.2
+
+  '@m234/nerd-fonts@0.5.0': {}
 
   '@marijn/buildtool@1.2.0':
     dependencies:
@@ -16011,7 +16004,7 @@ snapshots:
 
   codemirror@6.0.1:
     dependencies:
-      '@codemirror/autocomplete': 6.18.6
+      '@codemirror/autocomplete': 6.20.1
       '@codemirror/commands': 6.8.1
       '@codemirror/language': 6.11.0
       '@codemirror/lint': 6.8.5
@@ -18732,8 +18725,6 @@ snapshots:
       marked: 4.3.0
       node-emoji: 1.11.0
       supports-hyperlinks: 2.3.0
-
-  marked@15.0.11: {}
 
   marked@15.0.12: {}
 

@@ -4,6 +4,21 @@ use confique::Config;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Returns the system-level app directory on Linux (`/etc/witmproxy`).
+/// On other platforms, returns `~/.witmproxy`.
+pub fn system_app_dir() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/etc/witmproxy")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".witmproxy")
+    }
+}
+
 /// Utility function to expand $HOME in a PathBuf
 pub fn expand_home_in_path(path: &Path) -> Result<PathBuf> {
     let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -108,9 +123,19 @@ pub struct TransparentProxyConfig {
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct DbConfig {
     /// The database connection URL
-    #[config(
-        default = "$HOME/.witmproxy/db.sqlite",
-        layer_attr(arg(long, default_value = "$HOME/.witmproxy/db.sqlite"))
+    #[cfg_attr(
+        target_os = "linux",
+        config(
+            default = "/etc/witmproxy/witmproxy.db",
+            layer_attr(arg(long, default_value = "/etc/witmproxy/witmproxy.db"))
+        )
+    )]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        config(
+            default = "$HOME/.witmproxy/db.sqlite",
+            layer_attr(arg(long, default_value = "$HOME/.witmproxy/db.sqlite"))
+        )
     )]
     pub db_path: PathBuf,
 
@@ -131,9 +156,19 @@ pub struct TlsConfig {
     pub cache_size: usize,
 
     /// The directory where root certificates are stored
-    #[config(
-        default = "$HOME/.witmproxy/certs",
-        layer_attr(arg(long, default_value = "$HOME/.witmproxy/certs"))
+    #[cfg_attr(
+        target_os = "linux",
+        config(
+            default = "/etc/witmproxy/certs",
+            layer_attr(arg(long, default_value = "/etc/witmproxy/certs"))
+        )
+    )]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        config(
+            default = "$HOME/.witmproxy/certs",
+            layer_attr(arg(long, default_value = "$HOME/.witmproxy/certs"))
+        )
     )]
     pub cert_dir: PathBuf,
 }

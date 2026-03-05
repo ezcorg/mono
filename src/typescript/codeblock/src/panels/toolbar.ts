@@ -3,12 +3,41 @@ import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
 import { CodeblockFacet, openFileEffect, currentFileField } from "../editor";
 import { extOrLanguageToLanguageId } from "../lsps";
+import { LSP, FileChangeType } from "../utils/lsp";
+import { Seti } from "@m234/nerd-fonts/fs";
+
+type NerdIcon = { value: string; hexCode: number; color?: string };
+
+// Browser-safe file icon lookup (avoids node:path.parse used by Seti.fromPath)
+const FALLBACK_ICON: NerdIcon = { value: '\ue64e', hexCode: 0xe64e }; // nf-seti-text
+
+function setiIconForPath(filePath: string): NerdIcon {
+    const base = filePath.split('/').pop() || filePath;
+
+    // Check exact basename match first (e.g. Dockerfile, Makefile)
+    const byBase = Seti.byBaseSeti.get(base);
+    if (byBase) return byBase;
+
+    // Walk extensions from longest to shortest (e.g. .spec.ts → .ts)
+    let dot = base.indexOf('.');
+    if (dot < 0) return FALLBACK_ICON;
+    let ext = base.slice(dot);
+    for (;;) {
+        const byExt = Seti.byExtensionSeti.get(ext);
+        if (byExt) return byExt;
+        dot = ext.indexOf('.', 1);
+        if (dot === -1) break;
+        ext = ext.slice(dot);
+    }
+    return FALLBACK_ICON;
+}
 
 // Command result types for the first section
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'rename-file';
+    type: 'create-file' | 'rename-file' | 'import-files';
     icon: string;
+    iconColor?: string;
     query: string;
     requiresInput?: boolean;
 }
@@ -19,10 +48,6 @@ export type SearchResult = HighlightedSearch | CommandResult;
 // Type guards
 function isCommandResult(result: SearchResult): result is CommandResult {
     return 'type' in result;
-}
-
-function isSearchResult(result: SearchResult): result is HighlightedSearch {
-    return 'score' in result;
 }
 
 // Naming mode state
@@ -63,112 +88,18 @@ function isValidProgrammingLanguage(query: string): boolean {
         extOrLanguageToLanguageId[key].toLowerCase() === lowerQuery
     );
 }
-// Get appropriate icon for language/extension
-function getLanguageIcon(query: string): string {
-    const lowerQuery = query.toLowerCase();
+// Default file icon (nf-seti-text)
+const DEFAULT_FILE_ICON = '\ue64e';
 
-    // Language/extension icons matching extOrLanguageToLanguageId
-    const iconMap: Record<string, string> = {
-        // JavaScript/TypeScript family
-        'javascript': '🟨',
-        'js': '🟨',
-        'typescript': '🔷',
-        'ts': '🔷',
-        'jsx': '⚛️',
-        'tsx': '⚛️',
+// Get nerd font icon for a file path
+function getFileIcon(path: string): { glyph: string; color: string } {
+    const result = setiIconForPath(path);
+    return { glyph: result.value, color: result.color || '' };
+}
 
-        // Python
-        'python': '🐍',
-        'py': '🐍',
-
-        // Ruby
-        'ruby': '💎',
-        'rb': '💎',
-
-        // PHP
-        'php': '🐘',
-
-        // Java
-        'java': '☕',
-
-        // C/C++
-        'cpp': '⚙️',
-        'c': '⚙️',
-
-        // C#
-        'csharp': '🔷',
-        'cs': '🔷',
-
-        // Go
-        'go': '🐹',
-
-        // Swift
-        'swift': '🦉',
-
-        // Kotlin
-        'kotlin': '🟣',
-        'kt': '🟣',
-
-        // Rust
-        'rust': '🦀',
-        'rs': '🦀',
-
-        // Scala
-        'scala': '🔴',
-
-        // Visual Basic
-        'vb': '🔵',
-
-        // Haskell
-        'haskell': '🎭',
-        'hs': '🎭',
-
-        // Lua
-        'lua': '🌙',
-
-        // Perl
-        'perl': '🐪',
-        'pl': '🐪',
-
-        // Shell/Bash
-        'bash': '🐚',
-        'shell': '🐚',
-        'sh': '🐚',
-        'zsh': '🐚',
-
-        // SQL
-        'mysql': '🗃️',
-        'sql': '🗃️',
-
-        // Web technologies
-        'html': '🌐',
-        'css': '🎨',
-        'scss': '🎨',
-        'less': '🎨',
-
-        // Data formats
-        'json': '📋',
-        'yaml': '⚙️',
-        'yml': '⚙️',
-        'xml': '📄',
-        'toml': '⚙️',
-        'ini': '⚙️',
-        'conf': '⚙️',
-        'log': '📄',
-        'env': '🔧',
-
-        // Documentation
-        'markdown': '📝',
-        'md': '📝',
-
-        // Docker/Build
-        'dockerfile': '🐳',
-        'makefile': '🔨',
-        'dockerignore': '🐳',
-        'gitignore': '📝'
-    };
-
-    return iconMap[lowerQuery] || '📄';
+// Get icon for a language/extension query (used for create-file commands)
+function getLanguageIcon(query: string): { glyph: string; color: string } {
+    return getFileIcon(`file.${query}`);
 }
 
 
@@ -186,10 +117,12 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
     if (query.trim()) {
         // Create new file command (only if query doesn't match existing file)
         if (!hasExactFileMatch) {
+            const langIcon = isLanguageQuery ? getLanguageIcon(query) : null;
             const createFileCommand: CommandResult = {
                 id: isLanguageQuery ? "Create new file" : `Create new file "${query}"`,
                 type: 'create-file',
-                icon: isLanguageQuery ? getLanguageIcon(query) : '📄',
+                icon: langIcon ? langIcon.glyph : DEFAULT_FILE_ICON,
+                iconColor: langIcon?.color,
                 query,
                 requiresInput: isLanguageQuery
             };
@@ -201,14 +134,43 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
             const renameCommand: CommandResult = {
                 id: `Rename to "${query}"`,
                 type: 'rename-file',
-                icon: '✏️',
+                icon: '\uf044', // nf-fa-pencil_square_o (edit icon)
                 query
             };
             commands.push(renameCommand);
         }
     }
 
+    // Import files/folder command — always shown when query is empty or matches "import"
+    const lowerQuery = query.toLowerCase().trim();
+    if (!lowerQuery || lowerQuery === 'import' || 'import files'.startsWith(lowerQuery)) {
+        commands.push({
+            id: 'Import files/folder from device...',
+            type: 'import-files',
+            icon: '\ue613', // nf-seti-folder
+            query: '',
+        });
+    }
+
     return commands;
+}
+
+async function importFiles(files: FileList, view: EditorView) {
+    const { fs, index } = view.state.facet(CodeblockFacet);
+    for (const file of files) {
+        const path = file.webkitRelativePath || file.name;
+        const dir = path.substring(0, path.lastIndexOf('/'));
+        if (dir) await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(path, await file.text());
+        if (index) index.add(path);
+        LSP.notifyFileChanged(path, FileChangeType.Created);
+    }
+    if (index?.savePath) await index.save(fs, index.savePath);
+    // Open first imported file
+    if (files.length > 0) {
+        const first = files[0].webkitRelativePath || files[0].name;
+        safeDispatch(view, { effects: openFileEffect.of({ path: first }) });
+    }
 }
 
 // Toolbar Panel
@@ -221,7 +183,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     // Create state icon (left side)
     const stateIcon = document.createElement("div");
     stateIcon.className = "cm-toolbar-state-icon";
-    stateIcon.textContent = "📄"; // Default file icon
+    stateIcon.textContent = DEFAULT_FILE_ICON;
 
     // Create container for state icon to help with alignment
     const stateIconContainer = document.createElement("div");
@@ -247,18 +209,19 @@ export const toolbarPanel = (view: EditorView): Panel => {
     let selectedIndex = 0;
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
 
-    // Tracks gutter width for toolbar alignment
+    // Tracks gutter width for toolbar/footer alignment
     function updateGutterWidthVariables() {
         const gutters = view.dom.querySelector('.cm-gutters');
         if (gutters) {
             const gutterWidth = gutters.getBoundingClientRect().width;
-            dom.style.setProperty('--cm-gutter-width', `${gutterWidth}px`);
+            // Set on view.dom so both toolbar and footer panels inherit the variables
+            view.dom.style.setProperty('--cm-gutter-width', `${gutterWidth}px`);
 
             const numberGutter = gutters.querySelector('.cm-lineNumbers');
 
             if (numberGutter) {
                 const numberGutterWidth = numberGutter.getBoundingClientRect().width;
-                dom.style.setProperty('--cm-gutter-lineno-width', `${numberGutterWidth}px`);
+                view.dom.style.setProperty('--cm-gutter-lineno-width', `${numberGutterWidth}px`);
             }
         }
 
@@ -289,7 +252,15 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
         const resultIcon = document.createElement("div");
         resultIcon.className = "cm-search-result-icon";
-        resultIcon.textContent = isCommandResult(result) ? result.icon : '📄';
+        resultIcon.style.fontFamily = 'var(--cm-icon-font-family)';
+        if (isCommandResult(result)) {
+            resultIcon.textContent = result.icon;
+            if (result.iconColor) resultIcon.style.color = result.iconColor;
+        } else {
+            const icon = getFileIcon(result.id);
+            resultIcon.textContent = icon.glyph;
+            if (icon.color) resultIcon.style.color = icon.color;
+        }
 
         resultIconContainer.appendChild(resultIcon);
         li.appendChild(resultIconContainer);
@@ -314,22 +285,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
         const results = view.state.field(searchResultsField);
         const children: HTMLElement[] = [];
 
-        // Separate commands from search results
-        const commands = results.filter(isCommandResult);
-        const searchResults = results.filter(isSearchResult);
-
-        let currentIndex = 0;
-
-        // Render commands section
-        commands.forEach((command) => {
-            children.push(renderItem(command, currentIndex));
-            currentIndex++;
-        });
-
-        // Render search results section
-        searchResults.forEach((result) => {
-            children.push(renderItem(result, currentIndex));
-            currentIndex++;
+        // Render items in state array order (search results first, commands second)
+        results.forEach((result, i) => {
+            children.push(renderItem(result, i));
         });
 
         resultsList.replaceChildren(...children);
@@ -345,9 +303,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
     function updateStateIcon() {
         if (namingMode.active) {
-            stateIcon.textContent = namingMode.type === 'create-file' ? '📄' : '✏️';
+            stateIcon.textContent = namingMode.type === 'create-file' ? DEFAULT_FILE_ICON : '\uf044';
         } else {
-            stateIcon.textContent = '📄'; // Default file icon
+            stateIcon.textContent = DEFAULT_FILE_ICON;
         }
     }
 
@@ -397,6 +355,18 @@ export const toolbarPanel = (view: EditorView): Panel => {
                     effects: [setSearchResults.of([]), openFileEffect.of({ path: newPath })]
                 });
             }
+        } else if (command.type === 'import-files') {
+            safeDispatch(view, { effects: setSearchResults.of([]) });
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.multiple = true;
+            fileInput.setAttribute('webkitdirectory', '');
+            fileInput.addEventListener('change', () => {
+                if (fileInput.files?.length) {
+                    importFiles(fileInput.files, view);
+                }
+            });
+            fileInput.click();
         }
     }
 
@@ -452,10 +422,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 // Get regular search results from index first
                 const searchResults: SearchResult[] = (index?.search(query) || []).slice(0, 100);
 
-                // Add command results first (passing search results to check for existing files)
+                // Add command results (passing search results to check for existing files)
                 const commands = createCommandResults(query, view, searchResults);
 
+                // Search results first, then commands
                 results = searchResults.concat(commands);
+            } else {
+                // Show import command when dropdown opens with empty query
+                results = createCommandResults('', view, []);
             }
 
             safeDispatch(view, { effects: setSearchResults.of(results) });
@@ -480,12 +454,12 @@ export const toolbarPanel = (view: EditorView): Panel => {
             // Get regular search results from index first
             const searchResults = (index?.search(query) || []).slice(0, 1000);
 
-            // Add command results first (passing search results to check for existing files)
+            // Add command results (passing search results to check for existing files)
             const commands = createCommandResults(query, view, searchResults);
-            results.push(...commands);
 
-            // Add search results
+            // Search results first, then commands
             results.push(...searchResults);
+            results.push(...commands);
         }
 
         safeDispatch(view, { effects: setSearchResults.of(results) });
@@ -542,6 +516,19 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 // Remove click-outside listener when dropdown closes
                 if (b.length === 0) {
                     document.removeEventListener("click", handleClickOutside);
+                }
+            }
+
+            // Update loading indicator
+            const prevFile = update.startState.field(currentFileField);
+            const nextFile = update.state.field(currentFileField);
+            if (prevFile.loading !== nextFile.loading) {
+                if (nextFile.loading) {
+                    stateIcon.textContent = '\ueb19'; // nf-cod-loading
+                    stateIcon.classList.add('cm-loading');
+                } else {
+                    stateIcon.textContent = DEFAULT_FILE_ICON;
+                    stateIcon.classList.remove('cm-loading');
                 }
             }
         },

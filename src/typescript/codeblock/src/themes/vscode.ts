@@ -119,7 +119,7 @@ const darkModeStyles = {
     "--cm-link": "#4078f2",
     "--cm-invalid": "#ff0000",
 
-    "--cm-search-result-color": "var(--cm-angle-bracket)",
+    "--cm-search-result-color": "var(--cm-foreground)",
     "--cm-search-result-color-hover": "#ffffff",
     "--cm-command-result-color": "var(--cm-search-result-color-hover)",
 
@@ -139,6 +139,7 @@ export const vscodeStyleMod = new StyleModule({
         /* Shared */
         "--cm-font-family":
             'Menlo, Monaco, Consolas, "Andale Mono", "Ubuntu Mono", "Courier New", monospace',
+        "--cm-icon-font-family": '"UbuntuMono NF", var(--cm-font-family)',
 
         /* Defaults to light theme */
         "--cm-background": "#ffffff",
@@ -168,7 +169,7 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-invalid": "#e45649",
 
         /* Additional UI colors */
-        "--cm-search-result-color": "#838383",
+        "--cm-search-result-color": "var(--cm-foreground)",
         "--cm-search-result-color-hover": "var(--cm-toolbar-color)",
         "--cm-search-result-bg-hover": "#2490e94f",
         "--cm-search-result-color-selected": "#ffffff",

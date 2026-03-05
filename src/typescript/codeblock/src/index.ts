@@ -1,4 +1,6 @@
 export { createCodeblock, codeblock, basicSetup, type CodeblockConfig, CodeblockFacet, setThemeEffect } from "./editor";
+export { settingsField, updateSettingsEffect, type EditorSettings } from "./panels/footer";
+export { LspLog, type LspLogEntry } from "./utils/lsp";
 export { Vfs as CodeblockFS } from './utils/fs';
 export * from './utils/snapshot';
 export * from './types';

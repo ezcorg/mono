@@ -76,7 +76,8 @@ export const codeblockTheme = EditorView.theme({
         textAlign: 'right',
         boxSizing: 'border-box',
         color: 'var(--cm-foreground)',
-        width: 'var(--cm-gutter-lineno-width)'
+        width: 'var(--cm-gutter-lineno-width)',
+        fontFamily: 'var(--cm-icon-font-family)',
     },
     '.cm-content': {
         padding: 0,
@@ -165,5 +166,182 @@ export const codeblockTheme = EditorView.theme({
     },
     '.cm-panels-top': {
         borderBottom: 'none'
-    }
+    },
+    '.cm-loading': {
+        animation: 'cm-pulse 1.2s ease-in-out infinite',
+    },
+    '@keyframes cm-pulse': {
+        '0%, 100%': { opacity: '1' },
+        '50%': { opacity: '0.4' },
+    },
+    // Footer panel
+    '.cm-footer-panel': {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        background: 'var(--cm-toolbar-background)',
+        color: 'var(--cm-toolbar-color)',
+        height: '22px',
+        padding: '0 4px',
+        fontSize: '12px',
+        fontFamily: 'var(--cm-font-family)',
+    },
+    '.cm-footer-left, .cm-footer-right': {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+    },
+    '.cm-footer-toggle-container': {
+        width: 'var(--cm-gutter-width)',
+    },
+    '.cm-footer-theme-toggle': {
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+        padding: 0,
+        fontSize: '14px',
+        lineHeight: '22px',
+        textAlign: 'right',
+        boxSizing: 'border-box',
+        width: 'var(--cm-gutter-lineno-width)',
+        display: 'block',
+    },
+    '.cm-footer-settings-cog, .cm-footer-lsp-log': {
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+        padding: '0 4px',
+        fontSize: '14px',
+        lineHeight: '22px',
+    },
+    '.cm-panels-bottom': {
+        borderTop: 'none',
+    },
+    // Settings overlay — full editor cover
+    '.cm-settings-overlay': {
+        position: 'absolute',
+        inset: 0,
+        overflowY: 'auto',
+        background: 'var(--cm-toolbar-background)',
+        color: 'var(--cm-toolbar-color)',
+        zIndex: 100,
+        fontFamily: 'var(--cm-font-family)',
+        fontSize: '13px',
+    },
+    '.cm-settings-header': {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '8px 12px',
+        fontWeight: 'bold',
+        borderBottom: '1px solid var(--cm-tooltip-border)',
+    },
+    '.cm-settings-close': {
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+        fontSize: '14px',
+    },
+    '.cm-settings-section': {
+        padding: '8px 12px',
+    },
+    '.cm-settings-section-title': {
+        fontWeight: 'bold',
+        marginBottom: '6px',
+        fontSize: '12px',
+        textTransform: 'uppercase',
+        opacity: '0.7',
+    },
+    '.cm-settings-row': {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '6px',
+        gap: '8px',
+    },
+    '.cm-settings-row > label': {
+        flex: '0 0 auto',
+        whiteSpace: 'nowrap',
+    },
+    '.cm-settings-control': {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+    },
+    '.cm-settings-value': {
+        minWidth: '36px',
+        textAlign: 'right',
+        fontSize: '12px',
+    },
+    '.cm-settings-select': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '2px 4px',
+        fontSize: '12px',
+        fontFamily: 'var(--cm-font-family)',
+    },
+    '.cm-settings-radio-group': {
+        display: 'flex',
+        gap: '4px',
+        alignItems: 'center',
+        fontSize: '12px',
+    },
+    '.cm-settings-radio-group label': {
+        marginRight: '6px',
+    },
+    '.cm-settings-input': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '2px 6px',
+        fontSize: '12px',
+        fontFamily: 'var(--cm-font-family)',
+        flex: 1,
+        minWidth: 0,
+    },
+    '.cm-settings-button': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '4px 8px',
+        fontSize: '12px',
+        cursor: 'pointer',
+    },
+    '.cm-settings-button-disabled': {
+        opacity: '0.5',
+        cursor: 'not-allowed',
+    },
+    // LSP log content
+    '.cm-lsp-log-content': {
+        padding: '8px 12px',
+        fontFamily: 'var(--cm-font-family)',
+        fontSize: '12px',
+        lineHeight: 1.5,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-all',
+        overflowY: 'auto',
+        flex: 1,
+    },
+    '.cm-lsp-log-entry': {
+        padding: '1px 0',
+    },
+    '.cm-lsp-log-error': {
+        color: 'var(--cm-diagnostic-error-bg)',
+    },
+    '.cm-lsp-log-warn': {
+        color: '#e5a100',
+    },
+    '.cm-lsp-log-info': {
+        opacity: '0.8',
+    },
+    '.cm-lsp-log-log': {
+        opacity: '0.6',
+    },
 });

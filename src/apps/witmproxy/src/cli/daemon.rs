@@ -77,7 +77,8 @@ impl DaemonHandler {
     }
 
     /// Get the native service manager for the current platform
-    /// Uses user-level services (no root required) on macOS and Linux
+    /// Linux: system-level systemd service (requires root)
+    /// macOS: user-level launchd service
     fn get_manager() -> Result<Box<dyn ServiceManager>> {
         #[cfg(target_os = "macos")]
         {
@@ -87,8 +88,8 @@ impl DaemonHandler {
 
         #[cfg(target_os = "linux")]
         {
-            // Use user-level systemd services (~/.config/systemd/user)
-            Ok(Box::new(SystemdServiceManager::user()))
+            // Use system-level systemd services (/etc/systemd/system)
+            Ok(Box::new(SystemdServiceManager::system()))
         }
 
         #[cfg(target_os = "windows")]
@@ -112,19 +113,37 @@ impl DaemonHandler {
         std::env::current_exe().context("Failed to get current executable path")
     }
 
-    /// Get the app directory (parent of cert_dir)
+    /// Get the app directory
+    /// Linux system service: /etc/witmproxy
+    /// macOS / other: parent of cert_dir (~/.witmproxy)
     fn get_app_dir(&self) -> PathBuf {
-        self.config
-            .tls
-            .cert_dir
-            .parent()
-            .unwrap_or(&PathBuf::from("."))
-            .to_path_buf()
+        #[cfg(target_os = "linux")]
+        {
+            PathBuf::from("/etc/witmproxy")
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.config
+                .tls
+                .cert_dir
+                .parent()
+                .unwrap_or(&PathBuf::from("."))
+                .to_path_buf()
+        }
     }
 
     /// Get the log file path
+    /// Linux system service: /var/log/witmproxy/witmproxy.log
+    /// macOS / other: <app_dir>/witmproxy.log
     pub fn get_log_path(&self) -> PathBuf {
-        self.get_app_dir().join(LOG_FILE_NAME)
+        #[cfg(target_os = "linux")]
+        {
+            PathBuf::from("/var/log/witmproxy").join(LOG_FILE_NAME)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.get_app_dir().join(LOG_FILE_NAME)
+        }
     }
 
     /// Get the config file path
@@ -144,6 +163,21 @@ impl DaemonHandler {
         }
     }
 
+    /// On Linux, require root for daemon management commands.
+    #[cfg(target_os = "linux")]
+    fn require_root() -> Result<()> {
+        if std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .is_none_or(|uid| uid.trim() != "0")
+        {
+            anyhow::bail!("This command must be run as root (use sudo)");
+        }
+        Ok(())
+    }
+
     /// Ensure the service directory exists for the current platform
     fn ensure_service_directory_exists() -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -158,28 +192,31 @@ impl DaemonHandler {
             }
         }
 
-        #[cfg(target_os = "linux")]
-        {
-            if let Some(home) = dirs::home_dir() {
-                let systemd_user_dir = home.join(".config/systemd/user");
-                if !systemd_user_dir.exists() {
-                    info!("Creating systemd user directory: {:?}", systemd_user_dir);
-                    std::fs::create_dir_all(&systemd_user_dir)
-                        .context("Failed to create ~/.config/systemd/user directory")?;
-                }
-            }
-        }
+        // Linux: /etc/systemd/system/ already exists, nothing to create
 
         Ok(())
     }
 
     /// Install the service
     pub async fn install_service(&self, skip_confirm: bool) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        Self::require_root()?;
+
         if !skip_confirm {
-            println!("This will install witmproxy as a user service.");
-            println!("The service will be configured to:");
-            println!("  - Run the proxy server in the background");
-            println!("  - Start automatically on login (on supported platforms)");
+            #[cfg(target_os = "linux")]
+            {
+                println!("This will install witmproxy as a system service.");
+                println!("The service will be configured to:");
+                println!("  - Run the proxy server in the background");
+                println!("  - Start automatically on boot");
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                println!("This will install witmproxy as a user service.");
+                println!("The service will be configured to:");
+                println!("  - Run the proxy server in the background");
+                println!("  - Start automatically on login (on supported platforms)");
+            }
             println!();
             print!("Continue? [y/N] ");
             use std::io::{self, Write};
@@ -202,9 +239,11 @@ impl DaemonHandler {
         let exe_path = Self::get_executable_path()?;
         let config_path = self.get_config_path();
 
-        // Create app directory and ensure config exists
+        // Create app directory and log directory
         let app_dir = self.get_app_dir();
         std::fs::create_dir_all(&app_dir)?;
+        let log_dir = self.get_log_path().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&log_dir)?;
 
         // Save the current configuration to the config file
         // This ensures settings like db_password are available to the daemon
@@ -271,7 +310,7 @@ impl DaemonHandler {
 
         manager
             .install(install_ctx)
-            .context("Failed to install service. On macOS, ensure ~/Library/LaunchAgents exists. On Linux, ensure ~/.config/systemd/user exists.")?;
+            .context("Failed to install service. On macOS, ensure ~/Library/LaunchAgents exists. On Linux, ensure you are running as root.")?;
 
         println!("✓ Service installed successfully.");
         println!("  Log file: {:?}", log_path);
@@ -284,6 +323,9 @@ impl DaemonHandler {
 
     /// Uninstall the service
     pub async fn uninstall_service(&self, skip_confirm: bool) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        Self::require_root()?;
+
         if !skip_confirm {
             println!("This will uninstall the witmproxy service.");
             println!("The service will be stopped if running.");
@@ -318,6 +360,9 @@ impl DaemonHandler {
 
     /// Start the service
     pub async fn start_service(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        Self::require_root()?;
+
         let manager = Self::get_manager()?;
         let label = Self::service_label();
 
@@ -333,6 +378,9 @@ impl DaemonHandler {
 
     /// Stop the service
     pub async fn stop_service(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        Self::require_root()?;
+
         let manager = Self::get_manager()?;
         let label = Self::service_label();
 
@@ -347,6 +395,9 @@ impl DaemonHandler {
 
     /// Restart the service
     pub async fn restart_service(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        Self::require_root()?;
+
         let manager = Self::get_manager()?;
         let label = Self::service_label();
 
@@ -392,18 +443,9 @@ impl DaemonHandler {
                     SERVICE_LABEL.to_string()
                 };
 
-                let systemd_user_path = dirs::home_dir().map(|h| {
-                    h.join(".config/systemd/user")
-                        .join(format!("{}.service", systemd_name))
-                });
                 let systemd_system_path =
                     PathBuf::from(format!("/etc/systemd/system/{}.service", systemd_name));
 
-                if let Some(user_path) = systemd_user_path
-                    && user_path.exists()
-                {
-                    return true;
-                }
                 if systemd_system_path.exists() {
                     return true;
                 }
