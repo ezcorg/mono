@@ -304,6 +304,36 @@ describe('Editor - TypeScript Language Support', () => {
             expect(await page.$('.cm-content')).not.toBeNull();
         }
     });
+    it('cross-file imports: exported constant is recognized in another file', async () => {
+        // 1. Create file A with an exported constant
+        await createFile(page, 'module-a.ts');
+        await typeInEditor(page, 'export const greeting = "hello";');
+
+        // Wait for debounced save to flush content to VFS
+        await new Promise(r => setTimeout(r, 2000));
+
+        // 2. Create file B that imports from file A
+        await createFile(page, 'module-b.ts');
+        await typeInEditor(page, 'import { greeting } from "./module-a";\nconsole.log(greeting);');
+
+        // 3. Wait for LSP diagnostics to settle
+        // Poll until no errors, or timeout
+        let errors: any[] = [];
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 2000));
+            errors = await page.$$('.cm-lintRange-error');
+            if (errors.length === 0) break;
+
+            // Nudge the LSP by making a trivial edit and undoing it
+            await page.keyboard.press('End');
+            await page.keyboard.type(' ');
+            await new Promise(r => setTimeout(r, 1000));
+            await page.keyboard.press('Backspace');
+        }
+
+        expect(errors.length).toBe(0);
+    });
 }, 60_000);
 
 describe('Editor - JavaScript Language Support', () => {

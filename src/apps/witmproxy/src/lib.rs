@@ -3,6 +3,7 @@
 // Library interface for witmproxy
 // This exposes the internal modules for testing and external use
 
+pub mod acl;
 pub mod cert;
 pub mod cli;
 pub mod config;
@@ -11,6 +12,7 @@ pub mod events;
 pub mod http;
 pub mod plugins;
 pub mod proxy;
+pub mod tenant;
 pub mod wasm;
 pub mod web;
 
@@ -23,7 +25,10 @@ mod tests;
 
 // Re-export commonly used types for convenience
 pub use cert::CertificateAuthority;
-pub use config::{AppConfig, DbConfig, PluginConfig, ProxyConfig, TlsConfig, WebConfig};
+pub use config::{
+    AppConfig, AuthConfig, DbConfig, PluginConfig, ProxyConfig, TlsConfig, TransparentProxyConfig,
+    WebConfig,
+};
 pub use db::Db;
 pub use plugins::registry::PluginRegistry;
 pub use proxy::ProxyServer;

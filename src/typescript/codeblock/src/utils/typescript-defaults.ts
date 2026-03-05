@@ -103,33 +103,48 @@ const TARGET_LIBS: Record<string, string[]> = {
     ],
 };
 
+/**
+ * Environment lib files included by TypeScript's `.full` variants (e.g. lib.es2020.full.d.ts).
+ * TypeScript includes these by default when no explicit `lib` is specified in tsconfig.
+ * We list them explicitly to match VS Code's default behavior.
+ */
+const DEFAULT_ENV_LIBS = ['dom', 'dom.iterable', 'dom.asynciterable', 'webworker.importscripts', 'scripthost'];
+
 export type TypescriptDefaultsConfig = {
     /** ES target, determines which lib files are needed. Default: "ES2020" */
     target?: string;
+    /** Additional lib names to load beyond the ES target libs.
+     *  Defaults to TypeScript's `.full` environment libs (dom, dom.iterable,
+     *  dom.asynciterable, webworker.importscripts, scripthost).
+     *  Pass `[]` to disable. */
+    additionalLibs?: string[];
     /** Custom tsconfig compilerOptions merged with defaults */
     compilerOptions?: Record<string, any>;
 };
 
 /**
- * Returns the list of TypeScript lib file names required for a given ES target.
- * Names are without the `lib.` prefix and `.d.ts` suffix (e.g. "es5", "es2015.collection").
+ * Returns the list of TypeScript lib file names required for a given ES target,
+ * plus any additional libs (DOM by default).
+ * Names are without the `lib.` prefix and `.d.ts` suffix (e.g. "es5", "dom").
  */
-export function getRequiredLibs(target: string = 'es2020'): string[] {
-    return TARGET_LIBS[target.toLowerCase()] || TARGET_LIBS.es2020;
+export function getRequiredLibs(target: string = 'es2020', additionalLibs: string[] = DEFAULT_ENV_LIBS): string[] {
+    const targetLibs = TARGET_LIBS[target.toLowerCase()] || TARGET_LIBS.es2020;
+    return [...targetLibs, ...additionalLibs];
 }
 
 /**
  * Returns all individual lib names for the tsconfig `lib` field.
  *
- * Lists every individual lib file (e.g. "es5", "es2015.promise") instead of
+ * Lists every individual lib file (e.g. "es5", "es2015.promise", "dom") instead of
  * just the top-level entry (e.g. "ES2020"). This is critical for browser-based
  * TypeScript via Volar: the virtual filesystem is async, so each
  * `/// <reference lib="..." />` chain level requires a separate async round-trip.
  * By listing all libs explicitly, TypeScript loads them all in a single pass.
  */
-export function getLibFieldForTarget(target: string = 'es2020'): string[] {
+export function getLibFieldForTarget(target: string = 'es2020', additionalLibs: string[] = DEFAULT_ENV_LIBS): string[] {
     const t = target.toLowerCase();
-    return TARGET_LIBS[t] || TARGET_LIBS.es2020;
+    const targetLibs = TARGET_LIBS[t] || TARGET_LIBS.es2020;
+    return [...targetLibs, ...additionalLibs];
 }
 
 let prefilled = false;
@@ -173,6 +188,7 @@ export async function prefillTypescriptDefaults(
     prefilled = true;
 
     const target = config.target || 'ES2020';
+    const additionalLibs = config.additionalLibs ?? DEFAULT_ENV_LIBS;
     const fileContents: Record<string, string> = {};
 
     // Write tsconfig.json if it doesn't exist
@@ -180,7 +196,7 @@ export async function prefillTypescriptDefaults(
     const tsconfigContent = JSON.stringify({
         compilerOptions: {
             target,
-            lib: getLibFieldForTarget(target),
+            lib: getLibFieldForTarget(target, additionalLibs),
             module: "ESNext",
             moduleResolution: "bundler",
             strict: true,
@@ -195,7 +211,7 @@ export async function prefillTypescriptDefaults(
     }
 
     // Write lib files to the path Volar expects in browser environments
-    const libs = getRequiredLibs(target);
+    const libs = getRequiredLibs(target, additionalLibs);
     await fs.mkdir(LIB_DIR, { recursive: true });
 
     await Promise.all(libs.map(async (name) => {

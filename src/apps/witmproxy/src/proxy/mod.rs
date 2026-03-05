@@ -1,6 +1,7 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::events::Event;
+use crate::tenant::TenantContext;
 use crate::events::connect::Connect;
 use crate::events::content::InboundContent;
 use crate::events::response::ContextualResponse;
@@ -32,6 +33,10 @@ use tracing::{debug, error, warn};
 
 use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
+
+pub mod netfilter;
+pub mod tenant_resolver;
+pub mod transparent;
 
 mod utils;
 pub use utils::{
@@ -129,11 +134,15 @@ impl ProxyServer {
                             Ok((io, peer)) => {
                                 debug!("Accepted connection from {}", peer);
                                 let shared = server.clone();
+                                // Resolve tenant from peer address (anonymous for now,
+                                // will be replaced by TenantResolver in Phase 4)
+                                let tenant_ctx = TenantContext::anonymous();
                                 tokio::spawn(async move {
                                     let svc = service_fn(move |req: Request<Incoming>| {
                                         let shared = shared.clone();
+                                        let tenant_ctx = tenant_ctx.clone();
                                         async move {
-                                            shared.handle_plain_http(req).await.map_err(|e| std::io::Error::other(e.to_string()))
+                                            shared.handle_plain_http(req, &tenant_ctx).await.map_err(|e| std::io::Error::other(e.to_string()))
                                         }
                                     });
 
@@ -253,6 +262,7 @@ impl ProxyServer {
     async fn handle_plain_http(
         &self,
         mut req: Request<Incoming>,
+        _tenant_ctx: &TenantContext,
     ) -> Result<Response<UnsyncBoxBody<Bytes, ErrorCode>>, ProxyError> {
         if req.method() == Method::CONNECT {
             debug!("Handling CONNECT request");

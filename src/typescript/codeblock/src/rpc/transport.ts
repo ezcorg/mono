@@ -1,35 +1,25 @@
-import { Transport } from "@open-rpc/client-js/build/transports/Transport";
-import { getNotifications } from "@open-rpc/client-js/src/Request";
-import type { JSONRPCRequestData, IJSONRPCData } from "@open-rpc/client-js/src/Request";
+import type { Transport } from "@codemirror/lsp-client"
 
-export default class MessagePortTransport extends Transport {
-    public postMessageID: string;
+/// Creates a Transport adapter that bridges a MessagePort (which
+/// sends/receives JSON objects) to lsp-client's Transport interface
+/// (which sends/receives JSON strings).
+export function messagePortTransport(port: MessagePort): Transport {
+    let handlers: ((value: string) => void)[] = []
 
-    constructor(public port: MessagePort) {
-        super();
-        this.postMessageID = `post-message-transport-${Math.random()}`;
-    }
+    port.addEventListener("message", (ev: MessageEvent) => {
+        let msg = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data)
+        for (let handler of handlers) handler(msg)
+    })
 
-    private messageHandler = (ev: MessageEvent) => {
-        this.transportRequestManager.resolveResponse(JSON.stringify(ev.data));
-    };
-
-    public connect(): Promise<void> {
-        return new Promise(async (resolve) => {
-            this.port.addEventListener("message", this.messageHandler);
-            resolve();
-        });
-    }
-
-    public async sendData(data: JSONRPCRequestData): Promise<any> {
-        const prom = this.transportRequestManager.addRequest(data, null);
-        const notifications = getNotifications(data);
-        if (this.port) {
-            this.port.postMessage((data as IJSONRPCData).request);
-            this.transportRequestManager.settlePendingRequest(notifications);
+    return {
+        send(message: string) {
+            port.postMessage(JSON.parse(message))
+        },
+        subscribe(handler: (value: string) => void) {
+            handlers.push(handler)
+        },
+        unsubscribe(handler: (value: string) => void) {
+            handlers = handlers.filter(h => h !== handler)
         }
-        return prom;
     }
-
-    public close(): void { }
 }

@@ -19,7 +19,7 @@ use crate::{
     wasm::{
         CapabilityProvider, Host, Runtime,
         bindgen::{
-            Plugin,
+            Plugin, UserInput,
             witmproxy::plugin::capabilities::{Event as WasmEvent, EventKind},
         },
     },
@@ -214,9 +214,86 @@ impl PluginRegistry {
             .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
     }
 
+    /// Find first unexecuted plugin from a pre-filtered effective set.
+    fn find_first_unexecuted_in_set<'a>(
+        &'a self,
+        event: &dyn Event,
+        executed_plugins: &HashSet<String>,
+        effective_set: &HashSet<String>,
+    ) -> Option<&'a WitmPlugin> {
+        self.plugins
+            .values()
+            .find(|p| {
+                effective_set.contains(&p.id())
+                    && !executed_plugins.contains(&p.id())
+                    && p.can_handle(event)
+            })
+    }
+
     /// Check if any plugins can handle an event
     pub fn can_handle(&self, event: &dyn Event) -> bool {
         self.plugins.values().any(|p| p.can_handle(event))
+    }
+
+    /// Returns the set of plugin IDs that are effective for a given tenant.
+    /// Applies per-tenant enable/disable overrides on top of global enabled state.
+    pub fn effective_plugins_for_tenant(
+        &self,
+        overrides: &[crate::db::tenants::TenantPluginOverride],
+    ) -> HashSet<String> {
+        let mut effective = HashSet::new();
+        for (id, plugin) in &self.plugins {
+            let mut enabled = plugin.enabled;
+            // Check for tenant-specific override
+            for ov in overrides {
+                if ov.plugin_namespace == plugin.namespace && ov.plugin_name == plugin.name {
+                    if let Some(ov_enabled) = ov.enabled {
+                        enabled = ov_enabled;
+                    }
+                }
+            }
+            if enabled {
+                effective.insert(id.clone());
+            }
+        }
+        effective
+    }
+
+    /// Resolve configuration for a plugin, merging tenant-specific config over global defaults.
+    /// Tenant config values are stored as JSON strings in the database.
+    pub fn resolve_config(
+        &self,
+        plugin: &WitmPlugin,
+        tenant_config: &[crate::db::tenants::TenantPluginConfig],
+    ) -> Vec<UserInput> {
+        use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::ActualInput;
+
+        let mut config = plugin.configuration.clone();
+        for tc in tenant_config {
+            if tc.plugin_namespace == plugin.namespace && tc.plugin_name == plugin.name {
+                // Try to deserialize the JSON value into ActualInput
+                let value = match serde_json::from_str::<ActualInput>(&tc.input_value) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(
+                            "Failed to deserialize tenant config value for {}/{} input '{}': {}. Falling back to string.",
+                            tc.plugin_namespace, tc.plugin_name, tc.input_name, e
+                        );
+                        ActualInput::Str(tc.input_value.clone())
+                    }
+                };
+
+                if let Some(existing) = config.iter_mut().find(|c| c.name == tc.input_name) {
+                    existing.value = value;
+                } else {
+                    config.push(UserInput {
+                        name: tc.input_name.clone(),
+                        value,
+                    });
+                }
+            }
+        }
+        config
     }
 
     /// Handle a generic event, passing it through all registered plugins, and returning the final [Event] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
@@ -365,6 +442,181 @@ impl PluginRegistry {
                 }
                 None => {
                     // Timer events may legitimately return None (side-effect only)
+                    if kind == EventKind::Timer {
+                        debug!("Timer plugin returned None; stopping timer chain");
+                        let timer_event = crate::events::timer::TimerEvent::now();
+                        let event_data = Box::new(timer_event).into_event_data(&mut store)?;
+                        return Ok((event_data, store));
+                    }
+                    anyhow::bail!("Plugin returned no event data; cannot continue processing");
+                }
+            }
+        }
+
+        let kind = current_event.kind();
+        let event_data = current_event.into_event_data(&mut store)?;
+        kind.validate_output(&event_data)?;
+        Ok((event_data, store))
+    }
+
+    /// Handle an event with tenant-specific plugin filtering and configuration.
+    /// Uses `effective_set` to filter plugins and `tenant_config` to override per-plugin config.
+    pub async fn handle_event_for_tenant(
+        &self,
+        event: Box<dyn Event>,
+        effective_set: &HashSet<String>,
+        tenant_config: &[crate::db::tenants::TenantPluginConfig],
+    ) -> Result<(WasmEvent, Store<Host>)> {
+        let any_plugins = self
+            .plugins
+            .values()
+            .any(|p| effective_set.contains(&p.id()) && p.can_handle(&*event));
+        if !any_plugins {
+            debug!(
+                "No effective tenant plugins for event of kind: {:?}",
+                event.kind()
+            );
+            let mut store = self.new_store();
+            let event_data = event.into_event_data(&mut store)?;
+            return Ok((event_data, store));
+        }
+
+        let mut current_event = event;
+        let mut store = self.new_store();
+        let mut executed_plugins = HashSet::new();
+
+        while let Some(plugin) = {
+            self.find_first_unexecuted_in_set(
+                &*current_event,
+                &executed_plugins,
+                effective_set,
+            )
+        } {
+            debug!(
+                "Executing handle_event for plugin: {} (tenant-scoped)",
+                plugin.id()
+            );
+
+            executed_plugins.insert(plugin.id());
+            let kind = current_event.kind();
+            let component = if let Some(c) = &plugin.component {
+                c
+            } else {
+                warn!(
+                    target: "plugins",
+                    plugin_id = %plugin.id(),
+                    event_kind = kind.to_string(),
+                    "Plugin component missing; skipping"
+                );
+                continue;
+            };
+
+            let (plugin_instance, component_store) =
+                match self.runtime.instantiate_plugin_component(component).await {
+                    Ok(pi) => pi,
+                    Err(e) => {
+                        warn!(
+                            target: "plugins",
+                            plugin_id = %plugin.id(),
+                            event_kind = kind.to_string(),
+                            error = %e,
+                            "Failed to instantiate plugin component; skipping"
+                        );
+                        continue;
+                    }
+                };
+
+            store = component_store;
+            let event_data = current_event.into_event_data(&mut store)?;
+
+            let provider = CapabilityProvider::from(&plugin.capabilities);
+            let cap_resource = store.data_mut().table.push(provider)?;
+            // Use tenant-resolved config
+            let config = self.resolve_config(plugin, tenant_config);
+
+            let guest_result = store
+                .run_concurrent(async move |store| {
+                    let (create_result, task) = match plugin_instance
+                        .witmproxy_plugin_witm_plugin()
+                        .plugin()
+                        .call_create(store, config)
+                        .await
+                    {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_kind = kind.to_string(),
+                                error = %e,
+                                "Error calling plugin create"
+                            );
+                            return Err(e);
+                        }
+                    };
+                    task.block(store).await;
+
+                    let plugin_resource = match create_result {
+                        Ok(resource) => resource,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_kind = kind.to_string(),
+                                error = ?e,
+                                "Plugin create returned configure error"
+                            );
+                            return Ok(None);
+                        }
+                    };
+
+                    let (result, task) = match plugin_instance
+                        .witmproxy_plugin_witm_plugin()
+                        .plugin()
+                        .call_handle(store, plugin_resource, event_data, cap_resource)
+                        .await
+                    {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            warn!(
+                                target: "plugins",
+                                event_kind = kind.to_string(),
+                                error = %e,
+                                "Error calling handle"
+                            );
+                            return Err(e);
+                        }
+                    };
+                    task.block(store).await;
+                    Ok(result)
+                })
+                .await??;
+
+            match guest_result {
+                Some(new_event_data) => {
+                    current_event = match new_event_data {
+                        WasmEvent::Request(r) => {
+                            let req = store.data_mut().http().table.delete(r)?;
+                            Box::new(req)
+                        }
+                        WasmEvent::Response(r) => {
+                            let response = store.data_mut().http().table.delete(r.response)?;
+                            let request_ctx = r.request;
+                            Box::new(ContextualResponse {
+                                request: request_ctx,
+                                response,
+                            })
+                        }
+                        WasmEvent::InboundContent(c) => {
+                            let content = store.data_mut().table.delete(c)?;
+                            Box::new(content)
+                        }
+                        WasmEvent::Timer(ctx) => {
+                            Box::new(crate::events::timer::TimerEvent {
+                                timestamp: ctx.timestamp,
+                            })
+                        }
+                    };
+                }
+                None => {
                     if kind == EventKind::Timer {
                         debug!("Timer plugin returned None; stopping timer chain");
                         let timer_event = crate::events::timer::TimerEvent::now();

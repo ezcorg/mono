@@ -5,9 +5,12 @@ use crate::{
     plugins::registry::PluginRegistry,
     wasm::Runtime,
 };
+use auth::AuthCommands;
 use daemon::DaemonCommands;
+use group_cmd::GroupCommands;
 use plugin::PluginCommands;
 use proxy::ProxyCommands;
+use tenant_cmd::TenantCommands;
 use trust::TrustCommands;
 
 use anyhow::Result;
@@ -19,9 +22,13 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
+pub mod api_client;
+pub mod auth;
 pub mod daemon;
+pub mod group_cmd;
 mod plugin;
 mod proxy;
+pub mod tenant_cmd;
 mod trust;
 
 #[cfg(test)]
@@ -90,6 +97,21 @@ enum Commands {
     Daemon {
         #[command(subcommand)]
         command: DaemonCommands,
+    },
+    /// Authentication commands (for remote management)
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
+    /// Tenant management commands (remote)
+    Tenant {
+        #[command(subcommand)]
+        command: TenantCommands,
+    },
+    /// Group management commands (remote)
+    Group {
+        #[command(subcommand)]
+        command: GroupCommands,
     },
     /// Run the proxy server directly in the foreground (no daemon)
     ///
@@ -169,7 +191,6 @@ impl Cli {
 
 impl ResolvedCli {
     async fn handle_command(&self, command: &Commands) -> Result<()> {
-        // TODO: change CLI such that the same code can be used for local and remote proxy management
         match command {
             Commands::Plugin { command } => {
                 let plugin_handler = plugin::PluginHandler::new(self.config.clone(), self.verbose);
@@ -191,6 +212,18 @@ impl ResolvedCli {
                     self.auto,
                 );
                 daemon_handler.handle(command).await
+            }
+            Commands::Auth { command } => {
+                let auth_handler = auth::AuthHandler;
+                auth_handler.handle(command).await
+            }
+            Commands::Tenant { command } => {
+                let tenant_handler = tenant_cmd::TenantHandler;
+                tenant_handler.handle(command).await
+            }
+            Commands::Group { command } => {
+                let group_handler = group_cmd::GroupHandler;
+                group_handler.handle(command).await
             }
             Commands::Run => self.run_foreground().await,
             Commands::Serve { log_file } => self.run_serve(log_file.clone()).await,

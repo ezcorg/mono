@@ -1,5 +1,9 @@
+pub mod acl_middleware;
+pub mod auth;
+pub mod auth_endpoints;
 pub mod cert_distribution;
 pub mod device_detection;
+pub mod management;
 pub mod server;
 pub mod templates;
 
@@ -20,6 +24,9 @@ use crate::web::templates::{IndexTemplate, InstructionsTemplate};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod auth_tests;
 
 #[derive(Clone)]
 pub struct AppState {

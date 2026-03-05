@@ -36,6 +36,12 @@ pub struct AppConfig {
 
     #[config(nested, layer_attr(command(flatten)))]
     pub web: WebConfig,
+
+    #[config(nested, layer_attr(command(flatten)))]
+    pub auth: AuthConfig,
+
+    #[config(nested, layer_attr(command(flatten)))]
+    pub transparent: TransparentProxyConfig,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
@@ -44,6 +50,58 @@ pub struct ProxyConfig {
     /// The address the proxy server will bind to (optional, defaults to 127.0.0.1:0)
     #[config(env = "PROXY_BIND_ADDR", layer_attr(arg(long)))]
     pub proxy_bind_addr: Option<String>,
+
+    /// Tenant resolver strategy: ip-mapping, tailscale, or header
+    #[config(default = "ip-mapping", layer_attr(arg(skip)))]
+    pub tenant_resolver: crate::proxy::tenant_resolver::TenantResolverKind,
+
+    /// Header name for header-based tenant resolution
+    #[config(layer_attr(arg(skip)))]
+    pub tenant_header: Option<String>,
+}
+
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
+pub struct AuthConfig {
+    /// Enable authentication for management API
+    #[config(default = false, layer_attr(arg(skip)))]
+    pub enabled: bool,
+
+    /// External JWKS URL for token verification
+    #[config(layer_attr(arg(skip)))]
+    pub jwks_url: Option<String>,
+
+    /// JWT issuer
+    #[config(layer_attr(arg(skip)))]
+    pub jwt_issuer: Option<String>,
+
+    /// JWT audience
+    #[config(layer_attr(arg(skip)))]
+    pub jwt_audience: Option<String>,
+
+    /// JWT secret for local token signing (env: AUTH_JWT_SECRET)
+    #[config(env = "AUTH_JWT_SECRET", layer_attr(arg(skip)))]
+    pub jwt_secret: Option<String>,
+}
+
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
+pub struct TransparentProxyConfig {
+    /// Enable transparent proxy mode
+    #[config(default = false, layer_attr(arg(skip)))]
+    pub enabled: bool,
+
+    /// Listen address for transparent proxy (default: 0.0.0.0:8080)
+    #[config(layer_attr(arg(skip)))]
+    pub listen_addr: Option<String>,
+
+    /// Network interface for iptables rules (default: tailscale0)
+    #[config(layer_attr(arg(skip)))]
+    pub interface: Option<String>,
+
+    /// Automatically configure iptables rules
+    #[config(default = true, layer_attr(arg(skip)))]
+    pub auto_iptables: bool,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]

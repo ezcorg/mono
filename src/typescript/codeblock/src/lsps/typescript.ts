@@ -50,7 +50,7 @@ export const createLanguageServer = async ({ connection, fs, libFiles }: CreateT
     })
     connection.onInitialized(() => {
         server.initialized();
-        server.fileWatcher.watchFiles(['**/*.{tsx,jsx,js,ts}'])
+        server.fileWatcher.watchFiles(['**/*.{tsx,jsx,js,ts,json}'])
     });
     return server;
 }

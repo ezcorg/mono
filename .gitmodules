@@ -16,3 +16,6 @@
 [submodule "src/rust/witmproxy-plugin-template-rust"]
 	path = src/rust/witmproxy-plugin-template-rust
 	url = https://github.com/ezcorg/witmproxy-plugin-template-rust
+[submodule "src/typescript/lsp-client"]
+	path = src/typescript/lsp-client
+	url = https://github.com/ezcorg/lsp-client

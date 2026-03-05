@@ -48,7 +48,6 @@ export const codeblockTheme = EditorView.theme({
                 fontSize: '16px',
                 textAlign: 'right',
                 boxSizing: 'border-box',
-                padding: '0 3px 0 5px',
                 width: 'var(--cm-gutter-lineno-width)',
             }
         },
@@ -76,7 +75,6 @@ export const codeblockTheme = EditorView.theme({
         fontSize: '16px',
         textAlign: 'right',
         boxSizing: 'border-box',
-        padding: '0 3px 0 5px',
         color: 'var(--cm-foreground)',
         width: 'var(--cm-gutter-lineno-width)'
     },

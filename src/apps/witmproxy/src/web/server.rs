@@ -2,6 +2,12 @@ use super::{AppState, download_certificate, index_page};
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
+use crate::web::{
+    auth::jwt_auth,
+    acl_middleware::acl_check,
+    auth_endpoints,
+    management,
+};
 use anyhow::Result;
 use rust_embed::RustEmbed;
 use salvo::Writer;
@@ -13,6 +19,7 @@ use salvo::serve_static::static_embed;
 use salvo::server::ServerHandle;
 use salvo::{Depot, Listener, Server, affix_state};
 use salvo::{Router, conn::TcpListener, oapi::OpenApi, prelude::SwaggerUi};
+use sqlx::SqlitePool;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::fs;
@@ -24,6 +31,7 @@ pub struct WebServer {
     ca: CertificateAuthority,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     config: AppConfig,
+    db_pool: Option<SqlitePool>,
     shutdown_notify: Arc<Notify>,
     handle: Option<ServerHandle>,
 }
@@ -43,9 +51,16 @@ impl WebServer {
             ca,
             config,
             plugin_registry,
+            db_pool: None,
             shutdown_notify: Arc::new(Notify::new()),
             handle: None,
         }
+    }
+
+    /// Set the database pool for management API endpoints.
+    pub fn with_db_pool(mut self, pool: SqlitePool) -> Self {
+        self.db_pool = Some(pool);
+        self
     }
 
     /// Returns the actual bound listen address, if the server has been started
@@ -88,7 +103,7 @@ impl WebServer {
         let acceptor = TcpListener::new(bind_addr).rustls(rustls).bind().await;
         // Store the actual bound address
         self.listen_addr = Some(acceptor.inner().local_addr()?);
-        let app = Router::new()
+        let mut app = Router::new()
             .hoop(ForceHttps::new().https_port(self.listen_addr.unwrap().port()))
             .hoop(affix_state::inject(state))
             .push(Router::with_path("/").get(index_page))
@@ -99,9 +114,79 @@ impl WebServer {
                     .get(list_plugins)
                     .post(upsert_plugin),
             )
-            .push(Router::with_path("/api/plugins/<namespace>/<name>").delete(delete_plugin))
+            .push(Router::with_path("/api/plugins/{namespace}/{name}").delete(delete_plugin))
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
+
+        // Auth endpoints (unauthenticated)
+        app = app
+            .push(Router::with_path("/api/auth/register").post(auth_endpoints::register))
+            .push(Router::with_path("/api/auth/login").post(auth_endpoints::login));
+
+        // Inject auth config and db pool for auth/management endpoints
+        if let Some(ref pool) = self.db_pool {
+            app = app
+                .hoop(affix_state::inject(pool.clone()))
+                .hoop(affix_state::inject(self.config.auth.clone()));
+
+            // Management endpoints (JWT + ACL protected)
+            // Routes ordered most-specific first to avoid prefix-matching issues
+            let manage_router = Router::new()
+                .hoop(jwt_auth)
+                .hoop(acl_check)
+                // Group permissions (most specific first)
+                .push(
+                    Router::with_path("/api/manage/groups/{id}/permissions/{permission_id}")
+                        .delete(management::remove_group_permission)
+                )
+                .push(
+                    Router::with_path("/api/manage/groups/{id}/permissions")
+                        .post(management::add_group_permission)
+                )
+                // Group members
+                .push(
+                    Router::with_path("/api/manage/groups/{id}/members")
+                        .post(management::add_group_member)
+                        .delete(management::remove_group_member)
+                )
+                // Tenant plugin config
+                .push(
+                    Router::with_path("/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled")
+                        .put(management::set_tenant_plugin_enabled)
+                )
+                .push(
+                    Router::with_path("/api/manage/tenants/{id}/plugins/{ns}/{name}/config")
+                        .put(management::set_tenant_plugin_config)
+                )
+                // Tenant IP mappings
+                .push(
+                    Router::with_path("/api/manage/tenants/{id}/ip-mappings")
+                        .get(management::list_ip_mappings)
+                        .post(management::add_ip_mapping)
+                        .delete(management::remove_ip_mapping)
+                )
+                // Single resource routes
+                .push(
+                    Router::with_path("/api/manage/groups/{id}")
+                        .delete(management::delete_group)
+                )
+                .push(
+                    Router::with_path("/api/manage/tenants/{id}")
+                        .get(management::get_tenant)
+                        .put(management::update_tenant)
+                        .delete(management::delete_tenant)
+                )
+                // Collection routes (least specific)
+                .push(
+                    Router::with_path("/api/manage/groups")
+                        .get(management::list_groups)
+                        .post(management::create_group)
+                )
+                .push(Router::with_path("/api/manage/tenants").get(management::list_tenants));
+
+            app = app.push(manage_router);
+
+        }
 
         // TODO: get version from Cargo.toml
         let doc = OpenApi::new("witmproxy", "0.0.1").merge_router(&app);

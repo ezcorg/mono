@@ -1,26 +1,21 @@
-- [x] While selecting the file input toolbar, pressing Esc should close the dropdown.
-- [x] Include configuration for pre-filling the filesystem (and editor) with default tsconfig Typescript definitions for built-in types (String, Numper, Map<> etc.) and resolves any specified overrides on the filesystem, should not pre-fill if files already exist, runs lazily when a Typescript file is first opened -- include this in the `pnpm dev` editor with some tests.
-- [x] Ensure that the editor search index is updated when files are created dynamically at runtime
-- [x] Fix this error related to loading dynamic CSS language support:
-  - Added error handling (try-catch) around `getLanguageSupport()` in `handleOpen` and `setLanguageSupport` so failed dynamic imports don't crash file opening
-  - Added `optimizeDeps.include` in `vite.config.ts` for all `@codemirror/lang-*` packages to ensure Vite pre-bundles them
-- [x] Fix TypeScript LSP "Cannot find name 'Number'" error for built-in types:
-  - Root cause: generated tsconfig.json had no explicit `lib` field, causing TypeScript to look for `lib.es2020.full.d.ts` (the `.full` variant includes DOM) which we don't write to the VFS
-  - Fix: added explicit `lib: ["ES2020"]` to the generated tsconfig so TypeScript resolves `lib.es2020.d.ts` (which we do write) instead
-  - Added `getLibFieldForTarget()` helper in `typescript-defaults.ts`
-- [x] Update e2e tests to validate expected editor functionality and behavior
-  - Switched from Playwright (broken on Ubuntu 25.10) to Puppeteer (vitest + puppeteer-core)
-  - Tests in `src/e2e/editor.spec.ts` (14 tests, all passing):
-    - [x] Editor initialization
-    - [x] File operations (create, persist across file switches, search index updates)
-    - [x] Toolbar keyboard navigation and Escape handling
-    - [x] TypeScript syntax highlighting
-    - [x] TypeScript diagnostics for type errors
-    - [x] Diagnostic tooltips on hover
-    - [x] TypeScript semantic errors (undefined variables)
-    - [x] Built-in type recognition (no "Cannot find name" errors)
-    - [x] Autocomplete for built-in type methods
-    - [x] JavaScript syntax highlighting
-    - [x] JavaScript file stability
-  - Requires Vite dev server running (`pnpm dev`) and system Chrome (`/usr/bin/google-chrome`)
+- [ ] Autocompletion functionality could likely help autofill valid local variables into method calls
+- [ ] Autocompletion in Typescript seems to recommend syntactically valid items, but not semantically correct (recommended `case`, `continue`, `const`, `class` after typing `c` in a method call). Figure out if there's something we can do to improve this. In any given language, we should only make suggestions which are syntactically and semantically correct at a given position.
+- [ ] Provide a mechanism for importing a file/folder from the host within the code editor (should likely result in a corresponding picker dialog, and should be persisted to the filesystem) and include it in the search options
+- [ ] Prioritize opening existing files (if any returned) over creating/renaming them in the search toolbar autocomplete
+- [ ] Create a footer toolbar for the component (its height should be roughly equal to one code editor row), then inside (arranged start to end):
+  - [ ] Add a simple light/dark/system toggle
+  - [ ] Add a settings cog which allows changing code editor configuration
+    - [ ] Theme
+      - [ ] Font size
+      - [ ] Colors
+      - [ ] ...etc.
+    - [ ] Autosave (enabled by default)
+    - [ ] OpenAPI API-compatible agent URL (research what existing codemirror plugins exist for this)
+    - [ ] Terminal (WASM `ghostty` build connected to a lazily loaded `wanix` host? -- leave as a stub for now)
+    - [ ] Any others that seem relevant?
+- [ ] Change the color of cm-search-results to black from their current light grey.
+- [ ] Have an intermediate state/indicator for when file opening/saving/etc.
+- [ ] Develop a plan for integrating nerdfonts (Ubuntu Mono? see: https://www.nerdfonts.com/#features) into the code editor
+  - [ ] Replace existing file icons with the appropriate nerdfont icon.
+- [ ] Consider whether it should be possible to synchronize a Dropbox folder in the filesystem (bi-directionally)
 - [ ] 

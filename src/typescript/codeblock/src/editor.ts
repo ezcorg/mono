@@ -10,11 +10,10 @@ import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, Highlig
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { VfsInterface } from "./types";
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
-import { documentUri, languageId } from '@marimo-team/codemirror-languageserver';
 import { lintKeymap } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
 import { SearchIndex } from "./utils/search";
-import { LSP, LSPClientExtension } from "./utils/lsp";
+import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
 import { StyleModule } from "style-mod";
@@ -160,6 +159,7 @@ const codeblockView = ViewPlugin.define((view) => {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
             await fs.writeFile(fileState.path, view.state.doc.toString()).catch(console.error)
+            LSP.notifyFileChanged(fileState.path, FileChangeType.Changed);
         }
     }, 500);
 
@@ -183,6 +183,9 @@ const codeblockView = ViewPlugin.define((view) => {
         if (!path) return;
         if (opening === path) return;
         opening = path;
+        // Flush any pending save so the current file's content is on VFS
+        // before the LSP switches to the new file
+        save.flush();
         try {
             const ext = path.split('.').pop()?.toLowerCase();
             const lang = (ext ? (extOrLanguageToLanguageId)[ext] ?? null : language) || 'markdown';
@@ -207,11 +210,15 @@ const codeblockView = ViewPlugin.define((view) => {
             if (!exists) {
                 await fs.mkdir(dirname(path), { recursive: true }).catch(() => {});
                 await fs.writeFile(path, content);
+                LSP.notifyFileChanged(path, FileChangeType.Created);
             }
 
             // Add new files to the search index so they appear in future searches
             const { index } = view.state.facet(CodeblockFacet);
-            if (index) index.add(path);
+            if (index) {
+                index.add(path);
+                if (index.savePath) index.save(fs, index.savePath);
+            }
             const unit = detectIndentationUnit(content) || "    ";
 
             // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
@@ -224,18 +231,14 @@ const codeblockView = ViewPlugin.define((view) => {
                 libFiles = getCachedLibFiles();
             }
 
-            let lsp: LSPClientExtension | null = lang ? await LSP.client({ view, language: lang as any, path, fs, libFiles }) : null;
+            let lsp: Extension | null = lang ? await LSP.client({ language: lang as any, path, fs, libFiles }) : null;
 
             safeDispatch(view, {
                 changes: { from: 0, to: view.state.doc.length, insert: content },
                 effects: [
                     indentationCompartment.reconfigure(indentUnit.of(unit)),
                     fileLoadedEffect.of({ path, content, language: lang }),
-                    languageServerCompartment.reconfigure([
-                        documentUri.of(`file:///${path}`),
-                        languageId.of((lang as string) || ""),
-                        ...(lsp ? [lsp] : [])
-                    ]),
+                    languageServerCompartment.reconfigure(lsp ? [lsp] : []),
                 ]
             });
         } catch (e) {

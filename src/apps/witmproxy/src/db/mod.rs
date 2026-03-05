@@ -1,8 +1,14 @@
+pub mod tenants;
+
+#[cfg(test)]
+mod tenant_tests;
+
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction, sqlite::SqliteConnectOptions};
 use std::path::PathBuf;
 use std::str::FromStr;
 
+#[derive(Clone)]
 pub struct Db {
     pub pool: SqlitePool,
 }
