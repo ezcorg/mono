@@ -372,7 +372,7 @@ impl CertificateAuthority {
     async fn install_linux(&self, cert_path: &Path) -> Result<()> {
         info!("Installing root certificate on Linux");
 
-        // Try different approaches based on what's available on the system
+        // 1. System trust store
         if Path::new("/usr/local/share/ca-certificates").exists() {
             // Ubuntu/Debian approach
             info!("Installing certificate via ca-certificates...");
@@ -399,7 +399,7 @@ impl CertificateAuthority {
                 .output()?;
 
             if output.status.success() {
-                info!("✓ Certificate successfully installed via update-ca-certificates");
+                info!("✓ Certificate installed to system trust store (ca-certificates)");
             } else {
                 error!(
                     "Failed to update certificates: {}",
@@ -431,7 +431,7 @@ impl CertificateAuthority {
             let output = Command::new("sudo").args(["update-ca-trust"]).output()?;
 
             if output.status.success() {
-                info!("✓ Certificate successfully installed via update-ca-trust");
+                info!("✓ Certificate installed to system trust store (ca-trust)");
             } else {
                 error!(
                     "Failed to update certificates: {}",
@@ -444,7 +444,251 @@ impl CertificateAuthority {
             self.print_manual_instructions(cert_path).await?;
         }
 
+        // 2. Browser NSS databases (Chrome, Firefox, Zen, etc.)
+        // Use the world-readable system copy since the original cert_path may be
+        // behind a root-only directory (e.g., /var/lib/witmproxy/ with 0o700).
+        // certutil runs as the invoking user, not root.
+        let nss_cert_path = [
+            "/usr/local/share/ca-certificates/witmproxy-root-ca.crt",
+            "/etc/pki/ca-trust/source/anchors/witmproxy-root-ca.crt",
+        ]
+        .iter()
+        .map(Path::new)
+        .find(|p| p.exists())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| cert_path.to_path_buf());
+
+        self.install_nss_databases(&nss_cert_path);
+
         Ok(())
+    }
+
+    /// Install the CA certificate into browser NSS databases.
+    /// Chrome/Chromium on Linux uses ~/.pki/nssdb.
+    /// Firefox-based browsers (Firefox, Zen, LibreWolf, etc.) use per-profile cert9.db.
+    fn install_nss_databases(&self, cert_path: &Path) {
+        if !Self::has_certutil() {
+            info!("Note: 'certutil' (libnss3-tools) not found — skipping browser NSS databases.");
+            info!("  Install it for automatic browser trust:");
+            info!("    sudo apt install libnss3-tools   # Debian/Ubuntu");
+            info!("    sudo dnf install nss-tools       # Fedora/RHEL");
+            info!("    sudo pacman -S nss               # Arch");
+            info!("  Then re-run: witm ca install");
+            return;
+        }
+
+        let nss_dbs = Self::find_nss_databases();
+        if nss_dbs.is_empty() {
+            debug!("No browser NSS databases found");
+            return;
+        }
+
+        let cert_name = "witmproxy-ca";
+        for (browser, db_path) in &nss_dbs {
+            let db_arg = format!("sql:{}", db_path.display());
+
+            // Remove existing cert with same nickname (ignore errors — may not exist)
+            let _ = Self::run_certutil_as_user(&["-D", "-d", &db_arg, "-n", cert_name]);
+
+            // Add the new cert as a trusted CA
+            let cert_path_str = cert_path.to_string_lossy();
+            let result = Self::run_certutil_as_user(&[
+                "-A", "-d", &db_arg, "-t", "C,,", "-n", cert_name, "-i", &cert_path_str,
+            ]);
+
+            match result {
+                Ok(output) if output.status.success() => {
+                    info!("✓ Certificate installed for {}", browser);
+                }
+                Ok(output) => {
+                    warn!(
+                        "Failed to install certificate for {}: {}",
+                        browser,
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to run certutil for {}: {}", browser, e);
+                }
+            }
+        }
+    }
+
+    /// Remove the CA certificate from browser NSS databases.
+    fn remove_nss_databases(&self) {
+        if !Self::has_certutil() {
+            return;
+        }
+
+        let cert_name = "witmproxy-ca";
+        for (browser, db_path) in &Self::find_nss_databases() {
+            let db_arg = format!("sql:{}", db_path.display());
+            match Self::run_certutil_as_user(&["-D", "-d", &db_arg, "-n", cert_name]) {
+                Ok(output) if output.status.success() => {
+                    info!("✓ Certificate removed from {}", browser);
+                }
+                _ => {
+                    // Cert may not have been installed — not an error
+                }
+            }
+        }
+    }
+
+    /// Check NSS database trust status.
+    fn check_nss_databases(&self) {
+        if !Self::has_certutil() {
+            info!("NSS databases: certutil not available (install libnss3-tools)");
+            return;
+        }
+
+        let cert_name = "witmproxy-ca";
+        let nss_dbs = Self::find_nss_databases();
+        if nss_dbs.is_empty() {
+            info!("NSS databases: none found");
+            return;
+        }
+
+        for (browser, db_path) in &nss_dbs {
+            let db_arg = format!("sql:{}", db_path.display());
+            match Self::run_certutil_as_user(&["-L", "-d", &db_arg, "-n", cert_name]) {
+                Ok(output) if output.status.success() => {
+                    info!("NSS: ✓ Trusted by {}", browser);
+                }
+                _ => {
+                    info!("NSS: ✗ Not trusted by {}", browser);
+                }
+            }
+        }
+    }
+
+    /// Check if certutil (from libnss3-tools / nss-tools) is available.
+    fn has_certutil() -> bool {
+        Command::new("certutil")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    }
+
+    /// Run certutil as the invoking user (not root) to avoid ownership issues
+    /// with user-owned NSS databases.
+    fn run_certutil_as_user(args: &[&str]) -> io::Result<std::process::Output> {
+        if let Ok(user) = std::env::var("SUDO_USER") {
+            Command::new("sudo")
+                .args(["-u", &user, "certutil"])
+                .args(args)
+                .output()
+        } else {
+            Command::new("certutil").args(args).output()
+        }
+    }
+
+    /// Find NSS certificate databases for browsers owned by the invoking user.
+    /// Searches native installs, Flatpak (~/.var/app/), and Snap (~/snap/) data directories.
+    fn find_nss_databases() -> Vec<(String, PathBuf)> {
+        let Some(home) = Self::get_invoking_user_home() else {
+            return vec![];
+        };
+
+        let mut dbs = Vec::new();
+
+        // Chrome/Chromium shared NSS database (native)
+        let chrome_nss = home.join(".pki/nssdb");
+        if chrome_nss.join("cert9.db").exists() {
+            dbs.push(("Chrome/Chromium".to_string(), chrome_nss));
+        }
+
+        // Firefox-family browsers — each has per-profile NSS databases.
+        // profile_rel_dir is the path within the browser's data root where profiles live.
+        let browser_dirs: &[(&str, &str)] = &[
+            (".mozilla/firefox", "Firefox"),
+            (".zen", "Zen"),
+            (".librewolf", "LibreWolf"),
+            (".waterfox", "Waterfox"),
+            (".floorp", "Floorp"),
+        ];
+
+        // Native installs: ~/.<browser_dir>/<profile>/cert9.db
+        for (rel_dir, browser_name) in browser_dirs {
+            Self::collect_nss_profiles(&home.join(rel_dir), browser_name, &mut dbs);
+        }
+
+        // Flatpak installs: ~/.var/app/<app-id>/<profile_rel_dir>/<profile>/cert9.db
+        let flatpak_apps: &[(&str, &str, &str)] = &[
+            ("org.mozilla.firefox", ".mozilla/firefox", "Firefox (Flatpak)"),
+            ("app.zen_browser.zen", ".zen", "Zen (Flatpak)"),
+            ("io.gitlab.librewolf-community", ".librewolf", "LibreWolf (Flatpak)"),
+            ("net.waterfox.waterfox", ".waterfox", "Waterfox (Flatpak)"),
+            ("one.nickel.nickel-browser", ".nickel", "nickel-browser (Flatpak)"),
+        ];
+
+        let flatpak_base = home.join(".var/app");
+        for (app_id, profile_rel, browser_name) in flatpak_apps {
+            let profile_dir = flatpak_base.join(app_id).join(profile_rel);
+            Self::collect_nss_profiles(&profile_dir, browser_name, &mut dbs);
+        }
+
+        // Snap installs: ~/snap/<snap-name>/common/<profile_rel_dir>/<profile>/cert9.db
+        let snap_apps: &[(&str, &str, &str)] = &[
+            ("firefox", ".mozilla/firefox", "Firefox (Snap)"),
+        ];
+
+        let snap_base = home.join("snap");
+        for (snap_name, profile_rel, browser_name) in snap_apps {
+            let profile_dir = snap_base.join(snap_name).join("common").join(profile_rel);
+            Self::collect_nss_profiles(&profile_dir, browser_name, &mut dbs);
+        }
+
+        // Snap Chromium-based: ~/snap/<name>/<revision>/.pki/nssdb
+        let snap_chromium_apps: &[&str] = &["chromium", "brave"];
+        for snap_name in snap_chromium_apps {
+            let snap_dir = snap_base.join(snap_name);
+            let Ok(entries) = std::fs::read_dir(&snap_dir) else { continue; };
+            for entry in entries.flatten() {
+                let nssdb = entry.path().join(".pki/nssdb");
+                if nssdb.join("cert9.db").exists() {
+                    dbs.push((format!("{} (Snap)", snap_name), nssdb));
+                    break; // Only need one revision
+                }
+            }
+        }
+
+        dbs
+    }
+
+    /// Scan a directory for subdirectories containing cert9.db (Firefox-style profiles).
+    fn collect_nss_profiles(dir: &Path, browser_name: &str, dbs: &mut Vec<(String, PathBuf)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && path.join("cert9.db").exists() {
+                let profile = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                dbs.push((format!("{} ({})", browser_name, profile), path));
+            }
+        }
+    }
+
+    /// Get the home directory of the user who invoked sudo (not root).
+    fn get_invoking_user_home() -> Option<PathBuf> {
+        std::env::var("SUDO_USER")
+            .ok()
+            .and_then(|user| {
+                std::fs::read_to_string("/etc/passwd").ok().and_then(|passwd| {
+                    passwd
+                        .lines()
+                        .find(|line| line.starts_with(&format!("{}:", user)))
+                        .and_then(|line| line.split(':').nth(5))
+                        .map(PathBuf::from)
+                })
+            })
+            .or_else(|| dirs::home_dir())
     }
 
     async fn install_windows(&self, cert_path: &Path) -> Result<()> {
@@ -516,7 +760,7 @@ impl CertificateAuthority {
                     .args(["update-ca-certificates"])
                     .output()?;
                 removed = true;
-                info!("✓ Certificate removed via ca-certificates");
+                info!("✓ Certificate removed from system trust store (ca-certificates)");
             }
         }
 
@@ -530,13 +774,16 @@ impl CertificateAuthority {
             if output.status.success() {
                 let _ = Command::new("sudo").args(["update-ca-trust"]).output()?;
                 removed = true;
-                info!("✓ Certificate removed via ca-trust");
+                info!("✓ Certificate removed from system trust store (ca-trust)");
             }
         }
 
         if !removed {
             info!("⚠ Certificate not found in standard locations (may already be removed)");
         }
+
+        // Also remove from browser NSS databases
+        self.remove_nss_databases();
 
         Ok(())
     }
@@ -585,12 +832,14 @@ impl CertificateAuthority {
         let rhel_path = Path::new("/etc/pki/ca-trust/source/anchors/witmproxy-root-ca.crt");
 
         if ubuntu_path.exists() {
-            info!("Trust status: ✓ Installed via ca-certificates");
+            info!("System trust store: ✓ Installed (ca-certificates)");
         } else if rhel_path.exists() {
-            info!("Trust status: ✓ Installed via ca-trust");
+            info!("System trust store: ✓ Installed (ca-trust)");
         } else {
-            info!("Trust status: ✗ Not found in standard trust stores");
+            info!("System trust store: ✗ Not found");
         }
+
+        self.check_nss_databases();
 
         Ok(())
     }

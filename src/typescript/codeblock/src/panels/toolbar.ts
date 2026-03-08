@@ -3,9 +3,9 @@ import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
 import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect } from "../editor";
 import { extOrLanguageToLanguageId } from "../lsps";
-import { LSP, FileChangeType } from "../utils/lsp";
+import { LSP, LspLog, FileChangeType } from "../utils/lsp";
 import { Seti } from "@m234/nerd-fonts/fs";
-import { settingsField, updateSettingsEffect, resolveThemeDark, themeIcons, themeCycle } from "./footer";
+import { settingsField, resolveThemeDark, createSettingsOverlay } from "./footer";
 
 type NerdIcon = { value: string; hexCode: number; color?: string };
 
@@ -93,6 +93,7 @@ function isValidProgrammingLanguage(query: string): boolean {
 // Icons
 const SEARCH_ICON = '\uf002'; // nf-fa-search (magnifying glass)
 const DEFAULT_FILE_ICON = '\ue64e'; // nf-seti-text
+const COG_ICON = '\uf013'; // nf-fa-cog
 
 // Get nerd font icon for a file path
 function getFileIcon(path: string): { glyph: string; color: string } {
@@ -179,6 +180,37 @@ async function importFiles(files: FileList, view: EditorView) {
     }
 }
 
+// Create an LSP log overlay element
+function createLspLogOverlay(): HTMLElement {
+    const overlay = document.createElement("div");
+    overlay.className = "cm-settings-overlay";
+
+    // Log content
+    const content = document.createElement("div");
+    content.className = "cm-lsp-log-content";
+    overlay.appendChild(content);
+
+    function render() {
+        const entries = LspLog.entries();
+        const fragment = document.createDocumentFragment();
+        for (const entry of entries) {
+            const div = document.createElement("div");
+            div.className = `cm-lsp-log-entry cm-lsp-log-${entry.level}`;
+            const time = new Date(entry.timestamp).toLocaleTimeString();
+            div.textContent = `[${time}] [${entry.level}] ${entry.message}`;
+            fragment.appendChild(div);
+        }
+        content.replaceChildren(fragment);
+        content.scrollTop = content.scrollHeight;
+    }
+
+    render();
+    const unsub = LspLog.subscribe(render);
+    (overlay as any)._lspLogUnsub = unsub;
+
+    return overlay;
+}
+
 const MIN_LOADING_MS = 400;
 
 // Toolbar Panel
@@ -210,23 +242,113 @@ export const toolbarPanel = (view: EditorView): Panel => {
     input.className = "cm-toolbar-input";
     inputContainer.appendChild(input);
 
-    // Theme toggle button (far right of toolbar)
-    const themeToggle = document.createElement("button");
-    themeToggle.className = "cm-toolbar-theme-toggle";
-    const initialSettings = view.state.field(settingsField);
-    themeToggle.textContent = themeIcons[initialSettings.theme];
+    // LSP log button (shows file-type icon of current file, hidden when lspLogEnabled is false)
+    const lspLogBtn = document.createElement("button");
+    lspLogBtn.className = "cm-toolbar-lsp-log";
+    lspLogBtn.style.fontFamily = 'var(--cm-icon-font-family)';
+    function updateLspLogIcon() {
+        const filePath = view.state.field(currentFileField).path;
+        if (filePath) {
+            const icon = getFileIcon(filePath);
+            lspLogBtn.textContent = icon.glyph;
+            lspLogBtn.style.color = icon.color || '';
+        } else {
+            lspLogBtn.textContent = DEFAULT_FILE_ICON;
+            lspLogBtn.style.color = '';
+        }
+    }
+    function updateLspLogVisibility() {
+        const enabled = view.state.field(settingsField).lspLogEnabled;
+        lspLogBtn.style.display = enabled ? '' : 'none';
+    }
+    updateLspLogIcon();
+    updateLspLogVisibility();
 
-    themeToggle.addEventListener("click", () => {
-        const current = view.state.field(settingsField);
-        const next = themeCycle[current.theme];
-        view.dispatch({
-            effects: [
-                updateSettingsEffect.of({ theme: next }),
-                setThemeEffect.of({ dark: resolveThemeDark(next) }),
-            ]
-        });
+    // Settings cog button (far right of toolbar)
+    const settingsCog = document.createElement("button");
+    settingsCog.className = "cm-toolbar-settings-cog";
+    settingsCog.style.fontFamily = 'var(--cm-icon-font-family)';
+    settingsCog.textContent = COG_ICON;
+
+    // Overlay management
+    let activeOverlay: HTMLElement | null = null;
+    let activeOverlayType: 'settings' | 'lsp-log' | null = null;
+    let savedInputValue: string | null = null;
+
+    const overlayLabels: Record<string, string> = {
+        'settings': 'settings',
+        'lsp-log': 'lsp.log',
+    };
+
+    function updateCogAppearance() {
+        if (activeOverlayType) {
+            settingsCog.textContent = '\u2715'; // ✕
+            settingsCog.style.fontFamily = '';
+            settingsCog.classList.add('cm-cog-active');
+        } else {
+            settingsCog.textContent = COG_ICON;
+            settingsCog.style.fontFamily = 'var(--cm-icon-font-family)';
+            settingsCog.classList.remove('cm-cog-active');
+        }
+    }
+
+    function showOverlay(overlay: HTMLElement) {
+        const panelsTop = view.dom.querySelector('.cm-panels-top');
+        if (panelsTop) {
+            overlay.style.top = `${panelsTop.getBoundingClientRect().height}px`;
+        }
+        view.dom.appendChild(overlay);
+    }
+
+    function openOverlay(type: 'settings' | 'lsp-log', overlay: HTMLElement) {
+        // Save current input and show overlay label
+        savedInputValue = input.value;
+        input.value = overlayLabels[type];
+
+        activeOverlay = overlay;
+        activeOverlayType = type;
+        showOverlay(overlay);
+        updateCogAppearance();
+    }
+
+    function closeOverlay() {
+        if (activeOverlay) {
+            // Clean up LSP log subscription if applicable
+            if ((activeOverlay as any)._lspLogUnsub) {
+                (activeOverlay as any)._lspLogUnsub();
+            }
+            activeOverlay.remove();
+            activeOverlay = null;
+            activeOverlayType = null;
+
+            // Restore input text
+            if (savedInputValue !== null) {
+                input.value = savedInputValue;
+                savedInputValue = null;
+            }
+            updateCogAppearance();
+        }
+    }
+
+    settingsCog.addEventListener("click", () => {
+        if (activeOverlayType) {
+            closeOverlay();
+        } else {
+            openOverlay('settings', createSettingsOverlay(view));
+        }
     });
-    dom.appendChild(themeToggle);
+
+    lspLogBtn.addEventListener("click", () => {
+        if (activeOverlayType === 'lsp-log') {
+            closeOverlay();
+        } else {
+            closeOverlay();
+            openOverlay('lsp-log', createLspLogOverlay());
+        }
+    });
+
+    dom.appendChild(lspLogBtn);
+    dom.appendChild(settingsCog);
 
     const resultsList = document.createElement("ul");
     resultsList.className = "cm-search-results";
@@ -236,12 +358,40 @@ export const toolbarPanel = (view: EditorView): Panel => {
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
     let loadingStartTime: number | null = null;
 
-    // Tracks gutter width for toolbar/footer alignment
+    // System theme media query listener
+    const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    function handleSystemThemeChange() {
+        const settings = view.state.field(settingsField);
+        if (settings.theme === 'system') {
+            safeDispatch(view, {
+                effects: setThemeEffect.of({ dark: systemThemeQuery.matches })
+            });
+        }
+    }
+    systemThemeQuery.addEventListener('change', handleSystemThemeChange);
+
+    // Apply initial settings (font size, font family, theme)
+    function applySettings() {
+        const settings = view.state.field(settingsField);
+        view.dom.style.setProperty('--cm-font-size', `${settings.fontSize}px`);
+        if (settings.fontFamily) {
+            view.dom.style.setProperty('--cm-font-family', settings.fontFamily);
+        } else {
+            view.dom.style.removeProperty('--cm-font-family');
+        }
+    }
+    applySettings();
+
+    // Apply initial theme
+    const initialSettings = view.state.field(settingsField);
+    const initialDark = resolveThemeDark(initialSettings.theme);
+    view.dom.setAttribute('data-theme', initialDark ? 'dark' : 'light');
+
+    // Tracks gutter width for toolbar alignment
     function updateGutterWidthVariables() {
         const gutters = view.dom.querySelector('.cm-gutters');
         if (gutters) {
             const gutterWidth = gutters.getBoundingClientRect().width;
-            // Set on view.dom so both toolbar and footer panels inherit the variables
             view.dom.style.setProperty('--cm-gutter-width', `${gutterWidth}px`);
 
             const numberGutter = gutters.querySelector('.cm-lineNumbers');
@@ -568,11 +718,18 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 }
             }
 
-            // Update theme toggle when settings change
+            // Apply settings when they change
             const prevSettings = update.startState.field(settingsField);
             const nextSettings = update.state.field(settingsField);
-            if (prevSettings.theme !== nextSettings.theme) {
-                themeToggle.textContent = themeIcons[nextSettings.theme];
+            if (prevSettings.fontSize !== nextSettings.fontSize || prevSettings.fontFamily !== nextSettings.fontFamily) {
+                applySettings();
+            }
+            if (prevSettings.lspLogEnabled !== nextSettings.lspLogEnabled) {
+                updateLspLogVisibility();
+                // Close the log overlay if the user disables it
+                if (!nextSettings.lspLogEnabled && activeOverlayType === 'lsp-log') {
+                    closeOverlay();
+                }
             }
 
             // Update loading indicator with minimum animation duration
@@ -581,7 +738,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
             if (prevFile.loading !== nextFile.loading) {
                 if (nextFile.loading) {
                     loadingStartTime = Date.now();
-                    stateIcon.textContent = '\ueb19'; // nf-cod-loading
+                    stateIcon.textContent = ''; // clear glyph; CSS border spinner handles the visual
                     stateIcon.classList.add('cm-loading');
                 } else {
                     const elapsed = loadingStartTime ? Date.now() - loadingStartTime : Infinity;
@@ -596,14 +753,23 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 }
             }
 
-            // Sync input value when file path changes externally (and input is not focused)
-            if (prevFile.path !== nextFile.path && document.activeElement !== input) {
+            // Update LSP log icon when file changes
+            if (prevFile.path !== nextFile.path) {
+                updateLspLogIcon();
+            }
+
+            // Sync input value when file path changes (unless overlay is open or user is naming)
+            if (prevFile.path !== nextFile.path && !namingMode.active && !activeOverlayType) {
                 input.value = nextFile.path || '';
             }
         },
         destroy() {
             // Clean up event listeners when panel is destroyed
             document.removeEventListener("click", handleClickOutside);
+            systemThemeQuery.removeEventListener('change', handleSystemThemeChange);
+
+            // Clean up overlay
+            closeOverlay();
 
             // Clean up ResizeObserver
             if (gutterObserver) {

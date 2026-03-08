@@ -1,7 +1,7 @@
 use crate::{
     AppConfig, Db, Runtime,
     cli::{
-        Cli, Commands, ResolvedCli, daemon::DaemonCommands, load_plugins_from_directory,
+        Cli, Commands, ResolvedCli, daemon::ServiceCommands, load_plugins_from_directory,
         plugin::PluginCommands,
     },
     config::confique_app_config_layer::AppConfigLayer,
@@ -510,94 +510,94 @@ fn test_cli_parse_config_path() {
 }
 
 #[test]
-fn test_cli_parse_daemon_install() {
+fn test_cli_parse_service_install() {
     // Test daemon install subcommand
-    let cli = Cli::try_parse_from(["witm", "daemon", "install"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "install"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Install { yes: false }
+        Some(Commands::Service {
+            command: ServiceCommands::Install { yes: false }
         })
     ));
 
     // With --yes flag
-    let cli = Cli::try_parse_from(["witm", "daemon", "install", "-y"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "install", "-y"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Install { yes: true }
+        Some(Commands::Service {
+            command: ServiceCommands::Install { yes: true }
         })
     ));
 }
 
 #[test]
-fn test_cli_parse_daemon_uninstall() {
+fn test_cli_parse_service_uninstall() {
     // Test daemon uninstall subcommand
-    let cli = Cli::try_parse_from(["witm", "daemon", "uninstall"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "uninstall"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Uninstall { yes: false }
+        Some(Commands::Service {
+            command: ServiceCommands::Uninstall { yes: false }
         })
     ));
 }
 
 #[test]
-fn test_cli_parse_daemon_start() {
+fn test_cli_parse_service_start() {
     // Test daemon start subcommand
-    let cli = Cli::try_parse_from(["witm", "daemon", "start"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "start"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Start
+        Some(Commands::Service {
+            command: ServiceCommands::Start
         })
     ));
 }
 
 #[test]
-fn test_cli_parse_daemon_stop() {
+fn test_cli_parse_service_stop() {
     // Test daemon stop subcommand
-    let cli = Cli::try_parse_from(["witm", "daemon", "stop"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "stop"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Stop
+        Some(Commands::Service {
+            command: ServiceCommands::Stop
         })
     ));
 }
 
 #[test]
-fn test_cli_parse_daemon_restart() {
+fn test_cli_parse_service_restart() {
     // Test daemon restart subcommand
-    let cli = Cli::try_parse_from(["witm", "daemon", "restart"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "restart"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Restart
+        Some(Commands::Service {
+            command: ServiceCommands::Restart
         })
     ));
 }
 
 #[test]
-fn test_cli_parse_daemon_status() {
+fn test_cli_parse_service_status() {
     // Test daemon status subcommand
-    let cli = Cli::try_parse_from(["witm", "daemon", "status"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "status"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Status
+        Some(Commands::Service {
+            command: ServiceCommands::Status
         })
     ));
 }
 
 #[test]
-fn test_cli_parse_daemon_logs() {
+fn test_cli_parse_service_logs() {
     // Test daemon logs subcommand
-    let cli = Cli::try_parse_from(["witm", "daemon", "logs"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "logs"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Logs {
+        Some(Commands::Service {
+            command: ServiceCommands::Logs {
                 follow: false,
                 lines: 50
             }
@@ -605,11 +605,11 @@ fn test_cli_parse_daemon_logs() {
     ));
 
     // With --follow flag
-    let cli = Cli::try_parse_from(["witm", "daemon", "logs", "-f"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "logs", "-f"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Logs {
+        Some(Commands::Service {
+            command: ServiceCommands::Logs {
                 follow: true,
                 lines: 50
             }
@@ -617,11 +617,11 @@ fn test_cli_parse_daemon_logs() {
     ));
 
     // With --lines option
-    let cli = Cli::try_parse_from(["witm", "daemon", "logs", "-l", "100"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "logs", "-l", "100"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Logs {
+        Some(Commands::Service {
+            command: ServiceCommands::Logs {
                 follow: false,
                 lines: 100
             }
@@ -629,11 +629,11 @@ fn test_cli_parse_daemon_logs() {
     ));
 
     // With both
-    let cli = Cli::try_parse_from(["witm", "daemon", "logs", "-f", "-l", "25"]).unwrap();
+    let cli = Cli::try_parse_from(["witm", "service", "logs", "-f", "-l", "25"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(Commands::Daemon {
-            command: DaemonCommands::Logs {
+        Some(Commands::Service {
+            command: ServiceCommands::Logs {
                 follow: true,
                 lines: 25
             }
@@ -665,30 +665,30 @@ fn test_cli_parse_serve_command() {
 // ============================================
 
 #[tokio::test]
-async fn test_daemon_handler_log_path() {
+async fn test_service_handler_log_path() {
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path();
     let cli = create_test_cli(temp_path).await;
 
-    let daemon_handler = crate::cli::daemon::DaemonHandler::new(cli.config.clone(), false, None, false);
-    let log_path = daemon_handler.get_log_path();
+    let service_handler = crate::cli::daemon::ServiceHandler::new(cli.config.clone(), false, None, false);
+    let log_path = service_handler.get_log_path();
 
     // Log path should be in the app directory
     assert!(log_path.to_str().unwrap().contains("witmproxy.log"));
 }
 
 #[tokio::test]
-async fn test_daemon_handler_is_service_installed_when_not_installed() {
+async fn test_service_handler_is_service_installed_when_not_installed() {
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path();
     let cli = create_test_cli(temp_path).await;
 
-    let daemon_handler = crate::cli::daemon::DaemonHandler::new(cli.config.clone(), false, None, false);
+    let service_handler = crate::cli::daemon::ServiceHandler::new(cli.config.clone(), false, None, false);
 
     // Service should not be installed in a fresh temp directory
     // Note: This test may vary depending on actual system state
     // For a clean test env, service should not be installed
-    let is_installed = daemon_handler.is_service_installed();
+    let is_installed = service_handler.is_service_installed();
     // We can't assert false because test might run on system with service installed
     // Just verify the function runs without error
     let _ = is_installed;

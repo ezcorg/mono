@@ -1,8 +1,6 @@
-import { EditorView, Panel } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { setThemeEffect, currentFileField, lineWrappingCompartment } from "../editor";
-import { LspLog } from "../utils/lsp";
-import { Seti } from "@m234/nerd-fonts/fs";
+import { setThemeEffect, lineWrappingCompartment } from "../editor";
 
 export interface EditorSettings {
     theme: 'light' | 'dark' | 'system';
@@ -49,55 +47,18 @@ export function resolveThemeDark(theme: EditorSettings['theme']): boolean {
     return theme === 'dark';
 }
 
-export const themeIcons: Record<EditorSettings['theme'], string> = {
+const themeIcons: Record<EditorSettings['theme'], string> = {
     light: '☀️',
     dark: '🌙',
     system: '🌓',
 };
 
-export const themeCycle: Record<EditorSettings['theme'], EditorSettings['theme']> = {
-    light: 'dark',
-    dark: 'system',
-    system: 'light',
-};
-
-const FALLBACK_ICON = '\ue64e'; // nf-seti-text
-
-function getFileIconForPath(filePath: string): { glyph: string; color: string } {
-    const base = filePath.split('/').pop() || filePath;
-    const byBase = Seti.byBaseSeti.get(base);
-    if (byBase) return { glyph: byBase.value, color: byBase.color || '' };
-    let dot = base.indexOf('.');
-    if (dot >= 0) {
-        let ext = base.slice(dot);
-        for (;;) {
-            const byExt = Seti.byExtensionSeti.get(ext);
-            if (byExt) return { glyph: byExt.value, color: byExt.color || '' };
-            dot = ext.indexOf('.', 1);
-            if (dot === -1) break;
-            ext = ext.slice(dot);
-        }
-    }
-    return { glyph: FALLBACK_ICON, color: '' };
-}
-
-// Settings overlay component
-function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLElement {
+// Settings overlay component (no header — toolbar shows "settings.json" and cog becomes ✕)
+export function createSettingsOverlay(view: EditorView): HTMLElement {
     const settings = view.state.field(settingsField);
 
     const overlay = document.createElement("div");
     overlay.className = "cm-settings-overlay";
-
-    // Header
-    const header = document.createElement("div");
-    header.className = "cm-settings-header";
-    header.textContent = "Settings";
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "cm-settings-close";
-    closeBtn.textContent = "✕";
-    closeBtn.addEventListener("click", onClose);
-    header.appendChild(closeBtn);
-    overlay.appendChild(header);
 
     // Theme section
     const themeSection = document.createElement("div");
@@ -115,22 +76,39 @@ function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLEleme
     fontSizeLabel.textContent = "Font size";
     const fontSizeControl = document.createElement("div");
     fontSizeControl.className = "cm-settings-control";
-    const fontSizeValue = document.createElement("span");
-    fontSizeValue.className = "cm-settings-value";
-    fontSizeValue.textContent = `${settings.fontSize}px`;
     const fontSizeRange = document.createElement("input");
     fontSizeRange.type = "range";
-    fontSizeRange.min = "10";
-    fontSizeRange.max = "24";
+    fontSizeRange.className = "cm-settings-font-size-range";
+    fontSizeRange.min = "8";
+    fontSizeRange.max = "48";
     fontSizeRange.step = "1";
     fontSizeRange.value = String(settings.fontSize);
-    fontSizeRange.addEventListener("input", () => {
+    const fontSizeInput = document.createElement("input");
+    fontSizeInput.type = "number";
+    fontSizeInput.className = "cm-settings-font-size-input";
+    fontSizeInput.min = "1";
+    fontSizeInput.max = "128";
+    fontSizeInput.value = String(settings.fontSize);
+    const fontSizePx = document.createElement("span");
+    fontSizePx.textContent = "px";
+    // Use 'change' on the range (fires on mouseup) to avoid feedback loop:
+    // dragging changes font size → overlay relayouts → slider thumb shifts
+    // relative to pointer → triggers another input event → runaway resizing.
+    fontSizeRange.addEventListener("change", () => {
         const size = Number(fontSizeRange.value);
-        fontSizeValue.textContent = `${size}px`;
+        fontSizeInput.value = String(size);
+        view.dispatch({ effects: updateSettingsEffect.of({ fontSize: size }) });
+    });
+    fontSizeInput.addEventListener("input", () => {
+        let size = Number(fontSizeInput.value);
+        if (isNaN(size) || size < 1) return;
+        size = Math.min(128, size);
+        fontSizeRange.value = String(size);
         view.dispatch({ effects: updateSettingsEffect.of({ fontSize: size }) });
     });
     fontSizeControl.appendChild(fontSizeRange);
-    fontSizeControl.appendChild(fontSizeValue);
+    fontSizeControl.appendChild(fontSizeInput);
+    fontSizeControl.appendChild(fontSizePx);
     fontSizeRow.appendChild(fontSizeLabel);
     fontSizeRow.appendChild(fontSizeControl);
     themeSection.appendChild(fontSizeRow);
@@ -160,7 +138,7 @@ function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLEleme
     fontFamilyRow.appendChild(fontFamilySelect);
     themeSection.appendChild(fontFamilyRow);
 
-    // Color theme radio
+    // Color theme radio — with emoji icons
     const colorThemeRow = document.createElement("div");
     colorThemeRow.className = "cm-settings-row";
     const colorThemeLabel = document.createElement("label");
@@ -186,7 +164,8 @@ function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLEleme
         });
         const radioLabel = document.createElement("label");
         radioLabel.htmlFor = `cm-theme-${t}`;
-        radioLabel.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+        radioLabel.textContent = themeIcons[t];
+        radioLabel.title = t.charAt(0).toUpperCase() + t.slice(1);
         radioGroup.appendChild(radio);
         radioGroup.appendChild(radioLabel);
     }
@@ -310,213 +289,3 @@ function createSettingsOverlay(view: EditorView, onClose: () => void): HTMLEleme
 
     return overlay;
 }
-
-// Footer Panel
-export const footerPanel = (view: EditorView): Panel => {
-    const dom = document.createElement("div");
-    dom.className = "cm-footer-panel";
-
-    const right = document.createElement("div");
-    right.className = "cm-footer-right";
-
-    const settings = view.state.field(settingsField);
-
-    // System theme media query listener (no UI, just reacts to OS changes)
-    let mediaQuery: MediaQueryList | null = null;
-    let mediaHandler: ((e: MediaQueryListEvent) => void) | null = null;
-
-    function setupSystemThemeListener() {
-        const currentSettings = view.state.field(settingsField);
-        if (mediaQuery && mediaHandler) {
-            mediaQuery.removeEventListener('change', mediaHandler);
-            mediaHandler = null;
-        }
-        if (currentSettings.theme === 'system') {
-            mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-            mediaHandler = (e: MediaQueryListEvent) => {
-                view.dispatch({
-                    effects: setThemeEffect.of({ dark: e.matches })
-                });
-            };
-            mediaQuery.addEventListener('change', mediaHandler);
-        }
-    }
-
-    setupSystemThemeListener();
-
-    // Settings cog button
-    const settingsCog = document.createElement("button");
-    settingsCog.className = "cm-footer-settings-cog";
-    settingsCog.textContent = "\u2699\uFE0F"; // ⚙️
-
-    let overlayEl: HTMLElement | null = null;
-    let activeOverlay: 'settings' | 'log' | null = null;
-
-    function closeOverlay() {
-        if (logUnsubscribe) {
-            logUnsubscribe();
-            logUnsubscribe = null;
-        }
-        if (overlayEl) {
-            overlayEl.remove();
-            overlayEl = null;
-            activeOverlay = null;
-        }
-    }
-
-    settingsCog.addEventListener("click", () => {
-        if (activeOverlay === 'settings') {
-            closeOverlay();
-        } else {
-            closeOverlay();
-            overlayEl = createSettingsOverlay(view, closeOverlay);
-            activeOverlay = 'settings';
-            view.dom.appendChild(overlayEl);
-        }
-    });
-
-    // LSP log button — icon matches current file's mimetype
-    const lspLogBtn = document.createElement("button");
-    lspLogBtn.className = "cm-footer-lsp-log";
-    lspLogBtn.title = "LSP Server Log";
-    lspLogBtn.style.fontFamily = 'var(--cm-icon-font-family)';
-    lspLogBtn.style.display = settings.lspLogEnabled ? '' : 'none';
-
-    // Set initial LSP icon based on current file
-    const currentFile = view.state.field(currentFileField);
-    if (currentFile.path) {
-        const icon = getFileIconForPath(currentFile.path);
-        lspLogBtn.textContent = icon.glyph;
-        if (icon.color) lspLogBtn.style.color = icon.color;
-    } else {
-        lspLogBtn.textContent = FALLBACK_ICON;
-    }
-
-    let logUnsubscribe: (() => void) | null = null;
-
-    function openLogOverlay() {
-        closeOverlay();
-        activeOverlay = 'log';
-
-        const el = document.createElement("div");
-        el.className = "cm-settings-overlay";
-
-        const header = document.createElement("div");
-        header.className = "cm-settings-header";
-        header.textContent = "LSP Server Log";
-        const headerRight = document.createElement("div");
-        headerRight.style.display = "flex";
-        headerRight.style.gap = "8px";
-        const clearBtn = document.createElement("button");
-        clearBtn.className = "cm-settings-close";
-        clearBtn.textContent = "Clear";
-        clearBtn.addEventListener("click", () => LspLog.clear());
-        const closeBtn = document.createElement("button");
-        closeBtn.className = "cm-settings-close";
-        closeBtn.textContent = "\u2715";
-        closeBtn.addEventListener("click", closeOverlay);
-        headerRight.appendChild(clearBtn);
-        headerRight.appendChild(closeBtn);
-        header.appendChild(headerRight);
-        el.appendChild(header);
-
-        const logContent = document.createElement("div");
-        logContent.className = "cm-lsp-log-content";
-
-        function renderLog() {
-            const entries = LspLog.entries();
-            logContent.textContent = '';
-            if (entries.length === 0) {
-                logContent.textContent = 'No log entries.';
-                return;
-            }
-            for (const entry of entries) {
-                const line = document.createElement("div");
-                line.className = `cm-lsp-log-entry cm-lsp-log-${entry.level}`;
-                const ts = new Date(entry.timestamp);
-                const time = `${ts.getHours().toString().padStart(2, '0')}:${ts.getMinutes().toString().padStart(2, '0')}:${ts.getSeconds().toString().padStart(2, '0')}`;
-                line.textContent = `[${time}] [${entry.level}] ${entry.message}`;
-                logContent.appendChild(line);
-            }
-            logContent.scrollTop = logContent.scrollHeight;
-        }
-
-        renderLog();
-        logUnsubscribe = LspLog.subscribe(renderLog);
-
-        el.appendChild(logContent);
-        overlayEl = el;
-        view.dom.appendChild(el);
-    }
-
-    lspLogBtn.addEventListener("click", () => {
-        if (activeOverlay === 'log') {
-            closeOverlay();
-        } else {
-            openLogOverlay();
-        }
-    });
-
-    right.appendChild(lspLogBtn);
-    right.appendChild(settingsCog);
-
-    dom.appendChild(right);
-
-    return {
-        dom,
-        top: false,
-        update(update) {
-            const prev = update.startState.field(settingsField);
-            const next = update.state.field(settingsField);
-            if (prev !== next) {
-                // Update system theme listener
-                if (prev.theme !== next.theme) {
-                    setupSystemThemeListener();
-                }
-
-                // Apply font size
-                if (prev.fontSize !== next.fontSize) {
-                    view.dom.style.setProperty('--cm-font-size', `${next.fontSize}px`);
-                }
-
-                // Apply font family
-                if (prev.fontFamily !== next.fontFamily) {
-                    if (next.fontFamily) {
-                        view.dom.style.setProperty('--cm-font-family', next.fontFamily);
-                    } else {
-                        view.dom.style.removeProperty('--cm-font-family');
-                    }
-                }
-
-                // Show/hide LSP log button
-                if (prev.lspLogEnabled !== next.lspLogEnabled) {
-                    lspLogBtn.style.display = next.lspLogEnabled ? '' : 'none';
-                    if (!next.lspLogEnabled && activeOverlay === 'log') {
-                        closeOverlay();
-                    }
-                }
-            }
-
-            // Update LSP log icon when current file changes
-            const prevFile = update.startState.field(currentFileField);
-            const nextFile = update.state.field(currentFileField);
-            if (prevFile.path !== nextFile.path) {
-                if (nextFile.path) {
-                    const icon = getFileIconForPath(nextFile.path);
-                    lspLogBtn.textContent = icon.glyph;
-                    lspLogBtn.style.color = icon.color || '';
-                } else {
-                    lspLogBtn.textContent = FALLBACK_ICON;
-                    lspLogBtn.style.color = '';
-                }
-            }
-        },
-        destroy() {
-            if (logUnsubscribe) logUnsubscribe();
-            closeOverlay();
-            if (mediaQuery && mediaHandler) {
-                mediaQuery.removeEventListener('change', mediaHandler);
-            }
-        }
-    };
-};

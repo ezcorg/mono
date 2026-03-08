@@ -10,6 +10,8 @@ use tracing::{debug, info, warn};
 
 #[derive(Subcommand)]
 pub enum PluginCommands {
+    /// List all installed plugins
+    List,
     /// Create a new plugin from a template
     New {
         /// Name of the plugin
@@ -54,6 +56,7 @@ impl PluginHandler {
 
     pub async fn handle(&self, command: &PluginCommands) -> Result<()> {
         match command {
+            PluginCommands::List => self.list_plugins().await,
             PluginCommands::New {
                 plugin_name,
                 language,
@@ -173,6 +176,73 @@ impl PluginHandler {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    async fn list_plugins(&self) -> Result<()> {
+        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        db.migrate().await?;
+
+        let rows = sqlx::query(
+            "SELECT namespace, name, version, author, description, license, url, enabled FROM plugins ORDER BY namespace, name",
+        )
+        .fetch_all(&db.pool)
+        .await?;
+
+        if rows.is_empty() {
+            println!("No plugins installed.");
+            return Ok(());
+        }
+
+        println!("Installed plugins:\n");
+        for row in &rows {
+            let namespace: String = sqlx::Row::try_get(row, "namespace")?;
+            let name: String = sqlx::Row::try_get(row, "name")?;
+            let version: String = sqlx::Row::try_get(row, "version")?;
+            let author: String = sqlx::Row::try_get(row, "author")?;
+            let description: String = sqlx::Row::try_get(row, "description")?;
+            let license: String = sqlx::Row::try_get(row, "license")?;
+            let url: String = sqlx::Row::try_get(row, "url")?;
+            let enabled: bool = sqlx::Row::try_get(row, "enabled")?;
+
+            println!("  {}/{} v{}", namespace, name, version);
+            if !description.is_empty() {
+                println!("    {}", description);
+            }
+            if !author.is_empty() {
+                println!("    Author:  {}", author);
+            }
+            if !license.is_empty() {
+                println!("    License: {}", license);
+            }
+            if !url.is_empty() {
+                println!("    URL:     {}", url);
+            }
+            println!("    Enabled: {}", if enabled { "yes" } else { "no" });
+
+            // Show capabilities
+            let cap_rows = sqlx::query(
+                "SELECT capability, granted FROM plugin_capabilities WHERE namespace = ? AND name = ?",
+            )
+            .bind(&namespace)
+            .bind(&name)
+            .fetch_all(&db.pool)
+            .await?;
+            if !cap_rows.is_empty() {
+                let caps: Vec<String> = cap_rows
+                    .iter()
+                    .map(|r| {
+                        let cap: String = sqlx::Row::try_get(r, "capability").unwrap_or_default();
+                        let granted: bool = sqlx::Row::try_get(r, "granted").unwrap_or(false);
+                        if granted { cap } else { format!("{} (denied)", cap) }
+                    })
+                    .collect();
+                println!("    Capabilities: {}", caps.join(", "));
+            }
+            println!();
+        }
+
+        println!("{} plugin(s) installed.", rows.len());
+        Ok(())
     }
 
     // TODO: LLM garbage here

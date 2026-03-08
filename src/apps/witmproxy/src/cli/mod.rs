@@ -3,15 +3,16 @@ use crate::{
     config::{confique_app_config_layer::AppConfigLayer, expand_home_in_path},
     db::Db,
     plugins::registry::PluginRegistry,
+    proxy::tenant_resolver,
     wasm::Runtime,
 };
 use auth::AuthCommands;
-use daemon::DaemonCommands;
+use daemon::ServiceCommands;
 use group_cmd::GroupCommands;
 use plugin::PluginCommands;
 use proxy::ProxyCommands;
 use tenant_cmd::TenantCommands;
-use trust::TrustCommands;
+use trust::CaCommands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -83,20 +84,20 @@ enum Commands {
         #[command(subcommand)]
         command: PluginCommands,
     },
-    /// Certificate trust management commands
-    Trust {
+    /// Certificate authority management commands
+    Ca {
         #[command(subcommand)]
-        command: TrustCommands,
+        command: CaCommands,
     },
     /// System proxy management commands
     Proxy {
         #[command(subcommand)]
         command: ProxyCommands,
     },
-    /// Daemon/service management commands
-    Daemon {
+    /// Service management commands
+    Service {
         #[command(subcommand)]
-        command: DaemonCommands,
+        command: ServiceCommands,
     },
     /// Authentication commands (for remote management)
     Auth {
@@ -196,22 +197,22 @@ impl ResolvedCli {
                 let plugin_handler = plugin::PluginHandler::new(self.config.clone(), self.verbose);
                 plugin_handler.handle(command).await
             }
-            Commands::Trust { command } => {
-                let trust_handler = trust::TrustHandler::new(self.config.clone());
-                trust_handler.handle(command).await
+            Commands::Ca { command } => {
+                let ca_handler = trust::CaHandler::new(self.config.clone());
+                ca_handler.handle(command).await
             }
             Commands::Proxy { command } => {
                 let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
                 proxy_handler.handle(command).await
             }
-            Commands::Daemon { command } => {
-                let daemon_handler = daemon::DaemonHandler::new(
+            Commands::Service { command } => {
+                let service_handler = daemon::ServiceHandler::new(
                     self.config.clone(),
                     self.verbose,
                     self.plugin_dir.clone(),
                     self.auto,
                 );
-                daemon_handler.handle(command).await
+                service_handler.handle(command).await
             }
             Commands::Auth { command } => {
                 let auth_handler = auth::AuthHandler;
@@ -235,40 +236,40 @@ impl ResolvedCli {
     /// - Restart the daemon so it picks up current config and newly added plugins
     /// - Unless --detach is specified, attach to the daemon's logs
     async fn run_default(&self) -> Result<()> {
-        let daemon_handler = daemon::DaemonHandler::new(
+        let service_handler = daemon::ServiceHandler::new(
             self.config.clone(),
             self.verbose,
             self.plugin_dir.clone(),
             self.auto,
         );
 
-        let was_installed = daemon_handler.is_service_installed();
+        let was_installed = service_handler.is_service_installed();
 
         // Always (re)install the service to ensure the service file reflects
         // the current CLI arguments (e.g. --plugin-dir, --verbose, --auto)
         if !was_installed {
             println!("First run detected. Installing witmproxy as a daemon service...");
         }
-        daemon_handler.install_service(true).await?;
+        service_handler.install_service(true).await?;
 
-        // Restart the daemon so it picks up the latest service file,
+        // Restart the service so it picks up the latest service file,
         // configuration, and any plugins added since the last start
-        info!("Starting witmproxy daemon...");
-        daemon_handler.restart_service().await?;
+        info!("Starting witmproxy service...");
+        service_handler.restart_service().await?;
 
         // Wait a moment for the service to start
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         // Check status
-        daemon_handler.show_status().await?;
+        service_handler.show_status().await?;
 
-        // Unless --detach is specified, attach to the daemon logs
+        // Unless --detach is specified, attach to the service logs
         if !self.detach {
             println!();
-            daemon_handler.attach_to_logs().await?;
+            service_handler.attach_to_logs().await?;
         } else {
             println!();
-            println!("Daemon started in background. Use 'witm daemon logs -f' to view logs.");
+            println!("Service started in background. Use 'witm service logs -f' to view logs.");
         }
 
         Ok(())
@@ -371,6 +372,9 @@ impl ResolvedCli {
             self.config.db.db_path.display()
         );
 
+        // Keep a pool handle for transparent proxy tenant resolution
+        let db_pool = db.pool.clone();
+
         // Plugin registry which will be shared across the proxy and web server
         let plugin_registry = if self.config.plugins.enabled {
             let runtime = Runtime::try_default()?;
@@ -419,6 +423,33 @@ impl ResolvedCli {
         let services_json = serde_json::to_string_pretty(&services)?;
         std::fs::write(&services_path, services_json)?;
         info!("Services information written to: {:?}", services_path);
+
+        // Start transparent proxy if enabled
+        let mut _transparent_proxy = None;
+        if self.config.transparent.enabled {
+            info!("Transparent proxy mode enabled, starting...");
+            let resolver = tenant_resolver::build_resolver(
+                &self.config.proxy.tenant_resolver,
+                db_pool.clone(),
+                self.config.proxy.tenant_header.clone(),
+            );
+            let upstream = crate::proxy::client(ca.clone())?;
+            let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+            let mut tp = crate::proxy::transparent::TransparentProxy::new(
+                Arc::new(ca),
+                plugin_registry.clone(),
+                resolver,
+                upstream,
+                self.config.transparent.clone(),
+                shutdown_notify,
+            );
+            tp.start().await?;
+            info!(
+                "Transparent proxy listening on {}",
+                tp.listen_addr().map(|a| a.to_string()).unwrap_or_default()
+            );
+            _transparent_proxy = Some(tp);
+        }
 
         // Handle --auto flag: enable system proxy
         if self.auto {

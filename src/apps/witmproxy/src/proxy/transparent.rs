@@ -1,26 +1,17 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use hyper::service::service_fn;
-use hyper::Request;
-use hyper::body::Incoming;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Notify, RwLock};
-use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
-
-use hyper_util::server::conn::auto::Builder as AutoServer;
-use hyper_util::rt::{TokioExecutor, TokioIo};
 
 use crate::cert::CertificateAuthority;
 use crate::config::TransparentProxyConfig;
+use crate::events::connect::Connect;
+use crate::events::Event;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::tenant_resolver::TenantResolver;
-use crate::proxy::{
-    build_server_tls_for_host, is_closed, perform_upstream, strip_proxy_headers,
-    convert_hyper_incoming_to_reqwest_request,
-    UpstreamClient,
-};
+use crate::proxy::{is_closed, parse_authority_host_port, run_tls_mitm, UpstreamClient};
 use crate::tenant::TenantContext;
 
 use super::netfilter::NetfilterManager;
@@ -106,7 +97,7 @@ impl TransparentProxy {
                     accept_result = listener.accept() => {
                         match accept_result {
                             Ok((stream, peer)) => {
-                                debug!("Transparent: accepted connection from {}", peer);
+                                info!("Transparent: accepted connection from {}", peer);
                                 let ca = ca.clone();
                                 let plugin_registry = plugin_registry.clone();
                                 let tenant_resolver = tenant_resolver.clone();
@@ -243,12 +234,33 @@ pub fn extract_sni_from_client_hello(buf: &[u8]) -> Option<String> {
     None
 }
 
+/// Check if any plugin wants to handle a connection to the given host.
+async fn should_intercept(
+    plugin_registry: &Option<Arc<RwLock<PluginRegistry>>>,
+    hostname: &str,
+) -> bool {
+    let Some(registry) = plugin_registry else {
+        return false;
+    };
+
+    let (host, port) = match parse_authority_host_port(hostname, 443) {
+        Ok(hp) => hp,
+        Err(_) => (hostname.to_string(), 443),
+    };
+
+    let connect_event: Box<dyn Event> = Box::new(Connect::new(host, port));
+    let registry = registry.read().await;
+    registry.can_handle(&*connect_event)
+}
+
 /// Handle a single transparent connection. Peeks to determine if it's TLS or plain HTTP.
+/// For TLS connections where plugins match (via Connect event on SNI hostname),
+/// delegates to the shared `run_tls_mitm` pipeline. Otherwise forwards raw TCP.
 async fn handle_transparent_connection(
-    stream: TcpStream,
+    mut stream: TcpStream,
     peer: SocketAddr,
     ca: Arc<CertificateAuthority>,
-    _plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     upstream: UpstreamClient,
     _tenant_ctx: TenantContext,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -271,69 +283,58 @@ async fn handle_transparent_connection(
                 "unknown".to_string()
             });
 
-        debug!("Transparent TLS: SNI={} from {}", hostname, peer);
+        info!("Transparent TLS: SNI={} from {}", hostname, peer);
 
-        // Generate cert for the SNI hostname
-        let server_tls = build_server_tls_for_host(&ca, &hostname).await?;
-        let acceptor = TlsAcceptor::from(Arc::new(server_tls));
-
-        let tls = acceptor.accept(stream).await?;
-        debug!("Transparent: TLS established for {}", hostname);
-
-        let hostname_for_svc = hostname.clone();
-        let svc = service_fn(move |mut req: Request<Incoming>| {
-            let upstream = upstream.clone();
-            let hostname = hostname_for_svc.clone();
-            async move {
-                // Ensure the request has the correct authority
-                if req.uri().authority().is_none() {
-                    let mut parts = req.uri().clone().into_parts();
-                    parts.scheme = Some("https".parse().unwrap());
-                    parts.authority = Some(hostname.parse().unwrap());
-                    if parts.path_and_query.is_none() {
-                        parts.path_and_query = Some("/".parse().unwrap());
-                    }
-                    if let Ok(new_uri) = hyper::Uri::from_parts(parts) {
-                        *req.uri_mut() = new_uri;
-                    }
+        if should_intercept(&plugin_registry, &hostname).await {
+            // Plugin(s) want this connection — run the full MITM pipeline
+            info!(
+                "Transparent: intercepting {} (plugins matched)",
+                hostname
+            );
+            let authority = format!("{}:443", hostname);
+            if let Err(e) =
+                run_tls_mitm(upstream, stream, authority, ca, plugin_registry).await
+            {
+                if !is_closed(&e) {
+                    debug!("Transparent MITM error for {}: {}", hostname, e);
                 }
-
-                strip_proxy_headers(req.headers_mut());
-                let reqwest_req = convert_hyper_incoming_to_reqwest_request(req, &upstream)
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
-                Ok::<_, std::io::Error>(perform_upstream(&upstream, reqwest_req).await)
             }
-        });
-
-        let executor = TokioExecutor::new();
-        let auto: AutoServer<TokioExecutor> = AutoServer::new(executor);
-        if let Err(e) = auto.serve_connection(TokioIo::new(tls), svc).await {
-            if !is_closed(&e) {
-                debug!("Transparent TLS connection error: {}", e);
+        } else {
+            // No plugins care — raw TCP forward to the real server
+            info!(
+                "Transparent: forwarding {} directly (no plugins matched)",
+                hostname
+            );
+            let mut upstream_stream = TcpStream::connect(format!("{}:443", hostname)).await?;
+            match tokio::io::copy_bidirectional(&mut stream, &mut upstream_stream).await {
+                Ok(_) => {}
+                Err(e) if is_closed(&e) => {}
+                Err(e) => debug!("Transparent forward error for {}: {}", hostname, e),
             }
         }
     } else {
-        // Plain HTTP -- extract Host header
-        debug!("Transparent HTTP connection from {}", peer);
+        // Plain HTTP — raw TCP forward (port 80 traffic, no MITM needed)
+        info!("Transparent HTTP: forwarding from {}", peer);
+        // Peek to extract Host header for upstream connection
+        let mut buf = vec![0u8; 8192];
+        let n = stream.peek(&mut buf).await?;
+        let request_data = std::str::from_utf8(&buf[..n]).unwrap_or("");
+        let host = request_data
+            .lines()
+            .find(|l| l.to_lowercase().starts_with("host:"))
+            .and_then(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()))
+            .unwrap_or_default();
 
-        let svc = service_fn(move |mut req: Request<Incoming>| {
-            let upstream = upstream.clone();
-            async move {
-                strip_proxy_headers(req.headers_mut());
-                let reqwest_req = convert_hyper_incoming_to_reqwest_request(req, &upstream)
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
-                Ok::<_, std::io::Error>(perform_upstream(&upstream, reqwest_req).await)
-            }
-        });
+        if host.is_empty() {
+            debug!("Transparent HTTP: no Host header found, dropping");
+            return Ok(());
+        }
 
-        if let Err(e) = hyper::server::conn::http1::Builder::new()
-            .preserve_header_case(true)
-            .serve_connection(TokioIo::new(stream), svc)
-            .await
-        {
-            if !is_closed(&e) {
-                debug!("Transparent HTTP connection error: {}", e);
-            }
+        let mut upstream_stream = TcpStream::connect(format!("{}:80", host)).await?;
+        match tokio::io::copy_bidirectional(&mut stream, &mut upstream_stream).await {
+            Ok(_) => {}
+            Err(e) if is_closed(&e) => {}
+            Err(e) => debug!("Transparent HTTP forward error for {}: {}", host, e),
         }
     }
 

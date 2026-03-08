@@ -4,12 +4,12 @@ use confique::Config;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Returns the system-level app directory on Linux (`/etc/witmproxy`).
+/// Returns the system-level app directory on Linux (`/var/lib/witmproxy`).
 /// On other platforms, returns `~/.witmproxy`.
 pub fn system_app_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
-        PathBuf::from("/etc/witmproxy")
+        PathBuf::from("/var/lib/witmproxy")
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -126,8 +126,8 @@ pub struct DbConfig {
     #[cfg_attr(
         target_os = "linux",
         config(
-            default = "/etc/witmproxy/witmproxy.db",
-            layer_attr(arg(long, default_value = "/etc/witmproxy/witmproxy.db"))
+            default = "/var/lib/witmproxy/witmproxy.db",
+            layer_attr(arg(long, default_value = "/var/lib/witmproxy/witmproxy.db"))
         )
     )]
     #[cfg_attr(
@@ -159,8 +159,8 @@ pub struct TlsConfig {
     #[cfg_attr(
         target_os = "linux",
         config(
-            default = "/etc/witmproxy/certs",
-            layer_attr(arg(long, default_value = "/etc/witmproxy/certs"))
+            default = "/var/lib/witmproxy/certs",
+            layer_attr(arg(long, default_value = "/var/lib/witmproxy/certs"))
         )
     )]
     #[cfg_attr(

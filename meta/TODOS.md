@@ -1,42 +1,22 @@
 # `witmproxy`
 
 ## Bugs
-- [x] Arguments don't appear to be passed to the daemon (--plugin-dir, --verbose, etc.)
 
 ## Simple
 
-- [x] Add note somewhere to its README that `witmproxy` requires nightly Rust for development, and plugin development requires `rustup target add wasm32-wasip2`
-- [x] Add note somewhere that `wkg` is required for updating/fetching `wit` files
-- [x] Configuration: plugins need to expose a way for users to configure them (`.configure()` method?)
-- [x] Look at base options passed to `witm` CLI, do they make sense to always be available (i.e, apply to all commands), or should some of them be refactored to only apply to certain command invocations?
-- [x] Add project `witmproxy` release binaries to path (as `witm`)
-- [x] Add a `time` object to CEL context which provides minimal convenience methods to control the time when a plugin should run (without leaking too much host information to the plugin):
-  - [x] `time.matches_cron(cron_string)` which accepts a string CRON expression, returning a boolean indicating whether it applies to the current system time
-  - [x] `time.is_day_of_week(weekday_int)` which accepts an integer 0-6 (sunday-monday) and returns a boolean indicating whether the current day matches
-  - [x] `time.is_between_hours(hour_start, hour_end)` which accepts two integers `hour_start` and `hour_end` where `hour_start` > `hour_end` and both are in the range [0,23], and returns whether the current time resides within the specified window
-
-## Medium
-
-- [x] Ensure that `witm plugin add` can be used after the proxy is running (i.e, should likely make a request to the web service instead of starting a plugin registry with a connection to the embedded sqlite database)
-- [x] Create GitHub Action infrastructure to test `witmproxy` across a matrix of build targets (Windows/macOS/Ubuntu/etc.)
-- [x] A clock `capability-kind` (wasi:clocks) to allow plugins to request current system time
-- [x] A timer `capability-kind` which allows plugins to execute periodically (should receive a list of CRON expressions)
+- [ ] `witm plugin list` should list and show details about install plugins
+- [ ] Rename `witm daemon` command to either `witm server` or `witm service`
+- [ ] Rename `witm trust` to `witm ca`. `witm ca remove` should be renamed to `witm ca uninstall`
+- [ ] Investigate whether it's currently possible to emit structured logs/traces with our existing logging infrastructure
 
 ## Bigger tasks
 
+- [ ] True e2e tests which dynamically bring up a remote `witmproxy` server, with various clients (emulated Android, desktop Chrome+Firefox+etc.) configured to use it as a remote proxy
+- [ ] Consider different CLI APIs, like `witm start --server --client localhost` to bring up the proxy as a server and a local-user client, `witm stop --client` to stop the client (but leave the server), or something like `witm start --proxy --client localhost` to not assume that we always want the API server (would it make sense to have  a locally available API server but no proxy? if there's a client, I guess it would just forward requests, but without one it makes no sense)  
 - [ ] Platform-specific secret handling of sensitive credentials (database password) that is compatible with the `witmproxy` daemon
 - [ ] Add a layer on-top of `witmproxy` to allow it to spawn a backend which can be used as a complete network interface/device, so that we can capture and handle all network traffic (if this makes sense)
-- [ ] Consider what architectural changes would be needed in order to allow something like the following: It would be convenient to deploy `witmproxy` to external hosts (which can be reached by a VPN/tunnel of some kind), and have multiple clients (like mobile phones, tablets, PCs, etc. all within the same household) able to share the same multi-tenant instance. It should still be possible to remotely (and securely) manage the proxy. What are ways we could accomplish this? How could we change the CLI (should it operate more as a client)? In some ways, `tailscale` is a good model to follow for this kind of functionality/architecture.
-  - [ ] The management service should rely on signed JWTs for authentication. It should be possible to start the webservice with a JWKS endpoint which it will use to retrieve keys for verifying JWTs. Imagine that we might want to be able to support users authenticating through created accounts (email/password), or through an OIDC provider (Google, Apple, etc.)
-  - [ ] No authentication logic should exist in (or be added to) the proxy server code (if possible). Ideally, the proxy server minimally has a mechanism of determining which connections belong to which tenants (so that per-tenant plugin configuration can be properly instantiated).
-  - [ ] Plugins should be modified to allow for per-tenant configuration, our primary use case here is an application built atop `witmproxy` which allows household parents to configure how plugins work for their children. Plugins should also be able to be enabled on a per-tenant basis (which takes precedence over global enabled status).
-  - [ ] Likely should add the concept of tenant groups, which are an abstraction which grants permissions to tenants in the system (probably just simple read/write permission over given system resources, some sort of namespaced ACL-like syntax here?). Tenants may belong to multiple groups. If using ACL syntax, groups are granted/denied the ability to perform `action`s (`write`, `read`, <resource-specific-actions-here-like-`enable`/`disable`>) on `resource`s, with most-specific selectors winning (and `deny`s taking precedence in tie-breaking scenarios, i.e deny `plugins:noshorts:write` > grant `plugins:*:write`)
-  - [ ] However permissions are modeled, the syntax and access/deny system should be well-tested.
-  - [ ] Per-tenant plugin configuration and execution should be tested e2e.
-  - [ ] Management authentication should be tested e2e (is the tenant determined properly? are the correct groups applied? are the tenants combined group permissions enforced correctly?)
-  - [ ] In conjunction, if it makes sense and is necessary for the above, consider the modifications to have the client create/manage a network interface, which establishes an authenticated tunnel (which allows persisting identity for connections) to the proxies services. The idea being that developing this in a cross-platform way (can be used on mobile devices as well as desktop) would involve creating a Tailscale like VPN client.
-
-When developing generally, consider that we're aiming to build a system which can be self-hosted or managed, with the minimal self-hosted layer containing most/all the primitives which the managed layer composes, and the managed layer provides sensible defaults which relieves the user from worrying about operating the proxy themselves (but does not necessarily implement anything users couldn't implement themselves).
+- [ ] Remove dependency on system binaries where possible (`certutil`, `cp`, `sh`, `sudo`, etc.), preferring native Rust interfaces or bundled binaries (with corresponding `bundled` features)
+- [ ] Some sort of LLM-assisted interface/functionality for building request/response plugins.
 
 - [ ] Consider whether it is possible to use WIT to express a system where plugins may register custom "capabilities" (interfaces?) that other plugins may request access to, and if it is possible, how that system would integrate into `witmproxy` (and what changes would be required)
 - [ ] A code editor extension for syntax highlighting CEL expressions

@@ -6,7 +6,6 @@ const FS = 'var(--cm-font-size, 16px)';
 const FS_75 = `calc(${FS} * 0.75)`;   // 12px at base 16
 const FS_85 = `calc(${FS} * 0.85)`;   // ~14px at base 16
 const FS_875 = `calc(${FS} * 0.875)`; // 14px at base 16
-const LH_FOOTER = `calc(${FS} * 1.375)`; // 22px at base 16
 
 export const codeblockTheme = EditorView.theme({
     "&:not(.cm-focused)": {
@@ -54,7 +53,7 @@ export const codeblockTheme = EditorView.theme({
 
             '& > .cm-search-result-icon': {
                 fontSize: FS,
-                textAlign: 'right',
+                textAlign: 'center',
                 boxSizing: 'border-box',
                 width: 'var(--cm-gutter-lineno-width)',
             }
@@ -79,12 +78,19 @@ export const codeblockTheme = EditorView.theme({
     '.cm-toolbar-state-icon-container': {
         width: 'var(--cm-gutter-width)',
         display: 'flex',
-        justifyContent: 'center',
     },
+    // Nerd Font icon glyphs have visual widths (700-920 units) that far exceed
+    // their monospace advance width (500 units), overflowing to the right.
+    // text-align operates on the advance width, not the visual bounds, so
+    // 'right' misaligns the icon. 'center' partially compensates for the
+    // rightward overflow and visually aligns with gutter line numbers.
     '.cm-toolbar-state-icon': {
         fontSize: FS,
         color: 'var(--cm-foreground)',
         fontFamily: 'var(--cm-icon-font-family)',
+        textAlign: 'center',
+        boxSizing: 'border-box',
+        width: 'var(--cm-gutter-lineno-width)',
     },
     '&': {
         fontSize: FS,
@@ -179,86 +185,52 @@ export const codeblockTheme = EditorView.theme({
         borderBottom: 'none',
         zIndex: 301,
     },
-    // Animated spinner (rotation) for file loading indicator
+    // CSS border spinner for file loading indicator
     '.cm-loading': {
         display: 'inline-block',
-        animation: 'cm-spin 1s linear infinite',
+        width: FS,
+        height: FS,
+        border: '2px solid currentColor',
+        borderTopColor: 'transparent',
+        borderRadius: '50%',
+        boxSizing: 'border-box',
+        animation: 'cm-spin 0.8s linear infinite',
+        marginLeft: '4px'
     },
     '@keyframes cm-spin': {
         '0%': { transform: 'rotate(0deg)' },
         '100%': { transform: 'rotate(360deg)' },
     },
-    // Footer panel
-    '.cm-footer-panel': {
-        display: 'flex',
-        justifyContent: 'flex-end',
-        alignItems: 'center',
-        background: 'var(--cm-toolbar-background)',
+    // Settings cog + LSP log button in toolbar (far right)
+    '.cm-toolbar-settings-cog, .cm-toolbar-lsp-log': {
+        border: 'none',
+        background: 'transparent',
         color: 'var(--cm-toolbar-color)',
-        height: LH_FOOTER,
-        padding: '0 4px',
-        fontSize: FS_75,
-        fontFamily: 'var(--cm-font-family)',
-    },
-    '.cm-footer-right': {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
-    },
-    '.cm-footer-settings-cog, .cm-footer-lsp-log': {
-        border: 'none',
-        background: 'transparent',
-        color: 'inherit',
-        cursor: 'pointer',
-        padding: '0 2px',
-        fontSize: FS_75,
-        lineHeight: LH_FOOTER,
-        verticalAlign: 'middle',
-    },
-    // Theme toggle in toolbar (far right)
-    '.cm-toolbar-theme-toggle': {
-        border: 'none',
-        background: 'transparent',
-        color: 'inherit',
         cursor: 'pointer',
         padding: '0 6px',
         fontSize: FS_875,
         lineHeight: 'inherit',
         flexShrink: '0',
+        transition: 'transform 0.25s ease',
     },
-    '.cm-panels-bottom': {
-        borderTop: 'none',
+    '.cm-toolbar-settings-cog.cm-cog-active': {
+        transform: 'rotate(90deg)',
     },
     // Settings / log overlay — anchored at top, grows downward
     '.cm-settings-overlay': {
-        position: 'fixed',
+        position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
-        maxHeight: '70%',
         overflowY: 'auto',
-        background: 'var(--cm-toolbar-background)',
+        background: 'var(--cm-background)',
         color: 'var(--cm-toolbar-color)',
         zIndex: 1000,
         fontFamily: 'var(--cm-font-family)',
         fontSize: FS,
     },
-    '.cm-settings-header': {
-        display: 'flex',
-        alignItems: 'center',
-        padding: '8px 12px',
-        fontWeight: 'bold',
-        borderBottom: '1px solid var(--cm-tooltip-border)',
-    },
-    '.cm-settings-close': {
-        border: 'none',
-        background: 'transparent',
-        color: 'inherit',
-        cursor: 'pointer',
-        fontSize: FS_875,
-    },
     '.cm-settings-section': {
-        padding: '8px 12px',
+        padding: '8px 6px',
     },
     '.cm-settings-section-title': {
         fontWeight: 'bold',
@@ -282,8 +254,20 @@ export const codeblockTheme = EditorView.theme({
         alignItems: 'center',
         gap: '4px',
     },
-    '.cm-settings-value': {
-        minWidth: '36px',
+    // Fixed pixel width so font-size changes don't relayout the slider
+    '.cm-settings-font-size-range': {
+        width: '120px',
+        flexShrink: '0',
+    },
+    '.cm-settings-font-size-input': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '2px 4px',
+        fontSize: 'inherit',
+        fontFamily: 'var(--cm-font-family)',
+        width: '3em',
         textAlign: 'right',
     },
     '.cm-settings-select': {

@@ -16,7 +16,7 @@ import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
-import { footerPanel, settingsField } from "./panels/footer";
+import { settingsField } from "./panels/footer";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult } from "./panels/toolbar";
@@ -138,7 +138,6 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     lineWrappingCompartment.of([]),
     tooltips({ position: "fixed" }),
     showPanel.of(toolbar ? toolbarPanel : null),
-    showPanel.of(toolbar ? footerPanel : null),
     settingsField,
     codeblockTheme,
     codeblockView,
@@ -187,6 +186,8 @@ const codeblockView = ViewPlugin.define((view) => {
 
     // Guard to prevent duplicate opens for same path while loading
     let opening: string | null = null;
+    // Track the path of the currently loaded file for correct save-on-switch
+    let activePath: string | null = view.state.field(currentFileField).path;
 
     async function setLanguageSupport(language: ExtensionOrLanguage) {
         if (!language) return;
@@ -205,9 +206,20 @@ const codeblockView = ViewPlugin.define((view) => {
         if (!path) return;
         if (opening === path) return;
         opening = path;
-        // Flush any pending save so the current file's content is on VFS
-        // before the LSP switches to the new file
-        save.flush();
+        // Cancel the debounced save and manually flush the current file.
+        // We can't use save.flush() because openFileEffect has already updated
+        // currentFileField.path to the NEW path, but the document still holds
+        // the OLD file's content. Using activePath ensures we write to the
+        // correct location.
+        save.cancel();
+        if (activePath && view.state.field(settingsField).autosave) {
+            const oldPath = activePath;
+            const oldContent = view.state.doc.toString();
+            const parent = dirname(oldPath);
+            if (parent) await fs.mkdir(parent, { recursive: true }).catch(console.error);
+            await fs.writeFile(oldPath, oldContent).catch(console.error);
+            LSP.notifyFileChanged(oldPath, FileChangeType.Changed);
+        }
         try {
             const ext = path.split('.').pop()?.toLowerCase();
             const lang = (ext ? (extOrLanguageToLanguageId)[ext] ?? null : language) || 'markdown';
@@ -255,6 +267,7 @@ const codeblockView = ViewPlugin.define((view) => {
 
             let lsp: Extension | null = lang ? await LSP.client({ language: lang as any, path, fs, libFiles }) : null;
 
+            activePath = path;
             safeDispatch(view, {
                 changes: { from: 0, to: view.state.doc.length, insert: content },
                 effects: [

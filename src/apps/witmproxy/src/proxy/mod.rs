@@ -299,7 +299,7 @@ impl ProxyServer {
                         Ok(upgraded) => {
                             if let Err(e) = run_tls_mitm(
                                 upstream,
-                                upgraded,
+                                TokioIo::new(upgraded),
                                 authority.clone(),
                                 ca,
                                 plugin_registry,
@@ -460,15 +460,21 @@ fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
     req
 }
 
-/// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
+/// Performs TLS MITM on a connection, then serves the *client-facing* side
 /// with a Hyper auto server (h1 or h2) and forwards each request to the real upstream via `upstream`.
-async fn run_tls_mitm(
+///
+/// Generic over the IO type so it can be used from both the standard proxy
+/// (with `TokioIo<Upgraded>`) and the transparent proxy (with `TcpStream`).
+pub(crate) async fn run_tls_mitm<IO>(
     upstream: reqwest::Client,
-    upgraded: upgrade::Upgraded,
+    stream: IO,
     authority: String,
     ca: Arc<CertificateAuthority>,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
-) -> ProxyResult<()> {
+) -> ProxyResult<()>
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     debug!("Running TLS MITM for {}", authority);
 
     // Extract host + port, default :443
@@ -478,7 +484,7 @@ async fn run_tls_mitm(
     let server_tls = build_server_tls_for_host(&ca, &host).await?;
     let acceptor = TlsAcceptor::from(Arc::new(server_tls));
 
-    let tls = acceptor.accept(TokioIo::new(upgraded)).await?;
+    let tls = acceptor.accept(stream).await?;
     debug!("TLS established with client for {}", host);
 
     // Auto (h1/h2) Hyper server over the client TLS stream

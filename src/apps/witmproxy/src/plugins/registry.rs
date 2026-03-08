@@ -310,6 +310,11 @@ impl PluginRegistry {
             return Ok((event_data, store));
         }
 
+        debug!(
+            "Found plugins with matching capability and scope; processing event of kind: {:?} through plugin chain",
+            event.kind()
+        );
+
         let mut current_event = event;
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();

@@ -22,6 +22,7 @@ const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 struct Component;
 
 pub const STYLES: &str = r#"
+<script>console.log('[witmproxy/noshorts] Plugin injected successfully');</script>
 <style>
     a[href*="shorts"] {
         display: none !important;
@@ -35,8 +36,8 @@ pub const STYLES: &str = r#"
         display: none !important;
     }
 
-    yt-thumbnail-view-model {
-        display: none !important;
+    ytd-rich-item-renderer:has(#dismissible) {
+        display: none;
     }
 
     #dismissible {
@@ -52,23 +53,6 @@ pub const STYLES: &str = r#"
 
     #masthead-ad {
         display: none !important;
-    }
-
-    .yt-lockup-metadata-view-model__avatar {
-        display: none !important;
-    }
-
-    .yt-lockup-view-model__content-image {
-        display: none !important;
-    }
-
-    #contents {
-        flex-direction: column;
-        gap: 4rem;
-    }
-
-    #contents > ytd-rich-item-renderer {
-        margin: 0 0 0 3rem;
     }
 </style>
 "#;

@@ -61,7 +61,6 @@ impl ApiClient {
     pub fn new(base_url: &str, token: Option<&str>) -> Self {
         Self {
             client: reqwest::Client::builder()
-                .danger_accept_invalid_certs(true)
                 .build()
                 .unwrap(),
             base_url: base_url.trim_end_matches('/').to_string(),

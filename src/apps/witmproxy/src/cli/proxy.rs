@@ -319,28 +319,32 @@ impl ProxyHandler {
     #[cfg(target_os = "linux")]
     async fn set_linux_proxy(&self, proxy_url: &str, enable: bool) -> Result<()> {
         if enable {
-            // Set environment variables via gsettings (GNOME)
-            let _ = Command::new("gsettings")
-                .args([
-                    "set",
-                    "org.gnome.system.proxy.http",
-                    "host",
-                    proxy_url
-                        .split("://")
-                        .last()
-                        .unwrap_or(proxy_url)
-                        .split(':')
-                        .next()
-                        .unwrap_or(""),
-                ])
+            let host = proxy_url
+                .split("://")
+                .last()
+                .unwrap_or(proxy_url)
+                .split(':')
+                .next()
+                .unwrap_or("");
+            let port = proxy_url.split(':').next_back().unwrap_or("8080");
+
+            let _ = Self::gsettings_cmd()
+                .args(["set", "org.gnome.system.proxy.http", "host", host])
                 .status();
 
-            let port = proxy_url.split(':').next_back().unwrap_or("8080");
-            let _ = Command::new("gsettings")
+            let _ = Self::gsettings_cmd()
                 .args(["set", "org.gnome.system.proxy.http", "port", port])
                 .status();
 
-            let _ = Command::new("gsettings")
+            let _ = Self::gsettings_cmd()
+                .args(["set", "org.gnome.system.proxy.https", "host", host])
+                .status();
+
+            let _ = Self::gsettings_cmd()
+                .args(["set", "org.gnome.system.proxy.https", "port", port])
+                .status();
+
+            let _ = Self::gsettings_cmd()
                 .args(["set", "org.gnome.system.proxy", "mode", "manual"])
                 .status();
 
@@ -350,7 +354,7 @@ impl ProxyHandler {
             println!("export HTTP_PROXY={}", proxy_url);
             println!("export HTTPS_PROXY={}", proxy_url);
         } else {
-            let _ = Command::new("gsettings")
+            let _ = Self::gsettings_cmd()
                 .args(["set", "org.gnome.system.proxy", "mode", "none"])
                 .status();
 
@@ -361,19 +365,48 @@ impl ProxyHandler {
         Ok(())
     }
 
+    /// Returns a configured `Command` for running gsettings.
+    /// When running as root (e.g. via sudo), uses `sudo -u <user>` and
+    /// passes through the D-Bus session address so gsettings can reach
+    /// the user's dconf database.
+    #[cfg(target_os = "linux")]
+    fn gsettings_cmd() -> Command {
+        if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+            let mut cmd = Command::new("sudo");
+            cmd.arg("-u").arg(&sudo_user);
+
+            // Forward DBUS_SESSION_BUS_ADDRESS so gsettings can connect.
+            // Try the env var first (preserved by some sudo configs),
+            // then fall back to the well-known user socket path.
+            if let Ok(addr) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+                cmd.arg(format!("DBUS_SESSION_BUS_ADDRESS={}", addr));
+            } else if let Ok(uid) = std::env::var("SUDO_UID") {
+                cmd.arg(format!(
+                    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{}/bus",
+                    uid
+                ));
+            }
+
+            cmd.arg("gsettings");
+            cmd
+        } else {
+            Command::new("gsettings")
+        }
+    }
+
     #[cfg(target_os = "linux")]
     async fn get_linux_proxy(&self) -> Result<Option<String>> {
-        let output = Command::new("gsettings")
+        let output = Self::gsettings_cmd()
             .args(["get", "org.gnome.system.proxy", "mode"])
             .output();
 
         if let Ok(output) = output {
             let mode = String::from_utf8_lossy(&output.stdout);
             if mode.trim().contains("manual") {
-                let host_output = Command::new("gsettings")
+                let host_output = Self::gsettings_cmd()
                     .args(["get", "org.gnome.system.proxy.http", "host"])
                     .output()?;
-                let port_output = Command::new("gsettings")
+                let port_output = Self::gsettings_cmd()
                     .args(["get", "org.gnome.system.proxy.http", "port"])
                     .output()?;
 

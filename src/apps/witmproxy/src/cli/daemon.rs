@@ -1,4 +1,6 @@
-use crate::config::AppConfig;
+use crate::config::{AppConfig, DbConfig};
+#[cfg(target_os = "linux")]
+use crate::config::TransparentProxyConfig;
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use service_manager::{
@@ -7,7 +9,7 @@ use service_manager::{
 };
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[cfg(target_os = "macos")]
 use service_manager::LaunchdServiceManager;
@@ -15,14 +17,20 @@ use service_manager::LaunchdServiceManager;
 #[cfg(target_os = "linux")]
 use service_manager::SystemdServiceManager;
 
-/// Service label for witmproxy daemon
-const SERVICE_LABEL: &str = "co.joinez.witmproxy";
+/// Service label used by the service-manager crate
+const SERVICE_LABEL: &str = "co.ez.witmproxy";
+
+/// Platform-specific service file name
+#[cfg(target_os = "macos")]
+const SERVICE_FILE_NAME: &str = "co.ez.witmproxy.plist";
+#[cfg(target_os = "linux")]
+const SERVICE_FILE_NAME: &str = "ez-witmproxy.service";
 
 /// Log file name within the app directory
 const LOG_FILE_NAME: &str = "witmproxy.log";
 
 #[derive(Subcommand)]
-pub enum DaemonCommands {
+pub enum ServiceCommands {
     /// Install the witmproxy service (does not start it)
     Install {
         /// Skip confirmation prompts
@@ -54,14 +62,14 @@ pub enum DaemonCommands {
     },
 }
 
-pub struct DaemonHandler {
+pub struct ServiceHandler {
     config: AppConfig,
     verbose: bool,
     plugin_dir: Option<PathBuf>,
     auto: bool,
 }
 
-impl DaemonHandler {
+impl ServiceHandler {
     pub fn new(config: AppConfig, verbose: bool, plugin_dir: Option<PathBuf>, auto: bool) -> Self {
         Self {
             config,
@@ -114,12 +122,12 @@ impl DaemonHandler {
     }
 
     /// Get the app directory
-    /// Linux system service: /etc/witmproxy
+    /// Linux system service: /var/lib/witmproxy
     /// macOS / other: parent of cert_dir (~/.witmproxy)
     fn get_app_dir(&self) -> PathBuf {
         #[cfg(target_os = "linux")]
         {
-            PathBuf::from("/etc/witmproxy")
+            PathBuf::from("/var/lib/witmproxy")
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -133,17 +141,8 @@ impl DaemonHandler {
     }
 
     /// Get the log file path
-    /// Linux system service: /var/log/witmproxy/witmproxy.log
-    /// macOS / other: <app_dir>/witmproxy.log
     pub fn get_log_path(&self) -> PathBuf {
-        #[cfg(target_os = "linux")]
-        {
-            PathBuf::from("/var/log/witmproxy").join(LOG_FILE_NAME)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            self.get_app_dir().join(LOG_FILE_NAME)
-        }
+        self.get_app_dir().join(LOG_FILE_NAME)
     }
 
     /// Get the config file path
@@ -151,15 +150,15 @@ impl DaemonHandler {
         self.get_app_dir().join("config.toml")
     }
 
-    pub async fn handle(&self, command: &DaemonCommands) -> Result<()> {
+    pub async fn handle(&self, command: &ServiceCommands) -> Result<()> {
         match command {
-            DaemonCommands::Install { yes } => self.install_service(*yes).await,
-            DaemonCommands::Uninstall { yes } => self.uninstall_service(*yes).await,
-            DaemonCommands::Start => self.start_service().await,
-            DaemonCommands::Stop => self.stop_service().await,
-            DaemonCommands::Restart => self.restart_service().await,
-            DaemonCommands::Status => self.show_status().await,
-            DaemonCommands::Logs { follow, lines } => self.show_logs(*follow, *lines).await,
+            ServiceCommands::Install { yes } => self.install_service(*yes).await,
+            ServiceCommands::Uninstall { yes } => self.uninstall_service(*yes).await,
+            ServiceCommands::Start => self.start_service().await,
+            ServiceCommands::Stop => self.stop_service().await,
+            ServiceCommands::Restart => self.restart_service().await,
+            ServiceCommands::Status => self.show_status().await,
+            ServiceCommands::Logs { follow, lines } => self.show_logs(*follow, *lines).await,
         }
     }
 
@@ -239,15 +238,76 @@ impl DaemonHandler {
         let exe_path = Self::get_executable_path()?;
         let config_path = self.get_config_path();
 
-        // Create app directory and log directory
+        // Create app directory with restricted permissions
         let app_dir = self.get_app_dir();
         std::fs::create_dir_all(&app_dir)?;
-        let log_dir = self.get_log_path().parent().unwrap().to_path_buf();
-        std::fs::create_dir_all(&log_dir)?;
 
-        // Save the current configuration to the config file
-        // This ensures settings like db_password are available to the daemon
-        self.config
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // 0o700: owner (root) only — config, certs, db, and logs may contain sensitive data
+            std::fs::set_permissions(&app_dir, std::fs::Permissions::from_mode(0o700))?;
+        }
+
+        // Load from the user's source config file to get config-file-only
+        // settings (transparent, auth, proxy.tenant_resolver, etc.) that are
+        // arg(skip) and therefore not settable via CLI. confique's layered
+        // loading gives preloaded defaults priority over the file, so bool
+        // fields like transparent.enabled always show up as `false` in
+        // self.config even when the file says `true`.
+        //
+        // If the daemon config already exists, use it as the base instead
+        // (preserving previous edits).
+        let source_config_path = if config_path.exists() {
+            config_path.clone()
+        } else {
+            // Fall back to the invoking user's home config.
+            // Under sudo, $HOME may point to /root — use SUDO_USER to find
+            // the real user's home directory instead.
+            let home = std::env::var("SUDO_USER")
+                .ok()
+                .and_then(|user| {
+                    // Look up the user's home dir from /etc/passwd
+                    std::fs::read_to_string("/etc/passwd").ok().and_then(|passwd| {
+                        passwd.lines()
+                            .find(|line| line.starts_with(&format!("{}:", user)))
+                            .and_then(|line| line.split(':').nth(5))
+                            .map(PathBuf::from)
+                    })
+                })
+                .or_else(|| dirs::home_dir());
+            home.map(|h| h.join(".witmproxy/config.toml"))
+                .unwrap_or_default()
+        };
+        let mut config_to_save = if source_config_path.exists() {
+            match AppConfig::load(&source_config_path) {
+                Ok(mut base) => {
+                    // Overlay CLI-settable fields from self.config
+                    if self.config.proxy.proxy_bind_addr.is_some() {
+                        base.proxy.proxy_bind_addr = self.config.proxy.proxy_bind_addr.clone();
+                    }
+                    if self.config.db.db_password != DbConfig::default().db_password {
+                        base.db.db_password = self.config.db.db_password.clone();
+                    }
+                    base.plugins = self.config.plugins.clone();
+                    base.tls = self.config.tls.clone();
+                    if self.config.web.web_bind_addr.is_some() {
+                        base.web.web_bind_addr = self.config.web.web_bind_addr.clone();
+                    }
+                    base
+                }
+                Err(e) => {
+                    warn!("Could not load config from {:?}, using defaults: {}", source_config_path, e);
+                    self.config.clone()
+                }
+            }
+        } else {
+            self.config.clone()
+        };
+        // Always use the daemon's standard paths regardless of source
+        config_to_save.db.db_path = app_dir.join("witmproxy.db");
+        config_to_save.tls.cert_dir = app_dir.join("certs");
+        config_to_save
             .save(&config_path)
             .context("Failed to save configuration")?;
         info!("Configuration saved to {:?}", config_path);
@@ -294,11 +354,25 @@ impl DaemonHandler {
         info!("Installing service with executable: {:?}", exe_path);
         info!("Service arguments: {:?}", args);
 
+        // On Linux, generate a custom unit file with ExecStopPost for iptables cleanup
+        #[cfg(target_os = "linux")]
+        let contents = {
+            let unit = generate_systemd_unit(
+                &exe_path,
+                &args,
+                &app_dir,
+                &self.config.transparent,
+            );
+            Some(unit)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let contents: Option<String> = None;
+
         let install_ctx = ServiceInstallCtx {
             label: label.clone(),
             program: exe_path,
             args,
-            contents: None, // Use default service file contents
+            contents,
             username: None, // Run as current user
             working_directory: Some(app_dir),
             environment: None,
@@ -315,8 +389,8 @@ impl DaemonHandler {
         println!("✓ Service installed successfully.");
         println!("  Log file: {:?}", log_path);
         println!();
-        println!("To start the service, run: witm daemon start");
-        println!("To check status, run: witm daemon status");
+        println!("To start the service, run: witm service start");
+        println!("To check status, run: witm service status");
 
         Ok(())
     }
@@ -371,7 +445,7 @@ impl DaemonHandler {
             .context("Failed to start service")?;
 
         println!("✓ Service started.");
-        println!("  To view logs: witm daemon logs -f");
+        println!("  To view logs: witm service logs -f");
 
         Ok(())
     }
@@ -423,10 +497,8 @@ impl DaemonHandler {
             // so we check platform-specific files
             #[cfg(target_os = "macos")]
             {
-                let plist_path = dirs::home_dir().map(|h| {
-                    h.join("Library/LaunchAgents")
-                        .join(format!("{}.plist", SERVICE_LABEL))
-                });
+                let plist_path = dirs::home_dir()
+                    .map(|h| h.join("Library/LaunchAgents").join(SERVICE_FILE_NAME));
                 if let Some(path) = plist_path {
                     return path.exists();
                 }
@@ -434,19 +506,8 @@ impl DaemonHandler {
 
             #[cfg(target_os = "linux")]
             {
-                // The service-manager crate converts dotted labels like "co.joinez.witmproxy"
-                // to hyphenated filenames by stripping the first segment: "joinez-witmproxy.service"
-                let label_parts: Vec<&str> = SERVICE_LABEL.split('.').collect();
-                let systemd_name = if label_parts.len() > 1 {
-                    label_parts[1..].join("-")
-                } else {
-                    SERVICE_LABEL.to_string()
-                };
-
-                let systemd_system_path =
-                    PathBuf::from(format!("/etc/systemd/system/{}.service", systemd_name));
-
-                if systemd_system_path.exists() {
+                let path = PathBuf::from("/etc/systemd/system").join(SERVICE_FILE_NAME);
+                if path.exists() {
                     return true;
                 }
             }
@@ -475,7 +536,7 @@ impl DaemonHandler {
         if !is_installed {
             println!("Service status: Not installed");
             println!();
-            println!("To install: witm daemon install");
+            println!("To install: witm service install");
             return Ok(());
         }
 
@@ -589,6 +650,72 @@ impl DaemonHandler {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn generate_systemd_unit(
+    exe_path: &Path,
+    args: &[OsString],
+    app_dir: &Path,
+    transparent_config: &TransparentProxyConfig,
+) -> String {
+    use crate::proxy::netfilter::NetfilterManager;
+
+    let interface = transparent_config
+        .interface
+        .as_deref()
+        .unwrap_or("tailscale0");
+    let redirect_port: u16 = transparent_config
+        .listen_addr
+        .as_deref()
+        .unwrap_or("0.0.0.0:8080")
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8080);
+
+    let args_str = args
+        .iter()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let exec_start = format!("{} {}", exe_path.display(), args_str);
+
+    let cleanup_commands = NetfilterManager::cleanup_commands(interface, redirect_port);
+    let exec_stop_post_lines: Vec<String> = cleanup_commands
+        .iter()
+        .map(|(cmd, cmd_args)| {
+            let path = if cmd == "iptables" {
+                "/usr/sbin/iptables"
+            } else {
+                "/usr/sbin/ip6tables"
+            };
+            format!("ExecStopPost=-{} {}", path, cmd_args.join(" "))
+        })
+        .collect();
+
+    format!(
+        "\
+[Unit]
+Description=witmproxy transparent proxy service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={exec_start}
+WorkingDirectory={work_dir}
+Restart=on-failure
+RestartSec=1
+{exec_stop_post}
+
+[Install]
+WantedBy=multi-user.target
+",
+        exec_start = exec_start,
+        work_dir = app_dir.display(),
+        exec_stop_post = exec_stop_post_lines.join("\n"),
+    )
+}
+
 /// Check if the daemon is already running by checking the services.json file
 pub fn is_daemon_running(app_dir: &Path) -> bool {
     let services_path = app_dir.join("services.json");
@@ -611,4 +738,135 @@ pub fn is_daemon_running(app_dir: &Path) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use super::*;
+    use crate::config::TransparentProxyConfig;
+
+    fn default_transparent_config() -> TransparentProxyConfig {
+        TransparentProxyConfig {
+            enabled: true,
+            listen_addr: None,
+            interface: None,
+            auto_iptables: true,
+        }
+    }
+
+    #[test]
+    fn generate_unit_has_valid_structure() {
+        let unit = generate_systemd_unit(
+            Path::new("/usr/bin/witm"),
+            &["--config-path".into(), "/etc/witm.toml".into(), "serve".into()],
+            Path::new("/var/lib/witmproxy"),
+            &default_transparent_config(),
+        );
+
+        assert!(unit.contains("[Unit]"));
+        assert!(unit.contains("[Service]"));
+        assert!(unit.contains("[Install]"));
+        assert!(unit.contains("ExecStart=/usr/bin/witm --config-path /etc/witm.toml serve"));
+        assert!(unit.contains("WorkingDirectory=/var/lib/witmproxy"));
+        assert!(unit.contains("Restart=on-failure"));
+        assert!(unit.contains("WantedBy=multi-user.target"));
+    }
+
+    #[test]
+    fn generate_unit_has_exec_stop_post_lines() {
+        let unit = generate_systemd_unit(
+            Path::new("/usr/bin/witm"),
+            &["serve".into()],
+            Path::new("/var/lib/witmproxy"),
+            &default_transparent_config(),
+        );
+
+        // 4 PREROUTING + 4 OUTPUT = 8 ExecStopPost lines
+        let stop_post_lines: Vec<&str> = unit
+            .lines()
+            .filter(|l| l.starts_with("ExecStopPost="))
+            .collect();
+        assert_eq!(stop_post_lines.len(), 8);
+
+        // All should use the `-` prefix for error suppression
+        for line in &stop_post_lines {
+            assert!(line.starts_with("ExecStopPost=-/usr/sbin/"));
+        }
+
+        // All should reference port 8080 (either --to-port or --to-destination)
+        for line in &stop_post_lines {
+            assert!(line.contains("8080"), "missing port 8080: {}", line);
+        }
+    }
+
+    #[test]
+    fn generate_unit_with_custom_interface_and_port() {
+        let config = TransparentProxyConfig {
+            enabled: true,
+            listen_addr: Some("0.0.0.0:9090".to_string()),
+            interface: Some("eth0".to_string()),
+            auto_iptables: true,
+        };
+
+        let unit = generate_systemd_unit(
+            Path::new("/usr/bin/witm"),
+            &["serve".into()],
+            Path::new("/var/lib/witmproxy"),
+            &config,
+        );
+
+        let stop_post_lines: Vec<&str> = unit
+            .lines()
+            .filter(|l| l.starts_with("ExecStopPost="))
+            .collect();
+        assert_eq!(stop_post_lines.len(), 8);
+
+        // PREROUTING lines should have eth0, OUTPUT lines should not
+        let prerouting_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("PREROUTING")).collect();
+        let output_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("OUTPUT")).collect();
+        assert_eq!(prerouting_lines.len(), 4);
+        assert_eq!(output_lines.len(), 4);
+        for line in &prerouting_lines {
+            assert!(line.contains("eth0"), "missing custom interface: {}", line);
+        }
+        for line in &stop_post_lines {
+            assert!(line.contains("9090"), "missing custom port 9090: {}", line);
+        }
+    }
+
+    #[test]
+    fn exec_stop_post_matches_cleanup_commands() {
+        use crate::proxy::netfilter::NetfilterManager;
+
+        let config = default_transparent_config();
+        let unit = generate_systemd_unit(
+            Path::new("/usr/bin/witm"),
+            &["serve".into()],
+            Path::new("/var/lib/witmproxy"),
+            &config,
+        );
+
+        let cleanup = NetfilterManager::cleanup_commands("tailscale0", 8080);
+        let stop_post_lines: Vec<&str> = unit
+            .lines()
+            .filter(|l| l.starts_with("ExecStopPost="))
+            .collect();
+
+        assert_eq!(stop_post_lines.len(), cleanup.len());
+
+        for ((cmd, args), line) in cleanup.iter().zip(stop_post_lines.iter()) {
+            // The line should contain all the args from cleanup_commands
+            for arg in args {
+                assert!(line.contains(arg), "ExecStopPost line missing arg '{}': {}", arg, line);
+            }
+            // Should use the full path
+            let expected_path = if cmd == "iptables" {
+                "/usr/sbin/iptables"
+            } else {
+                "/usr/sbin/ip6tables"
+            };
+            assert!(line.contains(expected_path), "missing path: {}", line);
+        }
+    }
 }
