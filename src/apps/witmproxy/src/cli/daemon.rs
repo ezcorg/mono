@@ -782,21 +782,29 @@ mod tests {
             &default_transparent_config(),
         );
 
-        // 4 PREROUTING + 4 OUTPUT = 8 ExecStopPost lines
+        // 4 PREROUTING + 4 OUTPUT DNAT + 2 QUIC block = 10 ExecStopPost lines
         let stop_post_lines: Vec<&str> = unit
             .lines()
             .filter(|l| l.starts_with("ExecStopPost="))
             .collect();
-        assert_eq!(stop_post_lines.len(), 8);
+        assert_eq!(stop_post_lines.len(), 10);
 
         // All should use the `-` prefix for error suppression
         for line in &stop_post_lines {
             assert!(line.starts_with("ExecStopPost=-/usr/sbin/"));
         }
 
-        // All should reference port 8080 (either --to-port or --to-destination)
-        for line in &stop_post_lines {
+        // TCP rules (PREROUTING + OUTPUT DNAT) should reference port 8080
+        let tcp_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| !l.contains("udp")).collect();
+        for line in &tcp_lines {
             assert!(line.contains("8080"), "missing port 8080: {}", line);
+        }
+
+        // QUIC block rules should reference UDP port 443
+        let udp_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("udp")).collect();
+        assert_eq!(udp_lines.len(), 2);
+        for line in &udp_lines {
+            assert!(line.contains("443"), "missing port 443: {}", line);
         }
     }
 
@@ -820,17 +828,19 @@ mod tests {
             .lines()
             .filter(|l| l.starts_with("ExecStopPost="))
             .collect();
-        assert_eq!(stop_post_lines.len(), 8);
+        assert_eq!(stop_post_lines.len(), 10);
 
-        // PREROUTING lines should have eth0, OUTPUT lines should not
+        // PREROUTING lines should have eth0
         let prerouting_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("PREROUTING")).collect();
         let output_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("OUTPUT")).collect();
         assert_eq!(prerouting_lines.len(), 4);
-        assert_eq!(output_lines.len(), 4);
+        assert_eq!(output_lines.len(), 6); // 4 DNAT + 2 QUIC block
         for line in &prerouting_lines {
             assert!(line.contains("eth0"), "missing custom interface: {}", line);
         }
-        for line in &stop_post_lines {
+        // TCP rules should reference port 9090
+        let tcp_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| !l.contains("udp")).collect();
+        for line in &tcp_lines {
             assert!(line.contains("9090"), "missing custom port 9090: {}", line);
         }
     }
