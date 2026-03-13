@@ -38,8 +38,12 @@ impl NetfilterManager {
             ("ip6tables".into(), vec!["-t","nat","-D","OUTPUT","-p","tcp","--dport","80","-m","owner","!","--uid-owner","0","-j","DNAT","--to-destination",&format!("[::1]:{}", port)].into_iter().map(String::from).collect()),
             ("ip6tables".into(), vec!["-t","nat","-D","OUTPUT","-p","tcp","--dport","443","-m","owner","!","--uid-owner","0","-j","DNAT","--to-destination",&format!("[::1]:{}", port)].into_iter().map(String::from).collect()),
             // QUIC/HTTP3 block rules (DROP UDP 443 to force TCP fallback through proxy)
+            // OUTPUT: locally-originated traffic (excluding root/proxy)
             ("iptables".into(), vec!["-D","OUTPUT","-p","udp","--dport","443","-m","owner","!","--uid-owner","0","-j","DROP"].into_iter().map(String::from).collect()),
             ("ip6tables".into(), vec!["-D","OUTPUT","-p","udp","--dport","443","-m","owner","!","--uid-owner","0","-j","DROP"].into_iter().map(String::from).collect()),
+            // FORWARD: traffic from remote clients (e.g. phones using this machine as exit node)
+            ("iptables".into(), vec!["-D","FORWARD","-i",interface,"-p","udp","--dport","443","-j","DROP"].into_iter().map(String::from).collect()),
+            ("ip6tables".into(), vec!["-D","FORWARD","-i",interface,"-p","udp","--dport","443","-j","DROP"].into_iter().map(String::from).collect()),
         ]
     }
 
@@ -112,12 +116,17 @@ impl NetfilterManager {
         // Block QUIC/HTTP3 (UDP port 443) to force browsers to fall back to TCP,
         // which the transparent proxy can intercept. Without this, browsers like
         // Chrome cache QUIC support for domains and bypass the proxy entirely.
+        //
+        // OUTPUT rules handle locally-originated traffic.
+        // FORWARD rules handle traffic from remote clients (e.g. phones routing
+        // through this machine as a Tailscale exit node).
         let quic_block_rules = [
             ("iptables", "443"),
             ("ip6tables", "443"),
         ];
 
         for (cmd, dport) in &quic_block_rules {
+            // OUTPUT: local traffic (exclude root to avoid blocking proxy's own connections)
             let status = Command::new(cmd)
                 .args([
                     "-I", "OUTPUT", "1",
@@ -128,9 +137,25 @@ impl NetfilterManager {
                 .status();
 
             match status {
-                Ok(s) if s.success() => info!("{} QUIC block rule added (UDP {})", cmd, dport),
-                Ok(s) => warn!("{} QUIC block rule for UDP {} failed: {}", cmd, dport, s),
+                Ok(s) if s.success() => info!("{} QUIC block rule added for OUTPUT (UDP {})", cmd, dport),
+                Ok(s) => warn!("{} QUIC block rule for OUTPUT UDP {} failed: {}", cmd, dport, s),
                 Err(e) => warn!("Failed to execute {} for QUIC block: {}", cmd, e),
+            }
+
+            // FORWARD: remote client traffic arriving on the proxy interface
+            let status = Command::new(cmd)
+                .args([
+                    "-I", "FORWARD", "1",
+                    "-i", &self.interface,
+                    "-p", "udp", "--dport", dport,
+                    "-j", "DROP",
+                ])
+                .status();
+
+            match status {
+                Ok(s) if s.success() => info!("{} QUIC block rule added for FORWARD (UDP {})", cmd, dport),
+                Ok(s) => warn!("{} QUIC block rule for FORWARD UDP {} failed: {}", cmd, dport, s),
+                Err(e) => warn!("Failed to execute {} for FORWARD QUIC block: {}", cmd, e),
             }
         }
 
@@ -225,23 +250,31 @@ mod tests {
     #[test]
     fn cleanup_commands_match_setup_rules() {
         let commands = NetfilterManager::cleanup_commands("tailscale0", 8080);
-        // 4 PREROUTING + 4 OUTPUT + 2 QUIC block = 10 total
-        assert_eq!(commands.len(), 10);
+        // 4 PREROUTING + 4 OUTPUT DNAT + 2 OUTPUT QUIC block + 2 FORWARD QUIC block = 12 total
+        assert_eq!(commands.len(), 12);
 
         // All commands should use -D (delete)
         for (_, args) in &commands {
             assert!(args.contains(&"-D".to_string()));
         }
 
-        // First 4 are PREROUTING (interface-bound), next 4 are OUTPUT NAT, last 2 are QUIC block
         let prerouting: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"PREROUTING".to_string())).collect();
         let output: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"OUTPUT".to_string())).collect();
+        let forward: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"FORWARD".to_string())).collect();
         assert_eq!(prerouting.len(), 4);
         assert_eq!(output.len(), 6); // 4 DNAT + 2 QUIC DROP
+        assert_eq!(forward.len(), 2); // 2 QUIC DROP for remote clients
 
         // PREROUTING rules should reference the interface
         for (_, args) in &prerouting {
             assert!(args.contains(&"tailscale0".to_string()));
+        }
+
+        // FORWARD QUIC rules should reference the interface and DROP UDP
+        for (_, args) in &forward {
+            assert!(args.contains(&"tailscale0".to_string()));
+            assert!(args.contains(&"DROP".to_string()));
+            assert!(args.contains(&"udp".to_string()));
         }
 
         // OUTPUT DNAT rules should have owner match and DNAT
@@ -251,9 +284,9 @@ mod tests {
             assert!(args.contains(&"owner".to_string()));
         }
 
-        // QUIC block rules should DROP UDP 443
+        // QUIC block rules should DROP UDP 443 (OUTPUT + FORWARD = 4 total)
         let quic_rules: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"udp".to_string())).collect();
-        assert_eq!(quic_rules.len(), 2);
+        assert_eq!(quic_rules.len(), 4);
         for (_, args) in &quic_rules {
             assert!(args.contains(&"DROP".to_string()));
             assert!(args.contains(&"443".to_string()));
@@ -272,7 +305,7 @@ mod tests {
     #[test]
     fn cleanup_commands_with_custom_values() {
         let commands = NetfilterManager::cleanup_commands("eth0", 9090);
-        assert_eq!(commands.len(), 10);
+        assert_eq!(commands.len(), 12);
         // PREROUTING rules use interface, OUTPUT rules don't
         let prerouting: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"PREROUTING".to_string())).collect();
         for (_, args) in &prerouting {

@@ -29,21 +29,21 @@ On first run, `witm` automatically:
 
 ```sh
 # View daemon status
-witm daemon status
+witm service status
 
 # Control the daemon
-witm daemon start    # Start the daemon
-witm daemon stop     # Stop the daemon
-witm daemon restart  # Restart the daemon
+witm service start    # Start the daemon
+witm service stop     # Stop the daemon
+witm service restart  # Restart the daemon
 
 # View logs
-witm daemon logs          # Show last 50 lines of logs
-witm daemon logs -f       # Follow logs in real-time (like tail -f)
-witm daemon logs -l 100   # Show last 100 lines
+witm service logs          # Show last 50 lines of logs
+witm service logs -f       # Follow logs in real-time (like tail -f)
+witm service logs -l 100   # Show last 100 lines
 
 # Manage installation
-witm daemon install    # Manually install the daemon
-witm daemon uninstall  # Remove the daemon from the system
+witm service install    # Manually install the daemon
+witm service uninstall  # Remove the daemon from the system
 ```
 
 ### 3. Add plugins

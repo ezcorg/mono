@@ -8,10 +8,10 @@ use crate::{
 };
 use auth::AuthCommands;
 use daemon::ServiceCommands;
-use group_cmd::GroupCommands;
+use group::GroupCommands;
 use plugin::PluginCommands;
 use proxy::ProxyCommands;
-use tenant_cmd::TenantCommands;
+use tenant::TenantCommands;
 use trust::CaCommands;
 
 use anyhow::Result;
@@ -26,10 +26,11 @@ use tracing::{error, info, warn};
 pub mod api_client;
 pub mod auth;
 pub mod daemon;
-pub mod group_cmd;
+pub mod group;
 mod plugin;
 mod proxy;
-pub mod tenant_cmd;
+pub mod tenant;
+mod tailscale;
 mod trust;
 
 #[cfg(test)]
@@ -219,11 +220,11 @@ impl ResolvedCli {
                 auth_handler.handle(command).await
             }
             Commands::Tenant { command } => {
-                let tenant_handler = tenant_cmd::TenantHandler;
+                let tenant_handler = tenant::TenantHandler;
                 tenant_handler.handle(command).await
             }
             Commands::Group { command } => {
-                let group_handler = group_cmd::GroupHandler;
+                let group_handler = group::GroupHandler;
                 group_handler.handle(command).await
             }
             Commands::Run => self.run_foreground().await,
@@ -423,6 +424,9 @@ impl ResolvedCli {
         let services_json = serde_json::to_string_pretty(&services)?;
         std::fs::write(&services_path, services_json)?;
         info!("Services information written to: {:?}", services_path);
+
+        // Detect Tailscale and display QR code for cert distribution
+        tailscale::discover_and_display(web_addr).await;
 
         // Start transparent proxy if enabled
         let mut _transparent_proxy = None;

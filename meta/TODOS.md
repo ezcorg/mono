@@ -4,16 +4,17 @@
 
 ## Simple
 
-- [ ] `witm plugin list` should list and show details about install plugins
-- [ ] Rename `witm daemon` command to either `witm server` or `witm service`
-- [ ] Rename `witm trust` to `witm ca`. `witm ca remove` should be renamed to `witm ca uninstall`
 - [ ] Investigate whether it's currently possible to emit structured logs/traces with our existing logging infrastructure
+
+## Medium
+
+- [ ] 
 
 ## Bigger tasks
 
-- [ ] True e2e tests which dynamically bring up a remote `witmproxy` server, with various clients (emulated Android, desktop Chrome+Firefox+etc.) configured to use it as a remote proxy
+- [ ] True e2e tests which dynamically bring up a remote `witmproxy` server, with various clients (emulated Android/iOS, desktop Chrome+Firefox+Safari+etc.) configured to use it as a remote proxy. Use `Appium` here.
 - [ ] Consider different CLI APIs, like `witm start --server --client localhost` to bring up the proxy as a server and a local-user client, `witm stop --client` to stop the client (but leave the server), or something like `witm start --proxy --client localhost` to not assume that we always want the API server (would it make sense to have  a locally available API server but no proxy? if there's a client, I guess it would just forward requests, but without one it makes no sense)  
-- [ ] Platform-specific secret handling of sensitive credentials (database password) that is compatible with the `witmproxy` daemon
+- [ ] Platform-specific secret handling of sensitive credentials (database password) that is compatible with the `witmproxy` service
 - [ ] Add a layer on-top of `witmproxy` to allow it to spawn a backend which can be used as a complete network interface/device, so that we can capture and handle all network traffic (if this makes sense)
 - [ ] Remove dependency on system binaries where possible (`certutil`, `cp`, `sh`, `sudo`, etc.), preferring native Rust interfaces or bundled binaries (with corresponding `bundled` features)
 - [ ] Some sort of LLM-assisted interface/functionality for building request/response plugins.
