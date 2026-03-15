@@ -7,7 +7,7 @@ use crate::{
     wasm::Runtime,
 };
 use auth::AuthCommands;
-use daemon::ServiceCommands;
+use service::ServiceCommands;
 use group::GroupCommands;
 use plugin::PluginCommands;
 use proxy::ProxyCommands;
@@ -25,7 +25,7 @@ use tracing::{error, info, warn};
 
 pub mod api_client;
 pub mod auth;
-pub mod daemon;
+pub mod service;
 pub mod group;
 mod plugin;
 mod proxy;
@@ -207,7 +207,7 @@ impl ResolvedCli {
                 proxy_handler.handle(command).await
             }
             Commands::Service { command } => {
-                let service_handler = daemon::ServiceHandler::new(
+                let service_handler = service::ServiceHandler::new(
                     self.config.clone(),
                     self.verbose,
                     self.plugin_dir.clone(),
@@ -237,7 +237,7 @@ impl ResolvedCli {
     /// - Restart the daemon so it picks up current config and newly added plugins
     /// - Unless --detach is specified, attach to the daemon's logs
     async fn run_default(&self) -> Result<()> {
-        let service_handler = daemon::ServiceHandler::new(
+        let service_handler = service::ServiceHandler::new(
             self.config.clone(),
             self.verbose,
             self.plugin_dir.clone(),

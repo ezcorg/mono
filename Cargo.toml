@@ -2,8 +2,9 @@
 resolver = "2"
 members = [
     "src/apps/witmproxy",
+    "src/apps/witmproxy/e2e",
     "src/apps/ezfilter-client/src-tauri",
-    "src/apps/eznote/src-tauri", 
+    "src/apps/eznote/src-tauri",
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
     "src/rust/witmproxy-plugin-noshorts",
