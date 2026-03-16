@@ -60,9 +60,7 @@ pub struct ApiClient {
 impl ApiClient {
     pub fn new(base_url: &str, token: Option<&str>) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .build()
-                .unwrap(),
+            client: reqwest::Client::builder().build().unwrap(),
             base_url: base_url.trim_end_matches('/').to_string(),
             token: token.map(|t| t.to_string()),
         }
@@ -76,11 +74,7 @@ impl ApiClient {
         }
     }
 
-    async fn request(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-    ) -> reqwest::RequestBuilder {
+    async fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url, path);
         let mut req = self.client.request(method, &url);
         if let Some(ref token) = self.token {
@@ -90,7 +84,11 @@ impl ApiClient {
     }
 
     pub async fn get(&self, path: &str) -> Result<reqwest::Response> {
-        let resp = self.request(reqwest::Method::GET, path).await.send().await?;
+        let resp = self
+            .request(reqwest::Method::GET, path)
+            .await
+            .send()
+            .await?;
         Ok(resp)
     }
 

@@ -81,11 +81,14 @@ impl TenantHandler {
                     body["email"] = serde_json::json!(email);
                 }
                 let resp = client
-                    .post_json("/api/auth/register", &serde_json::json!({
-                        "display_name": display_name,
-                        "email": email.as_deref().unwrap_or(""),
-                        "password": "", // Placeholder for CLI tenant creation
-                    }))
+                    .post_json(
+                        "/api/auth/register",
+                        &serde_json::json!({
+                            "display_name": display_name,
+                            "email": email.as_deref().unwrap_or(""),
+                            "password": "", // Placeholder for CLI tenant creation
+                        }),
+                    )
                     .await?;
                 let text = resp.text().await?;
                 println!("{}", text);

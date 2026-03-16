@@ -144,9 +144,9 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
 
 /// Hash a password using argon2.
 pub fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
-    use argon2::{Argon2, PasswordHasher};
     use argon2::password_hash::SaltString;
     use argon2::password_hash::rand_core::OsRng;
+    use argon2::{Argon2, PasswordHasher};
 
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
@@ -156,8 +156,8 @@ pub fn hash_password(password: &str) -> Result<String, argon2::password_hash::Er
 
 /// Verify a password against an argon2 hash.
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::password_hash::Error> {
-    use argon2::{Argon2, PasswordVerifier};
     use argon2::password_hash::PasswordHash;
+    use argon2::{Argon2, PasswordVerifier};
 
     let parsed_hash = PasswordHash::new(hash)?;
     Ok(Argon2::default()

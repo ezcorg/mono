@@ -202,9 +202,7 @@ where
                                 let cap_usize = cap.into();
                                 if n > cap_usize {
                                     // Data doesn't fit, buffer the rest
-                                    dst.set_buffer(Cursor::new(
-                                        data_frame.split_off(cap_usize),
-                                    ));
+                                    dst.set_buffer(Cursor::new(data_frame.split_off(cap_usize)));
                                     let mut dst_direct = dst.as_direct(store, cap_usize);
                                     dst_direct.remaining().copy_from_slice(&data_frame);
                                     dst_direct.mark_written(cap_usize);

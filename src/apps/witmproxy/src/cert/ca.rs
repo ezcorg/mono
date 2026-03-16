@@ -493,7 +493,15 @@ impl CertificateAuthority {
             // Add the new cert as a trusted CA
             let cert_path_str = cert_path.to_string_lossy();
             let result = Self::run_certutil_as_user(&[
-                "-A", "-d", &db_arg, "-t", "C,,", "-n", cert_name, "-i", &cert_path_str,
+                "-A",
+                "-d",
+                &db_arg,
+                "-t",
+                "C,,",
+                "-n",
+                cert_name,
+                "-i",
+                &cert_path_str,
             ]);
 
             match result {
@@ -616,11 +624,23 @@ impl CertificateAuthority {
 
         // Flatpak installs: ~/.var/app/<app-id>/<profile_rel_dir>/<profile>/cert9.db
         let flatpak_apps: &[(&str, &str, &str)] = &[
-            ("org.mozilla.firefox", ".mozilla/firefox", "Firefox (Flatpak)"),
+            (
+                "org.mozilla.firefox",
+                ".mozilla/firefox",
+                "Firefox (Flatpak)",
+            ),
             ("app.zen_browser.zen", ".zen", "Zen (Flatpak)"),
-            ("io.gitlab.librewolf-community", ".librewolf", "LibreWolf (Flatpak)"),
+            (
+                "io.gitlab.librewolf-community",
+                ".librewolf",
+                "LibreWolf (Flatpak)",
+            ),
             ("net.waterfox.waterfox", ".waterfox", "Waterfox (Flatpak)"),
-            ("one.nickel.nickel-browser", ".nickel", "nickel-browser (Flatpak)"),
+            (
+                "one.nickel.nickel-browser",
+                ".nickel",
+                "nickel-browser (Flatpak)",
+            ),
         ];
 
         let flatpak_base = home.join(".var/app");
@@ -630,9 +650,7 @@ impl CertificateAuthority {
         }
 
         // Snap installs: ~/snap/<snap-name>/common/<profile_rel_dir>/<profile>/cert9.db
-        let snap_apps: &[(&str, &str, &str)] = &[
-            ("firefox", ".mozilla/firefox", "Firefox (Snap)"),
-        ];
+        let snap_apps: &[(&str, &str, &str)] = &[("firefox", ".mozilla/firefox", "Firefox (Snap)")];
 
         let snap_base = home.join("snap");
         for (snap_name, profile_rel, browser_name) in snap_apps {
@@ -644,7 +662,9 @@ impl CertificateAuthority {
         let snap_chromium_apps: &[&str] = &["chromium", "brave"];
         for snap_name in snap_chromium_apps {
             let snap_dir = snap_base.join(snap_name);
-            let Ok(entries) = std::fs::read_dir(&snap_dir) else { continue; };
+            let Ok(entries) = std::fs::read_dir(&snap_dir) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 let nssdb = entry.path().join(".pki/nssdb");
                 if nssdb.join("cert9.db").exists() {
@@ -680,13 +700,15 @@ impl CertificateAuthority {
         std::env::var("SUDO_USER")
             .ok()
             .and_then(|user| {
-                std::fs::read_to_string("/etc/passwd").ok().and_then(|passwd| {
-                    passwd
-                        .lines()
-                        .find(|line| line.starts_with(&format!("{}:", user)))
-                        .and_then(|line| line.split(':').nth(5))
-                        .map(PathBuf::from)
-                })
+                std::fs::read_to_string("/etc/passwd")
+                    .ok()
+                    .and_then(|passwd| {
+                        passwd
+                            .lines()
+                            .find(|line| line.starts_with(&format!("{}:", user)))
+                            .and_then(|line| line.split(':').nth(5))
+                            .map(PathBuf::from)
+                    })
             })
             .or_else(|| dirs::home_dir())
     }

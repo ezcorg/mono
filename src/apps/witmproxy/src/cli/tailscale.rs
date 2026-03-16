@@ -30,7 +30,10 @@ struct TailscaleSelfNode {
 
 /// Detect Tailscale and return info about this node, or None if unavailable.
 fn detect_tailscale() -> Option<TailscaleInfo> {
-    let output = match Command::new("tailscale").args(["status", "--json"]).output() {
+    let output = match Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             debug!("tailscale binary not found or not executable: {}", e);

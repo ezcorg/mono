@@ -1,7 +1,6 @@
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::events::Event;
-use crate::tenant::TenantContext;
 use crate::events::connect::Connect;
 use crate::events::content::InboundContent;
 use crate::events::response::ContextualResponse;
@@ -9,6 +8,7 @@ use crate::http::utils::ContentTyped;
 use crate::plugins::cel::CelRequest;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
+use crate::tenant::TenantContext;
 use crate::wasm::bindgen::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 

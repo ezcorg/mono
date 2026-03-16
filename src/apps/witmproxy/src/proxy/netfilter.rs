@@ -28,22 +28,258 @@ impl NetfilterManager {
         let port = redirect_port.to_string();
         vec![
             // PREROUTING rules (traffic from other machines on the interface)
-            ("iptables".into(), vec!["-t","nat","-D","PREROUTING","-i",interface,"-p","tcp","--dport","80","-j","REDIRECT","--to-port",&port].into_iter().map(String::from).collect()),
-            ("iptables".into(), vec!["-t","nat","-D","PREROUTING","-i",interface,"-p","tcp","--dport","443","-j","REDIRECT","--to-port",&port].into_iter().map(String::from).collect()),
-            ("ip6tables".into(), vec!["-t","nat","-D","PREROUTING","-i",interface,"-p","tcp","--dport","80","-j","REDIRECT","--to-port",&port].into_iter().map(String::from).collect()),
-            ("ip6tables".into(), vec!["-t","nat","-D","PREROUTING","-i",interface,"-p","tcp","--dport","443","-j","REDIRECT","--to-port",&port].into_iter().map(String::from).collect()),
+            (
+                "iptables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "PREROUTING",
+                    "-i",
+                    interface,
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "80",
+                    "-j",
+                    "REDIRECT",
+                    "--to-port",
+                    &port,
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "iptables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "PREROUTING",
+                    "-i",
+                    interface,
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "443",
+                    "-j",
+                    "REDIRECT",
+                    "--to-port",
+                    &port,
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "ip6tables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "PREROUTING",
+                    "-i",
+                    interface,
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "80",
+                    "-j",
+                    "REDIRECT",
+                    "--to-port",
+                    &port,
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "ip6tables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "PREROUTING",
+                    "-i",
+                    interface,
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "443",
+                    "-j",
+                    "REDIRECT",
+                    "--to-port",
+                    &port,
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
             // OUTPUT rules (locally-originated traffic, excluding root/proxy to avoid loops)
-            ("iptables".into(), vec!["-t","nat","-D","OUTPUT","-p","tcp","--dport","80","-m","owner","!","--uid-owner","0","-j","DNAT","--to-destination",&format!("127.0.0.1:{}", port)].into_iter().map(String::from).collect()),
-            ("iptables".into(), vec!["-t","nat","-D","OUTPUT","-p","tcp","--dport","443","-m","owner","!","--uid-owner","0","-j","DNAT","--to-destination",&format!("127.0.0.1:{}", port)].into_iter().map(String::from).collect()),
-            ("ip6tables".into(), vec!["-t","nat","-D","OUTPUT","-p","tcp","--dport","80","-m","owner","!","--uid-owner","0","-j","DNAT","--to-destination",&format!("[::1]:{}", port)].into_iter().map(String::from).collect()),
-            ("ip6tables".into(), vec!["-t","nat","-D","OUTPUT","-p","tcp","--dport","443","-m","owner","!","--uid-owner","0","-j","DNAT","--to-destination",&format!("[::1]:{}", port)].into_iter().map(String::from).collect()),
+            (
+                "iptables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "OUTPUT",
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "80",
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DNAT",
+                    "--to-destination",
+                    &format!("127.0.0.1:{}", port),
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "iptables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "OUTPUT",
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "443",
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DNAT",
+                    "--to-destination",
+                    &format!("127.0.0.1:{}", port),
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "ip6tables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "OUTPUT",
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "80",
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DNAT",
+                    "--to-destination",
+                    &format!("[::1]:{}", port),
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "ip6tables".into(),
+                vec![
+                    "-t",
+                    "nat",
+                    "-D",
+                    "OUTPUT",
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "443",
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DNAT",
+                    "--to-destination",
+                    &format!("[::1]:{}", port),
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
             // QUIC/HTTP3 block rules (DROP UDP 443 to force TCP fallback through proxy)
             // OUTPUT: locally-originated traffic (excluding root/proxy)
-            ("iptables".into(), vec!["-D","OUTPUT","-p","udp","--dport","443","-m","owner","!","--uid-owner","0","-j","DROP"].into_iter().map(String::from).collect()),
-            ("ip6tables".into(), vec!["-D","OUTPUT","-p","udp","--dport","443","-m","owner","!","--uid-owner","0","-j","DROP"].into_iter().map(String::from).collect()),
+            (
+                "iptables".into(),
+                vec![
+                    "-D",
+                    "OUTPUT",
+                    "-p",
+                    "udp",
+                    "--dport",
+                    "443",
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DROP",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "ip6tables".into(),
+                vec![
+                    "-D",
+                    "OUTPUT",
+                    "-p",
+                    "udp",
+                    "--dport",
+                    "443",
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DROP",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
             // FORWARD: traffic from remote clients (e.g. phones using this machine as exit node)
-            ("iptables".into(), vec!["-D","FORWARD","-i",interface,"-p","udp","--dport","443","-j","DROP"].into_iter().map(String::from).collect()),
-            ("ip6tables".into(), vec!["-D","FORWARD","-i",interface,"-p","udp","--dport","443","-j","DROP"].into_iter().map(String::from).collect()),
+            (
+                "iptables".into(),
+                vec![
+                    "-D", "FORWARD", "-i", interface, "-p", "udp", "--dport", "443", "-j", "DROP",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                "ip6tables".into(),
+                vec![
+                    "-D", "FORWARD", "-i", interface, "-p", "udp", "--dport", "443", "-j", "DROP",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
         ]
     }
 
@@ -69,10 +305,20 @@ impl NetfilterManager {
         for (cmd, dport) in &prerouting_rules {
             let status = Command::new(cmd)
                 .args([
-                    "-t", "nat", "-A", "PREROUTING",
-                    "-i", &self.interface,
-                    "-p", "tcp", "--dport", dport,
-                    "-j", "REDIRECT", "--to-port", &port,
+                    "-t",
+                    "nat",
+                    "-A",
+                    "PREROUTING",
+                    "-i",
+                    &self.interface,
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    dport,
+                    "-j",
+                    "REDIRECT",
+                    "--to-port",
+                    &port,
                 ])
                 .status();
 
@@ -99,10 +345,24 @@ impl NetfilterManager {
             let dest = format!("{}:{}", loopback, port);
             let status = Command::new(cmd)
                 .args([
-                    "-t", "nat", "-I", "OUTPUT", "1",
-                    "-p", "tcp", "--dport", dport,
-                    "-m", "owner", "!", "--uid-owner", "0",
-                    "-j", "DNAT", "--to-destination", &dest,
+                    "-t",
+                    "nat",
+                    "-I",
+                    "OUTPUT",
+                    "1",
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    dport,
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DNAT",
+                    "--to-destination",
+                    &dest,
                 ])
                 .status();
 
@@ -120,41 +380,65 @@ impl NetfilterManager {
         // OUTPUT rules handle locally-originated traffic.
         // FORWARD rules handle traffic from remote clients (e.g. phones routing
         // through this machine as a Tailscale exit node).
-        let quic_block_rules = [
-            ("iptables", "443"),
-            ("ip6tables", "443"),
-        ];
+        let quic_block_rules = [("iptables", "443"), ("ip6tables", "443")];
 
         for (cmd, dport) in &quic_block_rules {
             // OUTPUT: local traffic (exclude root to avoid blocking proxy's own connections)
             let status = Command::new(cmd)
                 .args([
-                    "-I", "OUTPUT", "1",
-                    "-p", "udp", "--dport", dport,
-                    "-m", "owner", "!", "--uid-owner", "0",
-                    "-j", "DROP",
+                    "-I",
+                    "OUTPUT",
+                    "1",
+                    "-p",
+                    "udp",
+                    "--dport",
+                    dport,
+                    "-m",
+                    "owner",
+                    "!",
+                    "--uid-owner",
+                    "0",
+                    "-j",
+                    "DROP",
                 ])
                 .status();
 
             match status {
-                Ok(s) if s.success() => info!("{} QUIC block rule added for OUTPUT (UDP {})", cmd, dport),
-                Ok(s) => warn!("{} QUIC block rule for OUTPUT UDP {} failed: {}", cmd, dport, s),
+                Ok(s) if s.success() => {
+                    info!("{} QUIC block rule added for OUTPUT (UDP {})", cmd, dport)
+                }
+                Ok(s) => warn!(
+                    "{} QUIC block rule for OUTPUT UDP {} failed: {}",
+                    cmd, dport, s
+                ),
                 Err(e) => warn!("Failed to execute {} for QUIC block: {}", cmd, e),
             }
 
             // FORWARD: remote client traffic arriving on the proxy interface
             let status = Command::new(cmd)
                 .args([
-                    "-I", "FORWARD", "1",
-                    "-i", &self.interface,
-                    "-p", "udp", "--dport", dport,
-                    "-j", "DROP",
+                    "-I",
+                    "FORWARD",
+                    "1",
+                    "-i",
+                    &self.interface,
+                    "-p",
+                    "udp",
+                    "--dport",
+                    dport,
+                    "-j",
+                    "DROP",
                 ])
                 .status();
 
             match status {
-                Ok(s) if s.success() => info!("{} QUIC block rule added for FORWARD (UDP {})", cmd, dport),
-                Ok(s) => warn!("{} QUIC block rule for FORWARD UDP {} failed: {}", cmd, dport, s),
+                Ok(s) if s.success() => {
+                    info!("{} QUIC block rule added for FORWARD (UDP {})", cmd, dport)
+                }
+                Ok(s) => warn!(
+                    "{} QUIC block rule for FORWARD UDP {} failed: {}",
+                    cmd, dport, s
+                ),
                 Err(e) => warn!("Failed to execute {} for FORWARD QUIC block: {}", cmd, e),
             }
         }
@@ -164,7 +448,11 @@ impl NetfilterManager {
             // Try conntrack tool first
             vec!["conntrack", "-F"],
             // Alternative: flush via /proc
-            vec!["sh", "-c", "echo 1 > /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || true"],
+            vec![
+                "sh",
+                "-c",
+                "echo 1 > /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || true",
+            ],
         ] {
             match Command::new(flush_cmd[0]).args(&flush_cmd[1..]).status() {
                 Ok(s) if s.success() => {
@@ -177,7 +465,10 @@ impl NetfilterManager {
 
         // Dump the current OUTPUT chain for diagnostics — both iptables and raw nft views
         for cmd in ["iptables", "ip6tables"] {
-            match Command::new(cmd).args(["-t", "nat", "-L", "OUTPUT", "-n", "-v", "--line-numbers"]).output() {
+            match Command::new(cmd)
+                .args(["-t", "nat", "-L", "OUTPUT", "-n", "-v", "--line-numbers"])
+                .output()
+            {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout);
                     info!("{} nat OUTPUT chain after setup:\n{}", cmd, stdout);
@@ -187,7 +478,10 @@ impl NetfilterManager {
         }
         // Raw nft view — shows actual chain hook/priority and rule handles
         for family in ["ip", "ip6"] {
-            match Command::new("nft").args(["-a", "list", "chain", family, "nat", "OUTPUT"]).output() {
+            match Command::new("nft")
+                .args(["-a", "list", "chain", family, "nat", "OUTPUT"])
+                .output()
+            {
                 Ok(out) => {
                     let stdout = String::from_utf8_lossy(&out.stdout);
                     info!("nft {} nat OUTPUT chain:\n{}", family, stdout);
@@ -258,9 +552,18 @@ mod tests {
             assert!(args.contains(&"-D".to_string()));
         }
 
-        let prerouting: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"PREROUTING".to_string())).collect();
-        let output: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"OUTPUT".to_string())).collect();
-        let forward: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"FORWARD".to_string())).collect();
+        let prerouting: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| a.contains(&"PREROUTING".to_string()))
+            .collect();
+        let output: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| a.contains(&"OUTPUT".to_string()))
+            .collect();
+        let forward: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| a.contains(&"FORWARD".to_string()))
+            .collect();
         assert_eq!(prerouting.len(), 4);
         assert_eq!(output.len(), 6); // 4 DNAT + 2 QUIC DROP
         assert_eq!(forward.len(), 2); // 2 QUIC DROP for remote clients
@@ -278,14 +581,20 @@ mod tests {
         }
 
         // OUTPUT DNAT rules should have owner match and DNAT
-        let output_dnat: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"DNAT".to_string())).collect();
+        let output_dnat: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| a.contains(&"DNAT".to_string()))
+            .collect();
         assert_eq!(output_dnat.len(), 4);
         for (_, args) in &output_dnat {
             assert!(args.contains(&"owner".to_string()));
         }
 
         // QUIC block rules should DROP UDP 443 (OUTPUT + FORWARD = 4 total)
-        let quic_rules: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"udp".to_string())).collect();
+        let quic_rules: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| a.contains(&"udp".to_string()))
+            .collect();
         assert_eq!(quic_rules.len(), 4);
         for (_, args) in &quic_rules {
             assert!(args.contains(&"DROP".to_string()));
@@ -293,11 +602,15 @@ mod tests {
         }
 
         // TCP rules should reference port 8080 (either as --to-port or in --to-destination)
-        let tcp_rules: Vec<_> = commands.iter().filter(|(_, a)| !a.contains(&"udp".to_string())).collect();
+        let tcp_rules: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| !a.contains(&"udp".to_string()))
+            .collect();
         for (_, args) in &tcp_rules {
             assert!(
                 args.iter().any(|a| a.contains("8080")),
-                "missing port 8080 in args: {:?}", args,
+                "missing port 8080 in args: {:?}",
+                args,
             );
         }
     }
@@ -307,15 +620,22 @@ mod tests {
         let commands = NetfilterManager::cleanup_commands("eth0", 9090);
         assert_eq!(commands.len(), 12);
         // PREROUTING rules use interface, OUTPUT rules don't
-        let prerouting: Vec<_> = commands.iter().filter(|(_, a)| a.contains(&"PREROUTING".to_string())).collect();
+        let prerouting: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| a.contains(&"PREROUTING".to_string()))
+            .collect();
         for (_, args) in &prerouting {
             assert!(args.contains(&"eth0".to_string()));
         }
-        let tcp_rules: Vec<_> = commands.iter().filter(|(_, a)| !a.contains(&"udp".to_string())).collect();
+        let tcp_rules: Vec<_> = commands
+            .iter()
+            .filter(|(_, a)| !a.contains(&"udp".to_string()))
+            .collect();
         for (_, args) in &tcp_rules {
             assert!(
                 args.iter().any(|a| a.contains("9090")),
-                "missing port 9090 in args: {:?}", args,
+                "missing port 9090 in args: {:?}",
+                args,
             );
         }
     }

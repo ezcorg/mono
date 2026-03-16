@@ -77,10 +77,7 @@ fn multi_group_permission_merging() {
         Permission::deny("plugins:adblock:write"),
     ];
 
-    let all_perms: Vec<Permission> = group_a
-        .into_iter()
-        .chain(group_b.into_iter())
-        .collect();
+    let all_perms: Vec<Permission> = group_a.into_iter().chain(group_b.into_iter()).collect();
 
     assert!(evaluate(&all_perms, "plugins:noshorts:read"));
     assert!(evaluate(&all_perms, "plugins:noshorts:write"));

@@ -71,11 +71,7 @@ impl Tenant {
         Ok(tenant)
     }
 
-    pub async fn by_oidc(
-        pool: &SqlitePool,
-        provider: &str,
-        subject: &str,
-    ) -> Result<Option<Self>> {
+    pub async fn by_oidc(pool: &SqlitePool, provider: &str, subject: &str) -> Result<Option<Self>> {
         let tenant = sqlx::query_as::<_, Tenant>(
             "SELECT * FROM tenants WHERE oidc_provider = ? AND oidc_subject = ?",
         )
@@ -236,7 +232,12 @@ impl Group {
         Ok(groups)
     }
 
-    pub async fn create(pool: &SqlitePool, id: &str, name: &str, description: &str) -> Result<Self> {
+    pub async fn create(
+        pool: &SqlitePool,
+        id: &str,
+        name: &str,
+        description: &str,
+    ) -> Result<Self> {
         sqlx::query("INSERT INTO groups (id, name, description) VALUES (?, ?, ?)")
             .bind(id)
             .bind(name)
@@ -301,12 +302,11 @@ impl Group {
     }
 
     pub async fn permissions(pool: &SqlitePool, group_id: &str) -> Result<Vec<Permission>> {
-        let db_perms = sqlx::query_as::<_, DbPermission>(
-            "SELECT * FROM permissions WHERE group_id = ?",
-        )
-        .bind(group_id)
-        .fetch_all(pool)
-        .await?;
+        let db_perms =
+            sqlx::query_as::<_, DbPermission>("SELECT * FROM permissions WHERE group_id = ?")
+                .bind(group_id)
+                .fetch_all(pool)
+                .await?;
 
         db_perms
             .into_iter()
@@ -361,26 +361,16 @@ pub async fn set_plugin_config(
     Ok(())
 }
 
-pub async fn add_ip_mapping(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    ip_address: &str,
-) -> Result<()> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO tenant_ip_mappings (tenant_id, ip_address) VALUES (?, ?)",
-    )
-    .bind(tenant_id)
-    .bind(ip_address)
-    .execute(pool)
-    .await?;
+pub async fn add_ip_mapping(pool: &SqlitePool, tenant_id: &str, ip_address: &str) -> Result<()> {
+    sqlx::query("INSERT OR IGNORE INTO tenant_ip_mappings (tenant_id, ip_address) VALUES (?, ?)")
+        .bind(tenant_id)
+        .bind(ip_address)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
-pub async fn remove_ip_mapping(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    ip_address: &str,
-) -> Result<()> {
+pub async fn remove_ip_mapping(pool: &SqlitePool, tenant_id: &str, ip_address: &str) -> Result<()> {
     sqlx::query("DELETE FROM tenant_ip_mappings WHERE tenant_id = ? AND ip_address = ?")
         .bind(tenant_id)
         .bind(ip_address)

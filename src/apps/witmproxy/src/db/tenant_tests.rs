@@ -31,9 +31,17 @@ async fn create_and_retrieve_tenant() {
     let (db, _dir) = setup_db().await;
     let pool = &db.pool;
 
-    let tenant = Tenant::create(pool, "t1", "Alice", Some("alice@test.com"), None, None, None)
-        .await
-        .unwrap();
+    let tenant = Tenant::create(
+        pool,
+        "t1",
+        "Alice",
+        Some("alice@test.com"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(tenant.id, "t1");
     assert_eq!(tenant.display_name, "Alice");
     assert_eq!(tenant.email.as_deref(), Some("alice@test.com"));
@@ -45,9 +53,17 @@ async fn tenant_by_email() {
     let (db, _dir) = setup_db().await;
     let pool = &db.pool;
 
-    Tenant::create(pool, "t1", "Alice", Some("alice@test.com"), None, None, None)
-        .await
-        .unwrap();
+    Tenant::create(
+        pool,
+        "t1",
+        "Alice",
+        Some("alice@test.com"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     let found = Tenant::by_email(pool, "alice@test.com").await.unwrap();
     assert!(found.is_some());
@@ -278,7 +294,9 @@ async fn ip_mapping_crud() {
     assert!(not_found.is_none());
 
     // Remove mapping
-    remove_ip_mapping(pool, "t1", "192.168.1.100").await.unwrap();
+    remove_ip_mapping(pool, "t1", "192.168.1.100")
+        .await
+        .unwrap();
     let mappings = t1.ip_mappings(pool).await.unwrap();
     assert_eq!(mappings.len(), 1);
 }

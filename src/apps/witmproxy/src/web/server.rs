@@ -2,12 +2,7 @@ use super::{AppState, download_certificate, index_page};
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
-use crate::web::{
-    auth::jwt_auth,
-    acl_middleware::acl_check,
-    auth_endpoints,
-    management,
-};
+use crate::web::{acl_middleware::acl_check, auth::jwt_auth, auth_endpoints, management};
 use anyhow::Result;
 use rust_embed::RustEmbed;
 use salvo::Writer;
@@ -137,55 +132,51 @@ impl WebServer {
                 // Group permissions (most specific first)
                 .push(
                     Router::with_path("/api/manage/groups/{id}/permissions/{permission_id}")
-                        .delete(management::remove_group_permission)
+                        .delete(management::remove_group_permission),
                 )
                 .push(
                     Router::with_path("/api/manage/groups/{id}/permissions")
-                        .post(management::add_group_permission)
+                        .post(management::add_group_permission),
                 )
                 // Group members
                 .push(
                     Router::with_path("/api/manage/groups/{id}/members")
                         .post(management::add_group_member)
-                        .delete(management::remove_group_member)
+                        .delete(management::remove_group_member),
                 )
                 // Tenant plugin config
                 .push(
                     Router::with_path("/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled")
-                        .put(management::set_tenant_plugin_enabled)
+                        .put(management::set_tenant_plugin_enabled),
                 )
                 .push(
                     Router::with_path("/api/manage/tenants/{id}/plugins/{ns}/{name}/config")
-                        .put(management::set_tenant_plugin_config)
+                        .put(management::set_tenant_plugin_config),
                 )
                 // Tenant IP mappings
                 .push(
                     Router::with_path("/api/manage/tenants/{id}/ip-mappings")
                         .get(management::list_ip_mappings)
                         .post(management::add_ip_mapping)
-                        .delete(management::remove_ip_mapping)
+                        .delete(management::remove_ip_mapping),
                 )
                 // Single resource routes
-                .push(
-                    Router::with_path("/api/manage/groups/{id}")
-                        .delete(management::delete_group)
-                )
+                .push(Router::with_path("/api/manage/groups/{id}").delete(management::delete_group))
                 .push(
                     Router::with_path("/api/manage/tenants/{id}")
                         .get(management::get_tenant)
                         .put(management::update_tenant)
-                        .delete(management::delete_tenant)
+                        .delete(management::delete_tenant),
                 )
                 // Collection routes (least specific)
                 .push(
                     Router::with_path("/api/manage/groups")
                         .get(management::list_groups)
-                        .post(management::create_group)
+                        .post(management::create_group),
                 )
                 .push(Router::with_path("/api/manage/tenants").get(management::list_tenants));
 
             app = app.push(manage_router);
-
         }
 
         // TODO: get version from Cargo.toml

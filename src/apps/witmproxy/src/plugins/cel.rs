@@ -417,7 +417,9 @@ impl CelTime {
     }
 
     /// Register the `time` variable and its methods with the CEL environment
-    pub fn register_cel_env(env: cel_cxx::EnvBuilder<'_>) -> anyhow::Result<cel_cxx::EnvBuilder<'_>> {
+    pub fn register_cel_env(
+        env: cel_cxx::EnvBuilder<'_>,
+    ) -> anyhow::Result<cel_cxx::EnvBuilder<'_>> {
         let env = env
             .declare_variable::<CelTime>("time")?
             .register_member_function("matches_cron", CelTime::matches_cron)?

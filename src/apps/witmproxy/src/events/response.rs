@@ -52,7 +52,10 @@ impl Event for ContextualResponse {
         activation
             .bind_variable("request", CelRequest::from(&self.request))
             .ok()
-            .and_then(|a| a.bind_variable("response", CelResponse::from(&self.response)).ok())
+            .and_then(|a| {
+                a.bind_variable("response", CelResponse::from(&self.response))
+                    .ok()
+            })
             .and_then(|a| a.bind_variable("time", CelTime::now()).ok())
     }
 }

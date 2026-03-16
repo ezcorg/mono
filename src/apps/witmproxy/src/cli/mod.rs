@@ -7,10 +7,10 @@ use crate::{
     wasm::Runtime,
 };
 use auth::AuthCommands;
-use service::ServiceCommands;
 use group::GroupCommands;
 use plugin::PluginCommands;
 use proxy::ProxyCommands;
+use service::ServiceCommands;
 use tenant::TenantCommands;
 use trust::CaCommands;
 
@@ -25,12 +25,12 @@ use tracing::{error, info, warn};
 
 pub mod api_client;
 pub mod auth;
-pub mod service;
 pub mod group;
 mod plugin;
 mod proxy;
-pub mod tenant;
+pub mod service;
 mod tailscale;
+pub mod tenant;
 mod trust;
 pub mod update;
 

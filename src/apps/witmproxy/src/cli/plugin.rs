@@ -233,7 +233,11 @@ impl PluginHandler {
                     .map(|r| {
                         let cap: String = sqlx::Row::try_get(r, "capability").unwrap_or_default();
                         let granted: bool = sqlx::Row::try_get(r, "granted").unwrap_or(false);
-                        if granted { cap } else { format!("{} (denied)", cap) }
+                        if granted {
+                            cap
+                        } else {
+                            format!("{} (denied)", cap)
+                        }
                     })
                     .collect();
                 println!("    Capabilities: {}", caps.join(", "));
@@ -399,16 +403,13 @@ impl PluginHandler {
             // Set configuration values
             for kv in set_values {
                 let (key, value) = kv.split_once('=').ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Invalid format '{}': expected key=value",
-                        kv
-                    )
+                    anyhow::anyhow!("Invalid format '{}': expected key=value", kv)
                 })?;
 
                 // Store as a JSON-serialized ActualInput::Str by default
-                let value_json = serde_json::to_string(
-                    &crate::wasm::bindgen::ActualInput::Str(value.to_string()),
-                )?;
+                let value_json = serde_json::to_string(&crate::wasm::bindgen::ActualInput::Str(
+                    value.to_string(),
+                ))?;
 
                 sqlx::query(
                     "INSERT OR REPLACE INTO plugin_configuration (namespace, name, input_name, input_value) VALUES (?, ?, ?, ?)",

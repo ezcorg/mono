@@ -2,7 +2,9 @@ pub use crate::events::content::InboundContent;
 pub use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
     ActualInput, ConfigureError, Event, InputSchema, InputType, PluginManifest, UserInput,
 };
-pub use crate::wasm::{AnnotatorClient, CapabilityProvider, ClockClient, LocalStorageClient, Logger};
+pub use crate::wasm::{
+    AnnotatorClient, CapabilityProvider, ClockClient, LocalStorageClient, Logger,
+};
 
 wasmtime::component::bindgen!({
     world: "witmproxy:plugin/plugin",
@@ -322,9 +324,7 @@ impl Serialize for witmproxy::plugin::capabilities::EventKind {
             witmproxy::plugin::capabilities::EventKind::InboundContent => {
                 serializer.serialize_str("inbound_content")
             }
-            witmproxy::plugin::capabilities::EventKind::Timer => {
-                serializer.serialize_str("timer")
-            }
+            witmproxy::plugin::capabilities::EventKind::Timer => serializer.serialize_str("timer"),
         }
     }
 }

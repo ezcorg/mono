@@ -94,19 +94,13 @@ pub async fn register(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 .jwt_secret
                 .as_deref()
                 .unwrap_or("default-secret");
-            let issuer = auth_config
-                .jwt_issuer
-                .as_deref()
-                .unwrap_or("witmproxy");
+            let issuer = auth_config.jwt_issuer.as_deref().unwrap_or("witmproxy");
             let claims = Claims::new(&tenant_id, Some(&body.email), issuer, 86400);
 
             match create_token(&claims, secret) {
                 Ok(token) => {
                     res.status_code(StatusCode::CREATED);
-                    res.render(Json(AuthResponse {
-                        token,
-                        tenant_id,
-                    }));
+                    res.render(Json(AuthResponse { token, tenant_id }));
                 }
                 Err(e) => {
                     warn!("Token creation failed: {}", e);
@@ -189,10 +183,7 @@ pub async fn login(req: &mut Request, depot: &mut Depot, res: &mut Response) {
                 .jwt_secret
                 .as_deref()
                 .unwrap_or("default-secret");
-            let issuer = auth_config
-                .jwt_issuer
-                .as_deref()
-                .unwrap_or("witmproxy");
+            let issuer = auth_config.jwt_issuer.as_deref().unwrap_or("witmproxy");
             let claims = Claims::new(&tenant.id, tenant.email.as_deref(), issuer, 86400);
 
             match create_token(&claims, secret) {

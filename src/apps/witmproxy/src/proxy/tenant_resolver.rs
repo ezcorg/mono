@@ -180,20 +180,15 @@ impl TenantResolver for TailscaleResolver {
                             if let Ok(None) = tenants::tenant_by_ip(&self.pool, &ip_str).await {
                                 let display = format!("{} ({})", node_name, login);
                                 match tenants::Tenant::create(
-                                    &self.pool,
-                                    &tenant_id,
-                                    &display,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
+                                    &self.pool, &tenant_id, &display, None, None, None, None,
                                 )
                                 .await
                                 {
                                     Ok(_) => {
-                                        let _ =
-                                            tenants::add_ip_mapping(&self.pool, &tenant_id, &ip_str)
-                                                .await;
+                                        let _ = tenants::add_ip_mapping(
+                                            &self.pool, &tenant_id, &ip_str,
+                                        )
+                                        .await;
                                         debug!("Auto-created tenant {} for {}", tenant_id, ip);
                                     }
                                     Err(e) => {
@@ -202,9 +197,10 @@ impl TenantResolver for TailscaleResolver {
                                             "Tenant creation skipped (may already exist): {}",
                                             e
                                         );
-                                        let _ =
-                                            tenants::add_ip_mapping(&self.pool, &tenant_id, &ip_str)
-                                                .await;
+                                        let _ = tenants::add_ip_mapping(
+                                            &self.pool, &tenant_id, &ip_str,
+                                        )
+                                        .await;
                                     }
                                 }
                             }
@@ -264,9 +260,7 @@ impl HeaderResolver {
     pub fn resolve_from_header(&self, headers: &hyper::HeaderMap) -> TenantContext {
         match headers.get(&self.header_name) {
             Some(value) => match value.to_str() {
-                Ok(tenant_id) if !tenant_id.is_empty() => {
-                    TenantContext::new(tenant_id.to_string())
-                }
+                Ok(tenant_id) if !tenant_id.is_empty() => TenantContext::new(tenant_id.to_string()),
                 _ => TenantContext::anonymous(),
             },
             None => TenantContext::anonymous(),
@@ -374,8 +368,14 @@ mod tests {
 
         let addr1 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 1));
         let addr2 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 2), 1));
-        assert_eq!(resolver.resolve(&addr1).await.tenant_id.as_deref(), Some("t1"));
-        assert_eq!(resolver.resolve(&addr2).await.tenant_id.as_deref(), Some("t1"));
+        assert_eq!(
+            resolver.resolve(&addr1).await.tenant_id.as_deref(),
+            Some("t1")
+        );
+        assert_eq!(
+            resolver.resolve(&addr2).await.tenant_id.as_deref(),
+            Some("t1")
+        );
     }
 
     #[test]

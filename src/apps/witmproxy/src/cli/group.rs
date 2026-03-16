@@ -71,9 +71,7 @@ impl GroupHandler {
                 println!("{}", resp.text().await?);
             }
             GroupCommands::Delete { id } => {
-                let resp = client
-                    .delete(&format!("/api/manage/groups/{}", id))
-                    .await?;
+                let resp = client.delete(&format!("/api/manage/groups/{}", id)).await?;
                 println!("{}", resp.text().await?);
             }
             GroupCommands::AddMember {

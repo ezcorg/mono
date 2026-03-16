@@ -2,8 +2,8 @@ use crate::db::Db;
 use crate::db::tenants::{Group, Tenant};
 use crate::test_utils::create_ca_and_config;
 use crate::wasm::Runtime;
-use crate::web::auth::{Claims, create_token};
 use crate::web::WebServer;
+use crate::web::auth::{Claims, create_token};
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio::sync::RwLock;
@@ -193,7 +193,11 @@ async fn register_duplicate_email_returns_409() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 409, "Duplicate email should return 409 Conflict");
+    assert_eq!(
+        resp.status(),
+        409,
+        "Duplicate email should return 409 Conflict"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +272,17 @@ async fn management_api_with_valid_token_but_no_permissions_returns_403() {
     let (client, base_url, pool, _dir) = setup_auth_server().await;
 
     // Create a tenant directly in DB (no permissions)
-    Tenant::create(&pool, "t-noperm", "NoPerms", Some("noperm@test.com"), None, None, None)
-        .await
-        .unwrap();
+    Tenant::create(
+        &pool,
+        "t-noperm",
+        "NoPerms",
+        Some("noperm@test.com"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     let token = make_token("t-noperm", "test-secret-key");
 
@@ -293,11 +305,21 @@ async fn management_api_with_permissions_succeeds() {
     let (client, base_url, pool, _dir) = setup_auth_server().await;
 
     // Create tenant + group + permission
-    Tenant::create(&pool, "t-admin", "Admin", Some("admin@test.com"), None, None, None)
+    Tenant::create(
+        &pool,
+        "t-admin",
+        "Admin",
+        Some("admin@test.com"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    Group::create(&pool, "g-admin", "admins", "").await.unwrap();
+    Group::add_member(&pool, "g-admin", "t-admin")
         .await
         .unwrap();
-    Group::create(&pool, "g-admin", "admins", "").await.unwrap();
-    Group::add_member(&pool, "g-admin", "t-admin").await.unwrap();
     Group::add_permission(&pool, "p1", "g-admin", "grant", "tenants:*:read")
         .await
         .unwrap();
@@ -311,7 +333,11 @@ async fn management_api_with_permissions_succeeds() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 200, "Tenant with read permission should succeed");
+    assert_eq!(
+        resp.status(),
+        200,
+        "Tenant with read permission should succeed"
+    );
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body.is_array());
 }
@@ -321,11 +347,21 @@ async fn management_api_denied_for_wrong_action() {
     let (client, base_url, pool, _dir) = setup_auth_server().await;
 
     // Tenant with only read permission
-    Tenant::create(&pool, "t-reader", "Reader", Some("reader@test.com"), None, None, None)
+    Tenant::create(
+        &pool,
+        "t-reader",
+        "Reader",
+        Some("reader@test.com"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    Group::create(&pool, "g-read", "readers", "").await.unwrap();
+    Group::add_member(&pool, "g-read", "t-reader")
         .await
         .unwrap();
-    Group::create(&pool, "g-read", "readers", "").await.unwrap();
-    Group::add_member(&pool, "g-read", "t-reader").await.unwrap();
     Group::add_permission(&pool, "p1", "g-read", "grant", "tenants:*:read")
         .await
         .unwrap();
@@ -356,11 +392,23 @@ async fn management_tenant_crud_flow() {
     let (client, base_url, pool, _dir) = setup_auth_server().await;
 
     // Create admin tenant with broad permissions
-    Tenant::create(&pool, "t-super", "Super", Some("super@test.com"), None, None, None)
+    Tenant::create(
+        &pool,
+        "t-super",
+        "Super",
+        Some("super@test.com"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    Group::create(&pool, "g-super", "superadmins", "")
         .await
         .unwrap();
-    Group::create(&pool, "g-super", "superadmins", "").await.unwrap();
-    Group::add_member(&pool, "g-super", "t-super").await.unwrap();
+    Group::add_member(&pool, "g-super", "t-super")
+        .await
+        .unwrap();
     Group::add_permission(&pool, "p1", "g-super", "grant", "tenants:*:read")
         .await
         .unwrap();
@@ -395,9 +443,11 @@ async fn management_tenant_crud_flow() {
     let status = resp.status();
     let body_text = resp.text().await.unwrap();
     assert_eq!(
-        status.as_u16(), 200,
+        status.as_u16(),
+        200,
         "GET tenant by id failed: status={}, body={}",
-        status, body_text
+        status,
+        body_text
     );
     let body: serde_json::Value = serde_json::from_str(&body_text).unwrap();
     assert_eq!(body["display_name"], "Super");
@@ -436,7 +486,9 @@ async fn management_group_crud_flow() {
     Tenant::create(&pool, "t-ga", "GroupAdmin", None, None, None, None)
         .await
         .unwrap();
-    Group::create(&pool, "g-ga", "groupadmins", "").await.unwrap();
+    Group::create(&pool, "g-ga", "groupadmins", "")
+        .await
+        .unwrap();
     Group::add_member(&pool, "g-ga", "t-ga").await.unwrap();
     Group::add_permission(&pool, "p1", "g-ga", "grant", "groups:*:read")
         .await

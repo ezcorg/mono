@@ -1,5 +1,5 @@
 use crate::db::tenants::{TenantPluginConfig, TenantPluginOverride};
-use crate::test_utils::{create_plugin_registry, register_test_component, register_noop_plugin};
+use crate::test_utils::{create_plugin_registry, register_noop_plugin, register_test_component};
 
 #[tokio::test]
 async fn effective_plugins_no_overrides_returns_all_enabled() {
@@ -108,10 +108,7 @@ async fn effective_plugins_multiple_plugins_different_overrides() {
         .values()
         .map(|p| (p.namespace.clone(), p.name.clone(), p.id()))
         .collect();
-    assert!(
-        plugins.len() >= 2,
-        "Need at least 2 plugins for this test"
-    );
+    assert!(plugins.len() >= 2, "Need at least 2 plugins for this test");
 
     let (ns1, name1, id1) = &plugins[0];
     let (_ns2, _name2, id2) = &plugins[1];
@@ -125,7 +122,10 @@ async fn effective_plugins_multiple_plugins_different_overrides() {
     }];
 
     let effective = registry.effective_plugins_for_tenant(&overrides);
-    assert!(!effective.contains(id1), "Plugin 1 should be disabled for tenant");
+    assert!(
+        !effective.contains(id1),
+        "Plugin 1 should be disabled for tenant"
+    );
     assert!(effective.contains(id2), "Plugin 2 should still be enabled");
 }
 

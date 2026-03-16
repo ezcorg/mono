@@ -7,11 +7,11 @@ use tracing::{debug, error, info, warn};
 
 use crate::cert::CertificateAuthority;
 use crate::config::TransparentProxyConfig;
-use crate::events::connect::Connect;
 use crate::events::Event;
+use crate::events::connect::Connect;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::tenant_resolver::TenantResolver;
-use crate::proxy::{is_closed, parse_authority_host_port, run_tls_mitm, UpstreamClient};
+use crate::proxy::{UpstreamClient, is_closed, parse_authority_host_port, run_tls_mitm};
 use crate::tenant::TenantContext;
 
 use super::netfilter::NetfilterManager;
@@ -156,9 +156,8 @@ pub fn extract_sni_from_client_hello(buf: &[u8]) -> Option<String> {
     if handshake.len() < 4 {
         return None;
     }
-    let hs_len = ((handshake[1] as usize) << 16)
-        | ((handshake[2] as usize) << 8)
-        | (handshake[3] as usize);
+    let hs_len =
+        ((handshake[1] as usize) << 16) | ((handshake[2] as usize) << 8) | (handshake[3] as usize);
 
     let ch = &handshake[4..];
     if ch.len() < hs_len.min(ch.len()) {}
@@ -277,24 +276,18 @@ async fn handle_transparent_connection(
         let n = stream.peek(&mut hello_buf).await?;
         let hello_data = &hello_buf[..n];
 
-        let hostname = extract_sni_from_client_hello(hello_data)
-            .unwrap_or_else(|| {
-                warn!("Could not extract SNI from ClientHello from {}", peer);
-                "unknown".to_string()
-            });
+        let hostname = extract_sni_from_client_hello(hello_data).unwrap_or_else(|| {
+            warn!("Could not extract SNI from ClientHello from {}", peer);
+            "unknown".to_string()
+        });
 
         info!("Transparent TLS: SNI={} from {}", hostname, peer);
 
         if should_intercept(&plugin_registry, &hostname).await {
             // Plugin(s) want this connection — run the full MITM pipeline
-            info!(
-                "Transparent: intercepting {} (plugins matched)",
-                hostname
-            );
+            info!("Transparent: intercepting {} (plugins matched)", hostname);
             let authority = format!("{}:443", hostname);
-            if let Err(e) =
-                run_tls_mitm(upstream, stream, authority, ca, plugin_registry).await
-            {
+            if let Err(e) = run_tls_mitm(upstream, stream, authority, ca, plugin_registry).await {
                 if !is_closed(&e) {
                     debug!("Transparent MITM error for {}: {}", hostname, e);
                 }

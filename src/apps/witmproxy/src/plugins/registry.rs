@@ -221,13 +221,11 @@ impl PluginRegistry {
         executed_plugins: &HashSet<String>,
         effective_set: &HashSet<String>,
     ) -> Option<&'a WitmPlugin> {
-        self.plugins
-            .values()
-            .find(|p| {
-                effective_set.contains(&p.id())
-                    && !executed_plugins.contains(&p.id())
-                    && p.can_handle(event)
-            })
+        self.plugins.values().find(|p| {
+            effective_set.contains(&p.id())
+                && !executed_plugins.contains(&p.id())
+                && p.can_handle(event)
+        })
     }
 
     /// Check if any plugins can handle an event
@@ -438,11 +436,9 @@ impl PluginRegistry {
                             let content = store.data_mut().table.delete(c)?;
                             Box::new(content)
                         }
-                        WasmEvent::Timer(ctx) => {
-                            Box::new(crate::events::timer::TimerEvent {
-                                timestamp: ctx.timestamp,
-                            })
-                        }
+                        WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
+                            timestamp: ctx.timestamp,
+                        }),
                     };
                 }
                 None => {
@@ -490,13 +486,9 @@ impl PluginRegistry {
         let mut store = self.new_store();
         let mut executed_plugins = HashSet::new();
 
-        while let Some(plugin) = {
-            self.find_first_unexecuted_in_set(
-                &*current_event,
-                &executed_plugins,
-                effective_set,
-            )
-        } {
+        while let Some(plugin) =
+            { self.find_first_unexecuted_in_set(&*current_event, &executed_plugins, effective_set) }
+        {
             debug!(
                 "Executing handle_event for plugin: {} (tenant-scoped)",
                 plugin.id()
@@ -614,11 +606,9 @@ impl PluginRegistry {
                             let content = store.data_mut().table.delete(c)?;
                             Box::new(content)
                         }
-                        WasmEvent::Timer(ctx) => {
-                            Box::new(crate::events::timer::TimerEvent {
-                                timestamp: ctx.timestamp,
-                            })
-                        }
+                        WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
+                            timestamp: ctx.timestamp,
+                        }),
                     };
                 }
                 None => {
