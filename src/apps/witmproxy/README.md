@@ -2,14 +2,6 @@
 
 A WASM-in-the-middle proxy, written in Rust.
 
-## Features
-
-- 🧩 **WASM Plugin System**: Extensible plugin architecture built on [WebAssembly Components](https://component-model.bytecodealliance.org/)
-- 🔒 **TLS Interception**: Automatic certificate generation and TLS termination
-- 📱 **Smart Certificate Distribution**: Automatic device detection and certificate format selection
-- 🌐 **Web Interface**: Built-in web server for certificate downloads and management
-- 🔧 **Easy Configuration**: TOML-based configuration with sensible defaults
-
 ## Quick Start
 
 ### 1. Installation and setup
@@ -65,7 +57,7 @@ The witmproxy plugin WIT interface is automatically published to [GitHub Contain
 
 ```sh
 # Fetch the WIT interface for plugin development
-wkg get --format wit witmproxy:plugin@0.0.5 --output plugin.wit
+wkg get --format wit witmproxy:plugin@0.0.6 --output plugin.wit
 ```
 
 See [WIT Publishing Documentation](../../docs/wit-publishing.md) for more information.

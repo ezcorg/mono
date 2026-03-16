@@ -60,7 +60,7 @@ async fn fetch_latest_version(
     let url = "https://index.crates.io/wi/tm/witmproxy";
 
     let client = reqwest::Client::builder()
-        .user_agent("witmproxy-updater")
+        .user_agent("witmproxy/autoupdate")
         .build()?;
 
     let mut req = client.get(url);
