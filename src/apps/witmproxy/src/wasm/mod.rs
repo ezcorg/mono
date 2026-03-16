@@ -27,8 +27,9 @@ use crate::events::content::InboundContent;
 use crate::plugins::capabilities::Capability;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     CapabilityKind, HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
-    HostCapabilityProviderWithStore, HostContent, HostContentWithStore, HostLocalStorageClient,
-    HostLocalStorageClientWithStore, HostLogger, HostLoggerWithStore,
+    HostCapabilityProviderWithStore, HostClockClient, HostClockClientWithStore, HostContent,
+    HostContentWithStore, HostLocalStorageClient, HostLocalStorageClientWithStore, HostLogger,
+    HostLoggerWithStore,
 };
 pub use runtime::Runtime;
 
@@ -42,6 +43,7 @@ pub struct CapabilityProvider {
     logger: Option<Logger>,
     annotator: Option<AnnotatorClient>,
     local_storage: Option<LocalStorageClient>,
+    clock: Option<ClockClient>,
 }
 
 impl CapabilityProvider {
@@ -68,6 +70,12 @@ impl CapabilityProvider {
         self
     }
 
+    /// Set the clock capability
+    pub fn with_clock(mut self, clock: ClockClient) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
     /// Returns a clone of the logger if granted
     pub fn logger(&self) -> Option<Logger> {
         self.logger.clone()
@@ -81,6 +89,11 @@ impl CapabilityProvider {
     /// Returns a clone of the local storage client if granted
     pub fn local_storage(&self) -> Option<LocalStorageClient> {
         self.local_storage.clone()
+    }
+
+    /// Returns a clone of the clock client if granted
+    pub fn clock(&self) -> Option<ClockClient> {
+        self.clock.clone()
     }
 }
 
@@ -98,6 +111,9 @@ impl From<&Vec<Capability>> for CapabilityProvider {
                     }
                     CapabilityKind::LocalStorage => {
                         provider = provider.with_local_storage(LocalStorageClient::new());
+                    }
+                    CapabilityKind::Clock => {
+                        provider = provider.with_clock(ClockClient::new());
                     }
                     CapabilityKind::HandleEvent(_) => {
                         // Event handling capabilities are managed separately
@@ -156,8 +172,8 @@ where
         let cap = match dst.remaining(&mut store).map(NonZeroUsize::new) {
             Some(Some(cap)) => Some(cap),
             Some(None) => {
-                // On 0-length the best we can do is check that underlying stream has not
-                // reached the end yet
+                // Zero-length read: guest is checking readiness without consuming.
+                // Return Completed (we may have data) or Dropped (stream ended).
                 if self.body.is_end_stream() {
                     return Poll::Ready(Ok(StreamResult::Dropped));
                 } else {
@@ -167,48 +183,56 @@ where
             None => None,
         };
 
-        match Pin::new(&mut self.body).poll_frame(cx) {
-            Poll::Ready(Some(Ok(frame))) => {
-                // Try to extract data from the frame
-                match frame.into_data().map_err(http_body::Frame::into_trailers) {
-                    Ok(mut data_frame) => {
-                        if let Some(cap) = cap {
-                            let n = data_frame.len();
-                            let cap_usize = cap.into();
-                            if n > cap_usize {
-                                // Data doesn't fit, buffer the rest
-                                dst.set_buffer(Cursor::new(data_frame.split_off(cap_usize)));
-                                let mut dst_direct = dst.as_direct(store, cap_usize);
-                                dst_direct.remaining().copy_from_slice(&data_frame);
-                                dst_direct.mark_written(cap_usize);
-                            } else {
-                                // Copy the whole frame
-                                let mut dst_direct = dst.as_direct(store, n);
-                                dst_direct.remaining()[..n].copy_from_slice(&data_frame);
-                                dst_direct.mark_written(n);
+        // Loop to skip empty data frames from the HTTP body.
+        // HTTP/2 can produce zero-length DATA frames which would cause
+        // wasmtime to error with "Completed without producing any items"
+        // if we returned without writing anything.
+        loop {
+            match Pin::new(&mut self.body).poll_frame(cx) {
+                Poll::Ready(Some(Ok(frame))) => {
+                    // Try to extract data from the frame
+                    match frame.into_data().map_err(http_body::Frame::into_trailers) {
+                        Ok(mut data_frame) => {
+                            // Skip empty data frames and poll again
+                            if data_frame.is_empty() {
+                                continue;
                             }
-                        } else {
-                            // No capacity info, just buffer it
-                            dst.set_buffer(Cursor::new(data_frame));
+                            if let Some(cap) = cap {
+                                let n = data_frame.len();
+                                let cap_usize = cap.into();
+                                if n > cap_usize {
+                                    // Data doesn't fit, buffer the rest
+                                    dst.set_buffer(Cursor::new(data_frame.split_off(cap_usize)));
+                                    let mut dst_direct = dst.as_direct(store, cap_usize);
+                                    dst_direct.remaining().copy_from_slice(&data_frame);
+                                    dst_direct.mark_written(cap_usize);
+                                } else {
+                                    // Copy the whole frame
+                                    let mut dst_direct = dst.as_direct(store, n);
+                                    dst_direct.remaining()[..n].copy_from_slice(&data_frame);
+                                    dst_direct.mark_written(n);
+                                }
+                            } else {
+                                // No capacity info, just buffer it
+                                dst.set_buffer(Cursor::new(data_frame));
+                            }
+                            return Poll::Ready(Ok(StreamResult::Completed));
                         }
-                        Poll::Ready(Ok(StreamResult::Completed))
-                    }
-                    Err(Ok(_trailers)) => {
-                        // Trailers received - we're done with body data
-                        // Note: In a full implementation, trailers would be stored in the resource table
-                        // For now, we just signal completion
-                        Poll::Ready(Ok(StreamResult::Dropped))
-                    }
-                    Err(Err(..)) => {
-                        // Frame is neither data nor trailers - protocol error
-                        Poll::Ready(Ok(StreamResult::Dropped))
+                        Err(Ok(_trailers)) => {
+                            // Trailers received - we're done with body data
+                            return Poll::Ready(Ok(StreamResult::Dropped));
+                        }
+                        Err(Err(..)) => {
+                            // Frame is neither data nor trailers - protocol error
+                            return Poll::Ready(Ok(StreamResult::Dropped));
+                        }
                     }
                 }
+                Poll::Ready(Some(Err(_err))) => return Poll::Ready(Ok(StreamResult::Dropped)),
+                Poll::Ready(None) => return Poll::Ready(Ok(StreamResult::Dropped)),
+                Poll::Pending if finish => return Poll::Ready(Ok(StreamResult::Cancelled)),
+                Poll::Pending => return Poll::Pending,
             }
-            Poll::Ready(Some(Err(_err))) => Poll::Ready(Ok(StreamResult::Dropped)),
-            Poll::Ready(None) => Poll::Ready(Ok(StreamResult::Dropped)),
-            Poll::Pending if finish => Poll::Ready(Ok(StreamResult::Cancelled)),
-            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -278,6 +302,38 @@ impl LocalStorageClient {
     /// Delete a key from the store (async)
     pub async fn delete(&self, key: &str) {
         self.store.write().await.remove(key);
+    }
+}
+
+/// A clock client providing access to the current system time.
+#[derive(Clone)]
+pub struct ClockClient {}
+
+impl ClockClient {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    /// Returns the current time as a Unix timestamp in seconds
+    pub fn now_seconds(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
+    /// Returns the current time as a Unix timestamp in milliseconds
+    pub fn now_millis(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+}
+
+impl Default for ClockClient {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -646,6 +702,43 @@ impl HostLoggerWithStore for WitmProxy {
     }
 }
 
+impl HostClockClientWithStore for WitmProxy {
+    async fn now_seconds<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<ClockClient>,
+    ) -> wasmtime::Result<u64> {
+        let result = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get(&self_)?;
+            Ok::<u64, wasmtime::component::ResourceTableError>(client.now_seconds())
+        })?;
+        Ok(result)
+    }
+
+    async fn now_millis<T>(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<ClockClient>,
+    ) -> wasmtime::Result<u64> {
+        let result = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get(&self_)?;
+            Ok::<u64, wasmtime::component::ResourceTableError>(client.now_millis())
+        })?;
+        Ok(result)
+    }
+
+    async fn drop<T>(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<ClockClient>,
+    ) -> wasmtime::Result<()> {
+        accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            state.table.delete(rep)
+        })?;
+        Ok(())
+    }
+}
+
 impl HostCapabilityProviderWithStore for WitmProxy {
     async fn logger<T>(
         accessor: &Accessor<T, Self>,
@@ -707,6 +800,25 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
+    async fn clock<T>(
+        accessor: &Accessor<T, Self>,
+        cap: Resource<CapabilityProvider>,
+    ) -> wasmtime::Result<Option<Resource<ClockClient>>> {
+        Ok(accessor
+            .with(|mut access| {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                let provider = state.table.get(&cap)?;
+                match provider.clock() {
+                    Some(client) => Ok::<
+                        Option<Resource<ClockClient>>,
+                        wasmtime::component::ResourceTableError,
+                    >(Some(state.table.push(client)?)),
+                    None => Ok(None),
+                }
+            })
+            .unwrap_or(None))
+    }
+
     async fn drop<T>(
         accessor: &Accessor<T, Self>,
         rep: Resource<CapabilityProvider>,
@@ -728,6 +840,7 @@ impl HostCapabilityProvider for WitmProxyCtxView<'_> {}
 impl HostLocalStorageClient for WitmProxyCtxView<'_> {}
 impl HostAnnotatorClient for WitmProxyCtxView<'_> {}
 impl HostLogger for WitmProxyCtxView<'_> {}
+impl HostClockClient for WitmProxyCtxView<'_> {}
 
 pub struct P3Ctx {}
 impl wasmtime_wasi_http::p3::WasiHttpCtx for P3Ctx {}

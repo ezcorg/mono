@@ -3,7 +3,7 @@ use cel_cxx::Activation;
 use wasmtime::Store;
 
 use crate::events::Event;
-use crate::plugins::cel::CelConnect;
+use crate::plugins::cel::{CelConnect, CelTime};
 use crate::wasm::{
     Host,
     bindgen::{
@@ -59,5 +59,6 @@ impl Event for Connect {
         activation
             .bind_variable("connect", CelConnect::from(self))
             .ok()
+            .and_then(|a| a.bind_variable("time", CelTime::now()).ok())
     }
 }

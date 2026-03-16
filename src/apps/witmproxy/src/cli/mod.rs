@@ -3,12 +3,16 @@ use crate::{
     config::{confique_app_config_layer::AppConfigLayer, expand_home_in_path},
     db::Db,
     plugins::registry::PluginRegistry,
+    proxy::tenant_resolver,
     wasm::Runtime,
 };
-use daemon::DaemonCommands;
+use auth::AuthCommands;
+use group::GroupCommands;
 use plugin::PluginCommands;
 use proxy::ProxyCommands;
-use trust::TrustCommands;
+use service::ServiceCommands;
+use tenant::TenantCommands;
+use trust::CaCommands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -19,10 +23,16 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
-pub mod daemon;
+pub mod api_client;
+pub mod auth;
+pub mod group;
 mod plugin;
 mod proxy;
+pub mod service;
+mod tailscale;
+pub mod tenant;
 mod trust;
+pub mod update;
 
 #[cfg(test)]
 mod tests;
@@ -46,15 +56,15 @@ pub struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Directory to load plugins from (watched for changes)
+    /// Directory to load plugins from, watched for changes (only applies when running the proxy)
     #[arg(long)]
     plugin_dir: Option<PathBuf>,
 
-    /// Automatically trust the proxy CA and configure system proxy settings on startup
+    /// Automatically trust the proxy CA and configure system proxy settings on startup (only applies when running the proxy)
     #[arg(long)]
     auto: bool,
 
-    /// Detach from the daemon after starting (don't attach to logs)
+    /// Detach from the daemon after starting, don't attach to logs (only applies to default startup behavior)
     #[arg(short, long)]
     detach: bool,
 }
@@ -76,20 +86,35 @@ enum Commands {
         #[command(subcommand)]
         command: PluginCommands,
     },
-    /// Certificate trust management commands
-    Trust {
+    /// Certificate authority management commands
+    Ca {
         #[command(subcommand)]
-        command: TrustCommands,
+        command: CaCommands,
     },
     /// System proxy management commands
     Proxy {
         #[command(subcommand)]
         command: ProxyCommands,
     },
-    /// Daemon/service management commands
-    Daemon {
+    /// Service management commands
+    Service {
         #[command(subcommand)]
-        command: DaemonCommands,
+        command: ServiceCommands,
+    },
+    /// Authentication commands (for remote management)
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
+    /// Tenant management commands (remote)
+    Tenant {
+        #[command(subcommand)]
+        command: TenantCommands,
+    },
+    /// Group management commands (remote)
+    Group {
+        #[command(subcommand)]
+        command: GroupCommands,
     },
     /// Run the proxy server directly in the foreground (no daemon)
     ///
@@ -102,6 +127,15 @@ enum Commands {
         /// Log file path for daemon mode (stdout/stderr will be redirected here)
         #[arg(long)]
         log_file: Option<PathBuf>,
+    },
+    /// Check for updates and update the CLI binary
+    Update {
+        /// Force update even if already on the latest version
+        #[arg(long)]
+        force: bool,
+        /// Use cargo install instead of prebuilt binaries
+        #[arg(long)]
+        from_source: bool,
     },
 }
 
@@ -127,13 +161,43 @@ impl Cli {
         // Load and resolve configuration once at the beginning
         let resolved_cli = self.resolve_config().await?;
 
+        // Spawn a background update check for non-serve, non-update commands
+        let is_update_command = matches!(&resolved_cli.command, Some(Commands::Update { .. }));
+        let check_update = if !is_serve_command
+            && !is_update_command
+            && resolved_cli.config.update.cli_update_warning
+        {
+            Some(tokio::spawn(async {
+                tokio::time::timeout(
+                    tokio::time::Duration::from_secs(2),
+                    update::check_for_update_cached(false),
+                )
+                .await
+            }))
+        } else {
+            None
+        };
+
         // Handle subcommands first
-        if let Some(ref command) = resolved_cli.command {
-            return resolved_cli.handle_command(command).await;
+        let result = if let Some(ref command) = resolved_cli.command {
+            resolved_cli.handle_command(command).await
+        } else {
+            // Default behavior - install and start daemon, then attach to logs
+            resolved_cli.run_default().await
+        };
+
+        // Show update warning if available
+        if let Some(handle) = check_update {
+            if let Ok(Ok(Ok(Some(latest)))) = handle.await {
+                eprintln!(
+                    "\nA new version of witm is available: {} -> {}\nRun 'witm update' to install it.",
+                    update::current_version(),
+                    latest
+                );
+            }
         }
 
-        // Default behavior - install and start daemon, then attach to logs
-        resolved_cli.run_default().await
+        result
     }
 
     /// Load the configuration and resolve all $HOME placeholders
@@ -169,66 +233,82 @@ impl Cli {
 
 impl ResolvedCli {
     async fn handle_command(&self, command: &Commands) -> Result<()> {
-        // TODO: change CLI such that the same code can be used for local and remote proxy management
         match command {
             Commands::Plugin { command } => {
                 let plugin_handler = plugin::PluginHandler::new(self.config.clone(), self.verbose);
                 plugin_handler.handle(command).await
             }
-            Commands::Trust { command } => {
-                let trust_handler = trust::TrustHandler::new(self.config.clone());
-                trust_handler.handle(command).await
+            Commands::Ca { command } => {
+                let ca_handler = trust::CaHandler::new(self.config.clone());
+                ca_handler.handle(command).await
             }
             Commands::Proxy { command } => {
                 let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
                 proxy_handler.handle(command).await
             }
-            Commands::Daemon { command } => {
-                let daemon_handler = daemon::DaemonHandler::new(self.config.clone());
-                daemon_handler.handle(command).await
+            Commands::Service { command } => {
+                let service_handler = service::ServiceHandler::new(
+                    self.config.clone(),
+                    self.verbose,
+                    self.plugin_dir.clone(),
+                    self.auto,
+                );
+                service_handler.handle(command).await
+            }
+            Commands::Auth { command } => {
+                let auth_handler = auth::AuthHandler;
+                auth_handler.handle(command).await
+            }
+            Commands::Tenant { command } => {
+                let tenant_handler = tenant::TenantHandler;
+                tenant_handler.handle(command).await
+            }
+            Commands::Group { command } => {
+                let group_handler = group::GroupHandler;
+                group_handler.handle(command).await
             }
             Commands::Run => self.run_foreground().await,
             Commands::Serve { log_file } => self.run_serve(log_file.clone()).await,
+            Commands::Update { force, from_source } => {
+                let handler = update::UpdateHandler::new(self.config.clone());
+                handler.handle(*force, *from_source).await
+            }
         }
     }
 
     /// Default behavior when no subcommand is provided:
-    /// - Install the service if not already installed (first run)
-    /// - Start the service
+    /// - Install (or reinstall) the service with current CLI arguments
+    /// - Restart the daemon so it picks up current config and newly added plugins
     /// - Unless --detach is specified, attach to the daemon's logs
     async fn run_default(&self) -> Result<()> {
-        let daemon_handler = daemon::DaemonHandler::new(self.config.clone());
+        let service_handler = service::ServiceHandler::new(
+            self.config.clone(),
+            self.verbose,
+            self.plugin_dir.clone(),
+            self.auto,
+        );
+        // Always (re)install the service to ensure the service file reflects
+        // the current CLI arguments (e.g. --plugin-dir, --verbose, --auto)
+        service_handler.install_service(true).await?;
 
-        // Check if service is already installed
-        let is_installed = daemon_handler.is_service_installed();
-
-        if !is_installed {
-            // First run - install the service
-            info!("Service not installed. Installing witmproxy daemon...");
-            println!("First run detected. Installing witmproxy as a daemon service...");
-            daemon_handler.install_service(true).await?; // Skip confirmation for first run
-        }
-
-        // Start the service
-        info!("Starting witmproxy daemon...");
-        if let Err(e) = daemon_handler.start_service().await {
-            // If start fails, it might already be running, which is fine
-            warn!("Note: {}", e);
-        }
+        // Restart the service so it picks up the latest service file,
+        // configuration, and any plugins added since the last start
+        info!("Starting witmproxy service...");
+        service_handler.restart_service().await?;
 
         // Wait a moment for the service to start
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         // Check status
-        daemon_handler.show_status().await?;
+        service_handler.show_status().await?;
 
-        // Unless --detach is specified, attach to the daemon logs
+        // Unless --detach is specified, attach to the service logs
         if !self.detach {
             println!();
-            daemon_handler.attach_to_logs().await?;
+            service_handler.attach_to_logs().await?;
         } else {
             println!();
-            println!("Daemon started in background. Use 'witm daemon logs -f' to view logs.");
+            println!("Service started in background. Use 'witm service logs -f' to view logs.");
         }
 
         Ok(())
@@ -331,6 +411,9 @@ impl ResolvedCli {
             self.config.db.db_path.display()
         );
 
+        // Keep a pool handle for transparent proxy tenant resolution
+        let db_pool = db.pool.clone();
+
         // Plugin registry which will be shared across the proxy and web server
         let plugin_registry = if self.config.plugins.enabled {
             let runtime = Runtime::try_default()?;
@@ -380,11 +463,50 @@ impl ResolvedCli {
         std::fs::write(&services_path, services_json)?;
         info!("Services information written to: {:?}", services_path);
 
+        // Detect Tailscale and display QR code for cert distribution
+        tailscale::discover_and_display(web_addr).await;
+
+        // Start transparent proxy if enabled
+        let mut _transparent_proxy = None;
+        if self.config.transparent.enabled {
+            info!("Transparent proxy mode enabled, starting...");
+            let resolver = tenant_resolver::build_resolver(
+                &self.config.proxy.tenant_resolver,
+                db_pool.clone(),
+                self.config.proxy.tenant_header.clone(),
+            );
+            let upstream = crate::proxy::client(ca.clone())?;
+            let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+            let mut tp = crate::proxy::transparent::TransparentProxy::new(
+                Arc::new(ca),
+                plugin_registry.clone(),
+                resolver,
+                upstream,
+                self.config.transparent.clone(),
+                shutdown_notify,
+            );
+            tp.start().await?;
+            info!(
+                "Transparent proxy listening on {}",
+                tp.listen_addr().map(|a| a.to_string()).unwrap_or_default()
+            );
+            _transparent_proxy = Some(tp);
+        }
+
         // Handle --auto flag: enable system proxy
         if self.auto {
             info!("Auto mode: enabling system proxy");
             let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
             proxy_handler.enable_proxy_internal(false).await?;
+        }
+
+        // Spawn auto-update loop if enabled
+        if self.config.update.auto_update {
+            let update_config = self.config.clone();
+            let interval = self.config.update.check_interval_seconds;
+            tokio::spawn(async move {
+                update::auto_update_loop(interval, update_config).await;
+            });
         }
 
         // Set up file watcher for plugin directory if specified

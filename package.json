@@ -16,9 +16,6 @@
   },
   "packageManager": "pnpm@10.10.0",
   "pnpm": {
-    "overrides": {
-      "@codemirror/state": "6.5.2",
-      "@codemirror/view": "6.36.7"
-    }
+    "overrides": {}
   }
 }

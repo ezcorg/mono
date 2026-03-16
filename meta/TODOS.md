@@ -2,39 +2,36 @@
 
 ## Simple
 
-- [ ] Add note somewhere to its README that `witmproxy` requires nightly Rust for development, and plugin development requires `rustup target add wasm32-wasip2`
-- [ ] Add note somewhere that `wkg` is required for updating/fetching `wit` files
-- [ ] Configuration: plugins need to expose a way for users to configure them (`.configure()` method in )
-- [ ] Look at base options passed to `witm` CLI, do they make sense to always be available (i.e, apply to all commands), or should some of them be refactored to only apply to certain command invocations?
-- [ ] Add a `time` object to CEL context which provides minimal convenience methods to control the time when a plugin should run (without leaking too much host information to the plugin):
-  - [ ] `time.matches_cron(cron_string)` which accepts a string CRON expression, returning a boolean indicating whether it applies to the current system time
-  - [ ] `time.is_day_of_week(weekday_int)` which accepts an integer 0-6 (sunday-monday) and returns a boolean indicating whether the current day matches
-  - [ ] `time.is_between_hours(hour_start, hour_end)` which accepts two integers `hour_start` and `hour_end` where `hour_start` > `hour_end` and both are in the range [0,23], and returns whether the current time resides within the specified window
+- [ ] Investigate whether it's currently possible to emit structured logs/traces with our existing logging infrastructure
 
 ## Medium
 
-- [x] Ensure that `witm plugin add` can be used after the proxy is running (i.e, should likely make a request to the web service instead of starting a plugin registry with a connection to the embedded sqlite database)
-- [x] Create GitHub Action infrastructure to test `witmproxy` across a matrix of build targets (Windows/macOS/Ubuntu/etc.)
-- [ ] A clock `capability-kind` (wasi:clocks) to allow plugins to request current system time
+- [ ] Consider merging witmproxy/e2e with underlying library (under a flag) 
 
 ## Bigger tasks
 
-- [ ] Platform-specific secret handling of sensitive credentials (database password) that is compatible with the `witmproxy` daemon
+- [ ] True e2e tests which dynamically bring up a remote `witmproxy` server, with various clients (emulated Android/iOS, desktop Chrome+Firefox+Safari+etc.) configured to use it as a remote proxy. Use `Appium` here. It should exercise the behavior to test that tenant-specific functionality works, and that the server updates in response to dynamic changes, with clients observing the expected changes. It should verify that plugins work as expected (and we should have sufficient test plugins to exercise the full surface of the available plugins API). We should expose test utilities as a separate crate (or module? whichever seems most idiomatic and is most efficient) such that plugin authors can orchestrate the same client tests if they desire. https://github.com/multicatch/appium-client provides an unofficial Rust appium client. When applicable, detect whether necessary host system binaries are present for called test functions, emitting warning!s if not.
+- [ ] Consider different CLI APIs, like `witm start --server --client localhost` to bring up the proxy as a server and a local-user client, `witm stop --client` to stop the client (but leave the server), or something like `witm start --proxy --client localhost` to not assume that we always want the API server (would it make sense to have  a locally available API server but no proxy? if there's a client, I guess it would just forward requests, but without one it makes no sense)  
+- [ ] Platform-specific secret handling of sensitive credentials (database password) that is compatible with the `witmproxy` service
 - [ ] Add a layer on-top of `witmproxy` to allow it to spawn a backend which can be used as a complete network interface/device, so that we can capture and handle all network traffic (if this makes sense)
-- [ ] Consider what architectural changes would be needed in order to allow something like the following: It would be convenient to deploy `witmproxy` to external hosts (which can be reached by a VPN/tunnel of some kind), and have multiple clients (like mobile phones, tablets, PCs, etc.) able to share the same instance. It should still be possible to remotely (and securely) manage the proxy. What are ways we could accomplish this? How could we change the CLI (should it operate more as a client)? In some ways, `tailscale` is a good model to follow for this kind of functionality/architecture.
+- [ ] Remove dependency on system binaries where possible (`certutil`, `cp`, `sh`, `sudo`, etc.), preferring native Rust interfaces or bundled binaries (with corresponding `bundled` features)
+- [ ] Some sort of LLM-assisted interface/functionality for building request/response plugins.
+
 - [ ] Consider whether it is possible to use WIT to express a system where plugins may register custom "capabilities" (interfaces?) that other plugins may request access to, and if it is possible, how that system would integrate into `witmproxy` (and what changes would be required)
-- [ ] A code editor extension for syntax highlighting capability CEL expressions
+- [ ] A code editor extension for syntax highlighting CEL expressions
 
 # `ezfilter`
 
 A cross-platform application which assumes `witmproxy` (which may be hosted locally or remotely) as a backend. `ezfilter` is primarily a front-end, built using either `dioxus` or `tauri`, which provides a UI to manage and observe the `witmproxy` backend, but also provides additional functionality and includes (and configures) several opinionated plugins:
 
-* `noshorts` - a plugin which prevents you from using reels in TikTok, Instagram, YouTube, Facebook, ...
+* `noshorts` - a plugin which prevents you from viewing reels in TikTok, Instagram, YouTube, Facebook, ...
 * `noslop` - a plugin which uses hand-crafted heuristics, AI, and user-provided signals to filter addictive, manipulative, and low-quality content
+* `nofeeds` - a plugin which hides popular app feeds
 * `nocomments` - a plugin to hide comment sections from webpages
 * `notrump` - a plugin which filters Trump related content
 * `moredogs` - a plugin which injects additional dogs into your browsing experience
 * `focus` - a plugin which restricts your internet use to accomplishing set goals and avoiding distractions
+* `schedule` - a plugin which allows you to schedule when other plugins run (and how) 
 
 All `ezfilter` plugins must be open-source (as in you may view the unobfuscated client-side code which produced each binary in its whole) but they do not necessarily have to be free.
 
@@ -46,7 +43,7 @@ In others, the plugin author may ask the user to make a one-time payment or subs
 
 We charge for what it costs us to provide you our services (which includes a fair salary and some room for business development/R&D).
 
-This let's us work on `ezfilter` (and `witmproxy`) sustainably, so that we can hopefully improve your internet experience for the better long into the future.
+This let's us work on `ezfilter` (and `witmproxy`) sustainably, so that we can hopefully improve your internet experience for the better, long into the future.
 
 Our company, [`ez co`](https://joinez.co), is a worker-owned _democratic collective_: every company decision comes to a vote, and every employee has an equal ballot (which they can delegate to someone else if they so choose). We hope that this structure keeps us honest and transparent, and helps us avoid the typical issues caused by static hierarachy and any misaligned incentives.
 
@@ -64,6 +61,3 @@ Our company, [`ez co`](https://joinez.co), is a worker-owned _democratic collect
 - [ ] Payment infrastructure:
   * How do we allow payments in our system? Do we use Stripe? Do we accept stable coins?
   * How do we charge our users? What information do we retain (if any)?
-
-
-In `src/apps/witmproxy/wit/world.wit`, can you finish refactoring the WIT interface to expose a `plugin` resource, which will have a constructor(`list<user-input>`) (accepting user-input for plugin configuration) and the existing `handle()` method? This is desired so that guest plugins may reference supplied configuration for execution. We will then need to update the current Rust host (`witmproxy`) WASM component usage, and add tests to ensure things function as expected (which involve updating current example guests with the new interface and APIs).

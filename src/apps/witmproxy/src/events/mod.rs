@@ -14,6 +14,7 @@ pub mod connect;
 pub mod content;
 pub mod request;
 pub mod response;
+pub mod timer;
 
 /// Trait representing an event that can be handled by the plugin system
 pub trait Event: Send {
@@ -64,6 +65,7 @@ impl EventKind {
                 bail!("Connect events do not return Event (no guest handling)")
             }
             EventKind::InboundContent => ensure_matches!(event_data, WasmEvent::InboundContent(_)),
+            EventKind::Timer => ensure_matches!(event_data, WasmEvent::Timer(_)),
         }
     }
 }
@@ -75,6 +77,7 @@ impl std::fmt::Display for EventKind {
             EventKind::Response => write!(f, "response"),
             EventKind::Connect => write!(f, "connect"),
             EventKind::InboundContent => write!(f, "inbound_content"),
+            EventKind::Timer => write!(f, "timer"),
         }
     }
 }

@@ -8,6 +8,7 @@ use crate::http::utils::ContentTyped;
 use crate::plugins::cel::CelRequest;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
+use crate::tenant::TenantContext;
 use crate::wasm::bindgen::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
@@ -32,6 +33,10 @@ use tracing::{debug, error, warn};
 
 use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
+
+pub mod netfilter;
+pub mod tenant_resolver;
+pub mod transparent;
 
 mod utils;
 pub use utils::{
@@ -94,6 +99,31 @@ impl ProxyServer {
         let shutdown = self.shutdown_notify.clone();
         let server = self.clone();
 
+        // Spawn the timer scheduler (checks every 30 seconds for timer-capable plugins)
+        if let Some(ref registry) = self.plugin_registry {
+            let timer_registry = Arc::clone(registry);
+            let timer_shutdown = self.shutdown_notify.clone();
+            tokio::spawn(async move {
+                use crate::events::timer::TimerEvent;
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    tokio::select! {
+                        _ = timer_shutdown.notified() => break,
+                        _ = interval.tick() => {
+                            let timer_event = TimerEvent::now();
+                            let registry = timer_registry.read().await;
+                            if registry.can_handle(&timer_event) {
+                                debug!("Timer tick: dispatching timer event to plugins");
+                                if let Err(e) = registry.handle_event(Box::new(timer_event)).await {
+                                    warn!("Timer event handling error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         // Spawn the accept loop
         tokio::spawn(async move {
             loop {
@@ -104,11 +134,15 @@ impl ProxyServer {
                             Ok((io, peer)) => {
                                 debug!("Accepted connection from {}", peer);
                                 let shared = server.clone();
+                                // Resolve tenant from peer address (anonymous for now,
+                                // will be replaced by TenantResolver in Phase 4)
+                                let tenant_ctx = TenantContext::anonymous();
                                 tokio::spawn(async move {
                                     let svc = service_fn(move |req: Request<Incoming>| {
                                         let shared = shared.clone();
+                                        let tenant_ctx = tenant_ctx.clone();
                                         async move {
-                                            shared.handle_plain_http(req).await.map_err(|e| std::io::Error::other(e.to_string()))
+                                            shared.handle_plain_http(req, &tenant_ctx).await.map_err(|e| std::io::Error::other(e.to_string()))
                                         }
                                     });
 
@@ -228,6 +262,7 @@ impl ProxyServer {
     async fn handle_plain_http(
         &self,
         mut req: Request<Incoming>,
+        _tenant_ctx: &TenantContext,
     ) -> Result<Response<UnsyncBoxBody<Bytes, ErrorCode>>, ProxyError> {
         if req.method() == Method::CONNECT {
             debug!("Handling CONNECT request");
@@ -264,7 +299,7 @@ impl ProxyServer {
                         Ok(upgraded) => {
                             if let Err(e) = run_tls_mitm(
                                 upstream,
-                                upgraded,
+                                TokioIo::new(upgraded),
                                 authority.clone(),
                                 ca,
                                 plugin_registry,
@@ -425,15 +460,21 @@ fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
     req
 }
 
-/// Performs TLS MITM on a CONNECT tunnel, then serves the *client-facing* side
+/// Performs TLS MITM on a connection, then serves the *client-facing* side
 /// with a Hyper auto server (h1 or h2) and forwards each request to the real upstream via `upstream`.
-async fn run_tls_mitm(
+///
+/// Generic over the IO type so it can be used from both the standard proxy
+/// (with `TokioIo<Upgraded>`) and the transparent proxy (with `TcpStream`).
+pub(crate) async fn run_tls_mitm<IO>(
     upstream: reqwest::Client,
-    upgraded: upgrade::Upgraded,
+    stream: IO,
     authority: String,
     ca: Arc<CertificateAuthority>,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
-) -> ProxyResult<()> {
+) -> ProxyResult<()>
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     debug!("Running TLS MITM for {}", authority);
 
     // Extract host + port, default :443
@@ -443,7 +484,7 @@ async fn run_tls_mitm(
     let server_tls = build_server_tls_for_host(&ca, &host).await?;
     let acceptor = TlsAcceptor::from(Arc::new(server_tls));
 
-    let tls = acceptor.accept(TokioIo::new(upgraded)).await?;
+    let tls = acceptor.accept(stream).await?;
     debug!("TLS established with client for {}", host);
 
     // Auto (h1/h2) Hyper server over the client TLS stream

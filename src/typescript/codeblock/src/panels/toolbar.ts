@@ -1,14 +1,44 @@
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
-import { CodeblockFacet, openFileEffect, currentFileField } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect } from "../editor";
 import { extOrLanguageToLanguageId } from "../lsps";
+import { LSP, LspLog, FileChangeType } from "../utils/lsp";
+import { Seti } from "@m234/nerd-fonts/fs";
+import { settingsField, resolveThemeDark, createSettingsOverlay } from "./footer";
+
+type NerdIcon = { value: string; hexCode: number; color?: string };
+
+// Browser-safe file icon lookup (avoids node:path.parse used by Seti.fromPath)
+const FALLBACK_ICON: NerdIcon = { value: '\ue64e', hexCode: 0xe64e }; // nf-seti-text
+
+function setiIconForPath(filePath: string): NerdIcon {
+    const base = filePath.split('/').pop() || filePath;
+
+    // Check exact basename match first (e.g. Dockerfile, Makefile)
+    const byBase = Seti.byBaseSeti.get(base);
+    if (byBase) return byBase;
+
+    // Walk extensions from longest to shortest (e.g. .spec.ts → .ts)
+    let dot = base.indexOf('.');
+    if (dot < 0) return FALLBACK_ICON;
+    let ext = base.slice(dot);
+    for (;;) {
+        const byExt = Seti.byExtensionSeti.get(ext);
+        if (byExt) return byExt;
+        dot = ext.indexOf('.', 1);
+        if (dot === -1) break;
+        ext = ext.slice(dot);
+    }
+    return FALLBACK_ICON;
+}
 
 // Command result types for the first section
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'rename-file';
+    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder';
     icon: string;
+    iconColor?: string;
     query: string;
     requiresInput?: boolean;
 }
@@ -19,10 +49,6 @@ export type SearchResult = HighlightedSearch | CommandResult;
 // Type guards
 function isCommandResult(result: SearchResult): result is CommandResult {
     return 'type' in result;
-}
-
-function isSearchResult(result: SearchResult): result is HighlightedSearch {
-    return 'score' in result;
 }
 
 // Naming mode state
@@ -63,112 +89,21 @@ function isValidProgrammingLanguage(query: string): boolean {
         extOrLanguageToLanguageId[key].toLowerCase() === lowerQuery
     );
 }
-// Get appropriate icon for language/extension
-function getLanguageIcon(query: string): string {
-    const lowerQuery = query.toLowerCase();
 
-    // Language/extension icons matching extOrLanguageToLanguageId
-    const iconMap: Record<string, string> = {
-        // JavaScript/TypeScript family
-        'javascript': '🟨',
-        'js': '🟨',
-        'typescript': '🔷',
-        'ts': '🔷',
-        'jsx': '⚛️',
-        'tsx': '⚛️',
+// Icons
+const SEARCH_ICON = '\uf002'; // nf-fa-search (magnifying glass)
+const DEFAULT_FILE_ICON = '\ue64e'; // nf-seti-text
+const COG_ICON = '\uf013'; // nf-fa-cog
 
-        // Python
-        'python': '🐍',
-        'py': '🐍',
+// Get nerd font icon for a file path
+function getFileIcon(path: string): { glyph: string; color: string } {
+    const result = setiIconForPath(path);
+    return { glyph: result.value, color: result.color || '' };
+}
 
-        // Ruby
-        'ruby': '💎',
-        'rb': '💎',
-
-        // PHP
-        'php': '🐘',
-
-        // Java
-        'java': '☕',
-
-        // C/C++
-        'cpp': '⚙️',
-        'c': '⚙️',
-
-        // C#
-        'csharp': '🔷',
-        'cs': '🔷',
-
-        // Go
-        'go': '🐹',
-
-        // Swift
-        'swift': '🦉',
-
-        // Kotlin
-        'kotlin': '🟣',
-        'kt': '🟣',
-
-        // Rust
-        'rust': '🦀',
-        'rs': '🦀',
-
-        // Scala
-        'scala': '🔴',
-
-        // Visual Basic
-        'vb': '🔵',
-
-        // Haskell
-        'haskell': '🎭',
-        'hs': '🎭',
-
-        // Lua
-        'lua': '🌙',
-
-        // Perl
-        'perl': '🐪',
-        'pl': '🐪',
-
-        // Shell/Bash
-        'bash': '🐚',
-        'shell': '🐚',
-        'sh': '🐚',
-        'zsh': '🐚',
-
-        // SQL
-        'mysql': '🗃️',
-        'sql': '🗃️',
-
-        // Web technologies
-        'html': '🌐',
-        'css': '🎨',
-        'scss': '🎨',
-        'less': '🎨',
-
-        // Data formats
-        'json': '📋',
-        'yaml': '⚙️',
-        'yml': '⚙️',
-        'xml': '📄',
-        'toml': '⚙️',
-        'ini': '⚙️',
-        'conf': '⚙️',
-        'log': '📄',
-        'env': '🔧',
-
-        // Documentation
-        'markdown': '📝',
-        'md': '📝',
-
-        // Docker/Build
-        'dockerfile': '🐳',
-        'makefile': '🔨',
-        'dockerignore': '🐳',
-        'gitignore': '📝'
-    };
-
-    return iconMap[lowerQuery] || '📄';
+// Get icon for a language/extension query (used for create-file commands)
+function getLanguageIcon(query: string): { glyph: string; color: string } {
+    return getFileIcon(`file.${query}`);
 }
 
 
@@ -186,10 +121,12 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
     if (query.trim()) {
         // Create new file command (only if query doesn't match existing file)
         if (!hasExactFileMatch) {
+            const langIcon = isLanguageQuery ? getLanguageIcon(query) : null;
             const createFileCommand: CommandResult = {
                 id: isLanguageQuery ? "Create new file" : `Create new file "${query}"`,
                 type: 'create-file',
-                icon: isLanguageQuery ? getLanguageIcon(query) : '📄',
+                icon: langIcon ? langIcon.glyph : DEFAULT_FILE_ICON,
+                iconColor: langIcon?.color,
                 query,
                 requiresInput: isLanguageQuery
             };
@@ -201,15 +138,80 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
             const renameCommand: CommandResult = {
                 id: `Rename to "${query}"`,
                 type: 'rename-file',
-                icon: '✏️',
+                icon: '\uf044', // nf-fa-pencil_square_o (edit icon)
                 query
             };
             commands.push(renameCommand);
         }
     }
 
+    // Import commands — always shown
+    commands.push({
+        id: 'Import file(s)',
+        type: 'import-local-files',
+        icon: '\uf15b', // nf-fa-file
+        query: '',
+    });
+    commands.push({
+        id: 'Import folder(s)',
+        type: 'import-local-folder',
+        icon: '\ue613', // nf-seti-folder
+        query: '',
+    });
+
     return commands;
 }
+
+async function importFiles(files: FileList, view: EditorView) {
+    const { fs, index } = view.state.facet(CodeblockFacet);
+    for (const file of files) {
+        const path = file.webkitRelativePath || file.name;
+        const dir = path.substring(0, path.lastIndexOf('/'));
+        if (dir) await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(path, await file.text());
+        if (index) index.add(path);
+        LSP.notifyFileChanged(path, FileChangeType.Created);
+    }
+    if (index?.savePath) await index.save(fs, index.savePath);
+    // Open first imported file
+    if (files.length > 0) {
+        const first = files[0].webkitRelativePath || files[0].name;
+        safeDispatch(view, { effects: openFileEffect.of({ path: first }) });
+    }
+}
+
+// Create an LSP log overlay element
+function createLspLogOverlay(): HTMLElement {
+    const overlay = document.createElement("div");
+    overlay.className = "cm-settings-overlay";
+
+    // Log content
+    const content = document.createElement("div");
+    content.className = "cm-lsp-log-content";
+    overlay.appendChild(content);
+
+    function render() {
+        const entries = LspLog.entries();
+        const fragment = document.createDocumentFragment();
+        for (const entry of entries) {
+            const div = document.createElement("div");
+            div.className = `cm-lsp-log-entry cm-lsp-log-${entry.level}`;
+            const time = new Date(entry.timestamp).toLocaleTimeString();
+            div.textContent = `[${time}] [${entry.level}] ${entry.message}`;
+            fragment.appendChild(div);
+        }
+        content.replaceChildren(fragment);
+        content.scrollTop = content.scrollHeight;
+    }
+
+    render();
+    const unsub = LspLog.subscribe(render);
+    (overlay as any)._lspLogUnsub = unsub;
+
+    return overlay;
+}
+
+const MIN_LOADING_MS = 400;
 
 // Toolbar Panel
 export const toolbarPanel = (view: EditorView): Panel => {
@@ -218,10 +220,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
     const dom = document.createElement("div");
     dom.className = "cm-toolbar-panel";
 
-    // Create state icon (left side)
+    // Create state icon (left side) — magnifying glass at rest
     const stateIcon = document.createElement("div");
     stateIcon.className = "cm-toolbar-state-icon";
-    stateIcon.textContent = "📄"; // Default file icon
+    stateIcon.textContent = SEARCH_ICON;
 
     // Create container for state icon to help with alignment
     const stateIconContainer = document.createElement("div");
@@ -240,25 +242,163 @@ export const toolbarPanel = (view: EditorView): Panel => {
     input.className = "cm-toolbar-input";
     inputContainer.appendChild(input);
 
+    // LSP log button (shows file-type icon of current file, hidden when lspLogEnabled is false)
+    const lspLogBtn = document.createElement("button");
+    lspLogBtn.className = "cm-toolbar-lsp-log";
+    lspLogBtn.style.fontFamily = 'var(--cm-icon-font-family)';
+    function updateLspLogIcon() {
+        const filePath = view.state.field(currentFileField).path;
+        if (filePath) {
+            const icon = getFileIcon(filePath);
+            lspLogBtn.textContent = icon.glyph;
+            lspLogBtn.style.color = icon.color || '';
+        } else {
+            lspLogBtn.textContent = DEFAULT_FILE_ICON;
+            lspLogBtn.style.color = '';
+        }
+    }
+    function updateLspLogVisibility() {
+        const enabled = view.state.field(settingsField).lspLogEnabled;
+        lspLogBtn.style.display = enabled ? '' : 'none';
+    }
+    updateLspLogIcon();
+    updateLspLogVisibility();
+
+    // Settings cog button (far right of toolbar)
+    const settingsCog = document.createElement("button");
+    settingsCog.className = "cm-toolbar-settings-cog";
+    settingsCog.style.fontFamily = 'var(--cm-icon-font-family)';
+    settingsCog.textContent = COG_ICON;
+
+    // Overlay management
+    let activeOverlay: HTMLElement | null = null;
+    let activeOverlayType: 'settings' | 'lsp-log' | null = null;
+    let savedInputValue: string | null = null;
+
+    const overlayLabels: Record<string, string> = {
+        'settings': 'settings',
+        'lsp-log': 'lsp.log',
+    };
+
+    function updateCogAppearance() {
+        if (activeOverlayType) {
+            settingsCog.textContent = '\u2715'; // ✕
+            settingsCog.style.fontFamily = '';
+            settingsCog.classList.add('cm-cog-active');
+        } else {
+            settingsCog.textContent = COG_ICON;
+            settingsCog.style.fontFamily = 'var(--cm-icon-font-family)';
+            settingsCog.classList.remove('cm-cog-active');
+        }
+    }
+
+    function showOverlay(overlay: HTMLElement) {
+        const panelsTop = view.dom.querySelector('.cm-panels-top');
+        if (panelsTop) {
+            overlay.style.top = `${panelsTop.getBoundingClientRect().height}px`;
+        }
+        view.dom.appendChild(overlay);
+    }
+
+    function openOverlay(type: 'settings' | 'lsp-log', overlay: HTMLElement) {
+        // Save current input and show overlay label
+        savedInputValue = input.value;
+        input.value = overlayLabels[type];
+
+        activeOverlay = overlay;
+        activeOverlayType = type;
+        showOverlay(overlay);
+        updateCogAppearance();
+    }
+
+    function closeOverlay() {
+        if (activeOverlay) {
+            // Clean up LSP log subscription if applicable
+            if ((activeOverlay as any)._lspLogUnsub) {
+                (activeOverlay as any)._lspLogUnsub();
+            }
+            activeOverlay.remove();
+            activeOverlay = null;
+            activeOverlayType = null;
+
+            // Restore input text
+            if (savedInputValue !== null) {
+                input.value = savedInputValue;
+                savedInputValue = null;
+            }
+            updateCogAppearance();
+        }
+    }
+
+    settingsCog.addEventListener("click", () => {
+        if (activeOverlayType) {
+            closeOverlay();
+        } else {
+            openOverlay('settings', createSettingsOverlay(view));
+        }
+    });
+
+    lspLogBtn.addEventListener("click", () => {
+        if (activeOverlayType === 'lsp-log') {
+            closeOverlay();
+        } else {
+            closeOverlay();
+            openOverlay('lsp-log', createLspLogOverlay());
+        }
+    });
+
+    dom.appendChild(lspLogBtn);
+    dom.appendChild(settingsCog);
+
     const resultsList = document.createElement("ul");
     resultsList.className = "cm-search-results";
     dom.appendChild(resultsList);
 
     let selectedIndex = 0;
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
+    let loadingStartTime: number | null = null;
+
+    // System theme media query listener
+    const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    function handleSystemThemeChange() {
+        const settings = view.state.field(settingsField);
+        if (settings.theme === 'system') {
+            safeDispatch(view, {
+                effects: setThemeEffect.of({ dark: systemThemeQuery.matches })
+            });
+        }
+    }
+    systemThemeQuery.addEventListener('change', handleSystemThemeChange);
+
+    // Apply initial settings (font size, font family, theme)
+    function applySettings() {
+        const settings = view.state.field(settingsField);
+        view.dom.style.setProperty('--cm-font-size', `${settings.fontSize}px`);
+        if (settings.fontFamily) {
+            view.dom.style.setProperty('--cm-font-family', settings.fontFamily);
+        } else {
+            view.dom.style.removeProperty('--cm-font-family');
+        }
+    }
+    applySettings();
+
+    // Apply initial theme
+    const initialSettings = view.state.field(settingsField);
+    const initialDark = resolveThemeDark(initialSettings.theme);
+    view.dom.setAttribute('data-theme', initialDark ? 'dark' : 'light');
 
     // Tracks gutter width for toolbar alignment
     function updateGutterWidthVariables() {
         const gutters = view.dom.querySelector('.cm-gutters');
         if (gutters) {
             const gutterWidth = gutters.getBoundingClientRect().width;
-            dom.style.setProperty('--cm-gutter-width', `${gutterWidth}px`);
+            view.dom.style.setProperty('--cm-gutter-width', `${gutterWidth}px`);
 
             const numberGutter = gutters.querySelector('.cm-lineNumbers');
 
             if (numberGutter) {
                 const numberGutterWidth = numberGutter.getBoundingClientRect().width;
-                dom.style.setProperty('--cm-gutter-lineno-width', `${numberGutterWidth}px`);
+                view.dom.style.setProperty('--cm-gutter-lineno-width', `${numberGutterWidth}px`);
             }
         }
 
@@ -289,7 +429,15 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
         const resultIcon = document.createElement("div");
         resultIcon.className = "cm-search-result-icon";
-        resultIcon.textContent = isCommandResult(result) ? result.icon : '📄';
+        resultIcon.style.fontFamily = 'var(--cm-icon-font-family)';
+        if (isCommandResult(result)) {
+            resultIcon.textContent = result.icon;
+            if (result.iconColor) resultIcon.style.color = result.iconColor;
+        } else {
+            const icon = getFileIcon(result.id);
+            resultIcon.textContent = icon.glyph;
+            if (icon.color) resultIcon.style.color = icon.color;
+        }
 
         resultIconContainer.appendChild(resultIcon);
         li.appendChild(resultIconContainer);
@@ -314,22 +462,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
         const results = view.state.field(searchResultsField);
         const children: HTMLElement[] = [];
 
-        // Separate commands from search results
-        const commands = results.filter(isCommandResult);
-        const searchResults = results.filter(isSearchResult);
-
-        let currentIndex = 0;
-
-        // Render commands section
-        commands.forEach((command) => {
-            children.push(renderItem(command, currentIndex));
-            currentIndex++;
-        });
-
-        // Render search results section
-        searchResults.forEach((result) => {
-            children.push(renderItem(result, currentIndex));
-            currentIndex++;
+        // Render items in state array order (search results first, commands second)
+        results.forEach((result, i) => {
+            children.push(renderItem(result, i));
         });
 
         resultsList.replaceChildren(...children);
@@ -345,9 +480,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
     function updateStateIcon() {
         if (namingMode.active) {
-            stateIcon.textContent = namingMode.type === 'create-file' ? '📄' : '✏️';
+            stateIcon.textContent = namingMode.type === 'create-file' ? DEFAULT_FILE_ICON : '\uf044';
         } else {
-            stateIcon.textContent = '📄'; // Default file icon
+            stateIcon.textContent = SEARCH_ICON;
         }
     }
 
@@ -370,6 +505,23 @@ export const toolbarPanel = (view: EditorView): Panel => {
         namingMode = { active: false, type: 'create-file', originalQuery: '' };
         updateStateIcon();
         input.placeholder = '';
+    }
+
+    function triggerFileImport(folder: boolean) {
+        safeDispatch(view, { effects: setSearchResults.of([]) });
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        if (folder) {
+            fileInput.setAttribute('webkitdirectory', '');
+        } else {
+            fileInput.multiple = true;
+        }
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files?.length) {
+                importFiles(fileInput.files, view);
+            }
+        });
+        fileInput.click();
     }
 
     function handleCommandResult(command: CommandResult) {
@@ -397,6 +549,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
                     effects: [setSearchResults.of([]), openFileEffect.of({ path: newPath })]
                 });
             }
+        } else if (command.type === 'import-local-files') {
+            triggerFileImport(false);
+        } else if (command.type === 'import-local-folder') {
+            triggerFileImport(true);
         }
     }
 
@@ -435,10 +591,16 @@ export const toolbarPanel = (view: EditorView): Panel => {
         exitNamingMode();
     }
 
+    function resetInputToCurrentFile() {
+        const currentFile = view.state.field(currentFileField);
+        input.value = currentFile.path || '';
+    }
+
     // Close dropdown when clicking outside
     function handleClickOutside(event: Event) {
         if (!dom.contains(event.target as Node)) {
             safeDispatch(view, { effects: setSearchResults.of([]) });
+            resetInputToCurrentFile();
         }
     }
 
@@ -452,10 +614,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 // Get regular search results from index first
                 const searchResults: SearchResult[] = (index?.search(query) || []).slice(0, 100);
 
-                // Add command results first (passing search results to check for existing files)
+                // Add command results (passing search results to check for existing files)
                 const commands = createCommandResults(query, view, searchResults);
 
+                // Search results first, then commands
                 results = searchResults.concat(commands);
+            } else {
+                // Show import commands when dropdown opens with empty query
+                results = createCommandResults('', view, []);
             }
 
             safeDispatch(view, { effects: setSearchResults.of(results) });
@@ -480,12 +646,15 @@ export const toolbarPanel = (view: EditorView): Panel => {
             // Get regular search results from index first
             const searchResults = (index?.search(query) || []).slice(0, 1000);
 
-            // Add command results first (passing search results to check for existing files)
+            // Add command results (passing search results to check for existing files)
             const commands = createCommandResults(query, view, searchResults);
-            results.push(...commands);
 
-            // Add search results
+            // Search results first, then commands
             results.push(...searchResults);
+            results.push(...commands);
+        } else {
+            // Show import commands even with empty query
+            results = createCommandResults('', view, []);
         }
 
         safeDispatch(view, { effects: setSearchResults.of(results) });
@@ -512,6 +681,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
             if (results.length) {
                 selectedIndex = mod(selectedIndex + 1, results.length);
                 updateDropdown();
+            } else {
+                // No dropdown open — move cursor to editor body
+                view.focus();
             }
         } else if (event.key === "ArrowUp") {
             event.preventDefault();
@@ -522,6 +694,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else if (event.key === "Enter" && results.length && selectedIndex >= 0) {
             event.preventDefault();
             selectResult(results[selectedIndex]);
+        } else if (event.key === "Escape") {
+            event.preventDefault();
+            safeDispatch(view, { effects: setSearchResults.of([]) });
+            resetInputToCurrentFile();
+            input.blur();
         }
     });
 
@@ -540,10 +717,59 @@ export const toolbarPanel = (view: EditorView): Panel => {
                     document.removeEventListener("click", handleClickOutside);
                 }
             }
+
+            // Apply settings when they change
+            const prevSettings = update.startState.field(settingsField);
+            const nextSettings = update.state.field(settingsField);
+            if (prevSettings.fontSize !== nextSettings.fontSize || prevSettings.fontFamily !== nextSettings.fontFamily) {
+                applySettings();
+            }
+            if (prevSettings.lspLogEnabled !== nextSettings.lspLogEnabled) {
+                updateLspLogVisibility();
+                // Close the log overlay if the user disables it
+                if (!nextSettings.lspLogEnabled && activeOverlayType === 'lsp-log') {
+                    closeOverlay();
+                }
+            }
+
+            // Update loading indicator with minimum animation duration
+            const prevFile = update.startState.field(currentFileField);
+            const nextFile = update.state.field(currentFileField);
+            if (prevFile.loading !== nextFile.loading) {
+                if (nextFile.loading) {
+                    loadingStartTime = Date.now();
+                    stateIcon.textContent = ''; // clear glyph; CSS border spinner handles the visual
+                    stateIcon.classList.add('cm-loading');
+                } else {
+                    const elapsed = loadingStartTime ? Date.now() - loadingStartTime : Infinity;
+                    const remaining = Math.max(0, MIN_LOADING_MS - elapsed);
+                    loadingStartTime = null;
+                    setTimeout(() => {
+                        if (!view.state.field(currentFileField).loading) {
+                            stateIcon.textContent = SEARCH_ICON;
+                            stateIcon.classList.remove('cm-loading');
+                        }
+                    }, remaining);
+                }
+            }
+
+            // Update LSP log icon when file changes
+            if (prevFile.path !== nextFile.path) {
+                updateLspLogIcon();
+            }
+
+            // Sync input value when file path changes (unless overlay is open or user is naming)
+            if (prevFile.path !== nextFile.path && !namingMode.active && !activeOverlayType) {
+                input.value = nextFile.path || '';
+            }
         },
         destroy() {
             // Clean up event listeners when panel is destroyed
             document.removeEventListener("click", handleClickOutside);
+            systemThemeQuery.removeEventListener('change', handleSystemThemeChange);
+
+            // Clean up overlay
+            closeOverlay();
 
             // Clean up ResizeObserver
             if (gutterObserver) {

@@ -2,14 +2,6 @@
 
 A WASM-in-the-middle proxy, written in Rust.
 
-## Features
-
-- 🧩 **WASM Plugin System**: Extensible plugin architecture built on [WebAssembly Components](https://component-model.bytecodealliance.org/)
-- 🔒 **TLS Interception**: Automatic certificate generation and TLS termination
-- 📱 **Smart Certificate Distribution**: Automatic device detection and certificate format selection
-- 🌐 **Web Interface**: Built-in web server for certificate downloads and management
-- 🔧 **Easy Configuration**: TOML-based configuration with sensible defaults
-
 ## Quick Start
 
 ### 1. Installation and setup
@@ -29,21 +21,21 @@ On first run, `witm` automatically:
 
 ```sh
 # View daemon status
-witm daemon status
+witm service status
 
 # Control the daemon
-witm daemon start    # Start the daemon
-witm daemon stop     # Stop the daemon
-witm daemon restart  # Restart the daemon
+witm service start    # Start the daemon
+witm service stop     # Stop the daemon
+witm service restart  # Restart the daemon
 
 # View logs
-witm daemon logs          # Show last 50 lines of logs
-witm daemon logs -f       # Follow logs in real-time (like tail -f)
-witm daemon logs -l 100   # Show last 100 lines
+witm service logs          # Show last 50 lines of logs
+witm service logs -f       # Follow logs in real-time (like tail -f)
+witm service logs -l 100   # Show last 100 lines
 
 # Manage installation
-witm daemon install    # Manually install the daemon
-witm daemon uninstall  # Remove the daemon from the system
+witm service install    # Manually install the daemon
+witm service uninstall  # Remove the daemon from the system
 ```
 
 ### 3. Add plugins
@@ -65,7 +57,7 @@ The witmproxy plugin WIT interface is automatically published to [GitHub Contain
 
 ```sh
 # Fetch the WIT interface for plugin development
-wkg get --format wit witmproxy:plugin@0.0.5 --output plugin.wit
+wkg get --format wit witmproxy:plugin@0.0.6 --output plugin.wit
 ```
 
 See [WIT Publishing Documentation](../../docs/wit-publishing.md) for more information.
@@ -115,6 +107,14 @@ Consider either [supporting the author directly](https://github.com/sponsors/tbr
 - ...and more! (see [`cargo.toml`](./Cargo.toml) for a full list of our dependencies)
 
 ## Contributing
+
+### Prerequisites
+
+- **Nightly Rust**: `witmproxy` requires nightly Rust for development (`rustup default nightly` or use `+nightly` with cargo commands)
+- **WASM target**: Plugin development requires the `wasm32-wasip2` target: `rustup target add wasm32-wasip2`
+- **wkg**: The [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) CLI is required for updating and fetching WIT (WebAssembly Interface Type) files used by the plugin interface
+
+### Steps
 
 1. Fork the repository
 2. Create a feature branch

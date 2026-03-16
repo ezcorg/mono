@@ -32,6 +32,14 @@ interface capabilities {
         delete: async func(key: string);
     }
 
+    /// A resource for accessing the current system time (wasi:clocks)
+    resource clock-client {
+        /// Returns the current time as a Unix timestamp in seconds
+        now-seconds: async func() -> u64;
+        /// Returns the current time as a Unix timestamp in milliseconds
+        now-millis: async func() -> u64;
+    }
+
     /// A capability provider, which only returns capabilities that have been granted by the user
     resource capability-provider {
         // http: func() -> option<http-client>;
@@ -41,6 +49,7 @@ interface capabilities {
         logger: async func() -> option<logger>;
         annotator: async func() -> option<annotator-client>;
         local-storage: async func() -> option<local-storage-client>;
+        clock: async func() -> option<clock-client>;
     }
 
     /// A type used to limit the scope in which granted capabilities can be used.
@@ -66,8 +75,8 @@ interface capabilities {
 
     /// The different kinds of events that can be handled by plugins
     variant event-kind {
-        /// The associated capability determines which connections should be intercepted by the proxy 
-        /// 
+        /// The associated capability determines which connections should be intercepted by the proxy
+        ///
         /// If you do not request this capability, you are not guaranteed to receive any further
         /// request/response events related to connections you wish to handle.
         connect,
@@ -77,6 +86,9 @@ interface capabilities {
         response,
         // The associated capability determines which inbound content should be handled by the plugin
         inbound-content,
+        // The associated capability determines which timer events should be handled by the plugin.
+        // Timer events are generated periodically by the host based on CRON expressions in the capability scope.
+        timer,
     }
 
     /// The different kinds of capabilities that can be requested by plugins
@@ -85,10 +97,12 @@ interface capabilities {
         handle-event(event-kind),
         /// A capability to log messages
         logger,
-        /// A capability to annotate content (extract and store features + metadata) 
+        /// A capability to annotate content (extract and store features + metadata)
         annotator,
         /// A capability to store local key-value pairs
         local-storage,
+        /// A capability to access the current system time (wasi:clocks)
+        clock,
     }
 
     /// A capability requested by the plugin
@@ -121,11 +135,18 @@ interface capabilities {
         request: request-context,
     }
 
+    /// The context of a timer event, generated periodically by the host
+    record timer-context {
+        /// The current Unix timestamp in seconds when the timer fired
+        timestamp: u64,
+    }
+
     /// The different types of events that can be handled (and returned) by plugins
     variant event {
         request(request),
         response(contextual-response),
         inbound-content(content),
+        timer(timer-context),
     }
 
     /// A work-in-progress resource representing abstract byte stream content

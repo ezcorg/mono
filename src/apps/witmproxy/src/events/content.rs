@@ -11,7 +11,7 @@ use crate::http::utils::ContentEncoding;
 use crate::http::utils::Encoded;
 use crate::{
     events::Event,
-    plugins::cel::CelContent,
+    plugins::cel::{CelContent, CelTime},
     wasm::{
         Host,
         bindgen::{
@@ -55,6 +55,7 @@ impl Event for InboundContent {
         activation
             .bind_variable("content", CelContent::from(self))
             .ok()
+            .and_then(|a| a.bind_variable("time", CelTime::now()).ok())
     }
 }
 

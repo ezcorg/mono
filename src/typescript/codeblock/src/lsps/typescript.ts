@@ -16,9 +16,11 @@ function getLanguageServicePlugins(_ts: typeof ts) {
 export type CreateTypescriptEnvironmentArgs = {
     connection: Connection
     fs: VfsInterface
+    /** Pre-resolved lib file contents keyed by path, for synchronous cache population */
+    libFiles?: Record<string, string>
 }
 
-export const createLanguageServer = async ({ connection, fs }: CreateTypescriptEnvironmentArgs) => {
+export const createLanguageServer = async ({ connection, fs, libFiles }: CreateTypescriptEnvironmentArgs) => {
     const server = createServerBase(connection, {
         timer: {
             setImmediate: (callback: (...args: any[]) => void, ...args: any[]) => {
@@ -26,24 +28,20 @@ export const createLanguageServer = async ({ connection, fs }: CreateTypescriptE
             },
         },
     });
-    server.fileSystem.install('file', new VolarFs(fs));
-    server.onInitialize((params) => {
-        console.debug('ts server on init', params)
-    })
-    connection.onShutdown(() => {
-        console.debug('ts server shutdown')
-    })
+    const volarFs = new VolarFs(fs);
+    if (libFiles) {
+        volarFs.preloadFromMap(libFiles);
+    }
+    server.fileSystem.install('file', volarFs);
     connection.onInitialize(async (params) => {
         const languageServicePlugins = getLanguageServicePlugins(ts)
-
         return server.initialize(
             params,
             createTypeScriptProject(
                 // @ts-ignore
                 ts,
                 undefined,
-                async () => ({
-                    // rootUri: params.rootUri,
+                async (_ctx) => ({
                     languagePlugins: []
                 })
             ),
@@ -52,13 +50,7 @@ export const createLanguageServer = async ({ connection, fs }: CreateTypescriptE
     })
     connection.onInitialized(() => {
         server.initialized();
-        const extensions = [
-            '.tsx',
-            '.jsx',
-            '.js',
-            '.ts'
-        ]
-        server.fileWatcher.watchFiles([`**/*.{${extensions.join(',')}}`])
+        server.fileWatcher.watchFiles(['**/*.{tsx,jsx,js,ts,json}'])
     });
     return server;
 }

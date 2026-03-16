@@ -1,0 +1,29 @@
+[package]
+name = "witmproxy-test"
+version = "0.0.1"
+edition = "2024"
+description = "E2E test infrastructure and test suite for witmproxy. Plugin authors can depend on this crate to orchestrate the same client tests for their own plugins."
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+name = "witmproxy_test"
+path = "src/lib.rs"
+
+[dependencies]
+witmproxy = { path = "..", features = ["test-helpers"] }
+tokio = { version = "1.47", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-manual-roots"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+tempfile = "3.8"
+which = "7"
+fantoccini = "0.21"
+appium-client = "0.2"
+rustls = { version = "0.23", features = ["ring"] }
+
+[dev-dependencies]
+tokio-test = "0.4"

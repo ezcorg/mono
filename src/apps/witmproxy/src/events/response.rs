@@ -3,7 +3,7 @@ use wasmtime::Store;
 use wasmtime_wasi_http::p3::{Response, WasiHttpView};
 
 use crate::events::Event;
-use crate::plugins::cel::{CelRequest, CelResponse};
+use crate::plugins::cel::{CelRequest, CelResponse, CelTime};
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     ContextualResponse as WasiContextualResponse, RequestContext,
 };
@@ -52,10 +52,10 @@ impl Event for ContextualResponse {
         activation
             .bind_variable("request", CelRequest::from(&self.request))
             .ok()
-            .and_then(|activation| {
-                activation
-                    .bind_variable("response", CelResponse::from(&self.response))
+            .and_then(|a| {
+                a.bind_variable("response", CelResponse::from(&self.response))
                     .ok()
             })
+            .and_then(|a| a.bind_variable("time", CelTime::now()).ok())
     }
 }

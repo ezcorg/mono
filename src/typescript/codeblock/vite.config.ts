@@ -99,6 +99,22 @@ export default async function getConfig() {
             //     include: ['events', 'process']
             // }),
         ],
+        optimizeDeps: {
+            include: [
+                '@codemirror/lang-css',
+                '@codemirror/lang-sass',
+                '@codemirror/lang-less',
+                '@codemirror/lang-html',
+                '@codemirror/lang-json',
+                '@codemirror/lang-xml',
+                '@codemirror/lang-markdown',
+                '@codemirror/lang-sql',
+                '@codemirror/lang-php',
+                '@codemirror/lang-java',
+                '@codemirror/lang-cpp',
+                '@codemirror/lang-yaml',
+            ],
+        },
         server: {
             headers: {
                 'Cross-Origin-Embedder-Policy': 'credentialless',

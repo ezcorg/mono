@@ -6,15 +6,22 @@ import { VfsInterface } from '../types';
 
 onconnect = async (event) => {
     const [port] = event.ports;
-    console.debug('LSP worker connected on port: ', port);
-    const reader = new BrowserMessageReader(port);
-    const writer = new BrowserMessageWriter(port);
+
+    // Use a MessageChannel to separate Comlink RPC from LSP protocol.
+    // Both Comlink and BrowserMessageReader listen on the same port's
+    // 'message' event, so Comlink messages get misinterpreted as LSP messages.
+    const { port1: lspPort, port2: clientLspPort } = new MessageChannel();
+    lspPort.start();
+
+    const reader = new BrowserMessageReader(lspPort);
+    const writer = new BrowserMessageWriter(lspPort);
     const connection = createConnection(reader, writer);
     connection.listen();
 
-    const proxy = async ({ fs }: { fs: VfsInterface }) => {
-        console.log('creating language server')
-        await createLanguageServer({ fs, connection });
+    const proxy = async (fsProxy: VfsInterface, libFiles?: Record<string, string>) => {
+        await createLanguageServer({ fs: fsProxy, connection, libFiles });
+        // Return the LSP port for the client to use (separate from Comlink port)
+        return Comlink.transfer(clientLspPort, [clientLspPort]);
     }
     Comlink.expose({ createLanguageServer: proxy }, port);
 }

@@ -69,7 +69,6 @@ export namespace Vfs {
                     let cur = "/";
                     for (const part of parts) {
                         cur = cur === "/" ? `/${part}` : `${cur}/${part}`;
-                        console.log('creating', { cur, abs });
 
                         const exists = await this.exists(cur);
                         if (exists) continue;
@@ -323,18 +322,95 @@ export namespace Vfs {
 
 export class VolarFs implements FileSystem {
     #fs: VfsInterface
+    #fileCache = new Map<string, string>()
+    #statCache = new Map<string, { type: FileType; ctime: number; mtime: number; size: number }>()
+    #dirCache = new Map<string, [string, FileType][]>()
 
     constructor(fs: VfsInterface) {
         this.#fs = fs
     }
 
-    async stat(uri: URI) {
+    /**
+     * Synchronously populate the cache from a pre-resolved map of path → content.
+     * This bypasses async VFS reads entirely, ensuring TypeScript gets lib files
+     * immediately on first program creation.
+     */
+    preloadFromMap(files: Record<string, string>): void {
+        const now = Date.now();
+        for (const [path, content] of Object.entries(files)) {
+            this.#fileCache.set(path, content);
+            this.#statCache.set(path, {
+                type: FileType.File,
+                ctime: now,
+                mtime: now,
+                size: content.length,
+            });
+        }
+        // Build directory tree from file paths
+        const dirChildren = new Map<string, Map<string, FileType>>();
+        for (const path of Object.keys(files)) {
+            let dir = path;
+            let child = '';
+            while (true) {
+                const lastSlash = dir.lastIndexOf('/');
+                if (lastSlash < 0) break;
+                child = dir.substring(lastSlash + 1);
+                dir = dir.substring(0, lastSlash) || '/';
+
+                if (!dirChildren.has(dir)) {
+                    dirChildren.set(dir, new Map());
+                }
+                const children = dirChildren.get(dir)!;
+                // First encounter of this child — it's the file itself
+                if (!children.has(child)) {
+                    // If we've already seen this as a parent dir, it's a Directory
+                    children.set(child, dirChildren.has(dir === '/' ? `/${child}` : `${dir}/${child}`) ? FileType.Directory : FileType.File);
+                }
+                if (dir === '/') break;
+            }
+        }
+        // Update directory type for children that are actually directories
+        for (const [dirPath, children] of dirChildren) {
+            for (const [name] of children) {
+                const fullPath = dirPath === '/' ? `/${name}` : `${dirPath}/${name}`;
+                if (dirChildren.has(fullPath)) {
+                    children.set(name, FileType.Directory);
+                }
+            }
+        }
+        // Cache directory listings and stats
+        for (const [dirPath, children] of dirChildren) {
+            this.#dirCache.set(dirPath, [...children.entries()]);
+            this.#statCache.set(dirPath, {
+                type: FileType.Directory,
+                ctime: now,
+                mtime: now,
+                size: 0,
+            });
+        }
+    }
+
+    stat(uri: URI) {
+        const cached = this.#statCache.get(uri.path);
+        if (cached) return cached;
         return this.#fs.stat(uri.path);
     }
-    async readDirectory(uri: URI) {
+    readDirectory(uri: URI) {
+        // Only use dirCache for node_modules subtree (stable, preloaded).
+        // Root and user directories must go through live VFS to pick up new files.
+        if (uri.path.startsWith('/node_modules/')) {
+            const cached = this.#dirCache.get(uri.path);
+            if (cached) return cached;
+        }
         return this.#fs.readDir(uri.path);
     }
-    async readFile(uri: URI) {
+    readFile(uri: URI) {
+        const cached = this.#fileCache.get(uri.path);
+        if (cached !== undefined) return cached;
         return this.#fs.readFile(uri.path);
+    }
+
+    getCacheSize(): number {
+        return this.#fileCache.size;
     }
 }

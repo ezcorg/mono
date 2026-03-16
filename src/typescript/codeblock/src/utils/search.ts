@@ -19,7 +19,16 @@ export type HighlightedSearch = SearchResult & { highlights: SearchHighlights }
 
 export class SearchIndex {
 
+    /// The VFS path this index was loaded from / saved to, if known.
+    savePath?: string;
+
     constructor(public index: MiniSearch) { }
+
+    add(path: string) {
+        if (!this.index.has(path)) {
+            this.index.add({ path });
+        }
+    }
 
     search(...params: Parameters<MiniSearch['search']>): HighlightedSearch[] {
         const results = this.index.search(...params);
@@ -32,8 +41,8 @@ export class SearchIndex {
     }
 
     /**
-     * 
-     * @param results 
+     *
+     * @param results
      * @returns ranges of found term matched by each field
      */
     highlight(_results: SearchResult[]): SearchHighlights[] {
@@ -64,10 +73,12 @@ export class SearchIndex {
     }
 
     static async get(fs: VfsInterface, path: string, fields: IndexFields = defaultFields): Promise<SearchIndex> {
-        const index = await fs.exists(path) ? await fs.readFile(path) : null
-        return index ?
-            SearchIndex.from(index, fields) :
-            SearchIndex.build(fs, { fields, idField: 'path' }).then(index => index.save(fs, path))
+        const data = await fs.exists(path) ? await fs.readFile(path) : null
+        let index = data
+            ? SearchIndex.from(data, fields)
+            : await SearchIndex.build(fs, { fields, idField: 'path' }).then(idx => idx.save(fs, path))
+        index.savePath = path
+        return index
     }
 
     static async build(fs: VfsInterface, { filter = defaultFilter, ...rest }: SearchIndexOptions) {

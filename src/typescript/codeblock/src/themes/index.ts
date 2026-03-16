@@ -1,5 +1,12 @@
 import { EditorView } from '@codemirror/view';
 
+// Font size helpers — all relative to --cm-font-size so changing the
+// base font size in settings automatically scales the entire UI.
+const FS = 'var(--cm-font-size, 16px)';
+const FS_75 = `calc(${FS} * 0.75)`;   // 12px at base 16
+const FS_85 = `calc(${FS} * 0.85)`;   // ~14px at base 16
+const FS_875 = `calc(${FS} * 0.875)`; // 14px at base 16
+
 export const codeblockTheme = EditorView.theme({
     "&:not(.cm-focused)": {
         '& .cm-activeLine, & .cm-activeLineGutter': {
@@ -13,7 +20,7 @@ export const codeblockTheme = EditorView.theme({
         border: 'none',
         background: 'transparent',
         outline: 'none',
-        fontSize: '16px',
+        fontSize: FS,
         color: 'var(--cm-toolbar-color)',
         padding: '0 2px 0 6px',
         width: '100%',
@@ -45,10 +52,9 @@ export const codeblockTheme = EditorView.theme({
             width: 'var(--cm-gutter-width)',
 
             '& > .cm-search-result-icon': {
-                fontSize: '16px',
-                textAlign: 'right',
+                fontSize: FS,
+                textAlign: 'center',
                 boxSizing: 'border-box',
-                padding: '0 3px 0 5px',
                 width: 'var(--cm-gutter-lineno-width)',
             }
         },
@@ -71,14 +77,23 @@ export const codeblockTheme = EditorView.theme({
     },
     '.cm-toolbar-state-icon-container': {
         width: 'var(--cm-gutter-width)',
+        display: 'flex',
     },
+    // Nerd Font icon glyphs have visual widths (700-920 units) that far exceed
+    // their monospace advance width (500 units), overflowing to the right.
+    // text-align operates on the advance width, not the visual bounds, so
+    // 'right' misaligns the icon. 'center' partially compensates for the
+    // rightward overflow and visually aligns with gutter line numbers.
     '.cm-toolbar-state-icon': {
-        fontSize: '16px',
-        textAlign: 'right',
-        boxSizing: 'border-box',
-        padding: '0 3px 0 5px',
+        fontSize: FS,
         color: 'var(--cm-foreground)',
-        width: 'var(--cm-gutter-lineno-width)'
+        fontFamily: 'var(--cm-icon-font-family)',
+        textAlign: 'center',
+        boxSizing: 'border-box',
+        width: 'var(--cm-gutter-lineno-width)',
+    },
+    '&': {
+        fontSize: FS,
     },
     '.cm-content': {
         padding: 0,
@@ -88,7 +103,7 @@ export const codeblockTheme = EditorView.theme({
         flexDirection: 'column',
         fontFamily: 'var(--cm-font-family)',
         boxShadow: '-12px 12px 1px rgba(0,0,0,0.3)',
-        fontSize: '1rem',
+        fontSize: FS,
         maxWidth: 'min(calc(100% - 2rem), 62ch)',
         border: '2px solid var(--cm-tooltip-border)',
         overflow: 'auto',
@@ -128,7 +143,7 @@ export const codeblockTheme = EditorView.theme({
     '.documentation > *': {
         margin: 0,
         padding: '0.25rem 6px',
-        fontSize: '1rem',
+        fontSize: FS,
     },
     '.documentation > p > code': {
         backgroundColor: 'var(--cm-comment-bg)',
@@ -156,16 +171,170 @@ export const codeblockTheme = EditorView.theme({
         padding: 0,
         background: 'var(--cm-toolbar-background)',
         fontFamily: 'var(--cm-font-family)',
-        fontSize: '1rem',
+        fontSize: FS,
         listStyleType: 'none',
         width: '100%',
         maxHeight: '25vh',
         overflowY: 'auto',
+        zIndex: 200,
     },
     '.cm-gutters': {
         borderRight: 'none',
     },
     '.cm-panels-top': {
-        borderBottom: 'none'
-    }
+        borderBottom: 'none',
+        zIndex: 301,
+    },
+    // CSS border spinner for file loading indicator
+    '.cm-loading': {
+        display: 'inline-block',
+        width: FS,
+        height: FS,
+        border: '2px solid currentColor',
+        borderTopColor: 'transparent',
+        borderRadius: '50%',
+        boxSizing: 'border-box',
+        animation: 'cm-spin 0.8s linear infinite',
+        marginLeft: '4px'
+    },
+    '@keyframes cm-spin': {
+        '0%': { transform: 'rotate(0deg)' },
+        '100%': { transform: 'rotate(360deg)' },
+    },
+    // Settings cog + LSP log button in toolbar (far right)
+    '.cm-toolbar-settings-cog, .cm-toolbar-lsp-log': {
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--cm-toolbar-color)',
+        cursor: 'pointer',
+        padding: '0 6px',
+        fontSize: FS_875,
+        lineHeight: 'inherit',
+        flexShrink: '0',
+        transition: 'transform 0.25s ease',
+    },
+    '.cm-toolbar-settings-cog.cm-cog-active': {
+        transform: 'rotate(90deg)',
+    },
+    // Settings / log overlay — anchored at top, grows downward
+    '.cm-settings-overlay': {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        overflowY: 'auto',
+        background: 'var(--cm-background)',
+        color: 'var(--cm-toolbar-color)',
+        zIndex: 1000,
+        fontFamily: 'var(--cm-font-family)',
+        fontSize: FS,
+    },
+    '.cm-settings-section': {
+        padding: '8px 6px',
+    },
+    '.cm-settings-section-title': {
+        fontWeight: 'bold',
+        marginBottom: '6px',
+        fontSize: FS_85,
+        textTransform: 'uppercase',
+        opacity: '0.7',
+    },
+    '.cm-settings-row': {
+        display: 'flex',
+        alignItems: 'center',
+        marginBottom: '6px',
+        gap: '8px',
+    },
+    '.cm-settings-row > label': {
+        flex: '0 0 auto',
+        whiteSpace: 'nowrap',
+    },
+    '.cm-settings-control': {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+    },
+    // Fixed pixel width so font-size changes don't relayout the slider
+    '.cm-settings-font-size-range': {
+        width: '120px',
+        flexShrink: '0',
+    },
+    '.cm-settings-font-size-input': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '2px 4px',
+        fontSize: 'inherit',
+        fontFamily: 'var(--cm-font-family)',
+        width: '3em',
+        textAlign: 'right',
+    },
+    '.cm-settings-select': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '2px 4px',
+        fontSize: 'inherit',
+        fontFamily: 'var(--cm-font-family)',
+    },
+    '.cm-settings-radio-group': {
+        display: 'flex',
+        gap: '4px',
+        alignItems: 'center',
+    },
+    '.cm-settings-radio-group label': {
+        marginRight: '6px',
+    },
+    '.cm-settings-input': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '2px 6px',
+        fontSize: 'inherit',
+        fontFamily: 'var(--cm-font-family)',
+        flex: 1,
+        minWidth: 0,
+    },
+    '.cm-settings-button': {
+        background: 'var(--cm-background)',
+        color: 'inherit',
+        border: '1px solid var(--cm-tooltip-border)',
+        borderRadius: '2px',
+        padding: '4px 8px',
+        fontSize: 'inherit',
+        cursor: 'pointer',
+    },
+    '.cm-settings-button-disabled': {
+        opacity: '0.5',
+        cursor: 'not-allowed',
+    },
+    // LSP log content
+    '.cm-lsp-log-content': {
+        padding: '8px 12px',
+        fontFamily: 'var(--cm-font-family)',
+        fontSize: FS_75,
+        lineHeight: 1.5,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-all',
+        overflowY: 'auto',
+        flex: 1,
+    },
+    '.cm-lsp-log-entry': {
+        padding: '1px 0',
+    },
+    '.cm-lsp-log-error': {
+        color: 'var(--cm-diagnostic-error-bg)',
+    },
+    '.cm-lsp-log-warn': {
+        color: '#e5a100',
+    },
+    '.cm-lsp-log-info': {
+        opacity: '0.8',
+    },
+    '.cm-lsp-log-log': {
+        opacity: '0.6',
+    },
 });
