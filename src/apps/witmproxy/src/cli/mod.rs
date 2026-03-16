@@ -287,14 +287,8 @@ impl ResolvedCli {
             self.plugin_dir.clone(),
             self.auto,
         );
-
-        let was_installed = service_handler.is_service_installed();
-
         // Always (re)install the service to ensure the service file reflects
         // the current CLI arguments (e.g. --plugin-dir, --verbose, --auto)
-        if !was_installed {
-            println!("First run detected. Installing witmproxy as a daemon service...");
-        }
         service_handler.install_service(true).await?;
 
         // Restart the service so it picks up the latest service file,

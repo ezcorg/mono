@@ -1,17 +1,12 @@
 # `witmproxy`
 
-## Fixes
-
-- [ ] `test_asset_name_is_known_platform` should run platform specific tests, and for each one verify the asset name is as expected.
-
-
 ## Simple
 
 - [ ] Investigate whether it's currently possible to emit structured logs/traces with our existing logging infrastructure
 
 ## Medium
 
-- [ ] 
+- [ ] Consider merging witmproxy/e2e with underlying library (under a flag) 
 
 ## Bigger tasks
 
@@ -66,6 +61,3 @@ Our company, [`ez co`](https://joinez.co), is a worker-owned _democratic collect
 - [ ] Payment infrastructure:
   * How do we allow payments in our system? Do we use Stripe? Do we accept stable coins?
   * How do we charge our users? What information do we retain (if any)?
-
-<!-- 
-In `src/apps/witmproxy/wit/world.wit`, can you finish refactoring the WIT interface to expose a `plugin` resource, which will have a constructor(`list<user-input>`) (accepting user-input for plugin configuration) and the existing `handle()` method? This is desired so that guest plugins may reference supplied configuration for execution. We will then need to update the current Rust host (`witmproxy`) WASM component usage, and add tests to ensure things function as expected (which involve updating current example guests with the new interface and APIs). -->
