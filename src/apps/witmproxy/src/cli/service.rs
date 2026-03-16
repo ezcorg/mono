@@ -1,6 +1,6 @@
-use crate::config::{AppConfig, DbConfig};
 #[cfg(target_os = "linux")]
 use crate::config::TransparentProxyConfig;
+use crate::config::{AppConfig, DbConfig};
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use service_manager::{
@@ -268,12 +268,15 @@ impl ServiceHandler {
                 .ok()
                 .and_then(|user| {
                     // Look up the user's home dir from /etc/passwd
-                    std::fs::read_to_string("/etc/passwd").ok().and_then(|passwd| {
-                        passwd.lines()
-                            .find(|line| line.starts_with(&format!("{}:", user)))
-                            .and_then(|line| line.split(':').nth(5))
-                            .map(PathBuf::from)
-                    })
+                    std::fs::read_to_string("/etc/passwd")
+                        .ok()
+                        .and_then(|passwd| {
+                            passwd
+                                .lines()
+                                .find(|line| line.starts_with(&format!("{}:", user)))
+                                .and_then(|line| line.split(':').nth(5))
+                                .map(PathBuf::from)
+                        })
                 })
                 .or_else(|| dirs::home_dir());
             home.map(|h| h.join(".witmproxy/config.toml"))
@@ -297,7 +300,10 @@ impl ServiceHandler {
                     base
                 }
                 Err(e) => {
-                    warn!("Could not load config from {:?}, using defaults: {}", source_config_path, e);
+                    warn!(
+                        "Could not load config from {:?}, using defaults: {}",
+                        source_config_path, e
+                    );
                     self.config.clone()
                 }
             }
@@ -357,12 +363,7 @@ impl ServiceHandler {
         // On Linux, generate a custom unit file with ExecStopPost for iptables cleanup
         #[cfg(target_os = "linux")]
         let contents = {
-            let unit = generate_systemd_unit(
-                &exe_path,
-                &args,
-                &app_dir,
-                &self.config.transparent,
-            );
+            let unit = generate_systemd_unit(&exe_path, &args, &app_dir, &self.config.transparent);
             Some(unit)
         };
         #[cfg(not(target_os = "linux"))]
@@ -514,8 +515,6 @@ impl ServiceHandler {
 
             #[cfg(target_os = "windows")]
             {
-                // On Windows, we'd need to query the service control manager
-                // For now, just return false and let the install command handle it
                 use std::process::Command;
                 let output = Command::new("sc").args(["query", SERVICE_LABEL]).output();
                 if let Ok(output) = output {
@@ -759,7 +758,11 @@ mod tests {
     fn generate_unit_has_valid_structure() {
         let unit = generate_systemd_unit(
             Path::new("/usr/bin/witm"),
-            &["--config-path".into(), "/etc/witm.toml".into(), "serve".into()],
+            &[
+                "--config-path".into(),
+                "/etc/witm.toml".into(),
+                "serve".into(),
+            ],
             Path::new("/var/lib/witmproxy"),
             &default_transparent_config(),
         );
@@ -795,13 +798,19 @@ mod tests {
         }
 
         // TCP rules (PREROUTING + OUTPUT DNAT) should reference port 8080
-        let tcp_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| !l.contains("udp")).collect();
+        let tcp_lines: Vec<&&str> = stop_post_lines
+            .iter()
+            .filter(|l| !l.contains("udp"))
+            .collect();
         for line in &tcp_lines {
             assert!(line.contains("8080"), "missing port 8080: {}", line);
         }
 
         // QUIC block rules should reference UDP port 443
-        let udp_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("udp")).collect();
+        let udp_lines: Vec<&&str> = stop_post_lines
+            .iter()
+            .filter(|l| l.contains("udp"))
+            .collect();
         assert_eq!(udp_lines.len(), 2);
         for line in &udp_lines {
             assert!(line.contains("443"), "missing port 443: {}", line);
@@ -831,15 +840,24 @@ mod tests {
         assert_eq!(stop_post_lines.len(), 10);
 
         // PREROUTING lines should have eth0
-        let prerouting_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("PREROUTING")).collect();
-        let output_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| l.contains("OUTPUT")).collect();
+        let prerouting_lines: Vec<&&str> = stop_post_lines
+            .iter()
+            .filter(|l| l.contains("PREROUTING"))
+            .collect();
+        let output_lines: Vec<&&str> = stop_post_lines
+            .iter()
+            .filter(|l| l.contains("OUTPUT"))
+            .collect();
         assert_eq!(prerouting_lines.len(), 4);
         assert_eq!(output_lines.len(), 6); // 4 DNAT + 2 QUIC block
         for line in &prerouting_lines {
             assert!(line.contains("eth0"), "missing custom interface: {}", line);
         }
         // TCP rules should reference port 9090
-        let tcp_lines: Vec<&&str> = stop_post_lines.iter().filter(|l| !l.contains("udp")).collect();
+        let tcp_lines: Vec<&&str> = stop_post_lines
+            .iter()
+            .filter(|l| !l.contains("udp"))
+            .collect();
         for line in &tcp_lines {
             assert!(line.contains("9090"), "missing custom port 9090: {}", line);
         }
@@ -868,7 +886,12 @@ mod tests {
         for ((cmd, args), line) in cleanup.iter().zip(stop_post_lines.iter()) {
             // The line should contain all the args from cleanup_commands
             for arg in args {
-                assert!(line.contains(arg), "ExecStopPost line missing arg '{}': {}", arg, line);
+                assert!(
+                    line.contains(arg),
+                    "ExecStopPost line missing arg '{}': {}",
+                    arg,
+                    line
+                );
             }
             // Should use the full path
             let expected_path = if cmd == "iptables" {

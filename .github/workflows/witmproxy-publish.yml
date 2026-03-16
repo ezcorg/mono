@@ -221,9 +221,12 @@ jobs:
       - name: Build release binary
         run: cargo build --package witmproxy --bin witm --release --target ${{ matrix.target }}
 
+      - name: Rename binary to platform-specific name
+        run: mv target/${{ matrix.target }}/release/witm target/${{ matrix.target }}/release/${{ matrix.artifact }}
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: witmproxy-v${{ env.VERSION }}
-          files: target/${{ matrix.target }}/release/witm
+          files: target/${{ matrix.target }}/release/${{ matrix.artifact }}
           token: ${{ secrets.GITHUB_TOKEN }}

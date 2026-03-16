@@ -32,6 +32,7 @@ mod proxy;
 pub mod tenant;
 mod tailscale;
 mod trust;
+pub mod update;
 
 #[cfg(test)]
 mod tests;
@@ -127,6 +128,15 @@ enum Commands {
         #[arg(long)]
         log_file: Option<PathBuf>,
     },
+    /// Check for updates and update the CLI binary
+    Update {
+        /// Force update even if already on the latest version
+        #[arg(long)]
+        force: bool,
+        /// Use cargo install instead of prebuilt binaries
+        #[arg(long)]
+        from_source: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -151,13 +161,43 @@ impl Cli {
         // Load and resolve configuration once at the beginning
         let resolved_cli = self.resolve_config().await?;
 
+        // Spawn a background update check for non-serve, non-update commands
+        let is_update_command = matches!(&resolved_cli.command, Some(Commands::Update { .. }));
+        let check_update = if !is_serve_command
+            && !is_update_command
+            && resolved_cli.config.update.cli_update_warning
+        {
+            Some(tokio::spawn(async {
+                tokio::time::timeout(
+                    tokio::time::Duration::from_secs(2),
+                    update::check_for_update_cached(false),
+                )
+                .await
+            }))
+        } else {
+            None
+        };
+
         // Handle subcommands first
-        if let Some(ref command) = resolved_cli.command {
-            return resolved_cli.handle_command(command).await;
+        let result = if let Some(ref command) = resolved_cli.command {
+            resolved_cli.handle_command(command).await
+        } else {
+            // Default behavior - install and start daemon, then attach to logs
+            resolved_cli.run_default().await
+        };
+
+        // Show update warning if available
+        if let Some(handle) = check_update {
+            if let Ok(Ok(Ok(Some(latest)))) = handle.await {
+                eprintln!(
+                    "\nA new version of witm is available: {} -> {}\nRun 'witm update' to install it.",
+                    update::current_version(),
+                    latest
+                );
+            }
         }
 
-        // Default behavior - install and start daemon, then attach to logs
-        resolved_cli.run_default().await
+        result
     }
 
     /// Load the configuration and resolve all $HOME placeholders
@@ -229,6 +269,10 @@ impl ResolvedCli {
             }
             Commands::Run => self.run_foreground().await,
             Commands::Serve { log_file } => self.run_serve(log_file.clone()).await,
+            Commands::Update { force, from_source } => {
+                let handler = update::UpdateHandler::new(self.config.clone());
+                handler.handle(*force, *from_source).await
+            }
         }
     }
 
@@ -460,6 +504,15 @@ impl ResolvedCli {
             info!("Auto mode: enabling system proxy");
             let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
             proxy_handler.enable_proxy_internal(false).await?;
+        }
+
+        // Spawn auto-update loop if enabled
+        if self.config.update.auto_update {
+            let update_config = self.config.clone();
+            let interval = self.config.update.check_interval_seconds;
+            tokio::spawn(async move {
+                update::auto_update_loop(interval, update_config).await;
+            });
         }
 
         // Set up file watcher for plugin directory if specified

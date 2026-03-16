@@ -1,6 +1,9 @@
 # `witmproxy`
 
-## Bugs
+## Fixes
+
+- [ ] `test_asset_name_is_known_platform` should run platform specific tests, and for each one verify the asset name is as expected.
+
 
 ## Simple
 

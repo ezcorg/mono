@@ -11175,6 +11175,7 @@ dependencies = [
  "rustls-native-certs",
  "rustls-pemfile",
  "salvo",
+ "semver",
  "serde",
  "serde_json",
  "service-manager",

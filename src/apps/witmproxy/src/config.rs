@@ -57,6 +57,9 @@ pub struct AppConfig {
 
     #[config(nested, layer_attr(command(flatten)))]
     pub transparent: TransparentProxyConfig,
+
+    #[config(nested, layer_attr(command(flatten)))]
+    pub update: UpdateConfig,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
@@ -199,6 +202,26 @@ pub struct WebConfig {
     /// The address the web frontend will bind to (optional, defaults to 127.0.0.1:0)
     #[config(layer_attr(arg(long)))]
     pub web_bind_addr: Option<String>,
+}
+
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
+pub struct UpdateConfig {
+    /// Enable automatic updates in daemon mode (default: true)
+    #[config(default = true, layer_attr(arg(skip)))]
+    pub auto_update: bool,
+
+    /// Seconds between auto-update checks in daemon mode (default: 21600 = 6 hours)
+    #[config(default = 21600, layer_attr(arg(skip)))]
+    pub check_interval_seconds: u64,
+
+    /// Show update warnings in interactive CLI mode (default: true)
+    #[config(default = true, layer_attr(arg(skip)))]
+    pub cli_update_warning: bool,
+
+    /// Prefer prebuilt GitHub release binaries over cargo install (default: true)
+    #[config(default = true, layer_attr(arg(skip)))]
+    pub prefer_prebuilt: bool,
 }
 
 impl AppConfig {
