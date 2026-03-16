@@ -36,19 +36,32 @@ function setiIconForPath(filePath: string): NerdIcon {
 // Command result types for the first section
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder';
+    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file';
     icon: string;
     iconColor?: string;
     query: string;
     requiresInput?: boolean;
 }
 
+// Browse entry for filesystem navigation
+export interface BrowseEntry {
+    id: string;         // display name
+    type: 'browse-directory' | 'browse-file' | 'browse-parent';
+    icon: string;
+    iconColor?: string;
+    fullPath: string;   // full path for navigation/opening
+}
+
 // Combined result type
-export type SearchResult = HighlightedSearch | CommandResult;
+export type SearchResult = HighlightedSearch | CommandResult | BrowseEntry;
 
 // Type guards
 function isCommandResult(result: SearchResult): result is CommandResult {
-    return 'type' in result;
+    return 'type' in result && (result as CommandResult).query !== undefined;
+}
+
+function isBrowseEntry(result: SearchResult): result is BrowseEntry {
+    return 'type' in result && ('fullPath' in result);
 }
 
 // Naming mode state
@@ -57,6 +70,13 @@ export interface NamingMode {
     type: 'create-file' | 'rename-file';
     originalQuery: string;
     languageExtension?: string;
+}
+
+// Browse mode state for filesystem navigation
+export interface BrowseMode {
+    active: boolean;
+    currentPath: string;
+    filter: string;
 }
 
 // Search results state - now handles both commands and search results
@@ -94,6 +114,9 @@ function isValidProgrammingLanguage(query: string): boolean {
 const SEARCH_ICON = '\uf002'; // nf-fa-search (magnifying glass)
 const DEFAULT_FILE_ICON = '\ue64e'; // nf-seti-text
 const COG_ICON = '\uf013'; // nf-fa-cog
+const FOLDER_ICON = '\ue613'; // nf-seti-folder
+const FOLDER_OPEN_ICON = '\ue614'; // nf-seti-folder (open variant)
+const PARENT_DIR_ICON = '\uf112'; // nf-fa-reply (back/up arrow)
 
 // Get nerd font icon for a file path
 function getFileIcon(path: string): { glyph: string; color: string } {
@@ -145,6 +168,14 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         }
     }
 
+    // Open file (filesystem browser) — always shown
+    commands.push({
+        id: 'Open file',
+        type: 'open-file',
+        icon: FOLDER_OPEN_ICON,
+        query: '',
+    });
+
     // Import commands — always shown
     commands.push({
         id: 'Import file(s)',
@@ -155,7 +186,7 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
     commands.push({
         id: 'Import folder(s)',
         type: 'import-local-folder',
-        icon: '\ue613', // nf-seti-folder
+        icon: FOLDER_ICON,
         query: '',
     });
 
@@ -356,6 +387,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
     let selectedIndex = 0;
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
+    let browseMode: BrowseMode = { active: false, currentPath: '/', filter: '' };
     let loadingStartTime: number | null = null;
 
     // System theme media query listener
@@ -422,7 +454,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
     const renderItem = (result: SearchResult, i: number) => {
         const li = document.createElement("li");
-        li.className = `cm-search-result ${isCommandResult(result) ? 'cm-command-result' : 'cm-file-result'}`;
+
+        let resultClass = 'cm-file-result';
+        if (isCommandResult(result)) resultClass = 'cm-command-result';
+        else if (isBrowseEntry(result)) resultClass = result.type === 'browse-file' ? 'cm-file-result' : 'cm-browse-dir-result';
+        li.className = `cm-search-result ${resultClass}`;
 
         const resultIconContainer = document.createElement("div");
         resultIconContainer.className = "cm-search-result-icon-container";
@@ -430,7 +466,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
         const resultIcon = document.createElement("div");
         resultIcon.className = "cm-search-result-icon";
         resultIcon.style.fontFamily = 'var(--cm-icon-font-family)';
-        if (isCommandResult(result)) {
+
+        if (isBrowseEntry(result)) {
+            resultIcon.textContent = result.icon;
+            if (result.iconColor) resultIcon.style.color = result.iconColor;
+        } else if (isCommandResult(result)) {
             resultIcon.textContent = result.icon;
             if (result.iconColor) resultIcon.style.color = result.iconColor;
         } else {
@@ -471,7 +511,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     function selectResult(result: SearchResult) {
-        if (isCommandResult(result)) {
+        if (isBrowseEntry(result)) {
+            navigateBrowse(result);
+        } else if (isCommandResult(result)) {
             handleCommandResult(result);
         } else {
             handleSearchResult(result);
@@ -507,6 +549,116 @@ export const toolbarPanel = (view: EditorView): Panel => {
         input.placeholder = '';
     }
 
+    // --- Browse mode functions ---
+    async function enterBrowseMode(startPath?: string) {
+        const { cwd } = view.state.facet(CodeblockFacet);
+        const browsePath = startPath || cwd || '/';
+        browseMode = { active: true, currentPath: browsePath, filter: '' };
+
+        // Update state icon to folder
+        stateIcon.textContent = FOLDER_OPEN_ICON;
+
+        input.value = browsePath.endsWith('/') ? browsePath : browsePath + '/';
+        input.placeholder = '';
+        input.focus();
+
+        await refreshBrowseEntries();
+    }
+
+    async function refreshBrowseEntries() {
+        if (!browseMode.active) return;
+
+        const { fs } = view.state.facet(CodeblockFacet);
+        const dir = browseMode.currentPath;
+
+        try {
+            const entries = await fs.readDir(dir);
+            const browseResults: BrowseEntry[] = [];
+
+            // Add parent directory entry if not at root
+            if (dir !== '/' && dir !== '') {
+                const parentPath = dir.split('/').slice(0, -1).join('/') || '/';
+                browseResults.push({
+                    id: '..',
+                    type: 'browse-parent',
+                    icon: PARENT_DIR_ICON,
+                    fullPath: parentPath,
+                });
+            }
+
+            // Separate directories and files, sort each alphabetically
+            const dirs: BrowseEntry[] = [];
+            const files: BrowseEntry[] = [];
+
+            for (const [name, fileType] of entries) {
+                // Skip hidden/internal files
+                if (name.startsWith('.')) continue;
+
+                const fullPath = dir === '/' ? `${name}` : `${dir}/${name}`;
+
+                // FileType.Directory = 2
+                if (fileType === 2) {
+                    dirs.push({
+                        id: name + '/',
+                        type: 'browse-directory',
+                        icon: FOLDER_ICON,
+                        fullPath,
+                    });
+                } else {
+                    const icon = getFileIcon(name);
+                    files.push({
+                        id: name,
+                        type: 'browse-file',
+                        icon: icon.glyph,
+                        iconColor: icon.color,
+                        fullPath,
+                    });
+                }
+            }
+
+            dirs.sort((a, b) => a.id.localeCompare(b.id));
+            files.sort((a, b) => a.id.localeCompare(b.id));
+
+            // Apply filter
+            const filter = browseMode.filter.toLowerCase();
+            const filtered = [...browseResults, ...dirs, ...files].filter(entry =>
+                entry.type === 'browse-parent' || entry.id.toLowerCase().includes(filter)
+            );
+
+            selectedIndex = 0;
+            safeDispatch(view, { effects: setSearchResults.of(filtered) });
+        } catch (e) {
+            console.error('Failed to read directory:', e);
+            exitBrowseMode();
+        }
+    }
+
+    async function navigateBrowse(entry: BrowseEntry) {
+        if (entry.type === 'browse-file') {
+            // Open the file and exit browse mode
+            const path = entry.fullPath;
+            exitBrowseMode();
+            input.value = path;
+            safeDispatch(view, {
+                effects: [setSearchResults.of([]), openFileEffect.of({ path })]
+            });
+        } else {
+            // Navigate into directory (or parent)
+            browseMode.currentPath = entry.fullPath;
+            browseMode.filter = '';
+            const displayPath = entry.fullPath === '/' ? '/' : entry.fullPath + '/';
+            input.value = displayPath;
+            selectedIndex = 0;
+            await refreshBrowseEntries();
+        }
+    }
+
+    function exitBrowseMode() {
+        browseMode = { active: false, currentPath: '/', filter: '' };
+        updateStateIcon();
+        input.placeholder = '';
+    }
+
     function triggerFileImport(folder: boolean) {
         safeDispatch(view, { effects: setSearchResults.of([]) });
         const fileInput = document.createElement('input');
@@ -525,7 +677,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     function handleCommandResult(command: CommandResult) {
-        if (command.type === 'create-file') {
+        if (command.type === 'open-file') {
+            enterBrowseMode();
+            return;
+        } else if (command.type === 'create-file') {
             if (command.requiresInput) {
                 // Enter naming mode for language-specific file
                 enterNamingMode('create-file', command.query, command.query);
@@ -599,6 +754,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     // Close dropdown when clicking outside
     function handleClickOutside(event: Event) {
         if (!dom.contains(event.target as Node)) {
+            if (browseMode.active) exitBrowseMode();
             safeDispatch(view, { effects: setSearchResults.of([]) });
             resetInputToCurrentFile();
         }
@@ -640,6 +796,15 @@ export const toolbarPanel = (view: EditorView): Panel => {
             return;
         }
 
+        // If in browse mode, filter the directory entries
+        if (browseMode.active) {
+            // Extract filter text after the directory path prefix
+            const prefix = browseMode.currentPath === '/' ? '/' : browseMode.currentPath + '/';
+            browseMode.filter = query.startsWith(prefix) ? query.slice(prefix.length) : query;
+            refreshBrowseEntries();
+            return;
+        }
+
         let results: SearchResult[] = [];
 
         if (query.trim()) {
@@ -670,6 +835,44 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 event.preventDefault();
                 exitNamingMode();
                 input.value = namingMode.originalQuery;
+            }
+            return;
+        }
+
+        // Browse mode keyboard handling
+        if (browseMode.active) {
+            const results = view.state.field(searchResultsField);
+            if (event.key === "ArrowDown") {
+                event.preventDefault();
+                if (results.length) {
+                    selectedIndex = mod(selectedIndex + 1, results.length);
+                    updateDropdown();
+                }
+            } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                if (results.length) {
+                    selectedIndex = mod(selectedIndex - 1, results.length);
+                    updateDropdown();
+                }
+            } else if (event.key === "Enter" && results.length && selectedIndex >= 0) {
+                event.preventDefault();
+                selectResult(results[selectedIndex]);
+            } else if (event.key === "Backspace") {
+                // If filter is empty and backspace pressed, go up a directory
+                if (browseMode.filter === '' && browseMode.currentPath !== '/') {
+                    event.preventDefault();
+                    const parentPath = browseMode.currentPath.split('/').slice(0, -1).join('/') || '/';
+                    browseMode.currentPath = parentPath;
+                    const displayPath = parentPath === '/' ? '/' : parentPath + '/';
+                    input.value = displayPath;
+                    refreshBrowseEntries();
+                }
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                exitBrowseMode();
+                safeDispatch(view, { effects: setSearchResults.of([]) });
+                resetInputToCurrentFile();
+                input.blur();
             }
             return;
         }

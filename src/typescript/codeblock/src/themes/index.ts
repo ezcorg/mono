@@ -236,7 +236,6 @@ export const codeblockTheme = EditorView.theme({
         fontWeight: 'bold',
         marginBottom: '6px',
         fontSize: FS_85,
-        textTransform: 'uppercase',
         opacity: '0.7',
     },
     '.cm-settings-row': {

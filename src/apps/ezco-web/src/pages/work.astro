@@ -22,7 +22,8 @@ const projects = [
 		description:
 			"An intuitive, minimal, extensible markdown editor component",
 		tags: ["TipTap", "ProseMirror", "TypeScript"],
-		link: "https://github.com/join-ezco/mono/tree/main/src/typescript/markdown-editor",
+		href: "/work/markdown-editor",
+		github: "https://github.com/join-ezco/mono/tree/main/src/typescript/markdown-editor",
 	},
 	{
 		title: "codeblock",
@@ -30,16 +31,19 @@ const projects = [
 		description:
 			"A codeblock component with language server and virtual filesystem support",
 		tags: ["CodeMirror", "TypeScript"],
-		link: "https://github.com/join-ezco/mono/tree/main/src/typescript/codeblock",
+		href: "/work/codeblock",
+		github: "https://github.com/join-ezco/mono/tree/main/src/typescript/codeblock",
 	},
 	{
 		title: "witmproxy",
 		icon: "🌐",
 		description: "A WASM-in-the-middle proxy",
 		tags: ["Rust", "Plugins", "WASM", "mitmproxy"],
-		link: "https://github.com/join-ezco/mono/tree/main/src/apps/witmproxy",
+		github: "https://github.com/join-ezco/mono/tree/main/src/apps/witmproxy",
 	},
 ];
+
+const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>`;
 ---
 
 <!-- Order is sequential, first we make the promise available to the window -->
@@ -149,9 +153,9 @@ const projects = [
 
 				{/* New Project Action Card - First Item */}
 				<div class="grid-item" data-project-title="new-project">
-					<a href="/newproject" class="block w-full h-full">
+					<a href="/newproject" class="block w-full h-full new-project-link">
 						<div
-							class="work-item-card new-project-card h-full hover:bg-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden"
+							class="work-item-card new-project-card h-full hover:bg-[#ffffff] active:bg-[#ffffff] transition-colors duration-300 overflow-hidden"
 						>
 							<div class="p-6">
 								<div
@@ -188,64 +192,71 @@ const projects = [
 							class="grid-item"
 							data-project-title={project.title}
 						>
-							<div class="work-item-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden">
-								<div class="p-6">
-									<div class="flex items-center justify-between mb-3">
-										<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
-											{/* <span class="text-3xl">{project.icon}</span> */}
-											{project.title}
-										</h3>
-										{/* Only show toggle button if project has a demo */}
-										{(project.title === "markdown-editor" ||
-											project.title === "codeblock") && (
-											<button
-												class="expand-toggle relative flex items-center justify-center w-6 h-6 text-[#F5F5F5] text-xl transition-transform duration-300"
-												aria-label="Toggle project details"
-											>
-												<span class="toggle-icon absolute">
-													+
-												</span>
-												<span class="loading-icon absolute hidden">
-													<svg
-														class="w-5 h-5"
-														viewBox="0 0 24 24"
-														fill="none"
-														xmlns="http://www.w3.org/2000/svg"
+							{project.href ? (
+								<a href={project.href} class="block w-full h-full">
+									<div class="work-item-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden">
+										<div class="p-6">
+											<div class="flex items-center justify-between mb-3">
+												<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
+													{project.title}
+												</h3>
+											</div>
+											<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
+												{project.description}
+											</p>
+											<div class="flex flex-wrap gap-2">
+												{project.tags.map((tech) => (
+													<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+														{tech}
+													</span>
+												))}
+												{project.github && (
+													<a
+														href={project.github}
+														target="_blank"
+														rel="noopener noreferrer"
+														title={`${project.title} source on GitHub`}
+														class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag github-tag inline-flex items-center"
 													>
-														<circle
-															cx="12"
-															cy="12"
-															r="10"
-															stroke="currentColor"
-															stroke-width="2"
-															stroke-opacity="0.3"
-														/>
-														<path
-															d="M12 2a10 10 0 0 1 10 10"
-															stroke="currentColor"
-															stroke-width="2"
-															stroke-linecap="round"
-														/>
-													</svg>
+														<Fragment set:html={githubSvg} />
+													</a>
+												)}
+											</div>
+										</div>
+									</div>
+								</a>
+							) : (
+								<div class="work-item-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden">
+									<div class="p-6">
+										<div class="flex items-center justify-between mb-3">
+											<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
+												{project.title}
+											</h3>
+										</div>
+										<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
+											{project.description}
+										</p>
+										<div class="flex flex-wrap gap-2">
+											{project.tags.map((tech) => (
+												<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+													{tech}
 												</span>
-											</button>
-										)}
-									</div>
-									<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
-										{project.description}
-									</p>
-									<div class="flex flex-wrap gap-2">
-										{project.tags.map((tech) => (
-											<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
-												{tech}
-											</span>
-										))}
-									</div>
-									<div class="project-content hidden mt-6">
-										<div class="project-demo-container min-h-[400px] border border-[#333333]" />
+											))}
+											{project.github && (
+												<a
+													href={project.github}
+													target="_blank"
+													rel="noopener noreferrer"
+													title={`${project.title} source on GitHub`}
+													class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag github-tag inline-flex items-center"
+												>
+													<Fragment set:html={githubSvg} />
+												</a>
+											)}
+										</div>
 									</div>
 								</div>
-							</div>
+							)}
 						</div>
 					))
 				}
@@ -256,109 +267,7 @@ const projects = [
 	<Footer slot="footer" />
 
 	<script>
-		import { CodeblockFS } from "@joinezco/codeblock";
-		import { files } from "./data/work.js";
-
-		let pckry: any | null = null;
-		let resizeObserver: ResizeObserver | null = null;
-
-		let fs: any = null;
-		let editor: any = null;
-
-		let initPromise: Promise<void> | null = null;
-
-		async function init() {
-			if (initPromise) return initPromise;
-
-			initPromise = (async () => {
-				fs = await CodeblockFS.worker();
-				await Promise.all(
-					files.map(async ([path, content]) => {
-						await fs.writeFile(path, content);
-					}),
-				);
-			})();
-
-			return initPromise;
-		}
-		// Initialize filesystem and demos
-		init();
-
-		const demos = {
-			"markdown-editor": async (
-				containerEl: HTMLElement,
-				containerParent: HTMLElement,
-			) => {
-				try {
-					const { createEditor } = await import(
-						"@joinezco/markdown-editor"
-					);
-					// Ensure fs is initialized before using it
-					await initPromise;
-
-					editor = createEditor({
-						element: containerEl,
-						fs: {
-							fs,
-							filepath: "hello.md",
-						},
-					});
-					editor.view.dom.setAttribute(
-						"data-theme",
-						containerParent.matches(":hover") ? "light" : "dark",
-					);
-					containerParent.addEventListener("mouseover", () => {
-						editor.view.dom.setAttribute("data-theme", "light");
-					});
-					containerParent.addEventListener("mouseout", () => {
-						editor.view.dom.setAttribute("data-theme", "dark");
-					});
-				} catch (error) {
-					console.error("Failed to load markdown editor:", error);
-					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
-				}
-			},
-			codeblock: async (
-				containerEl: HTMLElement,
-				containerParent: HTMLElement,
-			) => {
-				try {
-					const { createCodeblock, SearchIndex } = await import(
-						"@joinezco/codeblock"
-					);
-
-					// Ensure fs is initialized before using it
-					await initPromise;
-
-					const index = await SearchIndex.get(
-						fs,
-						".codeblock/index.json",
-					);
-					const codeblock = createCodeblock({
-						parent: containerEl,
-						fs,
-						filepath: "example.ts",
-						index,
-						cwd: "/",
-					});
-					codeblock.dom.setAttribute(
-						"data-theme",
-						containerParent.matches(":hover") ? "light" : "dark",
-					);
-					containerParent.addEventListener("mouseover", () => {
-						codeblock.dom.setAttribute("data-theme", "light");
-					});
-					containerParent.addEventListener("mouseout", () => {
-						codeblock.dom.setAttribute("data-theme", "dark");
-					});
-				} catch (error) {
-					console.error("Failed to load codeblock editor:", error);
-					containerEl.innerHTML = `<div class="text-red-500">Failed to load editor (see console for log).</div>`;
-				}
-			},
-		};
-
-		function applyRainbowPatternBorder(
+		function applyAnimatedPatternBorder(
 			element: HTMLElement,
 			options: any = {},
 		) {
@@ -366,26 +275,43 @@ const projects = [
 				dashWidth = 12,
 				dashGap = 6,
 				strokeWidth = 2,
-				rainbowSpeed = 4, // seconds for one full cycle
+				rainbowSpeed = 4,
 				dashSpeed = 8,
-				hoverRainbowSpeed = rainbowSpeed * 0.2, // 3x faster on hover
-				hoverDashSpeed = dashSpeed * 0.2, // 3x faster on hover
+				hoverRainbowSpeed = rainbowSpeed * 0.2,
+				hoverDashSpeed = dashSpeed * 0.2,
+				// Greyscale colors for default state
+				greyscaleColors = [
+					"#888888",
+					"#999999",
+					"#aaaaaa",
+					"#999999",
+					"#888888",
+					"#777777",
+				],
+				// Rainbow colors for hover state
+				rainbowColors = [
+					"#ff0000",
+					"#ff8800",
+					"#ffff00",
+					"#00ff00",
+					"#0088ff",
+					"#8800ff",
+				],
 			} = options;
 
 			const svgNS = "http://www.w3.org/2000/svg";
-			let animations: SVGAnimateElement[] = []; // Store animation references
+			let animations: SVGAnimateElement[] = [];
+			let colorAnimations: SVGAnimateElement[] = [];
 
 			if (getComputedStyle(element).position === "static") {
 				element.style.position = "relative";
 			}
 
-			// Get element dimensions
 			const updateBorder = () => {
 				const rect = element.getBoundingClientRect();
 				const width = rect.width;
 				const height = rect.height;
 
-				// Calculate total perimeter for dash alignment
 				const perimeter = 2 * (width + height - 2 * strokeWidth);
 				const dashPattern = dashWidth + dashGap;
 				const numDashes = Math.floor(perimeter / dashPattern);
@@ -395,11 +321,11 @@ const projects = [
 				const adjustedDashGap =
 					(adjustedDashPattern * dashGap) / dashPattern;
 
-				// Remove old SVG if it exists
 				const oldSvg = element.querySelector(".rainbow-border-svg");
 				if (oldSvg) oldSvg.remove();
+				animations = [];
+				colorAnimations = [];
 
-				// Create SVG overlay - same size as element
 				const svg = document.createElementNS(svgNS, "svg");
 				svg.classList.add("rainbow-border-svg");
 				svg.setAttribute("width", `${width}`);
@@ -412,21 +338,12 @@ const projects = [
 				svg.style.zIndex = "1";
 				element.appendChild(svg);
 
-				// Create defs
 				const defs = document.createElementNS(svgNS, "defs");
 
-				// Create rainbow colors that will cycle
-				const colors = [
-					"#ff0000",
-					"#ff8800",
-					"#ffff00",
-					"#00ff00",
-					"#0088ff",
-					"#8800ff",
-				];
+				// Start with greyscale colors
+				const colors = greyscaleColors;
 				const numColors = colors.length;
 
-				// Create 4 separate gradients for each side
 				const createGradient = (
 					id: string,
 					isHorizontal: boolean,
@@ -451,7 +368,6 @@ const projects = [
 						gradient.setAttribute("y2", `${length}`);
 					}
 
-					// Create color stops with animated colors for cycling rainbow effect
 					const repetitions = 3;
 					const totalStops = repetitions * numColors;
 
@@ -466,7 +382,6 @@ const projects = [
 							stop.setAttribute("offset", `${offset}%`);
 							stop.setAttribute("stop-color", colors[i]);
 
-							// Create cycling color animation for each stop
 							const colorAnimate = document.createElementNS(
 								svgNS,
 								"animate",
@@ -476,13 +391,12 @@ const projects = [
 								"stop-color",
 							);
 
-							// Create color values by cycling through rainbow colors
 							const animatedColors: string[] = [];
 							for (let cycle = 0; cycle < numColors; cycle++) {
 								const colorIndex = (i + cycle) % numColors;
 								animatedColors.push(colors[colorIndex]);
 							}
-							animatedColors.push(colors[i]); // Complete the cycle
+							animatedColors.push(colors[i]);
 
 							colorAnimate.setAttribute(
 								"values",
@@ -497,20 +411,18 @@ const projects = [
 								"indefinite",
 							);
 
-							// Store animation reference for hover control
 							animations.push(colorAnimate);
+							colorAnimations.push(colorAnimate);
 
 							stop.appendChild(colorAnimate);
 							gradient.appendChild(stop);
 						}
 					}
 
-					// Add final stop to complete the cycle
 					const finalStop = document.createElementNS(svgNS, "stop");
 					finalStop.setAttribute("offset", "100%");
 					finalStop.setAttribute("stop-color", colors[0]);
 
-					// Animate final stop color too
 					const finalColorAnimate = document.createElementNS(
 						svgNS,
 						"animate",
@@ -524,7 +436,7 @@ const projects = [
 						const colorIndex = cycle % numColors;
 						finalAnimatedColors.push(colors[colorIndex]);
 					}
-					finalAnimatedColors.push(colors[0]); // Complete the cycle
+					finalAnimatedColors.push(colors[0]);
 
 					finalColorAnimate.setAttribute(
 						"values",
@@ -533,8 +445,8 @@ const projects = [
 					finalColorAnimate.setAttribute("dur", `${rainbowSpeed}s`);
 					finalColorAnimate.setAttribute("repeatCount", "indefinite");
 
-					// Store animation reference for hover control
 					animations.push(finalColorAnimate);
+					colorAnimations.push(finalColorAnimate);
 
 					finalStop.appendChild(finalColorAnimate);
 					gradient.appendChild(finalStop);
@@ -542,7 +454,6 @@ const projects = [
 					return gradient;
 				};
 
-				// Create gradients for each side
 				const topGradient = createGradient("top-gradient", true, width);
 				const rightGradient = createGradient(
 					"right-gradient",
@@ -566,11 +477,7 @@ const projects = [
 				defs.appendChild(leftGradient);
 				svg.appendChild(defs);
 
-				// Create 4 separate lines for each edge
-				// Lines are inset by half the stroke width to stay within bounds
 				const offset = strokeWidth / 2;
-
-				// Calculate starting dash offset for each side to ensure corner alignment
 				let runningOffset = 0;
 
 				// Top edge
@@ -597,10 +504,7 @@ const projects = [
 				topAnimate.setAttribute("to", `${runningOffset}`);
 				topAnimate.setAttribute("dur", `${dashSpeed}s`);
 				topAnimate.setAttribute("repeatCount", "indefinite");
-
-				// Store animation reference for hover control
 				animations.push(topAnimate);
-
 				topLine.appendChild(topAnimate);
 				svg.appendChild(topLine);
 
@@ -636,10 +540,7 @@ const projects = [
 				);
 				rightAnimate.setAttribute("dur", `${dashSpeed}s`);
 				rightAnimate.setAttribute("repeatCount", "indefinite");
-
-				// Store animation reference for hover control
 				animations.push(rightAnimate);
-
 				rightLine.appendChild(rightAnimate);
 				svg.appendChild(rightLine);
 
@@ -681,10 +582,7 @@ const projects = [
 				);
 				bottomAnimate.setAttribute("dur", `${dashSpeed}s`);
 				bottomAnimate.setAttribute("repeatCount", "indefinite");
-
-				// Store animation reference for hover control
 				animations.push(bottomAnimate);
-
 				bottomLine.appendChild(bottomAnimate);
 				svg.appendChild(bottomLine);
 
@@ -720,15 +618,33 @@ const projects = [
 				);
 				leftAnimate.setAttribute("dur", `${dashSpeed}s`);
 				leftAnimate.setAttribute("repeatCount", "indefinite");
-
-				// Store animation reference for hover control
 				animations.push(leftAnimate);
-
 				leftLine.appendChild(leftAnimate);
 				svg.appendChild(leftLine);
 			};
 
-			// Function to update animation speeds
+			// Switch color palette used in animations
+			const switchColors = (newColors: string[]) => {
+				const numC = newColors.length;
+				// Each gradient has (repetitions * numColors + 1) color animations
+				// colorAnimations stores them all in order
+				const reps = 3;
+				const stopsPerGradient = reps * numC + 1;
+
+				colorAnimations.forEach((anim, idx) => {
+					const gradientLocalIdx = idx % stopsPerGradient;
+					const isLast = gradientLocalIdx === reps * numC;
+					const stopIdx = isLast ? 0 : gradientLocalIdx % numC;
+
+					const vals: string[] = [];
+					for (let cycle = 0; cycle < numC; cycle++) {
+						vals.push(newColors[(stopIdx + cycle) % numC]);
+					}
+					vals.push(newColors[stopIdx]);
+					anim.setAttribute("values", vals.join(";"));
+				});
+			};
+
 			const updateAnimationSpeeds = (
 				newRainbowSpeed: number,
 				newDashSpeed: number,
@@ -744,21 +660,20 @@ const projects = [
 				});
 			};
 
-			// Track pseudo-class states
 			let isHovered = false;
 			let isFocused = false;
 			let isActive = false;
 
-			// Function to determine if any pseudo-class is active and update speeds accordingly
 			const updateBorderState = () => {
 				if (isHovered || isFocused || isActive) {
+					switchColors(rainbowColors);
 					updateAnimationSpeeds(hoverRainbowSpeed, hoverDashSpeed);
 				} else {
+					switchColors(greyscaleColors);
 					updateAnimationSpeeds(rainbowSpeed, dashSpeed);
 				}
 			};
 
-			// Mouse hover event listeners
 			const handleMouseEnter = () => {
 				isHovered = true;
 				updateBorderState();
@@ -769,7 +684,6 @@ const projects = [
 				updateBorderState();
 			};
 
-			// Focus event listeners
 			const handleFocus = () => {
 				isFocused = true;
 				updateBorderState();
@@ -780,7 +694,6 @@ const projects = [
 				updateBorderState();
 			};
 
-			// Active state event listeners
 			const handleMouseDown = () => {
 				isActive = true;
 				updateBorderState();
@@ -791,27 +704,23 @@ const projects = [
 				updateBorderState();
 			};
 
-			// Add all event listeners
 			element.addEventListener("mouseenter", handleMouseEnter);
 			element.addEventListener("mouseleave", handleMouseLeave);
 			element.addEventListener("focus", handleFocus);
 			element.addEventListener("blur", handleBlur);
 			element.addEventListener("mousedown", handleMouseDown);
 			element.addEventListener("mouseup", handleMouseUp);
-			
-			// Also handle mouseup outside the element to reset active state
 			document.addEventListener("mouseup", handleMouseUp);
 
-			// Initial render
 			updateBorder();
 
-			// Observe resizing
 			const resizeObserver = new ResizeObserver(() => {
 				updateBorder();
+				// Re-apply current state after resize rebuild
+				updateBorderState();
 			});
 			resizeObserver.observe(element);
 
-			// Return cleanup function
 			return () => {
 				element.removeEventListener("mouseenter", handleMouseEnter);
 				element.removeEventListener("mouseleave", handleMouseLeave);
@@ -836,100 +745,8 @@ const projects = [
 
 			if (!grid) return;
 
-			// Handle project card expansion and collapse
-			async function handleProjectExpansion(item: HTMLElement) {
-				const isExpanded = item.classList.contains("is-expanded");
-				const isLoading = item.classList.contains("is-loading");
-				const contentDiv = item.querySelector(
-					".project-content",
-				) as HTMLElement;
-				const toggleIcon = item.querySelector(
-					".toggle-icon",
-				) as HTMLElement;
-				const loadingIcon = item.querySelector(
-					".loading-icon",
-				) as HTMLElement;
-				const expandButton = item.querySelector(
-					".expand-toggle",
-				) as HTMLButtonElement;
-
-				// Prevent interaction during loading
-				if (isLoading) return;
-
-				if (!isExpanded) {
-					// Load content if needed
-					const projectTitle = item.dataset.projectTitle;
-					if (!projectTitle || !demos[projectTitle]) return;
-
-					// --- START LOADING ---
-					item.classList.add("is-loading");
-					expandButton.disabled = true;
-					toggleIcon.classList.add("hidden");
-					loadingIcon.classList.remove("hidden");
-
-					try {
-						const demoContainer = item.querySelector(
-							".project-demo-container",
-						) as HTMLElement;
-
-						// Call the appropriate demo loader once
-						const result = await demos[projectTitle](
-							demoContainer,
-							item,
-						);
-						demos[projectTitle] = () => result;
-
-						// --- END LOADING & EXPAND ---
-						item.classList.remove("is-loading");
-						expandButton.disabled = false;
-						loadingIcon.classList.add("hidden");
-
-						// Show the content
-						contentDiv.classList.remove("hidden");
-
-						// Update UI
-						toggleIcon.textContent = "−";
-						toggleIcon.classList.remove("hidden");
-
-						// Add expanded class
-						item.classList.add("is-expanded");
-
-						// ResizeObserver will automatically detect the expansion and trigger relayout
-						// Keep a small timeout to ensure content is rendered before observation
-						setTimeout(() => {
-							// Force a size check by updating the dataset
-							if (item.dataset.prevHeight) {
-								delete item.dataset.prevHeight;
-							}
-						}, 50);
-					} catch (error) {
-						// --- ERROR HANDLING ---
-						console.error("Failed to load demo:", error);
-						item.classList.remove("is-loading");
-						expandButton.disabled = false;
-						loadingIcon.classList.add("hidden");
-						toggleIcon.classList.remove("hidden");
-					}
-				} else {
-					// --- COLLAPSE ---
-					// Hide content first
-					contentDiv.classList.add("hidden");
-
-					// Update UI
-					toggleIcon.textContent = "+";
-
-					// Remove expanded class after a brief delay to allow content to hide
-					setTimeout(() => {
-						item.classList.remove("is-expanded");
-
-						// ResizeObserver will automatically detect the collapse and trigger relayout
-						// Force a size check by updating the dataset
-						if (item.dataset.prevHeight) {
-							delete item.dataset.prevHeight;
-						}
-					}, 100);
-				}
-			}
+			let pckry: any | null = null;
+			let resizeObserver: ResizeObserver | null = null;
 
 			// Initialize ResizeObserver for automatic relayout
 			const initResizeObserver = () => {
@@ -943,10 +760,8 @@ const projects = [
 				resizeObserver = new ResizeObserver((entries) => {
 					if (!pckry) return;
 
-					// Debounce the relayout to avoid excessive calls
 					clearTimeout(debounceTimeout);
 					debounceTimeout = setTimeout(() => {
-						// Check if any observed element has actually changed size
 						let shouldRelayout = false;
 						for (const entry of entries) {
 							const element = entry.target as HTMLElement;
@@ -955,7 +770,6 @@ const projects = [
 							) as HTMLElement;
 
 							if (gridItem) {
-								// Store previous size for comparison
 								const prevHeight = gridItem.dataset.prevHeight;
 								const currentHeight =
 									entry.contentRect.height.toString();
@@ -973,12 +787,22 @@ const projects = [
 					}, 100);
 				});
 
-				// Observe all grid items and their content
 				const gridItems = grid.querySelectorAll(".grid-item");
 				gridItems.forEach((item) => {
 					resizeObserver?.observe(item);
 				});
 			};
+
+			// Handle GitHub tag clicks — prevent parent <a> navigation
+			grid.addEventListener("click", (event) => {
+				const target = event.target as HTMLElement;
+				const githubTag = target.closest(".github-tag") as HTMLAnchorElement;
+				if (githubTag) {
+					event.preventDefault();
+					event.stopPropagation();
+					window.open(githubTag.href, "_blank", "noopener,noreferrer");
+				}
+			});
 
 			// Initialize Packery
 			const initPackery = () => {
@@ -994,22 +818,6 @@ const projects = [
 					percentPosition: true,
 				});
 
-				// Use event delegation for expand/collapse clicks
-				grid.addEventListener("click", (event) => {
-					const target = event.target as HTMLElement;
-					const button = target.closest(
-						".expand-toggle",
-					) as HTMLButtonElement;
-					if (button && !button.disabled) {
-						const item = target.closest(
-							".grid-item",
-						) as HTMLElement;
-						if (item && !item.classList.contains("is-loading")) {
-							handleProjectExpansion(item);
-						}
-					}
-				});
-
 				// Initialize ResizeObserver after Packery is ready
 				initResizeObserver();
 
@@ -1017,9 +825,9 @@ const projects = [
 				grid.style.opacity = "1";
 
 				const newProjectCard = grid.querySelector(
-					"[data-project-title='new-project'] > a",
+					"[data-project-title='new-project'] .new-project-link",
 				) as HTMLElement;
-				applyRainbowPatternBorder(newProjectCard, {
+				applyAnimatedPatternBorder(newProjectCard, {
 					dashWidth: 4,
 					dashGap: 8,
 					strokeWidth: 2,
@@ -1029,7 +837,6 @@ const projects = [
 				});
 			};
 
-			// Cleanup function for when the page is unloaded
 			const cleanup = () => {
 				if (resizeObserver) {
 					resizeObserver.disconnect();
@@ -1037,10 +844,7 @@ const projects = [
 				}
 			};
 
-			// Add cleanup listener
 			window.addEventListener("beforeunload", cleanup);
-
-			// Wait for images to load before initializing to prevent overlap
 			initPackery();
 		});
 	</script>
@@ -1070,7 +874,6 @@ const projects = [
 			);
 			background-size: 200px 100%;
 			animation: shimmer 1.5s ease-in-out infinite;
-			/* min-height: 200px; */
 		}
 
 		.skeleton-title {
@@ -1118,47 +921,6 @@ const projects = [
 			border-radius: 12px;
 		}
 
-		/* New project skeleton styles - centered layout */
-		.skeleton-icon {
-			height: 48px;
-			width: 48px;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 50%;
-			margin: 0 auto;
-		}
-
-		.skeleton-title-centered {
-			height: 32px;
-			width: 200px;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 4px;
-			margin: 0 auto;
-		}
-
-		.skeleton-description-centered {
-			height: 18px;
-			width: 250px;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 4px;
-			margin: 0 auto;
-		}
-
-		.skeleton-description-line-centered {
-			height: 18px;
-			width: 180px;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 4px;
-			margin: 0 auto;
-		}
-
 		/* Skeleton container styles */
 		#loading-skeleton {
 			transition: opacity 0.3s ease-in-out;
@@ -1172,7 +934,7 @@ const projects = [
 
 		.grid-item {
 			box-sizing: border-box;
-			width: 100%; /* Full width on mobile */
+			width: 100%;
 		}
 
 		.grid-sizer {
@@ -1189,55 +951,21 @@ const projects = [
 			}
 		}
 
-		/* Style for expanded items */
-		.grid-item.is-expanded {
-			width: 100% !important; /* Force full width on all screen sizes */
-			z-index: 10;
-		}
-
-		/* Ensure collapsed items reset to proper width */
-		.grid-item:not(.is-expanded) {
-			width: 100%; /* Full width on mobile */
-		}
-
-		@media (min-width: 768px) {
-			.grid-item:not(.is-expanded) {
-				width: calc(50% - 8px) !important;
-			}
-		}
-
-		.project-demo-container {
-			display: flex;
-
-			.cm-editor {
-				width: 100%;
-			}
-		}
-
-		/* Ensure project content transitions smoothly */
-		.project-content {
-			transition: all 0.3s ease;
-			overflow: hidden;
-		}
-
-		.project-content.hidden {
-			max-height: 0;
-			opacity: 0;
-			margin-top: 0;
-			padding-top: 0;
-			border-top: none;
-		}
-
-		.project-content:not(.hidden) {
-			max-height: none;
-			opacity: 1;
+		/* New project card — fixed dimensions to prevent hover shift */
+		.new-project-link {
+			display: block;
+			border: 2px solid transparent;
+			border-radius: inherit;
 		}
 
 		.new-project-card {
+			border: 2px dashed #666666;
+			transition: background-color 0.3s, border-color 0.3s;
+
 			&:hover,
 			&:focus,
 			&:active {
-				border: none;
+				border-color: transparent;
 			}
 		}
 
@@ -1258,87 +986,18 @@ const projects = [
 			border-color: #cccccc;
 			opacity: 1;
 		}
-		/* Loading state styles */
-		.expand-toggle:disabled {
-			cursor: not-allowed;
-			opacity: 0.7;
+
+		/* GitHub tag hover */
+		.github-tag {
+			transition: background-color 0.15s;
+		}
+		.github-tag:hover {
+			background-color: #e0e0e0 !important;
 		}
 
-		/* Perfect centering for toggle button icons */
-		.expand-toggle {
-			min-width: 24px;
-			min-height: 24px;
-		}
-		.toggle-icon {
-			cursor: pointer;
-		}
-
-		.toggle-icon,
-		.loading-icon {
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			top: 50%;
-			left: 50%;
-			transform: translate(-50%, -50%);
-			transition: opacity 0.2s ease-in-out;
-		}
-
-		/* Ensure hidden class works properly with absolute positioning */
-		.loading-icon.hidden {
-			display: none !important;
-		}
-
-		.toggle-icon.hidden {
-			display: none !important;
-		}
-
-		.loading-icon svg {
-			animation: spin 1s linear infinite;
-		}
-
-		@keyframes spin {
-			from {
-				transform: rotate(0deg);
-			}
-			to {
-				transform: rotate(360deg);
-			}
-		}
-
-		/* Pulsing background animation for loading state - applied as overlay */
-		.grid-item.is-loading .work-item-card::before {
-			content: "";
-			position: absolute;
-			top: 0;
-			left: 0;
-			right: 0;
-			bottom: 0;
-			background: linear-gradient(
-				90deg,
-				transparent,
-				rgba(255, 255, 255, 0.05),
-				transparent
-			);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			pointer-events: none;
-			z-index: 1;
-		}
-
-		/* Ensure content stays above the loading overlay */
-		.grid-item.is-loading .work-item-card > * {
-			position: relative;
-			z-index: 2;
-		}
-
-		/* Prevent interaction during loading */
-		.grid-item.is-loading .expand-toggle {
-			pointer-events: none;
-		}
-
-		.grid-item.is-loading {
-			opacity: 0.9;
+		/* Remove underline from all link cards */
+		a.block {
+			text-decoration: none;
 		}
 	</style>
 </Layout>

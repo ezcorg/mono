@@ -91,8 +91,6 @@ export const ExtendedCodeblock = Node.create({
                 // Render language back to HTML structure
                 renderHTML: attributes => {
 
-                    console.log('renderHTML attributes', { attributes });
-
                     if (!attributes.language || attributes.language === 'plaintext') {
                         return {}; // No class needed for plaintext
                     }
@@ -178,8 +176,6 @@ export const ExtendedCodeblock = Node.create({
                 type: this.type,
                 getAttributes: match => {
                     const input = match[1]?.trim();
-                    console.log('input', { input });
-
                     if (!input) return { language: 'markdown' };
 
                     // If input contains a dot, treat it as a filename
@@ -346,6 +342,9 @@ export const ExtendedCodeblock = Node.create({
             // This ensures proper stacking order based on DOM position
             reassignZIndexes();
 
+            // Track whether this codeblock was created empty (e.g. via ``` input rule)
+            const wasCreatedEmpty = !node.textContent && !node.attrs.file;
+
             // Initialize filesystem worker and update extensions asynchronously
             getFileSystemWorker().then(fs => {
                 fsWorker = fs;
@@ -367,6 +366,17 @@ export const ExtendedCodeblock = Node.create({
                             }),
                         ]
                     }));
+
+                    // If created via input rule (empty), focus toolbar and open dropdown
+                    if (wasCreatedEmpty) {
+                        requestAnimationFrame(() => {
+                            const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                            if (toolbarInput) {
+                                toolbarInput.focus();
+                                toolbarInput.click();
+                            }
+                        });
+                    }
                 })
             }).catch(error => {
                 console.error('Failed to initialize filesystem worker:', error);

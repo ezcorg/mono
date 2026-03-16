@@ -19,7 +19,7 @@ import { toolbarPanel, searchResultsField } from "./panels/toolbar";
 import { settingsField } from "./panels/footer";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
-export type { CommandResult } from "./panels/toolbar";
+export type { CommandResult, BrowseEntry } from "./panels/toolbar";
 
 export type CodeblockConfig = {
     fs: VfsInterface;

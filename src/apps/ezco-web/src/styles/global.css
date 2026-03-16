@@ -54,7 +54,7 @@ body {
 }
 
 .page-content>section {
-    width: min(80ch, 100vw);
+    width: min(90ch, 100vw);
     margin-top: 1.5rem;
 
     min-height: 100vh;
