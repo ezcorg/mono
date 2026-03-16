@@ -1,0 +1,49 @@
+---
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="codeblock | ez co" description="An interactive demo of the @joinezco/codeblock component.">
+	<div id="codeblock-container" class="w-full h-screen"></div>
+
+	<script>
+		import { CodeblockFS } from "@joinezco/codeblock";
+		import { files } from "../data/work.js";
+
+		async function init() {
+			const fs = await CodeblockFS.worker();
+			await Promise.all(
+				files.map(async ([path, content]) => {
+					await fs.writeFile(path, content);
+				}),
+			);
+
+			const { createCodeblock, SearchIndex } = await import(
+				"@joinezco/codeblock"
+			);
+			const container = document.getElementById("codeblock-container")!;
+
+			const index = await SearchIndex.get(fs, ".codeblock/index.json");
+			createCodeblock({
+				parent: container,
+				fs,
+				filepath: "example.ts",
+				index,
+				cwd: "/",
+				dark: true,
+			});
+		}
+
+		init().catch(console.error);
+	</script>
+
+	<style>
+		#codeblock-container {
+			display: flex;
+			flex-direction: column;
+		}
+
+		#codeblock-container :global(.cm-editor) {
+			flex: 1;
+		}
+	</style>
+</Layout>

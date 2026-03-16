@@ -1,0 +1,52 @@
+---
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="markdown-editor | ez co" description="An interactive demo of the @joinezco/markdown-editor component.">
+	<div id="editor-container" class="w-full h-screen"></div>
+
+	<script>
+		import { CodeblockFS } from "@joinezco/codeblock";
+		import { files } from "../data/work.js";
+
+		async function init() {
+			const fs = await CodeblockFS.worker();
+			await Promise.all(
+				files.map(async ([path, content]) => {
+					await fs.writeFile(path, content);
+				}),
+			);
+
+			const { createEditor } = await import("@joinezco/markdown-editor");
+			const container = document.getElementById("editor-container")!;
+
+			const editor = createEditor({
+				element: container,
+				fs: {
+					fs,
+					filepath: "hello.md",
+				},
+			});
+			editor.view.dom.setAttribute("data-theme", "dark");
+		}
+
+		init().catch(console.error);
+	</script>
+
+	<style>
+		#editor-container {
+			display: flex;
+			flex-direction: column;
+		}
+
+		#editor-container :global(.ezco-mde) {
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+		}
+
+		#editor-container :global(.ProseMirror) {
+			flex: 1;
+		}
+	</style>
+</Layout>
