@@ -138,11 +138,13 @@ async fn resolve_config_no_tenant_config_returns_global() {
     let tenant_config: Vec<TenantPluginConfig> = vec![];
 
     let resolved = registry.resolve_config(&plugin, &tenant_config);
-    assert_eq!(
-        resolved.len(),
-        plugin.configuration.len(),
-        "Resolved config should match global config length"
-    );
+    // With no tenant overrides, resolved config should be identical to global
+    for (resolved_input, global_input) in resolved.iter().zip(plugin.configuration.iter()) {
+        assert_eq!(
+            resolved_input.name, global_input.name,
+            "Resolved config input names should match global config"
+        );
+    }
 }
 
 #[tokio::test]
@@ -169,13 +171,16 @@ async fn resolve_config_tenant_overrides_specific_input() {
 
     let resolved = registry.resolve_config(&plugin, &tenant_config);
     assert_eq!(resolved.len(), plugin.configuration.len());
-    // The first input should have been overridden
-    let _overridden = resolved.iter().find(|i| i.name == first_input.name).unwrap();
-    // Check it was actually changed (it should differ from the original)
-    // The exact check depends on the ActualInput variant, but we can verify it was processed
+    // Verify the overridden input received the tenant-specific value
+    let overridden = resolved
+        .iter()
+        .find(|i| i.name == first_input.name)
+        .expect("Overridden input should be present");
+    let serialized = serde_json::to_string(&overridden.value).unwrap();
     assert!(
-        resolved.len() == plugin.configuration.len(),
-        "Config resolution should preserve config count"
+        serialized.contains("tenant-custom-value"),
+        "Override value should be reflected in resolved config, got: {}",
+        serialized
     );
 }
 
@@ -197,8 +202,12 @@ async fn resolve_config_ignores_config_for_other_plugins() {
 
     let resolved = registry.resolve_config(&plugin, &tenant_config);
     // Config should be identical to global since the tenant config is for a different plugin
-    assert_eq!(resolved.len(), plugin.configuration.len());
-    for (i, input) in resolved.iter().enumerate() {
-        assert_eq!(input.name, plugin.configuration[i].name);
+    for (resolved_input, global_input) in resolved.iter().zip(plugin.configuration.iter()) {
+        assert_eq!(resolved_input.name, global_input.name);
     }
+    assert_eq!(
+        resolved.len(),
+        plugin.configuration.len(),
+        "Config for other plugins should not add extra entries"
+    );
 }

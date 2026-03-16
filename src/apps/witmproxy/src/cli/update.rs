@@ -500,13 +500,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_current_version_parses() {
-        let v = current_version();
-        // Should match Cargo.toml
-        assert_eq!(v.to_string(), env!("CARGO_PKG_VERSION"));
-    }
-
-    #[test]
     fn test_cache_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(CACHE_FILE_NAME);

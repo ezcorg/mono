@@ -108,7 +108,9 @@ async fn tenant_all() {
         .unwrap();
 
     let all = Tenant::all(pool).await.unwrap();
-    assert_eq!(all.len(), 2);
+    let ids: Vec<&str> = all.iter().map(|t| t.id.as_str()).collect();
+    assert!(ids.contains(&"t1"), "Should contain tenant t1");
+    assert!(ids.contains(&"t2"), "Should contain tenant t2");
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +207,15 @@ async fn tenant_permissions_aggregated_from_groups() {
 
     let t1 = Tenant::by_id(pool, "t1").await.unwrap().unwrap();
     let permissions = t1.permissions(pool).await.unwrap();
-    assert_eq!(permissions.len(), 2, "Should have permissions from both groups");
+    let resources: Vec<String> = permissions.iter().map(|p| p.resource.to_string()).collect();
+    assert!(
+        resources.contains(&"tenants:*:read".to_string()),
+        "Should have read permission from readers group"
+    );
+    assert!(
+        resources.contains(&"tenants:*:write".to_string()),
+        "Should have write permission from writers group"
+    );
 }
 
 #[tokio::test]
@@ -223,14 +233,19 @@ async fn group_permissions_crud() {
         .unwrap();
 
     let perms = Group::permissions(pool, "g1").await.unwrap();
-    assert_eq!(perms.len(), 2);
+    let resources: Vec<String> = perms.iter().map(|p| p.resource.to_string()).collect();
+    assert!(resources.contains(&"tenants:*:read".to_string()));
+    assert!(resources.contains(&"tenants:secret:read".to_string()));
 
-    // Remove one
+    // Remove the read permission
     let removed = Group::remove_permission(pool, "p1").await.unwrap();
     assert!(removed);
 
+    // Verify only the deny permission remains
     let perms = Group::permissions(pool, "g1").await.unwrap();
     assert_eq!(perms.len(), 1);
+    assert_eq!(perms[0].resource.to_string(), "tenants:secret:read");
+    assert_eq!(perms[0].effect.to_string(), "deny");
 }
 
 // ---------------------------------------------------------------------------
