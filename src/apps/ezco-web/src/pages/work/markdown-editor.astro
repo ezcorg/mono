@@ -1,9 +1,21 @@
 ---
 import Layout from "../../layouts/Layout.astro";
+import Footer from "../../components/Footer.astro";
+import Navbar from "../../components/Navbar.astro";
 ---
 
 <Layout title="markdown-editor | ez co" description="An interactive demo of the @joinezco/markdown-editor component.">
-	<div id="editor-container" class="w-full h-screen"></div>
+	<section>
+		<div class="w-full mx-auto flex flex-col gap-8">
+			<Navbar currentPath="/work" />
+
+			<div class="demo-container border-2 border-[#333333] overflow-hidden">
+				<div id="editor-mount"></div>
+			</div>
+		</div>
+	</section>
+
+	<Footer slot="footer" />
 
 	<script>
 		import { CodeblockFS } from "@joinezco/codeblock";
@@ -18,7 +30,7 @@ import Layout from "../../layouts/Layout.astro";
 			);
 
 			const { createEditor } = await import("@joinezco/markdown-editor");
-			const container = document.getElementById("editor-container")!;
+			const container = document.getElementById("editor-mount")!;
 
 			const editor = createEditor({
 				element: container,
@@ -34,18 +46,25 @@ import Layout from "../../layouts/Layout.astro";
 	</script>
 
 	<style>
-		#editor-container {
+		.demo-container {
+			min-height: 70vh;
 			display: flex;
 			flex-direction: column;
 		}
 
-		#editor-container :global(.ezco-mde) {
+		#editor-mount {
 			flex: 1;
 			display: flex;
 			flex-direction: column;
 		}
 
-		#editor-container :global(.ProseMirror) {
+		#editor-mount :global(.ezco-mde) {
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+		}
+
+		#editor-mount :global(.ProseMirror) {
 			flex: 1;
 		}
 	</style>

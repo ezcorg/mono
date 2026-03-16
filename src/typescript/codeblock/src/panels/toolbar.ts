@@ -1,11 +1,11 @@
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
-import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment } from "../editor";
 import { extOrLanguageToLanguageId } from "../lsps";
 import { LSP, LspLog, FileChangeType } from "../utils/lsp";
 import { Seti } from "@m234/nerd-fonts/fs";
-import { settingsField, resolveThemeDark, createSettingsOverlay } from "./footer";
+import { settingsField, resolveThemeDark, updateSettingsEffect, EditorSettings } from "./footer";
 
 type NerdIcon = { value: string; hexCode: number; color?: string };
 
@@ -36,11 +36,20 @@ function setiIconForPath(filePath: string): NerdIcon {
 // Command result types for the first section
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file';
+    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings';
     icon: string;
     iconColor?: string;
     query: string;
     requiresInput?: boolean;
+}
+
+// Settings entry for dropdown-based settings
+export interface SettingsEntry {
+    id: string;          // display label like "Theme: dark"
+    settingKey: string;  // key in EditorSettings
+    type: 'settings-toggle' | 'settings-cycle' | 'settings-input';
+    icon: string;
+    currentValue: string; // display value
 }
 
 // Browse entry for filesystem navigation
@@ -53,7 +62,7 @@ export interface BrowseEntry {
 }
 
 // Combined result type
-export type SearchResult = HighlightedSearch | CommandResult | BrowseEntry;
+export type SearchResult = HighlightedSearch | CommandResult | BrowseEntry | SettingsEntry;
 
 // Type guards
 function isCommandResult(result: SearchResult): result is CommandResult {
@@ -62,6 +71,10 @@ function isCommandResult(result: SearchResult): result is CommandResult {
 
 function isBrowseEntry(result: SearchResult): result is BrowseEntry {
     return 'type' in result && ('fullPath' in result);
+}
+
+function isSettingsEntry(result: SearchResult): result is SettingsEntry {
+    return 'type' in result && ('settingKey' in result);
 }
 
 // Naming mode state
@@ -77,6 +90,13 @@ export interface BrowseMode {
     active: boolean;
     currentPath: string;
     filter: string;
+}
+
+// Settings mode state for dropdown-based settings
+export interface SettingsMode {
+    active: boolean;
+    filter: string;
+    editing: string | null; // settingKey currently being edited, or null
 }
 
 // Search results state - now handles both commands and search results
@@ -129,6 +149,21 @@ function getLanguageIcon(query: string): { glyph: string; color: string } {
     return getFileIcon(`file.${query}`);
 }
 
+
+// Theme cycle values and icons
+const themeCycleValues: EditorSettings['theme'][] = ['light', 'dark', 'system'];
+const themeIcons: Record<EditorSettings['theme'], string> = {
+    light: '\u2600\uFE0F',   // ☀️
+    dark: '\uD83C\uDF19',    // 🌙
+    system: '\uD83C\uDF13',  // 🌓
+};
+
+// Font family cycle values
+const fontFamilyCycleValues = ['', '"UbuntuMono NF", monospace'];
+const fontFamilyLabels: Record<string, string> = {
+    '': 'System default',
+    '"UbuntuMono NF", monospace': 'UbuntuMono NF',
+};
 
 // Create command results for the first section
 function createCommandResults(query: string, view: EditorView, searchResults: SearchResult[]): CommandResult[] {
@@ -187,6 +222,14 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         id: 'Import folder(s)',
         type: 'import-local-folder',
         icon: FOLDER_ICON,
+        query: '',
+    });
+
+    // Settings command — always shown
+    commands.push({
+        id: 'Settings',
+        type: 'settings',
+        icon: COG_ICON,
         query: '',
     });
 
@@ -295,35 +338,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
     updateLspLogIcon();
     updateLspLogVisibility();
 
-    // Settings cog button (far right of toolbar)
-    const settingsCog = document.createElement("button");
-    settingsCog.className = "cm-toolbar-settings-cog";
-    settingsCog.style.fontFamily = 'var(--cm-icon-font-family)';
-    settingsCog.textContent = COG_ICON;
+    // LSP log overlay management (dedicated to LSP log only)
+    let lspLogOverlay: HTMLElement | null = null;
+    let lspLogSavedInputValue: string | null = null;
 
-    // Overlay management
-    let activeOverlay: HTMLElement | null = null;
-    let activeOverlayType: 'settings' | 'lsp-log' | null = null;
-    let savedInputValue: string | null = null;
-
-    const overlayLabels: Record<string, string> = {
-        'settings': 'settings',
-        'lsp-log': 'lsp.log',
-    };
-
-    function updateCogAppearance() {
-        if (activeOverlayType) {
-            settingsCog.textContent = '\u2715'; // ✕
-            settingsCog.style.fontFamily = '';
-            settingsCog.classList.add('cm-cog-active');
-        } else {
-            settingsCog.textContent = COG_ICON;
-            settingsCog.style.fontFamily = 'var(--cm-icon-font-family)';
-            settingsCog.classList.remove('cm-cog-active');
-        }
-    }
-
-    function showOverlay(overlay: HTMLElement) {
+    function showLspLogOverlay(overlay: HTMLElement) {
         const panelsTop = view.dom.querySelector('.cm-panels-top');
         if (panelsTop) {
             overlay.style.top = `${panelsTop.getBoundingClientRect().height}px`;
@@ -331,55 +350,37 @@ export const toolbarPanel = (view: EditorView): Panel => {
         view.dom.appendChild(overlay);
     }
 
-    function openOverlay(type: 'settings' | 'lsp-log', overlay: HTMLElement) {
-        // Save current input and show overlay label
-        savedInputValue = input.value;
-        input.value = overlayLabels[type];
-
-        activeOverlay = overlay;
-        activeOverlayType = type;
-        showOverlay(overlay);
-        updateCogAppearance();
+    function openLspLogOverlay() {
+        lspLogSavedInputValue = input.value;
+        input.value = 'lsp.log';
+        lspLogOverlay = createLspLogOverlay();
+        showLspLogOverlay(lspLogOverlay);
     }
 
-    function closeOverlay() {
-        if (activeOverlay) {
-            // Clean up LSP log subscription if applicable
-            if ((activeOverlay as any)._lspLogUnsub) {
-                (activeOverlay as any)._lspLogUnsub();
+    function closeLspLogOverlay() {
+        if (lspLogOverlay) {
+            if ((lspLogOverlay as any)._lspLogUnsub) {
+                (lspLogOverlay as any)._lspLogUnsub();
             }
-            activeOverlay.remove();
-            activeOverlay = null;
-            activeOverlayType = null;
+            lspLogOverlay.remove();
+            lspLogOverlay = null;
 
-            // Restore input text
-            if (savedInputValue !== null) {
-                input.value = savedInputValue;
-                savedInputValue = null;
+            if (lspLogSavedInputValue !== null) {
+                input.value = lspLogSavedInputValue;
+                lspLogSavedInputValue = null;
             }
-            updateCogAppearance();
         }
     }
-
-    settingsCog.addEventListener("click", () => {
-        if (activeOverlayType) {
-            closeOverlay();
-        } else {
-            openOverlay('settings', createSettingsOverlay(view));
-        }
-    });
 
     lspLogBtn.addEventListener("click", () => {
-        if (activeOverlayType === 'lsp-log') {
-            closeOverlay();
+        if (lspLogOverlay) {
+            closeLspLogOverlay();
         } else {
-            closeOverlay();
-            openOverlay('lsp-log', createLspLogOverlay());
+            openLspLogOverlay();
         }
     });
 
     dom.appendChild(lspLogBtn);
-    dom.appendChild(settingsCog);
 
     const resultsList = document.createElement("ul");
     resultsList.className = "cm-search-results";
@@ -388,6 +389,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     let selectedIndex = 0;
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
     let browseMode: BrowseMode = { active: false, currentPath: '/', filter: '' };
+    let settingsMode: SettingsMode = { active: false, filter: '', editing: null };
     let loadingStartTime: number | null = null;
 
     // System theme media query listener
@@ -452,11 +454,166 @@ export const toolbarPanel = (view: EditorView): Panel => {
     updateGutterWidthVariables();
     setupGutterObserver();
 
+    // --- Settings mode functions ---
+    function buildSettingsEntries(filter: string): SettingsEntry[] {
+        const settings = view.state.field(settingsField);
+        const entries: SettingsEntry[] = [];
+
+        // Theme: cycle through light/dark/system
+        entries.push({
+            id: `Theme: ${settings.theme}`,
+            settingKey: 'theme',
+            type: 'settings-cycle',
+            icon: themeIcons[settings.theme],
+            currentValue: settings.theme,
+        });
+
+        // Font size: input
+        entries.push({
+            id: `Font size: ${settings.fontSize}px`,
+            settingKey: 'fontSize',
+            type: 'settings-input',
+            icon: 'Aa',
+            currentValue: String(settings.fontSize),
+        });
+
+        // Font family: cycle
+        const fontLabel = fontFamilyLabels[settings.fontFamily] || settings.fontFamily || 'System default';
+        entries.push({
+            id: `Font family: ${fontLabel}`,
+            settingKey: 'fontFamily',
+            type: 'settings-cycle',
+            icon: 'Aa',
+            currentValue: settings.fontFamily,
+        });
+
+        // Autosave: toggle
+        entries.push({
+            id: `Autosave: ${settings.autosave ? 'on' : 'off'}`,
+            settingKey: 'autosave',
+            type: 'settings-toggle',
+            icon: settings.autosave ? '\u2713' : '\u2717', // ✓ or ✗
+            currentValue: String(settings.autosave),
+        });
+
+        // Line wrap: toggle
+        entries.push({
+            id: `Line wrap: ${settings.lineWrap ? 'on' : 'off'}`,
+            settingKey: 'lineWrap',
+            type: 'settings-toggle',
+            icon: settings.lineWrap ? '\u2713' : '\u2717',
+            currentValue: String(settings.lineWrap),
+        });
+
+        // LSP log: toggle
+        entries.push({
+            id: `LSP log: ${settings.lspLogEnabled ? 'on' : 'off'}`,
+            settingKey: 'lspLogEnabled',
+            type: 'settings-toggle',
+            icon: settings.lspLogEnabled ? '\u2713' : '\u2717',
+            currentValue: String(settings.lspLogEnabled),
+        });
+
+        // Filter entries
+        if (filter) {
+            const lowerFilter = filter.toLowerCase();
+            return entries.filter(e => e.id.toLowerCase().includes(lowerFilter));
+        }
+        return entries;
+    }
+
+    function refreshSettingsEntries() {
+        if (!settingsMode.active) return;
+        const entries = buildSettingsEntries(settingsMode.filter);
+        selectedIndex = Math.min(selectedIndex, Math.max(0, entries.length - 1));
+        safeDispatch(view, { effects: setSearchResults.of(entries) });
+    }
+
+    function enterSettingsMode() {
+        settingsMode = { active: true, filter: '', editing: null };
+        stateIcon.textContent = COG_ICON;
+        input.value = 'settings/';
+        input.placeholder = '';
+        input.focus();
+        selectedIndex = 0;
+        const entries = buildSettingsEntries('');
+        safeDispatch(view, { effects: setSearchResults.of(entries) });
+    }
+
+    function exitSettingsMode() {
+        settingsMode = { active: false, filter: '', editing: null };
+        updateStateIcon();
+        input.placeholder = '';
+    }
+
+    function handleSettingsEntry(entry: SettingsEntry) {
+        const settings = view.state.field(settingsField);
+
+        if (entry.type === 'settings-toggle') {
+            const key = entry.settingKey as keyof EditorSettings;
+            const newValue = !settings[key];
+            const effects: StateEffect<any>[] = [updateSettingsEffect.of({ [key]: newValue })];
+
+            // Special handling for lineWrap: reconfigure compartment
+            if (key === 'lineWrap') {
+                effects.push(lineWrappingCompartment.reconfigure(newValue ? EditorView.lineWrapping : []));
+            }
+
+            safeDispatch(view, { effects });
+        } else if (entry.type === 'settings-cycle') {
+            if (entry.settingKey === 'theme') {
+                const currentIdx = themeCycleValues.indexOf(settings.theme);
+                const nextTheme = themeCycleValues[(currentIdx + 1) % themeCycleValues.length];
+                safeDispatch(view, {
+                    effects: [
+                        updateSettingsEffect.of({ theme: nextTheme }),
+                        setThemeEffect.of({ dark: resolveThemeDark(nextTheme) }),
+                    ]
+                });
+            } else if (entry.settingKey === 'fontFamily') {
+                const currentIdx = fontFamilyCycleValues.indexOf(settings.fontFamily);
+                const nextIdx = (currentIdx + 1) % fontFamilyCycleValues.length;
+                safeDispatch(view, {
+                    effects: [updateSettingsEffect.of({ fontFamily: fontFamilyCycleValues[nextIdx] })]
+                });
+            }
+        } else if (entry.type === 'settings-input') {
+            // Enter editing mode: show the current value in the input for inline editing
+            settingsMode.editing = entry.settingKey;
+            input.value = entry.currentValue;
+            input.select();
+        }
+    }
+
+    function confirmSettingsEdit() {
+        if (!settingsMode.editing) return;
+        const key = settingsMode.editing;
+        const rawValue = input.value.trim();
+
+        if (key === 'fontSize') {
+            const size = Number(rawValue);
+            if (!isNaN(size) && size >= 1 && size <= 128) {
+                safeDispatch(view, { effects: [updateSettingsEffect.of({ fontSize: size })] });
+            }
+        }
+
+        settingsMode.editing = null;
+        input.value = 'settings/' + settingsMode.filter;
+        // Refresh entries after a microtask so the state update has landed
+        queueMicrotask(() => refreshSettingsEntries());
+    }
+
+    function cancelSettingsEdit() {
+        settingsMode.editing = null;
+        input.value = 'settings/' + settingsMode.filter;
+    }
+
     const renderItem = (result: SearchResult, i: number) => {
         const li = document.createElement("li");
 
         let resultClass = 'cm-file-result';
-        if (isCommandResult(result)) resultClass = 'cm-command-result';
+        if (isSettingsEntry(result)) resultClass = 'cm-command-result';
+        else if (isCommandResult(result)) resultClass = 'cm-command-result';
         else if (isBrowseEntry(result)) resultClass = result.type === 'browse-file' ? 'cm-file-result' : 'cm-browse-dir-result';
         li.className = `cm-search-result ${resultClass}`;
 
@@ -465,18 +622,25 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
         const resultIcon = document.createElement("div");
         resultIcon.className = "cm-search-result-icon";
-        resultIcon.style.fontFamily = 'var(--cm-icon-font-family)';
 
-        if (isBrowseEntry(result)) {
+        if (isSettingsEntry(result)) {
+            // Settings entries use emoji or text icons, not nerd fonts
+            resultIcon.style.fontFamily = '';
             resultIcon.textContent = result.icon;
-            if (result.iconColor) resultIcon.style.color = result.iconColor;
-        } else if (isCommandResult(result)) {
-            resultIcon.textContent = result.icon;
-            if (result.iconColor) resultIcon.style.color = result.iconColor;
         } else {
-            const icon = getFileIcon(result.id);
-            resultIcon.textContent = icon.glyph;
-            if (icon.color) resultIcon.style.color = icon.color;
+            resultIcon.style.fontFamily = 'var(--cm-icon-font-family)';
+
+            if (isBrowseEntry(result)) {
+                resultIcon.textContent = result.icon;
+                if (result.iconColor) resultIcon.style.color = result.iconColor;
+            } else if (isCommandResult(result)) {
+                resultIcon.textContent = result.icon;
+                if (result.iconColor) resultIcon.style.color = result.iconColor;
+            } else {
+                const icon = getFileIcon(result.id);
+                resultIcon.textContent = icon.glyph;
+                if (icon.color) resultIcon.style.color = icon.color;
+            }
         }
 
         resultIconContainer.appendChild(resultIcon);
@@ -511,7 +675,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     function selectResult(result: SearchResult) {
-        if (isBrowseEntry(result)) {
+        if (isSettingsEntry(result)) {
+            handleSettingsEntry(result);
+        } else if (isBrowseEntry(result)) {
             navigateBrowse(result);
         } else if (isCommandResult(result)) {
             handleCommandResult(result);
@@ -523,6 +689,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
     function updateStateIcon() {
         if (namingMode.active) {
             stateIcon.textContent = namingMode.type === 'create-file' ? DEFAULT_FILE_ICON : '\uf044';
+        } else if (settingsMode.active) {
+            stateIcon.textContent = COG_ICON;
         } else {
             stateIcon.textContent = SEARCH_ICON;
         }
@@ -677,7 +845,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     function handleCommandResult(command: CommandResult) {
-        if (command.type === 'open-file') {
+        if (command.type === 'settings') {
+            enterSettingsMode();
+            return;
+        } else if (command.type === 'open-file') {
             enterBrowseMode();
             return;
         } else if (command.type === 'create-file') {
@@ -754,6 +925,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     // Close dropdown when clicking outside
     function handleClickOutside(event: Event) {
         if (!dom.contains(event.target as Node)) {
+            if (settingsMode.active) exitSettingsMode();
             if (browseMode.active) exitBrowseMode();
             safeDispatch(view, { effects: setSearchResults.of([]) });
             resetInputToCurrentFile();
@@ -796,6 +968,19 @@ export const toolbarPanel = (view: EditorView): Panel => {
             return;
         }
 
+        // If editing a settings value, don't interfere
+        if (settingsMode.active && settingsMode.editing) {
+            return;
+        }
+
+        // If in settings mode, filter the settings entries
+        if (settingsMode.active) {
+            const prefix = 'settings/';
+            settingsMode.filter = query.startsWith(prefix) ? query.slice(prefix.length) : query;
+            refreshSettingsEntries();
+            return;
+        }
+
         // If in browse mode, filter the directory entries
         if (browseMode.active) {
             // Extract filter text after the directory path prefix
@@ -835,6 +1020,55 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 event.preventDefault();
                 exitNamingMode();
                 input.value = namingMode.originalQuery;
+            }
+            return;
+        }
+
+        // Settings mode keyboard handling
+        if (settingsMode.active) {
+            const results = view.state.field(searchResultsField);
+
+            // If currently editing a settings value
+            if (settingsMode.editing) {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    confirmSettingsEdit();
+                } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelSettingsEdit();
+                }
+                return;
+            }
+
+            if (event.key === "ArrowDown") {
+                event.preventDefault();
+                if (results.length) {
+                    selectedIndex = mod(selectedIndex + 1, results.length);
+                    updateDropdown();
+                }
+            } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                if (results.length) {
+                    selectedIndex = mod(selectedIndex - 1, results.length);
+                    updateDropdown();
+                }
+            } else if (event.key === "Enter" && results.length && selectedIndex >= 0) {
+                event.preventDefault();
+                selectResult(results[selectedIndex]);
+            } else if (event.key === "Backspace") {
+                // If filter is empty and not editing, exit settings mode
+                if (settingsMode.filter === '') {
+                    event.preventDefault();
+                    exitSettingsMode();
+                    safeDispatch(view, { effects: setSearchResults.of([]) });
+                    resetInputToCurrentFile();
+                }
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                exitSettingsMode();
+                safeDispatch(view, { effects: setSearchResults.of([]) });
+                resetInputToCurrentFile();
+                input.blur();
             }
             return;
         }
@@ -930,9 +1164,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
             if (prevSettings.lspLogEnabled !== nextSettings.lspLogEnabled) {
                 updateLspLogVisibility();
                 // Close the log overlay if the user disables it
-                if (!nextSettings.lspLogEnabled && activeOverlayType === 'lsp-log') {
-                    closeOverlay();
+                if (!nextSettings.lspLogEnabled && lspLogOverlay) {
+                    closeLspLogOverlay();
                 }
+            }
+
+            // Refresh settings dropdown when settings change and settings mode is active
+            if (settingsMode.active && prevSettings !== nextSettings) {
+                refreshSettingsEntries();
             }
 
             // Update loading indicator with minimum animation duration
@@ -961,8 +1200,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 updateLspLogIcon();
             }
 
-            // Sync input value when file path changes (unless overlay is open or user is naming)
-            if (prevFile.path !== nextFile.path && !namingMode.active && !activeOverlayType) {
+            // Sync input value when file path changes (unless overlay/mode is active or user is naming)
+            if (prevFile.path !== nextFile.path && !namingMode.active && !lspLogOverlay && !settingsMode.active) {
                 input.value = nextFile.path || '';
             }
         },
@@ -971,8 +1210,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
             document.removeEventListener("click", handleClickOutside);
             systemThemeQuery.removeEventListener('change', handleSystemThemeChange);
 
-            // Clean up overlay
-            closeOverlay();
+            // Clean up LSP log overlay
+            closeLspLogOverlay();
 
             // Clean up ResizeObserver
             if (gutterObserver) {

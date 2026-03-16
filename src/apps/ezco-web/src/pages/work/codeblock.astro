@@ -1,9 +1,21 @@
 ---
 import Layout from "../../layouts/Layout.astro";
+import Footer from "../../components/Footer.astro";
+import Navbar from "../../components/Navbar.astro";
 ---
 
 <Layout title="codeblock | ez co" description="An interactive demo of the @joinezco/codeblock component.">
-	<div id="codeblock-container" class="w-full h-screen"></div>
+	<section>
+		<div class="w-full mx-auto flex flex-col gap-8">
+			<Navbar currentPath="/work" />
+
+			<div class="demo-container border-2 border-[#333333] overflow-hidden">
+				<div id="codeblock-mount"></div>
+			</div>
+		</div>
+	</section>
+
+	<Footer slot="footer" />
 
 	<script>
 		import { CodeblockFS } from "@joinezco/codeblock";
@@ -20,7 +32,7 @@ import Layout from "../../layouts/Layout.astro";
 			const { createCodeblock, SearchIndex } = await import(
 				"@joinezco/codeblock"
 			);
-			const container = document.getElementById("codeblock-container")!;
+			const container = document.getElementById("codeblock-mount")!;
 
 			const index = await SearchIndex.get(fs, ".codeblock/index.json");
 			createCodeblock({
@@ -37,12 +49,19 @@ import Layout from "../../layouts/Layout.astro";
 	</script>
 
 	<style>
-		#codeblock-container {
+		.demo-container {
+			min-height: 70vh;
 			display: flex;
 			flex-direction: column;
 		}
 
-		#codeblock-container :global(.cm-editor) {
+		#codeblock-mount {
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+		}
+
+		#codeblock-mount :global(.cm-editor) {
 			flex: 1;
 		}
 	</style>

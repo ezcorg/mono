@@ -71,7 +71,6 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				}
 			});
 
-			// If you get "parameter 1 is not of type 'Node'" error, see https://stackoverflow.com/a/77855838/492336
 			observer.observe(document.documentElement, {
 				childList: true,
 				subtree: true,
@@ -153,7 +152,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 
 				{/* New Project Action Card - First Item */}
 				<div class="grid-item" data-project-title="new-project">
-					<a href="/newproject" class="block w-full h-full new-project-link">
+					<a href="/newproject" class="block w-full h-full">
 						<div
 							class="work-item-card new-project-card h-full hover:bg-[#ffffff] active:bg-[#ffffff] transition-colors duration-300 overflow-hidden"
 						>
@@ -192,71 +191,45 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 							class="grid-item"
 							data-project-title={project.title}
 						>
-							{project.href ? (
-								<a href={project.href} class="block w-full h-full">
-									<div class="work-item-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden">
-										<div class="p-6">
-											<div class="flex items-center justify-between mb-3">
-												<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
+							<div
+								class="work-item-card project-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden"
+								data-href={project.href || undefined}
+							>
+								<div class="p-6">
+									<div class="flex items-center justify-between mb-3">
+										<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
+											{project.href ? (
+												<a href={project.href} class="stretched-link">
 													{project.title}
-												</h3>
-											</div>
-											<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
-												{project.description}
-											</p>
-											<div class="flex flex-wrap gap-2">
-												{project.tags.map((tech) => (
-													<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
-														{tech}
-													</span>
-												))}
-												{project.github && (
-													<a
-														href={project.github}
-														target="_blank"
-														rel="noopener noreferrer"
-														title={`${project.title} source on GitHub`}
-														class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag github-tag inline-flex items-center"
-													>
-														<Fragment set:html={githubSvg} />
-													</a>
-												)}
-											</div>
-										</div>
-									</div>
-								</a>
-							) : (
-								<div class="work-item-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden">
-									<div class="p-6">
-										<div class="flex items-center justify-between mb-3">
-											<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
-												{project.title}
-											</h3>
-										</div>
-										<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
-											{project.description}
-										</p>
-										<div class="flex flex-wrap gap-2">
-											{project.tags.map((tech) => (
-												<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
-													{tech}
-												</span>
-											))}
-											{project.github && (
-												<a
-													href={project.github}
-													target="_blank"
-													rel="noopener noreferrer"
-													title={`${project.title} source on GitHub`}
-													class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag github-tag inline-flex items-center"
-												>
-													<Fragment set:html={githubSvg} />
 												</a>
+											) : (
+												project.title
 											)}
-										</div>
+										</h3>
+									</div>
+									<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
+										{project.description}
+									</p>
+									<div class="flex flex-wrap gap-2">
+										{project.tags.map((tech) => (
+											<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+												{tech}
+											</span>
+										))}
+										{project.github && (
+											<a
+												href={project.github}
+												target="_blank"
+												rel="noopener noreferrer"
+												title={`${project.title} source on GitHub`}
+												class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag github-tag inline-flex items-center"
+											>
+												<Fragment set:html={githubSvg} />
+											</a>
+										)}
 									</div>
 								</div>
-							)}
+							</div>
 						</div>
 					))
 				}
@@ -279,7 +252,6 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				dashSpeed = 8,
 				hoverRainbowSpeed = rainbowSpeed * 0.2,
 				hoverDashSpeed = dashSpeed * 0.2,
-				// Greyscale colors for default state
 				greyscaleColors = [
 					"#888888",
 					"#999999",
@@ -288,7 +260,6 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 					"#888888",
 					"#777777",
 				],
-				// Rainbow colors for hover state
 				rainbowColors = [
 					"#ff0000",
 					"#ff8800",
@@ -340,7 +311,6 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 
 				const defs = document.createElementNS(svgNS, "defs");
 
-				// Start with greyscale colors
 				const colors = greyscaleColors;
 				const numColors = colors.length;
 
@@ -455,21 +425,9 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				};
 
 				const topGradient = createGradient("top-gradient", true, width);
-				const rightGradient = createGradient(
-					"right-gradient",
-					false,
-					height,
-				);
-				const bottomGradient = createGradient(
-					"bottom-gradient",
-					true,
-					width,
-				);
-				const leftGradient = createGradient(
-					"left-gradient",
-					false,
-					height,
-				);
+				const rightGradient = createGradient("right-gradient", false, height);
+				const bottomGradient = createGradient("bottom-gradient", true, width);
+				const leftGradient = createGradient("left-gradient", false, height);
 
 				defs.appendChild(topGradient);
 				defs.appendChild(rightGradient);
@@ -480,154 +438,40 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				const offset = strokeWidth / 2;
 				let runningOffset = 0;
 
-				// Top edge
-				const topLine = document.createElementNS(svgNS, "line");
-				topLine.setAttribute("x1", `${offset}`);
-				topLine.setAttribute("y1", `${offset}`);
-				topLine.setAttribute("x2", `${width - offset}`);
-				topLine.setAttribute("y2", `${offset}`);
-				topLine.setAttribute("stroke", "url(#top-gradient)");
-				topLine.setAttribute("stroke-width", `${strokeWidth}`);
-				topLine.setAttribute(
-					"stroke-dasharray",
-					`${adjustedDashWidth} ${adjustedDashGap}`,
-				);
-				topLine.setAttribute("stroke-linecap", "square");
-				topLine.setAttribute("stroke-dashoffset", `${runningOffset}`);
+				const createEdge = (x1: string, y1: string, x2: string, y2: string, gradientId: string) => {
+					const line = document.createElementNS(svgNS, "line");
+					line.setAttribute("x1", x1);
+					line.setAttribute("y1", y1);
+					line.setAttribute("x2", x2);
+					line.setAttribute("y2", y2);
+					line.setAttribute("stroke", `url(#${gradientId})`);
+					line.setAttribute("stroke-width", `${strokeWidth}`);
+					line.setAttribute("stroke-dasharray", `${adjustedDashWidth} ${adjustedDashGap}`);
+					line.setAttribute("stroke-linecap", "square");
+					line.setAttribute("stroke-dashoffset", `${runningOffset % adjustedDashPattern}`);
 
-				const topAnimate = document.createElementNS(svgNS, "animate");
-				topAnimate.setAttribute("attributeName", "stroke-dashoffset");
-				topAnimate.setAttribute(
-					"from",
-					`${adjustedDashWidth + adjustedDashGap + runningOffset}`,
-				);
-				topAnimate.setAttribute("to", `${runningOffset}`);
-				topAnimate.setAttribute("dur", `${dashSpeed}s`);
-				topAnimate.setAttribute("repeatCount", "indefinite");
-				animations.push(topAnimate);
-				topLine.appendChild(topAnimate);
-				svg.appendChild(topLine);
+					const animate = document.createElementNS(svgNS, "animate");
+					animate.setAttribute("attributeName", "stroke-dashoffset");
+					animate.setAttribute("from", `${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`);
+					animate.setAttribute("to", `${runningOffset % adjustedDashPattern}`);
+					animate.setAttribute("dur", `${dashSpeed}s`);
+					animate.setAttribute("repeatCount", "indefinite");
+					animations.push(animate);
+					line.appendChild(animate);
+					svg.appendChild(line);
+				};
 
+				createEdge(`${offset}`, `${offset}`, `${width - offset}`, `${offset}`, "top-gradient");
 				runningOffset += width - strokeWidth;
-
-				// Right edge
-				const rightLine = document.createElementNS(svgNS, "line");
-				rightLine.setAttribute("x1", `${width - offset}`);
-				rightLine.setAttribute("y1", `${offset}`);
-				rightLine.setAttribute("x2", `${width - offset}`);
-				rightLine.setAttribute("y2", `${height - offset}`);
-				rightLine.setAttribute("stroke", "url(#right-gradient)");
-				rightLine.setAttribute("stroke-width", `${strokeWidth}`);
-				rightLine.setAttribute(
-					"stroke-dasharray",
-					`${adjustedDashWidth} ${adjustedDashGap}`,
-				);
-				rightLine.setAttribute("stroke-linecap", "square");
-				rightLine.setAttribute(
-					"stroke-dashoffset",
-					`${runningOffset % adjustedDashPattern}`,
-				);
-
-				const rightAnimate = document.createElementNS(svgNS, "animate");
-				rightAnimate.setAttribute("attributeName", "stroke-dashoffset");
-				rightAnimate.setAttribute(
-					"from",
-					`${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`,
-				);
-				rightAnimate.setAttribute(
-					"to",
-					`${runningOffset % adjustedDashPattern}`,
-				);
-				rightAnimate.setAttribute("dur", `${dashSpeed}s`);
-				rightAnimate.setAttribute("repeatCount", "indefinite");
-				animations.push(rightAnimate);
-				rightLine.appendChild(rightAnimate);
-				svg.appendChild(rightLine);
-
+				createEdge(`${width - offset}`, `${offset}`, `${width - offset}`, `${height - offset}`, "right-gradient");
 				runningOffset += height - strokeWidth;
-
-				// Bottom edge
-				const bottomLine = document.createElementNS(svgNS, "line");
-				bottomLine.setAttribute("x1", `${width - offset}`);
-				bottomLine.setAttribute("y1", `${height - offset}`);
-				bottomLine.setAttribute("x2", `${offset}`);
-				bottomLine.setAttribute("y2", `${height - offset}`);
-				bottomLine.setAttribute("stroke", "url(#bottom-gradient)");
-				bottomLine.setAttribute("stroke-width", `${strokeWidth}`);
-				bottomLine.setAttribute(
-					"stroke-dasharray",
-					`${adjustedDashWidth} ${adjustedDashGap}`,
-				);
-				bottomLine.setAttribute("stroke-linecap", "square");
-				bottomLine.setAttribute(
-					"stroke-dashoffset",
-					`${runningOffset % adjustedDashPattern}`,
-				);
-
-				const bottomAnimate = document.createElementNS(
-					svgNS,
-					"animate",
-				);
-				bottomAnimate.setAttribute(
-					"attributeName",
-					"stroke-dashoffset",
-				);
-				bottomAnimate.setAttribute(
-					"from",
-					`${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`,
-				);
-				bottomAnimate.setAttribute(
-					"to",
-					`${runningOffset % adjustedDashPattern}`,
-				);
-				bottomAnimate.setAttribute("dur", `${dashSpeed}s`);
-				bottomAnimate.setAttribute("repeatCount", "indefinite");
-				animations.push(bottomAnimate);
-				bottomLine.appendChild(bottomAnimate);
-				svg.appendChild(bottomLine);
-
+				createEdge(`${width - offset}`, `${height - offset}`, `${offset}`, `${height - offset}`, "bottom-gradient");
 				runningOffset += width - strokeWidth;
-
-				// Left edge
-				const leftLine = document.createElementNS(svgNS, "line");
-				leftLine.setAttribute("x1", `${offset}`);
-				leftLine.setAttribute("y1", `${height - offset}`);
-				leftLine.setAttribute("x2", `${offset}`);
-				leftLine.setAttribute("y2", `${offset}`);
-				leftLine.setAttribute("stroke", "url(#left-gradient)");
-				leftLine.setAttribute("stroke-width", `${strokeWidth}`);
-				leftLine.setAttribute(
-					"stroke-dasharray",
-					`${adjustedDashWidth} ${adjustedDashGap}`,
-				);
-				leftLine.setAttribute("stroke-linecap", "square");
-				leftLine.setAttribute(
-					"stroke-dashoffset",
-					`${runningOffset % adjustedDashPattern}`,
-				);
-
-				const leftAnimate = document.createElementNS(svgNS, "animate");
-				leftAnimate.setAttribute("attributeName", "stroke-dashoffset");
-				leftAnimate.setAttribute(
-					"from",
-					`${adjustedDashWidth + adjustedDashGap + (runningOffset % adjustedDashPattern)}`,
-				);
-				leftAnimate.setAttribute(
-					"to",
-					`${runningOffset % adjustedDashPattern}`,
-				);
-				leftAnimate.setAttribute("dur", `${dashSpeed}s`);
-				leftAnimate.setAttribute("repeatCount", "indefinite");
-				animations.push(leftAnimate);
-				leftLine.appendChild(leftAnimate);
-				svg.appendChild(leftLine);
+				createEdge(`${offset}`, `${height - offset}`, `${offset}`, `${offset}`, "left-gradient");
 			};
 
-			// Switch color palette used in animations
 			const switchColors = (newColors: string[]) => {
 				const numC = newColors.length;
-				// Each gradient has (repetitions * numColors + 1) color animations
-				// colorAnimations stores them all in order
 				const reps = 3;
 				const stopsPerGradient = reps * numC + 1;
 
@@ -650,8 +494,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				newDashSpeed: number,
 			) => {
 				animations.forEach((animation) => {
-					const attributeName =
-						animation.getAttribute("attributeName");
+					const attributeName = animation.getAttribute("attributeName");
 					if (attributeName === "stop-color") {
 						animation.setAttribute("dur", `${newRainbowSpeed}s`);
 					} else if (attributeName === "stroke-dashoffset") {
@@ -674,86 +517,34 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				}
 			};
 
-			const handleMouseEnter = () => {
-				isHovered = true;
-				updateBorderState();
-			};
-
-			const handleMouseLeave = () => {
-				isHovered = false;
-				updateBorderState();
-			};
-
-			const handleFocus = () => {
-				isFocused = true;
-				updateBorderState();
-			};
-
-			const handleBlur = () => {
-				isFocused = false;
-				updateBorderState();
-			};
-
-			const handleMouseDown = () => {
-				isActive = true;
-				updateBorderState();
-			};
-
-			const handleMouseUp = () => {
-				isActive = false;
-				updateBorderState();
-			};
-
-			element.addEventListener("mouseenter", handleMouseEnter);
-			element.addEventListener("mouseleave", handleMouseLeave);
-			element.addEventListener("focus", handleFocus);
-			element.addEventListener("blur", handleBlur);
-			element.addEventListener("mousedown", handleMouseDown);
-			element.addEventListener("mouseup", handleMouseUp);
-			document.addEventListener("mouseup", handleMouseUp);
+			element.addEventListener("mouseenter", () => { isHovered = true; updateBorderState(); });
+			element.addEventListener("mouseleave", () => { isHovered = false; updateBorderState(); });
+			element.addEventListener("focus", () => { isFocused = true; updateBorderState(); });
+			element.addEventListener("blur", () => { isFocused = false; updateBorderState(); });
+			element.addEventListener("mousedown", () => { isActive = true; updateBorderState(); });
+			element.addEventListener("mouseup", () => { isActive = false; updateBorderState(); });
+			document.addEventListener("mouseup", () => { isActive = false; updateBorderState(); });
 
 			updateBorder();
 
 			const resizeObserver = new ResizeObserver(() => {
 				updateBorder();
-				// Re-apply current state after resize rebuild
 				updateBorderState();
 			});
 			resizeObserver.observe(element);
-
-			return () => {
-				element.removeEventListener("mouseenter", handleMouseEnter);
-				element.removeEventListener("mouseleave", handleMouseLeave);
-				element.removeEventListener("focus", handleFocus);
-				element.removeEventListener("blur", handleBlur);
-				element.removeEventListener("mousedown", handleMouseDown);
-				element.removeEventListener("mouseup", handleMouseUp);
-				document.removeEventListener("mouseup", handleMouseUp);
-				resizeObserver.disconnect();
-				const svg = element.querySelector(".rainbow-border-svg");
-				if (svg) svg.remove();
-			};
 		}
 
 		document.addEventListener("DOMContentLoaded", () => {
-			const grid = document.querySelector(
-				"#grid-container",
-			) as HTMLElement;
-			const loadingSkeleton = document.querySelector(
-				"#loading-skeleton",
-			) as HTMLElement;
+			const grid = document.querySelector("#grid-container") as HTMLElement;
+			const loadingSkeleton = document.querySelector("#loading-skeleton") as HTMLElement;
 
 			if (!grid) return;
 
 			let pckry: any | null = null;
 			let resizeObserver: ResizeObserver | null = null;
 
-			// Initialize ResizeObserver for automatic relayout
 			const initResizeObserver = () => {
-				if (!window.ResizeObserver) {
-					console.warn("ResizeObserver not supported");
-					return;
-				}
+				if (!window.ResizeObserver) return;
 
 				let debounceTimeout: ReturnType<typeof setTimeout>;
 
@@ -764,47 +555,25 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 					debounceTimeout = setTimeout(() => {
 						let shouldRelayout = false;
 						for (const entry of entries) {
-							const element = entry.target as HTMLElement;
-							const gridItem = element.closest(
-								".grid-item",
-							) as HTMLElement;
-
+							const gridItem = (entry.target as HTMLElement).closest(".grid-item") as HTMLElement;
 							if (gridItem) {
 								const prevHeight = gridItem.dataset.prevHeight;
-								const currentHeight =
-									entry.contentRect.height.toString();
-
+								const currentHeight = entry.contentRect.height.toString();
 								if (prevHeight !== currentHeight) {
 									gridItem.dataset.prevHeight = currentHeight;
 									shouldRelayout = true;
 								}
 							}
 						}
-
-						if (shouldRelayout) {
-							pckry.layout();
-						}
+						if (shouldRelayout) pckry.layout();
 					}, 100);
 				});
 
-				const gridItems = grid.querySelectorAll(".grid-item");
-				gridItems.forEach((item) => {
+				grid.querySelectorAll(".grid-item").forEach((item) => {
 					resizeObserver?.observe(item);
 				});
 			};
 
-			// Handle GitHub tag clicks — prevent parent <a> navigation
-			grid.addEventListener("click", (event) => {
-				const target = event.target as HTMLElement;
-				const githubTag = target.closest(".github-tag") as HTMLAnchorElement;
-				if (githubTag) {
-					event.preventDefault();
-					event.stopPropagation();
-					window.open(githubTag.href, "_blank", "noopener,noreferrer");
-				}
-			});
-
-			// Initialize Packery
 			const initPackery = () => {
 				loadingSkeleton.style.display = "none";
 				// @ts-ignore
@@ -818,14 +587,12 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 					percentPosition: true,
 				});
 
-				// Initialize ResizeObserver after Packery is ready
 				initResizeObserver();
-
-				// Better transition: fade in grid while skeleton is still visible
 				grid.style.opacity = "1";
 
+				// Apply animated border to the new-project-card itself (not the <a> wrapper)
 				const newProjectCard = grid.querySelector(
-					"[data-project-title='new-project'] .new-project-link",
+					"[data-project-title='new-project'] .new-project-card",
 				) as HTMLElement;
 				applyAnimatedPatternBorder(newProjectCard, {
 					dashWidth: 4,
@@ -837,97 +604,67 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				});
 			};
 
-			const cleanup = () => {
+			window.addEventListener("beforeunload", () => {
 				if (resizeObserver) {
 					resizeObserver.disconnect();
 					resizeObserver = null;
 				}
-			};
-
-			window.addEventListener("beforeunload", cleanup);
+			});
 			initPackery();
 		});
 	</script>
 
 	<style>
-		/* Set the font for the description text */
 		.description-text {
 			font-family: Times, serif;
 		}
 
-		/* Skeleton loading styles */
 		@keyframes shimmer {
-			0% {
-				background-position: -200px 0;
-			}
-			100% {
-				background-position: calc(200px + 100%) 0;
-			}
+			0% { background-position: -200px 0; }
+			100% { background-position: calc(200px + 100%) 0; }
 		}
 
 		.skeleton-card {
-			background: linear-gradient(
-				90deg,
-				transparent,
-				rgba(255, 255, 255, 0.05),
-				transparent
-			);
+			background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
 			background-size: 200px 100%;
 			animation: shimmer 1.5s ease-in-out infinite;
 		}
 
 		.skeleton-title {
-			height: 32px;
-			width: 60%;
+			height: 32px; width: 60%;
 			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 4px;
+			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
 		}
 
 		.skeleton-button {
-			height: 24px;
-			width: 24px;
+			height: 24px; width: 24px;
 			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 4px;
+			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
 		}
 
 		.skeleton-description {
-			height: 18px;
-			width: 85%;
+			height: 18px; width: 85%;
 			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 4px;
+			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
 		}
 
 		.skeleton-description-line {
-			height: 18px;
-			width: 65%;
+			height: 18px; width: 65%;
 			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 4px;
+			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
 		}
 
 		.skeleton-tag {
-			height: 24px;
-			width: 80px;
+			height: 24px; width: 80px;
 			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-			border-radius: 12px;
+			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 12px;
 		}
 
-		/* Skeleton container styles */
 		#loading-skeleton {
 			transition: opacity 0.3s ease-in-out;
 			width: 100%;
 		}
 
-		/* Base styles for the grid container and items */
 		#grid-container {
 			position: relative;
 		}
@@ -941,32 +678,41 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			width: 100%;
 		}
 
-		/* 2-column layout for medium screens and up */
 		@media (min-width: 768px) {
-			.grid-item {
-				width: calc(50% - 8px);
-			}
-			.grid-sizer {
-				width: calc(50% - 8px);
-			}
+			.grid-item { width: calc(50% - 8px); }
+			.grid-sizer { width: calc(50% - 8px); }
 		}
 
-		/* New project card — fixed dimensions to prevent hover shift */
-		.new-project-link {
-			display: block;
-			border: 2px solid transparent;
-			border-radius: inherit;
-		}
-
+		/* New project card — SVG border replaces CSS border entirely */
 		.new-project-card {
-			border: 2px dashed #666666;
-			transition: background-color 0.3s, border-color 0.3s;
+			position: relative;
+			border: 2px solid transparent;
+			transition: background-color 0.3s;
+		}
 
-			&:hover,
-			&:focus,
-			&:active {
-				border-color: transparent;
-			}
+		/* Stretched link pattern: title link covers the whole card */
+		.project-card {
+			position: relative;
+		}
+
+		.stretched-link::after {
+			content: "";
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			z-index: 1;
+		}
+
+		/* GitHub tag sits above the stretched link */
+		.github-tag {
+			position: relative;
+			z-index: 2;
+			transition: background-color 0.15s;
+		}
+		.github-tag:hover {
+			background-color: #e0e0e0 !important;
 		}
 
 		/* Hover effects for work items */
@@ -987,15 +733,11 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			opacity: 1;
 		}
 
-		/* GitHub tag hover */
-		.github-tag {
-			transition: background-color 0.15s;
+		/* Link styling */
+		.stretched-link {
+			color: inherit;
+			text-decoration: none;
 		}
-		.github-tag:hover {
-			background-color: #e0e0e0 !important;
-		}
-
-		/* Remove underline from all link cards */
 		a.block {
 			text-decoration: none;
 		}

@@ -201,8 +201,8 @@ export const codeblockTheme = EditorView.theme({
         '0%': { transform: 'rotate(0deg)' },
         '100%': { transform: 'rotate(360deg)' },
     },
-    // Settings cog + LSP log button in toolbar (far right)
-    '.cm-toolbar-settings-cog, .cm-toolbar-lsp-log': {
+    // LSP log button in toolbar (far right)
+    '.cm-toolbar-lsp-log': {
         border: 'none',
         background: 'transparent',
         color: 'var(--cm-toolbar-color)',
@@ -211,10 +211,6 @@ export const codeblockTheme = EditorView.theme({
         fontSize: FS_875,
         lineHeight: 'inherit',
         flexShrink: '0',
-        transition: 'transform 0.25s ease',
-    },
-    '.cm-toolbar-settings-cog.cm-cog-active': {
-        transform: 'rotate(90deg)',
     },
     // Settings / log overlay — anchored at top, grows downward
     '.cm-settings-overlay': {
