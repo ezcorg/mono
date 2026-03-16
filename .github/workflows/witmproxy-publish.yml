@@ -41,7 +41,6 @@ jobs:
         with:
           workspaces: |
             . -> target
-            src/apps/wasmtime -> src/apps/wasmtime/target
 
       - name: Install system dependencies
         run: |
@@ -82,7 +81,6 @@ jobs:
         with:
           workspaces: |
             . -> target
-            src/apps/wasmtime -> src/apps/wasmtime/target
 
       - name: Install system dependencies
         run: |
@@ -196,7 +194,6 @@ jobs:
           key: release-${{ matrix.target }}
           workspaces: |
             . -> target
-            src/apps/wasmtime -> src/apps/wasmtime/target
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
