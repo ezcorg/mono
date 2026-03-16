@@ -710,7 +710,7 @@ impl CertificateAuthority {
                             .map(PathBuf::from)
                     })
             })
-            .or_else(|| dirs::home_dir())
+            .or_else(dirs::home_dir)
     }
 
     async fn install_windows(&self, cert_path: &Path) -> Result<()> {

@@ -124,11 +124,10 @@ async fn fetch_latest_version(
             if entry.yanked {
                 continue;
             }
-            if let Ok(ver) = entry.vers.parse::<semver::Version>() {
-                if max_version.as_ref().is_none_or(|m| ver > *m) {
+            if let Ok(ver) = entry.vers.parse::<semver::Version>()
+                && max_version.as_ref().is_none_or(|m| ver > *m) {
                     max_version = Some(ver);
                 }
-            }
         }
     }
 
@@ -149,8 +148,8 @@ pub async fn check_for_update_cached(force: bool) -> Result<Option<semver::Versi
     let cache = read_cache();
 
     // If cache is fresh and not forced, use it directly
-    if !force {
-        if let Some(ref c) = cache {
+    if !force
+        && let Some(ref c) = cache {
             let age = chrono::Utc::now()
                 .signed_duration_since(c.checked_at)
                 .num_seconds();
@@ -162,7 +161,6 @@ pub async fn check_for_update_cached(force: bool) -> Result<Option<semver::Versi
                 return Ok(None);
             }
         }
-    }
 
     // Fetch from sparse index (may 304 when nothing changed)
     let result = fetch_latest_version(cache.as_ref()).await?;

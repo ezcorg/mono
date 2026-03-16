@@ -278,7 +278,7 @@ impl ServiceHandler {
                                 .map(PathBuf::from)
                         })
                 })
-                .or_else(|| dirs::home_dir());
+                .or_else(dirs::home_dir);
             home.map(|h| h.join(".witmproxy/config.toml"))
                 .unwrap_or_default()
         };

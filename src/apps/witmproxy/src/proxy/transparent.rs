@@ -112,11 +112,10 @@ impl TransparentProxy {
                                         plugin_registry,
                                         upstream,
                                         tenant_ctx,
-                                    ).await {
-                                        if !is_closed(&e) {
+                                    ).await
+                                        && !is_closed(&e) {
                                             debug!("Transparent connection error from {}: {}", peer, e);
                                         }
-                                    }
                                 });
                             }
                             Err(e) => error!("Transparent accept error: {}", e),
@@ -156,11 +155,7 @@ pub fn extract_sni_from_client_hello(buf: &[u8]) -> Option<String> {
     if handshake.len() < 4 {
         return None;
     }
-    let hs_len =
-        ((handshake[1] as usize) << 16) | ((handshake[2] as usize) << 8) | (handshake[3] as usize);
-
     let ch = &handshake[4..];
-    if ch.len() < hs_len.min(ch.len()) {}
 
     // ClientHello: version (2) + random (32) + session_id (1+N) + cipher_suites (2+N) + compression (1+N) + extensions
     if ch.len() < 34 {
@@ -287,11 +282,10 @@ async fn handle_transparent_connection(
             // Plugin(s) want this connection — run the full MITM pipeline
             info!("Transparent: intercepting {} (plugins matched)", hostname);
             let authority = format!("{}:443", hostname);
-            if let Err(e) = run_tls_mitm(upstream, stream, authority, ca, plugin_registry).await {
-                if !is_closed(&e) {
+            if let Err(e) = run_tls_mitm(upstream, stream, authority, ca, plugin_registry).await
+                && !is_closed(&e) {
                     debug!("Transparent MITM error for {}: {}", hostname, e);
                 }
-            }
         } else {
             // No plugins care — raw TCP forward to the real server
             info!(

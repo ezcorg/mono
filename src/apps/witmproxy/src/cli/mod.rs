@@ -187,15 +187,14 @@ impl Cli {
         };
 
         // Show update warning if available
-        if let Some(handle) = check_update {
-            if let Ok(Ok(Ok(Some(latest)))) = handle.await {
+        if let Some(handle) = check_update
+            && let Ok(Ok(Ok(Some(latest)))) = handle.await {
                 eprintln!(
                     "\nA new version of witm is available: {} -> {}\nRun 'witm update' to install it.",
                     update::current_version(),
                     latest
                 );
             }
-        }
 
         result
     }

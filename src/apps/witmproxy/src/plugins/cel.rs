@@ -396,7 +396,7 @@ impl CelTime {
     ///
     /// Example CEL: `time.is_day_of_week(1)` (true on Mondays)
     pub fn is_day_of_week(&self, weekday: i64) -> bool {
-        weekday >= 0 && weekday <= 6 && self.day_of_week == weekday as u32
+        (0..=6).contains(&weekday) && self.day_of_week == weekday as u32
     }
 
     /// Returns whether the current hour is between `hour_start` and `hour_end` (inclusive).
@@ -404,7 +404,7 @@ impl CelTime {
     ///
     /// Example CEL: `time.is_between_hours(9, 17)` (true from 9:00 to 17:59)
     pub fn is_between_hours(&self, hour_start: i64, hour_end: i64) -> bool {
-        if hour_start < 0 || hour_start > 23 || hour_end < 0 || hour_end > 23 {
+        if !(0..=23).contains(&hour_start) || !(0..=23).contains(&hour_end) {
             return false;
         }
         let h = self.hour as i64;
