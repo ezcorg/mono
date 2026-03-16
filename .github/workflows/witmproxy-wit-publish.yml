@@ -34,7 +34,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install wkg (wasm-pkg-tools)
-        run: cargo install wasm-pkg-tools
+        run: cargo install wkg@0.13.0
 
       - name: Make publish script executable
         run: chmod +x src/scripts/publish-wit.sh
