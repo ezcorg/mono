@@ -32,8 +32,10 @@ const languageSupportMap = {
         return less();
     },
     json: async () => {
-        const { json } = await import('@codemirror/lang-json');
-        return json();
+        // Use JavaScript mode for JSON files — it handles both strict JSON
+        // and lenient JSON-like syntax (unquoted keys, trailing commas, comments)
+        const { javascript } = await import('@codemirror/lang-javascript');
+        return javascript();
     },
     xml: async () => {
         const { xml } = await import('@codemirror/lang-xml');
@@ -193,6 +195,7 @@ export const extOrLanguageToLanguageId = {
     yaml: 'yaml',
     yml: 'yaml',
     xml: 'xml',
+    svg: 'xml',
     markdown: 'markdown',
     md: 'markdown',
     toml: 'toml',
@@ -248,6 +251,7 @@ export const extOrLanguageToLanguageId = {
     yaml: 'yaml',
     yml: 'yaml',
     xml: 'xml',
+    svg: 'xml',
     markdown: 'markdown',
     md: 'markdown',
     toml: 'toml',

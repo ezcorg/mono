@@ -33,12 +33,15 @@ import Navbar from "../../components/Navbar.astro";
 				"@joinezco/codeblock"
 			);
 			const container = document.getElementById("codeblock-mount")!;
-
 			const index = await SearchIndex.get(fs, ".codeblock/index.json");
+
+			// Pass content directly to avoid VFS readFile timing issues
+			const exampleFile = files.find(([p]) => p === "example.ts");
 			createCodeblock({
 				parent: container,
 				fs,
-				filepath: "example.ts",
+				content: exampleFile ? exampleFile[1] : "",
+				language: "ts",
 				index,
 				cwd: "/",
 				dark: true,

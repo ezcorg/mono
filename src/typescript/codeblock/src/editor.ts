@@ -16,7 +16,7 @@ import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField } from "./panels/toolbar";
-import { settingsField } from "./panels/footer";
+import { settingsField, updateSettingsEffect, resolveThemeDark } from "./panels/footer";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
@@ -57,6 +57,29 @@ class FileChangeBus {
 }
 
 export const fileChangeBus = new FileChangeBus();
+
+// --- Settings propagation across editors on the same page ---
+type SettingsChangeCallback = (settings: Partial<import("./panels/footer").EditorSettings>) => void;
+
+class SettingsChangeBus {
+    private listeners = new Set<{ view: EditorView; callback: SettingsChangeCallback }>();
+
+    subscribe(view: EditorView, callback: SettingsChangeCallback): () => void {
+        const entry = { view, callback };
+        this.listeners.add(entry);
+        return () => this.listeners.delete(entry);
+    }
+
+    notify(settings: Partial<import("./panels/footer").EditorSettings>, sourceView: EditorView) {
+        for (const entry of this.listeners) {
+            if (entry.view !== sourceView) {
+                entry.callback(settings);
+            }
+        }
+    }
+}
+
+export const settingsChangeBus = new SettingsChangeBus();
 
 export type CodeblockConfig = {
     fs: VfsInterface;
@@ -208,8 +231,27 @@ const codeblockView = ViewPlugin.define((view) => {
 
     // Flag to suppress save when receiving external file updates
     let receivingExternalUpdate = false;
+    // Flag to suppress re-broadcast when receiving settings from another editor
+    let receivingExternalSettings = false;
     // Subscription cleanup for file change notifications
     let unsubscribeFileChanges: (() => void) | null = null;
+
+    // Subscribe to settings changes from other editors
+    const unsubscribeSettings = settingsChangeBus.subscribe(view, (partial) => {
+        receivingExternalSettings = true;
+        try {
+            const effects: StateEffect<any>[] = [updateSettingsEffect.of(partial)];
+            if ('theme' in partial && partial.theme) {
+                effects.push(setThemeEffect.of({ dark: resolveThemeDark(partial.theme) }));
+            }
+            if ('lineWrap' in partial) {
+                effects.push(lineWrappingCompartment.reconfigure(partial.lineWrap ? EditorView.lineWrapping : []));
+            }
+            view.dispatch({ effects });
+        } finally {
+            receivingExternalSettings = false;
+        }
+    });
 
     // Debounced save
     const save = debounce(async () => {
@@ -255,6 +297,103 @@ const codeblockView = ViewPlugin.define((view) => {
     let opening: string | null = null;
     // Track the path of the currently loaded file for correct save-on-switch
     let activePath: string | null = view.state.field(currentFileField).path;
+    // Preview element for images/SVGs
+    let previewEl: HTMLElement | null = null;
+
+    const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+    const SVG_EXTENSION = 'svg';
+
+    function removePreview() {
+        if (previewEl) {
+            previewEl.remove();
+            previewEl = null;
+        }
+        // Restore editor visibility
+        const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
+        if (scroller) scroller.style.display = '';
+    }
+
+    function showImagePreview(content: string) {
+        removePreview();
+        previewEl = document.createElement('div');
+        previewEl.className = 'cm-image-preview';
+        previewEl.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;min-height:200px;overflow:auto;background:var(--cm-background, #1e1e1e);';
+
+        const img = document.createElement('img');
+        // Content is expected to be a data URL (from importFiles) or a URL
+        if (content.startsWith('data:') || content.startsWith('http') || content.startsWith('blob:')) {
+            img.src = content;
+        } else {
+            // Not a recognized image format in the VFS
+            const msg = document.createElement('div');
+            msg.style.cssText = 'color:var(--cm-toolbar-color, #ccc);text-align:center;';
+            msg.textContent = 'Image preview unavailable (import from disk to view)';
+            previewEl.appendChild(msg);
+            view.dom.appendChild(previewEl);
+            return;
+        }
+        img.style.maxWidth = '100%';
+        img.style.maxHeight = '400px';
+        img.style.objectFit = 'contain';
+        previewEl.appendChild(img);
+
+        // Hide the code editing area entirely for images
+        const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
+        if (scroller) scroller.style.display = 'none';
+
+        view.dom.appendChild(previewEl);
+    }
+
+    function showSvgPreview(content: string) {
+        removePreview();
+        previewEl = document.createElement('div');
+        previewEl.className = 'cm-svg-preview';
+        previewEl.style.cssText = 'border-top:1px solid var(--cm-tooltip-border, #333);padding:16px;display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--cm-background, #1e1e1e);min-height:100px;';
+
+        // Use DOMParser to safely render the SVG
+        try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(content, 'image/svg+xml');
+            const svgEl = doc.documentElement;
+            if (svgEl.tagName === 'svg') {
+                svgEl.style.maxWidth = '100%';
+                svgEl.style.maxHeight = '300px';
+                svgEl.removeAttribute('width');
+                svgEl.removeAttribute('height');
+                previewEl.appendChild(document.importNode(svgEl, true));
+            } else {
+                // Parse error or not an SVG
+                const msg = document.createElement('div');
+                msg.style.color = 'var(--cm-toolbar-color, #ccc)';
+                msg.textContent = 'SVG preview unavailable (invalid SVG)';
+                previewEl.appendChild(msg);
+            }
+        } catch {
+            const msg = document.createElement('div');
+            msg.style.color = 'var(--cm-toolbar-color, #ccc)';
+            msg.textContent = 'SVG preview error';
+            previewEl.appendChild(msg);
+        }
+
+        view.dom.appendChild(previewEl);
+    }
+
+    function updateSvgPreview() {
+        if (!previewEl || !previewEl.classList.contains('cm-svg-preview')) return;
+        const content = view.state.doc.toString();
+        try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(content, 'image/svg+xml');
+            const svgEl = doc.documentElement;
+            if (svgEl.tagName === 'svg') {
+                svgEl.style.maxWidth = '100%';
+                svgEl.style.maxHeight = '300px';
+                svgEl.removeAttribute('width');
+                svgEl.removeAttribute('height');
+                previewEl.replaceChildren(document.importNode(svgEl, true));
+            }
+        } catch { /* ignore parse errors during editing */ }
+    }
 
     async function setLanguageSupport(language: ExtensionOrLanguage) {
         if (!language) return;
@@ -343,14 +482,42 @@ const codeblockView = ViewPlugin.define((view) => {
             }
 
             activePath = path;
-            safeDispatch(view, {
-                changes: { from: 0, to: view.state.doc.length, insert: content },
-                effects: [
-                    indentationCompartment.reconfigure(indentUnit.of(unit)),
-                    fileLoadedEffect.of({ path, content, language: lang }),
-                    languageServerCompartment.reconfigure(lsp ? [lsp] : []),
-                ]
-            });
+
+            // Check for image/SVG files
+            const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
+            const isSvg = ext === SVG_EXTENSION;
+
+            if (isRasterImage) {
+                // Raster image: show preview, hide editor content
+                safeDispatch(view, {
+                    changes: { from: 0, to: view.state.doc.length, insert: content },
+                    effects: [
+                        fileLoadedEffect.of({ path, content, language: null }),
+                        readOnlyCompartment.reconfigure(EditorState.readOnly.of(true)),
+                    ]
+                });
+                showImagePreview(content);
+                // Hide the scroller since we're showing a preview
+                const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
+                if (scroller) scroller.style.display = 'none';
+            } else {
+                // Remove any existing preview
+                removePreview();
+
+                safeDispatch(view, {
+                    changes: { from: 0, to: view.state.doc.length, insert: content },
+                    effects: [
+                        indentationCompartment.reconfigure(indentUnit.of(unit)),
+                        fileLoadedEffect.of({ path, content, language: lang }),
+                        languageServerCompartment.reconfigure(lsp ? [lsp] : []),
+                    ]
+                });
+
+                // SVG: show live preview below the editor
+                if (isSvg) {
+                    showSvgPreview(content);
+                }
+            }
 
             // Subscribe to changes from other views of the same file
             subscribeToFileChanges(path);
@@ -394,6 +561,27 @@ const codeblockView = ViewPlugin.define((view) => {
 
             if (u.docChanged && !receivingExternalUpdate && u.state.field(settingsField).autosave) save();
 
+            // Live SVG preview update
+            if (u.docChanged && previewEl?.classList.contains('cm-svg-preview')) {
+                updateSvgPreview();
+            }
+
+            // Broadcast settings changes to other editors (unless we received them externally)
+            const prevSettings = u.startState.field(settingsField);
+            const nextSettings = u.state.field(settingsField);
+            if (prevSettings !== nextSettings && !receivingExternalSettings) {
+                // Compute the diff
+                const diff: Record<string, any> = {};
+                for (const key of Object.keys(nextSettings) as (keyof typeof nextSettings)[]) {
+                    if (prevSettings[key] !== nextSettings[key]) {
+                        diff[key] = nextSettings[key];
+                    }
+                }
+                if (Object.keys(diff).length > 0) {
+                    settingsChangeBus.notify(diff, view);
+                }
+            }
+
             // If fs changed via facet reconfig, refresh handle references
             const newFs = u.state.facet(CodeblockFacet).fs;
             if (fs !== newFs) fs = newFs;
@@ -403,6 +591,8 @@ const codeblockView = ViewPlugin.define((view) => {
                 unsubscribeFileChanges();
                 unsubscribeFileChanges = null;
             }
+            unsubscribeSettings();
+            removePreview();
             save.cancel();
         }
     };

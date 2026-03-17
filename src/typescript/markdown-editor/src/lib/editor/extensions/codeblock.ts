@@ -203,7 +203,7 @@ export const ExtendedCodeblock = Node.create({
             textblockTypeInputRule({
                 find: /^```$/,
                 type: this.type,
-                getAttributes: () => ({ language: 'markdown' }),
+                getAttributes: () => ({ language: '' }),
             }),
         ];
     },
@@ -270,6 +270,16 @@ export const ExtendedCodeblock = Node.create({
                 if (!main.empty) return false
                 if (unit == "line") main = state.doc.lineAt(main.head)
                 if (dir < 0 ? main.from > 0 : main.to < state.doc.length) return false
+
+                // ArrowUp from first line: focus toolbar instead of escaping to ProseMirror
+                if (dir < 0) {
+                    const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                    if (toolbarInput) {
+                        toolbarInput.focus();
+                        return true;
+                    }
+                }
+
                 // @ts-ignore
                 let targetPos = getPos() + (dir < 0 ? 0 : node.nodeSize)
                 let selection = Selection.near(view.state.doc.resolve(targetPos), dir)
@@ -343,6 +353,27 @@ export const ExtendedCodeblock = Node.create({
             // This ensures proper stacking order based on DOM position
             reassignZIndexes();
 
+            // Handle ArrowUp from toolbar to escape to ProseMirror above
+            dom.addEventListener('keydown', (e) => {
+                const target = e.target as HTMLElement;
+                if (target.classList.contains('cm-toolbar-input') && e.key === 'ArrowUp') {
+                    // Check if the dropdown is open — if so, let toolbar handle it
+                    const dropdown = dom.querySelector('.cm-search-results');
+                    if (dropdown && dropdown.children.length > 0) return;
+
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // @ts-ignore
+                    const pos = getPos();
+                    if (pos !== undefined) {
+                        let selection = Selection.near(view.state.doc.resolve(pos), -1);
+                        let tr = view.state.tr.setSelection(selection).scrollIntoView();
+                        view.dispatch(tr);
+                        view.focus();
+                    }
+                }
+            }, true);
+
             // Track whether this codeblock was created empty (e.g. via ``` input rule)
             const wasCreatedEmpty = !node.textContent && !node.attrs.file;
 
@@ -389,6 +420,15 @@ export const ExtendedCodeblock = Node.create({
             return {
                 dom,
                 setSelection(anchor, head) {
+                    // If the codeblock wasn't focused (entering from outside),
+                    // direct to the toolbar input for keyboard navigation
+                    if (!cm.hasFocus) {
+                        const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                        if (toolbarInput) {
+                            toolbarInput.focus();
+                            return;
+                        }
+                    }
                     cm.focus()
                     updating = true
                     cm.dispatch({ selection: { anchor, head } })

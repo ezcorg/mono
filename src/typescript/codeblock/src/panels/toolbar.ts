@@ -236,13 +236,33 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
     return commands;
 }
 
+const BINARY_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+
+function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
 async function importFiles(files: FileList, view: EditorView) {
     const { fs, index } = view.state.facet(CodeblockFacet);
     for (const file of files) {
         const path = file.webkitRelativePath || file.name;
         const dir = path.substring(0, path.lastIndexOf('/'));
         if (dir) await fs.mkdir(dir, { recursive: true });
-        await fs.writeFile(path, await file.text());
+
+        // Store binary images as data URLs so they can be rendered
+        const ext = path.split('.').pop()?.toLowerCase() || '';
+        if (BINARY_IMAGE_EXTS.has(ext)) {
+            const dataUrl = await fileToDataUrl(file);
+            await fs.writeFile(path, dataUrl);
+        } else {
+            await fs.writeFile(path, await file.text());
+        }
+
         if (index) index.add(path);
         LSP.notifyFileChanged(path, FileChangeType.Created);
     }
@@ -413,6 +433,16 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else {
             view.dom.style.removeProperty('--cm-font-family');
         }
+        // Max visible lines: set max-height on the scroller
+        const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
+        if (scroller) {
+            if (settings.maxVisibleLines > 0) {
+                const lineHeight = settings.fontSize * 1.5; // approximate
+                scroller.style.maxHeight = `${settings.maxVisibleLines * lineHeight}px`;
+            } else {
+                scroller.style.maxHeight = '';
+            }
+        }
     }
     applySettings();
 
@@ -514,6 +544,15 @@ export const toolbarPanel = (view: EditorView): Panel => {
             currentValue: String(settings.lspLogEnabled),
         });
 
+        // Max visible lines: input
+        entries.push({
+            id: `Max lines: ${settings.maxVisibleLines || 'unlimited'}`,
+            settingKey: 'maxVisibleLines',
+            type: 'settings-input',
+            icon: '\u2195', // ↕
+            currentValue: String(settings.maxVisibleLines || ''),
+        });
+
         // Filter entries
         if (filter) {
             const lowerFilter = filter.toLowerCase();
@@ -596,6 +635,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
             const size = Number(rawValue);
             if (!isNaN(size) && size >= 1 && size <= 128) {
                 safeDispatch(view, { effects: [updateSettingsEffect.of({ fontSize: size })] });
+            }
+        } else if (key === 'maxVisibleLines') {
+            const lines = rawValue === '' ? 0 : Number(rawValue);
+            if (!isNaN(lines) && lines >= 0) {
+                safeDispatch(view, { effects: [updateSettingsEffect.of({ maxVisibleLines: Math.floor(lines) })] });
             }
         }
 
@@ -1168,7 +1212,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
             // Apply settings when they change
             const prevSettings = update.startState.field(settingsField);
             const nextSettings = update.state.field(settingsField);
-            if (prevSettings.fontSize !== nextSettings.fontSize || prevSettings.fontFamily !== nextSettings.fontFamily) {
+            if (prevSettings.fontSize !== nextSettings.fontSize || prevSettings.fontFamily !== nextSettings.fontFamily || prevSettings.maxVisibleLines !== nextSettings.maxVisibleLines) {
                 applySettings();
             }
             if (prevSettings.lspLogEnabled !== nextSettings.lspLogEnabled) {

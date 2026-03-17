@@ -34,6 +34,7 @@ import Navbar from "../../components/Navbar.astro";
 
 			const editor = createEditor({
 				element: container,
+				autofocus: false,
 				fs: {
 					fs,
 					filepath: "hello.md",
@@ -66,6 +67,14 @@ import Navbar from "../../components/Navbar.astro";
 
 		#editor-mount :global(.ProseMirror) {
 			flex: 1;
+		}
+
+		/* Tighten margins for embedded components */
+		#editor-mount :global(.cm-editor) {
+			margin: 1rem 0;
+		}
+		#editor-mount :global(table) {
+			margin: 1rem 0;
 		}
 	</style>
 </Layout>

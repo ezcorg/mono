@@ -11,6 +11,7 @@ export interface EditorSettings {
     lspLogEnabled: boolean;
     agentUrl: string;
     terminalEnabled: boolean;
+    maxVisibleLines: number; // 0 = unlimited
 }
 
 const defaultSettings: EditorSettings = {
@@ -22,6 +23,7 @@ const defaultSettings: EditorSettings = {
     lspLogEnabled: false,
     agentUrl: '',
     terminalEnabled: false,
+    maxVisibleLines: 0,
 };
 
 export const updateSettingsEffect = StateEffect.define<Partial<EditorSettings>>();

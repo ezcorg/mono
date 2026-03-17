@@ -1,7 +1,41 @@
 export const files = [
-	['example.ts', `export const greet = (name: string) => {
-	return \`Hello, \${name}!\`
-};`],
+	['example.ts', `// Type inference and generics
+interface User {
+	name: string;
+	email: string;
+	role: "admin" | "editor" | "viewer";
+}
+
+function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+	return obj[key];
+}
+
+const user: User = {
+	name: "Alice",
+	email: "alice@example.com",
+	role: "admin",
+};
+
+// Hover over 'role' to see inferred type
+const role = getProperty(user, "role");
+
+// Autocomplete works after the dot
+// user.
+
+// Async patterns
+async function fetchUsers(): Promise<User[]> {
+	return [user];
+}
+
+// Mapped types
+type ReadonlyUser = Readonly<User>;
+type PartialUser = Partial<User>;
+
+// Template literal types
+type EventName = \`on\$\{Capitalize<string>}\`;
+
+export { user, fetchUsers, type ReadonlyUser, type PartialUser };
+`],
 	['hello.md', `# \`@joinezco/markdown-editor\`
 
 ## Usage
