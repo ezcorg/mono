@@ -583,7 +583,12 @@ const codeblockView = ViewPlugin.define((view) => {
         update(u: ViewUpdate) {
             // React to explicit openFileEffect requests
             for (let e of u.transactions.flatMap(t => t.effects)) {
-                if (e.is(openFileEffect)) queueMicrotask(() => handleOpen(e.value.path));
+                if (e.is(openFileEffect)) {
+                    // Cancel debounced save immediately to prevent it from writing
+                    // the old document content to the wrong (new) file path
+                    save.cancel();
+                    queueMicrotask(() => handleOpen(e.value.path));
+                }
                 if (e.is(setThemeEffect)) {
                     const dark = e.value.dark;
 

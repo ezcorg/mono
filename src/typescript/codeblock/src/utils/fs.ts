@@ -124,6 +124,14 @@ export namespace Vfs {
                     type: toVolarFileType(filestat.filetype),
                 };
             },
+
+            async unlink(path: string): Promise<void> {
+                const abs = ensureAbs(path);
+                const res = await jswasiFs.removeEntry(abs, false);
+                if (res !== WASI_ESUCCESS) {
+                    throw new Error(`unlink failed (${res}) for ${abs}`);
+                }
+            },
         } as VfsInterface;
     }
 
@@ -198,7 +206,11 @@ export namespace Vfs {
                 } catch (err) {
                     return null;
                 }
-            }
+            },
+
+            async unlink(path: string): Promise<void> {
+                await fs.promises.unlink(path);
+            },
         }
     }
 
@@ -272,7 +284,11 @@ export namespace Vfs {
                 } catch (err) {
                     return null;
                 }
-            }
+            },
+
+            async unlink(path: string): Promise<void> {
+                await fs.unlink(path);
+            },
         }
     }
 

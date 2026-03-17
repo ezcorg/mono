@@ -1,7 +1,7 @@
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
-import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment } from "../editor";
+import { CodeblockFacet, openFileEffect, fileLoadedEffect, currentFileField, setThemeEffect, lineWrappingCompartment } from "../editor";
 import { extOrLanguageToLanguageId } from "../lsps";
 import { LSP, LspLog, FileChangeType } from "../utils/lsp";
 import { Seti } from "@m234/nerd-fonts/fs";
@@ -97,6 +97,12 @@ export interface SettingsMode {
     active: boolean;
     filter: string;
     editing: string | null; // settingKey currently being edited, or null
+}
+
+// Delete confirmation mode
+export interface DeleteMode {
+    active: boolean;
+    filePath: string;
 }
 
 // Search results state - now handles both commands and search results
@@ -410,6 +416,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     let namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
     let browseMode: BrowseMode = { active: false, currentPath: '/', filter: '' };
     let settingsMode: SettingsMode = { active: false, filter: '', editing: null };
+    let deleteMode: DeleteMode = { active: false, filePath: '' };
     let loadingStartTime: number | null = null;
 
     // System theme media query listener
@@ -652,6 +659,63 @@ export const toolbarPanel = (view: EditorView): Panel => {
     function cancelSettingsEdit() {
         settingsMode.editing = null;
         input.value = 'settings/' + settingsMode.filter;
+    }
+
+    // --- Delete mode functions ---
+    function enterDeleteMode(filePath: string) {
+        deleteMode = { active: true, filePath };
+        stateIcon.textContent = '\u2717'; // ✗
+        input.value = '';
+        input.placeholder = `Delete "${filePath}"? (Enter to confirm, Esc to cancel)`;
+        input.focus();
+        safeDispatch(view, { effects: setSearchResults.of([]) });
+    }
+
+    function exitDeleteMode() {
+        deleteMode = { active: false, filePath: '' };
+        updateStateIcon();
+        input.placeholder = '';
+    }
+
+    async function confirmDelete() {
+        if (!deleteMode.active) return;
+        const path = deleteMode.filePath;
+        const { fs, index } = view.state.facet(CodeblockFacet);
+
+        try {
+            const currentFile = view.state.field(currentFileField);
+            const wasOpen = currentFile.path === path;
+
+            // Delete from VFS
+            await fs.unlink(path).catch((e) => console.warn('VFS unlink failed:', e));
+
+            // Remove from search index
+            if (index) {
+                try { index.index.discard(path); } catch { /* not in index */ }
+                if (index.savePath) index.save(fs, index.savePath);
+            }
+
+            // Notify LSP
+            LSP.notifyFileChanged(path, FileChangeType.Deleted);
+
+            exitDeleteMode();
+            safeDispatch(view, { effects: setSearchResults.of([]) });
+            resetInputToCurrentFile();
+
+            // If the deleted file was currently open, clear the editor
+            if (wasOpen) {
+                safeDispatch(view, {
+                    changes: { from: 0, to: view.state.doc.length, insert: '' },
+                    effects: [
+                        fileLoadedEffect.of({ path: '', content: '', language: null }),
+                    ]
+                });
+                input.value = '';
+            }
+        } catch (e) {
+            console.error('Failed to delete file:', e);
+            exitDeleteMode();
+        }
     }
 
     const renderItem = (result: SearchResult, i: number) => {
@@ -1023,6 +1087,12 @@ export const toolbarPanel = (view: EditorView): Panel => {
         const query = (event.target as HTMLInputElement).value;
         selectedIndex = 0;
 
+        // Block input during delete confirmation
+        if (deleteMode.active) {
+            input.value = '';
+            return;
+        }
+
         // If in naming mode, don't show search results
         if (namingMode.active) {
             return;
@@ -1071,6 +1141,21 @@ export const toolbarPanel = (view: EditorView): Panel => {
     });
 
     input.addEventListener("keydown", (event) => {
+        // Delete confirmation mode
+        if (deleteMode.active) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                confirmDelete();
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                exitDeleteMode();
+                resetInputToCurrentFile();
+            }
+            // Block all other keys in delete mode
+            event.preventDefault();
+            return;
+        }
+
         if (namingMode.active) {
             // Handle naming mode
             if (event.key === "Enter") {
@@ -1161,6 +1246,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
                     input.value = displayPath;
                     refreshBrowseEntries();
                 }
+            } else if (event.key === "Delete" && results.length && selectedIndex >= 0) {
+                // Delete a file from the browse dropdown
+                const result = results[selectedIndex];
+                if (isBrowseEntry(result) && result.type === 'browse-file') {
+                    event.preventDefault();
+                    exitBrowseMode();
+                    enterDeleteMode(result.fullPath);
+                }
             } else if (event.key === "Escape") {
                 event.preventDefault();
                 exitBrowseMode();
@@ -1191,6 +1284,13 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else if (event.key === "Enter" && results.length && selectedIndex >= 0) {
             event.preventDefault();
             selectResult(results[selectedIndex]);
+        } else if (event.key === "Delete" && results.length && selectedIndex >= 0) {
+            // Delete key on a highlighted file result → enter delete confirmation
+            const result = results[selectedIndex];
+            if (!isCommandResult(result) && !isBrowseEntry(result) && !isSettingsEntry(result)) {
+                event.preventDefault();
+                enterDeleteMode(result.id);
+            }
         } else if (event.key === "Escape") {
             event.preventDefault();
             safeDispatch(view, { effects: setSearchResults.of([]) });

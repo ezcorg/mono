@@ -12,20 +12,20 @@ async function init() {
 
     // Create editors with initial content (not filepath) to avoid VFS read timing issues
     const viewA = createCodeblock({
-        parent: parentA, fs, content: 'hello world', language: 'txt', toolbar: true, index, cwd: '/',
+        parent: parentA, fs, content: 'hello world', language: 'md', toolbar: true, index, cwd: '/',
     });
 
     const viewB = createCodeblock({
-        parent: parentB, fs, content: 'hello world', language: 'txt', toolbar: true, index, cwd: '/',
+        parent: parentB, fs, content: 'hello world', language: 'md', toolbar: true, index, cwd: '/',
     });
 
     // Manually subscribe both to the same file for sync testing
-    fileChangeBus.subscribe('shared.txt', viewA, (content) => {
+    fileChangeBus.subscribe('shared.md', viewA, (content) => {
         if (viewA.state.doc.toString() !== content) {
             viewA.dispatch({ changes: { from: 0, to: viewA.state.doc.length, insert: content } });
         }
     });
-    fileChangeBus.subscribe('shared.txt', viewB, (content) => {
+    fileChangeBus.subscribe('shared.md', viewB, (content) => {
         if (viewB.state.doc.toString() !== content) {
             viewB.dispatch({ changes: { from: 0, to: viewB.state.doc.length, insert: content } });
         }
