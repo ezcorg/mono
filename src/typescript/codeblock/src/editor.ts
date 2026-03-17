@@ -10,7 +10,7 @@ import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, Highlig
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { VfsInterface } from "./types";
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
-import { lintKeymap } from "@codemirror/lint";
+import { lintKeymap, setDiagnostics } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
 import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
@@ -295,22 +295,51 @@ const codeblockView = ViewPlugin.define((view) => {
 
     // Guard to prevent duplicate opens for same path while loading
     let opening: string | null = null;
-    // Track the path of the currently loaded file for correct save-on-switch
-    let activePath: string | null = view.state.field(currentFileField).path;
+    // Track the path of the currently loaded file for correct save-on-switch.
+    // Only set AFTER a file has actually been loaded (not during initial loading state).
+    const initialFile = view.state.field(currentFileField);
+    let activePath: string | null = (initialFile.loading) ? null : initialFile.path;
     // Preview element for images/SVGs
     let previewEl: HTMLElement | null = null;
+    let svgToggleBtn: HTMLElement | null = null;
+    let svgViewMode: 'preview' | 'source' = 'preview';
 
     const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
     const SVG_EXTENSION = 'svg';
+
+    function hideScroller() {
+        const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
+        if (scroller) {
+            // CodeMirror sets `display: flex !important` on .cm-scroller,
+            // so we can't use display:none. Hide via collapse instead.
+            scroller.style.visibility = 'hidden';
+            scroller.style.height = '0';
+            scroller.style.overflow = 'hidden';
+            scroller.style.position = 'absolute';
+        }
+    }
+
+    function showScroller() {
+        const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
+        if (scroller) {
+            scroller.style.visibility = '';
+            scroller.style.height = '';
+            scroller.style.overflow = '';
+            scroller.style.position = '';
+        }
+    }
 
     function removePreview() {
         if (previewEl) {
             previewEl.remove();
             previewEl = null;
         }
-        // Restore editor visibility
-        const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
-        if (scroller) scroller.style.display = '';
+        if (svgToggleBtn) {
+            svgToggleBtn.remove();
+            svgToggleBtn = null;
+        }
+        svgViewMode = 'preview';
+        showScroller();
     }
 
     function showImagePreview(content: string) {
@@ -320,11 +349,9 @@ const codeblockView = ViewPlugin.define((view) => {
         previewEl.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;min-height:200px;overflow:auto;background:var(--cm-background, #1e1e1e);';
 
         const img = document.createElement('img');
-        // Content is expected to be a data URL (from importFiles) or a URL
         if (content.startsWith('data:') || content.startsWith('http') || content.startsWith('blob:')) {
             img.src = content;
         } else {
-            // Not a recognized image format in the VFS
             const msg = document.createElement('div');
             msg.style.cssText = 'color:var(--cm-toolbar-color, #ccc);text-align:center;';
             msg.textContent = 'Image preview unavailable (import from disk to view)';
@@ -337,20 +364,12 @@ const codeblockView = ViewPlugin.define((view) => {
         img.style.objectFit = 'contain';
         previewEl.appendChild(img);
 
-        // Hide the code editing area entirely for images
-        const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
-        if (scroller) scroller.style.display = 'none';
-
+        hideScroller();
         view.dom.appendChild(previewEl);
     }
 
-    function showSvgPreview(content: string) {
-        removePreview();
-        previewEl = document.createElement('div');
-        previewEl.className = 'cm-svg-preview';
-        previewEl.style.cssText = 'border-top:1px solid var(--cm-tooltip-border, #333);padding:16px;display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--cm-background, #1e1e1e);min-height:100px;';
-
-        // Use DOMParser to safely render the SVG
+    function renderSvgInto(container: HTMLElement, content: string) {
+        container.innerHTML = '';
         try {
             const parser = new DOMParser();
             const doc = parser.parseFromString(content, 'image/svg+xml');
@@ -360,39 +379,60 @@ const codeblockView = ViewPlugin.define((view) => {
                 svgEl.style.maxHeight = '300px';
                 svgEl.removeAttribute('width');
                 svgEl.removeAttribute('height');
-                previewEl.appendChild(document.importNode(svgEl, true));
+                container.appendChild(document.importNode(svgEl, true));
             } else {
-                // Parse error or not an SVG
-                const msg = document.createElement('div');
-                msg.style.color = 'var(--cm-toolbar-color, #ccc)';
-                msg.textContent = 'SVG preview unavailable (invalid SVG)';
-                previewEl.appendChild(msg);
+                container.textContent = 'Invalid SVG';
+                container.style.color = 'var(--cm-toolbar-color, #ccc)';
             }
         } catch {
-            const msg = document.createElement('div');
-            msg.style.color = 'var(--cm-toolbar-color, #ccc)';
-            msg.textContent = 'SVG preview error';
-            previewEl.appendChild(msg);
+            container.textContent = 'SVG parse error';
+            container.style.color = 'var(--cm-toolbar-color, #ccc)';
+        }
+    }
+
+    function showSvgView(content: string, mode: 'preview' | 'source') {
+        removePreview();
+        svgViewMode = mode;
+
+        // Create toggle button in the toolbar area
+        svgToggleBtn = document.createElement('button');
+        svgToggleBtn.className = 'cm-svg-toggle';
+        svgToggleBtn.style.cssText = 'border:none;background:transparent;color:var(--cm-toolbar-color, #ccc);cursor:pointer;padding:0 6px;font-size:inherit;line-height:inherit;flex-shrink:0;font-family:inherit;';
+        svgToggleBtn.textContent = mode === 'preview' ? '\u{1F4DD}' : '\u{1F5BC}\uFE0F'; // 📝 or 🖼️
+        svgToggleBtn.title = mode === 'preview' ? 'Edit source' : 'Show preview';
+        svgToggleBtn.addEventListener('click', () => {
+            const newMode = svgViewMode === 'preview' ? 'source' : 'preview';
+            showSvgView(view.state.doc.toString(), newMode);
+        });
+
+        // Insert toggle button before the LSP log button in the toolbar
+        const toolbar = view.dom.querySelector('.cm-toolbar-panel');
+        const lspLogBtn = view.dom.querySelector('.cm-toolbar-lsp-log');
+        if (toolbar && lspLogBtn) {
+            toolbar.insertBefore(svgToggleBtn, lspLogBtn);
+        } else if (toolbar) {
+            toolbar.appendChild(svgToggleBtn);
         }
 
+        previewEl = document.createElement('div');
+        previewEl.className = 'cm-svg-preview';
+
+        if (mode === 'preview') {
+            // Preview mode: hide editor, show rendered SVG
+            hideScroller();
+            previewEl.style.cssText = 'padding:16px;display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--cm-background, #1e1e1e);min-height:200px;';
+            renderSvgInto(previewEl, content);
+        } else {
+            // Source mode: show editor, hide preview
+            showScroller();
+            previewEl.style.display = 'none';
+        }
         view.dom.appendChild(previewEl);
     }
 
     function updateSvgPreview() {
-        if (!previewEl || !previewEl.classList.contains('cm-svg-preview')) return;
-        const content = view.state.doc.toString();
-        try {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(content, 'image/svg+xml');
-            const svgEl = doc.documentElement;
-            if (svgEl.tagName === 'svg') {
-                svgEl.style.maxWidth = '100%';
-                svgEl.style.maxHeight = '300px';
-                svgEl.removeAttribute('width');
-                svgEl.removeAttribute('height');
-                previewEl.replaceChildren(document.importNode(svgEl, true));
-            }
-        } catch { /* ignore parse errors during editing */ }
+        if (!previewEl || !previewEl.classList.contains('cm-svg-preview') || previewEl.style.display === 'none') return;
+        renderSvgInto(previewEl, view.state.doc.toString());
     }
 
     async function setLanguageSupport(language: ExtensionOrLanguage) {
@@ -487,6 +527,9 @@ const codeblockView = ViewPlugin.define((view) => {
             const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
             const isSvg = ext === SVG_EXTENSION;
 
+            // Clear stale diagnostics from previous file
+            safeDispatch(view, setDiagnostics(view.state, []));
+
             if (isRasterImage) {
                 // Raster image: show preview, hide editor content
                 safeDispatch(view, {
@@ -497,9 +540,6 @@ const codeblockView = ViewPlugin.define((view) => {
                     ]
                 });
                 showImagePreview(content);
-                // Hide the scroller since we're showing a preview
-                const scroller = view.dom.querySelector('.cm-scroller') as HTMLElement;
-                if (scroller) scroller.style.display = 'none';
             } else {
                 // Remove any existing preview
                 removePreview();
@@ -515,7 +555,7 @@ const codeblockView = ViewPlugin.define((view) => {
 
                 // SVG: show live preview below the editor
                 if (isSvg) {
-                    showSvgPreview(content);
+                    showSvgView(content, 'preview');
                 }
             }
 

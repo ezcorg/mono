@@ -721,6 +721,12 @@ export const toolbarPanel = (view: EditorView): Panel => {
         });
 
         resultsList.replaceChildren(...children);
+
+        // Scroll the selected item into view
+        const selected = resultsList.querySelector('.selected') as HTMLElement;
+        if (selected) {
+            selected.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     function selectResult(result: SearchResult) {

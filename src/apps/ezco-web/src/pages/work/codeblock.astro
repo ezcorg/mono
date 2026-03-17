@@ -22,12 +22,17 @@ import Navbar from "../../components/Navbar.astro";
 		import { files } from "../data/work.js";
 
 		async function init() {
-			const fs = await CodeblockFS.worker();
-			await Promise.all(
-				files.map(async ([path, content]) => {
-					await fs.writeFile(path, content);
-				}),
-			);
+			const fs = await CodeblockFS.fsa("ezco-codeblock-demo");
+
+			// Seed files only if example.ts doesn't exist yet (first visit)
+			const exists = await fs.exists("example.ts");
+			if (!exists) {
+				await Promise.all(
+					files.map(async ([path, content]) => {
+						await fs.writeFile(path, content);
+					}),
+				);
+			}
 
 			const { createCodeblock, SearchIndex } = await import(
 				"@joinezco/codeblock"
@@ -35,13 +40,10 @@ import Navbar from "../../components/Navbar.astro";
 			const container = document.getElementById("codeblock-mount")!;
 			const index = await SearchIndex.get(fs, ".codeblock/index.json");
 
-			// Pass content directly to avoid VFS readFile timing issues
-			const exampleFile = files.find(([p]) => p === "example.ts");
 			createCodeblock({
 				parent: container,
 				fs,
-				content: exampleFile ? exampleFile[1] : "",
-				language: "ts",
+				filepath: "example.ts",
 				index,
 				cwd: "/",
 				dark: true,

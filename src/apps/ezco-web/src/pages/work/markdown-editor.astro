@@ -22,12 +22,17 @@ import Navbar from "../../components/Navbar.astro";
 		import { files } from "../data/work.js";
 
 		async function init() {
-			const fs = await CodeblockFS.worker();
-			await Promise.all(
-				files.map(async ([path, content]) => {
-					await fs.writeFile(path, content);
-				}),
-			);
+			const fs = await CodeblockFS.fsa("ezco-mde-demo");
+
+			// Seed files only if hello.md doesn't exist yet (first visit)
+			const exists = await fs.exists("hello.md");
+			if (!exists) {
+				await Promise.all(
+					files.map(async ([path, content]) => {
+						await fs.writeFile(path, content);
+					}),
+				);
+			}
 
 			const { createEditor } = await import("@joinezco/markdown-editor");
 			const container = document.getElementById("editor-mount")!;
