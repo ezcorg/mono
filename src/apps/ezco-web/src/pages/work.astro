@@ -154,7 +154,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				<div class="grid-item" data-project-title="new-project">
 					<a href="/newproject" class="block w-full h-full">
 						<div
-							class="work-item-card new-project-card h-full hover:bg-[#ffffff] active:bg-[#ffffff] transition-colors duration-300 overflow-hidden"
+							class="work-item-card new-project-card h-full hover:bg-[#ffffff] active:bg-[#ffffff] transition-colors duration-300"
 						>
 							<div class="p-6">
 								<div
@@ -303,8 +303,8 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				svg.setAttribute("height", `${height}`);
 				svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 				svg.style.position = "absolute";
-				svg.style.top = "0";
-				svg.style.left = "0";
+				svg.style.top = "-2px";
+				svg.style.left = "-2px";
 				svg.style.pointerEvents = "none";
 				svg.style.zIndex = "1";
 				element.appendChild(svg);

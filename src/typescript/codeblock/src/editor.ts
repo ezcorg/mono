@@ -21,6 +21,43 @@ import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
 
+// --- File change notification bus for multi-view sync ---
+type FileChangeListener = {
+    view: EditorView;
+    callback: (content: string) => void;
+};
+
+class FileChangeBus {
+    private listeners: Map<string, Set<FileChangeListener>> = new Map();
+
+    subscribe(path: string, view: EditorView, callback: (content: string) => void): () => void {
+        let set = this.listeners.get(path);
+        if (!set) {
+            set = new Set();
+            this.listeners.set(path, set);
+        }
+        const listener = { view, callback };
+        set.add(listener);
+        return () => {
+            set!.delete(listener);
+            if (set!.size === 0) this.listeners.delete(path);
+        };
+    }
+
+    /** Notify all listeners for `path` except the source view. */
+    notify(path: string, content: string, sourceView: EditorView) {
+        const set = this.listeners.get(path);
+        if (!set) return;
+        for (const listener of set) {
+            if (listener.view !== sourceView) {
+                listener.callback(content);
+            }
+        }
+    }
+}
+
+export const fileChangeBus = new FileChangeBus();
+
 export type CodeblockConfig = {
     fs: VfsInterface;
     cwd?: string;
@@ -169,20 +206,50 @@ const codeblockView = ViewPlugin.define((view) => {
 
     let { fs } = view.state.facet(CodeblockFacet);
 
+    // Flag to suppress save when receiving external file updates
+    let receivingExternalUpdate = false;
+    // Subscription cleanup for file change notifications
+    let unsubscribeFileChanges: (() => void) | null = null;
+
     // Debounced save
     const save = debounce(async () => {
         const fileState = view.state.field(currentFileField);
         if (fileState.path) {
+            const content = view.state.doc.toString();
             // confirm parent exists
             const parent = dirname(fileState.path);
 
             if (parent) {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
-            await fs.writeFile(fileState.path, view.state.doc.toString()).catch(console.error)
+            await fs.writeFile(fileState.path, content).catch(console.error)
             LSP.notifyFileChanged(fileState.path, FileChangeType.Changed);
+
+            // Notify other views of the same file
+            fileChangeBus.notify(fileState.path, content, view);
         }
     }, 500);
+
+    // Subscribe to external file changes for the given path
+    function subscribeToFileChanges(path: string) {
+        // Unsubscribe from previous file
+        if (unsubscribeFileChanges) {
+            unsubscribeFileChanges();
+            unsubscribeFileChanges = null;
+        }
+        unsubscribeFileChanges = fileChangeBus.subscribe(path, view, (newContent) => {
+            const currentContent = view.state.doc.toString();
+            if (newContent === currentContent) return; // No change
+            receivingExternalUpdate = true;
+            try {
+                view.dispatch({
+                    changes: { from: 0, to: view.state.doc.length, insert: newContent }
+                });
+            } finally {
+                receivingExternalUpdate = false;
+            }
+        });
+    }
 
     // Guard to prevent duplicate opens for same path while loading
     let opening: string | null = null;
@@ -265,7 +332,15 @@ const codeblockView = ViewPlugin.define((view) => {
                 libFiles = getCachedLibFiles();
             }
 
-            let lsp: Extension | null = lang ? await LSP.client({ language: lang as any, path, fs, libFiles }) : null;
+            let lsp: Extension | null = null;
+            if (lang) {
+                try {
+                    lsp = await LSP.client({ language: lang as any, path, fs, libFiles });
+                } catch (lspErr) {
+                    // Gracefully degrade when LSP is unavailable (e.g. missing worker, test environment)
+                    console.warn("LSP unavailable for this view:", lspErr);
+                }
+            }
 
             activePath = path;
             safeDispatch(view, {
@@ -276,6 +351,9 @@ const codeblockView = ViewPlugin.define((view) => {
                     languageServerCompartment.reconfigure(lsp ? [lsp] : []),
                 ]
             });
+
+            // Subscribe to changes from other views of the same file
+            subscribeToFileChanges(path);
         } catch (e) {
             console.error("Failed to open file", e);
         } finally {
@@ -314,11 +392,18 @@ const codeblockView = ViewPlugin.define((view) => {
                 safeDispatch(view, { effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(next.loading)) });
             }
 
-            if (u.docChanged && u.state.field(settingsField).autosave) save();
+            if (u.docChanged && !receivingExternalUpdate && u.state.field(settingsField).autosave) save();
 
             // If fs changed via facet reconfig, refresh handle references
             const newFs = u.state.facet(CodeblockFacet).fs;
             if (fs !== newFs) fs = newFs;
+        },
+        destroy() {
+            if (unsubscribeFileChanges) {
+                unsubscribeFileChanges();
+                unsubscribeFileChanges = null;
+            }
+            save.cancel();
         }
     };
 });

@@ -170,39 +170,40 @@ export const ExtendedCodeblock = Node.create({
 
     // Register input rules (e.g., ``` or ~~~ at the start of a line)
     addInputRules() {
+        const parseLanguageAttributes = (input: string | undefined) => {
+            if (!input) return { language: 'markdown' };
+
+            // If input contains a dot, treat it as a filename
+            if (input.includes('.')) {
+                const ext = input.split('.').pop()?.toLowerCase() || '';
+                const lang = extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown'
+                return { file: input, language: lang };
+            }
+
+            // Otherwise, check if it's a language name
+            const matchingLanguage = Object.entries(extOrLanguageToLanguageId).find(([ext, lang]) => {
+                return lang.includes(input) || ext === input;
+            })
+
+            if (matchingLanguage) {
+                return { language: matchingLanguage[1], file: null };
+            }
+
+            return { language: 'markdown' };
+        };
+
         return [
+            // ```language + space — more specific, checked first
             textblockTypeInputRule({
-                find: /^```([^\s`]+)?\s$/,
+                find: /^```([^\s`]+)\s$/,
                 type: this.type,
-                getAttributes: match => {
-                    const input = match[1]?.trim();
-                    if (!input) return { language: 'markdown' };
-
-                    // If input contains a dot, treat it as a filename
-                    if (input.includes('.')) {
-                        const ext = input.split('.').pop()?.toLowerCase() || '';
-                        const lang = extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown'
-                        return {
-                            file: input,
-                            language: lang,
-                        };
-                    }
-
-                    // Otherwise, check if it's a language name
-                    const matchingLanguage = Object.entries(extOrLanguageToLanguageId).find(([ext, lang]) => {
-                        return lang.includes(input) || ext === input;
-                    })
-
-                    if (matchingLanguage) {
-                        return {
-                            language: matchingLanguage[1],
-                            file: null,
-                        };
-                    }
-
-                    // If no language match found, default to markdown
-                    return { language: 'markdown' };
-                },
+                getAttributes: match => parseLanguageAttributes(match[1]?.trim()),
+            }),
+            // ``` alone — triggers immediately on the third backtick
+            textblockTypeInputRule({
+                find: /^```$/,
+                type: this.type,
+                getAttributes: () => ({ language: 'markdown' }),
             }),
         ];
     },

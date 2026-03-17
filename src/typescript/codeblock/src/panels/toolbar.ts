@@ -219,7 +219,7 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         query: '',
     });
     commands.push({
-        id: 'Import folder(s)',
+        id: 'Import folder',
         type: 'import-local-folder',
         icon: FOLDER_ICON,
         query: '',
@@ -538,6 +538,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
         selectedIndex = 0;
         const entries = buildSettingsEntries('');
         safeDispatch(view, { effects: setSearchResults.of(entries) });
+        // Ensure click-outside listener is active
+        document.addEventListener("click", handleClickOutside);
     }
 
     function exitSettingsMode() {
@@ -658,7 +660,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
             ev.preventDefault();
         });
 
-        li.addEventListener("click", () => selectResult(result));
+        li.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            selectResult(result);
+        });
         return li;
     };
 
@@ -731,6 +736,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
         input.focus();
 
         await refreshBrowseEntries();
+        // Ensure click-outside listener is active
+        document.addEventListener("click", handleClickOutside);
     }
 
     async function refreshBrowseEntries() {
@@ -933,30 +940,33 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     input.addEventListener("click", () => {
-        // Open dropdown when input is clicked
-        if (!namingMode.active) {
-            const query = input.value;
-            let results: SearchResult[] = [];
-
-            if (query.trim()) {
-                // Get regular search results from index first
-                const searchResults: SearchResult[] = (index?.search(query) || []).slice(0, 100);
-
-                // Add command results (passing search results to check for existing files)
-                const commands = createCommandResults(query, view, searchResults);
-
-                // Search results first, then commands
-                results = searchResults.concat(commands);
-            } else {
-                // Show import commands when dropdown opens with empty query
-                results = createCommandResults('', view, []);
-            }
-
-            safeDispatch(view, { effects: setSearchResults.of(results) });
-
-            // Add click-outside listener when dropdown opens
-            document.addEventListener("click", handleClickOutside);
+        // Don't interfere when in a special mode
+        if (namingMode.active || settingsMode.active || browseMode.active) {
+            return;
         }
+
+        // Open dropdown when input is clicked
+        const query = input.value;
+        let results: SearchResult[] = [];
+
+        if (query.trim()) {
+            // Get regular search results from index first
+            const searchResults: SearchResult[] = (index?.search(query) || []).slice(0, 100);
+
+            // Add command results (passing search results to check for existing files)
+            const commands = createCommandResults(query, view, searchResults);
+
+            // Search results first, then commands
+            results = searchResults.concat(commands);
+        } else {
+            // Show import commands when dropdown opens with empty query
+            results = createCommandResults('', view, []);
+        }
+
+        safeDispatch(view, { effects: setSearchResults.of(results) });
+
+        // Add click-outside listener when dropdown opens
+        document.addEventListener("click", handleClickOutside);
     });
 
     input.addEventListener("input", (event) => {
