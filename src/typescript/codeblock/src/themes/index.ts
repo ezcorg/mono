@@ -332,4 +332,38 @@ export const codeblockTheme = EditorView.theme({
     '.cm-lsp-log-log': {
         opacity: '0.6',
     },
+    // Terminal panel
+    '.cm-terminal-panel': {
+        borderTop: '1px solid var(--cm-tooltip-border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '200px',
+        minHeight: '80px',
+    },
+    '.cm-terminal-header': {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '2px 6px',
+        background: 'var(--cm-toolbar-background)',
+        fontSize: FS_85,
+        flexShrink: '0',
+    },
+    '.cm-terminal-title': {
+        opacity: '0.7',
+        fontFamily: 'var(--cm-font-family)',
+    },
+    '.cm-terminal-close': {
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--cm-toolbar-color)',
+        cursor: 'pointer',
+        padding: '2px 4px',
+        fontSize: FS_875,
+        lineHeight: '1',
+    },
+    '.cm-terminal-container': {
+        flex: 1,
+        overflow: 'hidden',
+    },
 });

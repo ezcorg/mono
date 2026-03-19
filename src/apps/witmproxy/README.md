@@ -7,9 +7,16 @@ A WASM-in-the-middle proxy, written in Rust.
 ### 1. Installation and setup
 
 ```sh
+# Install via shell script
+curl -fsSL https://witmproxy.rs/install.sh | sh
+
+# Or install from crates.io
 cargo install witmproxy
-witm              # First run: installs daemon and attaches to logs
-witm -d           # Run detached (start daemon without attaching to logs)
+
+# First run: installs daemon and attaches to logs
+witm
+# Run detached (start daemon without attaching to logs)
+witm -d
 ```
 
 On first run, `witm` automatically:
@@ -17,26 +24,34 @@ On first run, `witm` automatically:
 2. Starts the daemon service
 3. Attaches to the daemon's log output (unless `-d`/`--detach` is specified)
 
+> **Linux:** Daemon management commands (`install`, `start`, `stop`, `restart`, `uninstall`) require root privileges. Run them with `sudo`. The `status` and `logs` commands do not require root.
+>
+> **macOS:** Uses user-level launchd, so no `sudo` is needed for daemon management.
+
 ### 2. Daemon management
 
 ```sh
-# View daemon status
+# View daemon status (no sudo required)
 witm service status
 
-# Control the daemon
+# Control the daemon (Linux: prefix with sudo)
 witm service start    # Start the daemon
 witm service stop     # Stop the daemon
 witm service restart  # Restart the daemon
 
-# View logs
+# View logs (no sudo required)
 witm service logs          # Show last 50 lines of logs
 witm service logs -f       # Follow logs in real-time (like tail -f)
 witm service logs -l 100   # Show last 100 lines
 
-# Manage installation
+# Manage installation (Linux: prefix with sudo)
 witm service install    # Manually install the daemon
 witm service uninstall  # Remove the daemon from the system
 ```
+
+### Certificate Installation
+
+The `witm ca install` command installs the witmproxy root certificate into your system's trust store. This command may prompt for `sudo` on both Linux and macOS.
 
 ### 3. Add plugins
 

@@ -110,6 +110,7 @@ export const languageServerCompartment = new Compartment();
 export const indentationCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
 export const lineWrappingCompartment = new Compartment();
+export const terminalCompartment = new Compartment();
 
 // Effects + Fields for async file handling
 export const openFileEffect = StateEffect.define<{ path: string }>();
@@ -188,14 +189,15 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, typescript }: CodeblockConfig) => [
-    configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, typescript })),
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, typescript }: CodeblockConfig) => [
+    configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, typescript })),
     currentFileField,
     languageSupportCompartment.of([]),
     languageServerCompartment.of([]),
     indentationCompartment.of(indentUnit.of("    ")),
     readOnlyCompartment.of(EditorState.readOnly.of(false)),
     lineWrappingCompartment.of([]),
+    terminalCompartment.of([]),
     tooltips({ position: "fixed" }),
     showPanel.of(toolbar ? toolbarPanel : null),
     settingsField,
@@ -676,5 +678,17 @@ export function createCodeblock({ parent, fs, filepath, language, content = '', 
         doc: content,
         extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, typescript })]
     });
-    return new EditorView({ state, parent });
+    const view = new EditorView({ state, parent });
+
+    if (dark !== undefined) {
+        view.dom.setAttribute('data-theme', dark ? 'dark' : 'light');
+        view.dispatch({
+            effects: [
+                setThemeEffect.of({ dark }),
+                updateSettingsEffect.of({ theme: dark ? 'dark' : 'light' }),
+            ]
+        });
+    }
+
+    return view;
 }

@@ -1,6 +1,6 @@
-import { createCodeblock, fileChangeBus } from "./src/editor";
-import { Vfs } from "./src/utils/fs";
-import { SearchIndex } from "./src/utils/search";
+import { createCodeblock, fileChangeBus } from "../../editor";
+import { Vfs } from "../../utils/fs";
+import { SearchIndex } from "../../utils/search";
 
 async function init() {
     const fs = await Vfs.worker();

@@ -1,22 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import puppeteer, { Browser, Page } from 'puppeteer-core';
+import { Browser, Page } from 'puppeteer-core';
+import { DEV_SERVER, launchBrowser } from './helpers';
 
-const BASE_URL = 'http://localhost:5173/multiview-test.html';
-const CHROME_PATH = '/usr/bin/google-chrome';
+const BASE_URL = `${DEV_SERVER}/src/e2e/fixtures/multiview.html`;
 
 describe('Multi-view file sync (e2e)', () => {
     let browser: Browser;
     let page: Page;
 
     beforeAll(async () => {
-        browser = await puppeteer.launch({
-            executablePath: CHROME_PATH,
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-            ],
-        });
+        browser = await launchBrowser();
     });
 
     afterAll(async () => {

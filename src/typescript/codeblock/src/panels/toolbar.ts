@@ -36,7 +36,7 @@ function setiIconForPath(filePath: string): NerdIcon {
 // Command result types for the first section
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings';
+    type: 'create-file' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'open-terminal';
     icon: string;
     iconColor?: string;
     query: string;
@@ -136,6 +136,26 @@ function isValidProgrammingLanguage(query: string): boolean {
     );
 }
 
+// Map language names to canonical file extensions
+function languageToFileExtension(langOrExt: string): string {
+    const nameToExt: Record<string, string> = {
+        javascript: 'js',
+        typescript: 'ts',
+        python: 'py',
+        ruby: 'rb',
+        csharp: 'cs',
+        kotlin: 'kt',
+        rust: 'rs',
+        haskell: 'hs',
+        perl: 'pl',
+        bash: 'sh',
+        shell: 'sh',
+        mysql: 'sql',
+        markdown: 'md',
+    };
+    return nameToExt[langOrExt.toLowerCase()] || langOrExt.toLowerCase();
+}
+
 // Icons
 const SEARCH_ICON = '\uf002'; // nf-fa-search (magnifying glass)
 const DEFAULT_FILE_ICON = '\ue64e'; // nf-seti-text
@@ -143,6 +163,7 @@ const COG_ICON = '\uf013'; // nf-fa-cog
 const FOLDER_ICON = '\ue613'; // nf-seti-folder
 const FOLDER_OPEN_ICON = '\ue614'; // nf-seti-folder (open variant)
 const PARENT_DIR_ICON = '\uf112'; // nf-fa-reply (back/up arrow)
+const TERMINAL_ICON = '\uf120'; // nf-fa-terminal
 
 // Get nerd font icon for a file path
 function getFileIcon(path: string): { glyph: string; color: string } {
@@ -177,26 +198,33 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
     const currentFile = view.state.field(currentFileField);
     const hasValidFile = currentFile.path && !currentFile.loading;
     const isLanguageQuery = isValidProgrammingLanguage(query);
-    // TODO: fix language ext for new file with full language names, "typescript" -> "file.ts"
 
     // Check if query matches an existing file (first search result with exact match)
     const hasExactFileMatch = searchResults.length > 0 && searchResults[0].id === query;
 
-    if (query.trim()) {
-        // Create new file command (only if query doesn't match existing file)
-        if (!hasExactFileMatch) {
-            const langIcon = isLanguageQuery ? getLanguageIcon(query) : null;
-            const createFileCommand: CommandResult = {
-                id: isLanguageQuery ? "Create new file" : `Create new file "${query}"`,
-                type: 'create-file',
-                icon: langIcon ? langIcon.glyph : DEFAULT_FILE_ICON,
-                iconColor: langIcon?.color,
-                query,
-                requiresInput: isLanguageQuery
-            };
-            commands.push(createFileCommand);
-        }
+    // Create new file — always available
+    if (!query.trim()) {
+        // Empty query — generic create (enters naming mode)
+        commands.push({
+            id: 'Create new file',
+            type: 'create-file',
+            icon: DEFAULT_FILE_ICON,
+            query: '',
+            requiresInput: true,
+        });
+    } else if (!hasExactFileMatch) {
+        const langIcon = isLanguageQuery ? getLanguageIcon(query) : null;
+        commands.push({
+            id: isLanguageQuery ? "Create new file" : `Create new file "${query}"`,
+            type: 'create-file',
+            icon: langIcon ? langIcon.glyph : DEFAULT_FILE_ICON,
+            iconColor: langIcon?.color,
+            query,
+            requiresInput: isLanguageQuery,
+        });
+    }
 
+    if (query.trim()) {
         // Rename file command (only if file is open, query is not a language, and doesn't match current file)
         if (hasValidFile && !isLanguageQuery && !hasExactFileMatch) {
             const renameCommand: CommandResult = {
@@ -214,6 +242,14 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         id: 'Open file',
         type: 'open-file',
         icon: FOLDER_OPEN_ICON,
+        query: '',
+    });
+
+    // Open terminal — always shown
+    commands.push({
+        id: 'Open terminal',
+        type: 'open-terminal',
+        icon: TERMINAL_ICON,
         query: '',
     });
 
@@ -972,17 +1008,20 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else if (command.type === 'open-file') {
             enterBrowseMode();
             return;
+        } else if (command.type === 'open-terminal') {
+            safeDispatch(view, { effects: setSearchResults.of([]) });
+            import('./terminal').then(({ openTerminal }) => openTerminal(view));
+            return;
         } else if (command.type === 'create-file') {
             if (command.requiresInput) {
-                // Enter naming mode for language-specific file
-                enterNamingMode('create-file', command.query, command.query);
+                // Enter naming mode — convert language name to file extension
+                const ext = command.query ? languageToFileExtension(command.query) : undefined;
+                enterNamingMode('create-file', command.query, ext);
             } else {
-                // Create file directly and populate toolbar
+                // Create file: save current editor content under the new name, then open it
                 const pathToOpen = command.query.includes('.') ? command.query : `${command.query}.txt`;
                 input.value = pathToOpen;
-                safeDispatch(view, {
-                    effects: [setSearchResults.of([]), openFileEffect.of({ path: pathToOpen })]
-                });
+                createAndOpenFile(pathToOpen);
             }
         } else if (command.type === 'rename-file') {
             // Rename file directly since the new name is provided by the query
@@ -1010,6 +1049,26 @@ export const toolbarPanel = (view: EditorView): Panel => {
         });
     }
 
+    /** Save the current editor content to a new file path in the VFS, then open it. */
+    async function createAndOpenFile(pathToOpen: string) {
+        const { fs } = view.state.facet(CodeblockFacet);
+        const content = view.state.doc.toString();
+        const dir = pathToOpen.substring(0, pathToOpen.lastIndexOf('/'));
+        if (dir) await fs.mkdir(dir, { recursive: true }).catch(() => {});
+        await fs.writeFile(pathToOpen, content).catch(console.error);
+
+        // Add to search index
+        const { index } = view.state.facet(CodeblockFacet);
+        if (index) {
+            index.add(pathToOpen);
+            if (index.savePath) index.save(fs, index.savePath);
+        }
+
+        safeDispatch(view, {
+            effects: [setSearchResults.of([]), openFileEffect.of({ path: pathToOpen })]
+        });
+    }
+
     function executeNamingMode(filename: string) {
         if (!namingMode.active || !filename.trim()) return;
 
@@ -1018,10 +1077,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 ? `${filename}.${namingMode.languageExtension}`
                 : filename;
             input.value = pathToOpen;
-            // TODO: handle edge-cases like trying to create folders, invalid characters, etc.
-            safeDispatch(view, {
-                effects: [setSearchResults.of([]), openFileEffect.of({ path: pathToOpen })]
-            });
+            createAndOpenFile(pathToOpen);
         } else if (namingMode.type === 'rename-file') {
             const currentFile = view.state.field(currentFileField);
             if (currentFile.path) {

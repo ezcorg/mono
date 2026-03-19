@@ -13,6 +13,28 @@ import { SlashCommands } from './extensions/slash-commands';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
+// Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
+let caretBlinkInjected = false;
+function injectCaretBlink() {
+    if (caretBlinkInjected) return;
+    caretBlinkInjected = true;
+    const style = document.createElement('style');
+    style.textContent = `
+@supports (caret-animation: manual) {
+    .ezco-mde .ProseMirror {
+        caret-animation: manual;
+    }
+    .ezco-mde .ProseMirror:focus {
+        animation: ezco-mde-caret-blink 1s step-end infinite;
+    }
+    @keyframes ezco-mde-caret-blink {
+        from, 50% { caret-color: currentColor; }
+        50.1%, to { caret-color: transparent; }
+    }
+}`;
+    document.head.appendChild(style);
+}
+
 export type MarkdownEditorOptions = Partial<EditorOptions> & {
     extensions?: Extension[];
     fs?: FileSystemOptions;
@@ -77,6 +99,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 
     if (typeof document !== 'undefined') {
         StyleModule.mount(document, styleModule);
+        injectCaretBlink();
     }
     return editor as MarkdownEditor;
 }

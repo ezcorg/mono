@@ -132,7 +132,7 @@ jobs:
           cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Create GitHub release
-        if: github.event_name == 'push' && github.event.inputs.dry_run != 'true'
+        if: github.event.inputs.dry_run != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: witmproxy-v${{ env.VERSION }}

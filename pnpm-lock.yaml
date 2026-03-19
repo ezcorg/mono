@@ -161,6 +161,22 @@ importers:
         specifier: ^2.11.0
         version: 2.11.6(solid-js@1.9.6)(vite@6.4.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
 
+  src/apps/witmproxy-web:
+    dependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.1.16
+        version: 4.1.16(vite@7.1.6(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
+      astro:
+        specifier: ^5.15.1
+        version: 5.15.2(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.2)(yaml@2.8.0)
+      tailwindcss:
+        specifier: ^4.1.16
+        version: 4.1.16
+    devDependencies:
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.2
+
   src/typescript/codeblock:
     dependencies:
       '@babel/runtime':
@@ -277,6 +293,9 @@ importers:
       events:
         specifier: ^3.3.0
         version: 3.3.0
+      ghostty-web:
+        specifier: ^0.4.0
+        version: 0.4.0
       ignore:
         specifier: ^7.0.4
         version: 7.0.4
@@ -6327,6 +6346,9 @@ packages:
   get-uri@6.0.5:
     resolution: {integrity: sha512-b1O07XYq8eRuVzBNgJLstU6FYc1tS6wnMtF1I1D9lE8LxZSOGZ7LhxN54yPP6mGw5f2CkXY2BQUL9Fx41qvcIg==}
     engines: {node: '>= 14'}
+
+  ghostty-web@0.4.0:
+    resolution: {integrity: sha512-0puDBik2qapbD/QQBW9o5ZHfXnZBqZWx/ctBiVtKZ6ZLds4NYb+wZuw1cRLXZk9zYovIQ908z3rvFhexAvc5Hg==}
 
   git-log-parser@1.2.1:
     resolution: {integrity: sha512-PI+sPDvHXNPl5WNOErAK05s3j0lgwUzMN6o8cyQrDaKfT3qd7TmNJKeXX+SknI5I0QhG5fVPAEwSY4tRGDtYoQ==}
@@ -13695,6 +13717,13 @@ snapshots:
       tailwindcss: 4.1.16
       vite: 6.4.1(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0)
 
+  '@tailwindcss/vite@4.1.16(vite@7.1.6(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))':
+    dependencies:
+      '@tailwindcss/node': 4.1.16
+      '@tailwindcss/oxide': 4.1.16
+      tailwindcss: 4.1.16
+      vite: 7.1.6(@types/node@24.3.1)(jiti@2.6.1)(lightningcss@1.30.2)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0)
+
   '@tauri-apps/api@2.5.0': {}
 
   '@tauri-apps/cli-darwin-arm64@2.5.0':
@@ -17075,6 +17104,8 @@ snapshots:
       debug: 4.4.3(supports-color@8.1.1)
     transitivePeerDependencies:
       - supports-color
+
+  ghostty-web@0.4.0: {}
 
   git-log-parser@1.2.1:
     dependencies:

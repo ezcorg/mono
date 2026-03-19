@@ -9,8 +9,15 @@ import Navbar from "../../components/Navbar.astro";
 		<div class="w-full mx-auto flex flex-col gap-8">
 			<Navbar currentPath="/work" />
 
-			<div class="demo-container border-2 border-[#333333] overflow-hidden">
-				<div id="editor-mount"></div>
+			<button class="install-cmd" data-cmd="npm install @joinezco/markdown-editor">
+				<code>npm install @joinezco/markdown-editor</code>
+				<span class="install-cmd-feedback">copied!</span>
+			</button>
+
+			<div class="demo-container bg-[#1e1e1e] border-2 border-[#333333] overflow-hidden">
+				<div id="editor-mount">
+					<div class="loading-indicator"><div class="loading-bar"></div></div>
+				</div>
 			</div>
 		</div>
 	</section>
@@ -36,6 +43,7 @@ import Navbar from "../../components/Navbar.astro";
 
 			const { createEditor } = await import("@joinezco/markdown-editor");
 			const container = document.getElementById("editor-mount")!;
+			container.innerHTML = '';
 
 			const editor = createEditor({
 				element: container,
@@ -49,9 +57,49 @@ import Navbar from "../../components/Navbar.astro";
 		}
 
 		init().catch(console.error);
+
+		document.querySelector('.install-cmd')?.addEventListener('click', async (e) => {
+			const btn = (e.currentTarget as HTMLElement);
+			await navigator.clipboard.writeText(btn.dataset.cmd!);
+			btn.classList.add('copied');
+			setTimeout(() => btn.classList.remove('copied'), 1500);
+		});
 	</script>
 
 	<style>
+		.install-cmd {
+			font-family: monospace;
+			font-size: 0.875rem;
+			color: #F5F5F5;
+			opacity: 0.5;
+			display: block;
+			background: none;
+			border: none;
+			padding: 0;
+			cursor: pointer;
+			position: relative;
+			transition: opacity 0.15s;
+		}
+
+		.install-cmd:hover {
+			opacity: 0.8;
+		}
+
+		.install-cmd-feedback {
+			position: absolute;
+			right: -4rem;
+			top: 50%;
+			transform: translateY(-50%);
+			font-size: 0.75rem;
+			opacity: 0;
+			transition: opacity 0.15s;
+			pointer-events: none;
+		}
+
+		.install-cmd.copied .install-cmd-feedback {
+			opacity: 1;
+		}
+
 		.demo-container {
 			min-height: 70vh;
 			display: flex;
@@ -80,6 +128,27 @@ import Navbar from "../../components/Navbar.astro";
 		}
 		#editor-mount :global(table) {
 			margin: 1rem 0;
+		}
+
+		.loading-indicator {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			flex: 1;
+			min-height: 200px;
+		}
+
+		.loading-bar {
+			width: 48px;
+			height: 2px;
+			background: #444;
+			border-radius: 1px;
+			animation: loading-pulse 1.5s ease-in-out infinite;
+		}
+
+		@keyframes loading-pulse {
+			0%, 100% { opacity: 0.3; }
+			50% { opacity: 1; }
 		}
 	</style>
 </Layout>
