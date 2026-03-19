@@ -156,7 +156,6 @@ function safeDispatch(view: EditorView, spec: TransactionSpec) {
     });
 }
 
-
 const navigationKeymap: KeyBinding[] = [{
     key: "ArrowUp",
     run: (view: EditorView) => {
