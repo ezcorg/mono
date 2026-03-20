@@ -65,79 +65,81 @@ pub struct AppConfig {
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct ProxyConfig {
-    /// The address the proxy server will bind to (optional, defaults to 127.0.0.1:0)
+    /// The address the proxy server will bind to (default: 127.0.0.1:0)
     #[config(env = "PROXY_BIND_ADDR", layer_attr(arg(long)))]
     pub proxy_bind_addr: Option<String>,
 
-    /// Tenant resolver strategy: ip-mapping, tailscale, or header
-    #[config(default = "ip-mapping", layer_attr(arg(skip)))]
+    /// Tenant resolver strategy: ip-mapping, tailscale, or header (default: ip-mapping)
+    #[config(default = "ip-mapping", env = "PROXY_TENANT_RESOLVER", layer_attr(arg(long)))]
     pub tenant_resolver: crate::proxy::tenant_resolver::TenantResolverKind,
 
     /// Header name for header-based tenant resolution
-    #[config(layer_attr(arg(skip)))]
+    #[config(env = "PROXY_TENANT_HEADER", layer_attr(arg(long)))]
     pub tenant_header: Option<String>,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct AuthConfig {
-    /// Enable authentication for management API
-    #[config(default = false, layer_attr(arg(skip)))]
+    /// Enable authentication for management API (default: false)
+    #[config(default = false, env = "AUTH_ENABLED", layer_attr(arg(long = "auth-enabled", id = "auth-enabled")))]
     pub enabled: bool,
 
     /// External JWKS URL for token verification
-    #[config(layer_attr(arg(skip)))]
+    #[config(env = "AUTH_JWKS_URL", layer_attr(arg(long = "auth-jwks-url")))]
     pub jwks_url: Option<String>,
 
-    /// JWT issuer
-    #[config(layer_attr(arg(skip)))]
+    /// JWT issuer claim
+    #[config(env = "AUTH_JWT_ISSUER", layer_attr(arg(long = "auth-jwt-issuer")))]
     pub jwt_issuer: Option<String>,
 
-    /// JWT audience
-    #[config(layer_attr(arg(skip)))]
+    /// JWT audience claim
+    #[config(env = "AUTH_JWT_AUDIENCE", layer_attr(arg(long = "auth-jwt-audience")))]
     pub jwt_audience: Option<String>,
 
-    /// JWT secret for local token signing (env: AUTH_JWT_SECRET)
-    #[config(env = "AUTH_JWT_SECRET", layer_attr(arg(skip)))]
+    /// JWT secret for local token signing
+    #[config(env = "AUTH_JWT_SECRET", layer_attr(arg(long = "auth-jwt-secret")))]
     pub jwt_secret: Option<String>,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct TransparentProxyConfig {
-    /// Enable transparent proxy mode
-    #[config(default = false, layer_attr(arg(skip)))]
+    /// Enable transparent proxy mode (default: false)
+    #[config(default = false, env = "TRANSPARENT_ENABLED", layer_attr(arg(long = "transparent-enabled", id = "transparent-enabled")))]
     pub enabled: bool,
 
     /// Listen address for transparent proxy (default: 0.0.0.0:8080)
-    #[config(layer_attr(arg(skip)))]
+    #[config(env = "TRANSPARENT_LISTEN_ADDR", layer_attr(arg(long = "transparent-listen-addr")))]
     pub listen_addr: Option<String>,
 
     /// Network interface for iptables rules (default: tailscale0)
-    #[config(layer_attr(arg(skip)))]
+    #[config(env = "TRANSPARENT_INTERFACE", layer_attr(arg(long = "transparent-interface")))]
     pub interface: Option<String>,
 
-    /// Automatically configure iptables rules
-    #[config(default = true, layer_attr(arg(skip)))]
+    /// Automatically configure iptables rules (default: true)
+    #[config(default = true, env = "TRANSPARENT_AUTO_IPTABLES", layer_attr(arg(long = "transparent-auto-iptables")))]
     pub auto_iptables: bool,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct DbConfig {
-    /// The database connection URL
+    /// Path to the SQLite database file (default: /var/lib/witmproxy/witmproxy.db on Linux, $HOME/.witmproxy/db.sqlite otherwise)
     #[cfg_attr(
         target_os = "linux",
         config(
             default = "/var/lib/witmproxy/witmproxy.db",
-            layer_attr(arg(long, default_value = "/var/lib/witmproxy/witmproxy.db"))
+            env = "DB_PATH",
+            layer_attr(arg(long))
         )
     )]
     #[cfg_attr(
         not(target_os = "linux"),
         config(
             default = "$HOME/.witmproxy/db.sqlite",
-            layer_attr(arg(long, default_value = "$HOME/.witmproxy/db.sqlite"))
+            env = "DB_PATH",
+            layer_attr(arg(long))
         )
     )]
     pub db_path: PathBuf,
@@ -150,27 +152,29 @@ pub struct DbConfig {
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct TlsConfig {
-    /// The size of the generated key
-    #[config(default = 2048, layer_attr(arg(long, default_value = "2048")))]
+    /// Size of generated TLS keys in bits (default: 2048)
+    #[config(default = 2048, env = "TLS_KEY_SIZE", layer_attr(arg(long)))]
     pub key_size: u32,
 
-    /// The size of the cache for minted certificates
-    #[config(default = 1024, layer_attr(arg(long, default_value = "1024")))]
+    /// Size of the minted certificate cache (default: 1024)
+    #[config(default = 1024, env = "TLS_CACHE_SIZE", layer_attr(arg(long)))]
     pub cache_size: usize,
 
-    /// The directory where root certificates are stored
+    /// Directory where root certificates are stored (default: /var/lib/witmproxy/certs on Linux, $HOME/.witmproxy/certs otherwise)
     #[cfg_attr(
         target_os = "linux",
         config(
             default = "/var/lib/witmproxy/certs",
-            layer_attr(arg(long, default_value = "/var/lib/witmproxy/certs"))
+            env = "TLS_CERT_DIR",
+            layer_attr(arg(long))
         )
     )]
     #[cfg_attr(
         not(target_os = "linux"),
         config(
             default = "$HOME/.witmproxy/certs",
-            layer_attr(arg(long, default_value = "$HOME/.witmproxy/certs"))
+            env = "TLS_CERT_DIR",
+            layer_attr(arg(long))
         )
     )]
     pub cert_dir: PathBuf,
@@ -179,28 +183,28 @@ pub struct TlsConfig {
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct PluginConfig {
-    /// Whether or not plugins are enabled for the proxy
-    #[config(default = true, layer_attr(arg(long, default_value = "true")))]
+    /// Enable or disable the plugin system (default: true)
+    #[config(default = true, env = "PLUGINS_ENABLED", layer_attr(arg(long = "plugins-enabled", id = "plugins-enabled")))]
     pub enabled: bool,
 
-    /// The timeout for plugin execution
-    #[config(default = 1000, layer_attr(arg(long, default_value = "1000")))]
+    /// Plugin execution timeout in milliseconds (default: 1000)
+    #[config(default = 1000, env = "PLUGINS_TIMEOUT_MS", layer_attr(arg(long)))]
     pub timeout_ms: u64,
 
-    /// The maximum amount of memory a plugin can use
-    #[config(default = 1024, layer_attr(arg(long, default_value = "1024")))]
+    /// Maximum memory per plugin in MB (default: 1024)
+    #[config(default = 1024, env = "PLUGINS_MAX_MEMORY_MB", layer_attr(arg(long)))]
     pub max_memory_mb: u64,
 
-    /// The maximum amount of fuel a plugin can use
-    #[config(default = 1_000_000, layer_attr(arg(long, default_value = "1000000")))]
+    /// WASM fuel limit per plugin execution (default: 1000000)
+    #[config(default = 1_000_000, env = "PLUGINS_MAX_FUEL", layer_attr(arg(long)))]
     pub max_fuel: u64,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct WebConfig {
-    /// The address the web frontend will bind to (optional, defaults to 127.0.0.1:0)
-    #[config(layer_attr(arg(long)))]
+    /// The address the web frontend will bind to (default: 127.0.0.1:0)
+    #[config(env = "WEB_BIND_ADDR", layer_attr(arg(long)))]
     pub web_bind_addr: Option<String>,
 }
 
@@ -208,19 +212,19 @@ pub struct WebConfig {
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct UpdateConfig {
     /// Enable automatic updates in daemon mode (default: true)
-    #[config(default = true, layer_attr(arg(skip)))]
+    #[config(default = true, env = "UPDATE_AUTO_UPDATE", layer_attr(arg(long)))]
     pub auto_update: bool,
 
     /// Seconds between auto-update checks in daemon mode (default: 21600 = 6 hours)
-    #[config(default = 21600, layer_attr(arg(skip)))]
+    #[config(default = 21600, env = "UPDATE_CHECK_INTERVAL_SECONDS", layer_attr(arg(long)))]
     pub check_interval_seconds: u64,
 
     /// Show update warnings in interactive CLI mode (default: true)
-    #[config(default = true, layer_attr(arg(skip)))]
+    #[config(default = true, env = "UPDATE_CLI_UPDATE_WARNING", layer_attr(arg(long)))]
     pub cli_update_warning: bool,
 
     /// Prefer prebuilt GitHub release binaries over cargo install (default: true)
-    #[config(default = true, layer_attr(arg(skip)))]
+    #[config(default = true, env = "UPDATE_PREFER_PREBUILT", layer_attr(arg(long)))]
     pub prefer_prebuilt: bool,
 }
 

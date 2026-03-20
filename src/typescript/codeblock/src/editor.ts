@@ -15,8 +15,9 @@ import { highlightCode } from "@lezer/highlight";
 import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
-import { toolbarPanel, searchResultsField } from "./panels/toolbar";
-import { settingsField, updateSettingsEffect, resolveThemeDark } from "./panels/footer";
+import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
+import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
+import type { EditorSettings } from "./panels/settings";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
@@ -59,7 +60,7 @@ class FileChangeBus {
 export const fileChangeBus = new FileChangeBus();
 
 // --- Settings propagation across editors on the same page ---
-type SettingsChangeCallback = (settings: Partial<import("./panels/footer").EditorSettings>) => void;
+type SettingsChangeCallback = (settings: Partial<import("./panels/settings").EditorSettings>) => void;
 
 class SettingsChangeBus {
     private listeners = new Set<{ view: EditorView; callback: SettingsChangeCallback }>();
@@ -70,7 +71,7 @@ class SettingsChangeBus {
         return () => this.listeners.delete(entry);
     }
 
-    notify(settings: Partial<import("./panels/footer").EditorSettings>, sourceView: EditorView) {
+    notify(settings: Partial<import("./panels/settings").EditorSettings>, sourceView: EditorView) {
         for (const entry of this.listeners) {
             if (entry.view !== sourceView) {
                 entry.callback(settings);
@@ -90,6 +91,7 @@ export type CodeblockConfig = {
     index?: SearchIndex;
     language?: ExtensionOrLanguage;
     dark?: boolean;
+    settings?: Partial<EditorSettings>;
     typescript?: TypescriptDefaultsConfig & {
         /** Resolves a TypeScript lib name (e.g. "es5") to its `.d.ts` file content */
         resolveLib: (name: string) => Promise<string>;
@@ -111,13 +113,18 @@ export const indentationCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
 export const lineWrappingCompartment = new Compartment();
 export const terminalCompartment = new Compartment();
+export const lineNumbersCompartment = new Compartment();
+export const foldGutterCompartment = new Compartment();
 
 // Effects + Fields for async file handling
-export const openFileEffect = StateEffect.define<{ path: string }>();
+export const openFileEffect = StateEffect.define<{ path: string; skipSave?: boolean }>();
 export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null }>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
+
+// SVG preview toggle
+export const toggleSvgPreviewEffect = StateEffect.define<void>();
 
 // Holds the current file lifecycle
 export const currentFileField = StateField.define<{
@@ -188,24 +195,37 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, typescript }: CodeblockConfig) => [
-    configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, typescript })),
-    currentFileField,
-    languageSupportCompartment.of([]),
-    languageServerCompartment.of([]),
-    indentationCompartment.of(indentUnit.of("    ")),
-    readOnlyCompartment.of(EditorState.readOnly.of(false)),
-    lineWrappingCompartment.of([]),
-    terminalCompartment.of([]),
-    tooltips({ position: "fixed" }),
-    showPanel.of(toolbar ? toolbarPanel : null),
-    settingsField,
-    codeblockTheme,
-    codeblockView,
-    keymap.of(navigationKeymap.concat([indentWithTab])),
-    vscodeLightDark,
-    searchResultsField,
-];
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, settings, typescript }: CodeblockConfig) => {
+    // Merge dark flag into initial settings for backward compat
+    const resolvedSettings: Partial<EditorSettings> = { ...settings };
+    if (dark !== undefined && !('theme' in resolvedSettings)) {
+        resolvedSettings.theme = dark ? 'dark' : 'light';
+    }
+    const showLineNums = resolvedSettings.showLineNumbers !== false; // default true
+    const showFold = resolvedSettings.showFoldGutter !== false; // default true
+
+    return [
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript })),
+        InitialSettingsFacet.of(resolvedSettings),
+        currentFileField,
+        languageSupportCompartment.of([]),
+        languageServerCompartment.of([]),
+        indentationCompartment.of(indentUnit.of("    ")),
+        readOnlyCompartment.of(EditorState.readOnly.of(false)),
+        lineWrappingCompartment.of([]),
+        terminalCompartment.of([]),
+        lineNumbersCompartment.of(showLineNums ? [lineNumbers(), highlightActiveLineGutter()] : []),
+        foldGutterCompartment.of(showFold ? [foldGutter()] : []),
+        tooltips({ position: "fixed" }),
+        showPanel.of(toolbar ? toolbarPanel : null),
+        settingsField,
+        codeblockTheme,
+        codeblockView,
+        keymap.of(navigationKeymap.concat([indentWithTab])),
+        vscodeLightDark,
+        searchResultsField,
+    ];
+};
 
 // ViewPlugin reacts to field state & effects, with microtask scheduling to avoid nested updates
 // Inject @font-face for Nerd Font icons (idempotent)
@@ -248,6 +268,14 @@ const codeblockView = ViewPlugin.define((view) => {
             if ('lineWrap' in partial) {
                 effects.push(lineWrappingCompartment.reconfigure(partial.lineWrap ? EditorView.lineWrapping : []));
             }
+            if ('showLineNumbers' in partial) {
+                effects.push(lineNumbersCompartment.reconfigure(partial.showLineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : []));
+            }
+            if ('showFoldGutter' in partial) {
+                effects.push(foldGutterCompartment.reconfigure(partial.showFoldGutter ? [foldGutter()] : []));
+            }
+            // autoHideToolbar is handled by the toolbar panel's JS event handlers,
+            // not CSS classes — the updateSettingsEffect propagation is sufficient.
             view.dispatch({ effects });
         } finally {
             receivingExternalSettings = false;
@@ -302,7 +330,6 @@ const codeblockView = ViewPlugin.define((view) => {
     let activePath: string | null = (initialFile.loading) ? null : initialFile.path;
     // Preview element for images/SVGs
     let previewEl: HTMLElement | null = null;
-    let svgToggleBtn: HTMLElement | null = null;
     let svgViewMode: 'preview' | 'source' = 'preview';
 
     const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
@@ -334,10 +361,6 @@ const codeblockView = ViewPlugin.define((view) => {
         if (previewEl) {
             previewEl.remove();
             previewEl = null;
-        }
-        if (svgToggleBtn) {
-            svgToggleBtn.remove();
-            svgToggleBtn = null;
         }
         svgViewMode = 'preview';
         showScroller();
@@ -394,26 +417,6 @@ const codeblockView = ViewPlugin.define((view) => {
     function showSvgView(content: string, mode: 'preview' | 'source') {
         removePreview();
         svgViewMode = mode;
-
-        // Create toggle button in the toolbar area
-        svgToggleBtn = document.createElement('button');
-        svgToggleBtn.className = 'cm-svg-toggle';
-        svgToggleBtn.style.cssText = 'border:none;background:transparent;color:var(--cm-toolbar-color, #ccc);cursor:pointer;padding:0 6px;font-size:inherit;line-height:inherit;flex-shrink:0;font-family:inherit;';
-        svgToggleBtn.textContent = mode === 'preview' ? '\u{1F4DD}' : '\u{1F5BC}\uFE0F'; // 📝 or 🖼️
-        svgToggleBtn.title = mode === 'preview' ? 'Edit source' : 'Show preview';
-        svgToggleBtn.addEventListener('click', () => {
-            const newMode = svgViewMode === 'preview' ? 'source' : 'preview';
-            showSvgView(view.state.doc.toString(), newMode);
-        });
-
-        // Insert toggle button before the LSP log button in the toolbar
-        const toolbar = view.dom.querySelector('.cm-toolbar-panel');
-        const lspLogBtn = view.dom.querySelector('.cm-toolbar-lsp-log');
-        if (toolbar && lspLogBtn) {
-            toolbar.insertBefore(svgToggleBtn, lspLogBtn);
-        } else if (toolbar) {
-            toolbar.appendChild(svgToggleBtn);
-        }
 
         previewEl = document.createElement('div');
         previewEl.className = 'cm-svg-preview';
@@ -503,7 +506,7 @@ const codeblockView = ViewPlugin.define((view) => {
             const unit = detectIndentationUnit(content) || "    ";
 
             // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
-            const tsExtensions = ['ts', 'tsx', 'js', 'jsx'];
+            const tsExtensions = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts'];
             const { typescript } = view.state.facet(CodeblockFacet);
             let libFiles: Record<string, string> | undefined;
             if (typescript?.resolveLib && ext && tsExtensions.includes(ext)) {
@@ -588,12 +591,20 @@ const codeblockView = ViewPlugin.define((view) => {
                     // Cancel debounced save immediately to prevent it from writing
                     // the old document content to the wrong (new) file path
                     save.cancel();
+                    if (e.value.skipSave) {
+                        // Caller already handled file operations (e.g. rename) —
+                        // clear activePath so handleOpen won't save-on-switch
+                        activePath = null;
+                    }
                     queueMicrotask(() => handleOpen(e.value.path));
                 }
                 if (e.is(setThemeEffect)) {
                     const dark = e.value.dark;
-
                     u.view.dom.setAttribute('data-theme', dark ? 'dark' : 'light');
+                }
+                if (e.is(toggleSvgPreviewEffect)) {
+                    const newMode = svgViewMode === 'preview' ? 'source' : 'preview';
+                    showSvgView(view.state.doc.toString(), newMode);
                 }
             }
 
@@ -645,11 +656,8 @@ const codeblockView = ViewPlugin.define((view) => {
 });
 
 export const basicSetup: Extension = (() => [
-    lineNumbers(),
-    highlightActiveLineGutter(),
     highlightSpecialChars(),
     history(),
-    foldGutter(),
     drawSelection(),
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
@@ -672,22 +680,20 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark, typescript }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark, settings, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, typescript })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript })]
     });
     const view = new EditorView({ state, parent });
-
-    if (dark !== undefined) {
-        view.dom.setAttribute('data-theme', dark ? 'dark' : 'light');
-        view.dispatch({
-            effects: [
-                setThemeEffect.of({ dark }),
-                updateSettingsEffect.of({ theme: dark ? 'dark' : 'light' }),
-            ]
-        });
-    }
-
     return view;
 }
+
+// --- File-extension-specific toolbar commands ---
+
+registerFileAction({
+    extensions: ['svg'],
+    label: 'SVG > Toggle preview',
+    icon: '\udb82\ude1b', // nf-md-image_outline (󰈛)
+    action: (view) => view.dispatch({ effects: toggleSvgPreviewEffect.of(undefined) }),
+});

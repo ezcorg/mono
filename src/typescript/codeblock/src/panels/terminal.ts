@@ -1,6 +1,6 @@
 import { EditorView, Panel, showPanel } from "@codemirror/view";
 import { terminalCompartment } from "../editor";
-import { settingsField, resolveThemeDark } from "./footer";
+import { settingsField, resolveThemeDark } from "./settings";
 
 type GhosttyTerminal = {
     open(container: HTMLElement): void;

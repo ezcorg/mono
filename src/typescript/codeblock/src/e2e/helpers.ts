@@ -2,7 +2,13 @@ import { Browser, Page } from 'puppeteer-core';
 import puppeteer from 'puppeteer-core';
 
 export const CHROME_PATH = '/usr/bin/google-chrome';
-export const DEV_SERVER = 'http://localhost:5173';
+
+/** Get the dev server URL started by globalSetup. */
+export function getDevServerUrl(): string {
+    const url = process.env.CODEBLOCK_DEV_SERVER;
+    if (!url) throw new Error('CODEBLOCK_DEV_SERVER not set — is globalSetup configured?');
+    return url;
+}
 
 export async function launchBrowser(): Promise<Browser> {
     return puppeteer.launch({
@@ -53,8 +59,8 @@ export async function createFile(page: Page, filename: string) {
     } else {
         await page.keyboard.press('Enter');
     }
-    // Wait for file to load
-    await new Promise(r => setTimeout(r, 500));
+    // Wait for file to load and editor to become editable
+    await waitForFileReady(page, filename);
 }
 
 /** Open an existing file via toolbar. */
@@ -63,5 +69,24 @@ export async function openFile(page: Page, filename: string) {
     await page.type('.cm-toolbar-input', filename);
     await page.waitForSelector('.cm-file-result', { timeout: 3000 });
     await page.click('.cm-file-result');
-    await new Promise(r => setTimeout(r, 500));
+    // Wait for file to load and editor to become editable
+    await waitForFileReady(page, filename);
+}
+
+/** Wait for file loading to complete and editor to be ready for typing.
+ *  The safeDispatch pipeline uses microtasks, so we need to let them settle
+ *  before checking the loading state. */
+async function waitForFileReady(page: Page, _filename: string) {
+    // Let microtasks settle (safeDispatch → openFileEffect → handleOpen queue)
+    await new Promise(r => setTimeout(r, 100));
+
+    // Wait for loading spinner to appear and then disappear.
+    // If loading is very fast, the spinner may already be gone.
+    await page.waitForFunction(
+        () => !document.querySelector('.cm-loading'),
+        { timeout: 15000 }
+    );
+
+    // Let the readOnly reconfiguration microtask land
+    await new Promise(r => setTimeout(r, 100));
 }

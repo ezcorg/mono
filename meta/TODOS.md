@@ -56,7 +56,7 @@ Our company, [`ez co`](https://joinez.co), is a worker-owned _democratic collect
 - [ ] Plugin marketplace:
   * How do we support third-party plugin building? Should the primary interface be the `ezfilter` UI itself (interacting with our remote servers)? How do we make source code available? How do plugin security review? How much (if anything) do we charge third-party plugins?
     * Minimal plugin developer account fee: gives greater confidence of author authenticity (part of our security review), and helps us pay for the platform (which includes compute time and storage for building and hosting plugins+marketplace)
-    * x% cut of earnings made through the marketplace (which we may return to plugin authors to balance our net profit goals)
+    * x% cut of earnings made through the marketplace (which are returned to plugin authors to balance our net profit goals)
     * Manual plugin review process (with automations to help)
 - [ ] Payment infrastructure:
   * How do we allow payments in our system? Do we use Stripe? Do we accept stable coins?

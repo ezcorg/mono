@@ -2,6 +2,7 @@
 import Layout from "../../layouts/Layout.astro";
 import Footer from "../../components/Footer.astro";
 import Navbar from "../../components/Navbar.astro";
+import { Clipboard, Check } from "lucide-astro";
 ---
 
 <Layout title="codeblock | ez co" description="An interactive demo of the @joinezco/codeblock component.">
@@ -10,8 +11,9 @@ import Navbar from "../../components/Navbar.astro";
 			<Navbar currentPath="/work" />
 
 			<button class="install-cmd" data-cmd="npm install @joinezco/codeblock">
+				<span class="icon-copy"><Clipboard size={14} /></span>
+				<span class="icon-check"><Check size={14} /></span>
 				<code>npm install @joinezco/codeblock</code>
-				<span class="install-cmd-feedback">copied!</span>
 			</button>
 
 			<div class="demo-container border-2 border-[#333333] overflow-hidden">
@@ -73,33 +75,31 @@ import Navbar from "../../components/Navbar.astro";
 			font-family: monospace;
 			font-size: 0.875rem;
 			color: #F5F5F5;
-			opacity: 0.5;
-			display: block;
+			opacity: 0.6;
+			display: inline-flex;
+			align-items: center;
+			gap: 0.5rem;
 			background: none;
-			border: none;
-			padding: 0;
+			border: 2px solid #333333;
+			padding: 0.5rem 0.75rem;
 			cursor: pointer;
-			position: relative;
 			transition: opacity 0.15s;
 		}
 
 		.install-cmd:hover {
-			opacity: 0.8;
-		}
-
-		.install-cmd-feedback {
-			position: absolute;
-			right: -4rem;
-			top: 50%;
-			transform: translateY(-50%);
-			font-size: 0.75rem;
-			opacity: 0;
-			transition: opacity 0.15s;
-			pointer-events: none;
-		}
-
-		.install-cmd.copied .install-cmd-feedback {
 			opacity: 1;
+		}
+
+		.icon-check {
+			display: none;
+		}
+
+		.install-cmd.copied .icon-copy {
+			display: none;
+		}
+
+		.install-cmd.copied .icon-check {
+			display: inline-flex;
 		}
 
 		.demo-container {

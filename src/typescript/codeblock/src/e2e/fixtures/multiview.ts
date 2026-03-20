@@ -3,8 +3,8 @@ import { Vfs } from "../../utils/fs";
 import { SearchIndex } from "../../utils/search";
 
 async function init() {
-    const fs = await Vfs.worker();
-
+    // Use FSA (OPFS) directly — SharedWorker hangs in headless Chrome.
+    const fs = await Vfs.fsa(`codeblock-test-multiview-${Date.now()}`);
     const index = await SearchIndex.get(fs, '.codeblock/index.json');
 
     const parentA = document.getElementById('editor-a') as HTMLDivElement;
@@ -20,12 +20,13 @@ async function init() {
     });
 
     // Manually subscribe both to the same file for sync testing
-    fileChangeBus.subscribe('shared.md', viewA, (content) => {
+    // Use 'shared.txt' to match what the tests notify on
+    fileChangeBus.subscribe('shared.txt', viewA, (content) => {
         if (viewA.state.doc.toString() !== content) {
             viewA.dispatch({ changes: { from: 0, to: viewA.state.doc.length, insert: content } });
         }
     });
-    fileChangeBus.subscribe('shared.md', viewB, (content) => {
+    fileChangeBus.subscribe('shared.txt', viewB, (content) => {
         if (viewB.state.doc.toString() !== content) {
             viewB.dispatch({ changes: { from: 0, to: viewB.state.doc.length, insert: content } });
         }

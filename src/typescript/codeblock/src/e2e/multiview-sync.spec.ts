@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { Browser, Page } from 'puppeteer-core';
-import { DEV_SERVER, launchBrowser } from './helpers';
-
-const BASE_URL = `${DEV_SERVER}/src/e2e/fixtures/multiview.html`;
+import { getDevServerUrl, launchBrowser } from './helpers';
 
 describe('Multi-view file sync (e2e)', () => {
     let browser: Browser;
     let page: Page;
+    let BASE_URL: string;
 
     beforeAll(async () => {
+        BASE_URL = `${getDevServerUrl()}/src/e2e/fixtures/multiview.html`;
         browser = await launchBrowser();
     });
 
@@ -21,17 +21,17 @@ describe('Multi-view file sync (e2e)', () => {
         page.on('pageerror', err => console.log(`[pageerror] ${err}`));
         await page.goto(BASE_URL);
 
-        // Wait for both editors to be ready with content
-        await page.waitForFunction(() => (window as any).__editorsReady === true, { timeout: 10000 });
-        await page.waitForSelector('#editor-a .cm-content', { visible: true, timeout: 5000 });
-        await page.waitForSelector('#editor-b .cm-content', { visible: true, timeout: 5000 });
-    }, 30000);
+        await page.waitForFunction(() => (window as any).__editorsReady === true, { timeout: 5000 });
+        await page.waitForSelector('#editor-a .cm-content', { visible: true, timeout: 3000 });
+        await page.waitForSelector('#editor-b .cm-content', { visible: true, timeout: 3000 });
+    }, 15000);
 
     afterEach(async () => {
         await page.close();
     });
 
     it('should load the same initial content in both editors', async () => {
+
         const textA = await page.$eval('#editor-a .cm-content', el => el.textContent);
         const textB = await page.$eval('#editor-b .cm-content', el => el.textContent);
         expect(textA).toBe('hello world');
@@ -39,6 +39,7 @@ describe('Multi-view file sync (e2e)', () => {
     }, 15000);
 
     it('should sync edits from editor A to editor B via fileChangeBus.notify', async () => {
+
         // Edit view A and then notify via the bus (simulating what the save callback does)
         await page.evaluate(() => {
             const { viewA } = (window as any).__views;
@@ -57,6 +58,7 @@ describe('Multi-view file sync (e2e)', () => {
     }, 15000);
 
     it('should sync edits from editor B to editor A via fileChangeBus.notify', async () => {
+
         await page.evaluate(() => {
             const { viewB } = (window as any).__views;
             const bus = (window as any).__fileChangeBus;
@@ -69,6 +71,7 @@ describe('Multi-view file sync (e2e)', () => {
     }, 15000);
 
     it('should not notify the source view', async () => {
+
         // Edit A and notify — A should NOT receive the notification back
         const result = await page.evaluate(() => {
             const { viewA, viewB } = (window as any).__views;
@@ -93,6 +96,7 @@ describe('Multi-view file sync (e2e)', () => {
     }, 15000);
 
     it('should not create infinite sync loops', async () => {
+
         // This tests that when B receives an update and dispatches it,
         // the dispatch does NOT trigger B to re-notify (which would create a loop)
         const result = await page.evaluate(() => {

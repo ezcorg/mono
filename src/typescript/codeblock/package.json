@@ -11,7 +11,9 @@
     "dev": "vite",
     "build": "tsc",
     "build:preview": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run src/e2e/",
+    "test:e2e": "vitest run src/e2e/"
   },
   "exports": {
     ".": {

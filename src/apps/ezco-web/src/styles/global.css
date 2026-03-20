@@ -43,10 +43,6 @@ body {
     }
 }
 
-@media (width >=40rem) {
-    main.page-content>section {}
-}
-
 @media (width >=48rem) {
     main.page-content>section {
         margin-top: 8rem;
@@ -54,13 +50,16 @@ body {
 }
 
 .page-content>section {
-    width: min(90ch, 100vw);
+    width: 100%;
+    max-width: min(80ch, 100vw);
+    margin-left: auto;
+    margin-right: auto;
     margin-top: 1.5rem;
 
     min-height: 100vh;
     display: flex;
     align-items: flex-start;
-    justify-content: center;
+    justify-content: flex-start;
     padding: 0 1rem;
 }
 
@@ -71,8 +70,17 @@ body {
     }
 }
 
+@media (width >= 768px) {
+    .page-content > section {
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }
+}
+
 .page-content > section > div {
     width: 100%;
+    display: flex;
+    align-items: center;
 }
 
 .animate-blink {

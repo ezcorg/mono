@@ -3,7 +3,8 @@ import { Vfs } from "../../utils/fs";
 import { SearchIndex } from "../../utils/search";
 
 async function init() {
-    const fs = await Vfs.worker();
+    // Use FSA (OPFS) with unique bucket name for test isolation
+    const fs = await Vfs.fsa(`codeblock-test-create-${Date.now()}`);
     const index = await SearchIndex.get(fs, '.codeblock/index.json');
 
     const parent = document.getElementById('editor') as HTMLDivElement;

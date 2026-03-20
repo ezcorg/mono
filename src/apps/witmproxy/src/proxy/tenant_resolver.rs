@@ -280,7 +280,7 @@ impl TenantResolver for HeaderResolver {
 // ---------------------------------------------------------------------------
 
 /// Which tenant resolver to use.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum TenantResolverKind {
     /// Look up tenant_ip_mappings table (works with any VPN or manual config).

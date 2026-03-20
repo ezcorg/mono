@@ -15,8 +15,8 @@ use tenant::TenantCommands;
 use trust::CaCommands;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use confique::Config;
+use clap::{Args, Parser, Subcommand};
+use confique::{Config, Layer};
 use notify::{Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -42,37 +42,44 @@ mod tests;
 #[command(about = "A WASM-in-the-middle proxy")]
 pub struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 
     /// Configuration file path
-    #[arg(short, long, default_value = "$HOME/.witmproxy/config.toml")]
+    #[cfg_attr(
+        target_os = "linux",
+        arg(short, long, default_value = "/var/lib/witmproxy/config.toml")
+    )]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        arg(short, long, default_value = "$HOME/.witmproxy/config.toml")
+    )]
     config_path: PathBuf,
-
-    /// Configuration object
-    #[command(flatten)]
-    config: AppConfigLayer,
 
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+}
 
-    /// Directory to load plugins from, watched for changes (only applies when running the proxy)
+/// Shared options for commands that start or configure the proxy server
+#[derive(Args, Clone)]
+pub struct ProxyRunOptions {
+    /// Configuration values (overrides config file and environment variables)
+    #[command(flatten)]
+    pub config: AppConfigLayer,
+
+    /// Directory to load plugins from, watched for changes
     #[arg(long)]
-    plugin_dir: Option<PathBuf>,
+    pub plugin_dir: Option<PathBuf>,
 
-    /// Automatically trust the proxy CA and configure system proxy settings on startup (only applies when running the proxy)
+    /// Automatically trust the proxy CA and configure system proxy settings on startup
     #[arg(long)]
-    auto: bool,
-
-    /// Detach from the daemon after starting, don't attach to logs (only applies to default startup behavior)
-    #[arg(short, long)]
-    detach: bool,
+    pub auto: bool,
 }
 
 /// Internal helper struct that holds the resolved configuration
 pub struct ResolvedCli {
-    command: Option<Commands>,
-    config: AppConfig,
+    pub(crate) config: AppConfig,
+    config_layer: AppConfigLayer,
     verbose: bool,
     plugin_dir: Option<PathBuf>,
     auto: bool,
@@ -81,6 +88,38 @@ pub struct ResolvedCli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Install/restart the daemon service and attach to logs
+    ///
+    /// This is the recommended way to run witmproxy. It installs (or updates)
+    /// the system service with the current configuration, restarts the daemon,
+    /// and attaches to logs so you can see the proxy start up.
+    Start {
+        #[command(flatten)]
+        options: ProxyRunOptions,
+
+        /// Detach from the daemon after starting, don't attach to logs
+        #[arg(short, long)]
+        detach: bool,
+    },
+    /// Run the proxy server directly in the foreground (no daemon)
+    ///
+    /// This starts the web and proxy servers directly in the current terminal.
+    /// Useful for development, debugging, or when you don't want daemon overhead.
+    /// Press Ctrl+C to stop the proxy.
+    Run {
+        #[command(flatten)]
+        options: ProxyRunOptions,
+    },
+    /// Run the proxy server in daemon mode (internal, called by service manager)
+    #[command(hide = true)]
+    Serve {
+        #[command(flatten)]
+        options: ProxyRunOptions,
+
+        /// Log file path for daemon mode (stdout/stderr will be redirected here)
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+    },
     /// Plugin management commands
     Plugin {
         #[command(subcommand)]
@@ -116,18 +155,6 @@ enum Commands {
         #[command(subcommand)]
         command: GroupCommands,
     },
-    /// Run the proxy server directly in the foreground (no daemon)
-    ///
-    /// This starts the web and proxy servers directly in the current terminal.
-    /// Useful for development, debugging, or when you don't want daemon overhead.
-    /// Press Ctrl+C to stop the proxy.
-    Run,
-    /// Run the proxy server directly (used by the daemon, not typically called directly)
-    Serve {
-        /// Log file path for daemon mode (stdout/stderr will be redirected here)
-        #[arg(long)]
-        log_file: Option<PathBuf>,
-    },
     /// Check for updates and update the CLI binary
     Update {
         /// Force update even if already on the latest version
@@ -145,28 +172,152 @@ pub(crate) struct Services {
     pub web: String,
 }
 
+type UpdateCheckHandle = tokio::task::JoinHandle<
+    Result<Result<Option<semver::Version>, anyhow::Error>, tokio::time::error::Elapsed>,
+>;
+
 impl Cli {
     pub async fn run(self) -> Result<()> {
-        // Check if we're running the serve command (daemon mode)
-        // In that case, we'll let run_serve initialize tracing with file output
-        let is_serve_command = matches!(&self.command, Some(Commands::Serve { .. }));
+        let is_serve = matches!(&self.command, Commands::Serve { .. });
 
-        if !is_serve_command {
+        if !is_serve {
             let log_level = if self.verbose { "debug" } else { "info" };
             tracing_subscriber::fmt()
                 .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
                 .init();
         }
 
-        // Load and resolve configuration once at the beginning
-        let resolved_cli = self.resolve_config().await?;
+        let config_path = expand_home_in_path(&self.config_path)?;
+        let verbose = self.verbose;
 
-        // Spawn a background update check for non-serve, non-update commands
-        let is_update_command = matches!(&resolved_cli.command, Some(Commands::Update { .. }));
-        let check_update = if !is_serve_command
-            && !is_update_command
-            && resolved_cli.config.update.cli_update_warning
-        {
+        match self.command {
+            Commands::Start { options, detach } => {
+                let resolved =
+                    ResolvedCli::from_proxy_options(options, &config_path, verbose, detach)?;
+                let check = Self::maybe_spawn_update_check(&resolved.config);
+                let result = resolved.run_start().await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Run { options } => {
+                let resolved =
+                    ResolvedCli::from_proxy_options(options, &config_path, verbose, false)?;
+                let check = Self::maybe_spawn_update_check(&resolved.config);
+                let result = resolved.run_foreground().await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Serve {
+                options,
+                log_file,
+            } => {
+                let resolved =
+                    ResolvedCli::from_proxy_options(options, &config_path, verbose, false)?;
+                resolved.run_serve(log_file).await
+            }
+            Commands::Service { command } => match command {
+                ServiceCommands::Install { options, yes } => {
+                    let ProxyRunOptions {
+                        config: layer,
+                        plugin_dir,
+                        auto,
+                    } = options;
+                    let resolved_config = Self::resolve_config(layer.clone(), &config_path)?;
+                    let plugin_dir = plugin_dir.map(|d| expand_home_in_path(&d)).transpose()?;
+                    let service_handler =
+                        service::ServiceHandler::new(resolved_config, verbose, plugin_dir, auto);
+                    let check = Self::maybe_spawn_update_check(&service_handler.config);
+                    let result = service_handler.install_service(layer, yes).await;
+                    Self::show_update_warning(check).await;
+                    result
+                }
+                command => {
+                    let config = Self::load_config(&config_path)?;
+                    let check = Self::maybe_spawn_update_check(&config);
+                    let service_handler =
+                        service::ServiceHandler::new(config, verbose, None, false);
+                    let result = service_handler.handle(&command).await;
+                    Self::show_update_warning(check).await;
+                    result
+                }
+            },
+            Commands::Plugin { command } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let plugin_handler = plugin::PluginHandler::new(config, verbose);
+                let result = plugin_handler.handle(&command).await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Ca { command } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let ca_handler = trust::CaHandler::new(config);
+                let result = ca_handler.handle(&command).await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Proxy { command } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let proxy_handler = proxy::ProxyHandler::new(config);
+                let result = proxy_handler.handle(&command).await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Auth { command } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let auth_handler = auth::AuthHandler;
+                let result = auth_handler.handle(&command).await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Tenant { command } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let tenant_handler = tenant::TenantHandler;
+                let result = tenant_handler.handle(&command).await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Group { command } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let group_handler = group::GroupHandler;
+                let result = group_handler.handle(&command).await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Update { force, from_source } => {
+                let config = Self::load_config(&config_path)?;
+                let handler = update::UpdateHandler::new(config);
+                handler.handle(force, from_source).await
+            }
+        }
+    }
+
+    /// Load configuration from config file and env vars only (no CLI overrides)
+    fn load_config(config_path: &std::path::Path) -> Result<AppConfig> {
+        Self::resolve_config(AppConfigLayer::default_values(), config_path)
+    }
+
+    /// Resolve configuration with the given CLI layer
+    fn resolve_config(
+        layer: AppConfigLayer,
+        config_path: &std::path::Path,
+    ) -> Result<AppConfig> {
+        AppConfig::builder()
+            .preloaded(layer)
+            .env()
+            .file(config_path)
+            .load()?
+            .with_resolved_paths()
+    }
+
+    /// Spawn a background update check if enabled
+    fn maybe_spawn_update_check(config: &AppConfig) -> Option<UpdateCheckHandle> {
+        if config.update.cli_update_warning {
             Some(tokio::spawn(async {
                 tokio::time::timeout(
                     tokio::time::Duration::from_secs(2),
@@ -176,110 +327,48 @@ impl Cli {
             }))
         } else {
             None
-        };
-
-        // Handle subcommands first
-        let result = if let Some(ref command) = resolved_cli.command {
-            resolved_cli.handle_command(command).await
-        } else {
-            // Default behavior - install and start daemon, then attach to logs
-            resolved_cli.run_default().await
-        };
-
-        // Show update warning if available
-        if let Some(handle) = check_update
-            && let Ok(Ok(Ok(Some(latest)))) = handle.await {
-                eprintln!(
-                    "\nA new version of witm is available: {} -> {}\nRun 'witm update' to install it.",
-                    update::current_version(),
-                    latest
-                );
-            }
-
-        result
+        }
     }
 
-    /// Load the configuration and resolve all $HOME placeholders
-    async fn resolve_config(self) -> Result<ResolvedCli> {
-        // Resolve home directory and config path
-        let config_path = expand_home_in_path(&self.config_path)?;
-
-        // Load configuration using confique
-        let config = AppConfig::builder()
-            .preloaded(self.config)
-            .env()
-            .file(&config_path)
-            .load()?
-            .with_resolved_paths()?;
-
-        // Resolve plugin_dir path if provided
-        let plugin_dir = if let Some(ref dir) = self.plugin_dir {
-            Some(expand_home_in_path(dir)?)
-        } else {
-            None
-        };
-
-        Ok(ResolvedCli {
-            command: self.command,
-            config,
-            verbose: self.verbose,
-            plugin_dir,
-            auto: self.auto,
-            detach: self.detach,
-        })
+    /// Show update warning if a newer version is available
+    async fn show_update_warning(handle: Option<UpdateCheckHandle>) {
+        if let Some(handle) = handle
+            && let Ok(Ok(Ok(Some(latest)))) = handle.await
+        {
+            eprintln!(
+                "\nA new version of witm is available: {} -> {}\nRun 'witm update' to install it.",
+                update::current_version(),
+                latest
+            );
+        }
     }
 }
 
 impl ResolvedCli {
-    async fn handle_command(&self, command: &Commands) -> Result<()> {
-        match command {
-            Commands::Plugin { command } => {
-                let plugin_handler = plugin::PluginHandler::new(self.config.clone(), self.verbose);
-                plugin_handler.handle(command).await
-            }
-            Commands::Ca { command } => {
-                let ca_handler = trust::CaHandler::new(self.config.clone());
-                ca_handler.handle(command).await
-            }
-            Commands::Proxy { command } => {
-                let proxy_handler = proxy::ProxyHandler::new(self.config.clone());
-                proxy_handler.handle(command).await
-            }
-            Commands::Service { command } => {
-                let service_handler = service::ServiceHandler::new(
-                    self.config.clone(),
-                    self.verbose,
-                    self.plugin_dir.clone(),
-                    self.auto,
-                );
-                service_handler.handle(command).await
-            }
-            Commands::Auth { command } => {
-                let auth_handler = auth::AuthHandler;
-                auth_handler.handle(command).await
-            }
-            Commands::Tenant { command } => {
-                let tenant_handler = tenant::TenantHandler;
-                tenant_handler.handle(command).await
-            }
-            Commands::Group { command } => {
-                let group_handler = group::GroupHandler;
-                group_handler.handle(command).await
-            }
-            Commands::Run => self.run_foreground().await,
-            Commands::Serve { log_file } => self.run_serve(log_file.clone()).await,
-            Commands::Update { force, from_source } => {
-                let handler = update::UpdateHandler::new(self.config.clone());
-                handler.handle(*force, *from_source).await
-            }
-        }
+    fn from_proxy_options(
+        options: ProxyRunOptions,
+        config_path: &std::path::Path,
+        verbose: bool,
+        detach: bool,
+    ) -> Result<Self> {
+        let config_layer = options.config.clone();
+        let config = Cli::resolve_config(options.config, config_path)?;
+        let plugin_dir = options
+            .plugin_dir
+            .map(|d| expand_home_in_path(&d))
+            .transpose()?;
+        Ok(ResolvedCli {
+            config,
+            config_layer,
+            verbose,
+            plugin_dir,
+            auto: options.auto,
+            detach,
+        })
     }
 
-    /// Default behavior when no subcommand is provided:
-    /// - Install (or reinstall) the service with current CLI arguments
-    /// - Restart the daemon so it picks up current config and newly added plugins
-    /// - Unless --detach is specified, attach to the daemon's logs
-    async fn run_default(&self) -> Result<()> {
+    /// Install/restart the daemon service and optionally attach to logs
+    async fn run_start(&self) -> Result<()> {
         let service_handler = service::ServiceHandler::new(
             self.config.clone(),
             self.verbose,
@@ -288,7 +377,9 @@ impl ResolvedCli {
         );
         // Always (re)install the service to ensure the service file reflects
         // the current CLI arguments (e.g. --plugin-dir, --verbose, --auto)
-        service_handler.install_service(true).await?;
+        service_handler
+            .install_service(self.config_layer.clone(), true)
+            .await?;
 
         // Restart the service so it picks up the latest service file,
         // configuration, and any plugins added since the last start

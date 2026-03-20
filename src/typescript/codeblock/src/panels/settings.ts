@@ -1,5 +1,5 @@
 import { EditorView } from "@codemirror/view";
-import { StateEffect, StateField } from "@codemirror/state";
+import { Facet, StateEffect, StateField } from "@codemirror/state";
 import { setThemeEffect, lineWrappingCompartment } from "../editor";
 
 export interface EditorSettings {
@@ -12,6 +12,9 @@ export interface EditorSettings {
     agentUrl: string;
     terminalEnabled: boolean;
     maxVisibleLines: number; // 0 = unlimited
+    showLineNumbers: boolean;
+    showFoldGutter: boolean;
+    autoHideToolbar: boolean;
 }
 
 const defaultSettings: EditorSettings = {
@@ -24,13 +27,22 @@ const defaultSettings: EditorSettings = {
     agentUrl: '',
     terminalEnabled: false,
     maxVisibleLines: 0,
+    showLineNumbers: true,
+    showFoldGutter: true,
+    autoHideToolbar: false,
 };
+
+/** Facet carrying initial settings so settingsField.create() can read them without circular imports. */
+export const InitialSettingsFacet = Facet.define<Partial<EditorSettings>, Partial<EditorSettings>>({
+    combine: (values) => Object.assign({}, ...values),
+});
 
 export const updateSettingsEffect = StateEffect.define<Partial<EditorSettings>>();
 
 export const settingsField = StateField.define<EditorSettings>({
-    create() {
-        return { ...defaultSettings };
+    create(state) {
+        const initial = state.facet(InitialSettingsFacet);
+        return { ...defaultSettings, ...initial };
     },
     update(value, tr) {
         for (const e of tr.effects) {

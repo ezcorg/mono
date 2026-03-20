@@ -453,7 +453,7 @@ pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
                                         None,
                                         false,
                                     );
-                                    if let Err(e) = handler.install_service(true).await {
+                                    if let Err(e) = handler.install_service(confique::Layer::default_values(), true).await {
                                         warn!("Auto-update: failed to reinstall service: {:#}", e);
                                     }
                                     if let Err(e) = handler.restart_service().await {
