@@ -25,6 +25,7 @@
         "node_modules",
         "playwright-report",
         "test-results",
-        "public"
+        "public",
+        "src/e2e"
     ],
 }
