@@ -43,24 +43,17 @@ body {
     }
 }
 
-@media (width >=48rem) {
-    main.page-content>section {
-        margin-top: 8rem;
-    }
-}
-
 .page-content>section {
     width: 100%;
     max-width: min(80ch, 100vw);
     margin-left: auto;
     margin-right: auto;
-    margin-top: 1.5rem;
 
     min-height: 100vh;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: flex-start;
-    padding: 0 1rem;
+    padding: 2rem 1rem 0;
 }
 
 @media (width >= 640px) {

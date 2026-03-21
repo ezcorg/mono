@@ -377,8 +377,12 @@ export const ExtendedCodeblock = Node.create({
             // Track whether this codeblock was created empty (e.g. via ``` input rule)
             const wasCreatedEmpty = !node.textContent && !node.attrs.file;
 
-            // Initialize filesystem worker and update extensions asynchronously
-            getFileSystemWorker().then(fs => {
+            // Use the editor's filesystem if available (so codeblocks can resolve
+            // file references seeded into the same filesystem), otherwise fall back
+            // to a standalone worker.
+            const editorFs = editor.storage.persistence?.options?.fs;
+            const fsPromise = editorFs ? Promise.resolve(editorFs) : getFileSystemWorker();
+            fsPromise.then(fs => {
                 fsWorker = fs;
                 SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
                     // Reconfigure with codeblock extension once fs is ready
