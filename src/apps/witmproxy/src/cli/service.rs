@@ -1,8 +1,9 @@
 #[cfg(target_os = "linux")]
 use crate::config::TransparentProxyConfig;
-use crate::config::{AppConfig, DbConfig};
+use crate::config::{AppConfig, confique_app_config_layer::AppConfigLayer};
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use confique::Config;
 use service_manager::{
     ServiceInstallCtx, ServiceLabel, ServiceManager, ServiceStartCtx, ServiceStopCtx,
     ServiceUninstallCtx,
@@ -33,6 +34,9 @@ const LOG_FILE_NAME: &str = "witmproxy.log";
 pub enum ServiceCommands {
     /// Install the witmproxy service (does not start it)
     Install {
+        #[command(flatten)]
+        options: super::ProxyRunOptions,
+
         /// Skip confirmation prompts
         #[arg(short, long)]
         yes: bool,
@@ -63,7 +67,7 @@ pub enum ServiceCommands {
 }
 
 pub struct ServiceHandler {
-    config: AppConfig,
+    pub(crate) config: AppConfig,
     verbose: bool,
     plugin_dir: Option<PathBuf>,
     auto: bool,
@@ -152,7 +156,9 @@ impl ServiceHandler {
 
     pub async fn handle(&self, command: &ServiceCommands) -> Result<()> {
         match command {
-            ServiceCommands::Install { yes } => self.install_service(*yes).await,
+            ServiceCommands::Install { .. } => {
+                unreachable!("Install is handled directly by Cli::run()")
+            }
             ServiceCommands::Uninstall { yes } => self.uninstall_service(*yes).await,
             ServiceCommands::Start => self.start_service().await,
             ServiceCommands::Stop => self.stop_service().await,
@@ -197,7 +203,7 @@ impl ServiceHandler {
     }
 
     /// Install the service
-    pub async fn install_service(&self, skip_confirm: bool) -> Result<()> {
+    pub async fn install_service(&self, layer: AppConfigLayer, skip_confirm: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
         Self::require_root()?;
 
@@ -249,15 +255,10 @@ impl ServiceHandler {
             std::fs::set_permissions(&app_dir, std::fs::Permissions::from_mode(0o700))?;
         }
 
-        // Load from the user's source config file to get config-file-only
-        // settings (transparent, auth, proxy.tenant_resolver, etc.) that are
-        // arg(skip) and therefore not settable via CLI. confique's layered
-        // loading gives preloaded defaults priority over the file, so bool
-        // fields like transparent.enabled always show up as `false` in
-        // self.config even when the file says `true`.
-        //
-        // If the daemon config already exists, use it as the base instead
-        // (preserving previous edits).
+        // Build daemon config using confique layering:
+        // CLI args → env vars → existing config file → defaults
+        // This ensures CLI-provided values override existing config,
+        // while preserving settings the user didn't explicitly set.
         let source_config_path = if config_path.exists() {
             config_path.clone()
         } else {
@@ -282,34 +283,22 @@ impl ServiceHandler {
             home.map(|h| h.join(".witmproxy/config.toml"))
                 .unwrap_or_default()
         };
-        let mut config_to_save = if source_config_path.exists() {
-            match AppConfig::load(&source_config_path) {
-                Ok(mut base) => {
-                    // Overlay CLI-settable fields from self.config
-                    if self.config.proxy.proxy_bind_addr.is_some() {
-                        base.proxy.proxy_bind_addr = self.config.proxy.proxy_bind_addr.clone();
-                    }
-                    if self.config.db.db_password != DbConfig::default().db_password {
-                        base.db.db_password = self.config.db.db_password.clone();
-                    }
-                    base.plugins = self.config.plugins.clone();
-                    base.tls = self.config.tls.clone();
-                    if self.config.web.web_bind_addr.is_some() {
-                        base.web.web_bind_addr = self.config.web.web_bind_addr.clone();
-                    }
-                    base
-                }
-                Err(e) => {
-                    warn!(
-                        "Could not load config from {:?}, using defaults: {}",
-                        source_config_path, e
-                    );
-                    self.config.clone()
-                }
+
+        let mut builder = AppConfig::builder().preloaded(layer).env();
+        if source_config_path.exists() {
+            builder = builder.file(&source_config_path);
+        }
+        let mut config_to_save = match builder.load() {
+            Ok(config) => config,
+            Err(e) => {
+                warn!(
+                    "Could not build config from sources: {}, using resolved config",
+                    e
+                );
+                self.config.clone()
             }
-        } else {
-            self.config.clone()
         };
+
         // Always use the daemon's standard paths regardless of source
         config_to_save.db.db_path = app_dir.join("witmproxy.db");
         config_to_save.tls.cert_dir = app_dir.join("certs");
@@ -363,7 +352,8 @@ impl ServiceHandler {
         // On Linux, generate a custom unit file with ExecStopPost for iptables cleanup
         #[cfg(target_os = "linux")]
         let contents = {
-            let unit = generate_systemd_unit(&exe_path, &args, &app_dir, &self.config.transparent);
+            let unit =
+                generate_systemd_unit(&exe_path, &args, &app_dir, &config_to_save.transparent);
             Some(unit)
         };
         #[cfg(not(target_os = "linux"))]
@@ -785,12 +775,12 @@ mod tests {
             &default_transparent_config(),
         );
 
-        // 4 PREROUTING + 4 OUTPUT DNAT + 2 QUIC block = 10 ExecStopPost lines
+        // 4 PREROUTING + 4 OUTPUT DNAT + 2 OUTPUT QUIC block + 2 FORWARD QUIC block = 12 ExecStopPost lines
         let stop_post_lines: Vec<&str> = unit
             .lines()
             .filter(|l| l.starts_with("ExecStopPost="))
             .collect();
-        assert_eq!(stop_post_lines.len(), 10);
+        assert_eq!(stop_post_lines.len(), 12);
 
         // All should use the `-` prefix for error suppression
         for line in &stop_post_lines {
@@ -811,7 +801,7 @@ mod tests {
             .iter()
             .filter(|l| l.contains("udp"))
             .collect();
-        assert_eq!(udp_lines.len(), 2);
+        assert_eq!(udp_lines.len(), 4); // 2 OUTPUT + 2 FORWARD
         for line in &udp_lines {
             assert!(line.contains("443"), "missing port 443: {}", line);
         }
@@ -837,7 +827,7 @@ mod tests {
             .lines()
             .filter(|l| l.starts_with("ExecStopPost="))
             .collect();
-        assert_eq!(stop_post_lines.len(), 10);
+        assert_eq!(stop_post_lines.len(), 12);
 
         // PREROUTING lines should have eth0
         let prerouting_lines: Vec<&&str> = stop_post_lines
@@ -848,8 +838,13 @@ mod tests {
             .iter()
             .filter(|l| l.contains("OUTPUT"))
             .collect();
+        let forward_lines: Vec<&&str> = stop_post_lines
+            .iter()
+            .filter(|l| l.contains("FORWARD"))
+            .collect();
         assert_eq!(prerouting_lines.len(), 4);
         assert_eq!(output_lines.len(), 6); // 4 DNAT + 2 QUIC block
+        assert_eq!(forward_lines.len(), 2); // 2 FORWARD QUIC block
         for line in &prerouting_lines {
             assert!(line.contains("eth0"), "missing custom interface: {}", line);
         }

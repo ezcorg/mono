@@ -91,8 +91,6 @@ export const ExtendedCodeblock = Node.create({
                 // Render language back to HTML structure
                 renderHTML: attributes => {
 
-                    console.log('renderHTML attributes', { attributes });
-
                     if (!attributes.language || attributes.language === 'plaintext') {
                         return {}; // No class needed for plaintext
                     }
@@ -172,41 +170,40 @@ export const ExtendedCodeblock = Node.create({
 
     // Register input rules (e.g., ``` or ~~~ at the start of a line)
     addInputRules() {
+        const parseLanguageAttributes = (input: string | undefined) => {
+            if (!input) return { language: 'markdown' };
+
+            // If input contains a dot, treat it as a filename
+            if (input.includes('.')) {
+                const ext = input.split('.').pop()?.toLowerCase() || '';
+                const lang = extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown'
+                return { file: input, language: lang };
+            }
+
+            // Otherwise, check if it's a language name
+            const matchingLanguage = Object.entries(extOrLanguageToLanguageId).find(([ext, lang]) => {
+                return lang.includes(input) || ext === input;
+            })
+
+            if (matchingLanguage) {
+                return { language: matchingLanguage[1], file: null };
+            }
+
+            return { language: 'markdown' };
+        };
+
         return [
+            // ```language + space — more specific, checked first
             textblockTypeInputRule({
-                find: /^```([^\s`]+)?\s$/,
+                find: /^```([^\s`]+)\s$/,
                 type: this.type,
-                getAttributes: match => {
-                    const input = match[1]?.trim();
-                    console.log('input', { input });
-
-                    if (!input) return { language: 'markdown' };
-
-                    // If input contains a dot, treat it as a filename
-                    if (input.includes('.')) {
-                        const ext = input.split('.').pop()?.toLowerCase() || '';
-                        const lang = extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown'
-                        return {
-                            file: input,
-                            language: lang,
-                        };
-                    }
-
-                    // Otherwise, check if it's a language name
-                    const matchingLanguage = Object.entries(extOrLanguageToLanguageId).find(([ext, lang]) => {
-                        return lang.includes(input) || ext === input;
-                    })
-
-                    if (matchingLanguage) {
-                        return {
-                            language: matchingLanguage[1],
-                            file: null,
-                        };
-                    }
-
-                    // If no language match found, default to markdown
-                    return { language: 'markdown' };
-                },
+                getAttributes: match => parseLanguageAttributes(match[1]?.trim()),
+            }),
+            // ``` alone — triggers immediately on the third backtick
+            textblockTypeInputRule({
+                find: /^```$/,
+                type: this.type,
+                getAttributes: () => ({ language: '' }),
             }),
         ];
     },
@@ -273,6 +270,16 @@ export const ExtendedCodeblock = Node.create({
                 if (!main.empty) return false
                 if (unit == "line") main = state.doc.lineAt(main.head)
                 if (dir < 0 ? main.from > 0 : main.to < state.doc.length) return false
+
+                // ArrowUp from first line: focus toolbar instead of escaping to ProseMirror
+                if (dir < 0) {
+                    const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                    if (toolbarInput) {
+                        toolbarInput.focus();
+                        return true;
+                    }
+                }
+
                 // @ts-ignore
                 let targetPos = getPos() + (dir < 0 ? 0 : node.nodeSize)
                 let selection = Selection.near(view.state.doc.resolve(targetPos), dir)
@@ -346,8 +353,36 @@ export const ExtendedCodeblock = Node.create({
             // This ensures proper stacking order based on DOM position
             reassignZIndexes();
 
-            // Initialize filesystem worker and update extensions asynchronously
-            getFileSystemWorker().then(fs => {
+            // Handle ArrowUp from toolbar to escape to ProseMirror above
+            dom.addEventListener('keydown', (e) => {
+                const target = e.target as HTMLElement;
+                if (target.classList.contains('cm-toolbar-input') && e.key === 'ArrowUp') {
+                    // Check if the dropdown is open — if so, let toolbar handle it
+                    const dropdown = dom.querySelector('.cm-search-results');
+                    if (dropdown && dropdown.children.length > 0) return;
+
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // @ts-ignore
+                    const pos = getPos();
+                    if (pos !== undefined) {
+                        let selection = Selection.near(view.state.doc.resolve(pos), -1);
+                        let tr = view.state.tr.setSelection(selection).scrollIntoView();
+                        view.dispatch(tr);
+                        view.focus();
+                    }
+                }
+            }, true);
+
+            // Track whether this codeblock was created empty (e.g. via ``` input rule)
+            const wasCreatedEmpty = !node.textContent && !node.attrs.file;
+
+            // Use the editor's filesystem if available (so codeblocks can resolve
+            // file references seeded into the same filesystem), otherwise fall back
+            // to a standalone worker.
+            const editorFs = editor.storage.persistence?.options?.fs;
+            const fsPromise = editorFs ? Promise.resolve(editorFs) : getFileSystemWorker();
+            fsPromise.then(fs => {
                 fsWorker = fs;
                 SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
                     // Reconfigure with codeblock extension once fs is ready
@@ -367,6 +402,17 @@ export const ExtendedCodeblock = Node.create({
                             }),
                         ]
                     }));
+
+                    // If created via input rule (empty), focus toolbar and open dropdown
+                    if (wasCreatedEmpty) {
+                        requestAnimationFrame(() => {
+                            const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                            if (toolbarInput) {
+                                toolbarInput.focus();
+                                toolbarInput.click();
+                            }
+                        });
+                    }
                 })
             }).catch(error => {
                 console.error('Failed to initialize filesystem worker:', error);
@@ -378,6 +424,15 @@ export const ExtendedCodeblock = Node.create({
             return {
                 dom,
                 setSelection(anchor, head) {
+                    // If the codeblock wasn't focused (entering from outside),
+                    // direct to the toolbar input for keyboard navigation
+                    if (!cm.hasFocus) {
+                        const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                        if (toolbarInput) {
+                            toolbarInput.focus();
+                            return;
+                        }
+                    }
                     cm.focus()
                     updating = true
                     cm.dispatch({ selection: { anchor, head } })

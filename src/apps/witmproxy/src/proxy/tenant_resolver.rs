@@ -59,9 +59,10 @@ impl TenantResolver for IpMappingResolver {
         {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&ip)
-                && entry.expires_at > Instant::now() {
-                    return entry.context.clone();
-                }
+                && entry.expires_at > Instant::now()
+            {
+                return entry.context.clone();
+            }
         }
 
         // DB lookup
@@ -141,9 +142,10 @@ impl TenantResolver for TailscaleResolver {
         {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&ip)
-                && entry.expires_at > Instant::now() {
-                    return entry.context.clone();
-                }
+                && entry.expires_at > Instant::now()
+            {
+                return entry.context.clone();
+            }
         }
 
         // Call Tailscale whois API
@@ -280,7 +282,7 @@ impl TenantResolver for HeaderResolver {
 // ---------------------------------------------------------------------------
 
 /// Which tenant resolver to use.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum TenantResolverKind {
     /// Look up tenant_ip_mappings table (works with any VPN or manual config).

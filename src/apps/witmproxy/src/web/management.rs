@@ -119,12 +119,13 @@ pub async fn update_tenant(
     let tenant_id = id.into_inner();
 
     if let Some(enabled) = body.enabled
-        && let Err(e) = Tenant::update_enabled(&pool, &tenant_id, enabled).await {
-            warn!("Failed to update tenant: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
-            return;
-        }
+        && let Err(e) = Tenant::update_enabled(&pool, &tenant_id, enabled).await
+    {
+        warn!("Failed to update tenant: {}", e);
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Text::Plain("Internal error"));
+        return;
+    }
 
     if let Some(ref display_name) = body.display_name
         && let Err(e) = sqlx::query("UPDATE tenants SET display_name = ? WHERE id = ?")
@@ -132,12 +133,12 @@ pub async fn update_tenant(
             .bind(&tenant_id)
             .execute(&pool)
             .await
-        {
-            warn!("Failed to update tenant display_name: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
-            return;
-        }
+    {
+        warn!("Failed to update tenant display_name: {}", e);
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Text::Plain("Internal error"));
+        return;
+    }
 
     match Tenant::by_id(&pool, &tenant_id).await {
         Ok(Some(tenant)) => res.render(Json(TenantResponse::from(tenant))),

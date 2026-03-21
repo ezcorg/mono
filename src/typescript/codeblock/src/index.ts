@@ -1,5 +1,6 @@
-export { createCodeblock, codeblock, basicSetup, type CodeblockConfig, CodeblockFacet, setThemeEffect } from "./editor";
-export { settingsField, updateSettingsEffect, type EditorSettings } from "./panels/footer";
+export { createCodeblock, codeblock, basicSetup, type CodeblockConfig, CodeblockFacet, setThemeEffect, fileChangeBus, settingsChangeBus, lineNumbersCompartment, foldGutterCompartment, toggleSvgPreviewEffect } from "./editor";
+export { settingsField, updateSettingsEffect, InitialSettingsFacet, type EditorSettings } from "./panels/settings";
+export { registerFileAction, type FileActionEntry } from "./panels/toolbar";
 export { LspLog, type LspLogEntry } from "./utils/lsp";
 export { Vfs as CodeblockFS } from './utils/fs';
 export * from './utils/snapshot';

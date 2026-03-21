@@ -5,7 +5,7 @@ import Footer from '../components/Footer.astro';
 ---
 
 <Layout title="ez co | building easier">
-	<section>
+	<section class="home-hero">
 		<div class="w-full mx-auto flex flex-col gap-6 md:gap-8">
 			<Navbar currentPath="/" />
 			<div class="text-container">
@@ -77,6 +77,15 @@ import Footer from '../components/Footer.astro';
 
 	<Footer slot="footer" />
 </Layout>
+
+<style is:global>
+	.page-content > section.home-hero {
+		margin-top: 0;
+		min-height: 100vh;
+		align-items: flex-end;
+		padding-bottom: 6rem;
+	}
+</style>
 
 <style>
 	/* Text container for positioning */

@@ -63,6 +63,14 @@ export interface VfsInterface {
     stat: (
         path: string,
     ) => Promise<any | undefined>;
+
+    /**
+     * Deletes a file
+     * @param path A path to a file
+     */
+    unlink: (
+        path: string,
+    ) => Promise<void>;
 }
 
 export type FsMountOptions = {

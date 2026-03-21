@@ -44,3 +44,5 @@ key.secret
 key.public
 src/wasm/*
 !src/wasm/README.md
+
+.vitest-attachments

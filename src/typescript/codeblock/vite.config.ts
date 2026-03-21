@@ -64,6 +64,7 @@ export const snapshot = async (props: SnapshotProps = {}) => {
 
 export default async function getConfig() {
     return defineConfig({
+        appType: 'mpa',
         // resolve: {
         //     alias: {
         //         path: 'path-browserify',
@@ -101,6 +102,9 @@ export default async function getConfig() {
         ],
         optimizeDeps: {
             include: [
+                '@codemirror/lang-javascript',
+                '@codemirror/lang-python',
+                '@codemirror/lang-rust',
                 '@codemirror/lang-css',
                 '@codemirror/lang-sass',
                 '@codemirror/lang-less',
@@ -113,6 +117,11 @@ export default async function getConfig() {
                 '@codemirror/lang-java',
                 '@codemirror/lang-cpp',
                 '@codemirror/lang-yaml',
+                // Pre-bundle LSP deps to avoid mid-test page reloads from dep discovery
+                'vscode-languageserver/browser',
+                '@volar/language-server/browser',
+                'volar-service-typescript',
+                'typescript',
             ],
         },
         server: {

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multi-view sync test</title>
+  <style>
+    body { display: flex; gap: 16px; padding: 16px; background: #1e1e1e; }
+    .editor-pane { flex: 1; height: 400px; border: 1px solid #444; }
+    .cm-editor { height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="editor-a" class="editor-pane"></div>
+  <div id="editor-b" class="editor-pane"></div>
+  <script type="module" src="./multiview.ts"></script>
+</body>
+</html>

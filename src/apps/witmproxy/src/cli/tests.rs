@@ -1,6 +1,6 @@
 use crate::{
     AppConfig, Db, Runtime,
-    cli::{Commands, ResolvedCli, load_plugins_from_directory, plugin::PluginCommands},
+    cli::load_plugins_from_directory,
     config::confique_app_config_layer::AppConfigLayer,
     plugins::{WitmPlugin, registry::PluginRegistry},
     test_utils::test_component_path,
@@ -9,10 +9,12 @@ use crate::{
 use anyhow::Result;
 use cel_cxx::{Env, EnvBuilder};
 use confique::{Config, Layer};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio::sync::RwLock;
+
+use super::plugin;
 
 /// Helper function to create a static CEL environment for tests
 fn create_static_cel_env() -> Result<&'static Env<'static>> {
@@ -22,18 +24,8 @@ fn create_static_cel_env() -> Result<&'static Env<'static>> {
     Ok(Box::leak(Box::new(env)))
 }
 
-/// Test helper that creates a ResolvedCli with test configuration
-async fn create_test_cli(temp_path: &Path) -> ResolvedCli {
-    create_test_cli_with_options(temp_path, None, false, false).await
-}
-
-/// Test helper that creates a ResolvedCli with test configuration and options
-async fn create_test_cli_with_options(
-    temp_path: &Path,
-    plugin_dir: Option<PathBuf>,
-    auto: bool,
-    detach: bool,
-) -> ResolvedCli {
+/// Test helper that creates an AppConfig with test paths
+fn create_test_config(temp_path: &Path) -> AppConfig {
     let db_path = temp_path.join("test.db");
     let cert_dir = temp_path.join("certs");
     let mut partial_config = AppConfigLayer::default_values();
@@ -41,22 +33,12 @@ async fn create_test_cli_with_options(
     partial_config.db.db_password = Some("test_password".to_string());
     partial_config.tls.cert_dir = Some(cert_dir);
 
-    // Create a resolved config directly for testing
-    let config = AppConfig::builder()
+    AppConfig::builder()
         .preloaded(partial_config)
         .load()
         .expect("Failed to load test config")
         .with_resolved_paths()
-        .expect("Failed to resolve paths in test config");
-
-    ResolvedCli {
-        command: None,
-        config,
-        verbose: true,
-        plugin_dir,
-        auto,
-        detach,
-    }
+        .expect("Failed to resolve paths in test config")
 }
 
 #[tokio::test]
@@ -65,19 +47,19 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path();
 
-    // Create resolved CLI instance with test configuration
-    let cli = create_test_cli(temp_path).await;
+    let config = create_test_config(temp_path);
+    let plugin_handler = plugin::PluginHandler::new(config, true);
 
     // Test path to the signed WASM component
     let wasm_path = test_component_path()?;
 
     // Test adding the plugin
-    let command = Commands::Plugin {
-        command: PluginCommands::Add {
+    plugin_handler
+        .handle(&plugin::PluginCommands::Add {
             source: wasm_path.clone(),
-        },
-    };
-    cli.handle_command(&command).await?;
+        })
+        .await?;
+
     // Verify the plugin was actually added to the database
     let db_file_path = temp_path.join("test.db");
     let mut db = Db::from_path(db_file_path, "test_password").await.unwrap();
@@ -115,16 +97,15 @@ async fn test_witm_plugin_add_nonexistent_file() {
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path();
 
-    // Create resolved CLI instance with test configuration
-    let cli = create_test_cli(temp_path).await;
-    let command = Commands::Plugin {
-        command: PluginCommands::Add {
-            source: "/nonexistent/file.wasm".to_string(),
-        },
-    };
+    let config = create_test_config(temp_path);
+    let plugin_handler = plugin::PluginHandler::new(config, true);
 
     // Test with non-existent file
-    let result = cli.handle_command(&command).await;
+    let result = plugin_handler
+        .handle(&plugin::PluginCommands::Add {
+            source: "/nonexistent/file.wasm".to_string(),
+        })
+        .await;
 
     assert!(result.is_err(), "Should fail for non-existent file");
     assert!(
@@ -144,16 +125,15 @@ async fn test_witm_plugin_add_non_wasm_file() {
     // Create a dummy non-WASM file
     std::fs::write(&dummy_file, "This is not a WASM file").unwrap();
 
-    // Create resolved CLI instance with test configuration
-    let cli = create_test_cli(temp_path).await;
+    let config = create_test_config(temp_path);
+    let plugin_handler = plugin::PluginHandler::new(config, true);
 
     // Test with non-WASM file
-    let command = Commands::Plugin {
-        command: PluginCommands::Add {
+    let result = plugin_handler
+        .handle(&plugin::PluginCommands::Add {
             source: dummy_file.to_str().unwrap().to_string(),
-        },
-    };
-    let result = cli.handle_command(&command).await;
+        })
+        .await;
 
     assert!(result.is_err(), "Should fail for non-WASM file");
     assert!(
@@ -169,20 +149,18 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path();
 
-    // Create resolved CLI instance with test configuration
-    let cli = create_test_cli(temp_path).await;
+    let config = create_test_config(temp_path);
+    let plugin_handler = plugin::PluginHandler::new(config, true);
 
     // Test path to the signed WASM component
     let wasm_path = test_component_path()?;
 
     // Add the plugin first
-    let add_command = Commands::Plugin {
-        command: PluginCommands::Add {
+    plugin_handler
+        .handle(&plugin::PluginCommands::Add {
             source: wasm_path.clone(),
-        },
-    };
-    let result = cli.handle_command(&add_command).await;
-    assert!(result.is_ok(), "Failed to add plugin: {:?}", result.err());
+        })
+        .await?;
 
     // Verify plugin was added
     let db_file_path = temp_path.join("test.db");
@@ -199,17 +177,11 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
     let plugin_name = &test_plugin.name;
 
     // Test removing the plugin by name
-    let remove_command = Commands::Plugin {
-        command: PluginCommands::Remove {
+    plugin_handler
+        .handle(&plugin::PluginCommands::Remove {
             plugin_name: plugin_name.clone(),
-        },
-    };
-    let remove_result = cli.handle_command(&remove_command).await;
-    assert!(
-        remove_result.is_ok(),
-        "Failed to remove plugin: {:?}",
-        remove_result.err()
-    );
+        })
+        .await?;
 
     // Verify plugin was removed
     let plugins_after = WitmPlugin::all(&mut db, &runtime.engine, env)
@@ -227,20 +199,18 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path();
 
-    // Create resolved CLI instance with test configuration
-    let cli = create_test_cli(temp_path).await;
+    let config = create_test_config(temp_path);
+    let plugin_handler = plugin::PluginHandler::new(config, true);
 
     // Test path to the signed WASM component
     let wasm_path = test_component_path()?;
 
     // Add the plugin first
-    let add_command = Commands::Plugin {
-        command: PluginCommands::Add {
+    plugin_handler
+        .handle(&plugin::PluginCommands::Add {
             source: wasm_path.clone(),
-        },
-    };
-    let result = cli.handle_command(&add_command).await;
-    assert!(result.is_ok(), "Failed to add plugin: {:?}", result.err());
+        })
+        .await?;
 
     // Verify plugin was added and get its full ID
     let db_file_path = temp_path.join("test.db");
@@ -257,17 +227,11 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
     let full_plugin_id = format!("{}/{}", test_plugin.namespace, test_plugin.name);
 
     // Test removing the plugin by namespace/name
-    let remove_command = Commands::Plugin {
-        command: PluginCommands::Remove {
+    plugin_handler
+        .handle(&plugin::PluginCommands::Remove {
             plugin_name: full_plugin_id.clone(),
-        },
-    };
-    let remove_result = cli.handle_command(&remove_command).await;
-    assert!(
-        remove_result.is_ok(),
-        "Failed to remove plugin: {:?}",
-        remove_result.err()
-    );
+        })
+        .await?;
 
     // Verify plugin was removed
     let plugins_after = WitmPlugin::all(&mut db, &runtime.engine, env)
@@ -285,18 +249,17 @@ async fn test_witm_plugin_remove_nonexistent() {
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path();
 
-    // Create resolved CLI instance with test configuration
-    let cli = create_test_cli(temp_path).await;
+    let config = create_test_config(temp_path);
+    let plugin_handler = plugin::PluginHandler::new(config, true);
 
     // Test removing a nonexistent plugin
-    let remove_command = Commands::Plugin {
-        command: PluginCommands::Remove {
+    let result = plugin_handler
+        .handle(&plugin::PluginCommands::Remove {
             plugin_name: "nonexistent_plugin".to_string(),
-        },
-    };
-    let remove_result = cli.handle_command(&remove_command).await;
+        })
+        .await;
     assert!(
-        remove_result.is_ok(),
+        result.is_ok(),
         "Should not fail when removing nonexistent plugin"
     );
 }

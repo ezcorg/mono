@@ -1,0 +1,28 @@
+diff --git a/out/fs-collections/seti.js b/out/fs-collections/seti.js
+index cb7da3ba80e59075721b0ae5c824276ee5f0365f..e2b0c0fcc6b6b724d041f4604ea95e2f30a841ab 100644
+--- a/out/fs-collections/seti.js
++++ b/out/fs-collections/seti.js
+@@ -1,4 +1,3 @@
+-import { parse } from "node:path";
+ import { icons } from "../icons.js";
+ export const colors = {
+     blue: "#519ABA",
+@@ -451,7 +450,8 @@ export const byBaseSeti = new Map([
+ /**
+  * Get an icon for a file path or parsed object of this path.
+  */
+-export function fromPath(argument1) {
++export async function fromPath(argument1) {
++    const { parse } = await import("node:path");
+     const { base } = typeof argument1 === "string" ? parse(argument1) : argument1;
+     const foundBase = byBaseSeti?.get(base);
+     if (foundBase !== undefined) {
+diff --git a/out/fs-icons.js b/out/fs-icons.js
+index c73d2e98eb5beeaa0663b4c85163cb6bd80f82ca..8ea8108e4dbde8603e35a3a63ab3a5310c7ead9f 100644
+--- a/out/fs-icons.js
++++ b/out/fs-icons.js
+@@ -1,4 +1,3 @@
+-import {} from "node:path";
+ import {} from "./icons.js";
+ import * as Seti from "./fs-collections/seti.js";
+ export * as Seti from "./fs-collections/seti.js";

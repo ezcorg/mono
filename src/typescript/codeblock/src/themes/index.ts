@@ -45,17 +45,21 @@ export const codeblockTheme = EditorView.theme({
         color: 'var(--cm-search-result-color)',
         display: 'flex',
         cursor: 'pointer',
+        lineHeight: 1.4,
         '&.cm-command-result': {
             color: 'var(--cm-command-result-color)'
         },
         '& > .cm-search-result-icon-container': {
             width: 'var(--cm-gutter-width)',
+            minWidth: 'var(--cm-icon-col-width, 2ch)',
 
             '& > .cm-search-result-icon': {
                 fontSize: FS,
-                textAlign: 'center',
+                textAlign: 'right',
+                paddingRight: 'calc(1ch + 3px)',
                 boxSizing: 'border-box',
                 width: 'var(--cm-gutter-lineno-width)',
+                minWidth: 'var(--cm-icon-col-width, 2ch)',
             }
         },
         '&:hover': {
@@ -77,20 +81,21 @@ export const codeblockTheme = EditorView.theme({
     },
     '.cm-toolbar-state-icon-container': {
         width: 'var(--cm-gutter-width)',
+        minWidth: 'var(--cm-icon-col-width, 2ch)',
         display: 'flex',
     },
-    // Nerd Font icon glyphs have visual widths (700-920 units) that far exceed
-    // their monospace advance width (500 units), overflowing to the right.
-    // text-align operates on the advance width, not the visual bounds, so
-    // 'right' misaligns the icon. 'center' partially compensates for the
-    // rightward overflow and visually aligns with gutter line numbers.
+    // Icon right-aligned to match CM's right-aligned line numbers.
+    // padding-right: 3px matches CM's .cm-gutterElement right padding.
     '.cm-toolbar-state-icon': {
         fontSize: FS,
         color: 'var(--cm-foreground)',
         fontFamily: 'var(--cm-icon-font-family)',
-        textAlign: 'center',
+        paddingRight: 'calc(1ch + 3px)',
+        textAlign: 'right',
         boxSizing: 'border-box',
         width: 'var(--cm-gutter-lineno-width)',
+        minWidth: 'var(--cm-icon-col-width, 2ch)',
+        transition: 'opacity 0.15s ease',
     },
     '&': {
         fontSize: FS,
@@ -174,7 +179,7 @@ export const codeblockTheme = EditorView.theme({
         fontSize: FS,
         listStyleType: 'none',
         width: '100%',
-        maxHeight: '25vh',
+        maxHeight: `calc(${FS} * 1.4 * 10)`,
         overflowY: 'auto',
         zIndex: 200,
     },
@@ -185,24 +190,27 @@ export const codeblockTheme = EditorView.theme({
         borderBottom: 'none',
         zIndex: 301,
     },
-    // CSS border spinner for file loading indicator
+    // CSS border spinner for file loading indicator.
+    // Rendered as a separate element inside .cm-toolbar-state-icon-container,
+    // so it has fixed dimensions and doesn't inherit gutter-width sizing.
     '.cm-loading': {
         display: 'inline-block',
         width: FS,
         height: FS,
-        border: '2px solid currentColor',
+        border: '2px solid var(--cm-foreground, currentColor)',
         borderTopColor: 'transparent',
         borderRadius: '50%',
         boxSizing: 'border-box',
         animation: 'cm-spin 0.8s linear infinite',
-        marginLeft: '4px'
+        transition: 'opacity 0.15s ease-out',
+        margin: 'auto',
     },
     '@keyframes cm-spin': {
         '0%': { transform: 'rotate(0deg)' },
         '100%': { transform: 'rotate(360deg)' },
     },
-    // Settings cog + LSP log button in toolbar (far right)
-    '.cm-toolbar-settings-cog, .cm-toolbar-lsp-log': {
+    // LSP log button in toolbar (far right)
+    '.cm-toolbar-lsp-log': {
         border: 'none',
         background: 'transparent',
         color: 'var(--cm-toolbar-color)',
@@ -211,10 +219,6 @@ export const codeblockTheme = EditorView.theme({
         fontSize: FS_875,
         lineHeight: 'inherit',
         flexShrink: '0',
-        transition: 'transform 0.25s ease',
-    },
-    '.cm-toolbar-settings-cog.cm-cog-active': {
-        transform: 'rotate(90deg)',
     },
     // Settings / log overlay — anchored at top, grows downward
     '.cm-settings-overlay': {
@@ -236,7 +240,6 @@ export const codeblockTheme = EditorView.theme({
         fontWeight: 'bold',
         marginBottom: '6px',
         fontSize: FS_85,
-        textTransform: 'uppercase',
         opacity: '0.7',
     },
     '.cm-settings-row': {
@@ -336,5 +339,47 @@ export const codeblockTheme = EditorView.theme({
     },
     '.cm-lsp-log-log': {
         opacity: '0.6',
+    },
+    // Terminal panel
+    '.cm-terminal-panel': {
+        borderTop: '1px solid var(--cm-tooltip-border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '200px',
+        minHeight: '80px',
+    },
+    '.cm-terminal-header': {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '2px 6px',
+        background: 'var(--cm-toolbar-background)',
+        fontSize: FS_85,
+        flexShrink: '0',
+    },
+    '.cm-terminal-title': {
+        opacity: '0.7',
+        fontFamily: 'var(--cm-font-family)',
+    },
+    '.cm-terminal-close': {
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--cm-toolbar-color)',
+        cursor: 'pointer',
+        padding: '2px 4px',
+        fontSize: FS_875,
+        lineHeight: '1',
+    },
+    '.cm-terminal-container': {
+        flex: 1,
+        overflow: 'hidden',
+    },
+    // Auto-hide toolbar: JS manages retract/expand by toggling
+    // .cm-toolbar-retracted on .cm-panels-top (see toolbar.ts).
+    // The transition makes expand/retract feel smooth.
+    '& .cm-panels-top.cm-toolbar-retracted': {
+        maxHeight: '0px',
+        overflow: 'hidden',
+        transition: 'max-height 0.15s ease-out',
     },
 });

@@ -14,5 +14,6 @@
             "persistent": true,
             "cache": false
         }
-    }
+    },
+    "concurrency": "12"
 }

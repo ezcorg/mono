@@ -16,6 +16,9 @@
   },
   "packageManager": "pnpm@10.10.0",
   "pnpm": {
-    "overrides": {}
+    "overrides": {},
+    "patchedDependencies": {
+      "@m234/nerd-fonts@0.5.0": "patches/@m234__nerd-fonts@0.5.0.patch"
+    }
   }
 }

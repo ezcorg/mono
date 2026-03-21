@@ -283,9 +283,10 @@ async fn handle_transparent_connection(
             info!("Transparent: intercepting {} (plugins matched)", hostname);
             let authority = format!("{}:443", hostname);
             if let Err(e) = run_tls_mitm(upstream, stream, authority, ca, plugin_registry).await
-                && !is_closed(&e) {
-                    debug!("Transparent MITM error for {}: {}", hostname, e);
-                }
+                && !is_closed(&e)
+            {
+                debug!("Transparent MITM error for {}: {}", hostname, e);
+            }
         } else {
             // No plugins care — raw TCP forward to the real server
             info!(

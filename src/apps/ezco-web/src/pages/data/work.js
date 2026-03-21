@@ -1,20 +1,79 @@
 export const files = [
-	['example.ts', `export const greet = (name: string) => {
-	return \`Hello, \${name}!\`
-};`],
+	['example.ts', `// Type inference and generics
+interface User {
+	name: string;
+	email: string;
+	role: "admin" | "editor" | "viewer";
+}
+
+function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+	return obj[key];
+}
+
+const user: User = {
+	name: "Alice",
+	email: "alice@example.com",
+	role: "admin",
+};
+
+// Hover over 'role' to see inferred type
+const role = getProperty(user, "role");
+
+// Autocomplete works after the dot
+// user.
+
+// Async patterns
+async function fetchUsers(): Promise<User[]> {
+	return [user];
+}
+
+// Mapped types
+type ReadonlyUser = Readonly<User>;
+type PartialUser = Partial<User>;
+
+// Template literal types
+type EventName = \`on\$\{Capitalize<string>}\`;
+
+export { user, fetchUsers, type ReadonlyUser, type PartialUser };
+`],
+	['index.ts', `import { CodeblockFS } from "@joinezco/codeblock";
+import { createEditor } from "@joinezco/markdown-editor";
+
+async function init() {
+	const fs = await CodeblockFS.fsa("demo");
+
+	// Seed files only if hello.md doesn't exist yet (first visit)
+	const exists = await fs.exists("hello.md");
+	if (!exists) {
+		await fs.writeFile("hello.md", "# hello, world");
+	}
+	const container = document.getElementById("editor-mount")!;
+
+	const editor = createEditor({
+		element: container,
+		autofocus: false,
+		fs: {
+			fs,
+			filepath: "hello.md",
+		},
+	});
+	editor.view.dom.setAttribute("data-theme", "dark");
+}
+
+init().catch(console.error);
+`],
+	['install.sh', 'pnpm i @joinezco/markdown-editor'],
 	['hello.md', `# \`@joinezco/markdown-editor\`
 
 ## Usage
 
 ### Install
-\`\`\`sh
-pnpm i @joinezco/markdown-editor
+\`\`\`install.sh
 \`\`\`
 
-### Import
+### Basic example
 
-\`\`\`ts
-import { createEditor } from '@joinezco/markdown-editor';
+\`\`\`index.ts
 \`\`\`
 
 ## Features

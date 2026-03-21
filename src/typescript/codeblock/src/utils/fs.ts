@@ -3,7 +3,7 @@ import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from "../rpc/serde";
 import { FileSystem, FileType } from '@volar/language-service';
 import { URI } from 'vscode-uri'
-import type { mount, mountFromUrl } from '../workers/fs.worker';
+// Worker types no longer needed — VfsInterface is returned directly from the worker
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { SnapshotNode } from "@joinezco/memfs/snapshot";
 import { promises } from "node:fs";
@@ -124,14 +124,25 @@ export namespace Vfs {
                     type: toVolarFileType(filestat.filetype),
                 };
             },
+
+            async unlink(path: string): Promise<void> {
+                const abs = ensureAbs(path);
+                const res = await jswasiFs.removeEntry(abs, false);
+                if (res !== WASI_ESUCCESS) {
+                    throw new Error(`unlink failed (${res}) for ${abs}`);
+                }
+            },
         } as VfsInterface;
     }
 
-    // TODO: this is incorrect, fs is a Comlink proxy
     export const fromMemfs = (fs: FsApi): VfsInterface => {
         return {
             async readFile(path: string): Promise<string> {
-                return fs.promises.readFile(path, { encoding: "utf-8" }) as Promise<string>;
+                const result = await fs.promises.readFile(path, { encoding: "utf-8" });
+                // memfs may return a Buffer — ensure we return a string
+                if (typeof result === 'string') return result;
+                if (result && typeof (result as any).toString === 'function') return (result as any).toString('utf-8');
+                return String(result ?? '');
             },
 
             async writeFile(path: string, data: string): Promise<void> {
@@ -195,7 +206,11 @@ export namespace Vfs {
                 } catch (err) {
                     return null;
                 }
-            }
+            },
+
+            async unlink(path: string): Promise<void> {
+                await fs.promises.unlink(path);
+            },
         }
     }
 
@@ -269,8 +284,29 @@ export namespace Vfs {
                 } catch (err) {
                     return null;
                 }
-            }
+            },
+
+            async unlink(path: string): Promise<void> {
+                await fs.unlink(path);
+            },
         }
+    }
+
+    /**
+     * Create an FSA (File System Access / OPFS) backed filesystem.
+     * Data persists across page reloads via the browser's Origin Private File System.
+     *
+     * @param name - Unique name for the FSA storage bucket (default: 'codeblock')
+     */
+    export const fsa = async (name = 'codeblock'): Promise<VfsInterface> => {
+        const topFs = new TopLevelFs();
+        await topFs.addMount(
+            // @ts-ignore - TopLevelFs.addMount typing
+            undefined, "", undefined, "/",
+            "fsa", 0n,
+            { name, keepMetadata: "true", create: "true" }
+        );
+        return Vfs.fromJswasiFs(topFs);
     }
 
     /**
@@ -284,25 +320,19 @@ export namespace Vfs {
         // TODO: fix this for non-Vite consumers
         const worker = new SharedWorker(new URL('../workers/fs.worker.js', import.meta.url), { type: 'module' });
         worker.port.start()
-        const proxy = Comlink.wrap<{ mount: typeof mount; mountFromUrl: typeof mountFromUrl }>(worker.port);
+        const proxy = Comlink.wrap<{ mount: (args: any) => Promise<VfsInterface>; mountFromUrl: (args: any) => Promise<VfsInterface> }>(worker.port);
 
-        let fs;
+        let vfs: VfsInterface;
 
         if (!bufferOrUrl) {
-            // No buffer or URL provided - create empty filesystem
-            ({ fs } = await proxy.mount({ mountPoint: '/' }));
+            vfs = await proxy.mount({ mountPoint: '/' });
         } else if (typeof bufferOrUrl === 'string') {
-            // URL provided - use optimized mountFromUrl for better performance
-            ({ fs } = await proxy.mountFromUrl({
-                url: bufferOrUrl,
-                mountPoint: '/'
-            }));
+            vfs = await proxy.mountFromUrl({ url: bufferOrUrl, mountPoint: '/' });
         } else {
-            // Buffer provided - use traditional mount method
-            ({ fs } = await proxy.mount(Comlink.transfer({ buffer: bufferOrUrl, mountPoint: "/" }, [bufferOrUrl])));
+            vfs = await proxy.mount(Comlink.transfer({ buffer: bufferOrUrl, mountPoint: "/" }, [bufferOrUrl]));
         }
         console.debug('Filesystem worker mounted');
-        return Comlink.proxy(Vfs.fromMemfs(fs))
+        return vfs;
     }
     
     export async function* walk(fs: VfsInterface, path: string): AsyncIterable<string> {

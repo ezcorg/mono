@@ -247,5 +247,13 @@ export const styleModule: StyleModule = new StyleModule({
                 flex: 1
             }
         },
+        // Make task checkboxes visible when selected (Ctrl-A)
+        // Checkboxes don't natively show selection highlighting,
+        // so add an outline using the system Highlight color
+        '& ul[data-type="taskList"] li > label > input[type="checkbox"]': {
+            '&::selection': {
+                background: 'Highlight',
+            },
+        },
     }
 })
