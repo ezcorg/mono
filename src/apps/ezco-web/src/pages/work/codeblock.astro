@@ -31,7 +31,7 @@ import { Clipboard, Check } from "lucide-astro";
 		import { files } from "../data/work.js";
 
 		async function init() {
-			const fs = await CodeblockFS.fsa("ezco-codeblock-demo");
+			const fs = await CodeblockFS.fsa("ezco-demo");
 
 			// Seed files only if example.ts doesn't exist yet (first visit)
 			const exists = await fs.exists("example.ts");
@@ -103,6 +103,7 @@ import { Clipboard, Check } from "lucide-astro";
 		}
 
 		.demo-container {
+			width: 100%;
 			min-height: 70vh;
 			display: flex;
 			flex-direction: column;
