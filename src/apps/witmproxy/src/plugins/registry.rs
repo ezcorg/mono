@@ -244,10 +244,12 @@ impl PluginRegistry {
             let mut enabled = plugin.enabled;
             // Check for tenant-specific override
             for ov in overrides {
-                if ov.plugin_namespace == plugin.namespace && ov.plugin_name == plugin.name
-                    && let Some(ov_enabled) = ov.enabled {
-                        enabled = ov_enabled;
-                    }
+                if ov.plugin_namespace == plugin.namespace
+                    && ov.plugin_name == plugin.name
+                    && let Some(ov_enabled) = ov.enabled
+                {
+                    enabled = ov_enabled;
+                }
             }
             if enabled {
                 effective.insert(id.clone());

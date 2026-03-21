@@ -125,9 +125,10 @@ async fn fetch_latest_version(
                 continue;
             }
             if let Ok(ver) = entry.vers.parse::<semver::Version>()
-                && max_version.as_ref().is_none_or(|m| ver > *m) {
-                    max_version = Some(ver);
-                }
+                && max_version.as_ref().is_none_or(|m| ver > *m)
+            {
+                max_version = Some(ver);
+            }
         }
     }
 
@@ -148,19 +149,18 @@ pub async fn check_for_update_cached(force: bool) -> Result<Option<semver::Versi
     let cache = read_cache();
 
     // If cache is fresh and not forced, use it directly
-    if !force
-        && let Some(ref c) = cache {
-            let age = chrono::Utc::now()
-                .signed_duration_since(c.checked_at)
-                .num_seconds();
-            if age >= 0 && (age as u64) < CLI_CACHE_TTL_SECS {
-                let cached_ver: semver::Version = c.latest_version.parse()?;
-                if cached_ver > current {
-                    return Ok(Some(cached_ver));
-                }
-                return Ok(None);
+    if !force && let Some(ref c) = cache {
+        let age = chrono::Utc::now()
+            .signed_duration_since(c.checked_at)
+            .num_seconds();
+        if age >= 0 && (age as u64) < CLI_CACHE_TTL_SECS {
+            let cached_ver: semver::Version = c.latest_version.parse()?;
+            if cached_ver > current {
+                return Ok(Some(cached_ver));
             }
+            return Ok(None);
         }
+    }
 
     // Fetch from sparse index (may 304 when nothing changed)
     let result = fetch_latest_version(cache.as_ref()).await?;
@@ -453,7 +453,10 @@ pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
                                         None,
                                         false,
                                     );
-                                    if let Err(e) = handler.install_service(confique::Layer::default_values(), true).await {
+                                    if let Err(e) = handler
+                                        .install_service(confique::Layer::default_values(), true)
+                                        .await
+                                    {
                                         warn!("Auto-update: failed to reinstall service: {:#}", e);
                                     }
                                     if let Err(e) = handler.restart_service().await {

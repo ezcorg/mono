@@ -70,7 +70,11 @@ pub struct ProxyConfig {
     pub proxy_bind_addr: Option<String>,
 
     /// Tenant resolver strategy: ip-mapping, tailscale, or header (default: ip-mapping)
-    #[config(default = "ip-mapping", env = "PROXY_TENANT_RESOLVER", layer_attr(arg(long)))]
+    #[config(
+        default = "ip-mapping",
+        env = "PROXY_TENANT_RESOLVER",
+        layer_attr(arg(long))
+    )]
     pub tenant_resolver: crate::proxy::tenant_resolver::TenantResolverKind,
 
     /// Header name for header-based tenant resolution
@@ -82,7 +86,11 @@ pub struct ProxyConfig {
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct AuthConfig {
     /// Enable authentication for management API (default: false)
-    #[config(default = false, env = "AUTH_ENABLED", layer_attr(arg(long = "auth-enabled", id = "auth-enabled")))]
+    #[config(
+        default = false,
+        env = "AUTH_ENABLED",
+        layer_attr(arg(long = "auth-enabled", id = "auth-enabled"))
+    )]
     pub enabled: bool,
 
     /// External JWKS URL for token verification
@@ -106,19 +114,33 @@ pub struct AuthConfig {
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct TransparentProxyConfig {
     /// Enable transparent proxy mode (default: false)
-    #[config(default = false, env = "TRANSPARENT_ENABLED", layer_attr(arg(long = "transparent-enabled", id = "transparent-enabled")))]
+    #[config(
+        default = false,
+        env = "TRANSPARENT_ENABLED",
+        layer_attr(arg(long = "transparent-enabled", id = "transparent-enabled"))
+    )]
     pub enabled: bool,
 
     /// Listen address for transparent proxy (default: 0.0.0.0:8080)
-    #[config(env = "TRANSPARENT_LISTEN_ADDR", layer_attr(arg(long = "transparent-listen-addr")))]
+    #[config(
+        env = "TRANSPARENT_LISTEN_ADDR",
+        layer_attr(arg(long = "transparent-listen-addr"))
+    )]
     pub listen_addr: Option<String>,
 
     /// Network interface for iptables rules (default: tailscale0)
-    #[config(env = "TRANSPARENT_INTERFACE", layer_attr(arg(long = "transparent-interface")))]
+    #[config(
+        env = "TRANSPARENT_INTERFACE",
+        layer_attr(arg(long = "transparent-interface"))
+    )]
     pub interface: Option<String>,
 
     /// Automatically configure iptables rules (default: true)
-    #[config(default = true, env = "TRANSPARENT_AUTO_IPTABLES", layer_attr(arg(long = "transparent-auto-iptables")))]
+    #[config(
+        default = true,
+        env = "TRANSPARENT_AUTO_IPTABLES",
+        layer_attr(arg(long = "transparent-auto-iptables"))
+    )]
     pub auto_iptables: bool,
 }
 
@@ -184,7 +206,11 @@ pub struct TlsConfig {
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct PluginConfig {
     /// Enable or disable the plugin system (default: true)
-    #[config(default = true, env = "PLUGINS_ENABLED", layer_attr(arg(long = "plugins-enabled", id = "plugins-enabled")))]
+    #[config(
+        default = true,
+        env = "PLUGINS_ENABLED",
+        layer_attr(arg(long = "plugins-enabled", id = "plugins-enabled"))
+    )]
     pub enabled: bool,
 
     /// Plugin execution timeout in milliseconds (default: 1000)
@@ -216,11 +242,19 @@ pub struct UpdateConfig {
     pub auto_update: bool,
 
     /// Seconds between auto-update checks in daemon mode (default: 21600 = 6 hours)
-    #[config(default = 21600, env = "UPDATE_CHECK_INTERVAL_SECONDS", layer_attr(arg(long)))]
+    #[config(
+        default = 21600,
+        env = "UPDATE_CHECK_INTERVAL_SECONDS",
+        layer_attr(arg(long))
+    )]
     pub check_interval_seconds: u64,
 
     /// Show update warnings in interactive CLI mode (default: true)
-    #[config(default = true, env = "UPDATE_CLI_UPDATE_WARNING", layer_attr(arg(long)))]
+    #[config(
+        default = true,
+        env = "UPDATE_CLI_UPDATE_WARNING",
+        layer_attr(arg(long))
+    )]
     pub cli_update_warning: bool,
 
     /// Prefer prebuilt GitHub release binaries over cargo install (default: true)

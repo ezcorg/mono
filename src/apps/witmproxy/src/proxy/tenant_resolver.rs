@@ -59,9 +59,10 @@ impl TenantResolver for IpMappingResolver {
         {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&ip)
-                && entry.expires_at > Instant::now() {
-                    return entry.context.clone();
-                }
+                && entry.expires_at > Instant::now()
+            {
+                return entry.context.clone();
+            }
         }
 
         // DB lookup
@@ -141,9 +142,10 @@ impl TenantResolver for TailscaleResolver {
         {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&ip)
-                && entry.expires_at > Instant::now() {
-                    return entry.context.clone();
-                }
+                && entry.expires_at > Instant::now()
+            {
+                return entry.context.clone();
+            }
         }
 
         // Call Tailscale whois API

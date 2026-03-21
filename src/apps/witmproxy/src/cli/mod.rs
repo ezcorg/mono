@@ -207,10 +207,7 @@ impl Cli {
                 Self::show_update_warning(check).await;
                 result
             }
-            Commands::Serve {
-                options,
-                log_file,
-            } => {
+            Commands::Serve { options, log_file } => {
                 let resolved =
                     ResolvedCli::from_proxy_options(options, &config_path, verbose, false)?;
                 resolved.run_serve(log_file).await
@@ -303,10 +300,7 @@ impl Cli {
     }
 
     /// Resolve configuration with the given CLI layer
-    fn resolve_config(
-        layer: AppConfigLayer,
-        config_path: &std::path::Path,
-    ) -> Result<AppConfig> {
+    fn resolve_config(layer: AppConfigLayer, config_path: &std::path::Path) -> Result<AppConfig> {
         AppConfig::builder()
             .preloaded(layer)
             .env()

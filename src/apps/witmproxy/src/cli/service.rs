@@ -352,7 +352,8 @@ impl ServiceHandler {
         // On Linux, generate a custom unit file with ExecStopPost for iptables cleanup
         #[cfg(target_os = "linux")]
         let contents = {
-            let unit = generate_systemd_unit(&exe_path, &args, &app_dir, &config_to_save.transparent);
+            let unit =
+                generate_systemd_unit(&exe_path, &args, &app_dir, &config_to_save.transparent);
             Some(unit)
         };
         #[cfg(not(target_os = "linux"))]
