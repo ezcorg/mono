@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@m234/nerd-fonts@0.5.0':
+    hash: 82a8c2feb0a990e9c505ba013aa741114a836a159301111b923c4beaafa6cca6
+    path: patches/@m234__nerd-fonts@0.5.0.patch
+
 importers:
 
   .:
@@ -271,7 +276,7 @@ importers:
         version: 1.2.1
       '@m234/nerd-fonts':
         specifier: ^0.5.0
-        version: 0.5.0
+        version: 0.5.0(patch_hash=82a8c2feb0a990e9c505ba013aa741114a836a159301111b923c4beaafa6cca6)
       '@typescript/vfs':
         specifier: ^1.6.1
         version: 1.6.1(typescript@5.9.2)
@@ -13011,7 +13016,7 @@ snapshots:
       '@lezer/highlight': 1.2.1
       '@lezer/lr': 1.4.2
 
-  '@m234/nerd-fonts@0.5.0': {}
+  '@m234/nerd-fonts@0.5.0(patch_hash=82a8c2feb0a990e9c505ba013aa741114a836a159301111b923c4beaafa6cca6)': {}
 
   '@marijn/buildtool@1.2.0':
     dependencies:
