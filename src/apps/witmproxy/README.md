@@ -75,8 +75,6 @@ The witmproxy plugin WIT interface is automatically published to [GitHub Contain
 wkg get --format wit witmproxy:plugin@0.0.6 --output plugin.wit
 ```
 
-See [WIT Publishing Documentation](../../docs/wit-publishing.md) for more information.
-
 ###
 
 ## Architecture

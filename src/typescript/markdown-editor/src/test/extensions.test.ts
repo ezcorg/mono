@@ -96,25 +96,18 @@ describe('MarkdownEditor Extensions', () => {
             const table = editor.view.dom.querySelector('table')
             expect(table).toBeTruthy()
 
-            const thead = table?.querySelector('thead')
-            const tbody = table?.querySelector('tbody')
-            expect(thead).toBeTruthy()
-            expect(tbody).toBeTruthy()
-
-            const headers = thead?.querySelectorAll('th')
+            // Tiptap renders header cells as <th> directly in <tr>, without <thead>/<tbody> wrappers
+            const headers = table?.querySelectorAll('th')
             expect(headers?.length).toBe(3)
             expect(headers?.[0].textContent?.trim()).toBe('Header 1')
             expect(headers?.[1].textContent?.trim()).toBe('Header 2')
             expect(headers?.[2].textContent?.trim()).toBe('Header 3')
 
-            const rows = tbody?.querySelectorAll('tr')
-            expect(rows?.length).toBe(2)
-
-            const firstRowCells = rows?.[0].querySelectorAll('td')
-            expect(firstRowCells?.length).toBe(3)
-            expect(firstRowCells?.[0].textContent?.trim()).toBe('Cell 1')
-            expect(firstRowCells?.[1].textContent?.trim()).toBe('Cell 2')
-            expect(firstRowCells?.[2].textContent?.trim()).toBe('Cell 3')
+            const dataCells = table?.querySelectorAll('td')
+            expect(dataCells?.length).toBe(6)
+            expect(dataCells?.[0].textContent?.trim()).toBe('Cell 1')
+            expect(dataCells?.[1].textContent?.trim()).toBe('Cell 2')
+            expect(dataCells?.[2].textContent?.trim()).toBe('Cell 3')
         })
 
         it('should handle table navigation', () => {
@@ -181,38 +174,33 @@ describe('MarkdownEditor Extensions', () => {
             const codeBlock = '```javascript\nfunction hello() {\n  console.log("Hello, World!");\n}\n```'
             editor.commands.setContent(codeBlock)
 
-            const preElement = editor.view.dom.querySelector('pre')
-            expect(preElement).toBeTruthy()
-
-            const codeContent = preElement?.textContent || ''
-            expect(codeContent).toContain('function hello')
-            expect(codeContent).toContain('console.log')
-            expect(codeContent).toContain('Hello, World!')
+            // Code blocks render via CodeMirror node view, not <pre>
+            const json = editor.getJSON()
+            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            expect(codeNode).toBeTruthy()
+            expect(codeNode?.attrs?.language).toBe('javascript')
+            expect(codeNode?.content?.[0]?.text).toContain('function hello')
         })
 
         it('should handle different programming languages', () => {
             const pythonCode = '```python\ndef hello():\n    print("Hello, World!")\n```'
             editor.commands.setContent(pythonCode)
 
-            const preElement = editor.view.dom.querySelector('pre')
-            expect(preElement).toBeTruthy()
-
-            const codeContent = preElement?.textContent || ''
-            expect(codeContent).toContain('def hello')
-            expect(codeContent).toContain('print')
-            expect(codeContent).toContain('Hello, World!')
+            const json = editor.getJSON()
+            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            expect(codeNode).toBeTruthy()
+            expect(codeNode?.attrs?.language).toBe('python')
+            expect(codeNode?.content?.[0]?.text).toContain('def hello')
         })
 
         it('should handle code blocks without language specification', () => {
             const plainCode = '```\nplain text code\nno syntax highlighting\n```'
             editor.commands.setContent(plainCode)
 
-            const preElement = editor.view.dom.querySelector('pre')
-            expect(preElement).toBeTruthy()
-
-            const codeContent = preElement?.textContent || ''
-            expect(codeContent).toContain('plain text code')
-            expect(codeContent).toContain('no syntax highlighting')
+            const json = editor.getJSON()
+            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            expect(codeNode).toBeTruthy()
+            expect(codeNode?.content?.[0]?.text).toContain('plain text code')
         })
 
         it('should handle inline code', () => {
@@ -242,12 +230,12 @@ describe('MarkdownEditor Extensions', () => {
             const fileReference = '```src/example.js\nconsole.log("File content");\n```'
             editor.commands.setContent(fileReference)
 
-            const preElement = editor.view.dom.querySelector('pre')
-            expect(preElement).toBeTruthy()
-
-            const codeContent = preElement?.textContent || ''
-            expect(codeContent).toContain('console.log')
-            expect(codeContent).toContain('File content')
+            // Verify via JSON — CodeMirror node view doesn't render <pre>
+            const json = editor.getJSON()
+            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            expect(codeNode).toBeTruthy()
+            expect(codeNode?.content?.[0]?.text).toContain('console.log')
+            expect(codeNode?.content?.[0]?.text).toContain('File content')
         })
 
         it('should maintain file system state', () => {
@@ -313,10 +301,11 @@ Visit [our website](https://example.com) for more info.`
             expect(editor.view.dom.querySelector('[data-checked="false"]')).toBeTruthy()
             expect(editor.view.dom.querySelector('[data-checked="true"]')).toBeTruthy()
 
-            // Code blocks
-            const preElement = editor.view.dom.querySelector('pre')
-            expect(preElement).toBeTruthy()
-            expect(preElement?.textContent).toContain('function example')
+            // Code blocks (verified via JSON since CodeMirror node view replaces <pre>)
+            const json = editor.getJSON()
+            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            expect(codeNode).toBeTruthy()
+            expect(codeNode?.content?.[0]?.text).toContain('function example')
 
             // Tables
             const table = editor.view.dom.querySelector('table')
