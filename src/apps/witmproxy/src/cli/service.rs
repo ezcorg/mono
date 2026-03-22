@@ -35,7 +35,7 @@ pub enum ServiceCommands {
     /// Install the witmproxy service (does not start it)
     Install {
         #[command(flatten)]
-        options: super::ProxyRunOptions,
+        options: Box<super::ProxyRunOptions>,
 
         /// Skip confirmation prompts
         #[arg(short, long)]

@@ -65,7 +65,8 @@ impl CertificateAuthority {
         })
     }
 
-    async fn generate_root_certificate() -> CertResult<(rcgen::Certificate, KeyPair, CertificateParams)> {
+    async fn generate_root_certificate()
+    -> CertResult<(rcgen::Certificate, KeyPair, CertificateParams)> {
         let mut params = CertificateParams::default();
 
         let mut distinguished_name = DistinguishedName::new();
@@ -160,7 +161,8 @@ impl CertificateAuthority {
             params.subject_alt_names.push(rcgen::SanType::IpAddress(ip));
         } else {
             params.subject_alt_names.push(rcgen::SanType::DnsName(
-                domain.to_string()
+                domain
+                    .to_string()
                     .try_into()
                     .map_err(|_| CertError::InvalidFormat)?,
             ));

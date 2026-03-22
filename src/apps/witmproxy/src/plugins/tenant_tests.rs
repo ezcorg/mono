@@ -87,7 +87,7 @@ async fn effective_plugins_tenant_override_enables_disabled_plugin() {
     let enable_overrides = vec![TenantPluginOverride {
         tenant_id: "tenant-1".to_string(),
         plugin_namespace: plugin_ns,
-        plugin_name: plugin_name,
+        plugin_name,
         enabled: Some(true),
     }];
     let effective = registry.effective_plugins_for_tenant(&enable_overrides);
@@ -137,7 +137,7 @@ async fn resolve_config_no_tenant_config_returns_global() {
     let plugin = registry.plugins().values().next().unwrap();
     let tenant_config: Vec<TenantPluginConfig> = vec![];
 
-    let resolved = registry.resolve_config(&plugin, &tenant_config);
+    let resolved = registry.resolve_config(plugin, &tenant_config);
     // With no tenant overrides, resolved config should be identical to global
     for (resolved_input, global_input) in resolved.iter().zip(plugin.configuration.iter()) {
         assert_eq!(
@@ -169,7 +169,7 @@ async fn resolve_config_tenant_overrides_specific_input() {
         input_value: "\"tenant-custom-value\"".to_string(),
     }];
 
-    let resolved = registry.resolve_config(&plugin, &tenant_config);
+    let resolved = registry.resolve_config(plugin, &tenant_config);
     assert_eq!(resolved.len(), plugin.configuration.len());
     // Verify the overridden input received the tenant-specific value
     let overridden = resolved
@@ -200,7 +200,7 @@ async fn resolve_config_ignores_config_for_other_plugins() {
         input_value: "\"some-value\"".to_string(),
     }];
 
-    let resolved = registry.resolve_config(&plugin, &tenant_config);
+    let resolved = registry.resolve_config(plugin, &tenant_config);
     // Config should be identical to global since the tenant config is for a different plugin
     for (resolved_input, global_input) in resolved.iter().zip(plugin.configuration.iter()) {
         assert_eq!(resolved_input.name, global_input.name);

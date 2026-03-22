@@ -537,6 +537,14 @@ impl NetfilterManager {
     }
 }
 
+impl Drop for NetfilterManager {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = self.teardown();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,14 +645,6 @@ mod tests {
                 "missing port 9090 in args: {:?}",
                 args,
             );
-        }
-    }
-}
-
-impl Drop for NetfilterManager {
-    fn drop(&mut self) {
-        if self.active {
-            let _ = self.teardown();
         }
     }
 }

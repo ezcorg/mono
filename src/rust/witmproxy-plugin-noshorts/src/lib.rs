@@ -217,7 +217,9 @@ impl GuestPlugin for PluginInstance {
                                 }
 
                                 // Log every 10th read or if read took > 100ms
-                                if current_read_count % 10 == 0 || read_duration.as_millis() > 100 {
+                                if current_read_count.is_multiple_of(10)
+                                    || read_duration.as_millis() > 100
+                                {
                                     logger
                                         .info(format!(
                                             "[noshorts] 📖 Read #{}: {} bytes in {:?} (total: {} bytes)",
@@ -426,8 +428,6 @@ fn extract_charset_from_content_type(content_type: &str) -> &'static Encoding {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_inject_styles_into_html_simple() {
         // TODO:

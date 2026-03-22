@@ -750,14 +750,18 @@ where
                         // run_concurrent context so subtasks can make progress until
                         // the response body is fully consumed.
                         if let Some(mut store) = plugin_store {
-                            let (body_done_tx, body_done_rx) = tokio::sync::oneshot::channel::<()>();
+                            let (body_done_tx, body_done_rx) =
+                                tokio::sync::oneshot::channel::<()>();
                             let (parts, body) = response.into_parts();
-                            let wrapped_body = crate::proxy::utils::BodyWithSignal::new(body, body_done_tx);
+                            let wrapped_body =
+                                crate::proxy::utils::BodyWithSignal::new(body, body_done_tx);
                             let response = Response::from_parts(parts, wrapped_body.boxed_unsync());
                             tokio::spawn(async move {
-                                let _ = store.run_concurrent(async move |_| {
-                                    let _ = body_done_rx.await;
-                                }).await;
+                                let _ = store
+                                    .run_concurrent(async move |_| {
+                                        let _ = body_done_rx.await;
+                                    })
+                                    .await;
                             });
                             Ok(response)
                         } else {

@@ -19,8 +19,7 @@ use anyhow::Result;
 use appium_client::capabilities::AppiumCapability;
 use serde_json::json;
 use witmproxy_test::{
-    Protocol, TestEnv,
-    require_appium, require_android_tools, require_chromedriver,
+    Protocol, TestEnv, require_android_tools, require_appium, require_chromedriver,
     require_geckodriver, require_ios_tools, require_safaridriver,
 };
 
@@ -247,11 +246,15 @@ async fn android_emulated_through_proxy() -> Result<()> {
     // or via adb shell settings.
     let mut caps = appium_client::capabilities::android::AndroidCapabilities::new_uiautomator();
     caps.set_str("browserName", "Chrome");
-    caps.set_str("proxy", &json!({
-        "proxyType": "manual",
-        "httpProxy": &proxy_addr,
-        "sslProxy": &proxy_addr,
-    }).to_string());
+    caps.set_str(
+        "proxy",
+        &json!({
+            "proxyType": "manual",
+            "httpProxy": &proxy_addr,
+            "sslProxy": &proxy_addr,
+        })
+        .to_string(),
+    );
 
     // Attempt to connect to Appium server (default port 4723)
     let appium_url = "http://127.0.0.1:4723/";
@@ -308,11 +311,15 @@ async fn ios_emulated_through_proxy() -> Result<()> {
 
     let mut caps = appium_client::capabilities::ios::IOSCapabilities::new_xcui();
     caps.set_str("browserName", "Safari");
-    caps.set_str("proxy", &json!({
-        "proxyType": "manual",
-        "httpProxy": &proxy_addr,
-        "sslProxy": &proxy_addr,
-    }).to_string());
+    caps.set_str(
+        "proxy",
+        &json!({
+            "proxyType": "manual",
+            "httpProxy": &proxy_addr,
+            "sslProxy": &proxy_addr,
+        })
+        .to_string(),
+    );
 
     let appium_url = "http://127.0.0.1:4723/";
     match appium_client::ClientBuilder::native(caps)
