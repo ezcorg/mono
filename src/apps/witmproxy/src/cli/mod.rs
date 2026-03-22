@@ -218,13 +218,16 @@ impl Cli {
                         config: layer,
                         plugin_dir,
                         auto,
-                    } = options;
+                    } = options.as_ref();
                     let resolved_config = Self::resolve_config(layer.clone(), &config_path)?;
-                    let plugin_dir = plugin_dir.map(|d| expand_home_in_path(&d)).transpose()?;
+                    let plugin_dir = plugin_dir
+                        .as_ref()
+                        .map(|d| expand_home_in_path(d))
+                        .transpose()?;
                     let service_handler =
-                        service::ServiceHandler::new(resolved_config, verbose, plugin_dir, auto);
+                        service::ServiceHandler::new(resolved_config, verbose, plugin_dir, *auto);
                     let check = Self::maybe_spawn_update_check(&service_handler.config);
-                    let result = service_handler.install_service(layer, yes).await;
+                    let result = service_handler.install_service(layer.clone(), yes).await;
                     Self::show_update_warning(check).await;
                     result
                 }

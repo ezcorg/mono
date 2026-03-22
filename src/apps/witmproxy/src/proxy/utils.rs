@@ -7,8 +7,59 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Incoming};
 use hyper::{Method, Request, Response, header};
 use reqwest::Certificate;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio_rustls::rustls;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+
+/// A body wrapper that sends a signal when the body is fully consumed or dropped.
+/// Used to keep the WASM store alive (via `run_concurrent`) while plugin subtasks
+/// stream body data through channels.
+pub struct BodyWithSignal {
+    inner: UnsyncBoxBody<Bytes, ErrorCode>,
+    signal: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl BodyWithSignal {
+    pub fn new(
+        inner: UnsyncBoxBody<Bytes, ErrorCode>,
+        signal: tokio::sync::oneshot::Sender<()>,
+    ) -> Self {
+        Self {
+            inner,
+            signal: Some(signal),
+        }
+    }
+}
+
+impl Drop for BodyWithSignal {
+    fn drop(&mut self) {
+        // Signal that the body is done (consumed or dropped)
+        if let Some(signal) = self.signal.take() {
+            let _ = signal.send(());
+        }
+    }
+}
+
+impl Body for BodyWithSignal {
+    type Data = Bytes;
+    type Error = ErrorCode;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.inner).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+}
 
 /// Custom error type for proxy operations
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use super::{CertError, CertResult, Certificate, CertificateCache};
 use anyhow::{Result, anyhow};
-use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
+use rcgen::{CertificateParams, DistinguishedName, DnType, Issuer, KeyPair, SanType};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::io;
 use std::net::IpAddr;
@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 #[derive(Clone)]
 pub struct CertificateAuthority {
     root_cert: Arc<rcgen::Certificate>,
-    root_key: Arc<KeyPair>,
+    root_issuer: Arc<Issuer<'static, KeyPair>>,
     cert_cache: Arc<CertificateCache>,
     cert_dir: PathBuf,
 }
@@ -44,27 +44,29 @@ impl CertificateAuthority {
 
         let root_cert_path = get_root_cert_path(&cert_dir);
         let root_key_path = get_root_key_path(&cert_dir);
-        let (root_cert, root_key) = if root_cert_path.exists() && root_key_path.exists() {
+        let (root_cert, root_issuer) = if root_cert_path.exists() && root_key_path.exists() {
             info!("Loading existing root certificate");
             Self::load_root_certificate(&root_cert_path, &root_key_path).await?
         } else {
             info!("Generating new root certificate");
-            let (cert, key) = Self::generate_root_certificate().await?;
+            let (cert, key, params) = Self::generate_root_certificate().await?;
             Self::save_root_certificate(&cert, &key, &root_cert_path, &root_key_path).await?;
-            (cert, key)
+            let issuer = Issuer::new(params, key);
+            (cert, issuer)
         };
 
         let cert_cache = Arc::new(CertificateCache::new(1000));
 
         Ok(Self {
             root_cert: Arc::new(root_cert),
-            root_key: Arc::new(root_key),
+            root_issuer: Arc::new(root_issuer),
             cert_cache,
             cert_dir,
         })
     }
 
-    async fn generate_root_certificate() -> CertResult<(rcgen::Certificate, KeyPair)> {
+    async fn generate_root_certificate()
+    -> CertResult<(rcgen::Certificate, KeyPair, CertificateParams)> {
         let mut params = CertificateParams::default();
 
         let mut distinguished_name = DistinguishedName::new();
@@ -86,12 +88,12 @@ impl CertificateAuthority {
 
         let key_pair = KeyPair::generate()?;
         let cert = params.self_signed(&key_pair)?;
-        Ok((cert, key_pair))
+        Ok((cert, key_pair, params))
     }
     async fn load_root_certificate(
         cert_path: &Path,
         key_path: &Path,
-    ) -> CertResult<(rcgen::Certificate, KeyPair)> {
+    ) -> CertResult<(rcgen::Certificate, Issuer<'static, KeyPair>)> {
         let _cert_pem = fs::read_to_string(cert_path).await?;
         let key_pem = fs::read_to_string(key_path).await?;
 
@@ -112,7 +114,8 @@ impl CertificateAuthority {
         ];
 
         let cert = params.self_signed(&key_pair)?;
-        Ok((cert, key_pair))
+        let issuer = Issuer::new(params, key_pair);
+        Ok((cert, issuer))
     }
 
     async fn save_root_certificate(
@@ -158,7 +161,9 @@ impl CertificateAuthority {
             params.subject_alt_names.push(rcgen::SanType::IpAddress(ip));
         } else {
             params.subject_alt_names.push(rcgen::SanType::DnsName(
-                rcgen::Ia5String::try_from(domain.to_string())
+                domain
+                    .to_string()
+                    .try_into()
                     .map_err(|_| CertError::InvalidFormat)?,
             ));
         }
@@ -193,7 +198,7 @@ impl CertificateAuthority {
         // Generate key pair and create certificate
         let key_pair = KeyPair::generate()?;
 
-        let cert = params.signed_by(&key_pair, &self.root_cert, &self.root_key)?;
+        let cert = params.signed_by(&key_pair, &self.root_issuer)?;
         let pem_cert = cert.pem();
         let cert_der = cert.der();
 

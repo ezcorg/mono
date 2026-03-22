@@ -8,7 +8,7 @@ pub use crate::wasm::{
 
 wasmtime::component::bindgen!({
     world: "witmproxy:plugin/plugin",
-    exports: { default: async | store | task_exit },
+    exports: { default: async | store },
     imports: {
         "witmproxy:plugin/capabilities": async | store | trappable | tracing,
         default: trappable | tracing,
@@ -20,7 +20,7 @@ wasmtime::component::bindgen!({
         "witmproxy:plugin/capabilities.logger": Logger,
         "witmproxy:plugin/capabilities.clock-client": ClockClient,
         "witmproxy:plugin/capabilities.content": InboundContent,
-        "wasi:http/types@0.3.0-rc-2026-01-06": wasmtime_wasi_http::p3::bindings::http::types,
+        "wasi:http/types@0.3.0-rc-2026-03-15": wasmtime_wasi_http::p3::bindings::http::types,
     },
 });
 

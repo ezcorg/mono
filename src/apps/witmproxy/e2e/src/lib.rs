@@ -11,8 +11,8 @@ use tracing::warn;
 // Re-export witmproxy types that test authors need.
 pub use witmproxy::test_utils::{EchoResponse, Protocol, ServerHandle};
 pub use witmproxy::{
-    CertificateAuthority, AppConfig, PluginRegistry, WitmProxy,
-    db::{self, tenants, Db},
+    AppConfig, CertificateAuthority, PluginRegistry, WitmProxy,
+    db::{self, Db, tenants},
 };
 
 /// Check whether a host binary is on `$PATH`.
@@ -221,11 +221,7 @@ impl TestEnv {
     }
 
     /// Remove a plugin by name with optional namespace filter.
-    pub async fn remove_plugin(
-        &self,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Result<Vec<String>> {
+    pub async fn remove_plugin(&self, name: &str, namespace: Option<&str>) -> Result<Vec<String>> {
         let mut reg = self.registry.write().await;
         reg.remove_plugin(name, namespace).await
     }
@@ -272,15 +268,19 @@ impl TestEnv {
         input_value: &str,
     ) -> Result<()> {
         let db = self.db_pool().await;
-        tenants::set_plugin_config(&db.pool, tenant_id, namespace, name, input_name, input_value)
-            .await
+        tenants::set_plugin_config(
+            &db.pool,
+            tenant_id,
+            namespace,
+            name,
+            input_name,
+            input_value,
+        )
+        .await
     }
 
     /// Query the effective set of plugin IDs for a tenant.
-    pub async fn effective_plugins_for_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> Result<HashSet<String>> {
+    pub async fn effective_plugins_for_tenant(&self, tenant_id: &str) -> Result<HashSet<String>> {
         let db = self.db_pool().await;
         let tenant = tenants::Tenant::by_id(&db.pool, tenant_id)
             .await?

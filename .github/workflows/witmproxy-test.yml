@@ -64,10 +64,11 @@ jobs:
 
       - name: Check code formatting
         if: runner.os == 'Linux'
-        run: cargo fmt --package witmproxy --check
+        run: cargo fmt --all --check
 
-      # - name: Run clippy lints
-      #   run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run clippy lints
+        if: runner.os == 'Linux'
+        run: cargo clippy --package witmproxy --all-targets -- -D warnings
 
       - name: Run library tests
         run: cargo test --package witmproxy --lib

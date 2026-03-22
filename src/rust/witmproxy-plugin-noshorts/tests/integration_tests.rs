@@ -102,15 +102,14 @@ mod e2e_tests {
         );
 
         // If we can find the head tag, verify styles are in the right place
-        if let Some(head_pos) = response_text.find("<head") {
-            if let Some(style_pos) = response_text.find(r#"a[href*="shorts"]"#) {
-                if let Some(head_close_pos) = response_text.find("</head>") {
-                    assert!(
-                        style_pos > head_pos && style_pos < head_close_pos,
-                        "Expected injected styles to be inside <head> tag"
-                    );
-                }
-            }
+        if let Some(head_pos) = response_text.find("<head")
+            && let Some(style_pos) = response_text.find(r#"a[href*="shorts"]"#)
+            && let Some(head_close_pos) = response_text.find("</head>")
+        {
+            assert!(
+                style_pos > head_pos && style_pos < head_close_pos,
+                "Expected injected styles to be inside <head> tag"
+            );
         }
 
         println!("Successfully tested noshorts plugin with real YouTube request");

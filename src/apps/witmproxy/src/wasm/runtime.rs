@@ -17,7 +17,6 @@ impl Runtime {
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.wasm_component_model_async(true);
-        config.async_support(true);
 
         let engine = Engine::new(&config)?;
 

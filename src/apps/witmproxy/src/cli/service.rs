@@ -35,7 +35,7 @@ pub enum ServiceCommands {
     /// Install the witmproxy service (does not start it)
     Install {
         #[command(flatten)]
-        options: super::ProxyRunOptions,
+        options: Box<super::ProxyRunOptions>,
 
         /// Skip confirmation prompts
         #[arg(short, long)]
@@ -370,6 +370,8 @@ impl ServiceHandler {
             autostart: true, // Start on boot
             restart_policy: service_manager::RestartPolicy::OnFailure {
                 delay_secs: Some(1),
+                max_retries: None,
+                reset_after_secs: None,
             },
         };
 

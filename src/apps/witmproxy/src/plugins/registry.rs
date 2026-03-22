@@ -105,7 +105,7 @@ impl PluginRegistry {
         let plugin_instance = Plugin::new(&mut store, &instance)?;
         let guest_result = store
             .run_concurrent(async move |store| {
-                let (manifest, task) = match plugin_instance
+                let manifest = match plugin_instance
                     .witmproxy_plugin_witm_plugin()
                     .call_manifest(store)
                     .await
@@ -116,7 +116,6 @@ impl PluginRegistry {
                         return Err(e);
                     }
                 };
-                task.block(store).await;
 
                 Ok(manifest)
             })
@@ -363,7 +362,7 @@ impl PluginRegistry {
             let guest_result = store
                 .run_concurrent(async move |store| {
                     // Create the plugin resource with user-supplied configuration
-                    let (create_result, task) = match plugin_instance
+                    let create_result = match plugin_instance
                         .witmproxy_plugin_witm_plugin()
                         .plugin()
                         .call_create(store, config)
@@ -380,7 +379,6 @@ impl PluginRegistry {
                             return Err(e);
                         }
                     };
-                    task.block(store).await;
 
                     let plugin_resource = match create_result {
                         Ok(resource) => resource,
@@ -396,7 +394,7 @@ impl PluginRegistry {
                     };
 
                     // Handle the event using the plugin resource
-                    let (result, task) = match plugin_instance
+                    let result = match plugin_instance
                         .witmproxy_plugin_witm_plugin()
                         .plugin()
                         .call_handle(store, plugin_resource, event_data, cap_resource)
@@ -413,7 +411,6 @@ impl PluginRegistry {
                             return Err(e);
                         }
                     };
-                    task.block(store).await;
                     Ok(result)
                 })
                 .await??;
@@ -534,7 +531,7 @@ impl PluginRegistry {
 
             let guest_result = store
                 .run_concurrent(async move |store| {
-                    let (create_result, task) = match plugin_instance
+                    let create_result = match plugin_instance
                         .witmproxy_plugin_witm_plugin()
                         .plugin()
                         .call_create(store, config)
@@ -551,7 +548,6 @@ impl PluginRegistry {
                             return Err(e);
                         }
                     };
-                    task.block(store).await;
 
                     let plugin_resource = match create_result {
                         Ok(resource) => resource,
@@ -566,7 +562,7 @@ impl PluginRegistry {
                         }
                     };
 
-                    let (result, task) = match plugin_instance
+                    let result = match plugin_instance
                         .witmproxy_plugin_witm_plugin()
                         .plugin()
                         .call_handle(store, plugin_resource, event_data, cap_resource)
@@ -583,7 +579,6 @@ impl PluginRegistry {
                             return Err(e);
                         }
                     };
-                    task.block(store).await;
                     Ok(result)
                 })
                 .await??;

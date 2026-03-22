@@ -311,7 +311,11 @@ async fn http1_to_http1() -> Result<()> {
 
     let body: EchoResponse = resp.json().await?;
     assert_eq!(body.path, "/h1h1");
-    assert!(body.headers.get("witmproxy").is_some_and(|v| v.contains("req")));
+    assert!(
+        body.headers
+            .get("witmproxy")
+            .is_some_and(|v| v.contains("req"))
+    );
 
     echo.shutdown().await;
     env.shutdown().await;
@@ -341,7 +345,11 @@ async fn http2_to_http2() -> Result<()> {
 
     let body: EchoResponse = resp.json().await?;
     assert_eq!(body.path, "/h2h2");
-    assert!(body.headers.get("witmproxy").is_some_and(|v| v.contains("req")));
+    assert!(
+        body.headers
+            .get("witmproxy")
+            .is_some_and(|v| v.contains("req"))
+    );
 
     echo.shutdown().await;
     env.shutdown().await;

@@ -625,9 +625,8 @@ where
                     response_event_elapsed
                 );
 
-                // TODO:
                 // Check response content-type for content-specific handling
-                let (content, _store) = if let Some(registry) = &plugin_registry {
+                let (content, plugin_store) = if let Some(registry) = &plugin_registry {
                     let (response, mut store) = match handled_response {
                         Ok((event_data, store)) => match event_data {
                             WasmEvent::Response(WasiContextualResponse { response, .. }) => {
@@ -693,7 +692,7 @@ where
                             "Skipping InboundContent event processing (content_type={}, should_process_content={})",
                             content_type, should_process_content
                         );
-                        (content, store)
+                        (content, None)
                     } else {
                         let content = Box::new(content) as Box<dyn Event>;
                         debug!(
@@ -711,7 +710,7 @@ where
                             WasmEvent::InboundContent(content_resource) => {
                                 let content =
                                     store.data_mut().table.delete(content_resource).unwrap();
-                                (content, store)
+                                (content, Some(store))
                             }
                             _ => {
                                 return Response::builder()
@@ -745,7 +744,30 @@ where
                 debug!("Converting final InboundContent to HTTP response");
 
                 match content.into_response() {
-                    Ok(response) => Ok(response),
+                    Ok(response) => {
+                        // If plugins processed content, their WASM subtasks may still
+                        // be streaming body data. Keep the store alive in a background
+                        // run_concurrent context so subtasks can make progress until
+                        // the response body is fully consumed.
+                        if let Some(mut store) = plugin_store {
+                            let (body_done_tx, body_done_rx) =
+                                tokio::sync::oneshot::channel::<()>();
+                            let (parts, body) = response.into_parts();
+                            let wrapped_body =
+                                crate::proxy::utils::BodyWithSignal::new(body, body_done_tx);
+                            let response = Response::from_parts(parts, wrapped_body.boxed_unsync());
+                            tokio::spawn(async move {
+                                let _ = store
+                                    .run_concurrent(async move |_| {
+                                        let _ = body_done_rx.await;
+                                    })
+                                    .await;
+                            });
+                            Ok(response)
+                        } else {
+                            Ok(response)
+                        }
+                    }
                     Err(err) => {
                         error!("Error getting streaming response: {}", err);
                         Response::builder()
