@@ -7,7 +7,6 @@ use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
 use tracing::error;
 use wasmtime::Engine;
 use wasmtime::component::Component;
-pub use wasmtime_wasi_http::body::{HostIncomingBody, HyperIncomingBody};
 
 use crate::events::Event;
 use crate::{
@@ -99,7 +98,7 @@ impl WitmPlugin {
         let plugin_instance = Plugin::new(&mut store, &instance)?;
         let guest_result = store
             .run_concurrent(async move |store| {
-                let (manifest, task) = match plugin_instance
+                let manifest = match plugin_instance
                     .witmproxy_plugin_witm_plugin()
                     .call_manifest(store)
                     .await
@@ -110,7 +109,6 @@ impl WitmPlugin {
                         return Err(e);
                     }
                 };
-                task.block(store).await;
                 Ok(manifest)
             })
             .await??;

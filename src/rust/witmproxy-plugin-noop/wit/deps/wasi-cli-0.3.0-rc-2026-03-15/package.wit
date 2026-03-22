@@ -1,4 +1,4 @@
-package wasi:cli@0.3.0-rc-2026-01-06;
+package wasi:cli@0.3.0-rc-2026-03-15;
 
 interface types {
   enum error-code {
@@ -11,13 +11,13 @@ interface types {
 interface stdout {
   use types.{error-code};
 
-  write-via-stream: async func(data: stream<u8>) -> result<_, error-code>;
+  write-via-stream: func(data: stream<u8>) -> future<result<_, error-code>>;
 }
 
 interface stderr {
   use types.{error-code};
 
-  write-via-stream: async func(data: stream<u8>) -> result<_, error-code>;
+  write-via-stream: func(data: stream<u8>) -> future<result<_, error-code>>;
 }
 
 interface stdin {

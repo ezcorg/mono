@@ -18,8 +18,8 @@ use wasmtime::component::{
     StreamResult,
 };
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::WasiHttpCtx;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod runtime;
 
@@ -387,7 +387,6 @@ pub struct Host {
     pub table: ResourceTable,
     pub wasi: WasiCtx,
     pub http: WasiHttpCtx,
-    pub p3_http: P3Ctx,
     pub witmproxy_ctx: WitmProxyCtx,
 }
 
@@ -397,7 +396,6 @@ impl Default for Host {
             table: ResourceTable::new(),
             wasi: WasiCtxBuilder::new().build(),
             http: WasiHttpCtx::new(),
-            p3_http: P3Ctx {},
             witmproxy_ctx: WitmProxyCtxBuilder::new().build(),
         }
     }
@@ -451,10 +449,7 @@ impl HostContentWithStore for WitmProxy {
 
         let reader = accessor.with(|mut access| {
             let store = &mut access.as_context_mut();
-            let stream_reader = StreamReader::new(store, BodyStreamProducer::new(body));
-            Ok::<wasmtime::component::StreamReader<u8>, wasmtime::component::ResourceTableError>(
-                stream_reader,
-            )
+            StreamReader::new(store, BodyStreamProducer::new(body))
         })?;
         Ok(reader)
     }
@@ -539,7 +534,7 @@ impl HostContentWithStore for WitmProxy {
         // Pipe the stream reader to the channel consumer
         let poll_sender = PollSender::new(tx);
         accessor.with(|mut access| {
-            content.pipe(&mut access, ChannelStreamConsumer { tx: poll_sender });
+            let _ = content.pipe(&mut access, ChannelStreamConsumer { tx: poll_sender });
         });
 
         Ok(())
@@ -842,9 +837,6 @@ impl HostAnnotatorClient for WitmProxyCtxView<'_> {}
 impl HostLogger for WitmProxyCtxView<'_> {}
 impl HostClockClient for WitmProxyCtxView<'_> {}
 
-pub struct P3Ctx {}
-impl wasmtime_wasi_http::p3::WasiHttpCtx for P3Ctx {}
-
 impl WasiView for Host {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
@@ -854,21 +846,12 @@ impl WasiView for Host {
     }
 }
 
-impl WasiHttpView for Host {
-    fn ctx(&mut self) -> &mut WasiHttpCtx {
-        &mut self.http
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-}
-
 impl wasmtime_wasi_http::p3::WasiHttpView for Host {
     fn http(&mut self) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
         wasmtime_wasi_http::p3::WasiHttpCtxView {
             table: &mut self.table,
-            ctx: &mut self.p3_http,
+            ctx: &mut self.http,
+            hooks: Default::default(),
         }
     }
 }
