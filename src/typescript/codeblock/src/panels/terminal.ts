@@ -1,6 +1,7 @@
 import { EditorView, Panel, showPanel } from "@codemirror/view";
-import { terminalCompartment } from "../editor";
+import { terminalCompartment, CodeblockFacet } from "../editor";
 import { settingsField, resolveThemeDark } from "./settings";
+import type { JswasiTerminalSession } from "../utils/jswasi-terminal";
 
 type GhosttyTerminal = {
     open(container: HTMLElement): void;
@@ -60,9 +61,10 @@ function createTerminalPanel(view: EditorView): Panel {
     dom.appendChild(container);
 
     let terminal: GhosttyTerminal | null = null;
+    let session: JswasiTerminalSession | null = null;
 
-    // Lazy-load ghostty-web and mount
-    ensureGhostty().then(({ Terminal }) => {
+    // Lazy-load ghostty-web and connect to jswasi if configured
+    ensureGhostty().then(async ({ Terminal }) => {
         if (!dom.isConnected) return;
 
         const settings = view.state.field(settingsField);
@@ -75,7 +77,25 @@ function createTerminalPanel(view: EditorView): Panel {
                 : { background: '#ffffff', foreground: '#1e1e1e' },
         });
         terminal.open(container);
-        terminal.write('\x1b[1;32m$\x1b[0m Terminal ready (no backend connected)\r\n');
+
+        const cfg = view.state.facet(CodeblockFacet);
+        if (!cfg.jswasi) {
+            terminal.write('\x1b[1;32m$\x1b[0m Terminal ready (no backend connected)\r\n');
+            return;
+        }
+
+        terminal.write('\x1b[1;33m$\x1b[0m Initializing terminal...\r\n');
+
+        try {
+            const { createTerminalSession } = await import('../utils/jswasi-terminal');
+
+            // jswasi's terminal device system handles I/O routing —
+            // ghostty is attached as the terminal device during init,
+            // so user input and process output flow automatically.
+            session = await createTerminalSession(cfg.jswasi, terminal);
+        } catch (err: any) {
+            terminal.write(`\x1b[1;31mFailed to start terminal:\x1b[0m ${err.message}\r\n`);
+        }
     }).catch((err) => {
         container.textContent = `Failed to load terminal: ${err.message}`;
         container.style.padding = '8px';
@@ -86,6 +106,8 @@ function createTerminalPanel(view: EditorView): Panel {
         dom,
         top: false,
         destroy() {
+            session?.dispose();
+            session = null;
             terminal?.dispose?.();
             terminal = null;
         },

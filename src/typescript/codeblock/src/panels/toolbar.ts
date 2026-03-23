@@ -196,7 +196,7 @@ const COG_ICON = '\uf013'; // nf-fa-cog
 const FOLDER_ICON = '\ue613'; // nf-seti-folder
 const FOLDER_OPEN_ICON = '\ue614'; // nf-seti-folder (open variant)
 const PARENT_DIR_ICON = '\uf112'; // nf-fa-reply (back/up arrow)
-// const TERMINAL_ICON = '\uf120'; // nf-fa-terminal — awaiting WASM VM/shim
+const TERMINAL_ICON = '\uf120'; // nf-fa-terminal
 
 // Get nerd font icon for a file path
 function getFileIcon(path: string): { glyph: string; color: string } {
@@ -301,13 +301,15 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         query: '',
     });
 
-    // Open terminal — awaiting a backing WASM VM/shim for implementation
-    // commands.push({
-    //     id: 'Open terminal',
-    //     type: 'open-terminal',
-    //     icon: TERMINAL_ICON,
-    //     query: '',
-    // });
+    // Open terminal — shown when a jswasi backend is configured
+    if (view.state.facet(CodeblockFacet).jswasi) {
+        commands.push({
+            id: 'Open terminal',
+            type: 'open-terminal',
+            icon: TERMINAL_ICON,
+            query: '',
+        });
+    }
 
     // Import commands — always shown
     commands.push({

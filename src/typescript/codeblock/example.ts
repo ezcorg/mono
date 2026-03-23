@@ -46,4 +46,8 @@ const index = await SearchIndex.get(fs, path, ['path', 'basename', 'dirname', 'e
 createCodeblock({
     parent, fs, language: 'ts', toolbar: true, index, cwd: '/',
     typescript: { resolveLib },
+    jswasi: {
+        rootfsUrl: '/jswasi/rootfs.tgz',
+        opfsBucket: 'fsa1',
+    }
 });

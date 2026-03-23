@@ -1,3 +1,42 @@
+`codeblock` (src/typescript/codeblock):
+- [ ] Investigate the `wanix` project (located in `~/dev/wanix`), figure out what would be required in order to integrate it as a virtual machine backend (including what setup would be required for developing `wanix` locally, if necessary), which is lazily loaded when the editor "Open terminal" command is used in `codeblock`. Consider how we'd have to modify our filesystem (or just add a new WanixFs shim which implements the necessary APIs) such that the editor is able to modify files within the `wanix` filesystem.
+
+- [ ] Include `git` functionality in the wanix VM (to be reworked into `witvm`?)
+- [ ] Support for configurable keybindings for opening available commands
+- [ ] Sharable links to codeblock line ranges as # anchors (should work even with multiple codeblocks on the same page) 
+- [ ] Add an "Download file" option (for downloading the currently open file)
+- [ ] And an "Export archive" option
+- [ ] "Share p2p room" feature (use some webrtc p2p protocol)
+- [ ] Show a clipboard icon in the first row in the editor
+- [ ] Graph visualization for CSV files
+- [ ] Maybe change how search text is used for querying files (partial internal matches seem to be ignored, for some reason, for ex. "exa" doesn't return example), with some dynamically adjusting (as some function of search index size) threshold for when query length is sufficiently long for partial match querying.
+- [ ] Benchmark codeblock e2e performance using tests for 1 instance, 10 instances, all open to the same file, different files, some +1MB files open, and any other tests which seem like they'd be useful. Measure CPU+RAM+network utilization/etc. and save the data in OpenTelemetry format
+
+- [ ] Make light mode code editor text coloring less ugly
+
+`ezco-web` (src/apps/ezco-web):
+- [ ] In the `markdown-editor` example, loading multiple files at once doesn't always seem to properly result in LSP based diagnostics highlighting working immediately (requires a file change to properly flush state? unsure).
+
+`markdown-editor` (src/typescript/markdown-editor)
+- [ ] The editor cursor flash rate is too slow (on Zen?)
+
+`wanix` (../wanix)
+- [ ] Apply optimizations to `wanix` go wasm binaries: https://www.fermyon.com/blog/optimizing-tinygo-wasm
+
+`witmproxy` (src/apps/witmproxy)
+
+- [ ] We should have test infrastructure for producing `plugin` components in tests more easily (rather than re-using statically declared and separately built `witmproxy-<xyz>` plugins)
+
+- [ ] Plugins should also have an auto-update mechanism
+
+`witmproxy-web`
+
+`other`
+- [ ] Look over app tests, some seem to be complete nonsense
+- [ ] a witmproxy soundcloud plugin which allows playing specific sections of songs only
+
+===
+
 # `witmproxy`
 
 ## Simple
