@@ -1,7 +1,5 @@
 `codeblock` (src/typescript/codeblock):
-- [ ] Investigate the `wanix` project (located in `~/dev/wanix`), figure out what would be required in order to integrate it as a virtual machine backend (including what setup would be required for developing `wanix` locally, if necessary), which is lazily loaded when the editor "Open terminal" command is used in `codeblock`. Consider how we'd have to modify our filesystem (or just add a new WanixFs shim which implements the necessary APIs) such that the editor is able to modify files within the `wanix` filesystem.
-
-- [ ] Include `git` functionality in the wanix VM (to be reworked into `witvm`?)
+- [ ] Include `git` functionality in the VM
 - [ ] Support for configurable keybindings for opening available commands
 - [ ] Sharable links to codeblock line ranges as # anchors (should work even with multiple codeblocks on the same page) 
 - [ ] Add an "Download file" option (for downloading the currently open file)

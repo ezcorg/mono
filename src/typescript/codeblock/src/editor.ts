@@ -128,6 +128,18 @@ export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
 // SVG preview toggle
 export const toggleSvgPreviewEffect = StateEffect.define<void>();
 
+// Terminal active state tracking — lets the toolbar react to terminal open/close
+export const terminalActiveEffect = StateEffect.define<boolean>();
+export const terminalActiveField = StateField.define<boolean>({
+    create() { return false; },
+    update(value, tr) {
+        for (const e of tr.effects) {
+            if (e.is(terminalActiveEffect)) return e.value;
+        }
+        return value;
+    }
+});
+
 // Holds the current file lifecycle
 export const currentFileField = StateField.define<{
     path: string | null;
@@ -210,6 +222,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
+        terminalActiveField,
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),

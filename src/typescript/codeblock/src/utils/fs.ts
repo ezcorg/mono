@@ -293,6 +293,29 @@ export namespace Vfs {
     }
 
     /**
+     * Check if the browser supports FileSystemFileHandle.createWritable().
+     * Safari does not implement this method, so OPFS writes will fail.
+     */
+    export const supportsCreateWritable = (): boolean => {
+        return typeof FileSystemFileHandle !== 'undefined' &&
+            'createWritable' in FileSystemFileHandle.prototype;
+    }
+
+    /**
+     * Auto-detect the best available filesystem backend.
+     * Uses OPFS (FSA) when createWritable is supported (Chrome, Firefox),
+     * falls back to an in-memory worker backend (Safari and others).
+     *
+     * @param name - Unique name for the FSA storage bucket (used when OPFS is available)
+     */
+    export const auto = async (name = 'codeblock'): Promise<VfsInterface> => {
+        if (supportsCreateWritable()) {
+            return fsa(name);
+        }
+        return worker();
+    }
+
+    /**
      * Create an FSA (File System Access / OPFS) backed filesystem.
      * Data persists across page reloads via the browser's Origin Private File System.
      *

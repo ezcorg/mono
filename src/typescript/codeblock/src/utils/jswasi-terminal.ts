@@ -5,7 +5,7 @@ import type { JswasiConfig } from '../types';
 const MAJ_HTERM = 1;
 
 // ---------------------------------------------------------------------------
-// Ghostty-web ↔ hterm shim
+// Ghostty-web ↔ hterm shim (persistent proxy)
 // ---------------------------------------------------------------------------
 
 type GhosttyTerminal = {
@@ -13,31 +13,37 @@ type GhosttyTerminal = {
     onData(callback: (data: string) => void): void;
 };
 
+// The underlying ghostty terminal is mutable — it gets swapped each time
+// the terminal panel is opened. The shim's references always go through
+// these module-level variables so the jswasi kernel doesn't need to be
+// re-attached.
+let activeGhostty: GhosttyTerminal | null = null;
+let onInput: ((data: string) => void) | null = null;
+
+// Terminal dimensions reported to jswasi programs
+let screenCols = 80;
+let screenRows = 24;
+
 /**
- * Wraps a ghostty-web terminal instance to look like an hterm terminal,
- * so jswasi's HtermDeviceDriver can use it without modification.
+ * Creates a persistent hterm-compatible shim that delegates all I/O
+ * through `activeGhostty`. The same shim instance stays attached to
+ * jswasi for the kernel's lifetime — only the underlying ghostty
+ * terminal is swapped on reopen.
  */
-function createHtermShim(ghostty: GhosttyTerminal) {
-    let onInput: ((data: string) => void) | null = null;
-
-    // Wire ghostty input to the shim's input handler
-    ghostty.onData((data: string) => {
-        if (onInput) onInput(data);
-    });
-
+function createPersistentShim() {
     return {
-        screenSize: { width: 80, height: 24 },
+        get screenSize() { return { width: screenCols, height: screenRows }; },
 
         io: {
-            print(data: string) { ghostty.write(data); },
-            println(data: string) { ghostty.write(data + '\r\n'); },
+            print(data: string) { activeGhostty?.write(data); },
+            println(data: string) { activeGhostty?.write(data + '\r\n'); },
             push() {
                 return {
                     set onVTKeystroke(cb: (data: string) => void) { onInput = cb; },
                     set sendString(_cb: (data: string) => void) { /* same handler */ },
                     set onTerminalResize(_cb: (cols: number, rows: number) => void) { /* TODO */ },
-                    print(data: string) { ghostty.write(data); },
-                    println(data: string) { ghostty.write(data + '\r\n'); },
+                    print(data: string) { activeGhostty?.write(data); },
+                    println(data: string) { activeGhostty?.write(data + '\r\n'); },
                 };
             },
         },
@@ -45,12 +51,32 @@ function createHtermShim(ghostty: GhosttyTerminal) {
         installKeyboard() {},
         keyboard: { bindings: { addBindings() {} } },
         setInsertMode(_mode: boolean) {},
-        cursorLeft(n: number) { ghostty.write(`\x1b[${n}D`); },
+        cursorLeft(n: number) { activeGhostty?.write(`\x1b[${n}D`); },
 
         scrollPort_: {
             getScreenSize() { return { width: 800, height: 600 }; },
         },
     };
+}
+
+/** Connect a new ghostty terminal to the persistent shim. */
+function attachGhostty(ghostty: GhosttyTerminal) {
+    activeGhostty = ghostty;
+    // Route this terminal's input to the jswasi kernel's input handler
+    ghostty.onData((data: string) => {
+        if (onInput) onInput(data);
+    });
+}
+
+/** Disconnect the current ghostty terminal so stale writes are dropped. */
+function detachGhostty() {
+    activeGhostty = null;
+}
+
+/** Update the terminal dimensions reported to jswasi programs. */
+export function updateTerminalSize(cols: number, rows: number) {
+    screenCols = cols;
+    screenRows = rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,16 +85,13 @@ function createHtermShim(ghostty: GhosttyTerminal) {
 
 let jswasiReady: Promise<Jswasi> | null = null;
 
-export async function getJswasi(
-    config: JswasiConfig,
-    ghostty: GhosttyTerminal,
-): Promise<Jswasi> {
+async function getJswasi(config: JswasiConfig): Promise<Jswasi> {
     if (jswasiReady) return jswasiReady;
     jswasiReady = (async () => {
         const jswasi = new Jswasi();
 
-        // Attach the ghostty terminal as an hterm-compatible device
-        const shim = createHtermShim(ghostty);
+        // Attach the persistent shim as the hterm-compatible device
+        const shim = createPersistentShim();
         await jswasi.attachDevice({ terminal: shim }, MAJ_HTERM as any);
 
         const bucket = config.opfsBucket || 'fsa1';
@@ -100,15 +123,17 @@ export async function createTerminalSession(
     config: JswasiConfig,
     ghostty: GhosttyTerminal,
 ): Promise<JswasiTerminalSession> {
-    // getJswasi boots the kernel and attaches ghostty as the terminal device.
-    // Once init() completes, the wash shell is running and connected to the
-    // terminal — no additional wiring needed.
-    await getJswasi(config, ghostty);
+    // Swap in the new ghostty terminal before booting (first call) or
+    // reconnecting (subsequent calls). The persistent shim routes all
+    // kernel I/O through the active ghostty instance.
+    attachGhostty(ghostty);
+    await getJswasi(config);
 
     return {
         dispose() {
-            // Terminal cleanup — the jswasi kernel persists as a singleton,
-            // so we don't tear it down when the panel closes.
+            // Disconnect so the disposed terminal doesn't receive stale writes.
+            // The jswasi kernel persists as a singleton — it keeps running.
+            detachGhostty();
         },
     };
 }

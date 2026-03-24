@@ -1,7 +1,7 @@
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
-import { CodeblockFacet, openFileEffect, fileLoadedEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment } from "../editor";
+import { CodeblockFacet, openFileEffect, fileLoadedEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, terminalActiveField, terminalActiveEffect, terminalCompartment } from "../editor";
 import { lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
 import { foldGutter } from "@codemirror/language";
 import { extOrLanguageToLanguageId } from "../lsps";
@@ -516,7 +516,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
         }
     });
 
-    dom.appendChild(lspLogBtn);
+    // LSP log button is hidden — the feature is non-functional and visually noisy.
+    // Keeping the code for potential future use but not appending to DOM.
+    // dom.appendChild(lspLogBtn);
 
     const resultsList = document.createElement("ul");
     resultsList.className = "cm-search-results";
@@ -756,15 +758,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
             type: 'settings-toggle',
             icon: settings.lineWrap ? '\u2713' : '\u2717',
             currentValue: String(settings.lineWrap),
-        });
-
-        // LSP log: toggle
-        entries.push({
-            id: `LSP log: ${settings.lspLogEnabled ? 'on' : 'off'}`,
-            settingKey: 'lspLogEnabled',
-            type: 'settings-toggle',
-            icon: settings.lspLogEnabled ? '\u2713' : '\u2717',
-            currentValue: String(settings.lspLogEnabled),
         });
 
         // Max visible lines: input
@@ -1269,14 +1262,18 @@ export const toolbarPanel = (view: EditorView): Panel => {
             selectedIndex = 0;
             safeDispatch(view, { effects: setSearchResults.of(filtered) });
         } catch (e) {
-            console.error('Failed to read directory:', e);
-            exitBrowseMode();
+            console.warn('Failed to read directory:', e);
+            // Show an empty listing instead of crashing — the filesystem
+            // may not be mounted or OPFS state may be stale.
+            selectedIndex = 0;
+            safeDispatch(view, { effects: setSearchResults.of([]) });
         }
     }
 
     async function navigateBrowse(entry: BrowseEntry) {
         if (entry.type === 'browse-file') {
             // Open the file and exit browse mode
+            closeTerminalIfActive();
             const path = entry.fullPath;
             exitBrowseMode();
             input.value = path;
@@ -1364,6 +1361,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     function handleSearchResult(result: HighlightedSearch) {
+        closeTerminalIfActive();
         input.value = result.id;
         safeDispatch(view, {
             effects: [setSearchResults.of([]), openFileEffect.of({ path: result.id })]
@@ -1429,13 +1427,33 @@ export const toolbarPanel = (view: EditorView): Panel => {
         input.value = currentFile.path || cfg.language || '';
     }
 
+    /** Close the terminal panel if it's currently active. */
+    function closeTerminalIfActive() {
+        if (view.state.field(terminalActiveField)) {
+            safeDispatch(view, {
+                effects: [
+                    terminalCompartment.reconfigure([]),
+                    terminalActiveEffect.of(false),
+                ],
+            });
+        }
+    }
+
+    function resetInputToTerminalOrFile() {
+        if (view.state.field(terminalActiveField)) {
+            input.value = 'Terminal';
+        } else {
+            resetInputToCurrentFile();
+        }
+    }
+
     // Close dropdown when clicking outside
     function handleClickOutside(event: Event) {
         if (!dom.contains(event.target as Node)) {
             if (settingsMode.active) exitSettingsMode();
             if (browseMode.active) exitBrowseMode();
             safeDispatch(view, { effects: setSearchResults.of([]) });
-            resetInputToCurrentFile();
+            resetInputToTerminalOrFile();
         }
     }
 
@@ -1445,8 +1463,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
             return;
         }
 
-        // Open dropdown when input is clicked
-        const query = input.value;
+        // When terminal is open, treat the click as an empty-query dropdown
+        // so "Terminal" isn't used as a search/save-as query.
+        const terminalActive = view.state.field(terminalActiveField);
+        const query = terminalActive ? '' : input.value;
         let results: SearchResult[] = [];
 
         if (query.trim()) {
@@ -1694,7 +1714,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else if (event.key === "Escape") {
             event.preventDefault();
             safeDispatch(view, { effects: setSearchResults.of([]) });
-            resetInputToCurrentFile();
+            resetInputToTerminalOrFile();
             input.blur();
         }
     });
@@ -1789,9 +1809,22 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 updateLspLogIcon();
             }
 
-            // Sync input value when file path changes (unless overlay/mode is active or user is naming)
-            if (prevFile.path !== nextFile.path && !namingMode.active && !lspLogOverlay && !settingsMode.active) {
+            // Sync input value when file path changes (unless overlay/mode is active, naming, or terminal is open)
+            if (prevFile.path !== nextFile.path && !namingMode.active && !lspLogOverlay && !settingsMode.active && !update.state.field(terminalActiveField)) {
                 input.value = nextFile.path || '';
+            }
+
+            // Terminal state: update toolbar icon and text
+            const prevTerminal = update.startState.field(terminalActiveField);
+            const nextTerminal = update.state.field(terminalActiveField);
+            if (prevTerminal !== nextTerminal) {
+                if (nextTerminal) {
+                    stateIcon.textContent = TERMINAL_ICON;
+                    input.value = 'Terminal';
+                } else {
+                    stateIcon.textContent = SEARCH_ICON;
+                    resetInputToCurrentFile();
+                }
             }
         },
         destroy() {
