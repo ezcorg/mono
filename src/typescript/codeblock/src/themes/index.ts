@@ -351,18 +351,21 @@ export const codeblockTheme = EditorView.theme({
         height: '0',
         maxHeight: '50vh',
         zIndex: 150,
-        overflow: 'hidden',
         background: 'var(--cm-background)',
     },
     '.cm-terminal-container': {
         overflow: 'hidden',
         position: 'relative',
+        outline: 'none',
     },
-    // Ghostty creates a textarea for keyboard input capture.
-    // Hide it so its native caret doesn't flash independently.
-    '.cm-terminal-container textarea': {
-        opacity: '0',
-        caretColor: 'transparent',
+    // Terminal cursor — block cursor rendered as a mark decoration
+    '.cm-terminal-cursor': {
+        background: 'var(--cm-foreground, #d4d4d4)',
+        color: 'var(--cm-background, #1e1e1e)',
+        animation: 'cm-terminal-blink 1s step-end infinite',
+    },
+    '@keyframes cm-terminal-blink': {
+        '50%': { opacity: '0' },
     },
     // Auto-hide toolbar: JS manages retract/expand by toggling
     // .cm-toolbar-retracted on .cm-panels-top (see toolbar.ts).

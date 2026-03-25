@@ -8,6 +8,7 @@ members = [
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
     "src/rust/witmproxy-plugin-noshorts",
+    "src/rust/cicd",
 ]
 exclude = []
 

@@ -559,16 +559,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
         }
     }
 
-    /** Clip the terminal wrapper height to show only content rows (hide empty rows).
-     *  Since the wrapper starts at top:0 (covering the toolbar filler), the
-     *  minimum height is the toolbar panel height so the filler is fully occluded. */
-    function updateTerminalWrapperHeight(contentRows: number) {
-        const canvas = terminalWrapper.querySelector('canvas') as HTMLCanvasElement | null;
-        if (!canvas || canvas.clientHeight === 0) return;
-        const MAX_ROWS = 16;
-        const rowHeight = canvas.clientHeight / MAX_ROWS;
-        const visibleRows = Math.min(Math.max(1, contentRows + 1), MAX_ROWS);
-        const contentPx = visibleRows * rowHeight;
+    /** Sync the wrapper height to the terminal CM editor's actual content height. */
+    function syncTerminalWrapperHeight() {
+        const cmEditor = terminalWrapper.querySelector('.cm-editor') as HTMLElement | null;
+        if (!cmEditor) return;
+        const contentPx = cmEditor.scrollHeight;
         const minPx = dom.offsetHeight; // at least cover the toolbar filler
         const maxPx = window.innerHeight * 0.5;
         terminalWrapper.style.height = `${Math.min(Math.max(contentPx, minPx), maxPx)}px`;
@@ -587,20 +582,17 @@ export const toolbarPanel = (view: EditorView): Panel => {
         safeDispatch(view, { effects: setSearchResults.of([]) });
         document.addEventListener("click", handleTerminalClickOutside);
 
-        // Lazy-load terminal + jswasi
-        const [termMod, jswasiMod] = await Promise.all([
-            import('./terminal'),
-            import('../utils/jswasi-terminal'),
-        ]);
+        // Lazy-load terminal
+        const termMod = await import('./terminal');
 
         const terminalEl = await termMod.ensureTerminalElement(view);
         if (!terminalWrapper.contains(terminalEl)) {
             terminalWrapper.appendChild(terminalEl);
         }
 
-        // Dynamic height: clip to content rows
-        jswasiMod.setResizeCallback((rows) => {
-            if (terminalMode.active) updateTerminalWrapperHeight(rows);
+        // Sync wrapper height after each terminal render (content may grow/shrink)
+        termMod.setHeightCallback(() => {
+            if (terminalMode.active) syncTerminalWrapperHeight();
         });
 
         // Resize observer for terminal column width
@@ -609,8 +601,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
         });
         terminalResizeObserver.observe(terminalWrapper);
 
-        // Focus ghostty
-        requestAnimationFrame(() => termMod.focusTerminalEl());
+        // Focus terminal + initial height sync
+        requestAnimationFrame(() => {
+            termMod.focusTerminalEl();
+            syncTerminalWrapperHeight();
+        });
     }
 
     function exitTerminalMode() {
@@ -625,8 +620,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
         stateIcon.textContent = SEARCH_ICON;
         resetInputToCurrentFile();
 
-        import('../utils/jswasi-terminal').then(({ setResizeCallback }) => {
-            setResizeCallback(null);
+        import('./terminal').then(({ setHeightCallback }) => {
+            setHeightCallback(null);
         });
 
         terminalResizeObserver?.disconnect();
