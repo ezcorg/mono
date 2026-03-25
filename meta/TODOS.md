@@ -1,4 +1,17 @@
 `codeblock` (src/typescript/codeblock):
+- [ ] The filler should be occluded by the terminal when it's opened  
+- [ ] If the terminal and editor both have the same font family and font size, why does the editor have shorter row height?
+
+- [ ] Ensure search toolbar input is what retains focus and is interacted with (instead of the VMs command prompt)
+- [ ] The search toolbar input should have the same content as the last line in the editor (command prompt), and the last line should not be duplicated again in the terminal content
+- [ ] The terminal vertical size should grow with its content (with a sensible maximum), but not be larger than its content (i.e, don't show unnecessary empty terminal for no reason)
+- [ ] When in "Terminal" mode, `--cm-gutter-width` should likely be 0/reset
+
+- [ ] The opened terminal still shouldn't show empty lines.
+- [ ] Is there any mechanism available for us to style the terminal similarly to the code editor (font-family, font-size, etc.)?
+- [ ] There seems to be some vertical shifting in the editor when the terminal opens due to the search toolbar input disappearing and reducing the height of the element. Can you use a filler or some other method to ensure this doesn't happen?
+
+- [ ] Include a WASM build of `ripgrep`
 - [ ] Include `git` functionality in the VM
 - [ ] Support for configurable keybindings for opening available commands
 - [ ] Sharable links to codeblock line ranges as # anchors (should work even with multiple codeblocks on the same page) 
@@ -21,11 +34,16 @@
 `wanix` (../wanix)
 - [ ] Apply optimizations to `wanix` go wasm binaries: https://www.fermyon.com/blog/optimizing-tinygo-wasm
 
+`cicd` (src/rust/cicd)
+- [ ] A CLI for executing repository workflows and tasks. Immediately, this should contain 
+
+`mono`
+- [ ] Create a base justfile in the repo. This 
+
 `witmproxy` (src/apps/witmproxy)
 
-- [ ] We should have test infrastructure for producing `plugin` components in tests more easily (rather than re-using statically declared and separately built `witmproxy-<xyz>` plugins)
-
-- [ ] Plugins should also have an auto-update mechanism
+- [ ] We should have test infrastructure for producing and building witmproxy plugin WASM components in tests more easily (rather than re-using statically declared and separately built `witmproxy-<xyz>` plugins)
+- [ ] Plugins should have an auto-update mechanism
 
 `witmproxy-web`
 

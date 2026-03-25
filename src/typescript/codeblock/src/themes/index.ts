@@ -340,31 +340,29 @@ export const codeblockTheme = EditorView.theme({
     '.cm-lsp-log-log': {
         opacity: '0.6',
     },
-    // Terminal panel — fills available space when editor scroller is hidden
-    '.cm-terminal-panel': {
-        display: 'flex',
-        flexDirection: 'column',
-        flex: 1,
-        minHeight: '80px',
+    // Terminal wrapper — replaces the toolbar input with ghostty.
+    // Starts at top: 0 to cover the hidden toolbar elements (filler),
+    // then extends downward as content grows. Height set by JS.
+    '.cm-terminal-wrapper': {
+        position: 'absolute',
+        top: '0',
+        left: '0',
+        right: '0',
+        height: '0',
+        maxHeight: '50vh',
+        zIndex: 150,
+        overflow: 'hidden',
+        background: 'var(--cm-background)',
     },
     '.cm-terminal-container': {
-        flex: 1,
         overflow: 'hidden',
         position: 'relative',
     },
     // Ghostty creates a textarea for keyboard input capture.
-    // Hide it so its native caret doesn't flash at the top-left
-    // independently of the terminal's own cursor rendering.
+    // Hide it so its native caret doesn't flash independently.
     '.cm-terminal-container textarea': {
         opacity: '0',
         caretColor: 'transparent',
-    },
-    // When terminal is active, the editor scroller is hidden and
-    // the bottom panel grows to fill the remaining space.
-    '&.cm-terminal-active > .cm-panels-bottom': {
-        flex: '1',
-        display: 'flex',
-        flexDirection: 'column',
     },
     // Auto-hide toolbar: JS manages retract/expand by toggling
     // .cm-toolbar-retracted on .cm-panels-top (see toolbar.ts).

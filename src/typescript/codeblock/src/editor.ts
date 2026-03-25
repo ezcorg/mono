@@ -114,7 +114,6 @@ export const languageServerCompartment = new Compartment();
 export const indentationCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
 export const lineWrappingCompartment = new Compartment();
-export const terminalCompartment = new Compartment();
 export const lineNumbersCompartment = new Compartment();
 export const foldGutterCompartment = new Compartment();
 
@@ -127,18 +126,6 @@ export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
 
 // SVG preview toggle
 export const toggleSvgPreviewEffect = StateEffect.define<void>();
-
-// Terminal active state tracking — lets the toolbar react to terminal open/close
-export const terminalActiveEffect = StateEffect.define<boolean>();
-export const terminalActiveField = StateField.define<boolean>({
-    create() { return false; },
-    update(value, tr) {
-        for (const e of tr.effects) {
-            if (e.is(terminalActiveEffect)) return e.value;
-        }
-        return value;
-    }
-});
 
 // Holds the current file lifecycle
 export const currentFileField = StateField.define<{
@@ -222,13 +209,11 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
-        terminalActiveField,
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
         readOnlyCompartment.of(EditorState.readOnly.of(false)),
         lineWrappingCompartment.of([]),
-        terminalCompartment.of([]),
         lineNumbersCompartment.of(showLineNums ? [lineNumbers(), highlightActiveLineGutter()] : []),
         foldGutterCompartment.of(showFold ? [foldGutter()] : []),
         tooltips({ position: "fixed" }),

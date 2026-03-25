@@ -1,7 +1,7 @@
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField, TransactionSpec } from "@codemirror/state";
 import { HighlightedSearch } from "../utils/search";
-import { CodeblockFacet, openFileEffect, fileLoadedEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, terminalActiveField, terminalActiveEffect, terminalCompartment } from "../editor";
+import { CodeblockFacet, openFileEffect, fileLoadedEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment } from "../editor";
 import { lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
 import { foldGutter } from "@codemirror/language";
 import { extOrLanguageToLanguageId } from "../lsps";
@@ -530,6 +530,109 @@ export const toolbarPanel = (view: EditorView): Panel => {
     let settingsMode: SettingsMode = { active: false, filter: '', editing: null };
     let deleteMode: DeleteMode = { active: false, filePath: '' };
     let overwriteMode: OverwriteMode = { active: false, filePath: '', action: 'create-file' };
+    let terminalMode = { active: false };
+    let terminalResizeObserver: ResizeObserver | null = null;
+
+    // Terminal wrapper — replaces the toolbar input with the ghostty terminal.
+    // Positioned as a dropdown below the toolbar, growing as output arrives.
+    const terminalWrapper = document.createElement("div");
+    terminalWrapper.className = "cm-terminal-wrapper";
+    terminalWrapper.style.display = 'none';
+    dom.appendChild(terminalWrapper);
+
+    // Close terminal on Ctrl+C or Escape (capture phase so we get it before ghostty)
+    terminalWrapper.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            exitTerminalMode();
+        } else if (e.ctrlKey && e.key === 'c') {
+            // Let ghostty also handle SIGINT, then close
+            requestAnimationFrame(() => exitTerminalMode());
+        }
+    }, { capture: true });
+
+    function handleTerminalClickOutside(event: Event) {
+        if (!terminalMode.active) return;
+        if (!dom.contains(event.target as Node)) {
+            exitTerminalMode();
+        }
+    }
+
+    /** Clip the terminal wrapper height to show only content rows (hide empty rows).
+     *  Since the wrapper starts at top:0 (covering the toolbar filler), the
+     *  minimum height is the toolbar panel height so the filler is fully occluded. */
+    function updateTerminalWrapperHeight(contentRows: number) {
+        const canvas = terminalWrapper.querySelector('canvas') as HTMLCanvasElement | null;
+        if (!canvas || canvas.clientHeight === 0) return;
+        const MAX_ROWS = 16;
+        const rowHeight = canvas.clientHeight / MAX_ROWS;
+        const visibleRows = Math.min(Math.max(1, contentRows + 1), MAX_ROWS);
+        const contentPx = visibleRows * rowHeight;
+        const minPx = dom.offsetHeight; // at least cover the toolbar filler
+        const maxPx = window.innerHeight * 0.5;
+        terminalWrapper.style.height = `${Math.min(Math.max(contentPx, minPx), maxPx)}px`;
+    }
+
+    async function enterTerminalMode() {
+        terminalMode.active = true;
+        view.dom.style.setProperty('--cm-gutter-width', '0px');
+        view.dom.style.setProperty('--cm-gutter-lineno-width', '0px');
+
+        // Swap toolbar content: hide input elements (visibility preserves layout height),
+        // show terminal wrapper
+        stateIconContainer.style.visibility = 'hidden';
+        inputContainer.style.visibility = 'hidden';
+        terminalWrapper.style.display = '';
+        safeDispatch(view, { effects: setSearchResults.of([]) });
+        document.addEventListener("click", handleTerminalClickOutside);
+
+        // Lazy-load terminal + jswasi
+        const [termMod, jswasiMod] = await Promise.all([
+            import('./terminal'),
+            import('../utils/jswasi-terminal'),
+        ]);
+
+        const terminalEl = await termMod.ensureTerminalElement(view);
+        if (!terminalWrapper.contains(terminalEl)) {
+            terminalWrapper.appendChild(terminalEl);
+        }
+
+        // Dynamic height: clip to content rows
+        jswasiMod.setResizeCallback((rows) => {
+            if (terminalMode.active) updateTerminalWrapperHeight(rows);
+        });
+
+        // Resize observer for terminal column width
+        terminalResizeObserver = new ResizeObserver(() => {
+            termMod.handleTerminalResize(view.state.field(settingsField).fontSize);
+        });
+        terminalResizeObserver.observe(terminalWrapper);
+
+        // Focus ghostty
+        requestAnimationFrame(() => termMod.focusTerminalEl());
+    }
+
+    function exitTerminalMode() {
+        if (!terminalMode.active) return;
+        terminalMode.active = false;
+        updateGutterWidthVariables();
+
+        // Restore toolbar: show input elements, hide terminal
+        stateIconContainer.style.visibility = '';
+        inputContainer.style.visibility = '';
+        terminalWrapper.style.display = 'none';
+        stateIcon.textContent = SEARCH_ICON;
+        resetInputToCurrentFile();
+
+        import('../utils/jswasi-terminal').then(({ setResizeCallback }) => {
+            setResizeCallback(null);
+        });
+
+        terminalResizeObserver?.disconnect();
+        terminalResizeObserver = null;
+        document.removeEventListener("click", handleTerminalClickOutside);
+    }
 
     // System theme media query listener
     const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -1273,7 +1376,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     async function navigateBrowse(entry: BrowseEntry) {
         if (entry.type === 'browse-file') {
             // Open the file and exit browse mode
-            closeTerminalIfActive();
+            exitTerminalMode();
             const path = entry.fullPath;
             exitBrowseMode();
             input.value = path;
@@ -1322,8 +1425,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
             enterBrowseMode();
             return;
         } else if (command.type === 'open-terminal') {
-            safeDispatch(view, { effects: setSearchResults.of([]) });
-            import('./terminal').then(({ openTerminal }) => openTerminal(view));
+            enterTerminalMode();
             return;
         } else if (command.type === 'save-as') {
             if (command.requiresInput) {
@@ -1361,7 +1463,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     function handleSearchResult(result: HighlightedSearch) {
-        closeTerminalIfActive();
+        exitTerminalMode();
         input.value = result.id;
         safeDispatch(view, {
             effects: [setSearchResults.of([]), openFileEffect.of({ path: result.id })]
@@ -1427,21 +1529,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
         input.value = currentFile.path || cfg.language || '';
     }
 
-    /** Close the terminal panel if it's currently active. */
-    function closeTerminalIfActive() {
-        if (view.state.field(terminalActiveField)) {
-            safeDispatch(view, {
-                effects: [
-                    terminalCompartment.reconfigure([]),
-                    terminalActiveEffect.of(false),
-                ],
-            });
-        }
-    }
-
     function resetInputToTerminalOrFile() {
-        if (view.state.field(terminalActiveField)) {
-            input.value = 'Terminal';
+        if (terminalMode.active) {
+            input.value = '/ $';
         } else {
             resetInputToCurrentFile();
         }
@@ -1459,14 +1549,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
     input.addEventListener("click", () => {
         // Don't interfere when in a special mode
-        if (namingMode.active || settingsMode.active || browseMode.active) {
+        if (namingMode.active || settingsMode.active || browseMode.active || terminalMode.active) {
             return;
         }
 
-        // When terminal is open, treat the click as an empty-query dropdown
-        // so "Terminal" isn't used as a search/save-as query.
-        const terminalActive = view.state.field(terminalActiveField);
-        const query = terminalActive ? '' : input.value;
+        const query = input.value;
         let results: SearchResult[] = [];
 
         if (query.trim()) {
@@ -1810,21 +1897,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
             }
 
             // Sync input value when file path changes (unless overlay/mode is active, naming, or terminal is open)
-            if (prevFile.path !== nextFile.path && !namingMode.active && !lspLogOverlay && !settingsMode.active && !update.state.field(terminalActiveField)) {
+            if (prevFile.path !== nextFile.path && !namingMode.active && !lspLogOverlay && !settingsMode.active && !terminalMode.active) {
                 input.value = nextFile.path || '';
-            }
-
-            // Terminal state: update toolbar icon and text
-            const prevTerminal = update.startState.field(terminalActiveField);
-            const nextTerminal = update.state.field(terminalActiveField);
-            if (prevTerminal !== nextTerminal) {
-                if (nextTerminal) {
-                    stateIcon.textContent = TERMINAL_ICON;
-                    input.value = 'Terminal';
-                } else {
-                    stateIcon.textContent = SEARCH_ICON;
-                    resetInputToCurrentFile();
-                }
             }
         },
         destroy() {
@@ -1837,6 +1911,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
             // Clean up LSP log overlay
             closeLspLogOverlay();
+
+            // Clean up terminal overlay
+            exitTerminalMode();
 
             // Clean up ResizeObserver
             if (gutterObserver) {
