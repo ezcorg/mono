@@ -339,9 +339,9 @@ async function initTerminal(view: EditorView, container: HTMLElement) {
     const charWidth = settings.fontSize * 0.6;
     const cols = Math.max(2, Math.floor(container.clientWidth / charWidth));
 
-    // Parse theme colors to 0xRRGGBB
+    // Parse theme colors to 0xRRGGBB (bg matches --cm-toolbar-background)
     const fg = dark ? 0xd4d4d4 : 0x1e1e1e;
-    const bg = dark ? 0x1e1e1e : 0xffffff;
+    const bg = dark ? 0x2a2a2f : 0xf3f3f3;
 
     // Create WASM terminal (parser only — no canvas renderer)
     wasmTerm = ghostty.createTerminal(cols, MAX_ROWS, {
@@ -360,7 +360,7 @@ async function initTerminal(view: EditorView, container: HTMLElement) {
                 termDecoField,
                 EditorView.theme({
                     '&': {
-                        background: dark ? '#1e1e1e' : '#ffffff',
+                        background: 'var(--cm-toolbar-background)',
                         color: dark ? '#d4d4d4' : '#1e1e1e',
                     },
                     '.cm-scroller': { overflow: 'hidden' },

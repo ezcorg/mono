@@ -351,7 +351,7 @@ export const codeblockTheme = EditorView.theme({
         height: '0',
         maxHeight: '50vh',
         zIndex: 150,
-        background: 'var(--cm-background)',
+        background: 'var(--cm-toolbar-background)',
     },
     '.cm-terminal-container': {
         overflow: 'hidden',
