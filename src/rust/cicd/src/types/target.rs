@@ -25,6 +25,7 @@ impl BuildTarget {
     }
 
     /// The artifact name for a given binary on this target.
+    #[allow(dead_code)]
     pub fn artifact_name(&self, binary: &str) -> String {
         match self {
             Self::X86_64UnknownLinuxGnu => format!("{binary}-linux-x64"),
@@ -34,6 +35,7 @@ impl BuildTarget {
     }
 
     /// The GitHub Actions runner OS for this target.
+    #[allow(dead_code)]
     pub fn ci_runner(&self) -> &'static str {
         match self {
             Self::X86_64UnknownLinuxGnu => "ubuntu-latest",
@@ -42,6 +44,7 @@ impl BuildTarget {
     }
 
     /// Detect the current host target.
+    #[allow(dead_code)]
     pub fn current() -> Option<Self> {
         #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         return Some(Self::X86_64UnknownLinuxGnu);

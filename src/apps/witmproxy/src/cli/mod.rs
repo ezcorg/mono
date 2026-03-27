@@ -164,6 +164,8 @@ enum Commands {
         #[arg(long)]
         from_source: bool,
     },
+    /// Print version and build information
+    Version,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -294,6 +296,25 @@ impl Cli {
                 let handler = update::UpdateHandler::new(config);
                 handler.handle(force, from_source).await
             }
+            Commands::Version => {
+                Self::print_version();
+                Ok(())
+            }
+        }
+    }
+
+    fn print_version() {
+        println!("witmproxy {}", env!("CARGO_PKG_VERSION"));
+        if let Some(commit) = option_env!("GIT_COMMIT_HASH") {
+            println!("commit:  {}", commit);
+        }
+        println!(
+            "target:  {}-{}",
+            std::env::consts::ARCH,
+            std::env::consts::OS
+        );
+        if let Some(ts) = option_env!("BUILD_TIMESTAMP") {
+            println!("built:   {}", ts);
         }
     }
 

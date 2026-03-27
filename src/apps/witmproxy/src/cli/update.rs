@@ -259,6 +259,88 @@ async fn download_release_binary(version: &semver::Version) -> Result<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
+// 4e-2. Delta patch download and apply (bidiff)
+// ---------------------------------------------------------------------------
+
+/// Try to download a delta patch and apply it to the current binary.
+/// Returns Ok(Some(bytes)) with the new binary if successful, or Ok(None) if
+/// no patch is available for this version transition.
+async fn try_delta_update(
+    current: &semver::Version,
+    target: &semver::Version,
+) -> Result<Option<Vec<u8>>> {
+    let name = asset_name();
+    let patch_name = format!("{}.bidiff-from-{}", name, current);
+    let url = format!(
+        "https://github.com/ezcorg/mono/releases/download/witmproxy-v{}/{}",
+        target, patch_name
+    );
+
+    info!("Checking for delta patch: {}", url);
+    let client = reqwest::Client::builder()
+        .user_agent("witmproxy-updater")
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()?;
+
+    let resp = client.get(&url).send().await?;
+
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        info!("No delta patch available for {} -> {}", current, target);
+        return Ok(None);
+    }
+
+    if !resp.status().is_success() {
+        info!("Delta patch download returned status {}", resp.status());
+        return Ok(None);
+    }
+
+    let patch_bytes = resp.bytes().await?.to_vec();
+    info!(
+        "Downloaded delta patch ({} bytes), applying...",
+        patch_bytes.len()
+    );
+
+    // Read the current binary
+    let current_exe = std::env::current_exe().context("failed to get current executable path")?;
+    let old_binary = std::fs::read(&current_exe).context("failed to read current binary")?;
+
+    // Apply the patch
+    let patch_cursor = std::io::Cursor::new(&patch_bytes);
+    let old_cursor = std::io::Cursor::new(&old_binary);
+
+    let mut reader =
+        bipatch::Reader::new(patch_cursor, old_cursor).context("failed to parse delta patch")?;
+
+    let mut new_binary = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut new_binary)
+        .context("failed to apply delta patch")?;
+
+    // Validate the patched binary
+    let valid = if cfg!(target_os = "macos") {
+        new_binary.len() >= 4
+            && (new_binary[..4] == [0xFE, 0xED, 0xFA, 0xCE]
+                || new_binary[..4] == [0xFE, 0xED, 0xFA, 0xCF]
+                || new_binary[..4] == [0xCF, 0xFA, 0xED, 0xFE]
+                || new_binary[..4] == [0xCE, 0xFA, 0xED, 0xFE]
+                || new_binary[..4] == [0xCA, 0xFE, 0xBA, 0xBE])
+    } else {
+        new_binary.len() >= 4 && new_binary[..4] == [0x7F, b'E', b'L', b'F']
+    };
+
+    if !valid {
+        anyhow::bail!("Patched binary has invalid magic bytes — patch may be corrupt");
+    }
+
+    info!(
+        "Delta patch applied successfully ({} -> {} bytes)",
+        old_binary.len(),
+        new_binary.len()
+    );
+
+    Ok(Some(new_binary))
+}
+
+// ---------------------------------------------------------------------------
 // 4f. Binary replacement
 // ---------------------------------------------------------------------------
 
@@ -372,20 +454,42 @@ impl UpdateHandler {
         let mut updated = false;
 
         if !from_source && self.config.update.prefer_prebuilt {
-            match download_release_binary(&latest).await {
-                Ok(binary) => match replace_binary(&binary) {
+            // Try delta patch first (much smaller download)
+            match try_delta_update(&current, &latest).await {
+                Ok(Some(binary)) => match replace_binary(&binary) {
                     Ok(()) => {
+                        eprintln!("Applied delta patch successfully.");
                         updated = true;
                     }
                     Err(e) => {
-                        warn!(
-                            "Binary replacement failed: {:#}. Trying cargo install...",
-                            e
-                        );
+                        warn!("Delta patch binary replacement failed: {:#}", e);
                     }
                 },
+                Ok(None) => {
+                    info!("No delta patch available, falling back to full download");
+                }
                 Err(e) => {
-                    warn!("Prebuilt download failed: {:#}. Trying cargo install...", e);
+                    warn!("Delta update failed: {:#}", e);
+                }
+            }
+
+            // Fall back to full binary download
+            if !updated {
+                match download_release_binary(&latest).await {
+                    Ok(binary) => match replace_binary(&binary) {
+                        Ok(()) => {
+                            updated = true;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Binary replacement failed: {:#}. Trying cargo install...",
+                                e
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Prebuilt download failed: {:#}. Trying cargo install...", e);
+                    }
                 }
             }
         }
@@ -437,42 +541,71 @@ pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
                     );
 
                     if config.update.prefer_prebuilt {
-                        match download_release_binary(&latest).await {
-                            Ok(binary) => match replace_binary(&binary) {
+                        let mut did_update = false;
+
+                        // Try delta patch first
+                        match try_delta_update(&current, &latest).await {
+                            Ok(Some(binary)) => match replace_binary(&binary) {
                                 Ok(()) => {
                                     info!(
-                                        "Auto-update: binary replaced with version {}. Reinstalling service and restarting...",
+                                        "Auto-update: delta patch applied for version {}",
                                         latest
                                     );
-
-                                    // Reinstall and restart the service so the new binary is used.
-                                    // The service manager will kill this process when the service restarts.
-                                    let handler = crate::cli::service::ServiceHandler::new(
-                                        config.clone(),
-                                        false,
-                                        None,
-                                        false,
-                                    );
-                                    if let Err(e) = handler
-                                        .install_service(confique::Layer::default_values(), true)
-                                        .await
-                                    {
-                                        warn!("Auto-update: failed to reinstall service: {:#}", e);
-                                    }
-                                    if let Err(e) = handler.restart_service().await {
-                                        warn!("Auto-update: failed to restart service: {:#}", e);
-                                    }
-                                    // The restart should kill this process; if it didn't,
-                                    // just continue the loop.
-                                    return;
+                                    did_update = true;
                                 }
                                 Err(e) => {
-                                    warn!("Auto-update: binary replacement failed: {:#}", e);
+                                    warn!("Auto-update: delta patch replacement failed: {:#}", e);
                                 }
                             },
+                            Ok(None) => {}
                             Err(e) => {
-                                warn!("Auto-update: prebuilt download failed: {:#}", e);
+                                warn!("Auto-update: delta update failed: {:#}", e);
                             }
+                        }
+
+                        // Fall back to full binary download
+                        if !did_update {
+                            match download_release_binary(&latest).await {
+                                Ok(binary) => match replace_binary(&binary) {
+                                    Ok(()) => {
+                                        did_update = true;
+                                    }
+                                    Err(e) => {
+                                        warn!("Auto-update: binary replacement failed: {:#}", e);
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!("Auto-update: prebuilt download failed: {:#}", e);
+                                }
+                            }
+                        }
+
+                        if did_update {
+                            info!(
+                                "Auto-update: binary replaced with version {}. Reinstalling service and restarting...",
+                                latest
+                            );
+
+                            // Reinstall and restart the service so the new binary is used.
+                            // The service manager will kill this process when the service restarts.
+                            let handler = crate::cli::service::ServiceHandler::new(
+                                config.clone(),
+                                false,
+                                None,
+                                false,
+                            );
+                            if let Err(e) = handler
+                                .install_service(confique::Layer::default_values(), true)
+                                .await
+                            {
+                                warn!("Auto-update: failed to reinstall service: {:#}", e);
+                            }
+                            if let Err(e) = handler.restart_service().await {
+                                warn!("Auto-update: failed to restart service: {:#}", e);
+                            }
+                            // The restart should kill this process; if it didn't,
+                            // just continue the loop.
+                            return;
                         }
                     }
                     // No cargo install fallback for daemon — prebuilt only

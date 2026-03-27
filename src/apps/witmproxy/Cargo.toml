@@ -81,11 +81,11 @@ url = "2.5"
 
 # Template engine
 askama = { version = "0.15.5", features = ["derive"] }
-cargo-generate = { version = "0.23.7", features = ["vendored-openssl"] }
+# cargo-generate is huge (libgit2, libssh2, openssl) — only needed for `witm plugin new`
+cargo-generate = { version = "0.23.7", features = ["vendored-openssl"], optional = true }
 
 clap = { version = "4.5.47", features = ["derive"] }
 semver = "1"
-either = "1.15.0"
 confique = { version = "0.4.0", features = ["toml"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 # Must match version in sqlx
@@ -93,8 +93,6 @@ libsqlite3-sys = { version = "0.30.1", features = [
     "bundled-sqlcipher-vendored-openssl"
 ] }
 dirs = "6.0.0"
-lazy_static = "1.5.0"
-bimap = "0.6.3"
 salvo = { version = "0.89.3", features = ["oapi", "quinn", "serve-static", "cors", "affix-state", "rustls", "force-https"] }
 rust-embed = "8.7.2"
 http-body = "1.0.1"
@@ -105,6 +103,9 @@ tokio-stream = "0.1.17"
 notify = { version = "8.2.0" }
 qrcode = "0.14"
 
+# Binary patching for delta updates
+bipatch = "1.0.0"
+
 # Optional test helper dependencies
 tempfile = { version = "3.8", optional = true }
 service-manager = "0.11.0"
@@ -113,9 +114,9 @@ service-manager = "0.11.0"
 # Test dependencies
 tokio-test = "0.4"
 tempfile = "3.8"
-webpki-roots = "1.0.6"
-sqlx-cli = { version = "0.8.6", default-features = false, features = ["rustls", "sqlite"] }
 
 [features]
 # Feature to expose test utilities for integration tests in other crates
 test-helpers = ["dep:tempfile"]
+# Include cargo-generate for `witm plugin new` (large dependency tree)
+plugin-new = ["dep:cargo-generate"]

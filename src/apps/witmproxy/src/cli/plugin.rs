@@ -2,9 +2,7 @@ use super::Services;
 use crate::cert::ca::get_root_cert_path;
 use crate::{AppConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
-use cargo_generate::{GenerateArgs, TemplatePath, generate};
 use clap::Subcommand;
-use std::env;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
@@ -46,6 +44,7 @@ pub enum PluginCommands {
 /// Plugin command handler that contains the resolved configuration and verbose flag
 pub struct PluginHandler {
     pub config: AppConfig,
+    #[cfg_attr(not(feature = "plugin-new"), allow(dead_code))]
     pub verbose: bool,
 }
 
@@ -249,13 +248,15 @@ impl PluginHandler {
         Ok(())
     }
 
-    // TODO: LLM garbage here
+    #[cfg(feature = "plugin-new")]
     async fn create_new_plugin(
         &self,
         plugin_name: &str,
         language: &str,
         dest: &Option<PathBuf>,
     ) -> Result<()> {
+        use cargo_generate::{GenerateArgs, TemplatePath, generate};
+
         let template_path = match language {
             "rust" => TemplatePath {
                 auto_path: None,
@@ -278,7 +279,7 @@ impl PluginHandler {
         // Resolve destination path
         let destination = match dest {
             Some(path) => std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
-            None => env::current_dir()?,
+            None => std::env::current_dir()?,
         };
         std::fs::create_dir_all(destination.as_path())?;
 
@@ -317,6 +318,19 @@ impl PluginHandler {
         generate(args)?;
 
         Ok(())
+    }
+
+    #[cfg(not(feature = "plugin-new"))]
+    async fn create_new_plugin(
+        &self,
+        _plugin_name: &str,
+        _language: &str,
+        _dest: &Option<PathBuf>,
+    ) -> Result<()> {
+        anyhow::bail!(
+            "The `plugin new` command requires the `plugin-new` feature.\n\
+             Reinstall with: cargo install witmproxy --features plugin-new"
+        );
     }
 
     async fn add_plugin(&self, source: &str) -> Result<()> {

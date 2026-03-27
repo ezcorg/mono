@@ -35,6 +35,7 @@ impl MonoShell {
     }
 
     /// Run a command and capture its stdout.
+    #[allow(dead_code)]
     pub fn read(&self, cmd: &Cmd<'_>) -> Result<String, MonoError> {
         if self.verbose {
             eprintln!("$ {cmd}");
@@ -63,6 +64,7 @@ impl MonoShell {
 
     /// Read output from a destructive command.
     /// In dry-run mode, returns an empty string.
+    #[allow(dead_code)]
     pub fn read_destructive(&self, cmd: &Cmd<'_>) -> Result<String, MonoError> {
         if self.dry_run {
             eprintln!("[dry-run] would execute: {cmd}");
@@ -71,6 +73,7 @@ impl MonoShell {
         self.read(cmd)
     }
 
+    #[allow(dead_code)]
     pub fn is_dry_run(&self) -> bool {
         self.dry_run
     }

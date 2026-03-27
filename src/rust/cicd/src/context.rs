@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 /// Shared context threaded through all commands.
 pub struct MonoContext {
     pub repo_root: PathBuf,
+    #[allow(dead_code)]
     pub environment: Environment,
     pub shell: MonoShell,
 }
@@ -43,6 +44,7 @@ fn find_repo_root() -> Result<PathBuf, MonoError> {
 }
 
 /// Resolve a path relative to the repo root.
+#[allow(dead_code)]
 pub fn repo_path(ctx: &MonoContext, relative: impl AsRef<Path>) -> PathBuf {
     ctx.repo_root.join(relative)
 }

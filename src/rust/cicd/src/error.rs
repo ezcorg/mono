@@ -14,6 +14,7 @@ pub enum MonoError {
     #[error("missing environment variable: {0}")]
     MissingEnv(String),
 
+    #[allow(dead_code)]
     #[error("project `{project}` does not support `{operation}`")]
     UnsupportedOperation { project: String, operation: String },
 

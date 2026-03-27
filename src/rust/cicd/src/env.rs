@@ -3,8 +3,11 @@
 pub enum Environment {
     Local,
     GitHubActions {
+        #[allow(dead_code)]
         token: Option<String>,
+        #[allow(dead_code)]
         ref_name: String,
+        #[allow(dead_code)]
         event_name: String,
     },
 }
@@ -22,6 +25,7 @@ impl Environment {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_ci(&self) -> bool {
         matches!(self, Environment::GitHubActions { .. })
     }

@@ -1,0 +1,133 @@
+name: Publish witmproxy-plugin-noshorts
+
+on:
+  push:
+    tags:
+      - 'witmproxy-plugin-noshorts-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.1.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Perform a dry run (do not actually publish)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  PACKAGE: witmproxy-plugin-noshorts
+
+jobs:
+  test:
+    name: Check and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-wasip2
+
+      - name: Install cargo-component
+        run: cargo install cargo-component
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Check code formatting
+        run: cargo fmt --package ${{ env.PACKAGE }} --check
+
+      - name: Run clippy lints
+        run: cargo clippy --package ${{ env.PACKAGE }} --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --package ${{ env.PACKAGE }}
+
+  build-and-release:
+    name: Build WASM component and create release
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.dry_run != 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip2
+
+      - name: Install cargo-component
+        run: cargo install cargo-component
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Extract version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=${GITHUB_REF#refs/tags/witmproxy-plugin-noshorts-v}
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Publishing version: $VERSION"
+
+      - name: Update version in Cargo.toml
+        run: |
+          cd src/rust/witmproxy-plugin-noshorts
+          sed -i 's/^version = ".*"/version = "'${{ env.VERSION }}'"/' Cargo.toml
+          echo "Updated Cargo.toml version to ${{ env.VERSION }}"
+
+      - name: Build WASM component
+        run: cargo component build --package ${{ env.PACKAGE }} --release
+
+      - name: Locate and rename artifact
+        run: |
+          WASM_PATH=$(find target -name "witmproxy_plugin_noshorts.wasm" -path "*/release/*" | head -1)
+          if [ -z "$WASM_PATH" ]; then
+            echo "ERROR: Could not find built WASM component"
+            exit 1
+          fi
+          echo "Found WASM at: $WASM_PATH"
+          cp "$WASM_PATH" "witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: witmproxy-plugin-noshorts-v${{ env.VERSION }}
+          name: witmproxy-plugin-noshorts v${{ env.VERSION }}
+          body: |
+            ## witmproxy-plugin-noshorts v${{ env.VERSION }}
+
+            A witmproxy plugin that blocks YouTube and Instagram shorts.
+
+            ### Installation
+
+            ```bash
+            # Download the .wasm file from the release assets below, then:
+            witm plugin add witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm
+            ```
+          draft: false
+          prerelease: ${{ contains(env.VERSION, 'alpha') || contains(env.VERSION, 'beta') || contains(env.VERSION, 'rc') }}
+          files: witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm
+          token: ${{ secrets.GITHUB_TOKEN }}

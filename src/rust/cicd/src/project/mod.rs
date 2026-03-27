@@ -1,5 +1,6 @@
 pub mod registry;
 pub mod rust;
+pub mod wasm;
 
 use crate::context::MonoContext;
 use crate::error::MonoError;
@@ -11,7 +12,9 @@ use std::path::Path;
 pub enum ProjectKind {
     RustCrate,
     WasmComponent,
+    #[allow(dead_code)]
     TypeScriptLib,
+    #[allow(dead_code)]
     TypeScriptApp,
 }
 
@@ -33,6 +36,7 @@ pub trait Project {
     fn root(&self) -> &Path;
     fn version(&self) -> Result<Version, MonoError>;
     fn tag_prefix(&self) -> &str;
+    #[allow(dead_code)]
     fn build_targets(&self) -> &[BuildTarget];
 
     fn check(&self, ctx: &MonoContext) -> Result<(), MonoError>;
