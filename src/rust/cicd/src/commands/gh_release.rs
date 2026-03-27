@@ -5,11 +5,7 @@ use crate::types::ProjectId;
 use std::path::PathBuf;
 use xshell::cmd;
 
-pub fn run(
-    ctx: &MonoContext,
-    project: &ProjectId,
-    assets: &[PathBuf],
-) -> Result<(), MonoError> {
+pub fn run(ctx: &MonoContext, project: &ProjectId, assets: &[PathBuf]) -> Result<(), MonoError> {
     let projects = registry::all_projects(&ctx.repo_root);
     let idx = find_project(&projects, project)?;
     let p = &projects[idx];

@@ -1817,13 +1817,14 @@ dependencies = [
 
 [[package]]
 name = "cron"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5877d3fbf742507b66bc2a1945106bd30dd8504019d596901ddd012a4dd01740"
+checksum = "089df96cf6a25253b4b6b6744d86f91150a3d4df546f31a95def47976b8cba97"
 dependencies = [
  "chrono",
  "once_cell",
- "winnow 0.6.26",
+ "phf 0.11.3",
+ "winnow 0.7.13",
 ]
 
 [[package]]
@@ -11383,15 +11384,6 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "0.6.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e90edd2ac1aa278a5c4599b1d89cf03074b610800f866d4026dc199d7929a28"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "winnow"
 version = "0.7.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
@@ -11612,7 +11604,7 @@ dependencies = [
 
 [[package]]
 name = "witmproxy"
-version = "0.0.3-alpha"
+version = "0.0.4-alpha"
 dependencies = [
  "anyhow",
  "argon2",

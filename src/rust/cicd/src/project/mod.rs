@@ -48,10 +48,7 @@ pub trait Project {
 }
 
 /// Find a project by id from the registry.
-pub fn find_project(
-    projects: &[Box<dyn Project>],
-    id: &ProjectId,
-) -> Result<usize, MonoError> {
+pub fn find_project(projects: &[Box<dyn Project>], id: &ProjectId) -> Result<usize, MonoError> {
     projects
         .iter()
         .position(|p| p.id() == id)
@@ -82,12 +79,13 @@ pub fn read_cargo_version(cargo_toml: &Path) -> Result<Version, MonoError> {
 /// Update the version in a Cargo.toml file, preserving formatting.
 pub fn write_cargo_version(cargo_toml: &Path, version: &Version) -> Result<(), MonoError> {
     let contents = std::fs::read_to_string(cargo_toml)?;
-    let mut doc = contents
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| MonoError::ParseError {
-            path: cargo_toml.to_path_buf(),
-            reason: e.to_string(),
-        })?;
+    let mut doc =
+        contents
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| MonoError::ParseError {
+                path: cargo_toml.to_path_buf(),
+                reason: e.to_string(),
+            })?;
     doc["package"]["version"] = toml_edit::value(version.to_string());
     std::fs::write(cargo_toml, doc.to_string())?;
     Ok(())

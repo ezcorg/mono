@@ -50,12 +50,14 @@ impl Project for RustProject {
         let pkg = &self.package_name;
 
         eprintln!("checking formatting for {pkg}...");
-        ctx.shell.run(&cmd!(sh, "cargo fmt --package {pkg} --check"))?;
+        ctx.shell
+            .run(&cmd!(sh, "cargo fmt --package {pkg} --check"))?;
 
         eprintln!("running clippy for {pkg}...");
-        ctx.shell.run(
-            &cmd!(sh, "cargo clippy --package {pkg} --all-targets -- -D warnings"),
-        )?;
+        ctx.shell.run(&cmd!(
+            sh,
+            "cargo clippy --package {pkg} --all-targets -- -D warnings"
+        ))?;
 
         Ok(())
     }
@@ -65,7 +67,8 @@ impl Project for RustProject {
         let pkg = &self.package_name;
 
         eprintln!("testing {pkg}...");
-        ctx.shell.run(&cmd!(sh, "cargo test --package {pkg} --lib"))?;
+        ctx.shell
+            .run(&cmd!(sh, "cargo test --package {pkg} --lib"))?;
 
         Ok(())
     }
@@ -79,11 +82,7 @@ impl Project for RustProject {
         let sh = ctx.shell.inner();
         let pkg = &self.package_name;
 
-        let mut args: Vec<String> = vec![
-            "build".into(),
-            "--package".into(),
-            pkg.clone(),
-        ];
+        let mut args: Vec<String> = vec!["build".into(), "--package".into(), pkg.clone()];
 
         if let Some(bin) = &self.bin_name {
             args.push("--bin".into());
@@ -99,9 +98,7 @@ impl Project for RustProject {
             args.push(t.triple().to_string());
         }
 
-        let target_desc = target
-            .map(|t| format!(" for {t}"))
-            .unwrap_or_default();
+        let target_desc = target.map(|t| format!(" for {t}")).unwrap_or_default();
         let mode = if release { "release" } else { "debug" };
         eprintln!("building {pkg} ({mode}){target_desc}...");
 
@@ -118,8 +115,7 @@ impl Project for RustProject {
         // Update Cargo.lock by running cargo check
         let sh = ctx.shell.inner();
         let pkg = &self.package_name;
-        ctx.shell
-            .run(&cmd!(sh, "cargo check --package {pkg}"))?;
+        ctx.shell.run(&cmd!(sh, "cargo check --package {pkg}"))?;
 
         Ok(())
     }
@@ -136,9 +132,8 @@ impl Project for RustProject {
         }
 
         eprintln!("publishing {pkg} to crates.io...");
-        ctx.shell.run_destructive(
-            &cmd!(sh, "cargo publish --package {pkg}"),
-        )?;
+        ctx.shell
+            .run_destructive(&cmd!(sh, "cargo publish --package {pkg}"))?;
 
         Ok(())
     }

@@ -1,18 +1,12 @@
+`cicd` (src/rust/cicd):
+
+- [ ] symlink produced CLI to some user binary directory
+
+
 `codeblock` (src/typescript/codeblock):
-- [ ] The filler should be occluded by the terminal when it's opened  
-- [ ] If the terminal and editor both have the same font family and font size, why does the editor have shorter row height?
+- [ ] Fix ctrl+c resulting in terminal newline output
 
-- [ ] Ensure search toolbar input is what retains focus and is interacted with (instead of the VMs command prompt)
-- [ ] The search toolbar input should have the same content as the last line in the editor (command prompt), and the last line should not be duplicated again in the terminal content
-- [ ] The terminal vertical size should grow with its content (with a sensible maximum), but not be larger than its content (i.e, don't show unnecessary empty terminal for no reason)
-- [ ] When in "Terminal" mode, `--cm-gutter-width` should likely be 0/reset
-
-- [ ] The opened terminal still shouldn't show empty lines.
-- [ ] Is there any mechanism available for us to style the terminal similarly to the code editor (font-family, font-size, etc.)?
-- [ ] There seems to be some vertical shifting in the editor when the terminal opens due to the search toolbar input disappearing and reducing the height of the element. Can you use a filler or some other method to ensure this doesn't happen?
-
-- [ ] Include a WASM build of `ripgrep`
-- [ ] Include `git` functionality in the VM
+- [ ] Include `git` functionality in the wanix VM (to be reworked into `witvm`?)
 - [ ] Support for configurable keybindings for opening available commands
 - [ ] Sharable links to codeblock line ranges as # anchors (should work even with multiple codeblocks on the same page) 
 - [ ] Add an "Download file" option (for downloading the currently open file)
@@ -27,25 +21,30 @@
 
 `ezco-web` (src/apps/ezco-web):
 - [ ] In the `markdown-editor` example, loading multiple files at once doesn't always seem to properly result in LSP based diagnostics highlighting working immediately (requires a file change to properly flush state? unsure).
+- [ ] Include a lazy-loading Pokemon terminal example
 
 `markdown-editor` (src/typescript/markdown-editor)
 - [ ] The editor cursor flash rate is too slow (on Zen?)
 
-`wanix` (../wanix)
-- [ ] Apply optimizations to `wanix` go wasm binaries: https://www.fermyon.com/blog/optimizing-tinygo-wasm
-
-`cicd` (src/rust/cicd)
-- [ ] A CLI for executing repository workflows and tasks. Immediately, this should contain 
-
-`mono`
-- [ ] Create a base justfile in the repo. This 
-
 `witmproxy` (src/apps/witmproxy)
+- [ ] Add a `version` command, which just logs build information
+- [ ] Add functionality to `cicd` for publishing `witmproxy` plugins. Create a corresponding GitHub workflow for publishing `witmproxy-plugin-noshorts`.
+- [ ] `cargo build`/`cargo run` times are getting long (`cel-cxx-ffi` in particular?), should prune unused deps and make optimizations to improve the situation as much as possible
+- [ ] CLI should have a version command (giving version and potentially other details about the CLI build)
+- [ ] Integrate `bidiff` for `witmproxy` updates
 
-- [ ] We should have test infrastructure for producing and building witmproxy plugin WASM components in tests more easily (rather than re-using statically declared and separately built `witmproxy-<xyz>` plugins)
-- [ ] Plugins should have an auto-update mechanism
+- [ ] We should have test infrastructure for producing `plugin` components in tests more easily (rather than re-using statically declared and separately built `witmproxy-<xyz>` plugins)
 
 `witmproxy-web`
+
+- [ ] Fix awful AI generated copy
+- [ ] Consider what to keep from the generated skeleton
+
+`ezfilter`
+
+- [ ] Automatically update installed plugin dependencies
+- [ ] Managed infrastructure (confidential compute) offering
+- [ ] 
 
 `other`
 - [ ] Look over app tests, some seem to be complete nonsense

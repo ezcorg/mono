@@ -1,6 +1,6 @@
 [package]
 name = "witmproxy"
-version = "0.0.3-alpha"
+version = "0.0.4-alpha"
 edition = "2024"
 authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A WASM-in-the-middle proxy"
@@ -99,7 +99,7 @@ salvo = { version = "0.89.3", features = ["oapi", "quinn", "serve-static", "cors
 rust-embed = "8.7.2"
 http-body = "1.0.1"
 cel-cxx = { version = "0.2.4", features = ["tokio"] }
-cron = "0.15.0"
+cron = "0.16.0"
 async-compression = { version = "0.4.35", features = ["brotli", "deflate", "deflate64", "futures-io", "gzip", "tokio", "zstd"] }
 tokio-stream = "0.1.17"
 notify = { version = "8.2.0" }
