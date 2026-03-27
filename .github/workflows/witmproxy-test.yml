@@ -70,8 +70,8 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo clippy --package witmproxy --all-targets -- -D warnings
 
-      - name: Clean stale signed WASM test artifacts
-        run: rm -f target/wasm32-wasip2/release/*.signed.wasm
+      - name: Clean cached WASM test artifacts
+        run: rm -rf target/wasm32-wasip2
 
       - name: Install wasmsign2
         run: cargo install wasmsign2-cli
