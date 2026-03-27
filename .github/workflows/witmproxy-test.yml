@@ -76,6 +76,12 @@ jobs:
       - name: Install wasmsign2
         run: cargo install wasmsign2-cli
 
+      - name: Build and sign test plugins
+        run: |
+          cd src/rust/witmproxy-plugin-noop && make
+          cd src/rust/wasm-test-component && make
+          cd src/rust/witmproxy-plugin-noshorts && make
+
       - name: Run library tests
         run: cargo test --package witmproxy --lib
 
