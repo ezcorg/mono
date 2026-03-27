@@ -78,9 +78,9 @@ jobs:
 
       - name: Build and sign test plugins
         run: |
-          cd src/rust/witmproxy-plugin-noop && make
-          cd src/rust/wasm-test-component && make
-          cd src/rust/witmproxy-plugin-noshorts && make
+          make -C src/rust/witmproxy-plugin-noop
+          make -C src/rust/wasm-test-component
+          make -C src/rust/witmproxy-plugin-noshorts
 
       - name: Run library tests
         run: cargo test --package witmproxy --lib
