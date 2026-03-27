@@ -243,7 +243,12 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
 }
 
 #[endpoint]
-async fn upsert_plugin(file: FormFile, depot: &mut Depot, res: &mut salvo::Response) {
+async fn upsert_plugin(
+    file: FormFile,
+    req: &mut salvo::Request,
+    depot: &mut Depot,
+    res: &mut salvo::Response,
+) {
     let registry = if let Ok(state) = depot.obtain::<AppState>() {
         state.plugin_registry.clone()
     } else {
@@ -261,6 +266,13 @@ async fn upsert_plugin(file: FormFile, depot: &mut Depot, res: &mut salvo::Respo
         return;
     };
 
+    // Extract optional expected public key from header (hex-encoded)
+    let expected_key = req
+        .headers()
+        .get("X-Expected-Public-Key")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|hex_str| hex::decode(hex_str).ok());
+
     let bytes = match fs::read(file.path()).await {
         Ok(b) => b,
         Err(e) => {
@@ -274,7 +286,12 @@ async fn upsert_plugin(file: FormFile, depot: &mut Depot, res: &mut salvo::Respo
         }
     };
 
-    let plugin = match registry.read().await.plugin_from_component(bytes).await {
+    let plugin = match registry
+        .read()
+        .await
+        .plugin_from_component_with_key(bytes, expected_key.as_deref())
+        .await
+    {
         Ok(p) => p,
         Err(e) => {
             warn!("Failed to parse plugin: {}", e);

@@ -94,6 +94,20 @@ impl PluginRegistry {
     }
 
     pub async fn plugin_from_component(&self, component_bytes: Vec<u8>) -> Result<WitmPlugin> {
+        self.plugin_from_component_with_key(component_bytes, None)
+            .await
+    }
+
+    /// Load and verify a plugin from WASM bytes.
+    ///
+    /// If `expected_public_key` is provided, the plugin's embedded public key
+    /// must match it exactly — this lets callers pin trust to a known author
+    /// rather than accepting any self-signed component.
+    pub async fn plugin_from_component_with_key(
+        &self,
+        component_bytes: Vec<u8>,
+        expected_public_key: Option<&[u8]>,
+    ) -> Result<WitmPlugin> {
         let component =
             wasmtime::component::Component::from_binary(&self.runtime.engine, &component_bytes)?;
         let mut store = wasmtime::Store::new(&self.runtime.engine, Host::default());
@@ -124,6 +138,20 @@ impl PluginRegistry {
         // Verify the WASM component signature using wasmsign2
         let public_key_bytes = &guest_result.publickey;
         if !public_key_bytes.is_empty() {
+            // If the caller provided an expected public key, verify it matches
+            if let Some(expected) = expected_public_key
+                && public_key_bytes != expected
+            {
+                anyhow::bail!(
+                    "Plugin '{}' public key does not match the expected key.\n  \
+                     expected: {}\n  \
+                     got:      {}",
+                    guest_result.name,
+                    hex::encode(expected),
+                    hex::encode(public_key_bytes),
+                );
+            }
+
             let public_key = wasmsign2::PublicKey::from_bytes(public_key_bytes)
                 .map_err(|e| anyhow::anyhow!("Failed to parse public key: {}", e))?;
 

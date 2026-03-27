@@ -2,8 +2,7 @@ import { VfsInterface } from "../types";
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from "../rpc/serde";
 import { FileSystem, FileType } from '@volar/language-service';
-import { URI } from 'vscode-uri'
-// Worker types no longer needed — VfsInterface is returned directly from the worker
+import { URI } from 'vscode-uri';
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { SnapshotNode } from "@joinezco/memfs/snapshot";
 import { promises } from "node:fs";
@@ -294,7 +293,6 @@ export namespace Vfs {
 
     /**
      * Check if the browser supports FileSystemFileHandle.createWritable().
-     * Safari does not implement this method, so OPFS writes will fail.
      */
     export const supportsCreateWritable = (): boolean => {
         return typeof FileSystemFileHandle !== 'undefined' &&

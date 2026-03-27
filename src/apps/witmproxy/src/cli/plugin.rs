@@ -21,10 +21,14 @@ pub enum PluginCommands {
         #[arg(short, long)]
         dest: Option<PathBuf>,
     },
-    /// Add a plugin from local path, remote URL, or plugin name
+    /// Add a plugin from a local path or URL
     Add {
-        /// Local path, remote URL, or plugin name
+        /// Local .wasm file path or URL (https://...)
         source: String,
+        /// Path to a trusted public key file to verify the plugin was signed
+        /// by a known author (not just self-signed)
+        #[arg(short, long)]
+        public_key: Option<PathBuf>,
     },
     /// Remove a plugin by name or namespace/name
     Remove {
@@ -61,7 +65,9 @@ impl PluginHandler {
                 language,
                 dest,
             } => self.create_new_plugin(plugin_name, language, dest).await,
-            PluginCommands::Add { source } => self.add_plugin(source).await,
+            PluginCommands::Add { source, public_key } => {
+                self.add_plugin(source, public_key.as_deref()).await
+            }
             PluginCommands::Remove { plugin_name } => self.remove_plugin(plugin_name).await,
             PluginCommands::Configure {
                 plugin_name,
@@ -100,7 +106,11 @@ impl PluginHandler {
 
     /// Try to add plugin via the running daemon's web API.
     /// Returns Ok(true) if successful, Ok(false) if the daemon is unreachable.
-    async fn try_add_via_web(&self, wasm_bytes: &[u8]) -> Result<bool> {
+    async fn try_add_via_web(
+        &self,
+        wasm_bytes: &[u8],
+        expected_key: Option<&[u8]>,
+    ) -> Result<bool> {
         let web_addr = match self.get_web_url() {
             Some(addr) => addr,
             None => return Ok(false),
@@ -120,7 +130,12 @@ impl PluginHandler {
             .mime_str("application/wasm")?;
         let form = reqwest::multipart::Form::new().part("file", part);
 
-        match client.post(&url).multipart(form).send().await {
+        let mut request = client.post(&url).multipart(form);
+        if let Some(key) = expected_key {
+            request = request.header("X-Expected-Public-Key", hex::encode(key));
+        }
+
+        match request.send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     info!("Plugin added via running daemon");
@@ -333,22 +348,55 @@ impl PluginHandler {
         );
     }
 
-    async fn add_plugin(&self, source: &str) -> Result<()> {
-        // For now, only handle local WASM files
-        let path = Path::new(source);
-        if !path.exists() {
-            anyhow::bail!("File does not exist: {}", source);
+    /// Fetch WASM bytes from a URL or local file path.
+    async fn read_wasm_source(&self, source: &str) -> Result<Vec<u8>> {
+        if source.starts_with("https://") || source.starts_with("http://") {
+            eprintln!("Downloading plugin from {}...", source);
+            let client = reqwest::Client::builder()
+                .user_agent("witmproxy")
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()?;
+            let resp = client.get(source).send().await?;
+            if !resp.status().is_success() {
+                anyhow::bail!("Download failed: HTTP {}", resp.status());
+            }
+            let bytes = resp.bytes().await?.to_vec();
+            // Sanity check: WASM files start with \0asm
+            if bytes.len() < 4 || bytes[..4] != [0x00, b'a', b's', b'm'] {
+                anyhow::bail!("Downloaded file does not appear to be a valid WASM component");
+            }
+            eprintln!("Downloaded {} bytes.", bytes.len());
+            Ok(bytes)
+        } else {
+            let path = Path::new(source);
+            if !path.exists() {
+                anyhow::bail!("File does not exist: {}", source);
+            }
+            if path.extension().is_none_or(|ext| ext != "wasm") {
+                anyhow::bail!("Only .wasm files are supported");
+            }
+            Ok(std::fs::read(path)?)
         }
+    }
 
-        if path.extension().is_none_or(|ext| ext != "wasm") {
-            anyhow::bail!("Only .wasm files are supported for local installation");
-        }
+    async fn add_plugin(&self, source: &str, public_key_path: Option<&Path>) -> Result<()> {
+        let component_bytes = self.read_wasm_source(source).await?;
 
-        // Read the WASM file
-        let component_bytes = std::fs::read(path)?;
+        // Read expected public key if provided
+        let expected_key = match public_key_path {
+            Some(path) => {
+                let key_bytes = std::fs::read(path)
+                    .map_err(|e| anyhow::anyhow!("Failed to read public key {:?}: {}", path, e))?;
+                Some(key_bytes)
+            }
+            None => None,
+        };
 
         // Try the web API first (daemon may be running)
-        match self.try_add_via_web(&component_bytes).await {
+        match self
+            .try_add_via_web(&component_bytes, expected_key.as_deref())
+            .await
+        {
             Ok(true) => return Ok(()),
             Ok(false) => {
                 warn!("Daemon not reachable, falling back to direct DB access");
@@ -365,7 +413,9 @@ impl PluginHandler {
         let mut registry = PluginRegistry::new(db, runtime)?;
 
         // Create plugin from component bytes (including signature verification)
-        let mut plugin = registry.plugin_from_component(component_bytes).await?;
+        let mut plugin = registry
+            .plugin_from_component_with_key(component_bytes, expected_key.as_deref())
+            .await?;
         // TODO: DON'T GRANT ALL THE THINGS ALWAYS
         plugin
             .capabilities
