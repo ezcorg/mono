@@ -196,7 +196,7 @@ const COG_ICON = '\uf013'; // nf-fa-cog
 const FOLDER_ICON = '\ue613'; // nf-seti-folder
 const FOLDER_OPEN_ICON = '\ue614'; // nf-seti-folder (open variant)
 const PARENT_DIR_ICON = '\uf112'; // nf-fa-reply (back/up arrow)
-// const TERMINAL_ICON = '\uf120'; // nf-fa-terminal — awaiting WASM VM/shim
+const TERMINAL_ICON = '\uf120'; // nf-fa-terminal
 
 // Get nerd font icon for a file path
 function getFileIcon(path: string): { glyph: string; color: string } {
@@ -301,13 +301,15 @@ function createCommandResults(query: string, view: EditorView, searchResults: Se
         query: '',
     });
 
-    // Open terminal — awaiting a backing WASM VM/shim for implementation
-    // commands.push({
-    //     id: 'Open terminal',
-    //     type: 'open-terminal',
-    //     icon: TERMINAL_ICON,
-    //     query: '',
-    // });
+    // Open terminal — shown when a jswasi backend is configured
+    if (view.state.facet(CodeblockFacet).jswasi) {
+        commands.push({
+            id: 'Open terminal',
+            type: 'open-terminal',
+            icon: TERMINAL_ICON,
+            query: '',
+        });
+    }
 
     // Import commands — always shown
     commands.push({
@@ -514,7 +516,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
         }
     });
 
-    dom.appendChild(lspLogBtn);
+    // LSP log button is hidden — the feature is non-functional and visually noisy.
+    // Keeping the code for potential future use but not appending to DOM.
+    // dom.appendChild(lspLogBtn);
 
     const resultsList = document.createElement("ul");
     resultsList.className = "cm-search-results";
@@ -526,6 +530,104 @@ export const toolbarPanel = (view: EditorView): Panel => {
     let settingsMode: SettingsMode = { active: false, filter: '', editing: null };
     let deleteMode: DeleteMode = { active: false, filePath: '' };
     let overwriteMode: OverwriteMode = { active: false, filePath: '', action: 'create-file' };
+    let terminalMode = { active: false };
+    let terminalResizeObserver: ResizeObserver | null = null;
+
+    // Terminal wrapper — replaces the toolbar input with the ghostty terminal.
+    // Positioned as a dropdown below the toolbar, growing as output arrives.
+    const terminalWrapper = document.createElement("div");
+    terminalWrapper.className = "cm-terminal-wrapper";
+    terminalWrapper.style.display = 'none';
+    dom.appendChild(terminalWrapper);
+
+    // Close terminal on Ctrl+C or Escape (capture phase so we get it before ghostty)
+    terminalWrapper.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            exitTerminalMode();
+        } else if (e.ctrlKey && e.key === 'c') {
+            // Let ghostty also handle SIGINT, then close
+            requestAnimationFrame(() => exitTerminalMode());
+        }
+    }, { capture: true });
+
+    function handleTerminalClickOutside(event: Event) {
+        if (!terminalMode.active) return;
+        if (!dom.contains(event.target as Node)) {
+            exitTerminalMode();
+        }
+    }
+
+    /** Sync the wrapper height to the terminal CM editor's actual content height. */
+    function syncTerminalWrapperHeight() {
+        const cmEditor = terminalWrapper.querySelector('.cm-editor') as HTMLElement | null;
+        if (!cmEditor) return;
+        const contentPx = cmEditor.scrollHeight;
+        const minPx = dom.offsetHeight; // at least cover the toolbar filler
+        const maxPx = window.innerHeight * 0.5;
+        terminalWrapper.style.height = `${Math.min(Math.max(contentPx, minPx), maxPx)}px`;
+    }
+
+    async function enterTerminalMode() {
+        terminalMode.active = true;
+        view.dom.style.setProperty('--cm-gutter-width', '0px');
+        view.dom.style.setProperty('--cm-gutter-lineno-width', '0px');
+
+        // Swap toolbar content: hide input elements (visibility preserves layout height),
+        // show terminal wrapper
+        stateIconContainer.style.visibility = 'hidden';
+        inputContainer.style.visibility = 'hidden';
+        terminalWrapper.style.display = '';
+        safeDispatch(view, { effects: setSearchResults.of([]) });
+        document.addEventListener("click", handleTerminalClickOutside);
+
+        // Lazy-load terminal
+        const termMod = await import('./terminal');
+
+        const terminalEl = await termMod.ensureTerminalElement(view);
+        if (!terminalWrapper.contains(terminalEl)) {
+            terminalWrapper.appendChild(terminalEl);
+        }
+
+        // Sync wrapper height after each terminal render (content may grow/shrink)
+        termMod.setHeightCallback(() => {
+            if (terminalMode.active) syncTerminalWrapperHeight();
+        });
+
+        // Resize observer for terminal column width
+        terminalResizeObserver = new ResizeObserver(() => {
+            termMod.handleTerminalResize(view.state.field(settingsField).fontSize);
+        });
+        terminalResizeObserver.observe(terminalWrapper);
+
+        // Focus terminal + initial height sync
+        requestAnimationFrame(() => {
+            termMod.focusTerminalEl();
+            syncTerminalWrapperHeight();
+        });
+    }
+
+    function exitTerminalMode() {
+        if (!terminalMode.active) return;
+        terminalMode.active = false;
+        updateGutterWidthVariables();
+
+        // Restore toolbar: show input elements, hide terminal
+        stateIconContainer.style.visibility = '';
+        inputContainer.style.visibility = '';
+        terminalWrapper.style.display = 'none';
+        stateIcon.textContent = SEARCH_ICON;
+        resetInputToCurrentFile();
+
+        import('./terminal').then(({ setHeightCallback }) => {
+            setHeightCallback(null);
+        });
+
+        terminalResizeObserver?.disconnect();
+        terminalResizeObserver = null;
+        document.removeEventListener("click", handleTerminalClickOutside);
+    }
 
     // System theme media query listener
     const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -754,15 +856,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
             type: 'settings-toggle',
             icon: settings.lineWrap ? '\u2713' : '\u2717',
             currentValue: String(settings.lineWrap),
-        });
-
-        // LSP log: toggle
-        entries.push({
-            id: `LSP log: ${settings.lspLogEnabled ? 'on' : 'off'}`,
-            settingKey: 'lspLogEnabled',
-            type: 'settings-toggle',
-            icon: settings.lspLogEnabled ? '\u2713' : '\u2717',
-            currentValue: String(settings.lspLogEnabled),
         });
 
         // Max visible lines: input
@@ -1267,14 +1360,18 @@ export const toolbarPanel = (view: EditorView): Panel => {
             selectedIndex = 0;
             safeDispatch(view, { effects: setSearchResults.of(filtered) });
         } catch (e) {
-            console.error('Failed to read directory:', e);
-            exitBrowseMode();
+            console.warn('Failed to read directory:', e);
+            // Show an empty listing instead of crashing — the filesystem
+            // may not be mounted or OPFS state may be stale.
+            selectedIndex = 0;
+            safeDispatch(view, { effects: setSearchResults.of([]) });
         }
     }
 
     async function navigateBrowse(entry: BrowseEntry) {
         if (entry.type === 'browse-file') {
             // Open the file and exit browse mode
+            exitTerminalMode();
             const path = entry.fullPath;
             exitBrowseMode();
             input.value = path;
@@ -1323,8 +1420,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
             enterBrowseMode();
             return;
         } else if (command.type === 'open-terminal') {
-            safeDispatch(view, { effects: setSearchResults.of([]) });
-            import('./terminal').then(({ openTerminal }) => openTerminal(view));
+            enterTerminalMode();
             return;
         } else if (command.type === 'save-as') {
             if (command.requiresInput) {
@@ -1362,6 +1458,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     }
 
     function handleSearchResult(result: HighlightedSearch) {
+        exitTerminalMode();
         input.value = result.id;
         safeDispatch(view, {
             effects: [setSearchResults.of([]), openFileEffect.of({ path: result.id })]
@@ -1427,23 +1524,30 @@ export const toolbarPanel = (view: EditorView): Panel => {
         input.value = currentFile.path || cfg.language || '';
     }
 
+    function resetInputToTerminalOrFile() {
+        if (terminalMode.active) {
+            input.value = '/ $';
+        } else {
+            resetInputToCurrentFile();
+        }
+    }
+
     // Close dropdown when clicking outside
     function handleClickOutside(event: Event) {
         if (!dom.contains(event.target as Node)) {
             if (settingsMode.active) exitSettingsMode();
             if (browseMode.active) exitBrowseMode();
             safeDispatch(view, { effects: setSearchResults.of([]) });
-            resetInputToCurrentFile();
+            resetInputToTerminalOrFile();
         }
     }
 
     input.addEventListener("click", () => {
         // Don't interfere when in a special mode
-        if (namingMode.active || settingsMode.active || browseMode.active) {
+        if (namingMode.active || settingsMode.active || browseMode.active || terminalMode.active) {
             return;
         }
 
-        // Open dropdown when input is clicked
         const query = input.value;
         let results: SearchResult[] = [];
 
@@ -1692,7 +1796,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
         } else if (event.key === "Escape") {
             event.preventDefault();
             safeDispatch(view, { effects: setSearchResults.of([]) });
-            resetInputToCurrentFile();
+            resetInputToTerminalOrFile();
             input.blur();
         }
     });
@@ -1787,8 +1891,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 updateLspLogIcon();
             }
 
-            // Sync input value when file path changes (unless overlay/mode is active or user is naming)
-            if (prevFile.path !== nextFile.path && !namingMode.active && !lspLogOverlay && !settingsMode.active) {
+            // Sync input value when file path changes (unless overlay/mode is active, naming, or terminal is open)
+            if (prevFile.path !== nextFile.path && !namingMode.active && !lspLogOverlay && !settingsMode.active && !terminalMode.active) {
                 input.value = nextFile.path || '';
             }
         },
@@ -1802,6 +1906,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
 
             // Clean up LSP log overlay
             closeLspLogOverlay();
+
+            // Clean up terminal overlay
+            exitTerminalMode();
 
             // Clean up ResizeObserver
             if (gutterObserver) {

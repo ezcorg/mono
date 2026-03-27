@@ -8,7 +8,7 @@ import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { VfsInterface } from "./types";
+import { VfsInterface, JswasiConfig } from "./types";
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { lintKeymap, setDiagnostics } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
@@ -96,6 +96,8 @@ export type CodeblockConfig = {
         /** Resolves a TypeScript lib name (e.g. "es5") to its `.d.ts` file content */
         resolveLib: (name: string) => Promise<string>;
     };
+    /** jswasi configuration. When provided, enables the "Open terminal" command. */
+    jswasi?: JswasiConfig;
 };
 export type CreateCodeblockArgs = CodeblockConfig & {
     parent: HTMLElement;
@@ -112,7 +114,6 @@ export const languageServerCompartment = new Compartment();
 export const indentationCompartment = new Compartment();
 export const readOnlyCompartment = new Compartment();
 export const lineWrappingCompartment = new Compartment();
-export const terminalCompartment = new Compartment();
 export const lineNumbersCompartment = new Compartment();
 export const foldGutterCompartment = new Compartment();
 
@@ -195,7 +196,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, settings, typescript }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, settings, typescript, jswasi }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -205,7 +206,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     const showFold = resolvedSettings.showFoldGutter !== false; // default true
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         languageSupportCompartment.of([]),
@@ -213,7 +214,6 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         indentationCompartment.of(indentUnit.of("    ")),
         readOnlyCompartment.of(EditorState.readOnly.of(false)),
         lineWrappingCompartment.of([]),
-        terminalCompartment.of([]),
         lineNumbersCompartment.of(showLineNums ? [lineNumbers(), highlightActiveLineGutter()] : []),
         foldGutterCompartment.of(showFold ? [foldGutter()] : []),
         tooltips({ position: "fixed" }),
@@ -680,10 +680,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark, settings, typescript }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark, settings, typescript, jswasi }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })]
     });
     const view = new EditorView({ state, parent });
     return view;

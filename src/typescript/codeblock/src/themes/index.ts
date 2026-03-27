@@ -340,39 +340,32 @@ export const codeblockTheme = EditorView.theme({
     '.cm-lsp-log-log': {
         opacity: '0.6',
     },
-    // Terminal panel
-    '.cm-terminal-panel': {
-        borderTop: '1px solid var(--cm-tooltip-border)',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '200px',
-        minHeight: '80px',
-    },
-    '.cm-terminal-header': {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '2px 6px',
+    // Terminal wrapper — replaces the toolbar input with ghostty.
+    // Starts at top: 0 to cover the hidden toolbar elements (filler),
+    // then extends downward as content grows. Height set by JS.
+    '.cm-terminal-wrapper': {
+        position: 'absolute',
+        top: '0',
+        left: '0',
+        right: '0',
+        height: '0',
+        maxHeight: '50vh',
+        zIndex: 150,
         background: 'var(--cm-toolbar-background)',
-        fontSize: FS_85,
-        flexShrink: '0',
-    },
-    '.cm-terminal-title': {
-        opacity: '0.7',
-        fontFamily: 'var(--cm-font-family)',
-    },
-    '.cm-terminal-close': {
-        border: 'none',
-        background: 'transparent',
-        color: 'var(--cm-toolbar-color)',
-        cursor: 'pointer',
-        padding: '2px 4px',
-        fontSize: FS_875,
-        lineHeight: '1',
     },
     '.cm-terminal-container': {
-        flex: 1,
         overflow: 'hidden',
+        position: 'relative',
+        outline: 'none',
+    },
+    // Terminal cursor — block cursor rendered as a mark decoration
+    '.cm-terminal-cursor': {
+        background: 'var(--cm-foreground, #d4d4d4)',
+        color: 'var(--cm-background, #1e1e1e)',
+        animation: 'cm-terminal-blink 1s step-end infinite',
+    },
+    '@keyframes cm-terminal-blink': {
+        '50%': { opacity: '0' },
     },
     // Auto-hide toolbar: JS manages retract/expand by toggling
     // .cm-toolbar-retracted on .cm-panels-top (see toolbar.ts).

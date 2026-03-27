@@ -8,6 +8,7 @@ members = [
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
     "src/rust/witmproxy-plugin-noshorts",
+    "src/rust/cicd",
 ]
 exclude = []
 
@@ -21,3 +22,10 @@ codegen-units = 1
 opt-level = 0
 debug = true
 incremental = true
+
+# Optimize dependencies even in dev mode — reduces link time and improves
+# runtime performance during development with minimal impact on compile time
+# (deps are cached after the first build).
+[profile.dev.package."*"]
+opt-level = 2
+debug = false

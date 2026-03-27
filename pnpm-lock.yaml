@@ -61,7 +61,7 @@ importers:
         version: link:../../typescript/shared
       '@tailwindcss/vite':
         specifier: ^4.1.16
-        version: 4.1.16(vite@8.0.1(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
+        version: 4.1.16(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
       astro:
         specifier: ^5.15.1
         version: 5.15.2(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.3)(yaml@2.8.0)
@@ -165,22 +165,6 @@ importers:
       vite-plugin-solid:
         specifier: ^2.11.0
         version: 2.11.6(solid-js@1.9.6)(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
-
-  src/apps/witmproxy-web:
-    dependencies:
-      '@tailwindcss/vite':
-        specifier: ^4.1.16
-        version: 4.1.16(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
-      astro:
-        specifier: ^5.15.1
-        version: 5.15.2(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(rollup@4.50.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(typescript@5.9.3)(yaml@2.8.0)
-      tailwindcss:
-        specifier: ^4.1.16
-        version: 4.1.16
-    devDependencies:
-      typescript:
-        specifier: ^5.0.0
-        version: 5.9.3
 
   src/typescript/codeblock:
     dependencies:
@@ -14618,13 +14602,6 @@ snapshots:
       '@tailwindcss/oxide': 4.1.16
       tailwindcss: 4.1.16
       vite: 6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0)
-
-  '@tailwindcss/vite@4.1.16(vite@8.0.1(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))':
-    dependencies:
-      '@tailwindcss/node': 4.1.16
-      '@tailwindcss/oxide': 4.1.16
-      tailwindcss: 4.1.16
-      vite: 8.0.1(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0)
 
   '@tauri-apps/api@2.5.0': {}
 

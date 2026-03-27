@@ -57,6 +57,7 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
     plugin_handler
         .handle(&plugin::PluginCommands::Add {
             source: wasm_path.clone(),
+            public_key: None,
         })
         .await?;
 
@@ -104,6 +105,7 @@ async fn test_witm_plugin_add_nonexistent_file() {
     let result = plugin_handler
         .handle(&plugin::PluginCommands::Add {
             source: "/nonexistent/file.wasm".to_string(),
+            public_key: None,
         })
         .await;
 
@@ -132,6 +134,7 @@ async fn test_witm_plugin_add_non_wasm_file() {
     let result = plugin_handler
         .handle(&plugin::PluginCommands::Add {
             source: dummy_file.to_str().unwrap().to_string(),
+            public_key: None,
         })
         .await;
 
@@ -159,6 +162,7 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
     plugin_handler
         .handle(&plugin::PluginCommands::Add {
             source: wasm_path.clone(),
+            public_key: None,
         })
         .await?;
 
@@ -209,6 +213,7 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
     plugin_handler
         .handle(&plugin::PluginCommands::Add {
             source: wasm_path.clone(),
+            public_key: None,
         })
         .await?;
 

@@ -70,6 +70,18 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo clippy --package witmproxy --all-targets -- -D warnings
 
+      - name: Clean cached WASM test artifacts
+        run: rm -rf target/wasm32-wasip2
+
+      - name: Install wasmsign2
+        run: cargo install wasmsign2-cli
+
+      - name: Build and sign test plugins
+        run: |
+          make -C src/rust/witmproxy-plugin-noop
+          make -C src/rust/wasm-test-component
+          make -C src/rust/witmproxy-plugin-noshorts
+
       - name: Run library tests
         run: cargo test --package witmproxy --lib
 

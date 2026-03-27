@@ -1,0 +1,160 @@
+name: Publish witmproxy-plugin-noshorts
+
+on:
+  push:
+    tags:
+      - 'witmproxy-plugin-noshorts-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.0.1)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Perform a dry run (do not actually publish)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  PACKAGE: witmproxy-plugin-noshorts
+  WASM_TARGET: wasm32-wasip2
+
+jobs:
+  test:
+    name: Check and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-wasip2
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Check code formatting
+        run: cargo fmt --package ${{ env.PACKAGE }} --check
+
+      - name: Run clippy lints
+        run: cargo clippy --package ${{ env.PACKAGE }} --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --package ${{ env.PACKAGE }}
+
+  build-and-release:
+    name: Build WASM component and create release
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event.inputs.dry_run != 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip2
+
+      - name: Install wasmsign2
+        run: cargo install wasmsign2-cli
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Extract version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=${GITHUB_REF#refs/tags/witmproxy-plugin-noshorts-v}
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Publishing version: $VERSION"
+
+      - name: Update version in Cargo.toml
+        run: |
+          cd src/rust/witmproxy-plugin-noshorts
+          sed -i 's/^version = ".*"/version = "'${{ env.VERSION }}'"/' Cargo.toml
+          echo "Updated Cargo.toml version to ${{ env.VERSION }}"
+
+      - name: Build WASM component
+        run: cargo build --package ${{ env.PACKAGE }} --release --target ${{ env.WASM_TARGET }}
+
+      - name: Sign WASM component
+        run: |
+          UNSIGNED="target/${{ env.WASM_TARGET }}/release/witmproxy_plugin_noshorts.wasm"
+          SIGNED="target/${{ env.WASM_TARGET }}/release/witmproxy_plugin_noshorts.signed.wasm"
+
+          if [ ! -f "$UNSIGNED" ]; then
+            echo "ERROR: Could not find built WASM component at $UNSIGNED"
+            exit 1
+          fi
+
+          wasmsign2 sign \
+            -i "$UNSIGNED" \
+            -o "$SIGNED" \
+            -k src/rust/witmproxy-plugin-noshorts/key.secret
+
+          cp "$SIGNED" "witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm"
+
+      - name: Copy public key for release
+        run: cp src/rust/witmproxy-plugin-noshorts/key.public witmproxy-plugin-noshorts-v${{ env.VERSION }}.key.public
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: witmproxy-plugin-noshorts-v${{ env.VERSION }}
+          name: witmproxy-plugin-noshorts v${{ env.VERSION }}
+          body: |
+            ## witmproxy-plugin-noshorts v${{ env.VERSION }}
+
+            A witmproxy plugin that blocks YouTube and Instagram shorts.
+
+            ### Installation
+
+            ```bash
+            # Install directly from this release URL:
+            witm plugin add https://github.com/${{ github.repository }}/releases/download/witmproxy-plugin-noshorts-v${{ env.VERSION }}/witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm
+
+            # Or download the .wasm file and install locally:
+            witm plugin add witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm
+            ```
+
+            ### Verified Installation
+
+            Pin trust to the release public key to verify the plugin was signed by the expected author:
+
+            ```bash
+            # Download the public key and install with verification:
+            witm plugin add \
+              --public-key witmproxy-plugin-noshorts-v${{ env.VERSION }}.key.public \
+              witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm
+
+            # Or verify with wasmsign2 directly:
+            wasmsign2 verify -i witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm -p witmproxy-plugin-noshorts-v${{ env.VERSION }}.key.public
+            ```
+          draft: false
+          prerelease: ${{ contains(env.VERSION, 'alpha') || contains(env.VERSION, 'beta') || contains(env.VERSION, 'rc') }}
+          files: |
+            witmproxy-plugin-noshorts-v${{ env.VERSION }}.wasm
+            witmproxy-plugin-noshorts-v${{ env.VERSION }}.key.public
+          token: ${{ secrets.GITHUB_TOKEN }}
