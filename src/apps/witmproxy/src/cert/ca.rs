@@ -1,7 +1,7 @@
 use super::{CertError, CertResult, Certificate, CertificateCache};
 use anyhow::{Result, anyhow};
 use rcgen::{CertificateParams, DistinguishedName, DnType, Issuer, KeyPair, SanType};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::io;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,8 @@ use tracing::{debug, error, info, warn};
 
 #[derive(Clone)]
 pub struct CertificateAuthority {
-    root_cert: Arc<rcgen::Certificate>,
+    root_cert_pem: Arc<String>,
+    root_cert_der: Arc<Vec<u8>>,
     root_issuer: Arc<Issuer<'static, KeyPair>>,
     cert_cache: Arc<CertificateCache>,
     cert_dir: PathBuf,
@@ -44,21 +45,25 @@ impl CertificateAuthority {
 
         let root_cert_path = get_root_cert_path(&cert_dir);
         let root_key_path = get_root_key_path(&cert_dir);
-        let (root_cert, root_issuer) = if root_cert_path.exists() && root_key_path.exists() {
-            info!("Loading existing root certificate");
-            Self::load_root_certificate(&root_cert_path, &root_key_path).await?
-        } else {
-            info!("Generating new root certificate");
-            let (cert, key, params) = Self::generate_root_certificate().await?;
-            Self::save_root_certificate(&cert, &key, &root_cert_path, &root_key_path).await?;
-            let issuer = Issuer::new(params, key);
-            (cert, issuer)
-        };
+        let (root_cert_pem, root_cert_der, root_issuer) =
+            if root_cert_path.exists() && root_key_path.exists() {
+                info!("Loading existing root certificate");
+                Self::load_root_certificate(&root_cert_path, &root_key_path).await?
+            } else {
+                info!("Generating new root certificate");
+                let (cert, key, params) = Self::generate_root_certificate().await?;
+                Self::save_root_certificate(&cert, &key, &root_cert_path, &root_key_path).await?;
+                let pem = cert.pem();
+                let der = cert.der().to_vec();
+                let issuer = Issuer::new(params, key);
+                (pem, der, issuer)
+            };
 
         let cert_cache = Arc::new(CertificateCache::new(1000));
 
         Ok(Self {
-            root_cert: Arc::new(root_cert),
+            root_cert_pem: Arc::new(root_cert_pem),
+            root_cert_der: Arc::new(root_cert_der),
             root_issuer: Arc::new(root_issuer),
             cert_cache,
             cert_dir,
@@ -93,29 +98,24 @@ impl CertificateAuthority {
     async fn load_root_certificate(
         cert_path: &Path,
         key_path: &Path,
-    ) -> CertResult<(rcgen::Certificate, Issuer<'static, KeyPair>)> {
-        let _cert_pem = fs::read_to_string(cert_path).await?;
+    ) -> CertResult<(String, Vec<u8>, Issuer<'static, KeyPair>)> {
+        let cert_pem = fs::read_to_string(cert_path).await?;
         let key_pem = fs::read_to_string(key_path).await?;
 
         let key_pair = KeyPair::from_pem(&key_pem)?;
 
-        let mut params = CertificateParams::default();
+        // Load the issuer from the saved certificate so its identity (serial, DN
+        // encoding) exactly matches what's on disk. Previously this regenerated
+        // the cert from scratch, producing a different serial each time, which
+        // caused leaf cert signatures to not verify.
+        let issuer = Issuer::from_ca_cert_pem(&cert_pem, key_pair)?;
 
-        let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, "MITM Proxy Root CA");
-        distinguished_name.push(DnType::OrganizationName, "MITM Proxy");
-        distinguished_name.push(DnType::CountryName, "US");
+        // Extract DER from the saved PEM for get_root_certificate_der()
+        let cert_der = CertificateDer::from_pem_slice(cert_pem.as_bytes())
+            .map_err(|_| CertError::InvalidFormat)?
+            .to_vec();
 
-        params.distinguished_name = distinguished_name;
-        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        params.key_usages = vec![
-            rcgen::KeyUsagePurpose::KeyCertSign,
-            rcgen::KeyUsagePurpose::CrlSign,
-        ];
-
-        let cert = params.self_signed(&key_pair)?;
-        let issuer = Issuer::new(params, key_pair);
-        Ok((cert, issuer))
+        Ok((cert_pem, cert_der, issuer))
     }
 
     async fn save_root_certificate(
@@ -214,11 +214,11 @@ impl CertificateAuthority {
     }
 
     pub fn get_root_certificate_pem(&self) -> CertResult<String> {
-        Ok(self.root_cert.pem())
+        Ok((*self.root_cert_pem).clone())
     }
 
     pub fn get_root_certificate_der(&self) -> CertResult<Vec<u8>> {
-        Ok(self.root_cert.der().to_vec())
+        Ok((*self.root_cert_der).clone())
     }
 
     pub async fn clear_cache(&self) {

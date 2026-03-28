@@ -1,6 +1,7 @@
 `cicd` (src/rust/cicd):
 
 - [ ] symlink produced CLI to some user binary directory
+- [ ] replace
 
 
 `codeblock` (src/typescript/codeblock):
@@ -27,11 +28,8 @@
 - [ ] The editor cursor flash rate is too slow (on Zen?)
 
 `witmproxy` (src/apps/witmproxy)
-- [ ] Add a `version` command, which just logs build information
-- [ ] Add functionality to `cicd` for publishing `witmproxy` plugins. Create a corresponding GitHub workflow for publishing `witmproxy-plugin-noshorts`.
-- [ ] `cargo build`/`cargo run` times are getting long (`cel-cxx-ffi` in particular?), should prune unused deps and make optimizations to improve the situation as much as possible
-- [ ] CLI should have a version command (giving version and potentially other details about the CLI build)
-- [ ] Integrate `bidiff` for `witmproxy` updates
+- [ ] Modify WIT to include a `subprocess` capability. Develop the corresponding host implementation.
+- [ ] When code is merged to main, we should be automatically producing versioned `witmproxy` binaries, which are then stored. When publishing, we should just have to reference these already built binaries. We shouldn't have to to build and test beforehand everytime.
 
 - [ ] We should have test infrastructure for producing `plugin` components in tests more easily (rather than re-using statically declared and separately built `witmproxy-<xyz>` plugins)
 

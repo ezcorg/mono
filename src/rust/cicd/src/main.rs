@@ -30,7 +30,11 @@ fn main() -> Result<()> {
         Commands::GhRelease { project, assets } => {
             commands::gh_release::run(&ctx, &project, &assets)?
         }
-        Commands::Release { project, version } => commands::release::run(&ctx, &project, &version)?,
+        Commands::Release {
+            project,
+            version,
+            target,
+        } => commands::release::run(&ctx, &project, &version, target)?,
         Commands::List => commands::list::run(&ctx)?,
     }
 

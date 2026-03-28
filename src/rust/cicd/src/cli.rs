@@ -85,6 +85,10 @@ pub enum Commands {
     },
 
     /// Run the full release pipeline: check → test → bump → build → tag → publish → gh-release
+    ///
+    /// For cross-compiled projects (e.g., witmproxy), pass --target to produce a platform-specific
+    /// binary. Run once per target — subsequent runs for the same version upload additional assets
+    /// to the existing GitHub release.
     Release {
         /// Target project
         #[arg(short, long)]
@@ -92,6 +96,10 @@ pub enum Commands {
 
         /// Version to release (semver)
         version: Version,
+
+        /// Cross-compile for a specific target triple (e.g., x86_64-unknown-linux-gnu)
+        #[arg(long)]
+        target: Option<BuildTarget>,
     },
 
     /// List all registered projects

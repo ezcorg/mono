@@ -149,7 +149,37 @@ impl Project for WasmComponentProject {
             "WASM component '{}' is distributed via GitHub releases, not a package registry.",
             self.package_name
         );
-        eprintln!("Use `mono gh-release` to create a release with the built .wasm artifact.");
         Ok(())
+    }
+
+    fn release_assets(
+        &self,
+        ctx: &MonoContext,
+        _target: Option<&BuildTarget>,
+    ) -> Result<Vec<PathBuf>, MonoError> {
+        let mut assets = vec![];
+
+        let signed = self.signed_wasm_path(&ctx.repo_root);
+        if signed.exists() {
+            assets.push(signed);
+        } else {
+            let unsigned = self.unsigned_wasm_path(&ctx.repo_root);
+            if unsigned.exists() {
+                assets.push(unsigned);
+            } else {
+                return Err(MonoError::Other(anyhow::anyhow!(
+                    "No WASM artifact found at {} or {}",
+                    signed.display(),
+                    unsigned.display(),
+                )));
+            }
+        }
+
+        let key_public = self.root.join("key.public");
+        if key_public.exists() {
+            assets.push(key_public);
+        }
+
+        Ok(assets)
     }
 }

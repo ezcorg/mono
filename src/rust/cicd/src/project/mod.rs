@@ -5,7 +5,7 @@ pub mod wasm;
 use crate::context::MonoContext;
 use crate::error::MonoError;
 use crate::types::{BuildTarget, ProjectId, Version};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The kind of project, determining which tools are used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +39,11 @@ pub trait Project {
     #[allow(dead_code)]
     fn build_targets(&self) -> &[BuildTarget];
 
+    /// The binary name produced by this project, if any.
+    fn bin_name(&self) -> Option<&str> {
+        None
+    }
+
     fn check(&self, ctx: &MonoContext) -> Result<(), MonoError>;
     fn test(&self, ctx: &MonoContext) -> Result<(), MonoError>;
     fn build(
@@ -49,6 +54,15 @@ pub trait Project {
     ) -> Result<(), MonoError>;
     fn bump(&self, ctx: &MonoContext, version: &Version) -> Result<(), MonoError>;
     fn publish(&self, ctx: &MonoContext) -> Result<(), MonoError>;
+
+    /// Return the release asset paths after a successful release build.
+    /// For RustCrate: copies the binary to its platform-specific name.
+    /// For WasmComponent: returns the signed .wasm and public key.
+    fn release_assets(
+        &self,
+        ctx: &MonoContext,
+        target: Option<&BuildTarget>,
+    ) -> Result<Vec<PathBuf>, MonoError>;
 }
 
 /// Find a project by id from the registry.
