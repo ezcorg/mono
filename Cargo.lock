@@ -11528,7 +11528,7 @@ dependencies = [
 
 [[package]]
 name = "witmproxy"
-version = "0.0.5-alpha"
+version = "0.0.5"
 dependencies = [
  "anyhow",
  "argon2",
@@ -11601,7 +11601,7 @@ dependencies = [
 
 [[package]]
 name = "witmproxy-plugin-noshorts"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "brotli",

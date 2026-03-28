@@ -5,6 +5,18 @@ use crate::types::{BuildTarget, ProjectId, Version};
 use std::path::{Path, PathBuf};
 use xshell::cmd;
 
+impl RustProject {
+    /// Path to the built binary for a given target (or native build if None).
+    fn binary_path(&self, repo_root: &Path, target: Option<&BuildTarget>) -> Option<PathBuf> {
+        let bin = self.bin_name.as_ref()?;
+        let base = match target {
+            Some(t) => repo_root.join("target").join(t.triple()).join("release"),
+            None => repo_root.join("target/release"),
+        };
+        Some(base.join(bin))
+    }
+}
+
 /// A Rust project built with Cargo.
 pub struct RustProject {
     pub id: ProjectId,
@@ -40,6 +52,10 @@ impl Project for RustProject {
 
     fn tag_prefix(&self) -> &str {
         &self.tag_prefix
+    }
+
+    fn bin_name(&self) -> Option<&str> {
+        self.bin_name.as_deref()
     }
 
     fn build_targets(&self) -> &[BuildTarget] {
@@ -137,5 +153,45 @@ impl Project for RustProject {
             .run_destructive(&cmd!(sh, "cargo publish --package {pkg}"))?;
 
         Ok(())
+    }
+
+    fn release_assets(
+        &self,
+        ctx: &MonoContext,
+        target: Option<&BuildTarget>,
+    ) -> Result<Vec<PathBuf>, MonoError> {
+        let bin_path = match self.binary_path(&ctx.repo_root, target) {
+            Some(p) => p,
+            None => return Ok(vec![]),
+        };
+
+        if !bin_path.exists() {
+            return Err(MonoError::Other(anyhow::anyhow!(
+                "Built binary not found at {}",
+                bin_path.display()
+            )));
+        }
+
+        // Determine the platform-specific artifact name
+        let bin = self.bin_name.as_ref().unwrap();
+        let t = match target {
+            Some(t) => *t,
+            None => BuildTarget::current().ok_or_else(|| {
+                MonoError::Other(anyhow::anyhow!(
+                    "Cannot determine current platform. Pass --target explicitly."
+                ))
+            })?,
+        };
+        let artifact_name = t.artifact_name(bin);
+        let artifact_path = bin_path.with_file_name(&artifact_name);
+
+        eprintln!(
+            "copying {} -> {}",
+            bin_path.display(),
+            artifact_path.display()
+        );
+        std::fs::copy(&bin_path, &artifact_path)?;
+
+        Ok(vec![artifact_path])
     }
 }
