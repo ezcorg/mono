@@ -13,14 +13,15 @@ function App() {
     const fs = await CodeblockFS.worker('/snapshot.bin');
 
     // Generate or load search index
+    let index: SearchIndex | undefined;
     try {
-      const index = await SearchIndex.get(fs, '.codeblock/index.json');
+      index = await SearchIndex.get(fs, '.codeblock/index.json');
       console.log('Search index ready with', index, 'documents');
     } catch (error) {
       console.warn('Failed to create search index:', error);
     }
 
-    return fs;
+    return { fs, index };
   }
 
   useEffect(() => {
@@ -28,7 +29,7 @@ function App() {
     let newEditor: MarkdownEditor | null = null;
 
     if (ref.current && !editor) {
-      loadFs().then(async fs => {
+      loadFs().then(async ({ fs, index }) => {
         console.debug('Loaded filesystem', fs);
 
         await fs.writeFile('test.md', file);
@@ -39,6 +40,11 @@ function App() {
             fs: fs,
             filepath: 'test.md',
             autoSave: false,
+          },
+          toolbar: {
+            fs: fs,
+            index: index,
+            filepath: 'test.md',
           },
           onUpdate: ({ editor }) => {
             const markdown = (editor as MarkdownEditor).storage.markdown.getMarkdown();

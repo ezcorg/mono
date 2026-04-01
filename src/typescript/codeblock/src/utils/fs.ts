@@ -356,6 +356,48 @@ export namespace Vfs {
         return vfs;
     }
     
+    /**
+     * Create a lazy-loading VFS backed by OPFS. Only the manifest is fetched
+     * initially; file contents are downloaded on demand from chunk archives
+     * and cached persistently in OPFS.
+     *
+     * @param opts.manifestUrl  URL of the `fs.json` manifest
+     * @param opts.backing      Optional pre-created backing VFS (defaults to FSA)
+     * @param opts.backingName  OPFS bucket name when creating a default backing VFS
+     */
+    export const lazy = async (opts: {
+        manifestUrl: string;
+        backing?: VfsInterface;
+        backingName?: string;
+    }): Promise<VfsInterface> => {
+        const { loadManifest } = await import('./lazy-manifest');
+        const { ChunkFetcher } = await import('./chunk-fetcher');
+        const { LazyVfs } = await import('./lazy-vfs');
+
+        const manifest = await loadManifest(opts.manifestUrl);
+        const backing = opts.backing ?? await fsa(opts.backingName ?? 'codeblock-lazy');
+
+        const decoder = new TextDecoder();
+
+        const fetcher = new ChunkFetcher({
+            manifest,
+            manifestUrl: opts.manifestUrl,
+            async writeFile(path, data) {
+                // Decode binary tar content to string and write via the
+                // backing VFS.  This keeps all I/O on a single filesystem
+                // instance, avoiding stale-cache issues from dual TopLevelFs.
+                await backing.writeFile(path, decoder.decode(data));
+            },
+            async ensureDir(path) {
+                await backing.mkdir(path, { recursive: true }).catch(() => {});
+            },
+        });
+
+        fetcher.prefetch();
+
+        return new LazyVfs(backing, manifest, fetcher);
+    };
+
     export async function* walk(fs: VfsInterface, path: string): AsyncIterable<string> {
         const files = await fs.readDir(path);
 

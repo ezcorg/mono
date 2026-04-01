@@ -74,19 +74,26 @@ export async function openFile(page: Page, filename: string) {
 }
 
 /** Wait for file loading to complete and editor to be ready for typing.
- *  The safeDispatch pipeline uses microtasks, so we need to let them settle
- *  before checking the loading state. */
-async function waitForFileReady(page: Page, _filename: string) {
-    // Let microtasks settle (safeDispatch → openFileEffect → handleOpen queue)
-    await new Promise(r => setTimeout(r, 100));
-
-    // Wait for loading spinner to appear and then disappear.
-    // If loading is very fast, the spinner may already be gone.
+ *  With LazyVfs, the async chain is: openFileEffect microtask → handleOpen
+ *  (async OPFS read) → safeDispatch content + fileLoadedEffect → panel
+ *  update syncs toolbar input → readOnly reconfiguration microtask. */
+async function waitForFileReady(page: Page, filename: string) {
+    // Wait for the toolbar to show the expected filename AND no loading
+    // spinner present.  The toolbar input is set twice during file creation:
+    // once immediately by the toolbar command handler (before loading starts),
+    // and once by the panel update after fileLoadedEffect lands.  The spinner
+    // only disappears after the second update, so checking both conditions
+    // ensures the full loading pipeline has completed.
     await page.waitForFunction(
-        () => !document.querySelector('.cm-loading'),
-        { timeout: 15000 }
+        (fn: string) => {
+            const input = document.querySelector('.cm-toolbar-input') as HTMLInputElement;
+            const loading = document.querySelector('.cm-loading');
+            return input?.value === fn && !loading;
+        },
+        { timeout: 15000 },
+        filename,
     );
 
-    // Let the readOnly reconfiguration microtask land
-    await new Promise(r => setTimeout(r, 100));
+    // Let remaining microtasks (readOnly reconfiguration, spinner fade) settle
+    await new Promise(r => setTimeout(r, 300));
 }

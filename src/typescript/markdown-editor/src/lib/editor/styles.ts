@@ -255,5 +255,8 @@ export const styleModule: StyleModule = new StyleModule({
                 background: 'Highlight',
             },
         },
-    }
+    },
+    // Toolbar layout is provided by ToolbarCore's own StyleModule.
+    // Only override the codeblock editor margin within the markdown editor.
+
 })

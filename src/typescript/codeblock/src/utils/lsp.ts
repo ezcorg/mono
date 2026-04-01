@@ -53,6 +53,10 @@ const languageServerFactory: Map<string, (fs: VfsInterface, libFiles?: Record<st
 const lspPorts: Map<string, MessagePort> = new Map();
 export const lspWorkers: Map<string, SharedWorker> = new Map()
 
+// Cache initialization promises to prevent concurrent calls from creating
+// duplicate LSP clients for the same language (race condition).
+const clientInitPromises: Map<string, Promise<LSPClient | null>> = new Map();
+
 export namespace LSP {
     export async function worker(language: string, fs: VfsInterface, libFiles?: Record<string, string>): Promise<{ worker: SharedWorker, lspPort: MessagePort } | null> {
         let factory: ((fs: VfsInterface, libFiles?: Record<string, string>) => Promise<MessagePort>) | undefined;
@@ -85,29 +89,37 @@ export namespace LSP {
     }
 
     export async function client({ fs, language, path, libFiles }: ClientOptions): Promise<Extension | null> {
-        let client = clients.get(language);
         const uri = `file:///${path}`;
 
-        if (!client) {
-            const result = await LSP.worker(language, fs, libFiles);
-            if (!result) return null;
-            const { lspPort } = result;
+        // Use a cached promise to ensure only one LSPClient is created per language,
+        // even when multiple codeblocks call client() concurrently.
+        let initPromise = clientInitPromises.get(language);
+        if (!initPromise) {
+            initPromise = (async () => {
+                const result = await LSP.worker(language, fs, libFiles);
+                if (!result) return null;
+                const { lspPort } = result;
 
-            client = new LSPClient({
-                rootUri: 'file:///',
-                extensions: languageServerExtensions(),
-                notificationHandlers: {
-                    "window/logMessage": (_client, params: { type: number; message: string }) => {
-                        const level = params.type === 1 ? 'error' : params.type === 2 ? 'warn' : params.type === 3 ? 'info' : 'log';
-                        LspLog.push(level, params.message);
-                        return false; // fall through to default handler (console)
-                    }
-                },
-            });
-            client.connect(messagePortTransport(lspPort));
-            clients.set(language, client);
+                const lspClient = new LSPClient({
+                    rootUri: 'file:///',
+                    extensions: languageServerExtensions(),
+                    notificationHandlers: {
+                        "window/logMessage": (_client, params: { type: number; message: string }) => {
+                            const level = params.type === 1 ? 'error' : params.type === 2 ? 'warn' : params.type === 3 ? 'info' : 'log';
+                            LspLog.push(level, params.message);
+                            return false; // fall through to default handler (console)
+                        }
+                    },
+                });
+                lspClient.connect(messagePortTransport(lspPort));
+                clients.set(language, lspClient);
+                return lspClient;
+            })();
+            clientInitPromises.set(language, initPromise);
         }
 
+        const client = await initPromise;
+        if (!client) return null;
         return client.plugin(uri, language);
     }
 

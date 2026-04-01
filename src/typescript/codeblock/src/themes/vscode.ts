@@ -198,7 +198,7 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-diagnostic-error-bg": "#e45649",
         "--cm-comment-bg": "rgba(0,0,0,0.1)",
     },
-    ":root[data-theme='dark'], .cm-editor[data-theme='dark'], [data-theme='dark'] .cm-editor": darkModeStyles,
+    ":root[data-theme='dark'], .cm-editor[data-theme='dark'], [data-theme='dark'] .cm-editor, [data-theme='dark'] .cm-toolbar-panel, .cm-toolbar-panel[data-theme='dark']": darkModeStyles,
 
     /* Dark-mode override */
     "@media (prefers-color-scheme: dark)": {
