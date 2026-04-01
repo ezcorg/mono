@@ -82,22 +82,37 @@ export class ChunkFetcher {
         const raw = await decompressGzip(res);
         const entries = parseTar(raw);
 
-        // Extract files (parallel writes, batched to limit concurrency)
-        const BATCH = 8;
-        for (let i = 0; i < entries.length; i += BATCH) {
-            const batch = entries.slice(i, i + BATCH);
-            await Promise.all(batch.map(async (entry) => {
-                if (entry.type === 'directory') {
-                    await this.ensureDir(entry.path);
-                } else if (entry.type === 'file' && entry.data.byteLength > 0) {
-                    // Ensure parent directory exists
-                    const lastSlash = entry.path.lastIndexOf('/');
-                    if (lastSlash > 0) {
-                        await this.ensureDir(entry.path.substring(0, lastSlash));
-                    }
-                    await this.writeFile(entry.path, entry.data);
+        // Collect all directories that need to exist — both explicit directory
+        // entries from the tar AND parent directories derived from file paths.
+        // Sort by depth so parents are created before children.
+        const dirsNeeded = new Set<string>();
+        for (const entry of entries) {
+            if (entry.type === 'directory') {
+                dirsNeeded.add(entry.path);
+            } else if (entry.type === 'file') {
+                let dir = entry.path;
+                while (true) {
+                    const slash = dir.lastIndexOf('/');
+                    if (slash <= 0) break;
+                    dir = dir.substring(0, slash);
+                    if (dirsNeeded.has(dir)) break;
+                    dirsNeeded.add(dir);
                 }
-            }));
+            }
+        }
+        const sortedDirs = [...dirsNeeded].sort((a, b) => a.split('/').length - b.split('/').length);
+
+        // Create all directories sequentially (parent before child)
+        for (const dir of sortedDirs) {
+            await this.ensureDir(dir);
+        }
+
+        // Write files (parallel, batched)
+        const fileEntries = entries.filter(e => e.type === 'file' && e.data.byteLength > 0);
+        const BATCH = 8;
+        for (let i = 0; i < fileEntries.length; i += BATCH) {
+            const batch = fileEntries.slice(i, i + BATCH);
+            await Promise.all(batch.map(entry => this.writeFile(entry.path, entry.data)));
         }
 
         this.hydrated.add(chunkId);

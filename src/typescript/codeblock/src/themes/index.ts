@@ -112,11 +112,18 @@ export const codeblockTheme = EditorView.theme({
         maxWidth: 'min(calc(100% - 2rem), 62ch)',
         border: '2px solid var(--cm-tooltip-border)',
         overflow: 'auto',
+        overflowWrap: 'break-word',
+        wordBreak: 'break-word',
         background: 'var(--cm-tooltip-background)',
         color: 'var(--cm-tooltip-color)',
     },
     '.cm-tooltip a': {
         color: 'var(--cm-link)',
+    },
+    '.cm-tooltip-section': {
+        overflowWrap: 'break-word',
+        wordBreak: 'break-word',
+        minWidth: '0',
     },
     '.cm-tooltip-section:not(:first-child)': {
         borderTop: 'none',

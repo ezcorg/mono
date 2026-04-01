@@ -277,7 +277,14 @@ export function createSettingsOverlay(view: EditorView): HTMLElement {
     agentRow.appendChild(agentLabel);
     agentRow.appendChild(agentInput);
     aiSection.appendChild(agentRow);
-    // TODO: integrate via @marimo-team/codemirror-ai
+
+    const aiHintRow = document.createElement("div");
+    aiHintRow.className = "cm-settings-row";
+    const aiHintLabel = document.createElement("label");
+    aiHintLabel.style.opacity = '0.6';
+    aiHintLabel.textContent = "Select code and press Ctrl+L to edit with AI";
+    aiHintRow.appendChild(aiHintLabel);
+    aiSection.appendChild(aiHintRow);
 
     overlay.appendChild(aiSection);
 

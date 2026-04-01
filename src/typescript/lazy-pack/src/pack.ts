@@ -19,6 +19,7 @@ export interface PackOptions {
     outputDir: string;
     chunkStrategy: 'package' | 'directory';
     prefetchGlobs: string[];
+    excludeGlobs: string[];
     baseUrl: string;
 }
 
@@ -29,13 +30,13 @@ export interface PackResult {
 }
 
 export async function pack(opts: PackOptions): Promise<PackResult> {
-    const { inputDir, outputDir, chunkStrategy, prefetchGlobs, baseUrl } = opts;
+    const { inputDir, outputDir, chunkStrategy, prefetchGlobs, excludeGlobs, baseUrl } = opts;
     const chunksDir = path.join(outputDir, 'chunks');
 
     await fsp.mkdir(chunksDir, { recursive: true });
 
-    // 1. Walk the input directory
-    const allFiles = await walkDir(inputDir);
+    // 1. Walk the input directory (follows symlinks, applies excludes)
+    const allFiles = await walkDir(inputDir, inputDir, excludeGlobs);
     const relativePaths = allFiles.map(f => path.relative(inputDir, f));
 
     // 2. Assign files to chunks
@@ -120,18 +121,30 @@ interface Manifest {
 // Directory walker
 // ---------------------------------------------------------------------------
 
-async function walkDir(dir: string): Promise<string[]> {
+async function walkDir(dir: string, rootDir: string, excludeGlobs: string[]): Promise<string[]> {
     const results: string[] = [];
     const entries = await fsp.readdir(dir, { withFileTypes: true });
 
     for (const entry of entries) {
         const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            results.push(...await walkDir(full));
-        } else if (entry.isFile()) {
+        const rel = path.relative(rootDir, full);
+
+        // Apply exclude globs
+        if (excludeGlobs.length && matchesAnyGlob(rel, excludeGlobs)) continue;
+
+        // Use stat (not lstat) to follow symlinks
+        let st;
+        try {
+            st = await fsp.stat(full);
+        } catch {
+            continue; // broken symlink or permission error
+        }
+
+        if (st.isDirectory()) {
+            results.push(...await walkDir(full, rootDir, excludeGlobs));
+        } else if (st.isFile()) {
             results.push(full);
         }
-        // Skip symlinks for now (tar can represent them but adds complexity)
     }
 
     return results;

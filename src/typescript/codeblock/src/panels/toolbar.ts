@@ -77,6 +77,7 @@ function buildCMSettingsEntries(view: EditorView, filter: string): SettingsEntry
         { id: `Line numbers: ${s.showLineNumbers ? 'on' : 'off'}`, settingKey: 'showLineNumbers', type: 'settings-toggle', icon: s.showLineNumbers ? '\u2713' : '\u2717', currentValue: String(s.showLineNumbers) },
         { id: `Fold gutter: ${s.showFoldGutter ? 'on' : 'off'}`, settingKey: 'showFoldGutter', type: 'settings-toggle', icon: s.showFoldGutter ? '\u2713' : '\u2717', currentValue: String(s.showFoldGutter) },
         { id: `Auto-hide toolbar: ${s.autoHideToolbar ? 'on' : 'off'}`, settingKey: 'autoHideToolbar', type: 'settings-toggle', icon: s.autoHideToolbar ? '\u2713' : '\u2717', currentValue: String(s.autoHideToolbar) },
+        { id: 'Clear filesystem', settingKey: 'clearFilesystem', type: 'settings-action', icon: '\u2717', currentValue: '' },
     ];
     if (!filter) return entries;
     const lf = filter.toLowerCase();
@@ -157,6 +158,66 @@ function safeDispatch(view: EditorView, spec: any) {
 export const toolbarPanel = (view: EditorView): Panel => {
     let { filepath, language, index } = view.state.facet(CodeblockFacet);
 
+    // --- Clear filesystem ---
+    async function clearFilesystem() {
+        const fs = view.state.facet(CodeblockFacet).fs;
+        // Recursively collect all file paths first, then delete
+        const filesToDelete: string[] = [];
+        const dirsToDelete: string[] = [];
+        async function collectEntries(dir: string) {
+            try {
+                const entries = await fs.readDir(dir);
+                for (const [name, type] of entries) {
+                    const fullPath = dir === '/' ? `/${name}` : `${dir}/${name}`;
+                    if (type === 2 /* Directory */) {
+                        await collectEntries(fullPath);
+                        dirsToDelete.push(fullPath);
+                    } else {
+                        filesToDelete.push(fullPath);
+                    }
+                }
+            } catch { /* empty or inaccessible directory */ }
+        }
+        await collectEntries('/');
+
+        // Delete all files
+        for (const path of filesToDelete) {
+            await fs.unlink(path).catch(() => {});
+        }
+        // Delete directories deepest-first
+        for (const dir of dirsToDelete.reverse()) {
+            await fs.unlink(dir).catch(() => {});
+        }
+
+        // Clear search index
+        if (index) {
+            index.index.removeAll();
+            if (index.savePath) {
+                await fs.writeFile(index.savePath, '{}').catch(() => {});
+            }
+        }
+
+        // Try to clear OPFS storage
+        if (typeof navigator !== 'undefined' && 'storage' in navigator && 'getDirectory' in (navigator.storage ?? {})) {
+            try {
+                const root = await navigator.storage.getDirectory();
+                // @ts-ignore - remove() may not be in all type defs
+                for await (const [name] of root.entries()) {
+                    await root.removeEntry(name, { recursive: true }).catch(() => {});
+                }
+            } catch { /* OPFS not available or permission denied */ }
+        }
+
+        // Reset editor to blank state
+        safeDispatch(view, {
+            changes: { from: 0, to: view.state.doc.length, insert: '' },
+            effects: [
+                openFileEffect.of({ path: '', skipSave: true }),
+                setSearchResults.of([]),
+            ]
+        });
+    }
+
     // --- Create ToolbarCore with CM host ---
     const core = new ToolbarCore({
         fs: view.state.facet(CodeblockFacet).fs,
@@ -183,6 +244,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
         })),
         hasTerminal: !!view.state.facet(CodeblockFacet).jswasi,
         onEnterTerminal() { enterTerminalMode(); },
+        onClearFilesystem: clearFilesystem,
     } satisfies ToolbarHost);
 
     const dom = core.dom;

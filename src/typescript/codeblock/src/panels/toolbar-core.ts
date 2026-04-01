@@ -21,7 +21,7 @@ type NerdIcon = { value: string; hexCode: number; color?: string };
 
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'open-terminal' | 'file-action';
+    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'open-terminal' | 'file-action' | 'clear-filesystem';
     icon: string;
     iconColor?: string;
     query: string;
@@ -39,7 +39,7 @@ export interface FileActionEntry {
 export interface SettingsEntry {
     id: string;
     settingKey: string;
-    type: 'settings-toggle' | 'settings-cycle' | 'settings-input';
+    type: 'settings-toggle' | 'settings-cycle' | 'settings-input' | 'settings-action';
     icon: string;
     currentValue: string;
 }
@@ -119,6 +119,9 @@ export interface ToolbarHost {
     // Terminal command visibility
     hasTerminal?: boolean;
     onEnterTerminal?(): void;
+
+    /** Clear the filesystem and all related persistent storage. */
+    onClearFilesystem?(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -827,6 +830,11 @@ export class ToolbarCore {
     }
 
     private handleSettingsEntry(entry: SettingsEntry) {
+        if (entry.type === 'settings-action' && entry.settingKey === 'clearFilesystem') {
+            this.exitSettingsMode();
+            this.enterClearFilesystemConfirm();
+            return;
+        }
         this.host.handleSettingsEntry?.(entry);
         if (entry.type === 'settings-input') {
             this.settingsMode.editing = entry.settingKey;
@@ -897,6 +905,34 @@ export class ToolbarCore {
             console.error('Failed to delete file:', e);
             this.exitDeleteMode();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Clear filesystem confirmation
+    // -----------------------------------------------------------------------
+    private clearFilesystemPending = false;
+
+    private enterClearFilesystemConfirm() {
+        this.clearFilesystemPending = true;
+        this.stateIcon.textContent = '\u2717';
+        this.input.value = '';
+        this.input.placeholder = 'Clear all files and storage? (Enter to confirm, Esc to cancel)';
+        this.input.focus();
+        this.setResults([]);
+    }
+
+    private exitClearFilesystemConfirm() {
+        this.clearFilesystemPending = false;
+        this.updateStateIcon();
+        this.input.placeholder = '';
+    }
+
+    private async confirmClearFilesystem() {
+        if (!this.clearFilesystemPending) return;
+        this.exitClearFilesystemConfirm();
+        this.setResults([]);
+        this.resetInputToCurrentFile();
+        await this.host.onClearFilesystem?.();
     }
 
     // -----------------------------------------------------------------------
@@ -1052,7 +1088,7 @@ export class ToolbarCore {
         this.inputTouched = true;
         this.resultsExpanded = false;
 
-        if (this.deleteMode.active || this.overwriteMode.active) { this.input.value = ''; return; }
+        if (this.deleteMode.active || this.overwriteMode.active || this.clearFilesystemPending) { this.input.value = ''; return; }
         if (this.namingMode.active) return;
         if (this.settingsMode.active && this.settingsMode.editing) return;
 
@@ -1082,6 +1118,13 @@ export class ToolbarCore {
     }
 
     private onInputKeydown(event: KeyboardEvent) {
+        // Clear filesystem confirmation
+        if (this.clearFilesystemPending) {
+            if (event.key === "Enter") { event.preventDefault(); this.confirmClearFilesystem(); }
+            else if (event.key === "Escape") { event.preventDefault(); this.exitClearFilesystemConfirm(); this.resetInputToCurrentFile(); }
+            event.preventDefault();
+            return;
+        }
         // Overwrite confirmation
         if (this.overwriteMode.active) {
             if (event.key === "Enter") { event.preventDefault(); this.confirmOverwrite(); }
@@ -1172,6 +1215,7 @@ export class ToolbarCore {
     isNamingModeActive(): boolean { return this.namingMode.active; }
     isAnyModeActive(): boolean {
         return this.namingMode.active || this.settingsMode.active ||
-            this.browseMode.active || this.deleteMode.active || this.overwriteMode.active;
+            this.browseMode.active || this.deleteMode.active || this.overwriteMode.active ||
+            this.clearFilesystemPending;
     }
 }

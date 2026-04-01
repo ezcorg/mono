@@ -274,6 +274,9 @@ importers:
       '@m234/nerd-fonts':
         specifier: ^0.5.0
         version: 0.5.0(patch_hash=82a8c2feb0a990e9c505ba013aa741114a836a159301111b923c4beaafa6cca6)
+      '@marimo-team/codemirror-ai':
+        specifier: ^0.3.5
+        version: 0.3.5(@codemirror/state@6.5.2)(@codemirror/view@6.39.16)
       '@typescript/vfs':
         specifier: ^1.6.1
         version: 1.6.1(typescript@5.9.3)
@@ -3211,6 +3214,12 @@ packages:
     resolution: {integrity: sha512-Rdi3amfFyTZoUXxMc95k9x9Ult+DtQSuOHsZwN5wtIKQ5JdXQaErgtWgGjW0Fpg4Rj0YrUCpWOj0VqsumAt5JA==}
     hasBin: true
 
+  '@marimo-team/codemirror-ai@0.3.5':
+    resolution: {integrity: sha512-zGgVF0T410pwD1Ed79ane7pLC23aGC9osCQr2LBfKUhEiuVQ+3m71m0Hy0aAgRkdGS2WOLLvQiw58R9CiIaMNw==}
+    peerDependencies:
+      '@codemirror/state': ^6
+      '@codemirror/view': ^6
+
   '@mswjs/interceptors@0.39.6':
     resolution: {integrity: sha512-bndDP83naYYkfayr/qhBHMhk0YGwS1iv6vaEGcr0SQbO0IZtbOPqjKjds/WcG+bJA+1T5vCx6kprKOzn5Bg+Vw==}
     engines: {node: '>=18'}
@@ -6117,6 +6126,10 @@ packages:
 
   diff@5.2.0:
     resolution: {integrity: sha512-uIFDxqpRZGZ6ThOk84hEfqWoHx2devRFvpTZcTHur85vImfaxUbTW9Ryh4CpCuDnToOP1CEtXKIgytHBPVff5A==}
+    engines: {node: '>=0.3.1'}
+
+  diff@8.0.4:
+    resolution: {integrity: sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw==}
     engines: {node: '>=0.3.1'}
 
   diffable-html@4.1.0:
@@ -13830,6 +13843,12 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@marimo-team/codemirror-ai@0.3.5(@codemirror/state@6.5.2)(@codemirror/view@6.39.16)':
+    dependencies:
+      '@codemirror/state': 6.5.2
+      '@codemirror/view': 6.39.16
+      diff: 8.0.4
+
   '@mswjs/interceptors@0.39.6':
     dependencies:
       '@open-draft/deferred-promise': 2.2.0
@@ -17159,6 +17178,8 @@ snapshots:
   diff@4.0.2: {}
 
   diff@5.2.0: {}
+
+  diff@8.0.4: {}
 
   diffable-html@4.1.0:
     dependencies:

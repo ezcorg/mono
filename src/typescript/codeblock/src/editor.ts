@@ -18,6 +18,7 @@ import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig 
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
 import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
 import type { EditorSettings } from "./panels/settings";
+import { createAiExtension, reconfigureAi } from "./ai/extension";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
@@ -219,6 +220,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         tooltips({ position: "fixed" }),
         showPanel.of(toolbar ? toolbarPanel : null),
         settingsField,
+        createAiExtension({ agentUrl: resolvedSettings.agentUrl || '' }),
         codeblockTheme,
         codeblockView,
         keymap.of(navigationKeymap.concat([indentWithTab])),
@@ -623,9 +625,14 @@ const codeblockView = ViewPlugin.define((view) => {
                 updateSvgPreview();
             }
 
-            // Broadcast settings changes to other editors (unless we received them externally)
+            // Reconfigure AI extension when agentUrl changes
             const prevSettings = u.startState.field(settingsField);
             const nextSettings = u.state.field(settingsField);
+            if (prevSettings.agentUrl !== nextSettings.agentUrl) {
+                reconfigureAi(view, nextSettings.agentUrl);
+            }
+
+            // Broadcast settings changes to other editors (unless we received them externally)
             if (prevSettings !== nextSettings && !receivingExternalSettings) {
                 // Compute the diff
                 const diff: Record<string, any> = {};

@@ -23,6 +23,7 @@ Options:
   --chunk-strategy <name>   "package" (default) or "directory"
   --prefetch <glob>         Glob for files whose chunks should be prefetched
                             (can be specified multiple times)
+  --exclude <glob>          Glob for paths to exclude (can be specified multiple times)
   --base-url <url>          Base URL for chunk references (default: "./chunks/")
   -h, --help                Show this help
 `.trim());
@@ -35,6 +36,7 @@ async function main() {
     let outputDir: string | undefined;
     let chunkStrategy: 'package' | 'directory' = 'package';
     let prefetchGlobs: string[] = [];
+    let excludeGlobs: string[] = [];
     let baseUrl = './chunks/';
 
     for (let i = 0; i < args.length; i++) {
@@ -50,6 +52,8 @@ async function main() {
             chunkStrategy = val;
         } else if (arg === '--prefetch') {
             prefetchGlobs.push(args[++i]);
+        } else if (arg === '--exclude') {
+            excludeGlobs.push(args[++i]);
         } else if (arg === '--base-url') {
             baseUrl = args[++i];
         } else if (arg === '-h' || arg === '--help') {
@@ -71,12 +75,14 @@ async function main() {
     console.log(`  strategy: ${chunkStrategy}`);
     console.log(`  base URL: ${baseUrl}`);
     if (prefetchGlobs.length) console.log(`  prefetch: ${prefetchGlobs.join(', ')}`);
+    if (excludeGlobs.length) console.log(`  exclude: ${excludeGlobs.join(', ')}`);
 
     const result = await pack({
         inputDir: absInput,
         outputDir: absOutput,
         chunkStrategy,
         prefetchGlobs,
+        excludeGlobs,
         baseUrl,
     });
 

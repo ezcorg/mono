@@ -13,3 +13,4 @@ export { prefillTypescriptDefaults, getCachedLibFiles, getRequiredLibs, getLibFi
 export { LazyVfs } from './utils/lazy-vfs';
 export { ChunkFetcher } from './utils/chunk-fetcher';
 export { type LazyManifest, loadManifest, buildDirectoryTree, getChunkUrl, getFilesInChunk } from './utils/lazy-manifest';
+export { createAiExtension, reconfigureAi, aiCompartment } from './ai/extension';
