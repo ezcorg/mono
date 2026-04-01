@@ -1,10 +1,10 @@
 /**
- * ChunkFetcher — downloads, decompresses, and extracts tar.gz chunks
- * on demand.  Shared by LazyVfs (VfsInterface layer) and
- * LazyFilesystem (jswasi Filesystem layer).
+ * ChunkFetcher — downloads ZIP chunks and extracts entries one at a
+ * time, writing each to the backing store before moving to the next.
  *
- * Each chunk is fetched at most once; concurrent requests for the
- * same chunk share a single in-flight promise.
+ * ZIP format allows per-entry decompression (each file is independently
+ * deflate-compressed), so we never hold more than one file's data in
+ * memory at a time.
  */
 
 import { type LazyManifest, getChunkUrl } from "./lazy-manifest";
@@ -15,52 +15,55 @@ import { type LazyManifest, getChunkUrl } from "./lazy-manifest";
 
 export interface ChunkFetcherOpts {
     manifest: LazyManifest;
-    /** Absolute URL of the manifest file (used to resolve relative baseUrl). */
     manifestUrl: string;
-    /** Write an extracted file to the backing store. */
+    /** Write a file to the backing store (used for storing chunk zips). */
     writeFile: (path: string, data: Uint8Array) => Promise<void>;
-    /** Ensure a directory exists in the backing store. */
+    /** Ensure a directory exists. */
     ensureDir: (path: string) => Promise<void>;
+    /** Read a stored chunk zip from the backing store. */
+    readFile: (path: string) => Promise<ArrayBuffer>;
+    fetchChunk?: (url: string) => Promise<ArrayBuffer>;
 }
 
 export class ChunkFetcher {
     private manifest: LazyManifest;
     private manifestUrl: string;
     private writeFile: ChunkFetcherOpts['writeFile'];
-    private ensureDir: ChunkFetcherOpts['ensureDir'];
+    private readChunkZip: ChunkFetcherOpts['readFile'];
+    private fetchChunk: (url: string) => Promise<ArrayBuffer>;
 
     private hydrated = new Set<string>();
     private pending = new Map<string, Promise<void>>();
+    /** In-memory cache of recently used zip buffers. */
+    private zipCache = new Map<string, Uint8Array>();
 
     constructor(opts: ChunkFetcherOpts) {
         this.manifest = opts.manifest;
         this.manifestUrl = opts.manifestUrl;
         this.writeFile = opts.writeFile;
-        this.ensureDir = opts.ensureDir;
+        this.readChunkZip = opts.readFile;
+        this.fetchChunk = opts.fetchChunk ?? defaultFetchChunk;
     }
 
-    /** True if every file in `chunkId` has been extracted to the backing store. */
     isHydrated(chunkId: string): boolean {
         return this.hydrated.has(chunkId);
     }
 
-    /**
-     * Ensure all files from `chunkId` are extracted to the backing store.
-     * Concurrent calls for the same chunk share a single fetch.
-     */
     async hydrate(chunkId: string): Promise<void> {
         if (this.hydrated.has(chunkId)) return;
 
         let p = this.pending.get(chunkId);
         if (!p) {
-            p = this._doHydrate(chunkId);
+            p = this._doHydrate(chunkId).catch(e => {
+                console.error(`[LazyFS] chunk ${chunkId} hydration failed:`, e);
+                throw e;
+            });
             this.pending.set(chunkId, p);
             p.finally(() => this.pending.delete(chunkId));
         }
         return p;
     }
 
-    /** Kick off prefetch for all chunks in `manifest.prefetch`. Non-blocking. */
     prefetch(): void {
         for (const id of this.manifest.prefetch) {
             this.hydrate(id).catch(err =>
@@ -75,168 +78,140 @@ export class ChunkFetcher {
 
     private async _doHydrate(chunkId: string): Promise<void> {
         const url = getChunkUrl(this.manifest, chunkId, this.manifestUrl);
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`[LazyFS] chunk fetch failed: ${res.status} ${url}`);
+        const t0 = performance.now();
+        const buf = await this.fetchChunk(url);
+        const fetchMs = performance.now() - t0;
 
-        // Decompress gzip → raw tar bytes
-        const raw = await decompressGzip(res);
-        const entries = parseTar(raw);
+        // Store the zip blob as a single OPFS file instead of extracting
+        // individual files.  This avoids per-file OPFS write overhead
+        // (which is 43x slower on Firefox than Chrome).
+        //
+        // On read, files are extracted directly from the stored zip.
+        await this.writeFile(`.chunks/${chunkId}.zip`, new Uint8Array(buf));
 
-        // Collect all directories that need to exist — both explicit directory
-        // entries from the tar AND parent directories derived from file paths.
-        // Sort by depth so parents are created before children.
-        const dirsNeeded = new Set<string>();
-        for (const entry of entries) {
-            if (entry.type === 'directory') {
-                dirsNeeded.add(entry.path);
-            } else if (entry.type === 'file') {
-                let dir = entry.path;
-                while (true) {
-                    const slash = dir.lastIndexOf('/');
-                    if (slash <= 0) break;
-                    dir = dir.substring(0, slash);
-                    if (dirsNeeded.has(dir)) break;
-                    dirsNeeded.add(dir);
-                }
-            }
-        }
-        const sortedDirs = [...dirsNeeded].sort((a, b) => a.split('/').length - b.split('/').length);
+        // Cache the zip in memory for immediate reads (avoids re-reading
+        // from OPFS before the first read completes).
+        this.zipCache.set(chunkId, new Uint8Array(buf));
 
-        // Create all directories sequentially (parent before child)
-        for (const dir of sortedDirs) {
-            await this.ensureDir(dir);
-        }
+        const entries = readCentralDirectory(new Uint8Array(buf));
+        const fileCount = entries.filter(e => !e.path.endsWith('/')).length;
 
-        // Write files (parallel, batched)
-        const fileEntries = entries.filter(e => e.type === 'file' && e.data.byteLength > 0);
-        const BATCH = 8;
-        for (let i = 0; i < fileEntries.length; i += BATCH) {
-            const batch = fileEntries.slice(i, i + BATCH);
-            await Promise.all(batch.map(entry => this.writeFile(entry.path, entry.data)));
-        }
-
+        const totalMs = performance.now() - t0;
+        console.log(`[LazyFS] hydrated ${chunkId} (${fileCount} files, ${(buf.byteLength / 1024).toFixed(0)}KB, fetch=${fetchMs.toFixed(0)}ms, total=${totalMs.toFixed(0)}ms)`);
         this.hydrated.add(chunkId);
     }
-}
 
-// ---------------------------------------------------------------------------
-// Gzip decompression
-// ---------------------------------------------------------------------------
-
-async function decompressGzip(response: Response): Promise<ArrayBuffer> {
-    // Read the raw bytes first so we can inspect the magic header.
-    // If the server already applied transparent decompression
-    // (Content-Encoding: gzip), the bytes we receive are plain tar.
-    const buf = await response.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-
-    // Gzip magic: 0x1f 0x8b
-    const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-
-    if (isGzip && typeof DecompressionStream !== 'undefined') {
-        const ds = new DecompressionStream('gzip');
-        const writer = ds.writable.getWriter();
-        writer.write(bytes);
-        writer.close();
-        return new Response(ds.readable).arrayBuffer();
+    /**
+     * Read a file directly from a hydrated chunk's zip archive.
+     * Decompresses only the requested entry.
+     */
+    async readFromChunk(chunkId: string, filePath: string): Promise<Uint8Array> {
+        let zip = this.zipCache.get(chunkId);
+        if (!zip) {
+            // Read the stored zip from OPFS
+            const buf = await this.readChunkZip(`.chunks/${chunkId}.zip`);
+            zip = new Uint8Array(buf);
+            this.zipCache.set(chunkId, zip);
+        }
+        const entries = readCentralDirectory(zip);
+        const entry = entries.find(e => e.path === filePath);
+        if (!entry) throw new Error(`File not found in chunk: ${filePath}`);
+        return extractEntryAsync(zip, entry);
     }
+}
 
-    // Already decompressed (or DecompressionStream unavailable)
-    return buf;
+async function defaultFetchChunk(url: string): Promise<ArrayBuffer> {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`[LazyFS] chunk fetch failed: ${res.status} ${url}`);
+    return res.arrayBuffer();
 }
 
 // ---------------------------------------------------------------------------
-// Minimal tar parser
+// ZIP reader — minimal implementation for local file entries
 // ---------------------------------------------------------------------------
-// TAR format: sequence of 512-byte header blocks followed by file data
-// (rounded up to 512-byte boundary).  We only need path, size, and
-// type — no need for a full POSIX tar implementation.
 
-interface TarEntry {
+interface ZipEntryInfo {
     path: string;
-    type: 'file' | 'directory' | 'symlink';
-    data: Uint8Array;
-    linkTarget?: string;
+    compressedSize: number;
+    uncompressedSize: number;
+    compression: number;  // 0 = stored, 8 = deflate
+    localHeaderOffset: number;
 }
 
-const TAR_BLOCK = 512;
-const DECODER = new TextDecoder();
+/**
+ * Read the central directory from the end of the ZIP buffer.
+ * Returns metadata for each entry (no decompression yet).
+ */
+function readCentralDirectory(zip: Uint8Array): ZipEntryInfo[] {
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
 
-function parseTar(buffer: ArrayBuffer): TarEntry[] {
-    const bytes = new Uint8Array(buffer);
-    const entries: TarEntry[] = [];
-    let offset = 0;
+    // Find End of Central Directory record (search backwards for signature)
+    let eocdOffset = -1;
+    for (let i = zip.length - 22; i >= 0; i--) {
+        if (view.getUint32(i, true) === 0x06054b50) {
+            eocdOffset = i;
+            break;
+        }
+    }
+    if (eocdOffset === -1) throw new Error('Invalid ZIP: EOCD not found');
 
-    while (offset + TAR_BLOCK <= bytes.length) {
-        const header = bytes.subarray(offset, offset + TAR_BLOCK);
+    const entryCount = view.getUint16(eocdOffset + 10, true);
+    const centralOffset = view.getUint32(eocdOffset + 16, true);
 
-        // Two consecutive zero blocks mark the end of the archive
-        if (isZeroBlock(header)) break;
+    const entries: ZipEntryInfo[] = [];
+    let offset = centralOffset;
 
-        const path = readString(header, 0, 100);
-        const size = readOctal(header, 124, 12);
-        const typeFlag = String.fromCharCode(header[156]);
-        const linkTarget = readString(header, 157, 100);
-
-        // GNU/POSIX long name extension (type 'L')
-        // The next entry's data IS the long filename
-        let resolvedPath = path;
-
-        // UStar prefix (bytes 345-500)
-        const prefix = readString(header, 345, 155);
-        if (prefix) resolvedPath = prefix + '/' + path;
-
-        // Determine entry type
-        let type: TarEntry['type'];
-        if (typeFlag === '5' || typeFlag === 'D') {
-            type = 'directory';
-        } else if (typeFlag === '2' || typeFlag === '1') {
-            type = 'symlink';
-        } else {
-            type = 'file';
+    for (let i = 0; i < entryCount; i++) {
+        if (view.getUint32(offset, true) !== 0x02014b50) {
+            throw new Error('Invalid ZIP: bad central directory entry');
         }
 
-        // Strip leading './' or '/' for consistency
-        resolvedPath = resolvedPath.replace(/^\.\//, '').replace(/^\//, '');
-        // Strip trailing '/' from directory paths
-        if (type === 'directory') resolvedPath = resolvedPath.replace(/\/$/, '');
+        const compression = view.getUint16(offset + 10, true);
+        const compressedSize = view.getUint32(offset + 20, true);
+        const uncompressedSize = view.getUint32(offset + 24, true);
+        const nameLen = view.getUint16(offset + 28, true);
+        const extraLen = view.getUint16(offset + 30, true);
+        const commentLen = view.getUint16(offset + 32, true);
+        const localHeaderOffset = view.getUint32(offset + 42, true);
 
-        offset += TAR_BLOCK;
+        const pathBytes = zip.subarray(offset + 46, offset + 46 + nameLen);
+        const path = new TextDecoder().decode(pathBytes);
 
-        // Read file data
-        const dataBlocks = Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
-        const data = size > 0 ? bytes.slice(offset, offset + size) : new Uint8Array(0);
-        offset += dataBlocks;
+        entries.push({ path, compressedSize, uncompressedSize, compression, localHeaderOffset });
 
-        if (!resolvedPath) continue; // skip empty entries
-
-        entries.push({
-            path: resolvedPath,
-            type,
-            data,
-            linkTarget: type === 'symlink' ? linkTarget : undefined,
-        });
+        offset += 46 + nameLen + extraLen + commentLen;
     }
 
     return entries;
 }
 
-function readString(buf: Uint8Array, offset: number, length: number): string {
-    // Find the null terminator
-    let end = offset;
-    const max = offset + length;
-    while (end < max && buf[end] !== 0) end++;
-    return DECODER.decode(buf.subarray(offset, end));
-}
+/**
+ * Extract and decompress a single ZIP entry.
+ * Uses DecompressionStream('deflate-raw') for per-entry decompression.
+ */
+async function extractEntryAsync(zip: Uint8Array, entry: ZipEntryInfo): Promise<Uint8Array> {
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const lhOffset = entry.localHeaderOffset;
 
-function readOctal(buf: Uint8Array, offset: number, length: number): number {
-    const str = readString(buf, offset, length).trim();
-    return str ? parseInt(str, 8) || 0 : 0;
-}
-
-function isZeroBlock(block: Uint8Array): boolean {
-    for (let i = 0; i < block.length; i++) {
-        if (block[i] !== 0) return false;
+    if (view.getUint32(lhOffset, true) !== 0x04034b50) {
+        throw new Error(`Invalid ZIP: bad local header at ${lhOffset}`);
     }
-    return true;
+
+    const nameLen = view.getUint16(lhOffset + 26, true);
+    const extraLen = view.getUint16(lhOffset + 28, true);
+    const dataOffset = lhOffset + 30 + nameLen + extraLen;
+
+    const compressed = zip.subarray(dataOffset, dataOffset + entry.compressedSize);
+
+    if (entry.compression === 0) {
+        return compressed;
+    }
+
+    // Deflate-raw decompression via DecompressionStream
+    const ds = new DecompressionStream('deflate-raw');
+    const writer = ds.writable.getWriter();
+    writer.write(new Uint8Array(compressed));
+    writer.close();
+    const decompressed = await new Response(ds.readable).arrayBuffer();
+    return new Uint8Array(decompressed);
 }

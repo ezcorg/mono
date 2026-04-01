@@ -86,7 +86,7 @@ async function main() {
         baseUrl,
     });
 
-    console.log(`Done: ${result.fileCount} files in ${result.chunkCount} chunks`);
+    console.log(`Done: ${result.fileCount} files, ${result.symlinkCount} symlinks in ${result.chunkCount} chunks`);
     console.log(`  manifest: ${path.relative(process.cwd(), result.manifestPath)}`);
 }
 

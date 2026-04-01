@@ -41,11 +41,12 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/ai/edit') {
         try {
             const body = JSON.parse(await readBody(req));
-            const { prompt, selection, codeBefore, codeAfter } = body as {
+            const { prompt, selection, codeBefore, codeAfter, model } = body as {
                 prompt: string;
                 selection: string;
                 codeBefore: string;
                 codeAfter: string;
+                model?: string;
             };
 
             const systemPrompt = [
@@ -72,13 +73,15 @@ const server = createServer(async (req, res) => {
                 'Return ONLY the replacement for the selected code:',
             ].join('\n');
 
-            const claude = spawn('claude', [
+            const args = [
                 '-p', userPrompt,
                 '--system-prompt', systemPrompt,
                 '--no-session-persistence',
-                '--bare',
                 '--output-format', 'text',
-            ], {
+            ];
+            if (model) args.push('--model', model);
+
+            const claude = spawn('claude', args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
                 env: { ...process.env },
             });

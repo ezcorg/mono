@@ -28,5 +28,6 @@ const path = '.codeblock/index.json'
 const index = await SearchIndex.get(fs, path, ['path', 'basename', 'dirname', 'extension']);
 createCodeblock({
     parent, fs, filepath: 'example.ts', language: 'ts', toolbar: true, index, cwd: '/',
+    settings: { agentUrl: 'http://localhost:3141' },
     typescript: { resolveLib },
 });

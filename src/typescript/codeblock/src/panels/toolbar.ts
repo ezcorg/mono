@@ -61,6 +61,17 @@ const fontFamilyLabels: Record<string, string> = {
     '': 'System default',
     '"UbuntuMono NF", monospace': 'UbuntuMono NF',
 };
+const agentUrlCycleValues = ['', 'http://localhost:3141'];
+const agentUrlLabels: Record<string, string> = {
+    '': 'Off',
+    'http://localhost:3141': 'localhost:3141',
+};
+const aiModelCycleValues = ['haiku', 'sonnet', 'opus'];
+const aiModelLabels: Record<string, string> = {
+    'haiku': 'Haiku (fast)',
+    'sonnet': 'Sonnet (balanced)',
+    'opus': 'Opus (powerful)',
+};
 
 // ---------------------------------------------------------------------------
 // CM settings helpers
@@ -77,6 +88,8 @@ function buildCMSettingsEntries(view: EditorView, filter: string): SettingsEntry
         { id: `Line numbers: ${s.showLineNumbers ? 'on' : 'off'}`, settingKey: 'showLineNumbers', type: 'settings-toggle', icon: s.showLineNumbers ? '\u2713' : '\u2717', currentValue: String(s.showLineNumbers) },
         { id: `Fold gutter: ${s.showFoldGutter ? 'on' : 'off'}`, settingKey: 'showFoldGutter', type: 'settings-toggle', icon: s.showFoldGutter ? '\u2713' : '\u2717', currentValue: String(s.showFoldGutter) },
         { id: `Auto-hide toolbar: ${s.autoHideToolbar ? 'on' : 'off'}`, settingKey: 'autoHideToolbar', type: 'settings-toggle', icon: s.autoHideToolbar ? '\u2713' : '\u2717', currentValue: String(s.autoHideToolbar) },
+        { id: `AI agent: ${agentUrlLabels[s.agentUrl] || s.agentUrl || 'Off'}`, settingKey: 'agentUrl', type: 'settings-cycle', icon: s.agentUrl ? '\u2713' : '\u2717', currentValue: s.agentUrl },
+        { id: `AI model: ${aiModelLabels[s.aiModel] || s.aiModel}`, settingKey: 'aiModel', type: 'settings-cycle', icon: '\u2699', currentValue: s.aiModel },
         { id: 'Clear filesystem', settingKey: 'clearFilesystem', type: 'settings-action', icon: '\u2717', currentValue: '' },
     ];
     if (!filter) return entries;
@@ -103,6 +116,12 @@ function handleCMSettingsEntry(view: EditorView, entry: SettingsEntry) {
         } else if (entry.settingKey === 'fontFamily') {
             const idx = fontFamilyCycleValues.indexOf(s.fontFamily);
             safeDispatch(view, { effects: [updateSettingsEffect.of({ fontFamily: fontFamilyCycleValues[(idx + 1) % fontFamilyCycleValues.length] })] });
+        } else if (entry.settingKey === 'agentUrl') {
+            const idx = agentUrlCycleValues.indexOf(s.agentUrl);
+            safeDispatch(view, { effects: [updateSettingsEffect.of({ agentUrl: agentUrlCycleValues[(idx + 1) % agentUrlCycleValues.length] })] });
+        } else if (entry.settingKey === 'aiModel') {
+            const idx = aiModelCycleValues.indexOf(s.aiModel);
+            safeDispatch(view, { effects: [updateSettingsEffect.of({ aiModel: aiModelCycleValues[(idx + 1) % aiModelCycleValues.length] })] });
         }
     }
     // settings-input handled by confirmSettingsEdit — ToolbarCore shows inline input

@@ -44,12 +44,13 @@ export namespace LspLog {
 export type ClientOptions = {
     language: string,
     path: string,
-    fs: VfsInterface
-    libFiles?: Record<string, string>
+    fs: VfsInterface,
+    libFiles?: Record<string, string>,
 }
 
-// Cached factory (Comlink-wrapped) and LSP port per language
-const languageServerFactory: Map<string, (fs: VfsInterface, libFiles?: Record<string, string>) => Promise<MessagePort>> = new Map();
+// Cached factory and LSP port per language
+type WorkerFactory = (config: { fsPort: MessagePort; libFiles?: Record<string, string> }) => Promise<MessagePort>;
+const languageServerFactory: Map<string, WorkerFactory> = new Map();
 const lspPorts: Map<string, MessagePort> = new Map();
 export const lspWorkers: Map<string, SharedWorker> = new Map()
 
@@ -59,36 +60,49 @@ const clientInitPromises: Map<string, Promise<LSPClient | null>> = new Map();
 
 export namespace LSP {
     export async function worker(language: string, fs: VfsInterface, libFiles?: Record<string, string>): Promise<{ worker: SharedWorker, lspPort: MessagePort } | null> {
-        let factory: ((fs: VfsInterface, libFiles?: Record<string, string>) => Promise<MessagePort>) | undefined;
-        let worker: SharedWorker | undefined;
+        let factory: WorkerFactory | undefined;
+        let w: SharedWorker | undefined;
 
         switch (language) {
             case 'javascript':
             case 'typescript':
-                factory = languageServerFactory.get('javascript')
-                worker = lspWorkers.get('javascript')
+                factory = languageServerFactory.get('javascript');
+                w = lspWorkers.get('javascript');
 
                 if (!factory) {
-                    worker = new SharedWorker(new URL('../workers/javascript.worker.js', import.meta.url), { type: 'module' });
-                    worker.port.start();
-                    lspWorkers.set('javascript', worker)
-                    const wrapped = Comlink.wrap<{ createLanguageServer: (fs: VfsInterface, libFiles?: Record<string, string>) => Promise<MessagePort> }>(worker.port);
-                    factory = wrapped.createLanguageServer
-                    languageServerFactory.set('javascript', factory)
+                    w = new SharedWorker(new URL('../workers/javascript.worker.js', import.meta.url), { type: 'module' });
+                    w.port.start();
+                    lspWorkers.set('javascript', w);
+                    const wrapped = Comlink.wrap<{ createLanguageServer: WorkerFactory }>(w.port);
+                    factory = wrapped.createLanguageServer;
+                    languageServerFactory.set('javascript', factory);
                 }
                 break;
             default:
                 return null;
         }
-        // fs is proxied (has methods), libFiles is plain data (structured clone)
-        // The factory returns a MessagePort for the LSP connection (separate from Comlink's port)
-        const lspPort = await factory!(Comlink.proxy(fs), libFiles);
+
+        // Get a port connected to the fs SharedWorker's VFS and transfer
+        // it to the LSP worker so it can read files without proxying
+        // through the main thread.
+        let fsPort: MessagePort;
+        try {
+            const { Vfs } = await import('./fs');
+            fsPort = await Vfs.getVfsPort();
+        } catch (e) {
+            console.warn('[lsp] getVfsPort failed, falling back to main-thread proxy:', e);
+            const { port1, port2 } = new MessageChannel();
+            Comlink.expose(fs, port1);
+            fsPort = port2;
+        }
+
+        const lspPort = await factory!(Comlink.transfer({ fsPort, libFiles }, [fsPort]));
         lspPort.start();
         lspPorts.set(language, lspPort);
-        return { worker: worker!, lspPort }
+        return { worker: w!, lspPort };
     }
 
-    export async function client({ fs, language, path, libFiles }: ClientOptions): Promise<Extension | null> {
+    export async function client({ language, path, fs, libFiles }: ClientOptions): Promise<Extension | null> {
         const uri = `file:///${path}`;
 
         // Use a cached promise to ensure only one LSPClient is created per language,
@@ -102,6 +116,7 @@ export namespace LSP {
 
                 const lspClient = new LSPClient({
                     rootUri: 'file:///',
+                    timeout: 30000,
                     extensions: languageServerExtensions(),
                     notificationHandlers: {
                         "window/logMessage": (_client, params: { type: number; message: string }) => {

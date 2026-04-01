@@ -11,9 +11,10 @@ export const aiCompartment = new Compartment();
 
 export interface AiConfig {
     agentUrl: string;
+    model: string;
 }
 
-function buildAiExtension(agentUrl: string): Extension {
+function buildAiExtension(agentUrl: string, model: string): Extension {
     if (!agentUrl) return [];
     return aiExtension({
         prompt: async ({ prompt, selection, codeBefore, codeAfter, signal }) => {
@@ -21,7 +22,7 @@ function buildAiExtension(agentUrl: string): Extension {
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, selection, codeBefore, codeAfter }),
+                body: JSON.stringify({ prompt, selection, codeBefore, codeAfter, model }),
                 signal,
             });
             if (!res.ok) {
@@ -38,12 +39,12 @@ function buildAiExtension(agentUrl: string): Extension {
 
 /** Create the initial AI compartment extension. */
 export function createAiExtension(config: AiConfig): Extension {
-    return aiCompartment.of(buildAiExtension(config.agentUrl));
+    return aiCompartment.of(buildAiExtension(config.agentUrl, config.model));
 }
 
-/** Reconfigure the AI extension when agentUrl changes. */
-export function reconfigureAi(view: EditorView, agentUrl: string) {
+/** Reconfigure the AI extension when agentUrl or model changes. */
+export function reconfigureAi(view: EditorView, agentUrl: string, model: string) {
     view.dispatch({
-        effects: aiCompartment.reconfigure(buildAiExtension(agentUrl)),
+        effects: aiCompartment.reconfigure(buildAiExtension(agentUrl, model)),
     });
 }

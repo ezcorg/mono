@@ -39,6 +39,11 @@ export interface LazyManifest {
      * Paths are relative (no leading `/`).
      */
     files: Record<string, [chunkId: string, size: number]>;
+    /**
+     * Map of symlink paths to their targets (relative paths).
+     * Symlinks are resolved at read time without fetching a chunk.
+     */
+    symlinks?: Record<string, string>;
 }
 
 /** Pre-computed directory tree derived from manifest file paths. */
@@ -69,7 +74,7 @@ export function getChunkUrl(manifest: LazyManifest, chunkId: string, manifestUrl
     // against the page origin first to get a valid URL base.
     const absManifest = new URL(manifestUrl, globalThis.location?.href ?? 'file:///');
     const base = new URL(manifest.baseUrl, absManifest);
-    return new URL(`${chunkId}.tar.gz`, base).href;
+    return new URL(`${chunkId}.zip`, base).href;
 }
 
 /** Return all file paths that belong to a given chunk. */
@@ -95,39 +100,66 @@ export function buildDirectoryTree(manifest: LazyManifest): DirectoryTree {
     // Ensure the root is always present
     dirs.add('');
 
-    for (const filePath of Object.keys(manifest.files)) {
-        // Register the file as a child of its parent directory
+    // Helper: register a path and all its parent directories
+    function registerPath(filePath: string, isDir: boolean) {
         const lastSlash = filePath.lastIndexOf('/');
         const parentDir = lastSlash === -1 ? '' : filePath.substring(0, lastSlash);
-        const fileName = lastSlash === -1 ? filePath : filePath.substring(lastSlash + 1);
+        const name = lastSlash === -1 ? filePath : filePath.substring(lastSlash + 1);
 
         if (!children.has(parentDir)) children.set(parentDir, []);
         const siblings = children.get(parentDir)!;
-        if (!siblings.some(([n]) => n === fileName)) {
-            siblings.push([fileName, false]);
+        if (!siblings.some(([n]) => n === name)) {
+            siblings.push([name, isDir]);
         }
 
         // Walk up the path creating intermediate directories
         let dir = parentDir;
         while (dir !== '') {
-            if (dirs.has(dir)) break; // already registered everything above
+            if (dirs.has(dir)) break;
             dirs.add(dir);
-
             const parentSlash = dir.lastIndexOf('/');
             const parent = parentSlash === -1 ? '' : dir.substring(0, parentSlash);
             const dirName = parentSlash === -1 ? dir : dir.substring(parentSlash + 1);
-
             if (!children.has(parent)) children.set(parent, []);
             const parentChildren = children.get(parent)!;
             if (!parentChildren.some(([n]) => n === dirName)) {
                 parentChildren.push([dirName, true]);
             }
-
             dir = parent;
         }
     }
 
+    // Register real files
+    for (const filePath of Object.keys(manifest.files)) {
+        registerPath(filePath, false);
+    }
+
+    // Register symlinks — a symlink whose target is a directory appears
+    // as a directory in listings so `readDir` works through it.
+    if (manifest.symlinks) {
+        for (const [linkPath, target] of Object.entries(manifest.symlinks)) {
+            // Determine if the target is a directory by checking if any
+            // manifest path starts with `resolved target + /`.
+            const resolved = resolveSymlinkTarget(linkPath, target);
+            const targetIsDir = dirs.has(resolved)
+                || Object.keys(manifest.files).some(f => f.startsWith(resolved + '/'));
+            registerPath(linkPath, targetIsDir);
+        }
+    }
+
     return { dirs, children };
+}
+
+/** Resolve a potentially-relative symlink target against the link's location. */
+function resolveSymlinkTarget(linkPath: string, target: string): string {
+    if (!target.startsWith('.')) return target;
+    const linkDir = linkPath.substring(0, linkPath.lastIndexOf('/'));
+    const parts = linkDir.split('/').filter(Boolean);
+    for (const seg of target.split('/')) {
+        if (seg === '..') parts.pop();
+        else if (seg !== '.') parts.push(seg);
+    }
+    return parts.join('/');
 }
 
 /**

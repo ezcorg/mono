@@ -220,7 +220,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         tooltips({ position: "fixed" }),
         showPanel.of(toolbar ? toolbarPanel : null),
         settingsField,
-        createAiExtension({ agentUrl: resolvedSettings.agentUrl || '' }),
+        createAiExtension({ agentUrl: resolvedSettings.agentUrl || '', model: resolvedSettings.aiModel || 'sonnet' }),
         codeblockTheme,
         codeblockView,
         keymap.of(navigationKeymap.concat([indentWithTab])),
@@ -292,7 +292,7 @@ const codeblockView = ViewPlugin.define((view) => {
             // confirm parent exists
             const parent = dirname(fileState.path);
 
-            if (parent) {
+            if (parent && parent !== '.') {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
             await fs.writeFile(fileState.path, content).catch(console.error)
@@ -468,7 +468,7 @@ const codeblockView = ViewPlugin.define((view) => {
             const oldPath = activePath;
             const oldContent = view.state.doc.toString();
             const parent = dirname(oldPath);
-            if (parent) await fs.mkdir(parent, { recursive: true }).catch(console.error);
+            if (parent && parent !== '.') await fs.mkdir(parent, { recursive: true }).catch(console.error);
             await fs.writeFile(oldPath, oldContent).catch(console.error);
             LSP.notifyFileChanged(oldPath, FileChangeType.Changed);
         }
@@ -533,14 +533,16 @@ const codeblockView = ViewPlugin.define((view) => {
             const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
             const isSvg = ext === SVG_EXTENSION;
 
-            // Clear stale diagnostics from previous file
-            safeDispatch(view, setDiagnostics(view.state, []));
-
             if (isRasterImage) {
                 // Raster image: show preview, hide editor content
+                // Clear diagnostics + change content in one dispatch to avoid
+                // stale decoration positions from the previous file.
+                const clearDiag = setDiagnostics(view.state, []);
                 safeDispatch(view, {
+                    ...clearDiag,
                     changes: { from: 0, to: view.state.doc.length, insert: content },
                     effects: [
+                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
                         fileLoadedEffect.of({ path, content, language: null }),
                         readOnlyCompartment.reconfigure(EditorState.readOnly.of(true)),
                     ]
@@ -550,9 +552,16 @@ const codeblockView = ViewPlugin.define((view) => {
                 // Remove any existing preview
                 removePreview();
 
+                // Clear diagnostics + change content + reconfigure LSP in one
+                // atomic dispatch. Separate dispatches cause RangeError when
+                // stale LSP decorations reference positions beyond the new
+                // document's length.
+                const clearDiag = setDiagnostics(view.state, []);
                 safeDispatch(view, {
+                    ...clearDiag,
                     changes: { from: 0, to: view.state.doc.length, insert: content },
                     effects: [
+                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
                         indentationCompartment.reconfigure(indentUnit.of(unit)),
                         fileLoadedEffect.of({ path, content, language: lang }),
                         languageServerCompartment.reconfigure(lsp ? [lsp] : []),
@@ -625,11 +634,11 @@ const codeblockView = ViewPlugin.define((view) => {
                 updateSvgPreview();
             }
 
-            // Reconfigure AI extension when agentUrl changes
+            // Reconfigure AI extension when agentUrl or aiModel changes
             const prevSettings = u.startState.field(settingsField);
             const nextSettings = u.state.field(settingsField);
-            if (prevSettings.agentUrl !== nextSettings.agentUrl) {
-                reconfigureAi(view, nextSettings.agentUrl);
+            if (prevSettings.agentUrl !== nextSettings.agentUrl || prevSettings.aiModel !== nextSettings.aiModel) {
+                reconfigureAi(view, nextSettings.agentUrl, nextSettings.aiModel);
             }
 
             // Broadcast settings changes to other editors (unless we received them externally)
