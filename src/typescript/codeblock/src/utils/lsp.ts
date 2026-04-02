@@ -2,8 +2,9 @@ import { VfsInterface } from "../types";
 import * as Comlink from 'comlink';
 import { LSPClient, languageServerExtensions } from "@codemirror/lsp-client";
 import { Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { messagePortTransport } from "../rpc/transport";
-import { typeSignatureRenderer } from "../completions/type-signature";
+import { openFileEffect, currentFileField } from "../editor";
 
 const clients: Map<string, LSPClient> = new Map();
 
@@ -115,13 +116,10 @@ export namespace LSP {
                 if (!result) return null;
                 const { lspPort } = result;
 
-                const tsRenderer = typeSignatureRenderer();
                 const lspClient = new LSPClient({
                     rootUri: 'file:///',
                     timeout: 30000,
-                    extensions: languageServerExtensions({
-                        completion: { addToOptions: tsRenderer.addToOptions },
-                    }),
+                    extensions: languageServerExtensions(),
                     notificationHandlers: {
                         "window/logMessage": (_client, params: { type: number; message: string }) => {
                             const level = params.type === 1 ? 'error' : params.type === 2 ? 'warn' : params.type === 3 ? 'info' : 'log';
@@ -131,6 +129,44 @@ export namespace LSP {
                     },
                 });
                 lspClient.connect(messagePortTransport(lspPort));
+
+                // Override displayFile to support cross-file navigation
+                // (e.g. Go to Definition jumping to a different file).
+                const origDisplayFile = lspClient.workspace.displayFile.bind(lspClient.workspace);
+                lspClient.workspace.displayFile = async (uri: string): Promise<EditorView | null> => {
+                    // Check if already open in a view
+                    const existing = await origDisplayFile(uri);
+                    if (existing) return existing;
+
+                    // Extract path from file:/// URI, decoding percent-encoded
+                    // characters like %40 → @ so VFS paths stay correct.
+                    const filePath = decodeURIComponent(uri.replace(/^file:\/\/\//, ''));
+                    if (!filePath) return null;
+
+                    // Find any active view for this client
+                    const file = lspClient.workspace.files[0];
+                    const view = file?.getView() ?? null;
+                    if (!view) return null;
+
+                    // Dispatch openFileEffect and wait for the file to load
+                    view.dispatch({ effects: openFileEffect.of({ path: filePath }) });
+                    // Poll until the file is loaded (currentFileField.loading becomes false)
+                    return new Promise<EditorView | null>((resolve) => {
+                        let attempts = 0;
+                        const check = () => {
+                            const state = view.state.field(currentFileField);
+                            if (!state.loading && state.path === filePath) {
+                                resolve(view);
+                            } else if (++attempts > 100) {
+                                resolve(null); // timeout after ~5s
+                            } else {
+                                setTimeout(check, 50);
+                            }
+                        };
+                        setTimeout(check, 50);
+                    });
+                };
+
                 clients.set(language, lspClient);
                 return lspClient;
             })();

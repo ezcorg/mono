@@ -19,6 +19,8 @@ import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/t
 import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
 import type { EditorSettings } from "./panels/settings";
 import { createAiExtension, reconfigureAi } from "./ai/extension";
+import { contextMenu } from "./context-menu";
+import { navigationHistory } from "./navigation";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
@@ -223,6 +225,8 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         createAiExtension({ agentUrl: resolvedSettings.agentUrl || '', model: resolvedSettings.aiModel || 'sonnet' }),
         codeblockTheme,
         codeblockView,
+        contextMenu(),
+        navigationHistory(),
         keymap.of(navigationKeymap.concat([indentWithTab])),
         vscodeLightDark,
         searchResultsField,
@@ -497,6 +501,10 @@ const codeblockView = ViewPlugin.define((view) => {
                 await fs.mkdir(dirname(path), { recursive: true }).catch(() => {});
                 await fs.writeFile(path, content);
                 LSP.notifyFileChanged(path, FileChangeType.Created);
+                // Give the LSP server a moment to process the file-created
+                // notification before we send didOpen — otherwise the server
+                // hasn't added the file to its project graph yet.
+                await new Promise(r => setTimeout(r, 50));
             }
 
             // Add new files to the search index so they appear in future searches

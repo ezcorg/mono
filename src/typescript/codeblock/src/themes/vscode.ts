@@ -187,7 +187,7 @@ export const vscodeStyleMod = new StyleModule({
 
         "--cm-tooltip-color": "var(--cm-foreground)",
         "--cm-tooltip-background": "#ffffff",
-        "--cm-tooltip-border": "#000000",
+        "--cm-tooltip-border": "#c8c8c8",
 
         "--cm-diagnostic-info-color": "white",
         "--cm-diagnostic-info-bg": "#545454",

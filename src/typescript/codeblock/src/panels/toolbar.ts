@@ -10,6 +10,7 @@ import { StateEffect, StateField } from "@codemirror/state";
 import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment } from "../editor";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
+import { goBack, goForward, canGoBack, canGoForward } from "../navigation";
 import { settingsField, resolveThemeDark, updateSettingsEffect, EditorSettings } from "./settings";
 import {
     ToolbarCore, type ToolbarHost, type ToolbarIntent, type SearchResult, type SettingsEntry,
@@ -264,6 +265,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
         hasTerminal: !!view.state.facet(CodeblockFacet).jswasi,
         onEnterTerminal() { enterTerminalMode(); },
         onClearFilesystem: clearFilesystem,
+        goBack() { return goBack(view); },
+        goForward() { return goForward(view); },
+        canGoBack() { return canGoBack(view); },
+        canGoForward() { return canGoForward(view); },
         async classifyIntent(query, context): Promise<ToolbarIntent | null> {
             const agentUrl = view.state.field(settingsField).agentUrl;
             if (!agentUrl) return null;

@@ -136,6 +136,12 @@ export interface ToolbarHost {
     /** Clear the filesystem and all related persistent storage. */
     onClearFilesystem?(): Promise<void>;
 
+    // Navigation history (optional)
+    goBack?(): boolean;
+    goForward?(): boolean;
+    canGoBack?(): boolean;
+    canGoForward?(): boolean;
+
     /**
      * Optional AI-powered intent classification. Called with a debounce
      * when heuristics can't confidently determine intent. Should return
@@ -530,6 +536,14 @@ export class ToolbarCore {
                     commands.push({ id: entry.label, type: 'file-action', icon: entry.icon, query: '', action: entry.action });
                 }
             }
+        }
+
+        // Navigation
+        if (this.host.canGoBack?.()) {
+            commands.push({ id: 'Go back', type: 'file-action', icon: '\uf060', query: '', action: () => this.host.goBack?.() });
+        }
+        if (this.host.canGoForward?.()) {
+            commands.push({ id: 'Go forward', type: 'file-action', icon: '\uf061', query: '', action: () => this.host.goForward?.() });
         }
 
         // Settings
