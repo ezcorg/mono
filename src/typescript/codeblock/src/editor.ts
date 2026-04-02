@@ -291,7 +291,7 @@ const codeblockView = ViewPlugin.define((view) => {
     // Debounced save
     const save = debounce(async () => {
         const fileState = view.state.field(currentFileField);
-        if (fileState.path) {
+        if (fileState.path && !fileState.loading) {
             const content = view.state.doc.toString();
             // confirm parent exists
             const parent = dirname(fileState.path);
@@ -635,7 +635,7 @@ const codeblockView = ViewPlugin.define((view) => {
                 safeDispatch(view, { effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(next.loading)) });
             }
 
-            if (u.docChanged && !receivingExternalUpdate && u.state.field(settingsField).autosave) save();
+            if (u.docChanged && !receivingExternalUpdate && !u.state.field(currentFileField).loading && u.state.field(settingsField).autosave) save();
 
             // Live SVG preview update
             if (u.docChanged && previewEl?.classList.contains('cm-svg-preview')) {

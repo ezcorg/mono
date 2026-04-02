@@ -97,7 +97,7 @@ export class ChunkFetcher {
         const fileCount = entries.filter(e => !e.path.endsWith('/')).length;
 
         const totalMs = performance.now() - t0;
-        console.log(`[LazyFS] hydrated ${chunkId} (${fileCount} files, ${(buf.byteLength / 1024).toFixed(0)}KB, fetch=${fetchMs.toFixed(0)}ms, total=${totalMs.toFixed(0)}ms)`);
+        console.debug(`[LazyFS] hydrated ${chunkId} (${fileCount} files, ${(buf.byteLength / 1024).toFixed(0)}KB, fetch=${fetchMs.toFixed(0)}ms, total=${totalMs.toFixed(0)}ms)`);
         this.hydrated.add(chunkId);
     }
 

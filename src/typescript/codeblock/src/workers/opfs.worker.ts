@@ -22,7 +22,7 @@ async function init(bucketName: string) {
 
 async function getDirHandle(dirPath: string): Promise<FileSystemDirectoryHandle> {
     if (dirCache.has(dirPath)) return dirCache.get(dirPath)!;
-    const segments = dirPath.split('/').filter(Boolean);
+    const segments = dirPath.split('/').filter(s => s && s !== '.');
     let handle = bucketHandle!;
     let built = '';
     for (const seg of segments) {
@@ -38,7 +38,8 @@ async function getDirHandle(dirPath: string): Promise<FileSystemDirectoryHandle>
 }
 
 function splitPath(path: string): { dir: string; name: string } {
-    const normalized = path.replace(/^\//, '');
+    // Normalize: strip leading slash and collapse /./  segments
+    const normalized = path.replace(/^\//, '').replace(/\/\.(?=\/|$)/g, '');
     const lastSlash = normalized.lastIndexOf('/');
     return lastSlash >= 0
         ? { dir: normalized.substring(0, lastSlash), name: normalized.substring(lastSlash + 1) }
@@ -365,7 +366,10 @@ function handleMessage(ev: MessageEvent, replyTo: { postMessage: (msg: any) => v
     fn(...args).then(
         result => replyTo.postMessage({ id, result: result ?? null }),
         (e: any) => {
-            console.warn(`[opfs-worker] ${method}(${args?.[0]}) failed:`, e);
+            // NotFoundError is expected for resolver probes (e.g. @types/* lookups)
+            if (e?.name !== 'NotFoundError') {
+                console.warn(`[opfs-worker] ${method}(${args?.[0]}) failed:`, e);
+            }
             replyTo.postMessage({ id, error: e?.message ?? String(e) });
         }
     );

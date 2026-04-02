@@ -10,6 +10,12 @@ export default defineConfig({
         worker: {
             format: 'es',
         },
+        server: {
+            headers: {
+                'Cross-Origin-Embedder-Policy': 'credentialless',
+                'Cross-Origin-Opener-Policy': 'same-origin',
+            },
+        },
         optimizeDeps: {
             include: [
                 '@codemirror/lang-javascript',

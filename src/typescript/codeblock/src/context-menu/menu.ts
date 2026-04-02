@@ -71,9 +71,23 @@ export class ContextMenu {
             this.dom.appendChild(el);
         }
 
-        // Inherit font-size from the editor (--cm-font-size is scoped to .cm-editor)
-        const editorFontSize = view.dom.style.getPropertyValue('--cm-font-size');
-        if (editorFontSize) this.dom.style.fontSize = editorFontSize;
+        // The context menu is appended to document.body, outside the
+        // .cm-editor element where CSS custom properties and data-theme
+        // are set. Copy them so the menu inherits the editor's theme.
+        const theme = view.dom.getAttribute('data-theme');
+        if (theme) this.dom.setAttribute('data-theme', theme);
+        const editorStyle = getComputedStyle(view.dom);
+        for (const prop of [
+            '--cm-font-size', '--cm-font-family',
+            '--cm-toolbar-background', '--cm-toolbar-color',
+            '--cm-search-result-color', '--cm-search-result-color-hover',
+            '--cm-search-result-bg-hover', '--cm-search-result-color-selected',
+            '--cm-search-result-select-bg', '--cm-command-result-color',
+            '--cm-tooltip-border',
+        ]) {
+            const val = editorStyle.getPropertyValue(prop);
+            if (val) this.dom.style.setProperty(prop, val);
+        }
 
         // Position off-screen first to measure
         this.dom.style.left = '-9999px';

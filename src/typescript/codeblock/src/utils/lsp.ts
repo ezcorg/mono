@@ -92,7 +92,7 @@ export namespace LSP {
             const { Vfs } = await import('./fs');
             fsPort = await Vfs.getVfsPort();
         } catch (e) {
-            console.warn('[lsp] getVfsPort failed, falling back to main-thread proxy:', e);
+            console.debug('[lsp] getVfsPort unavailable, using main-thread proxy');
             const { port1, port2 } = new MessageChannel();
             Comlink.expose(fs, port1);
             fsPort = port2;

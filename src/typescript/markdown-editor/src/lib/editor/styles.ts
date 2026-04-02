@@ -1,9 +1,20 @@
 import { StyleModule } from 'style-mod';
 
-const darkModeStyles = {
+const darkModeStyles: Record<string, string> = {
     '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-dark)',
     '--ezco-mde-bg': 'var(--ezco-mde-bg-dark)',
     '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-dark)',
+    // Toolbar variables (shared with @joinezco/codeblock ToolbarCore)
+    '--cm-toolbar-background': '#2a2a2f',
+    '--cm-toolbar-color': '#ffffff',
+    '--cm-foreground': '#9cdcfe',
+    '--cm-search-result-color': '#9cdcfe',
+    '--cm-search-result-color-hover': '#ffffff',
+    '--cm-search-result-bg-hover': 'rgba(36, 144, 233, 0.31)',
+    '--cm-search-result-color-selected': '#ffffff',
+    '--cm-search-result-select-bg': '#2490e9',
+    '--cm-command-result-color': '#ffffff',
+    '--cm-tooltip-border': '#000000',
 }
 export const styleModule: StyleModule = new StyleModule({
     ':root[data-theme="dark"], [data-theme="dark"] .ezco-mde, .ezco-mde[data-theme="dark"]': darkModeStyles,
@@ -46,6 +57,22 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-light)',
         '--ezco-mde-bg': 'var(--ezco-mde-bg-light)',
         '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-light)',
+
+        // Toolbar variables (shared with @joinezco/codeblock ToolbarCore)
+        '--cm-font-family': 'Menlo, Monaco, Consolas, "Andale Mono", "Ubuntu Mono", "Courier New", monospace',
+        '--cm-icon-font-family': '"UbuntuMono NF", var(--cm-font-family)',
+        '--cm-toolbar-bg-light': '#f3f3f3',
+        '--cm-toolbar-bg-dark': '#2a2a2f',
+        '--cm-toolbar-background': 'var(--cm-toolbar-bg-light)',
+        '--cm-toolbar-color': '#000000',
+        '--cm-foreground': '#383a42',
+        '--cm-search-result-color': '#383a42',
+        '--cm-search-result-color-hover': '#000000',
+        '--cm-search-result-bg-hover': 'rgba(36, 144, 233, 0.31)',
+        '--cm-search-result-color-selected': '#ffffff',
+        '--cm-search-result-select-bg': '#2490e9',
+        '--cm-command-result-color': '#000000',
+        '--cm-tooltip-border': '#c8c8c8',
     },
     '.ezco-mde': {
 
