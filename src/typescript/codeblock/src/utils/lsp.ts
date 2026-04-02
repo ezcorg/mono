@@ -3,6 +3,7 @@ import * as Comlink from 'comlink';
 import { LSPClient, languageServerExtensions } from "@codemirror/lsp-client";
 import { Extension } from "@codemirror/state";
 import { messagePortTransport } from "../rpc/transport";
+import { typeSignatureRenderer } from "../completions/type-signature";
 
 const clients: Map<string, LSPClient> = new Map();
 
@@ -114,10 +115,13 @@ export namespace LSP {
                 if (!result) return null;
                 const { lspPort } = result;
 
+                const tsRenderer = typeSignatureRenderer();
                 const lspClient = new LSPClient({
                     rootUri: 'file:///',
                     timeout: 30000,
-                    extensions: languageServerExtensions(),
+                    extensions: languageServerExtensions({
+                        completion: { addToOptions: tsRenderer.addToOptions },
+                    }),
                     notificationHandlers: {
                         "window/logMessage": (_client, params: { type: number; message: string }) => {
                             const level = params.type === 1 ? 'error' : params.type === 2 ? 'warn' : params.type === 3 ? 'info' : 'log';

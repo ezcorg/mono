@@ -12,7 +12,7 @@ import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
 import { settingsField, resolveThemeDark, updateSettingsEffect, EditorSettings } from "./settings";
 import {
-    ToolbarCore, type ToolbarHost, type SearchResult, type SettingsEntry,
+    ToolbarCore, type ToolbarHost, type ToolbarIntent, type SearchResult, type SettingsEntry,
     SEARCH_ICON, getFileIcon, DEFAULT_FILE_ICON,
 } from "./toolbar-core";
 
@@ -264,6 +264,37 @@ export const toolbarPanel = (view: EditorView): Panel => {
         hasTerminal: !!view.state.facet(CodeblockFacet).jswasi,
         onEnterTerminal() { enterTerminalMode(); },
         onClearFilesystem: clearFilesystem,
+        async classifyIntent(query, context): Promise<ToolbarIntent | null> {
+            const agentUrl = view.state.field(settingsField).agentUrl;
+            if (!agentUrl) return null;
+            const model = view.state.field(settingsField).aiModel || 'haiku';
+            const url = agentUrl.replace(/\/+$/, '') + '/api/ai/edit';
+            const systemPrompt = [
+                'You are a toolbar intent classifier. Given the user\'s toolbar query, respond with EXACTLY one word — the intent category.',
+                'Categories: file-search, file-create, file-action, browse, settings, command, language, unknown',
+                'file-search: looking for an existing file by name/path',
+                'file-create: wants to create a new file',
+                'file-action: wants to rename, save-as, or perform an action on a file',
+                'browse: wants to explore directory structure',
+                'settings: wants to change editor settings, theme, font, etc.',
+                'command: wants to run a command like import, terminal, etc.',
+                'language: typed a programming language name',
+                'unknown: can\'t determine intent',
+                'Respond with only the category name, nothing else.',
+            ].join('\n');
+            const prompt = `Current file: ${context.currentFile || '(none)'}\nToolbar query: "${query}"`;
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, selection: '', codeBefore: '', codeAfter: '', model, systemPrompt }),
+                });
+                if (!res.ok) return null;
+                const text = (await res.text()).trim().toLowerCase();
+                const valid: ToolbarIntent[] = ['file-search', 'file-create', 'file-action', 'browse', 'settings', 'command', 'language', 'unknown'];
+                return valid.includes(text as ToolbarIntent) ? text as ToolbarIntent : null;
+            } catch { return null; }
+        },
     } satisfies ToolbarHost);
 
     const dom = core.dom;

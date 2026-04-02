@@ -86,6 +86,19 @@ export interface OverwriteMode {
 }
 
 // ---------------------------------------------------------------------------
+// Intent detection — determines result prioritization
+// ---------------------------------------------------------------------------
+export type ToolbarIntent =
+    | 'file-search'    // Looking for a specific file
+    | 'file-create'    // Wants to create a new file
+    | 'file-action'    // Wants rename/save-as/delete
+    | 'browse'         // Wants to browse the file system
+    | 'settings'       // Wants to change settings
+    | 'command'        // Wants a specific command (import, terminal)
+    | 'language'       // Typed a language name
+    | 'unknown';       // Can't determine intent
+
+// ---------------------------------------------------------------------------
 // Host interface — implemented by CM and Tiptap adapters
 // ---------------------------------------------------------------------------
 export interface ToolbarHost {
@@ -122,6 +135,13 @@ export interface ToolbarHost {
 
     /** Clear the filesystem and all related persistent storage. */
     onClearFilesystem?(): Promise<void>;
+
+    /**
+     * Optional AI-powered intent classification. Called with a debounce
+     * when heuristics can't confidently determine intent. Should return
+     * a ToolbarIntent or null if AI is unavailable / declines to answer.
+     */
+    classifyIntent?(query: string, context: { currentFile: string | null }): Promise<ToolbarIntent | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +387,11 @@ export class ToolbarCore {
     private currentFilePath: string | null;
     private handleClickOutsideBound: (event: Event) => void;
 
+    // AI intent classification state
+    private aiClassifyTimer: ReturnType<typeof setTimeout> | null = null;
+    private aiClassifyAbort: AbortController | null = null;
+    private lastIntent: ToolbarIntent = 'unknown';
+
     constructor(host: ToolbarHost) {
         this.host = host;
         this.currentFilePath = host.filepath || null;
@@ -424,6 +449,7 @@ export class ToolbarCore {
     getResults(): SearchResult[] { return this.results; }
 
     destroy() {
+        this.cancelAiClassify();
         document.removeEventListener("click", this.handleClickOutsideBound);
     }
 
@@ -512,6 +538,121 @@ export class ToolbarCore {
         }
 
         return commands;
+    }
+
+    // -----------------------------------------------------------------------
+    // Intent detection & result prioritization
+    // -----------------------------------------------------------------------
+
+    /** Command keyword patterns for intent detection */
+    private static readonly COMMAND_PATTERNS: [RegExp, ToolbarIntent][] = [
+        [/^(create|new|add|touch)\b/i, 'file-create'],
+        [/^(open|browse|find|explore|ls|dir)\b/i, 'browse'],
+        [/^(rename|mv|move|save|export)\b/i, 'file-action'],
+        [/^(import|upload)\b/i, 'command'],
+        [/^(terminal|term|shell|bash|sh|console)\b/i, 'command'],
+        [/^(settings?|config|prefs?|preferences?|options?)\b/i, 'settings'],
+        [/^(theme|dark|light|font|color)\b/i, 'settings'],
+    ];
+
+    /**
+     * Analyze input query to detect user intent using heuristics.
+     * Returns a confidence-weighted intent.
+     */
+    private detectIntent(query: string, hasFileResults: boolean): { intent: ToolbarIntent; confidence: number } {
+        const q = query.trim();
+        if (!q) return { intent: 'unknown', confidence: 0 };
+        const ql = q.toLowerCase();
+
+        // Direct path: contains slash or starts with dot — clearly looking for a file
+        if (q.includes('/')) {
+            if (q.endsWith('/')) return { intent: 'browse', confidence: 0.9 };
+            return { intent: 'file-search', confidence: 0.85 };
+        }
+        if (q.startsWith('.')) return { intent: 'file-search', confidence: 0.8 };
+
+        // File extension pattern: e.g. "main.ts", "readme.md"
+        if (/\.\w{1,10}$/.test(q)) return { intent: 'file-search', confidence: 0.8 };
+
+        // Command keywords
+        for (const [pattern, intent] of ToolbarCore.COMMAND_PATTERNS) {
+            if (pattern.test(ql)) return { intent, confidence: 0.85 };
+        }
+
+        // Language name — could be creating a file in that language
+        if (isValidProgrammingLanguage(ql)) return { intent: 'language', confidence: 0.7 };
+
+        // If there are file results, likely searching for a file
+        if (hasFileResults) return { intent: 'file-search', confidence: 0.6 };
+
+        // Default: ambiguous
+        return { intent: 'unknown', confidence: 0.3 };
+    }
+
+    /**
+     * Reorder results based on detected intent. Commands matching the
+     * intent are promoted above other commands; for some intents,
+     * commands are promoted above file results entirely.
+     */
+    private prioritizeResults(
+        fileResults: SearchResult[],
+        commands: CommandResult[],
+        intent: ToolbarIntent,
+    ): SearchResult[] {
+        switch (intent) {
+            case 'file-search':
+                // Files first (default behavior), but boost exact/prefix matches
+                return [...fileResults, ...commands];
+
+            case 'file-create': {
+                // Promote create/save-as commands above file results
+                const create = commands.filter(c => c.type === 'create-file' || c.type === 'save-as');
+                const rest = commands.filter(c => c.type !== 'create-file' && c.type !== 'save-as');
+                return [...create, ...fileResults, ...rest];
+            }
+
+            case 'file-action': {
+                // Promote rename/save-as above files
+                const actions = commands.filter(c =>
+                    c.type === 'rename-file' || c.type === 'save-as');
+                const rest = commands.filter(c =>
+                    c.type !== 'rename-file' && c.type !== 'save-as');
+                return [...actions, ...fileResults, ...rest];
+            }
+
+            case 'browse': {
+                // Promote "Open file" command
+                const browse = commands.filter(c => c.type === 'open-file');
+                const rest = commands.filter(c => c.type !== 'open-file');
+                return [...browse, ...fileResults, ...rest];
+            }
+
+            case 'settings': {
+                // Settings command first
+                const settings = commands.filter(c => c.type === 'settings');
+                const rest = commands.filter(c => c.type !== 'settings');
+                return [...settings, ...fileResults, ...rest];
+            }
+
+            case 'command': {
+                // Promote terminal and import commands
+                const promoted = commands.filter(c =>
+                    c.type === 'open-terminal' || c.type === 'import-local-files' || c.type === 'import-local-folder');
+                const rest = commands.filter(c =>
+                    c.type !== 'open-terminal' && c.type !== 'import-local-files' && c.type !== 'import-local-folder');
+                return [...promoted, ...fileResults, ...rest];
+            }
+
+            case 'language': {
+                // Language-specific: create/save-as first (they'll have the language context)
+                const langCmds = commands.filter(c => c.type === 'create-file' || c.type === 'save-as');
+                const rest = commands.filter(c => c.type !== 'create-file' && c.type !== 'save-as');
+                return [...langCmds, ...fileResults, ...rest];
+            }
+
+            default:
+                return [...fileResults, ...commands];
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1073,7 +1214,8 @@ export class ToolbarCore {
             } else {
                 const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 100);
                 const commands = this.createCommandResults(query, searchResults);
-                results = searchResults.concat(commands);
+                const { intent } = this.detectIntent(query, searchResults.length > 0);
+                results = this.prioritizeResults(searchResults, commands, intent);
             }
         } else {
             results = this.createCommandResults('', []);
@@ -1107,14 +1249,69 @@ export class ToolbarCore {
 
         let results: SearchResult[] = [];
         if (query.trim()) {
-            const searchResults = (this.host.index?.search(query) || []).slice(0, 1000);
+            const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 1000);
             const commands = this.createCommandResults(query, searchResults);
-            results.push(...searchResults);
-            results.push(...commands);
+            const { intent, confidence } = this.detectIntent(query, searchResults.length > 0);
+            this.lastIntent = intent;
+
+            // Auto-enter modes for high-confidence structural intents
+            if (confidence >= 0.85) {
+                if (intent === 'browse' && query.endsWith('/')) {
+                    this.enterBrowseMode(query === '/' ? '/' : query.replace(/\/+$/, ''));
+                    return;
+                }
+                if (intent === 'settings' && /^settings?\/?$/i.test(query.trim())) {
+                    this.enterSettingsMode();
+                    return;
+                }
+            }
+
+            results = this.prioritizeResults(searchResults, commands, intent);
+
+            // Schedule AI classification for low-confidence intents
+            this.scheduleAiClassify(query, searchResults, commands, confidence);
         } else {
+            this.lastIntent = 'unknown';
             results = this.createCommandResults('', []);
+            this.cancelAiClassify();
         }
         this.setResults(results);
+    }
+
+    /**
+     * Schedule a debounced AI intent classification request.
+     * Only fires when heuristic confidence is low and AI is available.
+     */
+    private scheduleAiClassify(
+        query: string,
+        fileResults: SearchResult[],
+        commands: CommandResult[],
+        confidence: number,
+    ) {
+        this.cancelAiClassify();
+        if (confidence >= 0.75 || !this.host.classifyIntent) return;
+
+        this.aiClassifyTimer = setTimeout(async () => {
+            const ctrl = new AbortController();
+            this.aiClassifyAbort = ctrl;
+            try {
+                const aiIntent = await this.host.classifyIntent!(query, {
+                    currentFile: this.getCurrentFilePath(),
+                });
+                if (ctrl.signal.aborted || !aiIntent) return;
+                // Only re-prioritize if the input hasn't changed
+                if (this.input.value === query) {
+                    this.lastIntent = aiIntent;
+                    const reordered = this.prioritizeResults(fileResults, commands, aiIntent);
+                    this.setResults(reordered);
+                }
+            } catch { /* AI unavailable — silently degrade */ }
+        }, 500);
+    }
+
+    private cancelAiClassify() {
+        if (this.aiClassifyTimer) { clearTimeout(this.aiClassifyTimer); this.aiClassifyTimer = null; }
+        if (this.aiClassifyAbort) { this.aiClassifyAbort.abort(); this.aiClassifyAbort = null; }
     }
 
     private onInputKeydown(event: KeyboardEvent) {
@@ -1213,6 +1410,8 @@ export class ToolbarCore {
     isSettingsModeActive(): boolean { return this.settingsMode.active; }
     isBrowseModeActive(): boolean { return this.browseMode.active; }
     isNamingModeActive(): boolean { return this.namingMode.active; }
+    /** The most recently detected intent from the toolbar input. */
+    getLastIntent(): ToolbarIntent { return this.lastIntent; }
     isAnyModeActive(): boolean {
         return this.namingMode.active || this.settingsMode.active ||
             this.browseMode.active || this.deleteMode.active || this.overwriteMode.active ||
