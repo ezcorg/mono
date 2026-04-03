@@ -24,6 +24,19 @@ export async function launchBrowser(): Promise<Browser> {
     });
 }
 
+/**
+ * Create a new page inside an incognito browser context so each test
+ * gets a clean OPFS / storage state, uncontaminated by the dev
+ * server's lazy filesystem.
+ */
+export async function newIsolatedPage(browser: Browser, url: string): Promise<Page> {
+    const context = await browser.createBrowserContext();
+    const page = await context.newPage();
+    await page.goto(url);
+    await waitForEditor(page);
+    return page;
+}
+
 /** Wait for the CodeMirror editor to be ready. */
 export async function waitForEditor(page: Page) {
     await page.waitForSelector('.cm-editor', { visible: true });

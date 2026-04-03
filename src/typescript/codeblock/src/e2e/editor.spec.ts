@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Browser, Page } from 'puppeteer-core';
 import {
     getDevServerUrl, launchBrowser, waitForEditor, typeInEditor,
-    getEditorText, getToolbarValue, createFile, openFile,
+    getEditorText, getToolbarValue, createFile, openFile, newIsolatedPage,
 } from './helpers';
 
 describe('Editor - File Operations', () => {
@@ -20,9 +20,9 @@ describe('Editor - File Operations', () => {
     });
 
     beforeEach(async () => {
-        page = await browser.newPage();
-        await page.goto(BASE_URL);
-        await waitForEditor(page);
+        // Use an incognito context so OPFS state from the dev server's
+        // lazy filesystem doesn't leak into tests.
+        page = await newIsolatedPage(browser, BASE_URL);
     });
 
     it('editor initializes with toolbar and content area', async () => {
@@ -41,19 +41,19 @@ describe('Editor - File Operations', () => {
         await typeInEditor(page, 'const x = 42;');
 
         // Wait for debounced save (500ms debounce + buffer)
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 2000));
 
         // Open a different file
         await createFile(page, 'other.ts');
         // Wait for file switch to complete
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 1000));
         await typeInEditor(page, 'const y = 100;');
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 2000));
 
         // Re-open the original file — content should be persisted in VFS
         await openFile(page, 'persist-test.ts');
-        // Wait for file content to load
-        await new Promise(r => setTimeout(r, 500));
+        // Wait for file content to load (loading state must complete)
+        await new Promise(r => setTimeout(r, 2000));
 
         const text = await getEditorText(page);
         expect(text).toContain('const x = 42;');
@@ -229,9 +229,7 @@ describe('Editor - TypeScript Language Support', () => {
     });
 
     beforeEach(async () => {
-        page = await browser.newPage();
-        await page.goto(BASE_URL);
-        await waitForEditor(page);
+        page = await newIsolatedPage(browser, BASE_URL);
     });
 
     it('TypeScript syntax highlighting is applied', async () => {
@@ -271,14 +269,16 @@ describe('Editor - TypeScript Language Support', () => {
             timeout: 20_000,
         });
 
-        // Hover over the error
+        // Click on the diagnostic marker to trigger the lint tooltip.
+        // CM6 shows lint tooltips when the cursor is placed inside a
+        // diagnostic range, which a click achieves reliably.
         const marker = await page.$('.cm-lintRange-error, .cm-lintRange-warning');
         if (marker) {
-            await marker.hover();
-            await page.waitForSelector('.cm-tooltip, .cm-lint-tooltip, .cm-tooltip-lint', {
-                timeout: 5000,
+            await marker.click();
+            await page.waitForSelector('.cm-tooltip-lint, .cm-tooltip.cm-tooltip-hover, .cm-panel-lint', {
+                timeout: 8000,
             });
-            const tooltip = await page.$('.cm-tooltip, .cm-lint-tooltip, .cm-tooltip-lint');
+            const tooltip = await page.$('.cm-tooltip-lint, .cm-tooltip.cm-tooltip-hover, .cm-panel-lint');
             expect(tooltip).not.toBeNull();
         }
     });
@@ -408,9 +408,7 @@ describe('Editor - JavaScript Language Support', () => {
     });
 
     beforeEach(async () => {
-        page = await browser.newPage();
-        await page.goto(BASE_URL);
-        await waitForEditor(page);
+        page = await newIsolatedPage(browser, BASE_URL);
     });
 
     it('JavaScript files get syntax highlighting', async () => {
