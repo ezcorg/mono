@@ -107,16 +107,37 @@ export const codeblockTheme = EditorView.theme({
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'var(--cm-font-family)',
-        boxShadow: '-12px 12px 1px rgba(0,0,0,0.3)',
+        boxShadow: '-12px 12px 0px rgba(0,0,0,0.3)',
         fontSize: FS,
-        maxWidth: 'min(calc(100% - 2rem), 62ch)',
+        maxWidth: 'min(100vw - 2rem, 80ch)',
         border: '2px solid var(--cm-tooltip-border)',
         overflow: 'auto',
+        overflowWrap: 'break-word',
+        wordBreak: 'break-word',
         background: 'var(--cm-tooltip-background)',
         color: 'var(--cm-tooltip-color)',
     },
+    // The autocomplete dropdown must allow overflow so the completion
+    // info panel (detail/docs) can render beside it without clipping.
+    '.cm-tooltip-autocomplete': {
+        overflow: 'visible',
+    },
+    // CM6's default completion icons use Unicode glyphs that need a
+    // system font — the monospace code font may not render them.
+    '.cm-completionIcon': {
+        fontFamily: 'system-ui, sans-serif',
+    },
+    // The default □ (U+25A1) doesn't render in many fonts — use ◆ instead.
+    '.cm-completionIcon-property': {
+        '&:after': { content: "'◇'" },
+    },
     '.cm-tooltip a': {
         color: 'var(--cm-link)',
+    },
+    '.cm-tooltip-section': {
+        overflowWrap: 'break-word',
+        wordBreak: 'break-word',
+        minWidth: '0',
     },
     '.cm-tooltip-section:not(:first-child)': {
         borderTop: 'none',

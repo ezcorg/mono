@@ -65,13 +65,10 @@ export namespace Vfs {
                 const abs = ensureAbs(path);
                 if (options?.recursive) {
                     const parts = abs.split("/").filter(Boolean);
-                    let cur = "/";
-                    for (const part of parts) {
-                        cur = cur === "/" ? `/${part}` : `${cur}/${part}`;
-
-                        const exists = await this.exists(cur);
-                        if (exists) continue;
-
+                    for (let i = 0; i < parts.length; i++) {
+                        const cur = "/" + parts.slice(0, i + 1).join("/");
+                        // Always attempt createDir — don't rely on exists()
+                        // which can return stale results in concurrent scenarios.
                         const res = await jswasiFs.createDir(cur);
                         if (res !== WASI_ESUCCESS && res !== WASI_EEXIST) {
                             throw new Error(`mkdir recursive failed (${res}) at ${cur}`);
@@ -337,25 +334,87 @@ export namespace Vfs {
      *                     If a URL is provided, it will be loaded directly in the worker
      *                     for better performance with large files.
      */
-    export const worker = async (bufferOrUrl?: CborUint8Array<SnapshotNode> | string): Promise<VfsInterface> => {
-        // TODO: fix this for non-Vite consumers
-        const worker = new SharedWorker(new URL('../workers/fs.worker.js', import.meta.url), { type: 'module' });
-        worker.port.start()
-        const proxy = Comlink.wrap<{ mount: (args: any) => Promise<VfsInterface>; mountFromUrl: (args: any) => Promise<VfsInterface> }>(worker.port);
+    // Reference to the fs SharedWorker proxy (shared across all consumers)
+    type FsWorkerProxy = {
+        mount: (args: any) => Promise<VfsInterface>;
+        mountFromUrl: (args: any) => Promise<VfsInterface>;
+        mountLazy: (args: any) => Promise<VfsInterface>;
+        getVfsPort: () => Promise<MessagePort>;
+        setOpfsWorkerPort: (port: MessagePort) => void;
+    };
+    let fsWorkerProxy: Comlink.Remote<FsWorkerProxy> | null = null;
+
+    function getFsWorkerProxy(): Comlink.Remote<FsWorkerProxy> {
+        if (!fsWorkerProxy) {
+            const w = new SharedWorker(new URL('../workers/fs.worker.js', import.meta.url), { type: 'module' });
+            w.port.start();
+            fsWorkerProxy = Comlink.wrap<FsWorkerProxy>(w.port);
+
+            // Create the dedicated OPFS worker on the main thread and
+            // give the SharedWorker a direct MessagePort to it.  Chrome
+            // doesn't allow Worker construction inside SharedWorkers.
+            const opfsWorker = new Worker(new URL('../workers/opfs.worker.js', import.meta.url), { type: 'module' });
+            const { port1, port2 } = new MessageChannel();
+            // Send port1 to the OPFS dedicated worker
+            opfsWorker.postMessage({ type: 'init-port', port: port1 }, [port1]);
+            // Send port2 to the SharedWorker
+            fsWorkerProxy.setOpfsWorkerPort(Comlink.transfer(port2, [port2]));
+        }
+        return fsWorkerProxy;
+    }
+
+    /**
+     * Get a MessagePort connected to the shared VFS in the fs worker.
+     * This port can be transferred to another worker (e.g., the LSP
+     * worker) so it can read/write files without proxying through the
+     * main thread.
+     */
+    export const getVfsPort = async (): Promise<MessagePort> => {
+        return getFsWorkerProxy().getVfsPort();
+    }
+
+    /**
+     * Create a VFS backed by a SharedWorker.  All filesystem I/O runs off
+     * the main thread.  Uses OPFS for persistence when available, falls
+     * back to in-memory memfs otherwise.
+     *
+     * @param bufferOrUrl Optional snapshot buffer or URL to hydrate
+     * @param name        OPFS bucket name (default: 'codeblock')
+     */
+    export const worker = async (bufferOrUrl?: CborUint8Array<SnapshotNode> | string, name = 'codeblock'): Promise<VfsInterface> => {
+        const proxy = getFsWorkerProxy();
 
         let vfs: VfsInterface;
 
         if (!bufferOrUrl) {
-            vfs = await proxy.mount({ mountPoint: '/' });
+            vfs = await proxy.mount({ name });
         } else if (typeof bufferOrUrl === 'string') {
-            vfs = await proxy.mountFromUrl({ url: bufferOrUrl, mountPoint: '/' });
+            vfs = await proxy.mountFromUrl({ url: bufferOrUrl, name });
         } else {
-            vfs = await proxy.mount(Comlink.transfer({ buffer: bufferOrUrl, mountPoint: "/" }, [bufferOrUrl]));
+            vfs = await proxy.mount(Comlink.transfer({ buffer: bufferOrUrl, name }, [bufferOrUrl]));
         }
         console.debug('Filesystem worker mounted');
         return vfs;
     }
-    
+
+    /**
+     * Create a lazy-loading VFS backed by a SharedWorker.
+     * All chunk fetching, decompression, and OPFS writes happen in the
+     * worker thread — the main thread only receives proxied results.
+     */
+    export const lazy = async (opts: {
+        manifestUrl: string;
+        backingName?: string;
+    }): Promise<VfsInterface> => {
+        const proxy = getFsWorkerProxy();
+        const vfs = await proxy.mountLazy({
+            manifestUrl: opts.manifestUrl,
+            backingName: opts.backingName ?? 'codeblock-lazy',
+        });
+        console.debug('Lazy filesystem worker mounted');
+        return vfs;
+    };
+
     export async function* walk(fs: VfsInterface, path: string): AsyncIterable<string> {
         const files = await fs.readDir(path);
 
@@ -374,11 +433,42 @@ export namespace Vfs {
 export class VolarFs implements FileSystem {
     #fs: VfsInterface
     #fileCache = new Map<string, string>()
+    #fileCacheBytes = 0
     #statCache = new Map<string, { type: FileType; ctime: number; mtime: number; size: number }>()
     #dirCache = new Map<string, [string, FileType][]>()
 
+    /** Approximate memory limit for #fileCache (~64 MB). */
+    static readonly FILE_CACHE_LIMIT = 64 * 1024 * 1024;
+
     constructor(fs: VfsInterface) {
         this.#fs = fs
+    }
+
+    /** Estimated bytes per character (V8 uses UTF-16 = 2 bytes per char). */
+    static #charBytes(content: string): number {
+        return content.length * 2;
+    }
+
+    /** Insert or refresh a file in the LRU cache, evicting if over limit. */
+    #cacheFile(path: string, content: string): void {
+        // If already present, remove first so re-insertion moves it to end (LRU)
+        const existing = this.#fileCache.get(path);
+        if (existing !== undefined) {
+            this.#fileCacheBytes -= VolarFs.#charBytes(existing);
+            this.#fileCache.delete(path);
+        }
+
+        const bytes = VolarFs.#charBytes(content);
+        this.#fileCache.set(path, content);
+        this.#fileCacheBytes += bytes;
+
+        // Evict oldest entries until under limit
+        while (this.#fileCacheBytes > VolarFs.FILE_CACHE_LIMIT && this.#fileCache.size > 1) {
+            const oldest = this.#fileCache.keys().next().value!;
+            const oldContent = this.#fileCache.get(oldest)!;
+            this.#fileCacheBytes -= VolarFs.#charBytes(oldContent);
+            this.#fileCache.delete(oldest);
+        }
     }
 
     /**
@@ -389,7 +479,7 @@ export class VolarFs implements FileSystem {
     preloadFromMap(files: Record<string, string>): void {
         const now = Date.now();
         for (const [path, content] of Object.entries(files)) {
-            this.#fileCache.set(path, content);
+            this.#cacheFile(path, content);
             this.#statCache.set(path, {
                 type: FileType.File,
                 ctime: now,
@@ -455,13 +545,32 @@ export class VolarFs implements FileSystem {
         }
         return this.#fs.readDir(uri.path);
     }
-    readFile(uri: URI) {
+    readFile(uri: URI): string | Promise<string> {
         const cached = this.#fileCache.get(uri.path);
-        if (cached !== undefined) return cached;
-        return this.#fs.readFile(uri.path);
+        if (cached !== undefined) {
+            // Touch: move to end of LRU
+            this.#fileCache.delete(uri.path);
+            this.#fileCache.set(uri.path, cached);
+            return cached;
+        }
+        // Cache miss — read from VFS and cache the result.
+        // Always wrap in Promise.resolve() to normalize Comlink proxy
+        // thenables into real Promises. This is critical because Volar's
+        // fileSystem cache stores the raw return value — a Comlink proxy
+        // thenable behaves differently from a real Promise when cached
+        // (proxy property access creates new proxies on every access).
+        const result = this.#fs.readFile(uri.path);
+        return Promise.resolve(result).then(content => {
+            this.#cacheFile(uri.path, content);
+            return content;
+        });
     }
 
     getCacheSize(): number {
         return this.#fileCache.size;
+    }
+
+    getCacheSizeBytes(): number {
+        return this.#fileCacheBytes;
     }
 }

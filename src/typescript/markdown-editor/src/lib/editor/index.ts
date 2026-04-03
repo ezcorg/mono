@@ -10,6 +10,7 @@ import { styleModule } from './styles';
 
 import { ExtendedLink } from './extensions/link';
 import { SlashCommands } from './extensions/slash-commands';
+import { Toolbar, ToolbarOptions } from './extensions/toolbar';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -25,7 +26,7 @@ function injectCaretBlink() {
         caret-animation: manual;
     }
     .ezco-mde .ProseMirror:focus {
-        animation: ezco-mde-caret-blink 1s step-end infinite;
+        animation: ezco-mde-caret-blink 530ms step-end infinite;
     }
     @keyframes ezco-mde-caret-blink {
         from, 50% { caret-color: currentColor; }
@@ -38,6 +39,7 @@ function injectCaretBlink() {
 export type MarkdownEditorOptions = Partial<EditorOptions> & {
     extensions?: Extension[];
     fs?: FileSystemOptions;
+    toolbar?: ToolbarOptions;
 }
 
 export type MarkdownEditor = Editor & {
@@ -81,6 +83,10 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             }),
             SlashCommands.configure({
                 commands: defaultSlashCommands,
+            }),
+            Toolbar.configure(options.toolbar || {
+                fs: options.fs?.fs,
+                filepath: options.fs?.filepath,
             }),
             ...(options.extensions || []),
         ],

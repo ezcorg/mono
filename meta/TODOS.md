@@ -1,16 +1,22 @@
 `cicd` (src/rust/cicd):
-
 - [ ] symlink produced CLI to some user binary directory
 - [ ] replace
 
+`ezco-web` (src/apps/ezco-web):
+- [ ] In the `markdown-editor` example, loading multiple files at once doesn't always seem to properly result in LSP based diagnostics highlighting working immediately (requires a file change to properly flush state? unsure).
+- [ ] Change the `markdown-editor` example to use the same font as the `pnpm dev` example in `src/typescript/markdown-editor`
+
+`markdown-editor` (src/typescript/markdown-editor)
+- [ ] Add a toolbar to the `markdown-editor` (maybe even copy `codeblock`'s search toolbar completely initially?)
+- [ ] The editor cursor flash rate is too slow (on Zen?)
 
 `codeblock` (src/typescript/codeblock):
-- [ ] Fix ctrl+c resulting in terminal newline output
 
 - [ ] Include `git` functionality in the wanix VM (to be reworked into `witvm`?)
+- [ ] Lazy-loading necessary `node_modules` when a given file is open
 - [ ] Support for configurable keybindings for opening available commands
-- [ ] Sharable links to codeblock line ranges as # anchors (should work even with multiple codeblocks on the same page) 
-- [ ] Add an "Download file" option (for downloading the currently open file)
+- [ ] Sharable links to codeblock line ranges as # anchors (should work even with multiple codeblocks on the same page)
+- [ ] Add a "Download file" option (for downloading the currently open file)
 - [ ] And an "Export archive" option
 - [ ] "Share p2p room" feature (use some webrtc p2p protocol)
 - [ ] Show a clipboard icon in the first row in the editor
@@ -20,16 +26,12 @@
 
 - [ ] Make light mode code editor text coloring less ugly
 
-`ezco-web` (src/apps/ezco-web):
-- [ ] In the `markdown-editor` example, loading multiple files at once doesn't always seem to properly result in LSP based diagnostics highlighting working immediately (requires a file change to properly flush state? unsure).
-- [ ] Include a lazy-loading Pokemon terminal example
-
-`markdown-editor` (src/typescript/markdown-editor)
-- [ ] The editor cursor flash rate is too slow (on Zen?)
+`jswasi`
+- [ ] Tab autocompletion in the shell
 
 `witmproxy` (src/apps/witmproxy)
 - [ ] Modify WIT to include a `subprocess` capability. Develop the corresponding host implementation.
-- [ ] When code is merged to main, we should be automatically producing versioned `witmproxy` binaries, which are then stored. When publishing, we should just have to reference these already built binaries. We shouldn't have to to build and test beforehand everytime.
+- [ ] When code is merged to main, we should be automatically producing versioned `witmproxy` binaries, which are then stored. When publishing, we should just have to reference these already built binaries. We shouldn't have to build and test beforehand everytime.
 
 - [ ] We should have test infrastructure for producing `plugin` components in tests more easily (rather than re-using statically declared and separately built `witmproxy-<xyz>` plugins)
 
@@ -63,9 +65,7 @@
 ## Bigger tasks
 
 - [ ] True e2e tests which dynamically bring up a remote `witmproxy` server, with various clients (emulated Android/iOS, desktop Chrome+Firefox+Safari+etc.) configured to use it as a remote proxy. Use `Appium` here. It should exercise the behavior to test that tenant-specific functionality works, and that the server updates in response to dynamic changes, with clients observing the expected changes. It should verify that plugins work as expected (and we should have sufficient test plugins to exercise the full surface of the available plugins API). We should expose test utilities as a separate crate (or module? whichever seems most idiomatic and is most efficient) such that plugin authors can orchestrate the same client tests if they desire. https://github.com/multicatch/appium-client provides an unofficial Rust appium client. When applicable, detect whether necessary host system binaries are present for called test functions, emitting warning!s if not.
-- [ ] Consider different CLI APIs, like `witm start --server --client localhost` to bring up the proxy as a server and a local-user client, `witm stop --client` to stop the client (but leave the server), or something like `witm start --proxy --client localhost` to not assume that we always want the API server (would it make sense to have  a locally available API server but no proxy? if there's a client, I guess it would just forward requests, but without one it makes no sense)  
 - [ ] Platform-specific secret handling of sensitive credentials (database password) that is compatible with the `witmproxy` service
-- [ ] Add a layer on-top of `witmproxy` to allow it to spawn a backend which can be used as a complete network interface/device, so that we can capture and handle all network traffic (if this makes sense)
 - [ ] Remove dependency on system binaries where possible (`certutil`, `cp`, `sh`, `sudo`, etc.), preferring native Rust interfaces or bundled binaries (with corresponding `bundled` features)
 - [ ] Some sort of LLM-assisted interface/functionality for building request/response plugins.
 

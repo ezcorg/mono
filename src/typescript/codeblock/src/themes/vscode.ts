@@ -187,7 +187,7 @@ export const vscodeStyleMod = new StyleModule({
 
         "--cm-tooltip-color": "var(--cm-foreground)",
         "--cm-tooltip-background": "#ffffff",
-        "--cm-tooltip-border": "#000000",
+        "--cm-tooltip-border": "#c8c8c8",
 
         "--cm-diagnostic-info-color": "white",
         "--cm-diagnostic-info-bg": "#545454",
@@ -198,7 +198,7 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-diagnostic-error-bg": "#e45649",
         "--cm-comment-bg": "rgba(0,0,0,0.1)",
     },
-    ":root[data-theme='dark'], .cm-editor[data-theme='dark'], [data-theme='dark'] .cm-editor": darkModeStyles,
+    ":root[data-theme='dark'], .cm-editor[data-theme='dark'], [data-theme='dark'] .cm-editor, [data-theme='dark'] .cm-toolbar-panel, .cm-toolbar-panel[data-theme='dark']": darkModeStyles,
 
     /* Dark-mode override */
     "@media (prefers-color-scheme: dark)": {

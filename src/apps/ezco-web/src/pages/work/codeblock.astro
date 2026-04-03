@@ -31,17 +31,26 @@ import { Clipboard, Check } from "lucide-astro";
 		import { files } from "../data/work.js";
 
 		async function init() {
-			const fs = await CodeblockFS.fsa("ezco-demo");
+			const fs = await CodeblockFS.worker(undefined, "ezco-demo");
 
-			// Seed files only if example.ts doesn't exist yet (first visit)
-			const exists = await fs.exists("example.ts");
-			if (!exists) {
-				await Promise.all(
-					files.map(async ([path, content]) => {
+			// Seed demo files — always write if content is empty or missing
+			await Promise.all(
+				files.map(async ([path, content]) => {
+					try {
+						const existing = await fs.exists(path);
+						if (!existing) {
+							await fs.writeFile(path, content);
+						} else {
+							const current = await fs.readFile(path);
+							if (!current || current.length === 0) {
+								await fs.writeFile(path, content);
+							}
+						}
+					} catch {
 						await fs.writeFile(path, content);
-					}),
-				);
-			}
+					}
+				}),
+			);
 
 			const { createCodeblock, SearchIndex } = await import(
 				"@joinezco/codeblock"

@@ -18,6 +18,9 @@ import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig 
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
 import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
 import type { EditorSettings } from "./panels/settings";
+import { createAiExtension, reconfigureAi } from "./ai/extension";
+import { contextMenu } from "./context-menu";
+import { navigationHistory } from "./navigation";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
@@ -219,8 +222,11 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         tooltips({ position: "fixed" }),
         showPanel.of(toolbar ? toolbarPanel : null),
         settingsField,
+        createAiExtension({ agentUrl: resolvedSettings.agentUrl || '', model: resolvedSettings.aiModel || 'sonnet' }),
         codeblockTheme,
         codeblockView,
+        contextMenu(),
+        navigationHistory(),
         keymap.of(navigationKeymap.concat([indentWithTab])),
         vscodeLightDark,
         searchResultsField,
@@ -285,12 +291,12 @@ const codeblockView = ViewPlugin.define((view) => {
     // Debounced save
     const save = debounce(async () => {
         const fileState = view.state.field(currentFileField);
-        if (fileState.path) {
+        if (fileState.path && !fileState.loading) {
             const content = view.state.doc.toString();
             // confirm parent exists
             const parent = dirname(fileState.path);
 
-            if (parent) {
+            if (parent && parent !== '.') {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
             await fs.writeFile(fileState.path, content).catch(console.error)
@@ -466,7 +472,7 @@ const codeblockView = ViewPlugin.define((view) => {
             const oldPath = activePath;
             const oldContent = view.state.doc.toString();
             const parent = dirname(oldPath);
-            if (parent) await fs.mkdir(parent, { recursive: true }).catch(console.error);
+            if (parent && parent !== '.') await fs.mkdir(parent, { recursive: true }).catch(console.error);
             await fs.writeFile(oldPath, oldContent).catch(console.error);
             LSP.notifyFileChanged(oldPath, FileChangeType.Changed);
         }
@@ -495,6 +501,10 @@ const codeblockView = ViewPlugin.define((view) => {
                 await fs.mkdir(dirname(path), { recursive: true }).catch(() => {});
                 await fs.writeFile(path, content);
                 LSP.notifyFileChanged(path, FileChangeType.Created);
+                // Give the LSP server a moment to process the file-created
+                // notification before we send didOpen — otherwise the server
+                // hasn't added the file to its project graph yet.
+                await new Promise(r => setTimeout(r, 50));
             }
 
             // Add new files to the search index so they appear in future searches
@@ -531,14 +541,16 @@ const codeblockView = ViewPlugin.define((view) => {
             const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
             const isSvg = ext === SVG_EXTENSION;
 
-            // Clear stale diagnostics from previous file
-            safeDispatch(view, setDiagnostics(view.state, []));
-
             if (isRasterImage) {
                 // Raster image: show preview, hide editor content
+                // Clear diagnostics + change content in one dispatch to avoid
+                // stale decoration positions from the previous file.
+                const clearDiag = setDiagnostics(view.state, []);
                 safeDispatch(view, {
+                    ...clearDiag,
                     changes: { from: 0, to: view.state.doc.length, insert: content },
                     effects: [
+                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
                         fileLoadedEffect.of({ path, content, language: null }),
                         readOnlyCompartment.reconfigure(EditorState.readOnly.of(true)),
                     ]
@@ -548,9 +560,16 @@ const codeblockView = ViewPlugin.define((view) => {
                 // Remove any existing preview
                 removePreview();
 
+                // Clear diagnostics + change content + reconfigure LSP in one
+                // atomic dispatch. Separate dispatches cause RangeError when
+                // stale LSP decorations reference positions beyond the new
+                // document's length.
+                const clearDiag = setDiagnostics(view.state, []);
                 safeDispatch(view, {
+                    ...clearDiag,
                     changes: { from: 0, to: view.state.doc.length, insert: content },
                     effects: [
+                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
                         indentationCompartment.reconfigure(indentUnit.of(unit)),
                         fileLoadedEffect.of({ path, content, language: lang }),
                         languageServerCompartment.reconfigure(lsp ? [lsp] : []),
@@ -616,16 +635,21 @@ const codeblockView = ViewPlugin.define((view) => {
                 safeDispatch(view, { effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(next.loading)) });
             }
 
-            if (u.docChanged && !receivingExternalUpdate && u.state.field(settingsField).autosave) save();
+            if (u.docChanged && !receivingExternalUpdate && !u.state.field(currentFileField).loading && u.state.field(settingsField).autosave) save();
 
             // Live SVG preview update
             if (u.docChanged && previewEl?.classList.contains('cm-svg-preview')) {
                 updateSvgPreview();
             }
 
-            // Broadcast settings changes to other editors (unless we received them externally)
+            // Reconfigure AI extension when agentUrl or aiModel changes
             const prevSettings = u.startState.field(settingsField);
             const nextSettings = u.state.field(settingsField);
+            if (prevSettings.agentUrl !== nextSettings.agentUrl || prevSettings.aiModel !== nextSettings.aiModel) {
+                reconfigureAi(view, nextSettings.agentUrl, nextSettings.aiModel);
+            }
+
+            // Broadcast settings changes to other editors (unless we received them externally)
             if (prevSettings !== nextSettings && !receivingExternalSettings) {
                 // Compute the diff
                 const diff: Record<string, any> = {};

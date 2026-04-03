@@ -67,22 +67,23 @@ export class SearchIndex {
         }
     }
 
-    static from(fs: string, fields: IndexFields) {
-        const index = MiniSearch.loadJSON(fs, { fields, idField: 'path' })
+    static from(data: string, options: Options) {
+        const index = MiniSearch.loadJSON(data, options)
         return new SearchIndex(index)
     }
 
     static async get(fs: VfsInterface, path: string, fields: IndexFields = defaultFields): Promise<SearchIndex> {
+        const opts: Options = { fields, idField: 'path' };
         try {
             const data = await fs.exists(path) ? await fs.readFile(path) : null
             let index = data
-                ? SearchIndex.from(data, fields)
-                : await SearchIndex.build(fs, { fields, idField: 'path' }).then(idx => idx.save(fs, path))
+                ? SearchIndex.from(data, opts)
+                : await SearchIndex.build(fs, opts).then(idx => idx.save(fs, path))
             index.savePath = path
             return index
         } catch (err) {
             console.warn('Search index build failed, starting empty:', err);
-            const index = new SearchIndex(new MiniSearch({ fields, idField: 'path' }));
+            const index = new SearchIndex(new MiniSearch(opts));
             index.savePath = path;
             return index;
         }

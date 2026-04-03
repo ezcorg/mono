@@ -10,6 +10,7 @@ export interface EditorSettings {
     lineWrap: boolean;
     lspLogEnabled: boolean;
     agentUrl: string;
+    aiModel: string;
     terminalEnabled: boolean;
     maxVisibleLines: number; // 0 = unlimited
     showLineNumbers: boolean;
@@ -25,6 +26,7 @@ const defaultSettings: EditorSettings = {
     lineWrap: false,
     lspLogEnabled: false,
     agentUrl: '',
+    aiModel: 'sonnet',
     terminalEnabled: false,
     maxVisibleLines: 0,
     showLineNumbers: true,
@@ -266,18 +268,59 @@ export function createSettingsOverlay(view: EditorView): HTMLElement {
     agentRow.className = "cm-settings-row";
     const agentLabel = document.createElement("label");
     agentLabel.textContent = "Agent URL";
-    const agentInput = document.createElement("input");
-    agentInput.type = "text";
-    agentInput.className = "cm-settings-input";
-    agentInput.placeholder = "OpenAPI-compatible endpoint";
-    agentInput.value = settings.agentUrl;
-    agentInput.addEventListener("change", () => {
-        view.dispatch({ effects: updateSettingsEffect.of({ agentUrl: agentInput.value }) });
+    const agentSelect = document.createElement("select");
+    agentSelect.className = "cm-settings-select";
+    const agentOptions = [
+        { label: "Off", value: "" },
+        { label: "localhost:3141", value: "http://localhost:3141" },
+    ];
+    for (const opt of agentOptions) {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        if (settings.agentUrl === opt.value) option.selected = true;
+        agentSelect.appendChild(option);
+    }
+    agentSelect.addEventListener("change", () => {
+        view.dispatch({ effects: updateSettingsEffect.of({ agentUrl: agentSelect.value }) });
     });
     agentRow.appendChild(agentLabel);
-    agentRow.appendChild(agentInput);
+    agentRow.appendChild(agentSelect);
     aiSection.appendChild(agentRow);
-    // TODO: integrate via @marimo-team/codemirror-ai
+
+    // Model selector
+    const modelRow = document.createElement("div");
+    modelRow.className = "cm-settings-row";
+    const modelLabel = document.createElement("label");
+    modelLabel.textContent = "Model";
+    const modelSelect = document.createElement("select");
+    modelSelect.className = "cm-settings-select";
+    const modelOptions = [
+        { label: "Haiku (fast)", value: "haiku" },
+        { label: "Sonnet (balanced)", value: "sonnet" },
+        { label: "Opus (powerful)", value: "opus" },
+    ];
+    for (const opt of modelOptions) {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        if (settings.aiModel === opt.value) option.selected = true;
+        modelSelect.appendChild(option);
+    }
+    modelSelect.addEventListener("change", () => {
+        view.dispatch({ effects: updateSettingsEffect.of({ aiModel: modelSelect.value }) });
+    });
+    modelRow.appendChild(modelLabel);
+    modelRow.appendChild(modelSelect);
+    aiSection.appendChild(modelRow);
+
+    const aiHintRow = document.createElement("div");
+    aiHintRow.className = "cm-settings-row";
+    const aiHintLabel = document.createElement("label");
+    aiHintLabel.style.opacity = '0.6';
+    aiHintLabel.textContent = "Select code and press Ctrl+L to edit with AI";
+    aiHintRow.appendChild(aiHintLabel);
+    aiSection.appendChild(aiHintRow);
 
     overlay.appendChild(aiSection);
 

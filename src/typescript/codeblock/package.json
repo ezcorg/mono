@@ -1,6 +1,6 @@
 {
   "name": "@joinezco/codeblock",
-  "version": "0.0.11",
+  "version": "0.0.13",
   "type": "module",
   "module": "dist/index.js",
   "main": "dist/index.js",
@@ -12,6 +12,7 @@
     "build": "tsc",
     "build:preview": "vite build",
     "preview": "vite preview",
+    "ai-proxy": "tsx src/ai/proxy-server.ts",
     "test": "vitest run src/e2e/",
     "test:e2e": "vitest run src/e2e/"
   },
@@ -70,6 +71,7 @@
     "@jsonjoy.com/util": "^1.6.0",
     "@lezer/highlight": "^1.2.1",
     "@m234/nerd-fonts": "^0.5.0",
+    "@marimo-team/codemirror-ai": "^0.3.5",
     "@typescript/vfs": "^1.6.1",
     "@uiw/codemirror-theme-vscode": "^4.23.12",
     "@volar/language-server": "2.4.13",

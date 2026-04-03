@@ -10,6 +10,31 @@ export default defineConfig({
         worker: {
             format: 'es',
         },
+        server: {
+            headers: {
+                'Cross-Origin-Embedder-Policy': 'credentialless',
+                'Cross-Origin-Opener-Policy': 'same-origin',
+            },
+        },
+        optimizeDeps: {
+            include: [
+                '@codemirror/lang-javascript',
+                '@codemirror/lang-python',
+                '@codemirror/lang-rust',
+                '@codemirror/lang-css',
+                '@codemirror/lang-sass',
+                '@codemirror/lang-less',
+                '@codemirror/lang-html',
+                '@codemirror/lang-json',
+                '@codemirror/lang-xml',
+                '@codemirror/lang-markdown',
+                '@codemirror/lang-sql',
+                '@codemirror/lang-php',
+                '@codemirror/lang-java',
+                '@codemirror/lang-cpp',
+                '@codemirror/lang-yaml',
+            ],
+        },
     },
     site: 'https://tbrockman.github.io',
     base: '/',

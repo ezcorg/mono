@@ -31,17 +31,26 @@ import { Clipboard, Check } from "lucide-astro";
 		import { files } from "../data/work.js";
 
 		async function init() {
-			const fs = await CodeblockFS.fsa("ezco-demo");
+			const fs = await CodeblockFS.worker(undefined, "ezco-demo");
 
-			// Seed files only if hello.md doesn't exist yet (first visit)
-			const exists = await fs.exists("hello.md");
-			if (!exists) {
-				await Promise.all(
-					files.map(async ([path, content]) => {
+			// Seed demo files — always write if content is empty or missing
+			await Promise.all(
+				files.map(async ([path, content]) => {
+					try {
+						const existing = await fs.exists(path);
+						if (!existing) {
+							await fs.writeFile(path, content);
+						} else {
+							const current = await fs.readFile(path);
+							if (!current || current.length === 0) {
+								await fs.writeFile(path, content);
+							}
+						}
+					} catch {
 						await fs.writeFile(path, content);
-					}),
-				);
-			}
+					}
+				}),
+			);
 
 			const { createEditor } = await import("@joinezco/markdown-editor");
 			const container = document.getElementById("editor-mount")!;
@@ -54,6 +63,7 @@ import { Clipboard, Check } from "lucide-astro";
 					fs,
 					filepath: "hello.md",
 				},
+				toolbar: {},
 			});
 			editor.view.dom.setAttribute("data-theme", "dark");
 		}
@@ -69,6 +79,24 @@ import { Clipboard, Check } from "lucide-astro";
 	</script>
 
 	<style>
+		@font-face {
+			font-family: "Source Serif 4";
+			src: url("/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf") format("truetype-variations");
+			font-weight: 200 900;
+			font-style: normal;
+		}
+
+		@font-face {
+			font-family: "Source Serif 4";
+			src: url("/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf") format("truetype-variations");
+			font-weight: 200 900;
+			font-style: italic;
+		}
+
+		#editor-mount :global(.ProseMirror) {
+			font-family: 'Source Serif 4', system-ui, Avenir, Helvetica, Arial, serif;
+		}
+
 		.install-cmd {
 			font-family: monospace;
 			font-size: 0.875rem;

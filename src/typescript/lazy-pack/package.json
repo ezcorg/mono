@@ -1,0 +1,20 @@
+{
+  "name": "@joinezco/lazy-pack",
+  "version": "0.0.1",
+  "description": "Build tool for creating lazy-loadable filesystem images",
+  "type": "module",
+  "bin": {
+    "lazy-pack": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
+  }
+}

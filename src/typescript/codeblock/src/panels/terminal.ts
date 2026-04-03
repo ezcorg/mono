@@ -361,7 +361,7 @@ async function initTerminal(view: EditorView, container: HTMLElement) {
                 EditorView.theme({
                     '&': {
                         background: 'var(--cm-toolbar-background)',
-                        color: dark ? '#d4d4d4' : '#1e1e1e',
+                        color: 'var(--cm-toolbar-color)',
                     },
                     '.cm-scroller': { overflow: 'hidden' },
                     '.cm-content': {
