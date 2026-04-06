@@ -455,6 +455,8 @@ impl Serialize for exports::witmproxy::plugin::witm_plugin::InputType {
             }
             InputType::Datetime => serializer.serialize_str("datetime"),
             InputType::Daterange => serializer.serialize_str("daterange"),
+            InputType::File => serializer.serialize_str("file"),
+            InputType::Binary => serializer.serialize_str("binary"),
         }
     }
 }
@@ -487,6 +489,8 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                     "number" => Ok(InputType::Number),
                     "datetime" => Ok(InputType::Datetime),
                     "daterange" => Ok(InputType::Daterange),
+                    "file" => Ok(InputType::File),
+                    "binary" => Ok(InputType::Binary),
                     _ => Err(de::Error::unknown_variant(
                         value,
                         &[
@@ -496,6 +500,8 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                             "select",
                             "datetime",
                             "daterange",
+                            "file",
+                            "binary",
                         ],
                     )),
                 }
@@ -522,6 +528,8 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                             "select",
                             "datetime",
                             "daterange",
+                            "file",
+                            "binary",
                         ],
                     )),
                 }
@@ -547,6 +555,15 @@ impl Serialize for exports::witmproxy::plugin::witm_plugin::ActualInput {
             ActualInput::Select(v) => map.serialize_entry("select", v)?,
             ActualInput::Datetime(v) => map.serialize_entry("datetime", v)?,
             ActualInput::Daterange(v) => map.serialize_entry("daterange", v)?,
+            ActualInput::File(v) => {
+                let file_map = serde_json::json!({
+                    "name": v.name,
+                    "content_type": v.content_type,
+                    "data": v.data,
+                });
+                map.serialize_entry("file", &file_map)?;
+            }
+            ActualInput::Binary(v) => map.serialize_entry("binary", v)?,
         }
         map.end()
     }
@@ -584,6 +601,35 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::ActualIn
                     "select" => Ok(ActualInput::Select(map.next_value()?)),
                     "datetime" => Ok(ActualInput::Datetime(map.next_value()?)),
                     "daterange" => Ok(ActualInput::Daterange(map.next_value()?)),
+                    "file" => {
+                        let v: serde_json::Value = map.next_value()?;
+                        let name = v
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let content_type = v
+                            .get("content_type")
+                            .and_then(|n| n.as_str())
+                            .map(|s| s.to_string());
+                        let data = v
+                            .get("data")
+                            .and_then(|d| d.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|b| b.as_u64().map(|n| n as u8))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        Ok(ActualInput::File(
+                            exports::witmproxy::plugin::witm_plugin::FileInput {
+                                name,
+                                content_type,
+                                data,
+                            },
+                        ))
+                    }
+                    "binary" => Ok(ActualInput::Binary(map.next_value()?)),
                     _ => Err(de::Error::unknown_variant(
                         &key,
                         &[
@@ -593,6 +639,8 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::ActualIn
                             "select",
                             "datetime",
                             "daterange",
+                            "file",
+                            "binary",
                         ],
                     )),
                 }

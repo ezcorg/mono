@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ---- Day (light) theme ---- */
+  :root,
+  [data-theme="light"] {
+    --color-bg: 224 242 254;          /* sky-100 */
+    --color-bg-deep: 186 230 253;     /* sky-200 */
+    --color-surface: 255 255 255;
+    --color-surface-hover: 240 249 255; /* sky-50 */
+    --color-text: 15 23 42;           /* slate-900 */
+    --color-text-muted: 71 85 105;    /* slate-600 */
+    --color-primary: 14 165 233;      /* sky-500 */
+    --color-primary-hover: 56 189 248; /* sky-400 */
+    --color-accent: 250 204 21;       /* sunshine-400 */
+    --color-accent-hover: 234 179 8;  /* sunshine-500 */
+    --color-success: 34 197 94;       /* meadow-500 */
+    --color-border: 186 230 253;      /* sky-200 */
+    --color-shadow: 0 0 0;
+
+    --gradient-sky: linear-gradient(180deg, #bae6fd 0%, #e0f2fe 40%, #f0f9ff 100%);
+    --shadow-ambient: 0 2px 12px rgba(0, 0, 0, 0.08);
+    --shadow-card: 0 4px 16px rgba(14, 165, 233, 0.1);
+  }
+
+  /* ---- Night (dark) theme ---- */
+  [data-theme="dark"] {
+    --color-bg: 15 23 42;             /* twilight-800 */
+    --color-bg-deep: 2 6 23;          /* twilight-900 */
+    --color-surface: 30 41 59;        /* twilight-700 */
+    --color-surface-hover: 51 65 85;  /* slate-700 */
+    --color-text: 245 230 211;        /* warm cream */
+    --color-text-muted: 148 163 184;  /* slate-400 */
+    --color-primary: 129 140 248;     /* moonlight-400 */
+    --color-primary-hover: 165 180 252; /* moonlight-300 */
+    --color-accent: 251 146 60;       /* campfire-400 */
+    --color-accent-hover: 253 186 116; /* campfire-300 */
+    --color-success: 74 222 128;      /* meadow-400 */
+    --color-border: 51 65 85;         /* slate-700 */
+    --color-shadow: 0 0 0;
+
+    --gradient-sky: linear-gradient(180deg, #020617 0%, #0f172a 50%, #1e293b 100%);
+    --shadow-ambient: 0 2px 12px rgba(0, 0, 0, 0.4);
+    --shadow-card: 0 4px 16px rgba(129, 140, 248, 0.08);
+  }
+
+  * {
+    border-color: rgb(var(--color-border));
+  }
+
+  body {
+    font-family: "Nunito", system-ui, sans-serif;
+    background: var(--gradient-sky);
+    color: rgb(var(--color-text));
+    min-height: 100vh;
+    transition: background 0.6s ease, color 0.3s ease;
+    overflow-x: hidden;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .surface {
+    background-color: rgb(var(--color-surface));
+    box-shadow: var(--shadow-card);
+  }
+
+  .surface-hover:hover {
+    background-color: rgb(var(--color-surface-hover));
+  }
+
+  .text-primary {
+    color: rgb(var(--color-primary));
+  }
+
+  .text-muted {
+    color: rgb(var(--color-text-muted));
+  }
+
+  .bg-primary {
+    background-color: rgb(var(--color-primary));
+  }
+
+  .bg-accent {
+    background-color: rgb(var(--color-accent));
+  }
+}
+
+/* Stars for night mode */
+[data-theme="dark"] .star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: white;
+  border-radius: 50%;
+  animation: twinkle 4s ease-in-out infinite;
+}
+
+/* Cloud decoration for day mode */
+.cloud {
+  position: absolute;
+  background: white;
+  border-radius: 9999px;
+  opacity: 0.6;
+  filter: blur(1px);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgb(var(--color-bg));
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-border));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-text-muted));
+}

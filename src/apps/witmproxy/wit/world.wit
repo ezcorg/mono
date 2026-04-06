@@ -175,6 +175,16 @@ interface witm-plugin {
         value: string,
     }
 
+    /// Metadata for a file input value
+    record file-input {
+        /// The original file name
+        name: string,
+        /// The MIME type of the file (if known)
+        content-type: option<string>,
+        /// The file contents as bytes
+        data: list<u8>,
+    }
+
     variant input-type {
         str,
         boolean,
@@ -182,6 +192,10 @@ interface witm-plugin {
         select(list<string>),
         datetime,
         daterange,
+        /// A file input (the user uploads a file)
+        file,
+        /// A raw binary data input
+        binary,
     }
 
     variant actual-input {
@@ -191,6 +205,10 @@ interface witm-plugin {
         select(string),
         datetime(string),
         daterange(tuple<string, string>),
+        /// A file with name, optional content-type, and data
+        file(file-input),
+        /// Raw binary data
+        binary(list<u8>),
     }
 
     record input-schema {

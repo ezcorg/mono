@@ -190,8 +190,7 @@ impl WebServer {
             app = app.push(manage_router);
         }
 
-        // TODO: get version from Cargo.toml
-        let doc = OpenApi::new("witmproxy", "0.0.1").merge_router(&app);
+        let doc = OpenApi::new("witmproxy", env!("CARGO_PKG_VERSION")).merge_router(&app);
         let app = app
             .unshift(doc.into_router("/api/docs/openapi.json"))
             .unshift(SwaggerUi::new("/api/docs/openapi.json").into_router("/swagger"));
