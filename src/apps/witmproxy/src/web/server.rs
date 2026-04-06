@@ -82,18 +82,29 @@ impl WebServer {
 
         salvo::http::request::set_global_secure_max_size(1024 * 1024 * 1024); // 1 GB
 
-        // TODO: HTTPS when cert is trusted
-        // Generate a certificate for the web server using our CA
-        let server_cert = self.ca.get_certificate_for_domain("127.0.0.1").await?;
-
-        // Build certificate chain: server cert + CA cert (in PEM format)
-        let ca_cert_pem = self.ca.get_root_certificate_pem()?;
-        let cert_chain = format!("{}\n{}", server_cert.pem_cert, ca_cert_pem);
-        let rustls = RustlsConfig::new(
-            Keycert::new()
-                .cert(cert_chain.as_bytes().to_vec())
-                .key(server_cert.pem_key.as_bytes().to_vec()),
-        );
+        // Build TLS config: use user-provided cert/key if available,
+        // otherwise generate one from our CA (e.g. for localhost dev).
+        // User-provided certs are useful with `tailscale cert` which
+        // produces publicly-trusted certs for your Tailscale hostname.
+        let rustls = if let (Some(cert_path), Some(key_path)) = (
+            &self.config.web.web_tls_cert_path,
+            &self.config.web.web_tls_key_path,
+        ) {
+            let cert_pem = std::fs::read(cert_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read TLS cert {:?}: {}", cert_path, e))?;
+            let key_pem = std::fs::read(key_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read TLS key {:?}: {}", key_path, e))?;
+            RustlsConfig::new(Keycert::new().cert(cert_pem).key(key_pem))
+        } else {
+            let server_cert = self.ca.get_certificate_for_domain("127.0.0.1").await?;
+            let ca_cert_pem = self.ca.get_root_certificate_pem()?;
+            let cert_chain = format!("{}\n{}", server_cert.pem_cert, ca_cert_pem);
+            RustlsConfig::new(
+                Keycert::new()
+                    .cert(cert_chain.as_bytes().to_vec())
+                    .key(server_cert.pem_key.as_bytes().to_vec()),
+            )
+        };
 
         let acceptor = TcpListener::new(bind_addr).rustls(rustls).bind().await;
         // Store the actual bound address

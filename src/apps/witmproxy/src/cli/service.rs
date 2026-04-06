@@ -307,20 +307,25 @@ impl ServiceHandler {
             .context("Failed to save configuration")?;
         info!("Configuration saved to {:?}", config_path);
 
-        // Build arguments for the 'serve' subcommand
+        // Build arguments for the 'serve' subcommand.
+        // Global args (--config-path, --verbose) go BEFORE the subcommand;
+        // subcommand args (--plugin-dir, --auto, --log-file) go AFTER it.
         let mut args: Vec<OsString> = vec![];
 
-        // Add config path (always exists now since we saved it above)
+        // Global args (defined on Cli)
         args.push("--config-path".into());
         args.push(config_path.into());
 
-        // Forward verbose flag
         if self.verbose {
             args.push("--verbose".into());
         }
 
-        // Forward plugin-dir (canonicalize to absolute path since the daemon's
-        // working directory differs from the user's current directory)
+        // Subcommand name
+        args.push("serve".into());
+
+        // Subcommand args (defined on ProxyRunOptions / Serve)
+        // Canonicalize plugin-dir to absolute path since the daemon's
+        // working directory differs from the user's current directory
         if let Some(ref plugin_dir) = self.plugin_dir {
             let absolute_dir = if plugin_dir.is_relative() {
                 std::env::current_dir()
@@ -333,15 +338,10 @@ impl ServiceHandler {
             args.push(absolute_dir.into());
         }
 
-        // Forward auto flag
         if self.auto {
             args.push("--auto".into());
         }
 
-        // Add the serve subcommand
-        args.push("serve".into());
-
-        // Add log file path
         let log_path = self.get_log_path();
         args.push("--log-file".into());
         args.push(log_path.clone().into());

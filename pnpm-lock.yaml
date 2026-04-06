@@ -91,6 +91,31 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  src/apps/ezfilter:
+    dependencies:
+      '@tauri-apps/api':
+        specifier: ^2
+        version: 2.5.0
+      '@tauri-apps/plugin-opener':
+        specifier: ^2
+        version: 2.2.6
+      solid-js:
+        specifier: ^1.9.3
+        version: 1.9.6
+    devDependencies:
+      '@tauri-apps/cli':
+        specifier: ^2
+        version: 2.5.0
+      typescript:
+        specifier: ~5.6.2
+        version: 5.6.3
+      vite:
+        specifier: ^6.0.3
+        version: 6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0)
+      vite-plugin-solid:
+        specifier: ^2.11.0
+        version: 2.11.6(solid-js@1.9.6)(vite@6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
+
   src/apps/ezfilter-client:
     dependencies:
       '@tauri-apps/api':

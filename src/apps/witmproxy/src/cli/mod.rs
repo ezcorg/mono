@@ -101,6 +101,10 @@ enum Commands {
         #[arg(short, long)]
         detach: bool,
     },
+    /// Stop the daemon service
+    ///
+    /// Stops the running witmproxy daemon service.
+    Stop,
     /// Run the proxy server directly in the foreground (no daemon)
     ///
     /// This starts the web and proxy servers directly in the current terminal.
@@ -198,6 +202,14 @@ impl Cli {
                     ResolvedCli::from_proxy_options(options, &config_path, verbose, detach)?;
                 let check = Self::maybe_spawn_update_check(&resolved.config);
                 let result = resolved.run_start().await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Stop => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let service_handler = service::ServiceHandler::new(config, verbose, None, false);
+                let result = service_handler.stop_service().await;
                 Self::show_update_warning(check).await;
                 result
             }

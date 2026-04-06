@@ -83,7 +83,6 @@ A cross-platform application which assumes `witmproxy` (which may be hosted loca
 * `notrump` - a plugin which filters Trump related content
 * `moredogs` - a plugin which injects additional dogs into your browsing experience
 * `focus` - a plugin which restricts your internet use to accomplishing set goals and avoiding distractions
-* `schedule` - a plugin which allows you to schedule when other plugins run (and how) 
 
 All `ezfilter` plugins must be open-source (as in you may view the unobfuscated client-side code which produced each binary in its whole) but they do not necessarily have to be free.
 
@@ -107,7 +106,7 @@ Our company, [`ez co`](https://joinez.co), is a worker-owned _democratic collect
   * Plugin creation tab (terminal to a WASM-based VM, optional file explorer, search bar, LLM-powered code editor)
 - [ ] Plugin marketplace:
   * How do we support third-party plugin building? Should the primary interface be the `ezfilter` UI itself (interacting with our remote servers)? How do we make source code available? How do plugin security review? How much (if anything) do we charge third-party plugins?
-    * Minimal plugin developer account fee: gives greater confidence of author authenticity (part of our security review), and helps us pay for the platform (which includes compute time and storage for building and hosting plugins+marketplace)
+    * Minimal plugin developer account fee: gives greater confidence of author authenticity (part of our security review), and helps us pay for the platform (which includes compute time, storage, and maintenance for building and hosting plugins+marketplace)
     * x% cut of earnings made through the marketplace (which are returned to plugin authors to balance our net profit goals)
     * Manual plugin review process (with automations to help)
 - [ ] Payment infrastructure:

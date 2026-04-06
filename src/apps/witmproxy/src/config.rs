@@ -232,6 +232,18 @@ pub struct WebConfig {
     /// The address the web frontend will bind to (default: 127.0.0.1:0)
     #[config(env = "WEB_BIND_ADDR", layer_attr(arg(long)))]
     pub web_bind_addr: Option<String>,
+
+    /// Path to a TLS certificate file (PEM) for the web server.
+    /// When set (along with web_tls_key_path), the web server uses this
+    /// certificate instead of auto-generating one from the proxy CA.
+    /// Useful with `tailscale cert` which produces <hostname>.crt/.key files.
+    #[config(env = "WEB_TLS_CERT_PATH", layer_attr(arg(long)))]
+    pub web_tls_cert_path: Option<PathBuf>,
+
+    /// Path to a TLS private key file (PEM) for the web server.
+    /// Must be set together with web_tls_cert_path.
+    #[config(env = "WEB_TLS_KEY_PATH", layer_attr(arg(long)))]
+    pub web_tls_key_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
@@ -283,6 +295,14 @@ impl AppConfig {
 
         // Resolve TLS certificate directory
         self.tls.cert_dir = expand_home_in_path(&self.tls.cert_dir)?;
+
+        // Resolve web TLS paths
+        if let Some(ref p) = self.web.web_tls_cert_path {
+            self.web.web_tls_cert_path = Some(expand_home_in_path(p)?);
+        }
+        if let Some(ref p) = self.web.web_tls_key_path {
+            self.web.web_tls_key_path = Some(expand_home_in_path(p)?);
+        }
 
         Ok(self)
     }
