@@ -1,5 +1,6 @@
 use salvo::http::StatusCode;
-use salvo::oapi::endpoint;
+use salvo::oapi::extract::JsonBody;
+use salvo::oapi::{ToSchema, endpoint};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -9,20 +10,20 @@ use crate::config::AuthConfig;
 use crate::db::tenants::Tenant;
 use crate::web::auth::{Claims, create_token, hash_password, verify_password};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
     pub display_name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuthResponse {
     pub token: String,
     pub tenant_id: String,
@@ -30,7 +31,7 @@ pub struct AuthResponse {
 
 /// POST /api/auth/register -- create a new tenant with email/password, return JWT.
 #[endpoint]
-pub async fn register(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn register(body: JsonBody<RegisterRequest>, depot: &mut Depot, res: &mut Response) {
     let pool = match depot.obtain::<SqlitePool>() {
         Ok(p) => p.clone(),
         Err(_) => {
@@ -49,14 +50,7 @@ pub async fn register(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         }
     };
 
-    let body: RegisterRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request body: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     // Check if email already exists
     if let Ok(Some(_)) = Tenant::by_email(&pool, &body.email).await {
@@ -119,7 +113,7 @@ pub async fn register(req: &mut Request, depot: &mut Depot, res: &mut Response) 
 
 /// POST /api/auth/login -- authenticate with email/password, return JWT.
 #[endpoint]
-pub async fn login(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn login(body: JsonBody<LoginRequest>, depot: &mut Depot, res: &mut Response) {
     let pool = match depot.obtain::<SqlitePool>() {
         Ok(p) => p.clone(),
         Err(_) => {
@@ -138,14 +132,7 @@ pub async fn login(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         }
     };
 
-    let body: LoginRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request body: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     let tenant = match Tenant::by_email(&pool, &body.email).await {
         Ok(Some(t)) => t,

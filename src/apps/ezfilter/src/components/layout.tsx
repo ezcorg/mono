@@ -1,7 +1,6 @@
 import { type JSX, Show } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
-import { Puzzle, Settings, ArrowLeft } from "lucide-solid";
-import { ThemeToggle } from "./theme-toggle";
+import { Puzzle, Settings } from "lucide-solid";
 import { DayNightScene } from "./day-night-scene";
 import { cn } from "../lib/cn";
 
@@ -55,7 +54,7 @@ export function Layout(props: LayoutProps) {
               })}
             </nav>
 
-            <ThemeToggle />
+            {/* Theme toggle moved to Settings page */}
           </header>
         </Show>
 

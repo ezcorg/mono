@@ -170,6 +170,16 @@ enum Commands {
     },
     /// Print version and build information
     Version,
+    /// Fetch and output the OpenAPI specification from a running server
+    Openapi {
+        /// URL of a running witmproxy server (reads from services.json if not specified)
+        #[arg(long)]
+        server: Option<String>,
+
+        /// Output file path (prints to stdout if not specified)
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -310,6 +320,60 @@ impl Cli {
             }
             Commands::Version => {
                 Self::print_version();
+                Ok(())
+            }
+            Commands::Openapi { server, output } => {
+                let url = if let Some(s) = server {
+                    s
+                } else {
+                    // Try to read from services.json
+                    let config = Self::load_config(&config_path)?;
+                    let app_dir = config
+                        .tls
+                        .cert_dir
+                        .parent()
+                        .unwrap_or(&PathBuf::from("."))
+                        .to_path_buf();
+                    let services_path = app_dir.join("services.json");
+                    let services: Services = serde_json::from_str(
+                        &std::fs::read_to_string(&services_path)
+                            .map_err(|_| anyhow::anyhow!(
+                                "No --server specified and no services.json found at {:?}. Is witmproxy running?",
+                                services_path
+                            ))?,
+                    )?;
+                    format!("https://{}", services.web)
+                };
+
+                // Fetch the OpenAPI spec, accepting self-signed certs
+                let client = reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .build()?;
+                let spec = client
+                    .get(format!(
+                        "{}/api/docs/openapi.json",
+                        url.trim_end_matches('/')
+                    ))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .text()
+                    .await?;
+
+                // Pretty-print the JSON
+                let parsed: serde_json::Value = serde_json::from_str(&spec)?;
+                let pretty = serde_json::to_string_pretty(&parsed)?;
+
+                if let Some(output_path) = output {
+                    if let Some(parent) = output_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&output_path, &pretty)?;
+                    eprintln!("OpenAPI spec written to: {:?}", output_path);
+                } else {
+                    println!("{}", pretty);
+                }
+
                 Ok(())
             }
         }
@@ -531,6 +595,69 @@ impl ResolvedCli {
             self.config.db.db_path.display()
         );
 
+        // Provision default admin account if it doesn't exist
+        if self.config.auth.enabled {
+            use crate::db::tenants::Tenant;
+            use crate::web::auth::hash_password;
+
+            let admin_email = &self.config.auth.admin_email;
+            match Tenant::by_email(&db.pool, admin_email).await {
+                Ok(Some(_)) => {
+                    info!("Admin account already exists: {}", admin_email);
+                }
+                Ok(None) => {
+                    let password = self.config.auth.admin_password.clone().unwrap_or_else(|| {
+                        use argon2::password_hash::rand_core::{OsRng, RngCore};
+                        let mut bytes = [0u8; 18];
+                        OsRng.fill_bytes(&mut bytes);
+                        hex::encode(bytes)[..24].to_string()
+                    });
+
+                    let password_hash = hash_password(&password)
+                        .map_err(|e| anyhow::anyhow!("Failed to hash admin password: {}", e))?;
+
+                    let tenant_id = uuid::Uuid::new_v4().to_string();
+                    Tenant::create(
+                        &db.pool,
+                        &tenant_id,
+                        "Admin",
+                        Some(admin_email),
+                        Some(&password_hash),
+                        None,
+                        None,
+                    )
+                    .await?;
+
+                    // Create "admins" group with full access and add the admin to it
+                    use crate::db::tenants::Group;
+                    let group_id = uuid::Uuid::new_v4().to_string();
+                    let perm_id = uuid::Uuid::new_v4().to_string();
+                    Group::create(&db.pool, &group_id, "admins", "Full administrative access")
+                        .await?;
+                    Group::add_permission(&db.pool, &perm_id, &group_id, "grant", "*:*:*").await?;
+                    Group::add_member(&db.pool, &group_id, &tenant_id).await?;
+                    info!("Admin group created with full access");
+
+                    info!("Default admin account created: {}", admin_email);
+                    if self.config.auth.admin_password.is_none() {
+                        println!("\n╔══════════════════════════════════════════╗");
+                        println!("║  Default admin account created           ║");
+                        println!("║  Email:    {}", admin_email);
+                        println!("║  Password: {}", password);
+                        println!("║                                          ║");
+                        println!("║  Save this password - it won't be        ║");
+                        println!("║  shown again. Set AUTH_ADMIN_PASSWORD     ║");
+                        println!("║  or --auth-admin-password to use your    ║");
+                        println!("║  own.                                    ║");
+                        println!("╚══════════════════════════════════════════╝\n");
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to check for admin account: {}", e);
+                }
+            }
+        }
+
         // Keep a pool handle for transparent proxy tenant resolution
         let db_pool = db.pool.clone();
 
@@ -560,7 +687,10 @@ impl ResolvedCli {
         }
 
         let ca_for_proxy = CertificateAuthority::new(self.config.tls.cert_dir.clone()).await?;
-        let mut proxy = WitmProxy::new(ca_for_proxy, plugin_registry.clone(), self.config.clone());
+        let config_path = app_dir.join("config.toml");
+        let mut proxy = WitmProxy::new(ca_for_proxy, plugin_registry.clone(), self.config.clone())
+            .with_config_path(config_path)
+            .with_db_pool(db_pool.clone());
         proxy.start().await?;
 
         // Capture the bound addresses

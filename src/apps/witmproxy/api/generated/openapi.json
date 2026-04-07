@@ -1,0 +1,93 @@
+{
+  "info": {
+    "title": "witmproxy",
+    "version": "0.0.1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "witmproxy.web.index_page",
+        "responses": {}
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "operationId": "witmproxy.web.auth_endpoints.login",
+        "responses": {},
+        "summary": "POST /api/auth/login -- authenticate with email/password, return JWT."
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "operationId": "witmproxy.web.auth_endpoints.register",
+        "responses": {},
+        "summary": "POST /api/auth/register -- create a new tenant with email/password, return JWT."
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "witmproxy.web.server.health_check",
+        "responses": {}
+      }
+    },
+    "/api/plugins": {
+      "get": {
+        "operationId": "witmproxy.web.server.list_plugins",
+        "responses": {}
+      },
+      "post": {
+        "operationId": "witmproxy.web.server.upsert_plugin",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "Upload a file."
+        },
+        "responses": {}
+      }
+    },
+    "/api/plugins/{namespace}/{name}": {
+      "delete": {
+        "operationId": "witmproxy.web.server.delete_plugin",
+        "parameters": [
+          {
+            "description": "Get parameter `namespace` from request url path.",
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Get parameter `name` from request url path.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/cert": {
+      "get": {
+        "operationId": "witmproxy.web.download_certificate",
+        "responses": {}
+      }
+    }
+  }
+}

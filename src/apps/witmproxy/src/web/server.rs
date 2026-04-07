@@ -7,6 +7,7 @@ use anyhow::Result;
 use rust_embed::RustEmbed;
 use salvo::Writer;
 use salvo::conn::rustls::{Keycert, RustlsConfig};
+use salvo::cors::{AllowHeaders, AllowMethods, AllowOrigin, Cors};
 use salvo::oapi::endpoint;
 use salvo::oapi::extract::{FormFile, PathParam};
 use salvo::prelude::ForceHttps;
@@ -26,6 +27,7 @@ pub struct WebServer {
     ca: CertificateAuthority,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     config: AppConfig,
+    config_path: Option<std::path::PathBuf>,
     db_pool: Option<SqlitePool>,
     shutdown_notify: Arc<Notify>,
     handle: Option<ServerHandle>,
@@ -45,6 +47,7 @@ impl WebServer {
             listen_addr: None,
             ca,
             config,
+            config_path: None,
             plugin_registry,
             db_pool: None,
             shutdown_notify: Arc::new(Notify::new()),
@@ -55,6 +58,12 @@ impl WebServer {
     /// Set the database pool for management API endpoints.
     pub fn with_db_pool(mut self, pool: SqlitePool) -> Self {
         self.db_pool = Some(pool);
+        self
+    }
+
+    /// Set the config file path so the management API can persist changes.
+    pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
+        self.config_path = Some(path);
         self
     }
 
@@ -109,83 +118,127 @@ impl WebServer {
         let acceptor = TcpListener::new(bind_addr).rustls(rustls).bind().await;
         // Store the actual bound address
         self.listen_addr = Some(acceptor.inner().local_addr()?);
+        let cors = Cors::new()
+            .allow_origin(AllowOrigin::any())
+            .allow_methods(AllowMethods::any())
+            .allow_headers(AllowHeaders::any())
+            .into_handler();
+
         let mut app = Router::new()
             .hoop(ForceHttps::new().https_port(self.listen_addr.unwrap().port()))
+            .hoop(cors)
             .hoop(affix_state::inject(state))
             .push(Router::with_path("/").get(index_page))
             .push(Router::with_path("/cert").get(download_certificate))
-            .push(Router::with_path("/api/health").get(health_check))
             .push(
-                Router::with_path("/api/plugins")
-                    .get(list_plugins)
-                    .post(upsert_plugin),
+                Router::with_path("/api/health")
+                    .get(health_check)
+                    .options(preflight),
             )
-            .push(Router::with_path("/api/plugins/{namespace}/{name}").delete(delete_plugin))
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
-        // Auth endpoints (unauthenticated)
-        app = app
-            .push(Router::with_path("/api/auth/register").post(auth_endpoints::register))
-            .push(Router::with_path("/api/auth/login").post(auth_endpoints::login));
-
-        // Inject auth config and db pool for auth/management endpoints
+        // Inject db pool and auth config for auth + management endpoints
         if let Some(ref pool) = self.db_pool {
             app = app
                 .hoop(affix_state::inject(pool.clone()))
-                .hoop(affix_state::inject(self.config.auth.clone()));
+                .hoop(affix_state::inject(self.config.auth.clone()))
+                .hoop(affix_state::inject(self.config.clone()))
+                .hoop(affix_state::inject(management::ConfigPath(
+                    self.config_path.clone().unwrap_or_default(),
+                )));
+
+            // Auth endpoints (unauthenticated, but need db pool + auth config)
+            app = app
+                .push(
+                    Router::with_path("/api/auth/register")
+                        .post(auth_endpoints::register)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/auth/login")
+                        .post(auth_endpoints::login)
+                        .options(preflight),
+                );
 
             // Management endpoints (JWT + ACL protected)
             // Routes ordered most-specific first to avoid prefix-matching issues
             let manage_router = Router::new()
                 .hoop(jwt_auth)
                 .hoop(acl_check)
-                // Group permissions (most specific first)
                 .push(
                     Router::with_path("/api/manage/groups/{id}/permissions/{permission_id}")
-                        .delete(management::remove_group_permission),
+                        .delete(management::remove_group_permission)
+                        .options(preflight),
                 )
                 .push(
                     Router::with_path("/api/manage/groups/{id}/permissions")
-                        .post(management::add_group_permission),
+                        .post(management::add_group_permission)
+                        .options(preflight),
                 )
-                // Group members
                 .push(
                     Router::with_path("/api/manage/groups/{id}/members")
                         .post(management::add_group_member)
-                        .delete(management::remove_group_member),
+                        .delete(management::remove_group_member)
+                        .options(preflight),
                 )
-                // Tenant plugin config
                 .push(
                     Router::with_path("/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled")
-                        .put(management::set_tenant_plugin_enabled),
+                        .put(management::set_tenant_plugin_enabled)
+                        .options(preflight),
                 )
                 .push(
                     Router::with_path("/api/manage/tenants/{id}/plugins/{ns}/{name}/config")
-                        .put(management::set_tenant_plugin_config),
+                        .put(management::set_tenant_plugin_config)
+                        .options(preflight),
                 )
-                // Tenant IP mappings
                 .push(
                     Router::with_path("/api/manage/tenants/{id}/ip-mappings")
                         .get(management::list_ip_mappings)
                         .post(management::add_ip_mapping)
-                        .delete(management::remove_ip_mapping),
+                        .delete(management::remove_ip_mapping)
+                        .options(preflight),
                 )
-                // Single resource routes
-                .push(Router::with_path("/api/manage/groups/{id}").delete(management::delete_group))
+                .push(
+                    Router::with_path("/api/manage/groups/{id}")
+                        .delete(management::delete_group)
+                        .options(preflight),
+                )
                 .push(
                     Router::with_path("/api/manage/tenants/{id}")
                         .get(management::get_tenant)
                         .put(management::update_tenant)
-                        .delete(management::delete_tenant),
+                        .delete(management::delete_tenant)
+                        .options(preflight),
                 )
-                // Collection routes (least specific)
                 .push(
                     Router::with_path("/api/manage/groups")
                         .get(management::list_groups)
-                        .post(management::create_group),
+                        .post(management::create_group)
+                        .options(preflight),
                 )
-                .push(Router::with_path("/api/manage/tenants").get(management::list_tenants));
+                .push(
+                    Router::with_path("/api/manage/tenants")
+                        .get(management::list_tenants)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/manage/config")
+                        .get(management::get_config)
+                        .put(management::update_config)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/plugins")
+                        .get(list_plugins)
+                        .post(upsert_plugin)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/plugins/{namespace}/{name}")
+                        .delete(delete_plugin)
+                        .options(preflight),
+                );
 
             app = app.push(manage_router);
         }
@@ -221,7 +274,13 @@ impl WebServer {
     }
 }
 
-// // Health check endpoint
+/// Responds to CORS preflight OPTIONS requests with 204 No Content.
+/// The CORS hoop adds the Access-Control-Allow-* headers automatically.
+#[endpoint]
+async fn preflight(res: &mut salvo::Response) {
+    res.status_code(salvo::http::StatusCode::NO_CONTENT);
+}
+
 #[endpoint]
 async fn health_check(res: &mut salvo::Response) {
     res.status_code(salvo::http::StatusCode::OK);

@@ -1,11 +1,12 @@
 import { createSignal, createResource, For, Show, onMount } from "solid-js";
 import { A } from "@solidjs/router";
 import {
+  AlertTriangle,
   Puzzle,
   Settings,
   Power,
   PowerOff,
-  Upload,
+  FileDown,
   RefreshCw,
   Search,
   Shield,
@@ -20,7 +21,7 @@ import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { Skeleton } from "../components/ui/skeleton";
-import { WitmproxyClient } from "../lib/api/client";
+import { api } from "../lib/api/client";
 import { getApiBaseUrl } from "../lib/stores/config";
 import { getToken } from "../lib/stores/auth";
 import { cn } from "../lib/cn";
@@ -86,15 +87,37 @@ const KNOWN_PLUGINS: Record<
 export default function PluginsPage() {
   const [search, setSearch] = createSignal("");
   const [refreshKey, setRefreshKey] = createSignal(0);
+  const [importing, setImporting] = createSignal(false);
+  const [importError, setImportError] = createSignal<string | null>(null);
+  let fileInputRef: HTMLInputElement | undefined;
+
+  async function handleImportPlugin(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    const token = getToken();
+    if (!token) return;
+    setImporting(true);
+    setImportError(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await api.uploadPlugin(getApiBaseUrl(), token, bytes, file.name);
+      setRefreshKey((k) => k + 1);
+    } catch (err: any) {
+      const msg = err?.body ?? err?.message ?? "Unknown error importing plugin";
+      setImportError(msg);
+    } finally {
+      setImporting(false);
+      input.value = "";
+    }
+  }
 
   const [plugins, { refetch }] = createResource(
     () => refreshKey(),
     async () => {
-      const client = new WitmproxyClient(getApiBaseUrl());
       const token = getToken();
-      if (token) client.setToken(token);
-
-      const names = await client.listPlugins();
+      const names = await api.listPlugins(getApiBaseUrl(), token ?? "");
+      if (!Array.isArray(names)) return [];
       return names.map(
         (fullName): PluginInfo => ({
           fullName,
@@ -137,10 +160,24 @@ export default function PluginsPage() {
           >
             <RefreshCw class="h-4 w-4" />
           </Button>
-          <Button variant="secondary" size="sm">
-            <Upload class="h-4 w-4" />
-            <span class="hidden sm:inline">Upload Plugin</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fileInputRef?.click()}
+            disabled={importing()}
+          >
+            <FileDown class="h-4 w-4" />
+            <span class="hidden sm:inline">
+              {importing() ? "Importing..." : "Import plugin"}
+            </span>
           </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".wasm"
+            class="hidden"
+            onChange={handleImportPlugin}
+          />
         </div>
       </div>
 
@@ -155,7 +192,35 @@ export default function PluginsPage() {
         />
       </div>
 
+      {/* Import error banner */}
+      <Show when={importError()}>
+        <div class="mb-4 flex items-start gap-2 rounded-2xl border border-red-500/30 bg-red-500/5 p-4">
+          <AlertTriangle class="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+          <div class="flex-1">
+            <p class="text-sm font-display font-semibold text-red-500">Failed to import plugin</p>
+            <p class="text-xs text-red-400 mt-0.5">{importError()}</p>
+          </div>
+          <button
+            class="text-red-400 hover:text-red-500 text-xs"
+            onClick={() => setImportError(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      </Show>
+
       {/* Plugin grid */}
+      <Show when={plugins.error}>
+        <div class="mb-4 flex items-start gap-2 rounded-2xl border border-red-500/30 bg-red-500/5 p-4">
+          <AlertTriangle class="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+          <div class="flex-1">
+            <p class="text-sm font-display font-semibold text-red-500">Failed to load plugins</p>
+            <p class="text-xs text-red-400 mt-0.5">
+              {(plugins.error as any)?.body ?? (plugins.error as any)?.message ?? "Unknown error"}
+            </p>
+          </div>
+        </div>
+      </Show>
       <Show
         when={!plugins.loading}
         fallback={

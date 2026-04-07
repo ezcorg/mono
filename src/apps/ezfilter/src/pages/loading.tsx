@@ -2,7 +2,6 @@ import { onMount } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { isSetupComplete } from "../lib/stores/config";
 import { DayNightScene } from "../components/day-night-scene";
-import { ThemeToggle } from "../components/theme-toggle";
 
 export default function LoadingPage() {
   const navigate = useNavigate();
@@ -22,11 +21,6 @@ export default function LoadingPage() {
   return (
     <div class="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
       <DayNightScene />
-
-      {/* Theme toggle in corner */}
-      <div class="absolute top-4 right-4 z-20">
-        <ThemeToggle />
-      </div>
 
       <div class="relative z-10 flex flex-col items-center gap-6 animate-fade-in">
         {/* Cloud character - inspired by the hand-drawn ezfilter SVG */}

@@ -1,6 +1,6 @@
 use salvo::http::StatusCode;
-use salvo::oapi::endpoint;
-use salvo::oapi::extract::PathParam;
+use salvo::oapi::extract::{JsonBody, PathParam};
+use salvo::oapi::{ToSchema, endpoint};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -12,7 +12,7 @@ use crate::db::tenants::{self, Group, Tenant};
 // Tenant endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct TenantResponse {
     id: String,
     display_name: String,
@@ -84,7 +84,7 @@ pub async fn get_tenant(id: PathParam<String>, depot: &mut Depot, res: &mut Resp
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTenantRequest {
     pub display_name: Option<String>,
     pub enabled: Option<bool>,
@@ -94,7 +94,7 @@ pub struct UpdateTenantRequest {
 #[endpoint]
 pub async fn update_tenant(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<UpdateTenantRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -107,14 +107,7 @@ pub async fn update_tenant(
         }
     };
 
-    let body: UpdateTenantRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     let tenant_id = id.into_inner();
 
@@ -187,7 +180,7 @@ pub async fn delete_tenant(id: PathParam<String>, depot: &mut Depot, res: &mut R
 // Group endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct GroupResponse {
     id: String,
     name: String,
@@ -229,7 +222,7 @@ pub async fn list_groups(depot: &mut Depot, res: &mut Response) {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateGroupRequest {
     pub name: String,
     pub description: Option<String>,
@@ -237,7 +230,11 @@ pub struct CreateGroupRequest {
 
 /// POST /api/manage/groups -- create a group.
 #[endpoint]
-pub async fn create_group(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+pub async fn create_group(
+    body: JsonBody<CreateGroupRequest>,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
     let pool = match depot.obtain::<SqlitePool>() {
         Ok(p) => p.clone(),
         Err(_) => {
@@ -247,14 +244,7 @@ pub async fn create_group(req: &mut Request, depot: &mut Depot, res: &mut Respon
         }
     };
 
-    let body: CreateGroupRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     let group_id = uuid::Uuid::new_v4().to_string();
     let description = body.description.as_deref().unwrap_or("");
@@ -305,7 +295,7 @@ pub async fn delete_group(id: PathParam<String>, depot: &mut Depot, res: &mut Re
 // Group membership endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct MemberRequest {
     pub tenant_id: String,
 }
@@ -314,7 +304,7 @@ pub struct MemberRequest {
 #[endpoint]
 pub async fn add_group_member(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<MemberRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -327,14 +317,7 @@ pub async fn add_group_member(
         }
     };
 
-    let body: MemberRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     match Group::add_member(&pool, &id.into_inner(), &body.tenant_id).await {
         Ok(()) => {
@@ -353,7 +336,7 @@ pub async fn add_group_member(
 #[endpoint]
 pub async fn remove_group_member(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<MemberRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -366,14 +349,7 @@ pub async fn remove_group_member(
         }
     };
 
-    let body: MemberRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     match Group::remove_member(&pool, &id.into_inner(), &body.tenant_id).await {
         Ok(()) => {
@@ -392,7 +368,7 @@ pub async fn remove_group_member(
 // Group permissions endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AddPermissionRequest {
     pub effect: String,
     pub resource: String,
@@ -402,7 +378,7 @@ pub struct AddPermissionRequest {
 #[endpoint]
 pub async fn add_group_permission(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<AddPermissionRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -415,14 +391,7 @@ pub async fn add_group_permission(
         }
     };
 
-    let body: AddPermissionRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     // Validate effect
     if body.effect != "grant" && body.effect != "deny" {
@@ -498,7 +467,7 @@ pub async fn remove_group_permission(
 // Tenant plugin configuration endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetPluginEnabledRequest {
     pub enabled: bool,
 }
@@ -509,7 +478,7 @@ pub async fn set_tenant_plugin_enabled(
     id: PathParam<String>,
     ns: PathParam<String>,
     name: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<SetPluginEnabledRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -522,14 +491,7 @@ pub async fn set_tenant_plugin_enabled(
         }
     };
 
-    let body: SetPluginEnabledRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     match tenants::set_plugin_override(
         &pool,
@@ -552,7 +514,7 @@ pub async fn set_tenant_plugin_enabled(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetPluginConfigRequest {
     pub config: std::collections::HashMap<String, String>,
 }
@@ -563,7 +525,7 @@ pub async fn set_tenant_plugin_config(
     id: PathParam<String>,
     ns: PathParam<String>,
     name: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<SetPluginConfigRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -576,14 +538,7 @@ pub async fn set_tenant_plugin_config(
         }
     };
 
-    let body: SetPluginConfigRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     let tenant_id = id.into_inner();
     let namespace = ns.into_inner();
@@ -615,7 +570,7 @@ pub async fn set_tenant_plugin_config(
 // Tenant IP mapping endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IpMappingRequest {
     pub ip_address: String,
 }
@@ -661,7 +616,7 @@ pub async fn list_ip_mappings(id: PathParam<String>, depot: &mut Depot, res: &mu
 #[endpoint]
 pub async fn add_ip_mapping(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<IpMappingRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -674,14 +629,7 @@ pub async fn add_ip_mapping(
         }
     };
 
-    let body: IpMappingRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     match tenants::add_ip_mapping(&pool, &id.into_inner(), &body.ip_address).await {
         Ok(()) => {
@@ -700,7 +648,7 @@ pub async fn add_ip_mapping(
 #[endpoint]
 pub async fn remove_ip_mapping(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<IpMappingRequest>,
     depot: &mut Depot,
     res: &mut Response,
 ) {
@@ -713,14 +661,7 @@ pub async fn remove_ip_mapping(
         }
     };
 
-    let body: IpMappingRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
+    let body = body.into_inner();
 
     match tenants::remove_ip_mapping(&pool, &id.into_inner(), &body.ip_address).await {
         Ok(()) => {
@@ -734,3 +675,95 @@ pub async fn remove_ip_mapping(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Configuration endpoints
+// ---------------------------------------------------------------------------
+
+/// Subset of AppConfig fields that are safe to expose and modify at runtime.
+/// Excludes sensitive fields (db_password, jwt_secret, admin_password) and
+/// fields that require a restart to take effect (bind addresses, cert paths).
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeConfig {
+    pub plugins_enabled: bool,
+    pub plugins_timeout_ms: u64,
+    pub plugins_max_memory_mb: u64,
+    pub plugins_max_fuel: u64,
+    pub auto_update: bool,
+    pub transparent_enabled: bool,
+}
+
+impl RuntimeConfig {
+    fn from_app_config(config: &crate::config::AppConfig) -> Self {
+        Self {
+            plugins_enabled: config.plugins.enabled,
+            plugins_timeout_ms: config.plugins.timeout_ms,
+            plugins_max_memory_mb: config.plugins.max_memory_mb,
+            plugins_max_fuel: config.plugins.max_fuel,
+            auto_update: config.update.auto_update,
+            transparent_enabled: config.transparent.enabled,
+        }
+    }
+
+    fn apply_to(&self, config: &mut crate::config::AppConfig) {
+        config.plugins.enabled = self.plugins_enabled;
+        config.plugins.timeout_ms = self.plugins_timeout_ms;
+        config.plugins.max_memory_mb = self.plugins_max_memory_mb;
+        config.plugins.max_fuel = self.plugins_max_fuel;
+        config.update.auto_update = self.auto_update;
+        config.transparent.enabled = self.transparent_enabled;
+    }
+}
+
+/// GET /api/manage/config -- get current runtime configuration.
+#[endpoint]
+pub async fn get_config(depot: &mut Depot, res: &mut Response) {
+    let config = match depot.obtain::<crate::config::AppConfig>() {
+        Ok(c) => c.clone(),
+        Err(_) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Text::Plain("Config not available"));
+            return;
+        }
+    };
+
+    res.render(Json(RuntimeConfig::from_app_config(&config)));
+}
+
+/// PUT /api/manage/config -- update runtime configuration and persist to disk.
+#[endpoint]
+pub async fn update_config(body: JsonBody<RuntimeConfig>, depot: &mut Depot, res: &mut Response) {
+    let mut config = match depot.obtain::<crate::config::AppConfig>() {
+        Ok(c) => c.clone(),
+        Err(_) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Text::Plain("Config not available"));
+            return;
+        }
+    };
+
+    let config_path = match depot.obtain::<ConfigPath>() {
+        Ok(p) => p.0.clone(),
+        Err(_) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Text::Plain("Config path not available"));
+            return;
+        }
+    };
+
+    let updates = body.into_inner();
+    updates.apply_to(&mut config);
+
+    if let Err(e) = config.save(&config_path) {
+        warn!("Failed to save config: {}", e);
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Text::Plain(format!("Failed to save config: {}", e)));
+        return;
+    }
+
+    res.render(Json(RuntimeConfig::from_app_config(&config)));
+}
+
+/// Newtype for injecting the config file path via depot
+#[derive(Clone)]
+pub struct ConfigPath(pub std::path::PathBuf);

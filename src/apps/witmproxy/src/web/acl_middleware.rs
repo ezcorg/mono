@@ -21,6 +21,11 @@ pub async fn acl_check(
     res: &mut Response,
     ctrl: &mut FlowCtrl,
 ) {
+    // Skip ACL for CORS preflight requests
+    if req.method() == salvo::http::Method::OPTIONS {
+        return;
+    }
+
     // If auth is disabled, skip ACL checks
     let _auth_config = match depot.obtain::<crate::config::AuthConfig>() {
         Ok(config) if config.enabled => config.clone(),

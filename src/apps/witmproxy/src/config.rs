@@ -108,6 +108,21 @@ pub struct AuthConfig {
     /// JWT secret for local token signing
     #[config(env = "AUTH_JWT_SECRET", layer_attr(arg(long = "auth-jwt-secret")))]
     pub jwt_secret: Option<String>,
+
+    /// Default admin email (default: admin@localhost)
+    #[config(
+        default = "admin@localhost",
+        env = "AUTH_ADMIN_EMAIL",
+        layer_attr(arg(long = "auth-admin-email"))
+    )]
+    pub admin_email: String,
+
+    /// Default admin password (if unset, a random password is generated on first startup)
+    #[config(
+        env = "AUTH_ADMIN_PASSWORD",
+        layer_attr(arg(long = "auth-admin-password"))
+    )]
+    pub admin_password: Option<String>,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]

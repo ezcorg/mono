@@ -1,6 +1,8 @@
-// Types matching the witmproxy WIT world and REST API
-
-// ── Input configuration types (from wit/world.wit) ──
+// Types matching the witmproxy WIT world plugin interface (wit/world.wit).
+// These represent the plugin input-config schema and are NOT part of the
+// REST API -- they're used by the plugin config UI to render dynamic forms.
+//
+// API response types are generated from the OpenAPI spec (see ./generated/).
 
 export type InputType =
   | { kind: "str" }
@@ -84,42 +86,3 @@ export interface PluginManifest {
   configuration: InputSchema[];
 }
 
-// ── API response types ──
-
-export interface Tenant {
-  id: string;
-  email: string;
-  displayName?: string;
-  enabled: boolean;
-}
-
-export interface Group {
-  id: string;
-  name: string;
-  description?: string;
-}
-
-export interface Permission {
-  id: string;
-  effect: "grant" | "deny";
-  resource: string;
-}
-
-export interface IpMapping {
-  ip: string;
-  tenantId: string;
-}
-
-export interface AuthTokens {
-  token: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface RegisterRequest {
-  email: string;
-  password: string;
-}
