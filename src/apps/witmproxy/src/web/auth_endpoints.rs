@@ -38,12 +38,12 @@ pub async fn register(
 ) -> Result<Json<AuthResponse>, StatusError> {
     let pool = depot
         .obtain::<SqlitePool>()
-        .map(|p| p.clone())
+        .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Database not available"))?;
 
     let auth_config = depot
         .obtain::<AuthConfig>()
-        .map(|c| c.clone())
+        .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Auth config not available"))?;
 
     let body = body.into_inner();
@@ -101,12 +101,12 @@ pub async fn login(
 ) -> Result<Json<AuthResponse>, StatusError> {
     let pool = depot
         .obtain::<SqlitePool>()
-        .map(|p| p.clone())
+        .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Database not available"))?;
 
     let auth_config = depot
         .obtain::<AuthConfig>()
-        .map(|c| c.clone())
+        .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Auth config not available"))?;
 
     let body = body.into_inner();

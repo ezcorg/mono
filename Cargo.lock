@@ -2685,6 +2685,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ezfilter-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fantoccini 0.22.1",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-subscriber",
+ "which 8.0.2",
+ "witmproxy",
+ "witmproxy-test",
+]
+
+[[package]]
 name = "eznote"
 version = "0.1.0"
 dependencies = [

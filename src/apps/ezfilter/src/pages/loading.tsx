@@ -87,7 +87,7 @@ export default function LoadingPage() {
 
         {/* App name */}
         <div class="text-center">
-          <h1 class="text-5xl font-extrabold font-display tracking-tight">
+          <h1 class="text-5xl font-extrabold font-title tracking-tight">
             <span class="text-[rgb(var(--color-primary))]">ez</span>
             <span>filter</span>
           </h1>

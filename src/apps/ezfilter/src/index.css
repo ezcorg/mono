@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "Amanojaku";
+  src: url("/fonts/Amanojaku.otf") format("opentype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 @layer base {
   /* ---- Day (light) theme ---- */
   :root,
@@ -91,7 +99,12 @@
   }
 }
 
-/* (Old star/cloud decorations removed — replaced by cozy.svg background) */
+/* Title font */
+.font-title {
+  font-family: "Amanojaku", "Nunito", system-ui, sans-serif;
+}
+
+/* Removed: text-over-image (replaced by scrim overlay on background) */
 
 /* Overlay scrollbar — floats over content, never causes layout shift */
 .scrollbar-float {

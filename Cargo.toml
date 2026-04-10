@@ -9,6 +9,7 @@ members = [
     "src/rust/witmproxy-plugin-noshorts",
     "src/rust/cicd",
     "src/apps/ezfilter/src-tauri",
+    "src/apps/ezfilter/e2e",
 ]
 exclude = []
 

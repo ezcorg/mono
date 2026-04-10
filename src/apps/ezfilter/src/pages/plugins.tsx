@@ -24,7 +24,7 @@ import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
 import { api } from "../lib/api/client";
 import { getApiBaseUrl } from "../lib/stores/config";
-import { getToken, getTenantId } from "../lib/stores/auth";
+import { getToken } from "../lib/stores/auth";
 import { cn } from "../lib/cn";
 import { t } from "../lib/i18n";
 import { getCapMeta } from "../lib/capabilities";
@@ -77,39 +77,47 @@ export default function PluginsPage() {
     const file = input.files?.[0];
     if (!file) return;
     setImportError(null);
+    setImporting(true);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      // Derive a basic set of capabilities from file name convention
-      // In production this would come from parsing the WASM module metadata
-      const caps = ["network:read", "dom:modify", "storage:local"];
-      setPendingPlugin({ name: file.name, bytes, capabilities: caps });
-      setCapReviewOpen(true);
-    } catch (err: any) {
-      const msg = err?.body ?? err?.message ?? "Unknown error reading plugin";
-      setImportError(msg);
-    } finally {
-      input.value = "";
-    }
-  }
+      const token = getToken();
+      if (!token) return;
 
-  async function confirmPluginInstall() {
-    const pending = pendingPlugin();
-    if (!pending) return;
-    const token = getToken();
-    if (!token) return;
-    setImporting(true);
-    setImportError(null);
-    setCapReviewOpen(false);
-    try {
-      await api.uploadPlugin(getApiBaseUrl(), token, pending.bytes, pending.name);
+      // Upload the plugin — the server parses the WASM module and registers it
+      await api.uploadPlugin(getApiBaseUrl(), token, bytes, file.name);
+
+      // Fetch the updated plugin list to get the real capabilities
+      const plugins = await api.listPlugins(getApiBaseUrl(), token);
+      if (Array.isArray(plugins)) {
+        // Find the newly added plugin (most likely the last one matching the file name)
+        const added = plugins.find((p) =>
+          file.name.toLowerCase().includes(p.name.toLowerCase()) ||
+          file.name.toLowerCase().includes(p.namespace.toLowerCase())
+        );
+        if (added && added.capabilities.length > 0) {
+          // Show the review dialog with the real capabilities from the server
+          setPendingPlugin({
+            name: `${added.namespace}/${added.name}`,
+            bytes,
+            capabilities: added.capabilities.map((c) => c.kind),
+          });
+          setCapReviewOpen(true);
+        }
+      }
+
       setRefreshKey((k) => k + 1);
     } catch (err: any) {
       const msg = err?.body ?? err?.message ?? "Unknown error importing plugin";
       setImportError(msg);
     } finally {
       setImporting(false);
-      setPendingPlugin(null);
+      input.value = "";
     }
+  }
+
+  function dismissCapReview() {
+    setCapReviewOpen(false);
+    setPendingPlugin(null);
   }
 
   const [plugins, { refetch }] = createResource(
@@ -290,13 +298,11 @@ export default function PluginsPage() {
                                 class="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-display cursor-pointer outline-none hover:bg-[rgb(var(--color-surface-hover))]"
                                 onSelect={async () => {
                                   const token = getToken();
-                                  const tenantId = getTenantId();
-                                  if (!token || !tenantId) return;
+                                  if (!token) return;
                                   try {
                                     await api.setPluginEnabled(
                                       getApiBaseUrl(),
                                       token,
-                                      tenantId,
                                       plugin.namespace,
                                       plugin.name,
                                       !plugin.enabled
@@ -413,18 +419,8 @@ export default function PluginsPage() {
               </div>
             </Show>
 
-            <div class="flex items-center justify-end gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setCapReviewOpen(false);
-                  setPendingPlugin(null);
-                }}
-              >
-                {t("plugins_cancel")}
-              </Button>
-              <Button size="sm" onClick={confirmPluginInstall}>
+            <div class="flex items-center justify-end">
+              <Button size="sm" onClick={dismissCapReview}>
                 <ShieldCheck class="h-4 w-4" />
                 {t("plugins_approve_install")}
               </Button>

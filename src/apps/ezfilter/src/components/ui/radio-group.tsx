@@ -1,5 +1,5 @@
 import { RadioGroup as KRadioGroup } from "@kobalte/core/radio-group";
-import { type JSX, splitProps, For } from "solid-js";
+import { splitProps, For } from "solid-js";
 import { cn } from "../../lib/cn";
 
 interface RadioGroupProps {
@@ -10,7 +10,7 @@ interface RadioGroupProps {
 }
 
 export function RadioGroup(props: RadioGroupProps) {
-  const [local, rest] = splitProps(props, [
+  const [local] = splitProps(props, [
     "options",
     "value",
     "onChange",
@@ -24,7 +24,7 @@ export function RadioGroup(props: RadioGroupProps) {
           {(option) => (
             <KRadioGroup.Item value={option.value} class="group">
               <KRadioGroup.ItemInput />
-              <label
+              <KRadioGroup.ItemLabel
                 class={cn(
                   "flex cursor-pointer items-start gap-3 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-4",
                   "transition-all duration-200",
@@ -43,16 +43,16 @@ export function RadioGroup(props: RadioGroupProps) {
                   </KRadioGroup.ItemIndicator>
                 </KRadioGroup.ItemControl>
                 <div class="flex flex-col gap-0.5">
-                  <KRadioGroup.ItemLabel class="text-sm font-bold font-display">
+                  <span class="text-sm font-bold font-display">
                     {option.label}
-                  </KRadioGroup.ItemLabel>
+                  </span>
                   {option.description && (
                     <span class="text-xs text-[rgb(var(--color-text-muted))]">
                       {option.description}
                     </span>
                   )}
                 </div>
-              </label>
+              </KRadioGroup.ItemLabel>
             </KRadioGroup.Item>
           )}
         </For>

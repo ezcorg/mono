@@ -489,7 +489,7 @@ export default function SetupPage() {
       <div class="relative z-10 w-full max-w-md animate-fade-in">
         {/* Logo */}
         <div class="text-center mb-6">
-          <h1 class="text-3xl font-extrabold font-display tracking-tight">
+          <h1 class="text-3xl font-extrabold font-title tracking-tight">
             <span class="text-[rgb(var(--color-primary))]">ez</span>filter
           </h1>
           <p class="text-sm text-[rgb(var(--color-text-muted))] font-display mt-1">

@@ -110,10 +110,10 @@ export const api = {
       { method: "DELETE" }
     ),
 
-  setPluginEnabled: (baseUrl: string, token: string, tenantId: string, ns: string, name: string, enabled: boolean) =>
+  setPluginEnabled: (baseUrl: string, token: string, ns: string, name: string, enabled: boolean) =>
     request<string>(
       baseUrl,
-      `/api/manage/tenants/${encodeURIComponent(tenantId)}/plugins/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/enabled`,
+      `/api/plugins/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/enabled`,
       token,
       { method: "PUT", body: JSON.stringify({ enabled }) }
     ),

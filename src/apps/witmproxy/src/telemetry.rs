@@ -46,34 +46,32 @@ pub mod otel {
                 .build();
 
             // Traces
-            if config.traces_enabled {
-                if let Ok(exporter) = opentelemetry_otlp::SpanExporter::builder()
+            if config.traces_enabled
+                && let Ok(exporter) = opentelemetry_otlp::SpanExporter::builder()
                     .with_tonic()
                     .with_endpoint(&config.endpoint)
                     .build()
-                {
-                    let tp = SdkTracerProvider::builder()
-                        .with_batch_exporter(exporter)
-                        .with_resource(resource.clone())
-                        .build();
-                    tracer_provider = Some(tp);
-                }
+            {
+                let tp = SdkTracerProvider::builder()
+                    .with_batch_exporter(exporter)
+                    .with_resource(resource.clone())
+                    .build();
+                tracer_provider = Some(tp);
             }
 
             // Metrics
-            if config.metrics_enabled {
-                if let Ok(exporter) = opentelemetry_otlp::MetricExporter::builder()
+            if config.metrics_enabled
+                && let Ok(exporter) = opentelemetry_otlp::MetricExporter::builder()
                     .with_tonic()
                     .with_endpoint(&config.endpoint)
                     .build()
-                {
-                    let mp = SdkMeterProvider::builder()
-                        .with_periodic_exporter(exporter)
-                        .with_resource(resource)
-                        .build();
-                    global::set_meter_provider(mp.clone());
-                    meter_provider = Some(mp);
-                }
+            {
+                let mp = SdkMeterProvider::builder()
+                    .with_periodic_exporter(exporter)
+                    .with_resource(resource)
+                    .build();
+                global::set_meter_provider(mp.clone());
+                meter_provider = Some(mp);
             }
         }
 
@@ -164,22 +162,22 @@ pub mod otel {
                 sys.refresh_all();
 
                 // CPU
-                if let Some(pid) = pid {
-                    if let Some(proc_) = sys.process(pid) {
-                        cpu_gauge.record(
-                            proc_.cpu_usage() as f64 / 100.0,
-                            &[KeyValue::new("scope", "process")],
-                        );
-                    }
+                if let Some(pid) = pid
+                    && let Some(proc_) = sys.process(pid)
+                {
+                    cpu_gauge.record(
+                        proc_.cpu_usage() as f64 / 100.0,
+                        &[KeyValue::new("scope", "process")],
+                    );
                 }
                 let global_cpu = sys.global_cpu_usage() as f64 / 100.0;
                 cpu_gauge.record(global_cpu, &[KeyValue::new("scope", "system")]);
 
                 // Memory
-                if let Some(pid) = pid {
-                    if let Some(proc_) = sys.process(pid) {
-                        mem_used.record(proc_.memory(), &[KeyValue::new("scope", "process")]);
-                    }
+                if let Some(pid) = pid
+                    && let Some(proc_) = sys.process(pid)
+                {
+                    mem_used.record(proc_.memory(), &[KeyValue::new("scope", "process")]);
                 }
                 mem_used.record(sys.used_memory(), &[KeyValue::new("scope", "system")]);
                 mem_total.record(sys.total_memory(), &[KeyValue::new("scope", "system")]);

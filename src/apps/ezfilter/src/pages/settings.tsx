@@ -306,7 +306,7 @@ export default function SettingsPage() {
                   <button
                     onClick={startEditingUrl}
                     class="flex h-6 w-6 items-center justify-center rounded-lg text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))] hover:bg-[rgb(var(--color-surface-hover))] transition-colors"
-                    title="Change server URL"
+                    title={t("settings_change_url")}
                   >
                     <Pencil class="h-3 w-3" />
                   </button>
@@ -346,10 +346,10 @@ export default function SettingsPage() {
                   disabled={urlHealth() !== "ok"}
                 >
                   <Check class="h-3.5 w-3.5" />
-                  Apply
+                  {t("settings_apply")}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={cancelEditingUrl}>
-                  Cancel
+                  {t("plugins_cancel")}
                 </Button>
               </div>
             </div>

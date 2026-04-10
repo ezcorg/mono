@@ -85,6 +85,10 @@ impl PluginRegistry {
         &self.plugins
     }
 
+    pub fn plugins_mut(&mut self) -> &mut HashMap<String, WitmPlugin> {
+        &mut self.plugins
+    }
+
     pub async fn load_plugins(&mut self) -> Result<()> {
         let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine, self.env).await?;
         for plugin in plugins.into_iter() {

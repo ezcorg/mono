@@ -15,7 +15,7 @@ use crate::db::tenants::{self, Group, Tenant};
 fn db(depot: &mut Depot) -> Result<SqlitePool, StatusError> {
     depot
         .obtain::<SqlitePool>()
-        .map(|p| p.clone())
+        .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Database not available"))
 }
 
@@ -536,7 +536,7 @@ impl RuntimeConfig {
 pub async fn get_config(depot: &mut Depot) -> Result<Json<RuntimeConfig>, StatusError> {
     let config = depot
         .obtain::<crate::config::AppConfig>()
-        .map(|c| c.clone())
+        .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
 
     Ok(Json(RuntimeConfig::from_app_config(&config)))
@@ -550,7 +550,7 @@ pub async fn update_config(
 ) -> Result<Json<RuntimeConfig>, StatusError> {
     let mut config = depot
         .obtain::<crate::config::AppConfig>()
-        .map(|c| c.clone())
+        .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
 
     let config_path = depot

@@ -235,6 +235,11 @@ impl WebServer {
                         .options(preflight),
                 )
                 .push(
+                    Router::with_path("/api/plugins/{namespace}/{name}/enabled")
+                        .put(set_plugin_enabled)
+                        .options(preflight),
+                )
+                .push(
                     Router::with_path("/api/plugins/{namespace}/{name}")
                         .delete(delete_plugin)
                         .options(preflight),
@@ -491,5 +496,47 @@ async fn delete_plugin(
                 e
             )));
         }
+    }
+}
+
+#[derive(serde::Deserialize, salvo::oapi::ToSchema)]
+struct SetPluginEnabledBody {
+    enabled: bool,
+}
+
+/// PUT /api/plugins/{namespace}/{name}/enabled -- toggle global plugin enabled state.
+#[endpoint(security(("bearer" = [])), status_codes(200, 400, 401, 403, 404, 500))]
+async fn set_plugin_enabled(
+    namespace: PathParam<String>,
+    name: PathParam<String>,
+    body: salvo::oapi::extract::JsonBody<SetPluginEnabledBody>,
+    depot: &mut Depot,
+) -> Result<&'static str, salvo::http::StatusError> {
+    let registry = depot
+        .obtain::<AppState>()
+        .map(|s| s.plugin_registry.clone())
+        .map_err(|_| {
+            salvo::http::StatusError::internal_server_error().brief("Internal server error")
+        })?;
+
+    let registry = registry.ok_or_else(|| {
+        salvo::http::StatusError::bad_request().brief("Plugin system is disabled")
+    })?;
+
+    let ns = namespace.into_inner();
+    let plugin_name = name.into_inner();
+    let enabled = body.into_inner().enabled;
+
+    let mut reg = registry.write().await;
+    let plugin_id = format!("{}/{}", ns, plugin_name);
+    if let Some(plugin) = reg.plugins_mut().get_mut(&plugin_id) {
+        plugin.enabled = enabled;
+        Ok(if enabled {
+            "Plugin enabled"
+        } else {
+            "Plugin disabled"
+        })
+    } else {
+        Err(salvo::http::StatusError::not_found().brief("Plugin not found"))
     }
 }

@@ -7,7 +7,6 @@ import { Button } from "../components/ui/button";
 import { Input, Label } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
-import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import type { InputSchema, ActualInput, UserInput } from "../lib/api/types";
 import { api, type PluginSummary } from "../lib/api/client";
@@ -173,6 +172,14 @@ export default function PluginConfigPage() {
                   const meta = () => getCapMeta(cap.kind);
                   const isExpanded = () => expandedCaps().has(i());
                   const Icon = meta().icon;
+                  // Icon color: green = granted, red = denied, purple = granted with custom scope
+                  const scopeModified = () => cap.scope !== "true" && cap.scope !== "";
+                  const iconColorClass = () =>
+                    !cap.granted
+                      ? "bg-red-500/10 text-red-500"
+                      : scopeModified()
+                        ? "bg-purple-500/10 text-purple-500"
+                        : "bg-[rgb(var(--color-success))]/10 text-[rgb(var(--color-success))]";
                   return (
                     <div class="rounded-xl border border-[rgb(var(--color-border))] overflow-hidden">
                       {/* Condensed row */}
@@ -182,9 +189,7 @@ export default function PluginConfigPage() {
                       >
                         <div class={cn(
                           "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                          cap.granted
-                            ? "bg-[rgb(var(--color-success))]/10 text-[rgb(var(--color-success))]"
-                            : "bg-[rgb(var(--color-border))]/50 text-[rgb(var(--color-text-muted))]"
+                          iconColorClass()
                         )}>
                           <Icon class="h-4 w-4" />
                         </div>
@@ -192,30 +197,39 @@ export default function PluginConfigPage() {
                           <p class="text-sm font-display font-semibold truncate">
                             {meta().label}
                           </p>
-                          <p class="text-xs text-[rgb(var(--color-text-muted))] truncate">
-                            {meta().description}
-                          </p>
+                          <Show
+                            when={scopeModified()}
+                            fallback={
+                              <p class="text-xs text-[rgb(var(--color-text-muted))] truncate">
+                                {meta().description}
+                              </p>
+                            }
+                          >
+                            <p class="text-xs text-purple-400 font-mono truncate">
+                              {cap.scope}
+                            </p>
+                          </Show>
                         </div>
-                        <div class="flex items-center gap-2 shrink-0">
-                          <Badge variant={cap.granted ? "success" : "secondary"} class="text-[10px]">
-                            {cap.granted ? t("plugin_config_cap_granted") : t("plugin_config_cap_denied")}
-                          </Badge>
-                          <div class={cn(
-                            "transition-transform duration-200",
-                            isExpanded() && "rotate-90"
-                          )}>
-                            <ChevronRight class="h-4 w-4 text-[rgb(var(--color-text-muted))]" />
-                          </div>
+                        <div class={cn(
+                          "transition-transform duration-200 shrink-0",
+                          isExpanded() && "rotate-90"
+                        )}>
+                          <ChevronRight class="h-4 w-4 text-[rgb(var(--color-text-muted))]" />
                         </div>
                       </div>
 
                       {/* Expanded details */}
                       <Show when={isExpanded()}>
-                        <div class="px-3 pb-3 pt-1 space-y-3 border-t border-[rgb(var(--color-border))]">
+                        <div class="px-3 pb-3 pt-2 space-y-3 border-t border-[rgb(var(--color-border))]">
                           <div class="flex items-center justify-between">
-                            <span class="text-xs font-display font-semibold text-[rgb(var(--color-text-muted))]">
-                              {t("plugin_config_cap_granted")} / {t("plugin_config_cap_denied")}
-                            </span>
+                            <div>
+                              <p class="text-xs font-display font-semibold">
+                                {cap.granted ? t("plugin_config_cap_granted") : t("plugin_config_cap_denied")}
+                              </p>
+                              <p class="text-[10px] text-[rgb(var(--color-text-muted))]">
+                                {meta().description}
+                              </p>
+                            </div>
                             <Switch
                               checked={cap.granted}
                               onChange={() => toggleCapGranted(i())}

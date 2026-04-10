@@ -181,10 +181,10 @@ const en: Messages = {
   plugins_toggle_enable: { message: "Enable" },
   plugins_toggle_disable: { message: "Disable" },
   plugins_review_capabilities: { message: "Review Capabilities" },
-  plugins_review_caps_desc: { message: "This plugin requests the following capabilities. Review and approve before installing." },
+  plugins_review_caps_desc: { message: "This plugin was installed with the following capabilities." },
   plugins_capability: { message: "Capability" },
   plugins_capability_scope: { message: "Scope" },
-  plugins_approve_install: { message: "Approve & Install" },
+  plugins_approve_install: { message: "Done" },
   plugins_cancel: { message: "Cancel" },
 
   // ── Plugin config page ──
@@ -214,6 +214,8 @@ const en: Messages = {
   settings_mode: { message: "Mode" },
   settings_server_url: { message: "Server URL" },
   settings_not_configured: { message: "not configured" },
+  settings_change_url: { message: "Change server URL" },
+  settings_apply: { message: "Apply" },
 
   settings_proxy_title: { message: "Proxy Configuration" },
   settings_proxy_desc: { message: "Runtime settings for the witmproxy server" },
