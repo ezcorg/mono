@@ -2,6 +2,7 @@ import { onMount } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { isSetupComplete } from "../lib/stores/config";
 import { DayNightScene } from "../components/day-night-scene";
+import { t } from "../lib/i18n";
 
 export default function LoadingPage() {
   const navigate = useNavigate();
@@ -91,7 +92,7 @@ export default function LoadingPage() {
             <span>filter</span>
           </h1>
           <p class="mt-2 text-sm text-[rgb(var(--color-text-muted))] font-display font-medium">
-            your friendly content filter
+            {t("app_tagline")}
           </p>
         </div>
 

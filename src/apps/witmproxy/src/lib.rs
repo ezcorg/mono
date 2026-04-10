@@ -11,6 +11,7 @@ pub mod events;
 pub mod http;
 pub mod plugins;
 pub mod proxy;
+pub mod telemetry;
 pub mod tenant;
 pub mod wasm;
 pub mod web;

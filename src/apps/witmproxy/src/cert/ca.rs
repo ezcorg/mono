@@ -75,8 +75,8 @@ impl CertificateAuthority {
         let mut params = CertificateParams::default();
 
         let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, "MITM Proxy Root CA");
-        distinguished_name.push(DnType::OrganizationName, "MITM Proxy");
+        distinguished_name.push(DnType::CommonName, "witmproxy Root CA");
+        distinguished_name.push(DnType::OrganizationName, "witmproxy");
         distinguished_name.push(DnType::CountryName, "US");
 
         params.distinguished_name = distinguished_name;
@@ -753,7 +753,7 @@ impl CertificateAuthority {
                 "security",
                 "delete-certificate",
                 "-c",
-                "MITM Proxy Root CA",
+                "witmproxy Root CA",
                 "/Library/Keychains/System.keychain",
             ])
             .output()?;
@@ -819,7 +819,7 @@ impl CertificateAuthority {
         info!("Removing root certificate from Windows");
 
         let output = Command::new("certutil")
-            .args(["-delstore", "Root", "MITM Proxy Root CA"])
+            .args(["-delstore", "Root", "witmproxy Root CA"])
             .output()?;
 
         if output.status.success() || output.stderr.is_empty() {
@@ -840,7 +840,7 @@ impl CertificateAuthority {
             .args([
                 "find-certificate",
                 "-c",
-                "MITM Proxy Root CA",
+                "witmproxy Root CA",
                 "/Library/Keychains/System.keychain",
             ])
             .output()?;
@@ -873,7 +873,7 @@ impl CertificateAuthority {
 
     async fn check_windows_status(&self) -> Result<()> {
         let output = Command::new("certutil")
-            .args(["-store", "Root", "MITM Proxy Root CA"])
+            .args(["-store", "Root", "witmproxy Root CA"])
             .output()?;
 
         if output.status.success() && !String::from_utf8_lossy(&output.stdout).contains("ERROR") {
@@ -900,7 +900,7 @@ impl CertificateAuthority {
     async fn print_manual_removal_instructions(&self) -> Result<()> {
         info!("\nManual Removal Instructions");
         info!("==========================");
-        info!("Please manually remove the 'MITM Proxy Root CA' certificate from:");
+        info!("Please manually remove the 'witmproxy Root CA' certificate from:");
         info!("- Certificate Manager / Trusted Root Certification Authorities");
         info!("- Or your system's equivalent certificate trust store");
         Ok(())

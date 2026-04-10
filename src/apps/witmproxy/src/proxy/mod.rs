@@ -183,6 +183,7 @@ impl ProxyServer {
 
     /// Determine whether any plugins want to handle this connection
     /// Returns true if MITM should be performed, false if connection should be forwarded transparently
+    #[tracing::instrument(skip(self), fields(authority = %authority))]
     async fn handle_connect(&self, authority: &str) -> bool {
         let Some(plugin_registry) = &self.plugin_registry else {
             debug!("No plugin registry, skipping MITM for {}", authority);
@@ -465,6 +466,7 @@ fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
 ///
 /// Generic over the IO type so it can be used from both the standard proxy
 /// (with `TokioIo<Upgraded>`) and the transparent proxy (with `TcpStream`).
+#[tracing::instrument(skip(upstream, stream, ca, plugin_registry), fields(authority = %authority))]
 pub(crate) async fn run_tls_mitm<IO>(
     upstream: reqwest::Client,
     stream: IO,
@@ -475,7 +477,7 @@ pub(crate) async fn run_tls_mitm<IO>(
 where
     IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    debug!("Running TLS MITM for {}", authority);
+    debug!("Running TLS interception for {}", authority);
 
     // Extract host + port, default :443
     let (host, _port) = parse_authority_host_port(&authority, 443)?;

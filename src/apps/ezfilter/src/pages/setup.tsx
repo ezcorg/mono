@@ -38,7 +38,8 @@ import {
 import { DayNightScene } from "../components/day-night-scene";
 import { setConfig, type HostingMode } from "../lib/stores/config";
 import { api } from "../lib/api/client";
-import { setToken } from "../lib/stores/auth";
+import { setToken, setTenantId } from "../lib/stores/auth";
+import { t } from "../lib/i18n";
 
 type Step =
   | "hosting"
@@ -81,10 +82,10 @@ async function checkHealth(
   try {
     const parsed = new URL(baseUrl.trim());
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { status: "error", message: "URL must start with http:// or https://" };
+      return { status: "error", message: t("error_invalid_url_protocol") };
     }
   } catch {
-    return { status: "error", message: "Please enter a valid URL (e.g. https://my-server:9443)" };
+    return { status: "error", message: t("error_invalid_url") };
   }
 
   try {
@@ -93,7 +94,7 @@ async function checkHealth(
     if (res.ok) return { status: "ok" };
     return {
       status: "error",
-      message: `Server responded with ${res.status} ${res.statusText}`,
+      message: t("error_server_status", res.status, res.statusText),
     };
   } catch (e: any) {
     const msg: string = e?.message ?? String(e);
@@ -102,47 +103,47 @@ async function checkHealth(
     if (/ssl|certificate|cert|tls|ERR_CERT/i.test(msg)) {
       return {
         status: "tls-error",
-        message:
-          "TLS/SSL error — the server's certificate may be self-signed or untrusted. " +
-          "If running locally, make sure you have trusted the certificate or use http:// instead.",
+        message: t("error_tls"),
       };
     }
     return {
       status: "error",
-      message: `Could not reach the server. Make sure it is running and the URL is correct.`,
+      message: t("error_server_unreachable"),
     };
   }
 }
 
-/** Try to detect `witmproxy` on the local system via Tauri invoke. */
+/** Try to detect the `witm` binary on the local system via Tauri invoke. */
 async function detectBinary(): Promise<{
   found: boolean;
   path?: string;
 }> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    // We assume a Tauri command `check_binary` is (or will be) registered.
-    // If the command doesn't exist yet, the invoke will throw and we
-    // fall through to the catch below.
-    const result = await invoke<{ found: boolean; path?: string }>(
+    return await invoke<{ found: boolean; path?: string }>(
       "check_binary",
-      { name: "witmproxy" }
+      { name: "witm" }
     );
-    return result;
   } catch {
-    // Not running inside Tauri or command not available — try a heuristic
-    // by hitting localhost:8080/api/health which is the default port.
-    try {
-      const res = await fetch("http://127.0.0.1:8080/api/health", {
-        signal: AbortSignal.timeout(2000),
-      });
-      if (res.ok)
-        return { found: true, path: "http://127.0.0.1:8080 (running)" };
-    } catch {
-      // ignore
-    }
+    // Not running inside Tauri — can't check PATH from the browser
     return { found: false };
   }
+}
+
+/** Open a file picker to manually select the witm binary. */
+async function pickBinaryFile(): Promise<string | null> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      title: t("setup_local_select_binary"),
+      multiple: false,
+      filters: [{ name: "Executable", extensions: ["*"] }],
+    });
+    if (selected) return typeof selected === "string" ? selected : selected.path;
+  } catch {
+    // Not running in Tauri
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,12 +170,18 @@ export default function SetupPage() {
   const [binaryStatus, setBinaryStatus] =
     createSignal<BinaryStatus>("unknown");
   const [binaryPath, setBinaryPath] = createSignal("");
-  const [localSetupDone, setLocalSetupDone] = createSignal(false);
+  type StepState = "idle" | "checking" | "done" | "needed" | "error";
+  const [serviceState, setServiceState] = createSignal<StepState>("idle");
+  const [caState, setCaState] = createSignal<StepState>("idle");
+  const [proxyState, setProxyState] = createSignal<StepState>("idle");
+  const [stepMessage, setStepMessage] = createSignal("");
+  const allStepsDone = () =>
+    serviceState() === "done" && caState() === "done" && proxyState() === "done";
 
   const API_VERSION = "v1";
   const MANAGED_BASE = "https://ezfilter.joinez.co";
   const DOCS_URL = "https://docs.ezfilter.joinez.co/self-host";
-  const DOWNLOAD_URL = "https://github.com/nicholasgasior/witmproxy/releases";
+  const DOWNLOAD_URL = "https://github.com/ezcorg/mono/releases?q=witmproxy";
 
   // -- debounced server URL for health check --
   const debouncedUrl = useDebounce(() => serverUrl(), 500);
@@ -221,11 +228,11 @@ export default function SetupPage() {
       // handled by button callbacks
     } else if (current === "server-url") {
       if (!serverUrl().trim()) {
-        setError("Please enter a server URL");
+        setError(t("setup_server_enter_url"));
         return;
       }
       if (healthStatus() === "checking") {
-        setError("Waiting for health check to complete...");
+        setError(t("setup_server_wait_health"));
         return;
       }
       setStep("login");
@@ -258,7 +265,7 @@ export default function SetupPage() {
 
   async function handleLogin() {
     if (!email().trim() || !password().trim()) {
-      setError("Please enter your email and password");
+      setError(t("error_enter_credentials"));
       return;
     }
     setLoading(true);
@@ -269,12 +276,13 @@ export default function SetupPage() {
         password: password(),
       });
       setToken(result.token);
+      setTenantId(result.tenant_id);
       completeSetup();
     } catch (e: any) {
       setError(
         e?.body ??
           e?.message ??
-          "Login failed. Check your credentials and server URL."
+          t("error_login_failed")
       );
     } finally {
       setLoading(false);
@@ -283,7 +291,7 @@ export default function SetupPage() {
 
   async function handleRegister() {
     if (!email().trim() || !password().trim()) {
-      setError("Please enter your email and password");
+      setError(t("error_enter_credentials"));
       return;
     }
     setLoading(true);
@@ -295,9 +303,10 @@ export default function SetupPage() {
         display_name: email(),
       });
       setToken(result.token);
+      setTenantId(result.tenant_id);
       completeSetup();
     } catch (e: any) {
-      setError(e?.body ?? e?.message ?? "Registration failed.");
+      setError(e?.body ?? e?.message ?? t("error_register_failed"));
     } finally {
       setLoading(false);
     }
@@ -313,9 +322,7 @@ export default function SetupPage() {
   }
 
   function handleStubSignup() {
-    setError(
-      "Account registration is not yet available for managed hosting. Please use self-hosting for now."
-    );
+    setError(t("error_managed_signup"));
   }
 
   // -- local binary detection --
@@ -337,6 +344,124 @@ export default function SetupPage() {
       runBinaryDetection();
     }
   });
+
+  // Debounced validation of manually edited binary path
+  const debouncedBinaryPath = useDebounce(() => binaryPath(), 500);
+  createEffect(() => {
+    const path = debouncedBinaryPath();
+    if (!path.trim() || binaryStatus() === "checking") return;
+    // Only validate if the path was manually edited (not auto-detected)
+    (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        setBinaryStatus("checking");
+        const result = await invoke<{ found: boolean; path?: string }>(
+          "validate_binary",
+          { path }
+        );
+        setBinaryStatus(result.found ? "found" : "not-found");
+      } catch {
+        // Not in Tauri, can't validate
+      }
+    })();
+  });
+
+  // -- individual setup step handlers --
+
+  async function checkServiceRunning() {
+    setServiceState("checking");
+    setStepMessage("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<{ success: boolean; already_done: boolean; message: string }>(
+        "check_service_running",
+        { binaryPath: binaryPath() }
+      );
+      setServiceState(result.success ? "done" : "needed");
+      setStepMessage(result.message);
+    } catch (e: any) {
+      setServiceState("error");
+      setStepMessage(e?.message ?? "Could not check service status");
+    }
+  }
+
+  async function doStartService() {
+    setServiceState("checking");
+    setStepMessage("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<{ success: boolean; already_done: boolean; message: string }>(
+        "start_service",
+        { binaryPath: binaryPath() }
+      );
+      setServiceState(result.success ? "done" : "error");
+      setStepMessage(result.message);
+    } catch (e: any) {
+      setServiceState("error");
+      setStepMessage(e?.message ?? "Failed to start service");
+    }
+  }
+
+  async function checkCaStatus() {
+    setCaState("checking");
+    setStepMessage("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<{ success: boolean; already_done: boolean; message: string }>(
+        "check_ca_status",
+        { binaryPath: binaryPath() }
+      );
+      setCaState(result.already_done ? "done" : "needed");
+      setStepMessage(result.message);
+    } catch (e: any) {
+      setCaState("error");
+      setStepMessage(e?.message ?? "Failed to check CA status");
+    }
+  }
+
+  async function doInstallCa() {
+    setCaState("checking");
+    setStepMessage("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<{ success: boolean; already_done: boolean; message: string }>(
+        "install_ca",
+        { binaryPath: binaryPath() }
+      );
+      setCaState(result.success ? "done" : "error");
+      setStepMessage(result.message);
+    } catch (e: any) {
+      setCaState("error");
+      setStepMessage(e?.message ?? "Failed to install CA");
+    }
+  }
+
+  async function doEnableProxy() {
+    setProxyState("checking");
+    setStepMessage("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      // Use the server URL as the proxy target — typically http://host:port
+      const proxyUrl = serverUrl().trim() || "http://127.0.0.1:8080";
+      const result = await invoke<{ success: boolean; already_done: boolean; message: string }>(
+        "enable_proxy",
+        { proxyUrl }
+      );
+      setProxyState(result.success ? "done" : "error");
+      setStepMessage(result.message);
+    } catch (e: any) {
+      setProxyState("error");
+      setStepMessage(e?.message ?? "Failed to enable proxy");
+    }
+  }
+
+  async function runAllChecks() {
+    await checkServiceRunning();
+    if (serviceState() !== "done") return;
+    await checkCaStatus();
+    if (caState() !== "done" && caState() !== "needed") return;
+    // Don't auto-install CA -- let user click the button
+  }
 
   // -- step numbers --
 
@@ -368,21 +493,48 @@ export default function SetupPage() {
             <span class="text-[rgb(var(--color-primary))]">ez</span>filter
           </h1>
           <p class="text-sm text-[rgb(var(--color-text-muted))] font-display mt-1">
-            Let's get you set up
+            {t("setup_heading")}
           </p>
         </div>
 
         {/* Progress */}
         <div class="flex items-center justify-center gap-2 mb-6">
-          {Array.from({ length: totalSteps() }, (_, i) => (
-            <div
-              class={`h-1.5 rounded-full transition-all duration-300 ${
-                i + 1 <= stepNumber()
-                  ? "w-10 bg-[rgb(var(--color-primary))]"
-                  : "w-6 bg-[rgb(var(--color-border))]"
-              }`}
-            />
-          ))}
+          {Array.from({ length: totalSteps() }, (_, i) => {
+            const pillStep = i + 1;
+            const canNavigate = () => pillStep <= stepNumber();
+            return (
+              <button
+                type="button"
+                disabled={!canNavigate()}
+                onClick={() => {
+                  if (!canNavigate()) return;
+                  setError("");
+                  if (hostingMode() === "managed") {
+                    // Managed flow: step 1 = hosting, step 2 = login
+                    if (pillStep === 1) setStep("hosting");
+                    else if (pillStep === 2) setStep("login");
+                  } else {
+                    // Self-host flow: step 1 = hosting, step 2 = has-server, step 3 = server-url/local-setup/remote-info, step 4 = login
+                    if (pillStep === 1) setStep("hosting");
+                    else if (pillStep === 2) setStep("has-server");
+                    else if (pillStep === 3) {
+                      // Go back to whatever step 3 sub-step they were on
+                      const s = step();
+                      if (s === "login" || s === "signup") {
+                        setStep("server-url");
+                      }
+                    }
+                    else if (pillStep === 4) setStep("login");
+                  }
+                }}
+                class={`h-1.5 rounded-full transition-all duration-300 ${
+                  pillStep <= stepNumber()
+                    ? "w-10 bg-[rgb(var(--color-primary))]"
+                    : "w-6 bg-[rgb(var(--color-border))]"
+                } ${canNavigate() ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+              />
+            );
+          })}
         </div>
 
         <Card class="backdrop-blur-sm bg-[rgb(var(--color-surface))]/90">
@@ -394,10 +546,10 @@ export default function SetupPage() {
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
                   <Cloud class="h-5 w-5 text-[rgb(var(--color-primary))]" />
-                  How would you like to run it?
+                  {t("setup_hosting_title")}
                 </CardTitle>
                 <CardDescription>
-                  Choose between our managed service or your own server
+                  {t("setup_hosting_description")}
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
@@ -407,21 +559,19 @@ export default function SetupPage() {
                   options={[
                     {
                       value: "managed",
-                      label: "Managed by us",
-                      description:
-                        "We handle everything for you. Your instance runs privately in an environment supporting confidential computing, where we never have access to your data.",
+                      label: t("setup_hosting_managed_label"),
+                      description: t("setup_hosting_managed_desc"),
                     },
                     {
                       value: "self-host",
-                      label: "Self-hosted",
-                      description:
-                        "Connect to your own backend, hosted and maintained by you, locally or remotely.",
+                      label: t("setup_hosting_selfhost_label"),
+                      description: t("setup_hosting_selfhost_desc"),
                     },
                   ]}
                 />
                 <div class="flex justify-end pt-2">
                   <Button onClick={goNext}>
-                    Continue
+                    {t("common_continue")}
                     <ArrowRight class="h-4 w-4" />
                   </Button>
                 </div>
@@ -435,11 +585,10 @@ export default function SetupPage() {
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
                   <Server class="h-5 w-5 text-[rgb(var(--color-primary))]" />
-                  Do you have a running server?
+                  {t("setup_has_server_title")}
                 </CardTitle>
                 <CardDescription>
-                  If you already have a witmproxy instance running, we can
-                  connect to it directly.
+                  {t("setup_has_server_desc")}
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
@@ -456,10 +605,10 @@ export default function SetupPage() {
                     </div>
                     <div class="flex flex-col gap-0.5">
                       <span class="text-sm font-bold font-display">
-                        Yes, I have a server
+                        {t("setup_has_server_yes")}
                       </span>
                       <span class="text-xs text-[rgb(var(--color-text-muted))]">
-                        I'll provide the URL to my running instance
+                        {t("setup_has_server_yes_desc")}
                       </span>
                     </div>
                     <ArrowRight class="ml-auto h-4 w-4 text-[rgb(var(--color-text-muted))]" />
@@ -477,11 +626,10 @@ export default function SetupPage() {
                     </div>
                     <div class="flex flex-col gap-0.5">
                       <span class="text-sm font-bold font-display">
-                        No — set up locally
+                        {t("setup_has_server_local")}
                       </span>
                       <span class="text-xs text-[rgb(var(--color-text-muted))]">
-                        We'll help you install and configure witmproxy on this
-                        machine
+                        {t("setup_has_server_local_desc")}
                       </span>
                     </div>
                     <ArrowRight class="ml-auto h-4 w-4 text-[rgb(var(--color-text-muted))]" />
@@ -499,10 +647,10 @@ export default function SetupPage() {
                     </div>
                     <div class="flex flex-col gap-0.5">
                       <span class="text-sm font-bold font-display">
-                        No — set up remotely
+                        {t("setup_has_server_remote")}
                       </span>
                       <span class="text-xs text-[rgb(var(--color-text-muted))]">
-                        I'll deploy witmproxy on my own infrastructure
+                        {t("setup_has_server_remote_desc")}
                       </span>
                     </div>
                     <ArrowRight class="ml-auto h-4 w-4 text-[rgb(var(--color-text-muted))]" />
@@ -512,7 +660,7 @@ export default function SetupPage() {
                 <div class="flex justify-start pt-2">
                   <Button variant="ghost" onClick={goBack}>
                     <ArrowLeft class="h-4 w-4" />
-                    Back
+                    {t("common_back")}
                   </Button>
                 </div>
               </CardContent>
@@ -525,159 +673,190 @@ export default function SetupPage() {
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
                   <HardDrive class="h-5 w-5 text-[rgb(var(--color-primary))]" />
-                  Local setup
+                  {t("setup_local_title")}
                 </CardTitle>
                 <CardDescription>
-                  We'll check for witmproxy on your machine and help you get it
-                  running.
+                  {t("setup_local_desc")}
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-5">
-                {/* Binary detection */}
+                {/* Binary path */}
                 <div class="rounded-xl border border-[rgb(var(--color-border))] p-4 space-y-3">
                   <div class="flex items-center justify-between">
                     <span class="text-sm font-bold font-display">
-                      witmproxy binary
+                      {t("setup_local_binary_label")}
                     </span>
                     <SolidSwitch>
                       <Match when={binaryStatus() === "checking"}>
                         <span class="flex items-center gap-1.5 text-xs text-[rgb(var(--color-text-muted))]">
                           <Loader2 class="h-3.5 w-3.5 animate-spin" />
-                          Detecting...
+                          {t("setup_local_path_checking")}
                         </span>
                       </Match>
                       <Match when={binaryStatus() === "found"}>
                         <span class="flex items-center gap-1.5 text-xs text-green-500 font-medium">
                           <Check class="h-3.5 w-3.5" />
-                          Found
+                          {t("setup_local_path_valid")}
                         </span>
                       </Match>
                       <Match when={binaryStatus() === "not-found"}>
                         <span class="flex items-center gap-1.5 text-xs text-red-500 font-medium">
                           <X class="h-3.5 w-3.5" />
-                          Not found
+                          {t("setup_local_not_found")}
                         </span>
                       </Match>
                       <Match when={binaryStatus() === "unknown"}>
                         <span class="text-xs text-[rgb(var(--color-text-muted))]">
-                          Pending
+                          {t("setup_local_pending")}
                         </span>
                       </Match>
                     </SolidSwitch>
                   </div>
 
-                  <Show when={binaryStatus() === "found" && binaryPath()}>
-                    <p class="text-xs text-[rgb(var(--color-text-muted))] font-mono break-all">
-                      {binaryPath()}
-                    </p>
-                  </Show>
+                  {/* Editable path input */}
+                  <div class="flex gap-2">
+                    <Input
+                      type="text"
+                      value={binaryPath()}
+                      onInput={(e) => setBinaryPath(e.currentTarget.value)}
+                      placeholder="/usr/local/bin/witm"
+                      class="font-mono text-xs flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={async () => {
+                        const path = await pickBinaryFile();
+                        if (path) setBinaryPath(path);
+                      }}
+                    >
+                      <FolderOpen class="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p class="text-xs text-[rgb(var(--color-text-muted))]">
+                    {t("setup_local_path_hint")}
+                  </p>
 
-                  <Show when={binaryStatus() === "not-found"}>
+                  <Show when={binaryStatus() === "not-found" && !binaryPath().trim()}>
                     <p class="text-xs text-[rgb(var(--color-text-muted))]">
-                      witmproxy was not detected on your system. You can
-                      download it or point to an existing binary.
+                      {t("setup_local_not_detected")}
                     </p>
                     <div class="flex gap-2">
                       <Button
                         size="sm"
-                        onClick={() => {
-                          window.open(DOWNLOAD_URL, "_blank");
-                        }}
+                        onClick={() => window.open(DOWNLOAD_URL, "_blank")}
                       >
                         <Download class="h-3.5 w-3.5" />
-                        Download
+                        {t("setup_local_download")}
                       </Button>
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={async () => {
-                          try {
-                            const { openUrl } = await import(
-                              "@tauri-apps/plugin-opener"
-                            );
-                            // If in Tauri, we could use a file dialog in the
-                            // future. For now, open the docs.
-                            await openUrl(DOWNLOAD_URL);
-                          } catch {
-                            window.open(DOWNLOAD_URL, "_blank");
-                          }
+                        variant="ghost"
+                        onClick={() => {
+                          setBinaryStatus("unknown");
+                          runBinaryDetection();
                         }}
                       >
-                        <FolderOpen class="h-3.5 w-3.5" />
-                        Browse...
+                        {t("setup_local_recheck")}
                       </Button>
                     </div>
-                  </Show>
-
-                  <Show
-                    when={
-                      binaryStatus() === "not-found" ||
-                      binaryStatus() === "unknown"
-                    }
-                  >
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setBinaryStatus("unknown");
-                        runBinaryDetection();
-                      }}
-                    >
-                      Re-check
-                    </Button>
                   </Show>
                 </div>
 
-                {/* Setup actions (shown once binary is found) */}
+                {/* Setup steps (shown once binary is found) */}
                 <Show when={binaryStatus() === "found"}>
-                  <div class="rounded-xl border border-[rgb(var(--color-border))] p-4 space-y-3">
+                  <div class="rounded-xl border border-[rgb(var(--color-border))] p-4 space-y-4">
                     <span class="text-sm font-bold font-display">
-                      Configure proxy
+                      {t("setup_local_configure")}
                     </span>
-                    <p class="text-xs text-[rgb(var(--color-text-muted))]">
-                      These actions will install the CA certificate, trust it in
-                      your system store, and start the proxy service.
-                    </p>
-                    <div class="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        disabled={localSetupDone()}
-                        onClick={async () => {
-                          setLoading(true);
-                          setError("");
-                          try {
-                            const { invoke } = await import(
-                              "@tauri-apps/api/core"
-                            );
-                            await invoke("setup_local_proxy");
-                            setLocalSetupDone(true);
-                            setServerUrl("http://127.0.0.1:8080");
-                          } catch (e: any) {
-                            setError(
-                              e?.message ??
-                                "Failed to set up proxy. You may need to run this manually — see the docs."
-                            );
-                          } finally {
-                            setLoading(false);
-                          }
-                        }}
-                      >
-                        <Show
-                          when={!loading()}
-                          fallback={
-                            <Loader2 class="h-3.5 w-3.5 animate-spin" />
-                          }
-                        >
-                          <ShieldCheck class="h-3.5 w-3.5" />
+
+                    {/* Step 1: Service running */}
+                    <div class="flex items-center justify-between">
+                      <div class="flex-1">
+                        <p class="text-sm font-display font-semibold">{t("setup_local_step_running")}</p>
+                        <p class="text-xs text-[rgb(var(--color-text-muted))]">{t("setup_local_step_running_desc")}</p>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <Show when={serviceState() === "done"}>
+                          <Check class="h-4 w-4 text-green-500" />
                         </Show>
-                        Install, trust & enable
-                      </Button>
+                        <Show when={serviceState() === "checking"}>
+                          <Loader2 class="h-4 w-4 animate-spin text-[rgb(var(--color-text-muted))]" />
+                        </Show>
+                        <Show when={serviceState() === "error"}>
+                          <X class="h-4 w-4 text-red-500" />
+                        </Show>
+                        <Show when={serviceState() === "idle" || serviceState() === "needed"}>
+                          <Button size="sm" variant="secondary" onClick={serviceState() === "needed" ? doStartService : checkServiceRunning}>
+                            {serviceState() === "needed" ? t("setup_local_install") : t("setup_local_check")}
+                          </Button>
+                        </Show>
+                      </div>
                     </div>
-                    <Show when={localSetupDone()}>
+
+                    {/* Step 2: CA trusted */}
+                    <div class="flex items-center justify-between">
+                      <div class="flex-1">
+                        <p class="text-sm font-display font-semibold">{t("setup_local_step_ca")}</p>
+                        <p class="text-xs text-[rgb(var(--color-text-muted))]">{t("setup_local_step_ca_desc")}</p>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <Show when={caState() === "done"}>
+                          <Check class="h-4 w-4 text-green-500" />
+                        </Show>
+                        <Show when={caState() === "checking"}>
+                          <Loader2 class="h-4 w-4 animate-spin text-[rgb(var(--color-text-muted))]" />
+                        </Show>
+                        <Show when={caState() === "error"}>
+                          <X class="h-4 w-4 text-red-500" />
+                        </Show>
+                        <Show when={caState() === "idle"}>
+                          <Button size="sm" variant="secondary" onClick={checkCaStatus}>
+                            {t("setup_local_check")}
+                          </Button>
+                        </Show>
+                        <Show when={caState() === "needed"}>
+                          <Button size="sm" variant="secondary" onClick={doInstallCa}>
+                            {t("setup_local_install")}
+                          </Button>
+                        </Show>
+                      </div>
+                    </div>
+
+                    {/* Step 3: System proxy */}
+                    <div class="flex items-center justify-between">
+                      <div class="flex-1">
+                        <p class="text-sm font-display font-semibold">{t("setup_local_step_proxy")}</p>
+                        <p class="text-xs text-[rgb(var(--color-text-muted))]">{t("setup_local_step_proxy_desc")}</p>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <Show when={proxyState() === "done"}>
+                          <Check class="h-4 w-4 text-green-500" />
+                        </Show>
+                        <Show when={proxyState() === "checking"}>
+                          <Loader2 class="h-4 w-4 animate-spin text-[rgb(var(--color-text-muted))]" />
+                        </Show>
+                        <Show when={proxyState() === "error"}>
+                          <X class="h-4 w-4 text-red-500" />
+                        </Show>
+                        <Show when={proxyState() === "idle" || proxyState() === "needed"}>
+                          <Button size="sm" variant="secondary" onClick={doEnableProxy}>
+                            {t("setup_local_enable")}
+                          </Button>
+                        </Show>
+                      </div>
+                    </div>
+
+                    {/* Status message */}
+                    <Show when={stepMessage()}>
+                      <p class="text-xs text-[rgb(var(--color-text-muted))] font-mono">{stepMessage()}</p>
+                    </Show>
+
+                    {/* All done indicator */}
+                    <Show when={allStepsDone()}>
                       <p class="flex items-center gap-1.5 text-xs text-green-500 font-medium">
                         <Check class="h-3.5 w-3.5" />
-                        Proxy configured and running on{" "}
-                        <span class="font-mono">127.0.0.1:8080</span>
+                        {t("setup_local_running")}
                       </p>
                     </Show>
                   </div>
@@ -690,10 +869,10 @@ export default function SetupPage() {
                 <div class="flex justify-between pt-2">
                   <Button variant="ghost" onClick={goBack}>
                     <ArrowLeft class="h-4 w-4" />
-                    Back
+                    {t("common_back")}
                   </Button>
                   <Button onClick={goNext}>
-                    Continue
+                    {t("common_continue")}
                     <ArrowRight class="h-4 w-4" />
                   </Button>
                 </div>
@@ -707,24 +886,22 @@ export default function SetupPage() {
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
                   <Globe class="h-5 w-5 text-[rgb(var(--color-primary))]" />
-                  Remote deployment
+                  {t("setup_remote_title")}
                 </CardTitle>
                 <CardDescription>
-                  Deploy witmproxy on your own infrastructure, then come back
-                  here with the URL.
+                  {t("setup_remote_desc")}
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
                 <div class="rounded-xl border border-[rgb(var(--color-border))] p-4 space-y-3">
                   <p class="text-sm text-[rgb(var(--color-text-secondary))]">
-                    You'll need to set up and manage the server yourself. Our
-                    documentation covers:
+                    {t("setup_remote_self_manage")}
                   </p>
                   <ul class="list-disc list-inside text-sm text-[rgb(var(--color-text-muted))] space-y-1">
-                    <li>Docker / docker-compose deployment</li>
-                    <li>Systemd service configuration</li>
-                    <li>TLS certificate setup</li>
-                    <li>Environment variables & configuration</li>
+                    <li>{t("setup_remote_doc_docker")}</li>
+                    <li>{t("setup_remote_doc_systemd")}</li>
+                    <li>{t("setup_remote_doc_tls")}</li>
+                    <li>{t("setup_remote_doc_env")}</li>
                   </ul>
                   <Button
                     size="sm"
@@ -732,21 +909,21 @@ export default function SetupPage() {
                     onClick={() => window.open(DOCS_URL, "_blank")}
                   >
                     <ExternalLink class="h-3.5 w-3.5" />
-                    Open documentation
+                    {t("setup_remote_open_docs")}
                   </Button>
                 </div>
 
                 <p class="text-xs text-[rgb(var(--color-text-muted))]">
-                  Once your server is running, click Continue to enter its URL.
+                  {t("setup_remote_ready")}
                 </p>
 
                 <div class="flex justify-between pt-2">
                   <Button variant="ghost" onClick={goBack}>
                     <ArrowLeft class="h-4 w-4" />
-                    Back
+                    {t("common_back")}
                   </Button>
                   <Button onClick={goNext}>
-                    Continue
+                    {t("common_continue")}
                     <ArrowRight class="h-4 w-4" />
                   </Button>
                 </div>
@@ -760,20 +937,20 @@ export default function SetupPage() {
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
                   <Server class="h-5 w-5 text-[rgb(var(--color-primary))]" />
-                  Where is your server?
+                  {t("setup_server_title")}
                 </CardTitle>
                 <CardDescription>
-                  Enter the URL of your witmproxy web server
+                  {t("setup_server_desc")}
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
                 <div class="space-y-2">
-                  <Label for="server-url">Server URL</Label>
+                  <Label for="server-url">{t("setup_server_url_label")}</Label>
                   <div class="relative">
                     <Input
                       id="server-url"
                       type="url"
-                      placeholder="https://my-proxy.example.com"
+                      placeholder={t("setup_server_url_placeholder")}
                       value={serverUrl()}
                       onInput={(e) => setServerUrl(e.currentTarget.value)}
                       class="pr-10"
@@ -797,7 +974,7 @@ export default function SetupPage() {
                     </div>
                   </div>
                   <p class="text-xs text-[rgb(var(--color-text-muted))]">
-                    The full URL including protocol (https://)
+                    {t("setup_server_url_hint")}
                   </p>
                 </div>
 
@@ -805,7 +982,7 @@ export default function SetupPage() {
                 <Show when={healthStatus() === "ok"}>
                   <p class="text-sm text-green-500 font-medium flex items-center gap-1.5">
                     <Check class="h-4 w-4" />
-                    Server is reachable and healthy
+                    {t("setup_server_healthy")}
                   </p>
                 </Show>
 
@@ -820,7 +997,7 @@ export default function SetupPage() {
                   <div class="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-1">
                     <p class="text-sm text-red-500 font-medium flex items-center gap-1.5">
                       <ShieldCheck class="h-4 w-4 shrink-0" />
-                      TLS certificate error
+                      {t("setup_server_tls_error")}
                     </p>
                     <p class="text-xs text-red-400">{healthMessage()}</p>
                   </div>
@@ -832,13 +1009,13 @@ export default function SetupPage() {
                 <div class="flex justify-between pt-2">
                   <Button variant="ghost" onClick={goBack}>
                     <ArrowLeft class="h-4 w-4" />
-                    Back
+                    {t("common_back")}
                   </Button>
                   <Button
                     onClick={goNext}
                     disabled={healthStatus() === "checking"}
                   >
-                    Continue
+                    {t("common_continue")}
                     <ArrowRight class="h-4 w-4" />
                   </Button>
                 </div>
@@ -852,39 +1029,38 @@ export default function SetupPage() {
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
                   <LogIn class="h-5 w-5 text-[rgb(var(--color-primary))]" />
-                  Sign in to your account
+                  {t("setup_login_title")}
                 </CardTitle>
                 <CardDescription>
                   <Show
                     when={hostingMode() === "managed"}
                     fallback={
                       <>
-                        Sign in to your server at{" "}
-                        <span class="font-mono text-xs">{serverUrl()}</span>
+                        {t("setup_login_desc_selfhost", serverUrl())}
                       </>
                     }
                   >
-                    Sign in with your ezfilter account
+                    {t("setup_login_desc_managed")}
                   </Show>
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
                 <div class="space-y-2">
-                  <Label for="email">Email</Label>
+                  <Label for="email">{t("common_email")}</Label>
                   <Input
                     id="email"
                     type="email"
-                    placeholder="you@example.com"
+                    placeholder={t("setup_login_email_placeholder")}
                     value={email()}
                     onInput={(e) => setEmail(e.currentTarget.value)}
                   />
                 </div>
                 <div class="space-y-2">
-                  <Label for="password">Password</Label>
+                  <Label for="password">{t("common_password")}</Label>
                   <Input
                     id="password"
                     type="password"
-                    placeholder="Your password"
+                    placeholder={t("setup_login_password_placeholder")}
                     value={password()}
                     onInput={(e) => setPassword(e.currentTarget.value)}
                     onKeyDown={(e) => {
@@ -897,8 +1073,8 @@ export default function SetupPage() {
                 </Show>
                 <div class="flex flex-col gap-3 pt-2">
                   <Button onClick={handleLogin} disabled={loading()}>
-                    <Show when={loading()} fallback={<>Sign In</>}>
-                      Signing in...
+                    <Show when={loading()} fallback={<>{t("setup_login_btn")}</>}>
+                      {t("setup_login_btn_loading")}
                     </Show>
                   </Button>
                   <div class="text-center">
@@ -909,15 +1085,15 @@ export default function SetupPage() {
                         setStep("signup");
                       }}
                     >
-                      Don't have an account?{" "}
-                      <span class="underline">Sign up</span>
+                      {t("setup_login_no_account")}{" "}
+                      <span class="underline">{t("setup_login_sign_up")}</span>
                     </button>
                   </div>
                 </div>
                 <div class="flex justify-start pt-2">
                   <Button variant="ghost" onClick={goBack}>
                     <ArrowLeft class="h-4 w-4" />
-                    Back
+                    {t("common_back")}
                   </Button>
                 </div>
               </CardContent>
@@ -930,35 +1106,34 @@ export default function SetupPage() {
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
                   <UserPlus class="h-5 w-5 text-[rgb(var(--color-primary))]" />
-                  Create an account
+                  {t("setup_signup_title")}
                 </CardTitle>
                 <CardDescription>
                   <Show
                     when={hostingMode() === "self-host"}
-                    fallback={<>Create your ezfilter account</>}
+                    fallback={<>{t("setup_signup_desc_managed")}</>}
                   >
-                    Register on your server at{" "}
-                    <span class="font-mono text-xs">{serverUrl()}</span>
+                    {t("setup_signup_desc_selfhost", serverUrl())}
                   </Show>
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
                 <div class="space-y-2">
-                  <Label for="reg-email">Email</Label>
+                  <Label for="reg-email">{t("common_email")}</Label>
                   <Input
                     id="reg-email"
                     type="email"
-                    placeholder="you@example.com"
+                    placeholder={t("setup_login_email_placeholder")}
                     value={email()}
                     onInput={(e) => setEmail(e.currentTarget.value)}
                   />
                 </div>
                 <div class="space-y-2">
-                  <Label for="reg-password">Password</Label>
+                  <Label for="reg-password">{t("common_password")}</Label>
                   <Input
                     id="reg-password"
                     type="password"
-                    placeholder="Choose a password"
+                    placeholder={t("setup_signup_password_placeholder")}
                     value={password()}
                     onInput={(e) => setPassword(e.currentTarget.value)}
                     onKeyDown={(e) => {
@@ -980,8 +1155,8 @@ export default function SetupPage() {
                     }}
                     disabled={loading()}
                   >
-                    <Show when={loading()} fallback={<>Create Account</>}>
-                      Creating account...
+                    <Show when={loading()} fallback={<>{t("setup_signup_btn")}</>}>
+                      {t("setup_signup_btn_loading")}
                     </Show>
                   </Button>
                   <div class="text-center">
@@ -992,8 +1167,8 @@ export default function SetupPage() {
                         setStep("login");
                       }}
                     >
-                      Already have an account?{" "}
-                      <span class="underline">Sign in</span>
+                      {t("setup_signup_has_account")}{" "}
+                      <span class="underline">{t("setup_signup_sign_in")}</span>
                     </button>
                   </div>
                 </div>
@@ -1006,7 +1181,7 @@ export default function SetupPage() {
                     }}
                   >
                     <ArrowLeft class="h-4 w-4" />
-                    Back
+                    {t("common_back")}
                   </Button>
                 </div>
               </CardContent>

@@ -21,5 +21,6 @@ export function setDevMode(on: boolean) {
 
 export function clearAllAppState() {
   localStorage.clear();
-  window.location.reload();
+  // Navigate to root so the app re-enters the onboarding flow
+  window.location.href = "/";
 }

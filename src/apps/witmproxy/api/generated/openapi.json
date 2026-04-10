@@ -1,7 +1,177 @@
 {
+  "components": {
+    "schemas": {
+      "witmproxy.web.auth_endpoints.LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.auth_endpoints.RegisterRequest": {
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.AddPermissionRequest": {
+        "properties": {
+          "effect": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "effect",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.CreateGroupRequest": {
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.IpMappingRequest": {
+        "properties": {
+          "ip_address": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ip_address"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.MemberRequest": {
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.RuntimeConfig": {
+        "description": "Subset of AppConfig fields that are safe to expose and modify at runtime.\nExcludes sensitive fields (db_password, jwt_secret, admin_password) and\nfields that require a restart to take effect (bind addresses, cert paths).",
+        "properties": {
+          "auto_update": {
+            "type": "boolean"
+          },
+          "plugins_enabled": {
+            "type": "boolean"
+          },
+          "plugins_max_fuel": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "plugins_max_memory_mb": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "plugins_timeout_ms": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "transparent_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "plugins_enabled",
+          "plugins_timeout_ms",
+          "plugins_max_memory_mb",
+          "plugins_max_fuel",
+          "auto_update",
+          "transparent_enabled"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.SetPluginConfigRequest": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "config"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.SetPluginEnabledRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "witmproxy.web.management.UpdateTenantRequest": {
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
   "info": {
     "title": "witmproxy",
-    "version": "0.0.1"
+    "version": "0.0.6"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -12,15 +182,47 @@
       }
     },
     "/api/auth/login": {
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
       "post": {
         "operationId": "witmproxy.web.auth_endpoints.login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.auth_endpoints.LoginRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
         "responses": {},
         "summary": "POST /api/auth/login -- authenticate with email/password, return JWT."
       }
     },
     "/api/auth/register": {
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
       "post": {
         "operationId": "witmproxy.web.auth_endpoints.register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.auth_endpoints.RegisterRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
         "responses": {},
         "summary": "POST /api/auth/register -- create a new tenant with email/password, return JWT."
       }
@@ -29,12 +231,490 @@
       "get": {
         "operationId": "witmproxy.web.server.health_check",
         "responses": {}
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      }
+    },
+    "/api/manage/config": {
+      "get": {
+        "operationId": "witmproxy.web.management.get_config",
+        "responses": {},
+        "summary": "GET /api/manage/config -- get current runtime configuration."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "put": {
+        "operationId": "witmproxy.web.management.update_config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.RuntimeConfig"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "PUT /api/manage/config -- update runtime configuration and persist to disk."
+      }
+    },
+    "/api/manage/groups": {
+      "get": {
+        "operationId": "witmproxy.web.management.list_groups",
+        "responses": {},
+        "summary": "GET /api/manage/groups -- list all groups."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "post": {
+        "operationId": "witmproxy.web.management.create_group",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.CreateGroupRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "POST /api/manage/groups -- create a group."
+      }
+    },
+    "/api/manage/groups/{id}": {
+      "delete": {
+        "operationId": "witmproxy.web.management.delete_group",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {},
+        "summary": "DELETE /api/manage/groups/:id -- delete a group."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      }
+    },
+    "/api/manage/groups/{id}/members": {
+      "delete": {
+        "operationId": "witmproxy.web.management.remove_group_member",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.MemberRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "DELETE /api/manage/groups/:id/members -- remove member from group."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "post": {
+        "operationId": "witmproxy.web.management.add_group_member",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.MemberRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "POST /api/manage/groups/:id/members -- add member to group."
+      }
+    },
+    "/api/manage/groups/{id}/permissions": {
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "post": {
+        "operationId": "witmproxy.web.management.add_group_permission",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.AddPermissionRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "POST /api/manage/groups/:id/permissions -- add permission to group."
+      }
+    },
+    "/api/manage/groups/{id}/permissions/{permission_id}": {
+      "delete": {
+        "operationId": "witmproxy.web.management.remove_group_permission",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Get parameter `permission_id` from request url path.",
+            "in": "path",
+            "name": "permission_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {},
+        "summary": "DELETE /api/manage/groups/:id/permissions/:permission_id -- remove permission."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      }
+    },
+    "/api/manage/tenants": {
+      "get": {
+        "operationId": "witmproxy.web.management.list_tenants",
+        "responses": {},
+        "summary": "GET /api/manage/tenants -- list all tenants."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      }
+    },
+    "/api/manage/tenants/{id}": {
+      "delete": {
+        "operationId": "witmproxy.web.management.delete_tenant",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {},
+        "summary": "DELETE /api/manage/tenants/:id -- delete tenant."
+      },
+      "get": {
+        "operationId": "witmproxy.web.management.get_tenant",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {},
+        "summary": "GET /api/manage/tenants/:id -- get tenant by ID."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "put": {
+        "operationId": "witmproxy.web.management.update_tenant",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.UpdateTenantRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "PUT /api/manage/tenants/:id -- update tenant."
+      }
+    },
+    "/api/manage/tenants/{id}/ip-mappings": {
+      "delete": {
+        "operationId": "witmproxy.web.management.remove_ip_mapping",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.IpMappingRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "DELETE /api/manage/tenants/:id/ip-mappings -- remove IP mapping."
+      },
+      "get": {
+        "operationId": "witmproxy.web.management.list_ip_mappings",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {},
+        "summary": "GET /api/manage/tenants/:id/ip-mappings -- list IP mappings for a tenant."
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "post": {
+        "operationId": "witmproxy.web.management.add_ip_mapping",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.IpMappingRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "POST /api/manage/tenants/:id/ip-mappings -- add IP mapping."
+      }
+    },
+    "/api/manage/tenants/{id}/plugins/{ns}/{name}/config": {
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "put": {
+        "operationId": "witmproxy.web.management.set_tenant_plugin_config",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Get parameter `ns` from request url path.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Get parameter `name` from request url path.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.SetPluginConfigRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "PUT /api/manage/tenants/:id/plugins/:ns/:name/config -- set per-tenant plugin config."
+      }
+    },
+    "/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled": {
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
+      },
+      "put": {
+        "operationId": "witmproxy.web.management.set_tenant_plugin_enabled",
+        "parameters": [
+          {
+            "description": "Get parameter `id` from request url path.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Get parameter `ns` from request url path.",
+            "in": "path",
+            "name": "ns",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Get parameter `name` from request url path.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/witmproxy.web.management.SetPluginEnabledRequest"
+              }
+            }
+          },
+          "description": "Extract json format data from request."
+        },
+        "responses": {},
+        "summary": "PUT /api/manage/tenants/:id/plugins/:ns/:name/enabled -- set per-tenant plugin enabled state."
       }
     },
     "/api/plugins": {
       "get": {
         "operationId": "witmproxy.web.server.list_plugins",
         "responses": {}
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
       },
       "post": {
         "operationId": "witmproxy.web.server.upsert_plugin",
@@ -81,6 +761,12 @@
           }
         ],
         "responses": {}
+      },
+      "options": {
+        "description": "The CORS hoop adds the Access-Control-Allow-* headers automatically.",
+        "operationId": "witmproxy.web.server.preflight",
+        "responses": {},
+        "summary": "Responds to CORS preflight OPTIONS requests with 204 No Content."
       }
     },
     "/cert": {

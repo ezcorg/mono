@@ -2,7 +2,7 @@
 
 import { type Client, formDataBodySerializer, type Options as Options2, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { WitmproxyWebAuthEndpointsLoginData, WitmproxyWebAuthEndpointsRegisterData, WitmproxyWebDownloadCertificateData, WitmproxyWebIndexPageData, WitmproxyWebServerDeletePluginData, WitmproxyWebServerHealthCheckData, WitmproxyWebServerListPluginsData, WitmproxyWebServerUpsertPluginData } from './types.gen';
+import type { WitmproxyWebAuthEndpointsLoginData, WitmproxyWebAuthEndpointsRegisterData, WitmproxyWebDownloadCertificateData, WitmproxyWebIndexPageData, WitmproxyWebManagementAddGroupMemberData, WitmproxyWebManagementAddGroupPermissionData, WitmproxyWebManagementAddIpMappingData, WitmproxyWebManagementCreateGroupData, WitmproxyWebManagementDeleteGroupData, WitmproxyWebManagementDeleteTenantData, WitmproxyWebManagementGetConfigData, WitmproxyWebManagementGetTenantData, WitmproxyWebManagementListGroupsData, WitmproxyWebManagementListIpMappingsData, WitmproxyWebManagementListTenantsData, WitmproxyWebManagementRemoveGroupMemberData, WitmproxyWebManagementRemoveGroupPermissionData, WitmproxyWebManagementRemoveIpMappingData, WitmproxyWebManagementSetTenantPluginConfigData, WitmproxyWebManagementSetTenantPluginEnabledData, WitmproxyWebManagementUpdateConfigData, WitmproxyWebManagementUpdateTenantData, WitmproxyWebServerDeletePluginData, WitmproxyWebServerHealthCheckData, WitmproxyWebServerListPluginsData, WitmproxyWebServerPreflight10Data, WitmproxyWebServerPreflight11Data, WitmproxyWebServerPreflight12Data, WitmproxyWebServerPreflight13Data, WitmproxyWebServerPreflight14Data, WitmproxyWebServerPreflight15Data, WitmproxyWebServerPreflight16Data, WitmproxyWebServerPreflight2Data, WitmproxyWebServerPreflight3Data, WitmproxyWebServerPreflight4Data, WitmproxyWebServerPreflight5Data, WitmproxyWebServerPreflight6Data, WitmproxyWebServerPreflight7Data, WitmproxyWebServerPreflight8Data, WitmproxyWebServerPreflight9Data, WitmproxyWebServerPreflightData, WitmproxyWebServerUpsertPluginData } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -21,18 +21,297 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 export const witmproxyWebIndexPage = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebIndexPageData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/', ...options });
 
 /**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflightData, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/auth/login', ...options });
+
+/**
  * POST /api/auth/login -- authenticate with email/password, return JWT.
  */
-export const witmproxyWebAuthEndpointsLogin = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebAuthEndpointsLoginData, ThrowOnError>) => (options?.client ?? client).post<unknown, unknown, ThrowOnError>({ url: '/api/auth/login', ...options });
+export const witmproxyWebAuthEndpointsLogin = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebAuthEndpointsLoginData, ThrowOnError>) => (options?.client ?? client).post<unknown, unknown, ThrowOnError>({
+    url: '/api/auth/login',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers
+    }
+});
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight2 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight2Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/auth/register', ...options });
 
 /**
  * POST /api/auth/register -- create a new tenant with email/password, return JWT.
  */
-export const witmproxyWebAuthEndpointsRegister = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebAuthEndpointsRegisterData, ThrowOnError>) => (options?.client ?? client).post<unknown, unknown, ThrowOnError>({ url: '/api/auth/register', ...options });
+export const witmproxyWebAuthEndpointsRegister = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebAuthEndpointsRegisterData, ThrowOnError>) => (options?.client ?? client).post<unknown, unknown, ThrowOnError>({
+    url: '/api/auth/register',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers
+    }
+});
 
 export const witmproxyWebServerHealthCheck = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerHealthCheckData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/health', ...options });
 
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight3 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight3Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/health', ...options });
+
+/**
+ * GET /api/manage/config -- get current runtime configuration.
+ */
+export const witmproxyWebManagementGetConfig = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebManagementGetConfigData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/manage/config', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight4 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight4Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/config', ...options });
+
+/**
+ * PUT /api/manage/config -- update runtime configuration and persist to disk.
+ */
+export const witmproxyWebManagementUpdateConfig = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebManagementUpdateConfigData, ThrowOnError>) => (options?.client ?? client).put<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/config',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers
+    }
+});
+
+/**
+ * GET /api/manage/groups -- list all groups.
+ */
+export const witmproxyWebManagementListGroups = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebManagementListGroupsData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight5 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight5Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups', ...options });
+
+/**
+ * POST /api/manage/groups -- create a group.
+ */
+export const witmproxyWebManagementCreateGroup = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebManagementCreateGroupData, ThrowOnError>) => (options?.client ?? client).post<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/groups',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers
+    }
+});
+
+/**
+ * DELETE /api/manage/groups/:id -- delete a group.
+ */
+export const witmproxyWebManagementDeleteGroup = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementDeleteGroupData, ThrowOnError>) => (options.client ?? client).delete<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups/{id}', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight6 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight6Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups/{id}', ...options });
+
+/**
+ * DELETE /api/manage/groups/:id/members -- remove member from group.
+ */
+export const witmproxyWebManagementRemoveGroupMember = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementRemoveGroupMemberData, ThrowOnError>) => (options.client ?? client).delete<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/groups/{id}/members',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight7 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight7Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups/{id}/members', ...options });
+
+/**
+ * POST /api/manage/groups/:id/members -- add member to group.
+ */
+export const witmproxyWebManagementAddGroupMember = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementAddGroupMemberData, ThrowOnError>) => (options.client ?? client).post<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/groups/{id}/members',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight8 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight8Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups/{id}/permissions', ...options });
+
+/**
+ * POST /api/manage/groups/:id/permissions -- add permission to group.
+ */
+export const witmproxyWebManagementAddGroupPermission = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementAddGroupPermissionData, ThrowOnError>) => (options.client ?? client).post<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/groups/{id}/permissions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * DELETE /api/manage/groups/:id/permissions/:permission_id -- remove permission.
+ */
+export const witmproxyWebManagementRemoveGroupPermission = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementRemoveGroupPermissionData, ThrowOnError>) => (options.client ?? client).delete<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups/{id}/permissions/{permission_id}', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight9 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight9Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/groups/{id}/permissions/{permission_id}', ...options });
+
+/**
+ * GET /api/manage/tenants -- list all tenants.
+ */
+export const witmproxyWebManagementListTenants = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebManagementListTenantsData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight10 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight10Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants', ...options });
+
+/**
+ * DELETE /api/manage/tenants/:id -- delete tenant.
+ */
+export const witmproxyWebManagementDeleteTenant = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementDeleteTenantData, ThrowOnError>) => (options.client ?? client).delete<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants/{id}', ...options });
+
+/**
+ * GET /api/manage/tenants/:id -- get tenant by ID.
+ */
+export const witmproxyWebManagementGetTenant = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementGetTenantData, ThrowOnError>) => (options.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants/{id}', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight11 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight11Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants/{id}', ...options });
+
+/**
+ * PUT /api/manage/tenants/:id -- update tenant.
+ */
+export const witmproxyWebManagementUpdateTenant = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementUpdateTenantData, ThrowOnError>) => (options.client ?? client).put<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/tenants/{id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * DELETE /api/manage/tenants/:id/ip-mappings -- remove IP mapping.
+ */
+export const witmproxyWebManagementRemoveIpMapping = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementRemoveIpMappingData, ThrowOnError>) => (options.client ?? client).delete<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/tenants/{id}/ip-mappings',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * GET /api/manage/tenants/:id/ip-mappings -- list IP mappings for a tenant.
+ */
+export const witmproxyWebManagementListIpMappings = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementListIpMappingsData, ThrowOnError>) => (options.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants/{id}/ip-mappings', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight12 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight12Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants/{id}/ip-mappings', ...options });
+
+/**
+ * POST /api/manage/tenants/:id/ip-mappings -- add IP mapping.
+ */
+export const witmproxyWebManagementAddIpMapping = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementAddIpMappingData, ThrowOnError>) => (options.client ?? client).post<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/tenants/{id}/ip-mappings',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight13 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight13Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/config', ...options });
+
+/**
+ * PUT /api/manage/tenants/:id/plugins/:ns/:name/config -- set per-tenant plugin config.
+ */
+export const witmproxyWebManagementSetTenantPluginConfig = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementSetTenantPluginConfigData, ThrowOnError>) => (options.client ?? client).put<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/config',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight14 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight14Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled', ...options });
+
+/**
+ * PUT /api/manage/tenants/:id/plugins/:ns/:name/enabled -- set per-tenant plugin enabled state.
+ */
+export const witmproxyWebManagementSetTenantPluginEnabled = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebManagementSetTenantPluginEnabledData, ThrowOnError>) => (options.client ?? client).put<unknown, unknown, ThrowOnError>({
+    url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
 export const witmproxyWebServerListPlugins = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerListPluginsData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/api/plugins', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight15 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight15Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/plugins', ...options });
 
 export const witmproxyWebServerUpsertPlugin = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerUpsertPluginData, ThrowOnError>) => (options?.client ?? client).post<unknown, unknown, ThrowOnError>({
     ...formDataBodySerializer,
@@ -45,5 +324,12 @@ export const witmproxyWebServerUpsertPlugin = <ThrowOnError extends boolean = fa
 });
 
 export const witmproxyWebServerDeletePlugin = <ThrowOnError extends boolean = false>(options: Options<WitmproxyWebServerDeletePluginData, ThrowOnError>) => (options.client ?? client).delete<unknown, unknown, ThrowOnError>({ url: '/api/plugins/{namespace}/{name}', ...options });
+
+/**
+ * Responds to CORS preflight OPTIONS requests with 204 No Content.
+ *
+ * The CORS hoop adds the Access-Control-Allow-* headers automatically.
+ */
+export const witmproxyWebServerPreflight16 = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebServerPreflight16Data, ThrowOnError>) => (options?.client ?? client).options<unknown, unknown, ThrowOnError>({ url: '/api/plugins/{namespace}/{name}', ...options });
 
 export const witmproxyWebDownloadCertificate = <ThrowOnError extends boolean = false>(options?: Options<WitmproxyWebDownloadCertificateData, ThrowOnError>) => (options?.client ?? client).get<unknown, unknown, ThrowOnError>({ url: '/cert', ...options });

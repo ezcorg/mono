@@ -95,7 +95,7 @@ export const api = {
     ),
 
   listPlugins: (baseUrl: string, token: string) =>
-    request<string[]>(baseUrl, "/api/plugins", token),
+    request<PluginSummary[]>(baseUrl, "/api/plugins", token),
 
   deletePlugin: (
     baseUrl: string,
@@ -108,6 +108,22 @@ export const api = {
       `/api/plugins/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`,
       token,
       { method: "DELETE" }
+    ),
+
+  setPluginEnabled: (baseUrl: string, token: string, tenantId: string, ns: string, name: string, enabled: boolean) =>
+    request<string>(
+      baseUrl,
+      `/api/manage/tenants/${encodeURIComponent(tenantId)}/plugins/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/enabled`,
+      token,
+      { method: "PUT", body: JSON.stringify({ enabled }) }
+    ),
+
+  setPluginConfig: (baseUrl: string, token: string, tenantId: string, ns: string, name: string, config: Record<string, string>) =>
+    request<string>(
+      baseUrl,
+      `/api/manage/tenants/${encodeURIComponent(tenantId)}/plugins/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/config`,
+      token,
+      { method: "PUT", body: JSON.stringify({ config }) }
     ),
 
   uploadPlugin: (baseUrl: string, token: string, wasmBytes: Uint8Array, fileName: string) => {
@@ -128,6 +144,18 @@ export const api = {
       body: JSON.stringify(config),
     }),
 };
+
+export interface PluginSummary {
+  namespace: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  license: string;
+  url: string;
+  enabled: boolean;
+  capabilities: { kind: string; scope: string; granted: boolean }[];
+}
 
 export interface RuntimeConfig {
   plugins_enabled: boolean;

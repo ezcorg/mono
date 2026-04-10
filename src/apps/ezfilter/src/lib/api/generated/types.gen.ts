@@ -4,6 +4,64 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type WitmproxyWebAuthEndpointsLoginRequest = {
+    email: string;
+    password: string;
+};
+
+export type WitmproxyWebAuthEndpointsRegisterRequest = {
+    display_name: string;
+    email: string;
+    password: string;
+};
+
+export type WitmproxyWebManagementAddPermissionRequest = {
+    effect: string;
+    resource: string;
+};
+
+export type WitmproxyWebManagementCreateGroupRequest = {
+    description?: string | null;
+    name: string;
+};
+
+export type WitmproxyWebManagementIpMappingRequest = {
+    ip_address: string;
+};
+
+export type WitmproxyWebManagementMemberRequest = {
+    tenant_id: string;
+};
+
+/**
+ * Subset of AppConfig fields that are safe to expose and modify at runtime.
+ * Excludes sensitive fields (db_password, jwt_secret, admin_password) and
+ * fields that require a restart to take effect (bind addresses, cert paths).
+ */
+export type WitmproxyWebManagementRuntimeConfig = {
+    auto_update: boolean;
+    plugins_enabled: boolean;
+    plugins_max_fuel: number;
+    plugins_max_memory_mb: number;
+    plugins_timeout_ms: number;
+    transparent_enabled: boolean;
+};
+
+export type WitmproxyWebManagementSetPluginConfigRequest = {
+    config: {
+        [key: string]: unknown;
+    };
+};
+
+export type WitmproxyWebManagementSetPluginEnabledRequest = {
+    enabled: boolean;
+};
+
+export type WitmproxyWebManagementUpdateTenantRequest = {
+    display_name?: string | null;
+    enabled?: boolean | null;
+};
+
 export type WitmproxyWebIndexPageData = {
     body?: never;
     path?: never;
@@ -11,15 +69,35 @@ export type WitmproxyWebIndexPageData = {
     url: '/';
 };
 
-export type WitmproxyWebAuthEndpointsLoginData = {
+export type WitmproxyWebServerPreflightData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/auth/login';
 };
 
-export type WitmproxyWebAuthEndpointsRegisterData = {
+export type WitmproxyWebAuthEndpointsLoginData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebAuthEndpointsLoginRequest;
+    path?: never;
+    query?: never;
+    url: '/api/auth/login';
+};
+
+export type WitmproxyWebServerPreflight2Data = {
     body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/register';
+};
+
+export type WitmproxyWebAuthEndpointsRegisterData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebAuthEndpointsRegisterRequest;
     path?: never;
     query?: never;
     url: '/api/auth/register';
@@ -32,7 +110,339 @@ export type WitmproxyWebServerHealthCheckData = {
     url: '/api/health';
 };
 
+export type WitmproxyWebServerPreflight3Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/health';
+};
+
+export type WitmproxyWebManagementGetConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/config';
+};
+
+export type WitmproxyWebServerPreflight4Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/config';
+};
+
+export type WitmproxyWebManagementUpdateConfigData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementRuntimeConfig;
+    path?: never;
+    query?: never;
+    url: '/api/manage/config';
+};
+
+export type WitmproxyWebManagementListGroupsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/groups';
+};
+
+export type WitmproxyWebServerPreflight5Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/groups';
+};
+
+export type WitmproxyWebManagementCreateGroupData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementCreateGroupRequest;
+    path?: never;
+    query?: never;
+    url: '/api/manage/groups';
+};
+
+export type WitmproxyWebManagementDeleteGroupData = {
+    body?: never;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/groups/{id}';
+};
+
+export type WitmproxyWebServerPreflight6Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/groups/{id}';
+};
+
+export type WitmproxyWebManagementRemoveGroupMemberData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementMemberRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/groups/{id}/members';
+};
+
+export type WitmproxyWebServerPreflight7Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/groups/{id}/members';
+};
+
+export type WitmproxyWebManagementAddGroupMemberData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementMemberRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/groups/{id}/members';
+};
+
+export type WitmproxyWebServerPreflight8Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/groups/{id}/permissions';
+};
+
+export type WitmproxyWebManagementAddGroupPermissionData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementAddPermissionRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/groups/{id}/permissions';
+};
+
+export type WitmproxyWebManagementRemoveGroupPermissionData = {
+    body?: never;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+        /**
+         * Get parameter `permission_id` from request url path.
+         */
+        permission_id: string;
+    };
+    query?: never;
+    url: '/api/manage/groups/{id}/permissions/{permission_id}';
+};
+
+export type WitmproxyWebServerPreflight9Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/groups/{id}/permissions/{permission_id}';
+};
+
+export type WitmproxyWebManagementListTenantsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/tenants';
+};
+
+export type WitmproxyWebServerPreflight10Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/tenants';
+};
+
+export type WitmproxyWebManagementDeleteTenantData = {
+    body?: never;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}';
+};
+
+export type WitmproxyWebManagementGetTenantData = {
+    body?: never;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}';
+};
+
+export type WitmproxyWebServerPreflight11Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/tenants/{id}';
+};
+
+export type WitmproxyWebManagementUpdateTenantData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementUpdateTenantRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}';
+};
+
+export type WitmproxyWebManagementRemoveIpMappingData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementIpMappingRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}/ip-mappings';
+};
+
+export type WitmproxyWebManagementListIpMappingsData = {
+    body?: never;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}/ip-mappings';
+};
+
+export type WitmproxyWebServerPreflight12Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/tenants/{id}/ip-mappings';
+};
+
+export type WitmproxyWebManagementAddIpMappingData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementIpMappingRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}/ip-mappings';
+};
+
+export type WitmproxyWebServerPreflight13Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/config';
+};
+
+export type WitmproxyWebManagementSetTenantPluginConfigData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementSetPluginConfigRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+        /**
+         * Get parameter `ns` from request url path.
+         */
+        ns: string;
+        /**
+         * Get parameter `name` from request url path.
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/config';
+};
+
+export type WitmproxyWebServerPreflight14Data = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled';
+};
+
+export type WitmproxyWebManagementSetTenantPluginEnabledData = {
+    /**
+     * Extract json format data from request.
+     */
+    body?: WitmproxyWebManagementSetPluginEnabledRequest;
+    path: {
+        /**
+         * Get parameter `id` from request url path.
+         */
+        id: string;
+        /**
+         * Get parameter `ns` from request url path.
+         */
+        ns: string;
+        /**
+         * Get parameter `name` from request url path.
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/manage/tenants/{id}/plugins/{ns}/{name}/enabled';
+};
+
 export type WitmproxyWebServerListPluginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/plugins';
+};
+
+export type WitmproxyWebServerPreflight15Data = {
     body?: never;
     path?: never;
     query?: never;
@@ -63,6 +473,13 @@ export type WitmproxyWebServerDeletePluginData = {
          */
         name: string;
     };
+    query?: never;
+    url: '/api/plugins/{namespace}/{name}';
+};
+
+export type WitmproxyWebServerPreflight16Data = {
+    body?: never;
+    path?: never;
     query?: never;
     url: '/api/plugins/{namespace}/{name}';
 };

@@ -243,7 +243,18 @@ impl WebServer {
             app = app.push(manage_router);
         }
 
-        let doc = OpenApi::new("witmproxy", env!("CARGO_PKG_VERSION")).merge_router(&app);
+        let doc = OpenApi::new("witmproxy", env!("CARGO_PKG_VERSION"))
+            .merge_router(&app)
+            .add_security_scheme(
+                "bearer",
+                salvo::oapi::security::SecurityScheme::Http(
+                    salvo::oapi::security::Http::new(salvo::oapi::security::HttpAuthScheme::Bearer)
+                        .bearer_format("JWT")
+                        .description(
+                            "JWT token obtained from /api/auth/login or /api/auth/register",
+                        ),
+                ),
+            );
         let app = app
             .unshift(doc.into_router("/api/docs/openapi.json"))
             .unshift(SwaggerUi::new("/api/docs/openapi.json").into_router("/swagger"));
@@ -281,14 +292,34 @@ async fn preflight(res: &mut salvo::Response) {
     res.status_code(salvo::http::StatusCode::NO_CONTENT);
 }
 
-#[endpoint]
-async fn health_check(res: &mut salvo::Response) {
-    res.status_code(salvo::http::StatusCode::OK);
-    res.render(salvo::writing::Text::Plain("OK"));
+#[endpoint(status_codes(200))]
+async fn health_check() -> &'static str {
+    "OK"
 }
 
 // Plugin management endpoints
-#[endpoint]
+
+#[derive(serde::Serialize)]
+struct PluginSummary {
+    namespace: String,
+    name: String,
+    version: String,
+    author: String,
+    description: String,
+    license: String,
+    url: String,
+    enabled: bool,
+    capabilities: Vec<PluginCapSummary>,
+}
+
+#[derive(serde::Serialize)]
+struct PluginCapSummary {
+    kind: String,
+    scope: String,
+    granted: bool,
+}
+
+#[endpoint(security(("bearer" = [])), status_codes(200, 401, 403, 500))]
 async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
     let registry = if let Ok(state) = depot.obtain::<AppState>() {
         state.plugin_registry.clone()
@@ -299,19 +330,40 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
         return;
     };
 
-    // TODO: return plugin details
     if let Some(registry) = registry {
         let registry = registry.read().await;
-        let plugin_names: Vec<String> = registry.plugins().keys().cloned().collect();
+        let plugins: Vec<PluginSummary> = registry
+            .plugins()
+            .values()
+            .map(|p| PluginSummary {
+                namespace: p.namespace.clone(),
+                name: p.name.clone(),
+                version: p.version.clone(),
+                author: p.author.clone(),
+                description: p.description.clone(),
+                license: p.license.clone(),
+                url: p.url.clone(),
+                enabled: p.enabled,
+                capabilities: p
+                    .capabilities
+                    .iter()
+                    .map(|c| PluginCapSummary {
+                        kind: c.inner.kind.to_string(),
+                        scope: c.inner.scope.expression.clone(),
+                        granted: c.granted,
+                    })
+                    .collect(),
+            })
+            .collect();
         res.status_code(salvo::http::StatusCode::OK);
-        res.render(salvo::writing::Json(plugin_names));
+        res.render(salvo::writing::Json(plugins));
     } else {
         res.status_code(salvo::http::StatusCode::OK);
-        res.render(salvo::writing::Json(Vec::<String>::new()));
+        res.render(salvo::writing::Json(Vec::<PluginSummary>::new()));
     }
 }
 
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 400, 401, 403, 500))]
 async fn upsert_plugin(
     file: FormFile,
     req: &mut salvo::Request,
@@ -393,7 +445,7 @@ async fn upsert_plugin(
     }
 }
 
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 401, 403, 404, 500))]
 async fn delete_plugin(
     namespace: PathParam<String>,
     name: PathParam<String>,

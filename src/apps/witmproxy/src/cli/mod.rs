@@ -198,9 +198,22 @@ impl Cli {
 
         if !is_serve {
             let log_level = if self.verbose { "debug" } else { "info" };
-            tracing_subscriber::fmt()
-                .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
-                .init();
+            // Load config early to check telemetry settings (best-effort, fall back to defaults)
+            let config_path_resolved = expand_home_in_path(&self.config_path).ok();
+            let otel_config = config_path_resolved
+                .as_ref()
+                .and_then(|p| crate::config::AppConfig::load(p).ok())
+                .map(|c| c.telemetry)
+                .unwrap_or_default();
+            let _telemetry_guard = if otel_config.enabled {
+                crate::telemetry::otel::init_telemetry(&otel_config, log_level, None)
+            } else {
+                crate::telemetry::otel::init_telemetry(
+                    &crate::config::TelemetryConfig::default(),
+                    log_level,
+                    None,
+                )
+            };
         }
 
         let config_path = expand_home_in_path(&self.config_path)?;
@@ -524,26 +537,27 @@ impl ResolvedCli {
     /// Run the proxy server directly (daemon mode)
     /// This method is called by the daemon service and writes logs to a file
     async fn run_serve(&self, log_file: Option<PathBuf>) -> Result<()> {
-        // Set up file-based logging if a log file path is provided
-        if let Some(ref log_path) = log_file {
-            // Create parent directories if needed
+        let log_level = if self.verbose { "debug" } else { "info" };
+
+        // Set up logging (with optional file writer and OTel)
+        let writer = if let Some(ref log_path) = log_file {
             if let Some(parent) = log_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            Some(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_path)?,
+            )
+        } else {
+            None
+        };
 
-            // Set up file-based tracing subscriber
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)?;
+        let _telemetry_guard =
+            crate::telemetry::otel::init_telemetry(&self.config.telemetry, log_level, writer);
 
-            let log_level = if self.verbose { "debug" } else { "info" };
-            tracing_subscriber::fmt()
-                .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
-                .with_writer(file)
-                .with_ansi(false) // No ANSI colors in log file
-                .init();
-
+        if let Some(ref log_path) = log_file {
             info!("witmproxy daemon starting, logging to {:?}", log_path);
         }
 
@@ -571,6 +585,17 @@ impl ResolvedCli {
         std::fs::create_dir_all(&app_dir)?;
 
         info!("Loaded proxy configuration");
+
+        // Spawn system resource metrics if OTel is enabled
+        #[cfg(feature = "otel")]
+        let _resource_metrics_handle =
+            if self.config.telemetry.enabled && self.config.telemetry.resource_metrics_enabled {
+                Some(crate::telemetry::otel::spawn_resource_metrics(
+                    self.config.telemetry.resource_metrics_interval_secs,
+                ))
+            } else {
+                None
+            };
 
         // Create certificate authority using pre-resolved cert_dir
         std::fs::create_dir_all(&self.config.tls.cert_dir)?;

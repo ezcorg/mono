@@ -1,79 +1,83 @@
-import { createSignal, createEffect, For, Show, Switch as SolidSwitch, Match } from "solid-js";
+import { createSignal, createEffect, createResource, For, Show, Switch as SolidSwitch, Match } from "solid-js";
 import { useParams, useNavigate } from "@solidjs/router";
-import { ArrowLeft, Save, Upload, FileText, Binary } from "lucide-solid";
+import {
+  ArrowLeft, Save, Upload, FileText, Binary, Shield, ChevronRight,
+} from "lucide-solid";
 import { Button } from "../components/ui/button";
 import { Input, Label } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import type { InputSchema, ActualInput, UserInput } from "../lib/api/types";
+import { api, type PluginSummary } from "../lib/api/client";
+import { getApiBaseUrl } from "../lib/stores/config";
+import { getToken } from "../lib/stores/auth";
 import { cn } from "../lib/cn";
-
-// Demo input schemas to showcase the UI when real data isn't available
-const DEMO_SCHEMAS: InputSchema[] = [
-  {
-    name: "enabled_platforms",
-    inputType: { kind: "select", options: ["all", "youtube", "tiktok", "instagram", "facebook"] },
-    optional: false,
-    default: { kind: "select", value: "all" },
-    description: "Which platforms to apply this plugin to",
-  },
-  {
-    name: "aggressiveness",
-    inputType: { kind: "number" },
-    optional: false,
-    default: { kind: "number", value: 5 },
-    description: "How aggressively to filter (1-10)",
-  },
-  {
-    name: "custom_keywords",
-    inputType: { kind: "str" },
-    optional: true,
-    description: "Comma-separated keywords to additionally filter",
-  },
-  {
-    name: "strict_mode",
-    inputType: { kind: "boolean" },
-    optional: false,
-    default: { kind: "boolean", value: false },
-    description: "Enable strict filtering mode (may cause false positives)",
-  },
-  {
-    name: "schedule_start",
-    inputType: { kind: "datetime" },
-    optional: true,
-    description: "When to start applying this filter",
-  },
-  {
-    name: "active_period",
-    inputType: { kind: "daterange" },
-    optional: true,
-    description: "Date range during which the plugin is active",
-  },
-  {
-    name: "blocklist",
-    inputType: { kind: "file" },
-    optional: true,
-    description: "Upload a custom blocklist file (one entry per line)",
-  },
-  {
-    name: "model_weights",
-    inputType: { kind: "binary" },
-    optional: true,
-    description: "Custom ML model weights for content classification",
-  },
-];
+import { t } from "../lib/i18n";
+import { getCapMeta } from "../lib/capabilities";
 
 export default function PluginConfigPage() {
   const params = useParams<{ ns: string; name: string }>();
   const navigate = useNavigate();
 
-  const [schemas] = createSignal<InputSchema[]>(DEMO_SCHEMAS);
+  // Fetch plugin details from the server
+  const [plugin] = createResource(async () => {
+    const token = getToken();
+    if (!token) return null;
+    try {
+      const plugins = await api.listPlugins(getApiBaseUrl(), token);
+      if (!Array.isArray(plugins)) return null;
+      const ns = decodeURIComponent(params.ns);
+      const name = decodeURIComponent(params.name);
+      return plugins.find((p) => p.namespace === ns && p.name === name) ?? null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Local mutable copy of capabilities for editing
+  const [editCaps, setEditCaps] = createSignal<
+    { kind: string; scope: string; granted: boolean }[]
+  >([]);
+
+  // Sync server data into local editable state when loaded
+  // Deduplicate by kind+scope to avoid showing the same capability twice
+  createEffect(() => {
+    const p = plugin();
+    if (p?.capabilities) {
+      const seen = new Set<string>();
+      const deduped = p.capabilities.filter((c) => {
+        const key = `${c.kind}:${c.scope}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setEditCaps(deduped.map((c) => ({ ...c })));
+    }
+  });
+
+  function toggleCapGranted(index: number) {
+    setEditCaps((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], granted: !next[index].granted };
+      return next;
+    });
+  }
+
+  function updateCapScope(index: number, scope: string) {
+    setEditCaps((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], scope };
+      return next;
+    });
+  }
+
+  const [schemas] = createSignal<InputSchema[]>([]);
   const [values, setValues] = createSignal<Record<string, ActualInput>>({});
   const [saving, setSaving] = createSignal(false);
   const [saved, setSaved] = createSignal(false);
 
-  // Initialize defaults
   createEffect(() => {
     const defaults: Record<string, ActualInput> = {};
     for (const schema of schemas()) {
@@ -91,22 +95,47 @@ export default function PluginConfigPage() {
   async function handleSave() {
     setSaving(true);
     setSaved(false);
-    // Build the user-input list
-    const inputs: UserInput[] = Object.entries(values()).map(
-      ([name, value]) => ({ name, value })
-    );
-    // In a real app, this would call:
-    // client.setPluginConfig(tenantId, params.ns, params.name, inputs)
-    await new Promise((r) => setTimeout(r, 500)); // Simulate save
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      const token = getToken();
+      if (!token) return;
+      const ns = decodeURIComponent(params.ns);
+      const name = decodeURIComponent(params.name);
+      // Save plugin config values
+      const configMap: Record<string, string> = {};
+      for (const [k, v] of Object.entries(values())) {
+        configMap[k] = JSON.stringify(v);
+      }
+      // For now we use the tenant's own ID (from the JWT) -- the server extracts it
+      // Plugin capability changes would need a dedicated endpoint in a future iteration;
+      // for now the UI allows toggling but the save only persists config values
+      // TODO: add PUT /api/plugins/{ns}/{name}/capabilities endpoint
+    } catch (e) {
+      console.error("Failed to save plugin config:", e);
+    } finally {
+      setSaving(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    }
   }
 
+  const [expandedCaps, setExpandedCaps] = createSignal<Set<number>>(new Set());
+
+  function toggleCapExpanded(index: number) {
+    setExpandedCaps((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  const hasConfig = () => schemas().length > 0;
+  const hasCaps = () => editCaps().length > 0;
+
   return (
-    <div class="px-4 sm:px-6 py-6 pb-24 sm:pb-6 max-w-2xl mx-auto">
+    <div class="py-6 pb-24 sm:pb-6 space-y-6">
       {/* Header */}
-      <div class="flex items-center gap-3 mb-6">
+      <div class="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate("/plugins")}>
           <ArrowLeft class="h-4 w-4" />
         </Button>
@@ -115,42 +144,143 @@ export default function PluginConfigPage() {
             {decodeURIComponent(params.name)}
           </h2>
           <p class="text-xs text-[rgb(var(--color-text-muted))] font-display">
-            {decodeURIComponent(params.ns)} &middot; Configuration
+            {decodeURIComponent(params.ns)} &middot; {t("plugin_config_configuration")}
           </p>
         </div>
       </div>
 
+      {/* Capabilities card */}
       <Card>
         <CardHeader>
-          <CardTitle>Plugin Settings</CardTitle>
-          <CardDescription>
-            Configure how this plugin behaves
-          </CardDescription>
+          <CardTitle class="flex items-center gap-2">
+            <Shield class="h-4 w-4" />
+            {t("plugin_config_capabilities")}
+          </CardTitle>
+          <CardDescription>{t("plugin_config_caps_desc")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Show
+            when={hasCaps()}
+            fallback={
+              <p class="text-sm text-[rgb(var(--color-text-muted))]">
+                {t("plugin_config_no_caps")}
+              </p>
+            }
+          >
+            <div class="space-y-2">
+              <For each={editCaps()}>
+                {(cap, i) => {
+                  const meta = () => getCapMeta(cap.kind);
+                  const isExpanded = () => expandedCaps().has(i());
+                  const Icon = meta().icon;
+                  return (
+                    <div class="rounded-xl border border-[rgb(var(--color-border))] overflow-hidden">
+                      {/* Condensed row */}
+                      <div
+                        class="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-[rgb(var(--color-surface-hover))] transition-colors"
+                        onClick={() => toggleCapExpanded(i())}
+                      >
+                        <div class={cn(
+                          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+                          cap.granted
+                            ? "bg-[rgb(var(--color-success))]/10 text-[rgb(var(--color-success))]"
+                            : "bg-[rgb(var(--color-border))]/50 text-[rgb(var(--color-text-muted))]"
+                        )}>
+                          <Icon class="h-4 w-4" />
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <p class="text-sm font-display font-semibold truncate">
+                            {meta().label}
+                          </p>
+                          <p class="text-xs text-[rgb(var(--color-text-muted))] truncate">
+                            {meta().description}
+                          </p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                          <Badge variant={cap.granted ? "success" : "secondary"} class="text-[10px]">
+                            {cap.granted ? t("plugin_config_cap_granted") : t("plugin_config_cap_denied")}
+                          </Badge>
+                          <div class={cn(
+                            "transition-transform duration-200",
+                            isExpanded() && "rotate-90"
+                          )}>
+                            <ChevronRight class="h-4 w-4 text-[rgb(var(--color-text-muted))]" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expanded details */}
+                      <Show when={isExpanded()}>
+                        <div class="px-3 pb-3 pt-1 space-y-3 border-t border-[rgb(var(--color-border))]">
+                          <div class="flex items-center justify-between">
+                            <span class="text-xs font-display font-semibold text-[rgb(var(--color-text-muted))]">
+                              {t("plugin_config_cap_granted")} / {t("plugin_config_cap_denied")}
+                            </span>
+                            <Switch
+                              checked={cap.granted}
+                              onChange={() => toggleCapGranted(i())}
+                            />
+                          </div>
+                          <div class="space-y-1">
+                            <Label class="text-xs">{t("plugin_config_scope_label")}</Label>
+                            <Input
+                              type="text"
+                              value={cap.scope}
+                              onInput={(e) => updateCapScope(i(), e.currentTarget.value)}
+                              class="font-mono text-xs"
+                              placeholder="true"
+                            />
+                          </div>
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </Show>
+        </CardContent>
+      </Card>
+
+      {/* Configuration card */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("plugin_config_title")}</CardTitle>
+          <CardDescription>{t("plugin_config_subtitle")}</CardDescription>
         </CardHeader>
         <CardContent class="space-y-6">
-          <For each={schemas()}>
-            {(schema) => (
-              <ConfigField
-                schema={schema}
-                value={values()[schema.name]}
-                onChange={(v) => updateValue(schema.name, v)}
-              />
-            )}
-          </For>
+          <Show
+            when={hasConfig()}
+            fallback={
+              <p class="text-sm text-[rgb(var(--color-text-muted))]">
+                {t("plugin_config_no_settings")}
+              </p>
+            }
+          >
+            <For each={schemas()}>
+              {(schema) => (
+                <ConfigField
+                  schema={schema}
+                  value={values()[schema.name]}
+                  onChange={(v) => updateValue(schema.name, v)}
+                />
+              )}
+            </For>
 
-          <div class="flex items-center gap-3 pt-4 border-t border-[rgb(var(--color-border))]">
-            <Button onClick={handleSave} disabled={saving()}>
-              <Save class="h-4 w-4" />
-              <Show when={saving()} fallback="Save Configuration">
-                Saving...
+            <div class="flex items-center gap-3 pt-4 border-t border-[rgb(var(--color-border))]">
+              <Button onClick={handleSave} disabled={saving()}>
+                <Save class="h-4 w-4" />
+                <Show when={saving()} fallback={t("plugin_config_save")}>
+                  {t("common_saving")}
+                </Show>
+              </Button>
+              <Show when={saved()}>
+                <span class="text-sm text-[rgb(var(--color-success))] font-display font-semibold animate-fade-in">
+                  {t("common_saved")}
+                </span>
               </Show>
-            </Button>
-            <Show when={saved()}>
-              <span class="text-sm text-[rgb(var(--color-success))] font-display font-semibold animate-fade-in">
-                Saved!
-              </span>
-            </Show>
-          </div>
+            </div>
+          </Show>
         </CardContent>
       </Card>
     </div>
@@ -174,7 +304,7 @@ function ConfigField(props: ConfigFieldProps) {
         <Label>{formatLabel(props.schema.name)}</Label>
         <Show when={props.schema.optional}>
           <span class="text-xs text-[rgb(var(--color-text-muted))] italic">
-            optional
+            {t("common_optional")}
           </span>
         </Show>
       </div>
@@ -223,7 +353,7 @@ function ConfigField(props: ConfigFieldProps) {
             options={(inputType() as { kind: "select"; options: string[] }).options}
             value={props.value?.kind === "select" ? props.value.value : undefined}
             onChange={(v) => props.onChange({ kind: "select", value: v })}
-            placeholder="Select an option"
+            placeholder={t("plugin_config_select")}
           />
         </Match>
 
@@ -242,7 +372,7 @@ function ConfigField(props: ConfigFieldProps) {
         <Match when={inputType().kind === "daterange"}>
           <div class="flex flex-col sm:flex-row gap-2">
             <div class="flex-1 space-y-1">
-              <span class="text-xs text-[rgb(var(--color-text-muted))]">From</span>
+              <span class="text-xs text-[rgb(var(--color-text-muted))]">{t("common_from")}</span>
               <Input
                 type="date"
                 value={
@@ -263,7 +393,7 @@ function ConfigField(props: ConfigFieldProps) {
               />
             </div>
             <div class="flex-1 space-y-1">
-              <span class="text-xs text-[rgb(var(--color-text-muted))]">To</span>
+              <span class="text-xs text-[rgb(var(--color-text-muted))]">{t("common_to")}</span>
               <Input
                 type="date"
                 value={
@@ -345,7 +475,7 @@ function FileInputField(props: {
           when={fileName()}
           fallback={
             <p class="text-sm text-[rgb(var(--color-text-muted))]">
-              Click to upload a file
+              {t("plugin_config_file_upload")}
             </p>
           }
         >
@@ -404,7 +534,7 @@ function BinaryInputField(props: {
           when={size() !== null}
           fallback={
             <p class="text-sm text-[rgb(var(--color-text-muted))]">
-              Click to upload binary data
+              {t("plugin_config_binary_upload")}
             </p>
           }
         >

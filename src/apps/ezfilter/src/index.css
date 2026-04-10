@@ -52,7 +52,7 @@
 
   body {
     font-family: "Nunito", system-ui, sans-serif;
-    background: var(--gradient-sky);
+    background: rgb(var(--color-bg));
     color: rgb(var(--color-text));
     min-height: 100vh;
     transition: background 0.6s ease, color 0.3s ease;
@@ -91,36 +91,34 @@
   }
 }
 
-/* Stars for night mode */
-[data-theme="dark"] .star {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  background: white;
-  border-radius: 50%;
-  animation: twinkle 4s ease-in-out infinite;
+/* (Old star/cloud decorations removed — replaced by cozy.svg background) */
+
+/* Overlay scrollbar — floats over content, never causes layout shift */
+.scrollbar-float {
+  overflow-y: overlay; /* WebKit/Blink: scrollbar overlays content */
+  scrollbar-gutter: auto; /* don't reserve gutter space */
 }
 
-/* Cloud decoration for day mode */
-.cloud {
-  position: absolute;
-  background: white;
-  border-radius: 9999px;
-  opacity: 0.6;
-  filter: blur(1px);
+/* Thin translucent scrollbar that appears on top of content */
+.scrollbar-float::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+.scrollbar-float::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-float::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-text-muted) / 0.3);
+  border-radius: 3px;
+}
+.scrollbar-float::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-text-muted) / 0.5);
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-}
-::-webkit-scrollbar-track {
-  background: rgb(var(--color-bg));
-}
-::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-border));
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-text-muted));
+/* Fallback for non-webkit (Firefox) */
+@supports not selector(::-webkit-scrollbar) {
+  .scrollbar-float {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--color-text-muted) / 0.3) transparent;
+  }
 }

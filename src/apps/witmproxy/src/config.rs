@@ -60,6 +60,9 @@ pub struct AppConfig {
 
     #[config(nested, layer_attr(command(flatten)))]
     pub update: UpdateConfig,
+
+    #[config(nested, layer_attr(command(flatten)))]
+    pub telemetry: TelemetryConfig,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
@@ -287,6 +290,66 @@ pub struct UpdateConfig {
     /// Prefer prebuilt GitHub release binaries over cargo install (default: true)
     #[config(default = true, env = "UPDATE_PREFER_PREBUILT", layer_attr(arg(long)))]
     pub prefer_prebuilt: bool,
+}
+
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
+pub struct TelemetryConfig {
+    /// Enable OpenTelemetry export (default: false). Only effective when compiled with the `otel` feature.
+    #[config(
+        default = false,
+        env = "OTEL_ENABLED",
+        layer_attr(arg(long = "otel-enabled", id = "otel-enabled"))
+    )]
+    pub enabled: bool,
+
+    /// OTLP endpoint for traces, metrics, and logs (default: http://localhost:4317)
+    #[config(
+        default = "http://localhost:4317",
+        env = "OTEL_EXPORTER_OTLP_ENDPOINT",
+        layer_attr(arg(long = "otel-endpoint"))
+    )]
+    pub endpoint: String,
+
+    /// Enable trace export (default: true when telemetry is enabled)
+    #[config(
+        default = true,
+        env = "OTEL_TRACES_ENABLED",
+        layer_attr(arg(long = "otel-traces"))
+    )]
+    pub traces_enabled: bool,
+
+    /// Enable metrics export (default: true when telemetry is enabled)
+    #[config(
+        default = true,
+        env = "OTEL_METRICS_ENABLED",
+        layer_attr(arg(long = "otel-metrics"))
+    )]
+    pub metrics_enabled: bool,
+
+    /// Enable log export (default: true when telemetry is enabled)
+    #[config(
+        default = true,
+        env = "OTEL_LOGS_ENABLED",
+        layer_attr(arg(long = "otel-logs"))
+    )]
+    pub logs_enabled: bool,
+
+    /// Enable system resource metrics (CPU, memory, disk, network) (default: true)
+    #[config(
+        default = true,
+        env = "OTEL_RESOURCE_METRICS_ENABLED",
+        layer_attr(arg(long = "otel-resource-metrics"))
+    )]
+    pub resource_metrics_enabled: bool,
+
+    /// System resource metrics collection interval in seconds (default: 15)
+    #[config(
+        default = 15,
+        env = "OTEL_RESOURCE_METRICS_INTERVAL_SECS",
+        layer_attr(arg(long = "otel-resource-metrics-interval"))
+    )]
+    pub resource_metrics_interval_secs: u64,
 }
 
 impl AppConfig {
