@@ -54,8 +54,12 @@
     --shadow-card: 0 4px 16px rgba(129, 140, 248, 0.08);
   }
 
-  * {
+  *,
+  ::before,
+  ::after {
     border-color: rgb(var(--color-border));
+    /* Prevent sub-pixel rendering artifacts on borders */
+    -webkit-backface-visibility: hidden;
   }
 
   body {

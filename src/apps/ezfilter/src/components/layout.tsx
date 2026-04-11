@@ -2,6 +2,7 @@ import { type JSX, Show, onMount } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { Puzzle, Settings, LogOut, Power, Loader2 } from "lucide-solid";
 import { DayNightScene } from "./day-night-scene";
+import { DevToolbar } from "./dev-toolbar";
 import { cn } from "../lib/cn";
 import { t } from "../lib/i18n";
 import { logout } from "../lib/stores/auth";
@@ -57,7 +58,7 @@ export function Layout(props: LayoutProps) {
         <Show
           when={!isSetup()}
           fallback={
-            <main class="h-full overflow-y-auto scrollbar-float">{props.children}</main>
+            <main class="h-full overflow-y-auto scrollbar-float animate-fade-in">{props.children}</main>
           }
         >
           {/* Desktop: nav + scrollable content */}
@@ -187,6 +188,8 @@ export function Layout(props: LayoutProps) {
           </nav>
         </Show>
       </div>
+
+      <DevToolbar />
     </div>
   );
 }

@@ -2,9 +2,10 @@ import { createSignal } from "solid-js";
 
 const STORAGE_KEY = "ezfilter:devmode";
 
-const [enabled, setEnabledInternal] = createSignal<boolean>(
-  localStorage.getItem(STORAGE_KEY) === "true"
-);
+const storedValue = localStorage.getItem(STORAGE_KEY);
+const defaultEnabled = storedValue !== null ? storedValue === "true" : import.meta.env.DEV;
+
+const [enabled, setEnabledInternal] = createSignal<boolean>(defaultEnabled);
 
 export function isDevMode() {
   return enabled();

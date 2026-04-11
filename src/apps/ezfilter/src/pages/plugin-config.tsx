@@ -39,6 +39,10 @@ export default function PluginConfigPage() {
   const [editCaps, setEditCaps] = createSignal<
     { kind: string; scope: string; granted: boolean }[]
   >([]);
+  // Original values from the server — used to detect user modifications
+  const [originalCaps, setOriginalCaps] = createSignal<
+    { kind: string; scope: string; granted: boolean }[]
+  >([]);
 
   // Sync server data into local editable state when loaded
   // Deduplicate by kind+scope to avoid showing the same capability twice
@@ -52,7 +56,9 @@ export default function PluginConfigPage() {
         seen.add(key);
         return true;
       });
-      setEditCaps(deduped.map((c) => ({ ...c })));
+      const caps = deduped.map((c) => ({ ...c }));
+      setEditCaps(caps);
+      setOriginalCaps(caps.map((c) => ({ ...c })));
     }
   });
 
@@ -172,12 +178,17 @@ export default function PluginConfigPage() {
                   const meta = () => getCapMeta(cap.kind);
                   const isExpanded = () => expandedCaps().has(i());
                   const Icon = meta().icon;
-                  // Icon color: green = granted, red = denied, purple = granted with custom scope
-                  const scopeModified = () => cap.scope !== "true" && cap.scope !== "";
+                  // Compare current values against original from server to detect user edits.
+                  // Purple = user has modified this capability (changed scope or granted status).
+                  const isModified = () => {
+                    const orig = originalCaps()[i()];
+                    if (!orig) return false;
+                    return cap.scope !== orig.scope || cap.granted !== orig.granted;
+                  };
                   const iconColorClass = () =>
                     !cap.granted
                       ? "bg-red-500/10 text-red-500"
-                      : scopeModified()
+                      : isModified()
                         ? "bg-purple-500/10 text-purple-500"
                         : "bg-[rgb(var(--color-success))]/10 text-[rgb(var(--color-success))]";
                   return (
@@ -198,14 +209,17 @@ export default function PluginConfigPage() {
                             {meta().label}
                           </p>
                           <Show
-                            when={scopeModified()}
+                            when={cap.scope !== "true" && cap.scope !== ""}
                             fallback={
                               <p class="text-xs text-[rgb(var(--color-text-muted))] truncate">
                                 {meta().description}
                               </p>
                             }
                           >
-                            <p class="text-xs text-purple-400 font-mono truncate">
+                            <p class={cn(
+                              "text-xs font-mono truncate",
+                              isModified() ? "text-purple-400" : "text-[rgb(var(--color-text-muted))]"
+                            )}>
                               {cap.scope}
                             </p>
                           </Show>

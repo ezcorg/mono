@@ -2,6 +2,7 @@ import {
   createSignal,
   createEffect,
   onCleanup,
+  untrack,
   Show,
   Switch as SolidSwitch,
   Match,
@@ -36,6 +37,7 @@ import {
   CardDescription,
 } from "../components/ui/card";
 import { DayNightScene } from "../components/day-night-scene";
+import { EzfilterLogo } from "../components/ezfilter-logo";
 import { setConfig, type HostingMode } from "../lib/stores/config";
 import { api } from "../lib/api/client";
 import { setToken, setTenantId } from "../lib/stores/auth";
@@ -231,8 +233,8 @@ export default function SetupPage() {
         setError(t("setup_server_enter_url"));
         return;
       }
-      if (healthStatus() === "checking") {
-        setError(t("setup_server_wait_health"));
+      if (healthStatus() !== "ok") {
+        setError(healthStatus() === "checking" ? t("setup_server_wait_health") : t("error_server_unreachable"));
         return;
       }
       setStep("login");
@@ -345,12 +347,14 @@ export default function SetupPage() {
     }
   });
 
-  // Debounced validation of manually edited binary path
+  // Debounced validation of manually edited binary path.
+  // Uses untrack on binaryStatus to avoid re-triggering when the status signal changes.
   const debouncedBinaryPath = useDebounce(() => binaryPath(), 500);
   createEffect(() => {
     const path = debouncedBinaryPath();
-    if (!path.trim() || binaryStatus() === "checking") return;
-    // Only validate if the path was manually edited (not auto-detected)
+    if (!path.trim()) return;
+    // Don't re-validate if already checking (read without tracking to avoid loop)
+    if (untrack(binaryStatus) === "checking") return;
     (async () => {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
@@ -360,6 +364,23 @@ export default function SetupPage() {
           { path }
         );
         setBinaryStatus(result.found ? "found" : "not-found");
+
+        // Auto-discover the web server URL if the binary is valid
+        if (result.found) {
+          try {
+            const info = await invoke<{ proxy?: string; web?: string }>(
+              "discover_server_url",
+              { binaryPath: path }
+            );
+            if (info.web) {
+              // Pre-fill the server URL for the next step
+              const webUrl = info.web.startsWith("http") ? info.web : `https://${info.web}`;
+              setServerUrl(webUrl);
+            }
+          } catch {
+            // Discovery is best-effort
+          }
+        }
       } catch {
         // Not in Tauri, can't validate
       }
@@ -488,10 +509,11 @@ export default function SetupPage() {
 
       <div class="relative z-10 w-full max-w-md animate-fade-in">
         {/* Logo */}
-        <div class="text-center mb-6">
-          <h1 class="text-3xl font-extrabold font-title tracking-tight">
-            <span class="text-[rgb(var(--color-primary))]">ez</span>filter
-          </h1>
+        <div class="text-center mb-6 flex flex-col items-center gap-1">
+          <EzfilterLogo
+            size="text-5xl"
+            class="text-[rgb(var(--color-text))]"
+          />
           <p class="text-sm text-[rgb(var(--color-text-muted))] font-display mt-1">
             {t("setup_heading")}
           </p>
@@ -679,7 +701,7 @@ export default function SetupPage() {
                   {t("setup_local_desc")}
                 </CardDescription>
               </CardHeader>
-              <CardContent class="space-y-5">
+              <CardContent class="space-y-5 min-h-[200px]">
                 {/* Binary path */}
                 <div class="rounded-xl border border-[rgb(var(--color-border))] p-4 space-y-3">
                   <div class="flex items-center justify-between">
@@ -1013,7 +1035,7 @@ export default function SetupPage() {
                   </Button>
                   <Button
                     onClick={goNext}
-                    disabled={healthStatus() === "checking"}
+                    disabled={healthStatus() !== "ok"}
                   >
                     {t("common_continue")}
                     <ArrowRight class="h-4 w-4" />

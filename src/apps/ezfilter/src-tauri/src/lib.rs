@@ -179,6 +179,63 @@ fn install_ca(binary_path: String) -> StepResult {
     }
 }
 
+/// Discover the witmproxy web server URL by reading its services.json file.
+/// The services.json is written by witmproxy on startup next to the cert directory.
+#[tauri::command]
+fn discover_server_url(binary_path: String) -> DiscoverResult {
+    let candidates: Vec<std::path::PathBuf> = vec![
+        // User home dir (most likely readable without sudo)
+        dirs::home_dir()
+            .unwrap_or_default()
+            .join(".witmproxy/services.json"),
+        // Linux system service (may need sudo)
+        std::path::PathBuf::from("/var/lib/witmproxy/services.json"),
+    ];
+
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(services) = serde_json::from_str::<serde_json::Value>(&content) {
+                let web = services
+                    .get("web")
+                    .and_then(|v| v.as_str())
+                    .map(|addr| format_as_url(addr, "https"));
+                let proxy = services
+                    .get("proxy")
+                    .and_then(|v| v.as_str())
+                    .map(|addr| format_as_url(addr, "http"));
+                if web.is_some() || proxy.is_some() {
+                    return DiscoverResult { proxy, web };
+                }
+            }
+        }
+    }
+
+    let _ = binary_path;
+    DiscoverResult {
+        proxy: None,
+        web: None,
+    }
+}
+
+/// Format a raw address (e.g. "0.0.0.0:9443") as a proper URL.
+/// Replaces 0.0.0.0 with 127.0.0.1 and adds the protocol scheme.
+fn format_as_url(addr: &str, scheme: &str) -> String {
+    // Strip any existing scheme
+    let bare = addr
+        .strip_prefix("https://")
+        .or_else(|| addr.strip_prefix("http://"))
+        .unwrap_or(addr);
+    // Replace 0.0.0.0 with localhost
+    let normalized = bare.replace("0.0.0.0", "127.0.0.1");
+    format!("{}://{}", scheme, normalized)
+}
+
+#[derive(Serialize)]
+struct DiscoverResult {
+    proxy: Option<String>,
+    web: Option<String>,
+}
+
 /// Enable the system proxy by configuring the OS to route HTTP(S) traffic
 /// through the given proxy URL. Works directly without needing the `witm` binary.
 #[tauri::command]
@@ -530,6 +587,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_binary,
             validate_binary,
+            discover_server_url,
             check_service_running,
             start_service,
             check_ca_status,

@@ -4,6 +4,8 @@ const en: Messages = {
   // ── App ──
   app_name: { message: "ezfilter" },
   app_tagline: { message: "your friendly content filter" },
+  app_get_started: { message: "Get started" },
+  app_sign_in: { message: "Sign In" },
 
   // ── Common ──
   common_save: { message: "Save" },
@@ -201,7 +203,7 @@ const en: Messages = {
   plugin_config_caps_desc: { message: "Permissions and scopes granted to this plugin" },
   plugin_config_cap_granted: { message: "Granted" },
   plugin_config_cap_denied: { message: "Denied" },
-  plugin_config_scope_label: { message: "Scope expression" },
+  plugin_config_scope_label: { message: "Filter expression" },
 
   // ── Settings page ──
   settings_title: { message: "Settings" },
