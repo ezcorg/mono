@@ -40,7 +40,7 @@ import { DayNightScene } from "../components/day-night-scene";
 import { EzfilterLogo } from "../components/ezfilter-logo";
 import { setConfig, type HostingMode } from "../lib/stores/config";
 import { api } from "../lib/api/client";
-import { setToken, setTenantId } from "../lib/stores/auth";
+import { setToken, setTenantId, setEmail as storeEmail } from "../lib/stores/auth";
 import { t } from "../lib/i18n";
 
 type Step =
@@ -279,6 +279,7 @@ export default function SetupPage() {
       });
       setToken(result.token);
       setTenantId(result.tenant_id);
+      storeEmail(email());
       completeSetup();
     } catch (e: any) {
       setError(
@@ -306,6 +307,7 @@ export default function SetupPage() {
       });
       setToken(result.token);
       setTenantId(result.tenant_id);
+      storeEmail(email());
       completeSetup();
     } catch (e: any) {
       setError(e?.body ?? e?.message ?? t("error_register_failed"));

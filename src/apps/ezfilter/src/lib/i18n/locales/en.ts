@@ -183,10 +183,11 @@ const en: Messages = {
   plugins_toggle_enable: { message: "Enable" },
   plugins_toggle_disable: { message: "Disable" },
   plugins_review_capabilities: { message: "Review Capabilities" },
-  plugins_review_caps_desc: { message: "This plugin was installed with the following capabilities." },
+  plugins_review_caps_desc: { message: "This plugin requests the following capabilities. Review and approve each one before activating." },
   plugins_capability: { message: "Capability" },
   plugins_capability_scope: { message: "Scope" },
-  plugins_approve_install: { message: "Done" },
+  plugins_approve_install: { message: "Approve & Enable" },
+  plugins_approve_pending: { message: "Review all capabilities to enable" },
   plugins_cancel: { message: "Cancel" },
 
   // ── Plugin config page ──
@@ -251,6 +252,40 @@ const en: Messages = {
     message: "Clear all app storage and reload? You'll need to go through setup again.",
   },
   settings_dev_reload: { message: "Force reload" },
+
+  // ── Admin page ──
+  nav_admin: { message: "Admin" },
+  admin_title: { message: "Administration" },
+  admin_subtitle: { message: "Manage users, groups, and permissions" },
+
+  admin_users_title: { message: "Users" },
+  admin_users_desc: { message: "Registered accounts on this server" },
+  admin_users_empty: { message: "No users found" },
+  admin_users_add: { message: "Register user" },
+  admin_users_email: { message: "Email" },
+  admin_users_password: { message: "Password" },
+  admin_users_display_name: { message: "Display name" },
+  admin_users_enabled: { message: "Enabled" },
+  admin_users_disable: { message: "Disable" },
+  admin_users_enable: { message: "Enable" },
+  admin_users_delete: { message: "Delete user" },
+  admin_users_delete_confirm: { message: "Delete this user? This cannot be undone." },
+
+  admin_groups_title: { message: "Groups" },
+  admin_groups_desc: { message: "Organize users and assign shared permissions" },
+  admin_groups_empty: { message: "No groups yet" },
+  admin_groups_add: { message: "Create group" },
+  admin_groups_name: { message: "Group name" },
+  admin_groups_description: { message: "Description" },
+  admin_groups_delete: { message: "Delete group" },
+  admin_groups_members: { message: "Members" },
+  admin_groups_add_member: { message: "Add member" },
+  admin_groups_permissions: { message: "Permissions" },
+  admin_groups_add_permission: { message: "Add permission" },
+  admin_groups_permission_effect: { message: "Effect" },
+  admin_groups_permission_resource: { message: "Resource pattern" },
+  admin_groups_permission_grant: { message: "Grant" },
+  admin_groups_permission_deny: { message: "Deny" },
 };
 
 export default en;

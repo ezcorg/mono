@@ -173,11 +173,13 @@ impl WebServer {
                 )
                 .push(
                     Router::with_path("/api/manage/groups/{id}/permissions")
+                        .get(management::list_group_permissions)
                         .post(management::add_group_permission)
                         .options(preflight),
                 )
                 .push(
                     Router::with_path("/api/manage/groups/{id}/members")
+                        .get(management::list_group_members)
                         .post(management::add_group_member)
                         .delete(management::remove_group_member)
                         .options(preflight),

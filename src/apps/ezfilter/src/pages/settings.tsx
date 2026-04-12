@@ -27,7 +27,7 @@ import { Switch } from "../components/ui/switch";
 import { Badge } from "../components/ui/badge";
 import { api, type RuntimeConfig } from "../lib/api/client";
 import { getApiBaseUrl, getConfig, setConfig } from "../lib/stores/config";
-import { getToken } from "../lib/stores/auth";
+import { getToken, getEmail } from "../lib/stores/auth";
 import { getTheme, setTheme, getResolvedTheme, type Theme } from "../lib/stores/theme";
 import { isDevMode, setDevMode, clearAllAppState } from "../lib/stores/devmode";
 import { cn } from "../lib/cn";
@@ -228,7 +228,7 @@ export default function SettingsPage() {
               <Label>{t("settings_profile_email")}</Label>
               <Input
                 type="email"
-                value={getConfig()?.hostingMode === "managed" ? "admin@localhost" : "admin@localhost"}
+                value={getEmail() ?? ""}
                 disabled
                 class="opacity-70"
               />

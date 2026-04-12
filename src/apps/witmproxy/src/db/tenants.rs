@@ -276,6 +276,17 @@ impl Group {
         Ok(())
     }
 
+    /// List all tenant IDs that are members of this group.
+    pub async fn members(pool: &SqlitePool, group_id: &str) -> Result<Vec<String>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT tenant_id FROM tenant_groups WHERE group_id = ?",
+        )
+        .bind(group_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn add_permission(
         pool: &SqlitePool,
         id: &str,
@@ -315,6 +326,22 @@ impl Group {
                 Ok(Permission::new(effect, &p.resource))
             })
             .collect()
+    }
+
+    /// List raw permission records (with IDs) for a group.
+    pub async fn permissions_with_ids(
+        pool: &SqlitePool,
+        group_id: &str,
+    ) -> Result<Vec<(String, String, String)>> {
+        let db_perms =
+            sqlx::query_as::<_, DbPermission>("SELECT * FROM permissions WHERE group_id = ?")
+                .bind(group_id)
+                .fetch_all(pool)
+                .await?;
+        Ok(db_perms
+            .into_iter()
+            .map(|p| (p.id, p.effect, p.resource))
+            .collect())
     }
 }
 

@@ -1,6 +1,6 @@
 import { type JSX, Show, onMount } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { Puzzle, Settings, LogOut, Power, Loader2 } from "lucide-solid";
+import { Puzzle, Settings, LogOut, Power, Loader2, ShieldCheck } from "lucide-solid";
 import { DayNightScene } from "./day-night-scene";
 import { DevToolbar } from "./dev-toolbar";
 import { cn } from "../lib/cn";
@@ -24,6 +24,7 @@ export function Layout(props: LayoutProps) {
 
   const navItems = [
     { href: "/plugins", icon: Puzzle, label: () => t("nav_plugins") },
+    { href: "/admin", icon: ShieldCheck, label: () => t("nav_admin") },
     { href: "/settings", icon: Settings, label: () => t("nav_settings") },
   ];
 

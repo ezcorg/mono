@@ -227,6 +227,45 @@ pub struct MemberRequest {
     pub tenant_id: String,
 }
 
+/// GET /api/manage/groups/:id/members -- list group members.
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn list_group_members(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<Json<Vec<String>>, StatusError> {
+    let pool = db(depot)?;
+    let members = Group::members(&pool, &id.into_inner()).await.map_err(|e| {
+        warn!("Failed to list group members: {}", e);
+        StatusError::internal_server_error().brief(format!("Failed: {}", e))
+    })?;
+    Ok(Json(members))
+}
+
+/// GET /api/manage/groups/:id/permissions -- list group permissions.
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn list_group_permissions(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<Json<Vec<PermissionResponse>>, StatusError> {
+    let pool = db(depot)?;
+    let perms = Group::permissions_with_ids(&pool, &id.into_inner())
+        .await
+        .map_err(|e| {
+            warn!("Failed to list group permissions: {}", e);
+            StatusError::internal_server_error().brief(format!("Failed: {}", e))
+        })?;
+    Ok(Json(
+        perms
+            .into_iter()
+            .map(|(id, effect, resource)| PermissionResponse {
+                id,
+                effect,
+                resource,
+            })
+            .collect(),
+    ))
+}
+
 /// POST /api/manage/groups/:id/members -- add member to group.
 #[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn add_group_member(

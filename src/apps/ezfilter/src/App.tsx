@@ -5,6 +5,7 @@ import SetupPage from "./pages/setup";
 import PluginsPage from "./pages/plugins";
 import PluginConfigPage from "./pages/plugin-config";
 import SettingsPage from "./pages/settings";
+import AdminPage from "./pages/admin";
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
       <Route path="/plugins" component={PluginsPage} />
       <Route path="/plugins/:ns/:name/config" component={PluginConfigPage} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/admin" component={AdminPage} />
     </Router>
   );
 }

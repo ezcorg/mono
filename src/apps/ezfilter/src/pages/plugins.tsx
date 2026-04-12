@@ -46,10 +46,15 @@ export default function PluginsPage() {
   const [importing, setImporting] = createSignal(false);
   const [importError, setImportError] = createSignal<string | null>(null);
   const [capReviewOpen, setCapReviewOpen] = createSignal(false);
+  interface PendingCapability {
+    kind: string;
+    scope: string;
+    approved: boolean;
+  }
   const [pendingPlugin, setPendingPlugin] = createSignal<{
+    namespace: string;
     name: string;
-    bytes: Uint8Array;
-    capabilities: string[];
+    capabilities: PendingCapability[];
   } | null>(null);
   const [deleteTarget, setDeleteTarget] = createSignal<{
     ns: string;
@@ -87,19 +92,25 @@ export default function PluginsPage() {
       await api.uploadPlugin(getApiBaseUrl(), token, bytes, file.name);
 
       // Fetch the updated plugin list to get the real capabilities
-      const plugins = await api.listPlugins(getApiBaseUrl(), token);
-      if (Array.isArray(plugins)) {
-        // Find the newly added plugin (most likely the last one matching the file name)
-        const added = plugins.find((p) =>
+      const allPlugins = await api.listPlugins(getApiBaseUrl(), token);
+      if (Array.isArray(allPlugins)) {
+        const added = allPlugins.find((p) =>
           file.name.toLowerCase().includes(p.name.toLowerCase()) ||
           file.name.toLowerCase().includes(p.namespace.toLowerCase())
         );
-        if (added && added.capabilities.length > 0) {
-          // Show the review dialog with the real capabilities from the server
+        if (added) {
+          // Immediately disable the plugin — it must be explicitly approved first
+          await api.setPluginEnabled(getApiBaseUrl(), token, added.namespace, added.name, false);
+
+          // Show the review dialog with capabilities requiring approval
           setPendingPlugin({
-            name: `${added.namespace}/${added.name}`,
-            bytes,
-            capabilities: added.capabilities.map((c) => c.kind),
+            namespace: added.namespace,
+            name: added.name,
+            capabilities: added.capabilities.map((c) => ({
+              kind: c.kind,
+              scope: c.scope,
+              approved: false,
+            })),
           });
           setCapReviewOpen(true);
         }
@@ -115,7 +126,53 @@ export default function PluginsPage() {
     }
   }
 
-  function dismissCapReview() {
+  function toggleCapApproval(index: number) {
+    setPendingPlugin((prev) => {
+      if (!prev) return prev;
+      const caps = [...prev.capabilities];
+      caps[index] = { ...caps[index], approved: !caps[index].approved };
+      return { ...prev, capabilities: caps };
+    });
+  }
+
+  function updatePendingScope(index: number, scope: string) {
+    setPendingPlugin((prev) => {
+      if (!prev) return prev;
+      const caps = [...prev.capabilities];
+      caps[index] = { ...caps[index], scope };
+      return { ...prev, capabilities: caps };
+    });
+  }
+
+  const allCapsApproved = () => {
+    const pending = pendingPlugin();
+    if (!pending || pending.capabilities.length === 0) return true;
+    return pending.capabilities.every((c) => c.approved);
+  };
+
+  async function handleApproveAndEnable() {
+    const pending = pendingPlugin();
+    if (!pending) return;
+    const token = getToken();
+    if (!token) return;
+
+    try {
+      // Re-enable the plugin now that capabilities are approved
+      await api.setPluginEnabled(getApiBaseUrl(), token, pending.namespace, pending.name, true);
+      setCapReviewOpen(false);
+      setPendingPlugin(null);
+      setRefreshKey((k) => k + 1);
+    } catch (err: any) {
+      setImportError(err?.body ?? err?.message ?? "Failed to enable plugin");
+    }
+  }
+
+  function cancelImport() {
+    const pending = pendingPlugin();
+    if (pending) {
+      // Plugin stays disabled since user didn't approve
+      setRefreshKey((k) => k + 1);
+    }
     setCapReviewOpen(false);
     setPendingPlugin(null);
   }
@@ -124,10 +181,15 @@ export default function PluginsPage() {
     () => refreshKey(),
     async () => {
       const token = getToken();
-      const data = await api.listPlugins(getApiBaseUrl(), token ?? "");
-      if (!Array.isArray(data)) return [];
-      // Filter out any malformed entries (missing required fields)
-      return data.filter((p) => p && p.name && p.namespace);
+      try {
+        const data = await api.listPlugins(getApiBaseUrl(), token ?? "");
+        if (!Array.isArray(data)) return [];
+        return data.filter((p) => p && p.name && p.namespace);
+      } catch (err: any) {
+        // Return empty on permission errors instead of throwing
+        if (err?.status === 403 || err?.status === 401) return [];
+        throw err;
+      }
     }
   );
 
@@ -376,10 +438,10 @@ export default function PluginsPage() {
       </Show>
 
       {/* Capability review dialog */}
-      <Dialog open={capReviewOpen()} onOpenChange={setCapReviewOpen}>
+      <Dialog open={capReviewOpen()} onOpenChange={(open) => { if (!open) cancelImport(); }}>
         <Dialog.Portal>
           <Dialog.Overlay class="fixed inset-0 z-50 bg-black/50 animate-fade-in" />
-          <Dialog.Content class="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-6 shadow-xl animate-fade-in">
+          <Dialog.Content class="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-6 shadow-xl animate-fade-in max-h-[85vh] overflow-y-auto scrollbar-float">
             <div class="flex items-center justify-between mb-4">
               <div class="flex items-center gap-2">
                 <ShieldCheck class="h-5 w-5 text-[rgb(var(--color-primary))]" />
@@ -398,19 +460,63 @@ export default function PluginsPage() {
 
             <Show when={pendingPlugin()}>
               <p class="text-sm font-display font-semibold mb-3">
-                {pendingPlugin()!.name}
+                {pendingPlugin()!.namespace}/{pendingPlugin()!.name}
               </p>
-              <div class="rounded-2xl border border-[rgb(var(--color-border))] divide-y divide-[rgb(var(--color-border))] mb-5">
+              <div class="space-y-2 mb-5">
                 <For each={pendingPlugin()!.capabilities}>
-                  {(cap) => {
-                    const meta = getCapMeta(cap);
+                  {(cap, i) => {
+                    const meta = getCapMeta(cap.kind);
                     const Icon = meta.icon;
                     return (
-                      <div class="flex items-center gap-3 px-4 py-2.5">
-                        <Icon class="h-4 w-4 shrink-0 text-[rgb(var(--color-text-muted))]" />
-                        <div class="flex-1 min-w-0">
-                          <p class="text-sm font-display font-semibold">{meta.label}</p>
-                          <p class="text-xs text-[rgb(var(--color-text-muted))] truncate">{meta.description}</p>
+                      <div class={cn(
+                        "rounded-xl border p-3 transition-colors",
+                        cap.approved
+                          ? "border-[rgb(var(--color-success))]/50 bg-[rgb(var(--color-success))]/5"
+                          : "border-[rgb(var(--color-border))]"
+                      )}>
+                        <div class="flex items-start gap-3">
+                          {/* Approval checkbox */}
+                          <button
+                            onClick={() => toggleCapApproval(i())}
+                            class={cn(
+                              "flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2 transition-all mt-0.5",
+                              cap.approved
+                                ? "border-[rgb(var(--color-success))] bg-[rgb(var(--color-success))] text-white"
+                                : "border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-primary))]"
+                            )}
+                          >
+                            <Show when={cap.approved}>
+                              <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none">
+                                <path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                              </svg>
+                            </Show>
+                          </button>
+
+                          <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                              <Icon class={cn(
+                                "h-4 w-4 shrink-0",
+                                cap.approved ? "text-[rgb(var(--color-success))]" : "text-[rgb(var(--color-text-muted))]"
+                              )} />
+                              <p class="text-sm font-display font-semibold">{meta.label}</p>
+                            </div>
+                            <p class="text-xs text-[rgb(var(--color-text-muted))] mt-0.5">
+                              {meta.description}
+                            </p>
+                            {/* Editable scope/filter expression */}
+                            <div class="mt-2">
+                              <label class="text-[10px] font-display font-semibold text-[rgb(var(--color-text-muted))] uppercase tracking-wider">
+                                {t("plugin_config_scope_label")}
+                              </label>
+                              <input
+                                type="text"
+                                value={cap.scope}
+                                onInput={(e) => updatePendingScope(i(), e.currentTarget.value)}
+                                class="mt-0.5 w-full rounded-lg border border-[rgb(var(--color-border))] bg-transparent px-2.5 py-1.5 font-mono text-xs text-[rgb(var(--color-text))] focus:outline-none focus:ring-1 focus:ring-[rgb(var(--color-primary))]"
+                                placeholder="true"
+                              />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );
@@ -419,11 +525,25 @@ export default function PluginsPage() {
               </div>
             </Show>
 
-            <div class="flex items-center justify-end">
-              <Button size="sm" onClick={dismissCapReview}>
-                <ShieldCheck class="h-4 w-4" />
-                {t("plugins_approve_install")}
+            <div class="flex items-center justify-between">
+              <Button variant="ghost" size="sm" onClick={cancelImport}>
+                {t("plugins_cancel")}
               </Button>
+              <div class="flex items-center gap-2">
+                <Show when={!allCapsApproved()}>
+                  <span class="text-xs text-[rgb(var(--color-text-muted))]">
+                    {t("plugins_approve_pending")}
+                  </span>
+                </Show>
+                <Button
+                  size="sm"
+                  onClick={handleApproveAndEnable}
+                  disabled={!allCapsApproved()}
+                >
+                  <ShieldCheck class="h-4 w-4" />
+                  {t("plugins_approve_install")}
+                </Button>
+              </div>
             </div>
           </Dialog.Content>
         </Dialog.Portal>

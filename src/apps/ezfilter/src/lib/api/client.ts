@@ -143,6 +143,81 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(config),
     }),
+
+  // ── Tenant management ──
+
+  listTenants: (baseUrl: string, token: string) =>
+    request<TenantSummary[]>(baseUrl, "/api/manage/tenants", token),
+
+  getTenant: (baseUrl: string, token: string, id: string) =>
+    request<TenantSummary>(baseUrl, `/api/manage/tenants/${encodeURIComponent(id)}`, token),
+
+  updateTenant: (baseUrl: string, token: string, id: string, body: { display_name?: string; enabled?: boolean }) =>
+    request<TenantSummary>(baseUrl, `/api/manage/tenants/${encodeURIComponent(id)}`, token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  deleteTenant: (baseUrl: string, token: string, id: string) =>
+    request<string>(baseUrl, `/api/manage/tenants/${encodeURIComponent(id)}`, token, { method: "DELETE" }),
+
+  registerUser: (baseUrl: string, token: string, body: { email: string; password: string; display_name: string }) =>
+    request<{ token: string; tenant_id: string }>(baseUrl, "/api/auth/register", null, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // ── Group management ──
+
+  listGroups: (baseUrl: string, token: string) =>
+    request<GroupSummary[]>(baseUrl, "/api/manage/groups", token),
+
+  createGroup: (baseUrl: string, token: string, body: { name: string; description?: string }) =>
+    request<GroupSummary>(baseUrl, "/api/manage/groups", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteGroup: (baseUrl: string, token: string, id: string) =>
+    request<string>(baseUrl, `/api/manage/groups/${encodeURIComponent(id)}`, token, { method: "DELETE" }),
+
+  listGroupMembers: (baseUrl: string, token: string, groupId: string) =>
+    request<string[]>(baseUrl, `/api/manage/groups/${encodeURIComponent(groupId)}/members`, token),
+
+  listGroupPermissions: (baseUrl: string, token: string, groupId: string) =>
+    request<{ id: string; effect: string; resource: string }[]>(
+      baseUrl,
+      `/api/manage/groups/${encodeURIComponent(groupId)}/permissions`,
+      token,
+    ),
+
+  addGroupMember: (baseUrl: string, token: string, groupId: string, tenantId: string) =>
+    request<string>(baseUrl, `/api/manage/groups/${encodeURIComponent(groupId)}/members`, token, {
+      method: "POST",
+      body: JSON.stringify({ tenant_id: tenantId }),
+    }),
+
+  removeGroupMember: (baseUrl: string, token: string, groupId: string, tenantId: string) =>
+    request<string>(baseUrl, `/api/manage/groups/${encodeURIComponent(groupId)}/members`, token, {
+      method: "DELETE",
+      body: JSON.stringify({ tenant_id: tenantId }),
+    }),
+
+  addGroupPermission: (baseUrl: string, token: string, groupId: string, body: { effect: string; resource: string }) =>
+    request<{ id: string; effect: string; resource: string }>(
+      baseUrl,
+      `/api/manage/groups/${encodeURIComponent(groupId)}/permissions`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  removeGroupPermission: (baseUrl: string, token: string, groupId: string, permissionId: string) =>
+    request<string>(
+      baseUrl,
+      `/api/manage/groups/${encodeURIComponent(groupId)}/permissions/${encodeURIComponent(permissionId)}`,
+      token,
+      { method: "DELETE" },
+    ),
 };
 
 export interface PluginSummary {
@@ -155,6 +230,20 @@ export interface PluginSummary {
   url: string;
   enabled: boolean;
   capabilities: { kind: string; scope: string; granted: boolean }[];
+}
+
+export interface TenantSummary {
+  id: string;
+  display_name: string;
+  email: string | null;
+  enabled: boolean;
+  created_at: string | null;
+}
+
+export interface GroupSummary {
+  id: string;
+  name: string;
+  description: string;
 }
 
 export interface RuntimeConfig {
