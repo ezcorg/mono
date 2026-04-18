@@ -15,6 +15,7 @@ import { getToken } from "../lib/stores/auth";
 import { cn } from "../lib/cn";
 import { t } from "../lib/i18n";
 import { getCapMeta } from "../lib/capabilities";
+import { FilterExpressionHelp } from "../components/filter-expression-help";
 
 export default function PluginConfigPage() {
   const params = useParams<{ ns: string; name: string }>();
@@ -250,7 +251,10 @@ export default function PluginConfigPage() {
                             />
                           </div>
                           <div class="space-y-1">
-                            <Label class="text-xs">{t("plugin_config_scope_label")}</Label>
+                            <div class="flex items-center gap-1.5">
+                              <Label class="text-xs">{t("plugin_config_scope_label")}</Label>
+                              <FilterExpressionHelp />
+                            </div>
                             <Input
                               type="text"
                               value={cap.scope}

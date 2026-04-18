@@ -3,6 +3,7 @@ import { A, useLocation, useNavigate } from "@solidjs/router";
 import { Puzzle, Settings, LogOut, Power, Loader2, ShieldCheck } from "lucide-solid";
 import { DayNightScene } from "./day-night-scene";
 import { DevToolbar } from "./dev-toolbar";
+import { ThemeToggle } from "./theme-toggle";
 import { cn } from "../lib/cn";
 import { t } from "../lib/i18n";
 import { logout } from "../lib/stores/auth";
@@ -56,6 +57,11 @@ export function Layout(props: LayoutProps) {
       <DayNightScene />
 
       <div class="relative z-10 h-full w-full">
+        <Show when={isSetup()}>
+          <div class="fixed top-4 right-4 z-40 animate-fade-in">
+            <ThemeToggle />
+          </div>
+        </Show>
         <Show
           when={!isSetup()}
           fallback={

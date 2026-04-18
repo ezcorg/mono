@@ -28,6 +28,7 @@ import { getToken } from "../lib/stores/auth";
 import { cn } from "../lib/cn";
 import { t } from "../lib/i18n";
 import { getCapMeta } from "../lib/capabilities";
+import { FilterExpressionHelp } from "../components/filter-expression-help";
 
 const PLUGIN_EMOJIS = ["🛡️", "🔍", "🌿", "⚡", "🎯", "🧩", "🔮", "🌊", "🔥", "🦊", "🐕", "🌸", "🎨", "🚀", "💎"];
 
@@ -505,9 +506,12 @@ export default function PluginsPage() {
                             </p>
                             {/* Editable scope/filter expression */}
                             <div class="mt-2">
-                              <label class="text-[10px] font-display font-semibold text-[rgb(var(--color-text-muted))] uppercase tracking-wider">
-                                {t("plugin_config_scope_label")}
-                              </label>
+                              <div class="flex items-center gap-1.5">
+                                <label class="text-[10px] font-display font-semibold text-[rgb(var(--color-text-muted))] uppercase tracking-wider">
+                                  {t("plugin_config_scope_label")}
+                                </label>
+                                <FilterExpressionHelp />
+                              </div>
                               <input
                                 type="text"
                                 value={cap.scope}

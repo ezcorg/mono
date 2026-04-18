@@ -1,5 +1,50 @@
 use serde::Serialize;
 use std::process::Command;
+use std::sync::Mutex;
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+pub struct MetricsState {
+    system: Mutex<System>,
+}
+
+impl Default for MetricsState {
+    fn default() -> Self {
+        Self {
+            system: Mutex::new(System::new()),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ProcessMetrics {
+    pub cpu_percent: f32,
+    pub mem_bytes: u64,
+}
+
+/// Sample CPU% and resident memory of the current process. CPU% is based on
+/// the delta since the previous call, so the first call typically returns 0.
+#[tauri::command]
+fn get_process_metrics(state: tauri::State<'_, MetricsState>) -> ProcessMetrics {
+    let pid = Pid::from_u32(std::process::id());
+    let mut sys = state.system.lock().unwrap();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
+    let cpu_count = sys.cpus().len().max(1) as f32;
+    if let Some(proc_) = sys.process(pid) {
+        ProcessMetrics {
+            cpu_percent: proc_.cpu_usage() / cpu_count,
+            mem_bytes: proc_.memory(),
+        }
+    } else {
+        ProcessMetrics {
+            cpu_percent: 0.0,
+            mem_bytes: 0,
+        }
+    }
+}
 
 #[derive(Serialize)]
 pub struct BinaryCheckResult {
@@ -237,16 +282,19 @@ struct DiscoverResult {
 }
 
 /// Enable the system proxy by configuring the OS to route HTTP(S) traffic
-/// through the given proxy URL. Works directly without needing the `witm` binary.
+/// through the given proxy URL. `bypass_hosts` are hostnames the OS should
+/// reach directly instead of via the proxy (loopback, the management UI's
+/// hostname, etc) — without these, the management UI loops through the
+/// proxy and fails. Works directly without needing the `witm` binary.
 #[tauri::command]
-fn enable_proxy(proxy_url: String) -> StepResult {
-    set_system_proxy(&proxy_url, true)
+fn enable_proxy(proxy_url: String, bypass_hosts: Option<Vec<String>>) -> StepResult {
+    set_system_proxy(&proxy_url, true, bypass_hosts.unwrap_or_default())
 }
 
 /// Disable the system proxy, restoring normal network operation.
 #[tauri::command]
 fn disable_proxy() -> StepResult {
-    set_system_proxy("", false)
+    set_system_proxy("", false, Vec::new())
 }
 
 /// Check the current system proxy status.
@@ -267,22 +315,22 @@ fn check_proxy_status() -> StepResult {
 }
 
 /// Set or unset the system HTTP/HTTPS proxy using platform-specific tools.
-fn set_system_proxy(proxy_url: &str, enable: bool) -> StepResult {
+fn set_system_proxy(proxy_url: &str, enable: bool, bypass_hosts: Vec<String>) -> StepResult {
     #[cfg(target_os = "linux")]
     {
-        set_linux_proxy(proxy_url, enable)
+        set_linux_proxy(proxy_url, enable, &bypass_hosts)
     }
     #[cfg(target_os = "macos")]
     {
-        set_macos_proxy(proxy_url, enable)
+        set_macos_proxy(proxy_url, enable, &bypass_hosts)
     }
     #[cfg(target_os = "windows")]
     {
-        set_windows_proxy(proxy_url, enable)
+        set_windows_proxy(proxy_url, enable, &bypass_hosts)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        let _ = (proxy_url, enable);
+        let _ = (proxy_url, enable, bypass_hosts);
         StepResult {
             success: false,
             already_done: false,
@@ -335,7 +383,7 @@ fn gsettings_cmd() -> Command {
 }
 
 #[cfg(target_os = "linux")]
-fn set_linux_proxy(proxy_url: &str, enable: bool) -> StepResult {
+fn set_linux_proxy(proxy_url: &str, enable: bool, bypass_hosts: &[String]) -> StepResult {
     if enable {
         let url_without_protocol = proxy_url
             .strip_prefix("http://")
@@ -356,6 +404,18 @@ fn set_linux_proxy(proxy_url: &str, enable: bool) -> StepResult {
             .status();
         let _ = gsettings_cmd()
             .args(["set", "org.gnome.system.proxy.https", "port", port])
+            .status();
+        // ignore-hosts is a GVariant array of strings
+        let ignore = format!(
+            "[{}]",
+            bypass_hosts
+                .iter()
+                .map(|h| format!("'{}'", h.replace('\'', "")))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let _ = gsettings_cmd()
+            .args(["set", "org.gnome.system.proxy", "ignore-hosts", &ignore])
             .status();
         let _ = gsettings_cmd()
             .args(["set", "org.gnome.system.proxy", "mode", "manual"])
@@ -411,7 +471,7 @@ fn get_linux_proxy() -> Option<String> {
 // ── macOS: networksetup ──
 
 #[cfg(target_os = "macos")]
-fn set_macos_proxy(proxy_url: &str, enable: bool) -> StepResult {
+fn set_macos_proxy(proxy_url: &str, enable: bool, bypass_hosts: &[String]) -> StepResult {
     let output = match Command::new("networksetup")
         .args(["-listallnetworkservices"])
         .output()
@@ -444,12 +504,26 @@ fn set_macos_proxy(proxy_url: &str, enable: bool) -> StepResult {
             let _ = Command::new("networksetup")
                 .args(["-setsecurewebproxy", service, host, port])
                 .status();
+            // Set bypass list. networksetup expects each host as a separate
+            // positional arg after the service name; pass "Empty" to clear.
+            let mut args: Vec<&str> = vec!["-setproxybypassdomains", service];
+            if bypass_hosts.is_empty() {
+                args.push("Empty");
+            } else {
+                for h in bypass_hosts {
+                    args.push(h.as_str());
+                }
+            }
+            let _ = Command::new("networksetup").args(&args).status();
         } else {
             let _ = Command::new("networksetup")
                 .args(["-setwebproxystate", service, "off"])
                 .status();
             let _ = Command::new("networksetup")
                 .args(["-setsecurewebproxystate", service, "off"])
+                .status();
+            let _ = Command::new("networksetup")
+                .args(["-setproxybypassdomains", service, "Empty"])
                 .status();
         }
     }
@@ -497,7 +571,7 @@ fn get_macos_proxy() -> Option<String> {
 // ── Windows: registry ──
 
 #[cfg(target_os = "windows")]
-fn set_windows_proxy(proxy_url: &str, enable: bool) -> StepResult {
+fn set_windows_proxy(proxy_url: &str, enable: bool, bypass_hosts: &[String]) -> StepResult {
     let reg_path = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     if enable {
         let proxy_server = proxy_url.strip_prefix("http://").unwrap_or(proxy_url);
@@ -527,6 +601,26 @@ fn set_windows_proxy(proxy_url: &str, enable: bool) -> StepResult {
                 "/f",
             ])
             .status();
+        // ProxyOverride is a semicolon-delimited list of bypass hosts.
+        // Append "<local>" to also bypass plain (no-dot) hostnames.
+        if !bypass_hosts.is_empty() {
+            let mut entries: Vec<String> = bypass_hosts.to_vec();
+            entries.push("<local>".to_string());
+            let override_value = entries.join(";");
+            let _ = Command::new("reg")
+                .args([
+                    "add",
+                    reg_path,
+                    "/v",
+                    "ProxyOverride",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &override_value,
+                    "/f",
+                ])
+                .status();
+        }
     } else {
         let _ = Command::new("reg")
             .args([
@@ -584,6 +678,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(MetricsState::default())
         .invoke_handler(tauri::generate_handler![
             check_binary,
             validate_binary,
@@ -595,6 +690,7 @@ pub fn run() {
             enable_proxy,
             disable_proxy,
             check_proxy_status,
+            get_process_metrics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

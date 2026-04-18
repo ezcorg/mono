@@ -144,6 +144,9 @@ impl WitmProxy {
             self.plugin_registry.clone(),
             self.config.clone(),
         )?;
+        // Tell the proxy where its own management server is so it can
+        // short-circuit traffic targeting that port back to loopback.
+        proxy_server.set_management_addr(web_addr);
         proxy_server.start().await?;
         let proxy_addr = proxy_server
             .listen_addr()

@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { getApiBaseUrl } from "./config";
+import { getApiBaseUrl, getConfig } from "./config";
 
 export type ConnectionStatus = "unknown" | "checking" | "connected" | "disconnected";
 
@@ -14,19 +14,40 @@ export function getConnectionMessage() {
   return statusMessage();
 }
 
-/** Derive the proxy URL from the configured server URL.
- *  The proxy typically runs on the same host as the web server. */
+/** Derive the proxy URL. Prefer the discovered URL persisted in config —
+ *  it points at the real ephemeral port the proxy bound to. Fall back to
+ *  the host:8080 heuristic only when nothing was discovered (e.g. the user
+ *  is connecting to a remote server they set up themselves). */
 function getProxyUrl(): string {
+  const discovered = getConfig()?.proxyUrl;
+  if (discovered) return discovered;
+
   const base = getApiBaseUrl();
   if (!base) return "";
   try {
     const url = new URL(base);
-    // Default witmproxy proxy port — the web server is HTTPS,
-    // the proxy itself is plain HTTP on the same host.
-    return `http://${url.hostname}:${url.port || "8080"}`;
+    return `http://${url.hostname}:8080`;
   } catch {
     return base;
   }
+}
+
+/** Hosts that should bypass the system proxy when it is enabled. The list
+ *  always includes loopback and ".local"; the configured server URL's host
+ *  is added so the management UI can be reached without going through the
+ *  proxy (which would otherwise loop or hit a closed port). */
+function getBypassHosts(): string[] {
+  const hosts = new Set<string>(["localhost", "127.0.0.1", "::1", "*.local"]);
+  const base = getApiBaseUrl();
+  if (base) {
+    try {
+      const u = new URL(base);
+      if (u.hostname) hosts.add(u.hostname);
+    } catch {
+      // ignore
+    }
+  }
+  return Array.from(hosts);
 }
 
 /** Check the current proxy status via Tauri command. */
@@ -59,7 +80,7 @@ export async function connectProxy(): Promise<boolean> {
     }
     const result = await invoke<{ success: boolean; already_done: boolean; message: string }>(
       "enable_proxy",
-      { proxyUrl },
+      { proxyUrl, bypassHosts: getBypassHosts() },
     );
     setStatusInternal(result.success || result.already_done ? "connected" : "disconnected");
     setStatusMessageInternal(result.message);

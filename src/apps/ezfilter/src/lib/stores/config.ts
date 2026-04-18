@@ -9,6 +9,10 @@ export type HostingMode = "managed" | "self-host";
 export interface AppConfig {
   hostingMode: HostingMode;
   serverUrl: string;
+  /** Discovered proxy URL (e.g. http://127.0.0.1:54321). Set during local
+   *  setup so the system-proxy install can target the real ephemeral port
+   *  instead of guessing :8080. */
+  proxyUrl?: string;
   setupComplete: boolean;
 }
 

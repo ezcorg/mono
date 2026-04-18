@@ -25,6 +25,8 @@ import {
   FolderOpen,
   ShieldCheck,
   HardDrive,
+  Sparkles,
+  Link as LinkIcon,
 } from "lucide-solid";
 import { Button } from "../components/ui/button";
 import { Input, Label } from "../components/ui/input";
@@ -38,12 +40,13 @@ import {
 } from "../components/ui/card";
 import { DayNightScene } from "../components/day-night-scene";
 import { EzfilterLogo } from "../components/ezfilter-logo";
-import { setConfig, type HostingMode } from "../lib/stores/config";
+import { setConfig, getConfig, type HostingMode } from "../lib/stores/config";
 import { api } from "../lib/api/client";
 import { setToken, setTenantId, setEmail as storeEmail } from "../lib/stores/auth";
 import { t } from "../lib/i18n";
 
 type Step =
+  | "connect-or-create"
   | "hosting"
   | "has-server"
   | "server-url"
@@ -156,7 +159,7 @@ export default function SetupPage() {
   const navigate = useNavigate();
 
   // -- wizard state --
-  const [step, setStep] = createSignal<Step>("hosting");
+  const [step, setStep] = createSignal<Step>("connect-or-create");
   const [hostingMode, setHostingMode] = createSignal<HostingMode>("managed");
   const [serverUrl, setServerUrl] = createSignal("");
   const [email, setEmail] = createSignal("");
@@ -252,11 +255,22 @@ export default function SetupPage() {
   function goBack() {
     setError("");
     const current = step();
-    if (current === "has-server") setStep("hosting");
+    if (current === "connect-or-create") {
+      navigate("/", { replace: true });
+    } else if (current === "hosting") setStep("connect-or-create");
+    else if (current === "has-server") setStep("hosting");
     else if (current === "server-url") {
-      setStep("has-server");
+      // Came either from connect-or-create (existing server flow) or from
+      // local-setup / remote-info during create flow.
       setHealthStatus("idle");
       setHealthMessage("");
+      if (createdNewServer()) {
+        // Created flow: go back to whichever sub-step seeded the URL.
+        // Default to has-server since both local/remote land on server-url.
+        setStep("has-server");
+      } else {
+        setStep("connect-or-create");
+      }
     } else if (current === "local-setup") setStep("has-server");
     else if (current === "remote-info") setStep("has-server");
     else if (current === "login") {
@@ -264,6 +278,10 @@ export default function SetupPage() {
       else setStep("hosting");
     } else if (current === "signup") setStep("login");
   }
+
+  // True when the user picked "Create a new one" instead of "Connect to existing".
+  // We need this because the server-url step is reachable from both branches.
+  const [createdNewServer, setCreatedNewServer] = createSignal(false);
 
   async function handleLogin() {
     if (!email().trim() || !password().trim()) {
@@ -379,6 +397,11 @@ export default function SetupPage() {
               const webUrl = info.web.startsWith("http") ? info.web : `https://${info.web}`;
               setServerUrl(webUrl);
             }
+            if (info.proxy) {
+              // Persist the real proxy URL so the system-proxy install can
+              // target the actual ephemeral port instead of guessing :8080.
+              setConfig({ proxyUrl: info.proxy });
+            }
           } catch {
             // Discovery is best-effort
           }
@@ -464,11 +487,21 @@ export default function SetupPage() {
     setStepMessage("");
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      // Use the server URL as the proxy target — typically http://host:port
-      const proxyUrl = serverUrl().trim() || "http://127.0.0.1:8080";
+      // Prefer the discovered proxy URL (real ephemeral port). The web
+      // server URL is NOT a proxy — only fall back to a localhost guess.
+      const proxyUrl = getConfig()?.proxyUrl?.trim() || "http://127.0.0.1:8080";
+      // Bypass loopback and the web-server hostname so the management UI
+      // is never routed through the proxy.
+      const bypassHosts: string[] = ["localhost", "127.0.0.1", "::1", "*.local"];
+      try {
+        const u = new URL(serverUrl().trim());
+        if (u.hostname) bypassHosts.push(u.hostname);
+      } catch {
+        // ignore — the server URL may be empty at this point
+      }
       const result = await invoke<{ success: boolean; already_done: boolean; message: string }>(
         "enable_proxy",
-        { proxyUrl }
+        { proxyUrl, bypassHosts }
       );
       setProxyState(result.success ? "done" : "error");
       setStepMessage(result.message);
@@ -490,16 +523,32 @@ export default function SetupPage() {
 
   const stepNumber = () => {
     const s = step();
-    if (s === "hosting") return 1;
-    if (s === "has-server") return 2;
-    if (s === "local-setup" || s === "remote-info") return 3;
-    if (s === "server-url") return hostingMode() === "self-host" ? 3 : 2;
-    if (s === "login" || s === "signup")
-      return hostingMode() === "self-host" ? 4 : 2;
+    // Connect flow: connect-or-create → server-url → login (3 steps)
+    if (!createdNewServer()) {
+      if (s === "connect-or-create") return 1;
+      if (s === "server-url") return 2;
+      if (s === "login" || s === "signup") return 3;
+      return 1;
+    }
+    // Create flow: connect-or-create → hosting → (has-server → local/remote → server-url) → login
+    if (s === "connect-or-create") return 1;
+    if (s === "hosting") return 2;
+    if (hostingMode() === "managed") {
+      if (s === "login" || s === "signup") return 3;
+      return 2;
+    }
+    if (s === "has-server") return 3;
+    if (s === "local-setup" || s === "remote-info") return 4;
+    if (s === "server-url") return 5;
+    if (s === "login" || s === "signup") return 6;
     return 1;
   };
 
-  const totalSteps = () => (hostingMode() === "self-host" ? 4 : 2);
+  const totalSteps = () => {
+    if (!createdNewServer()) return 3;
+    if (hostingMode() === "managed") return 3;
+    return 6;
+  };
 
   // -----------------------------------------------------------------------
   // Render
@@ -525,37 +574,14 @@ export default function SetupPage() {
         <div class="flex items-center justify-center gap-2 mb-6">
           {Array.from({ length: totalSteps() }, (_, i) => {
             const pillStep = i + 1;
-            const canNavigate = () => pillStep <= stepNumber();
+            const reached = pillStep <= stepNumber();
             return (
-              <button
-                type="button"
-                disabled={!canNavigate()}
-                onClick={() => {
-                  if (!canNavigate()) return;
-                  setError("");
-                  if (hostingMode() === "managed") {
-                    // Managed flow: step 1 = hosting, step 2 = login
-                    if (pillStep === 1) setStep("hosting");
-                    else if (pillStep === 2) setStep("login");
-                  } else {
-                    // Self-host flow: step 1 = hosting, step 2 = has-server, step 3 = server-url/local-setup/remote-info, step 4 = login
-                    if (pillStep === 1) setStep("hosting");
-                    else if (pillStep === 2) setStep("has-server");
-                    else if (pillStep === 3) {
-                      // Go back to whatever step 3 sub-step they were on
-                      const s = step();
-                      if (s === "login" || s === "signup") {
-                        setStep("server-url");
-                      }
-                    }
-                    else if (pillStep === 4) setStep("login");
-                  }
-                }}
+              <div
                 class={`h-1.5 rounded-full transition-all duration-300 ${
-                  pillStep <= stepNumber()
+                  reached
                     ? "w-10 bg-[rgb(var(--color-primary))]"
                     : "w-6 bg-[rgb(var(--color-border))]"
-                } ${canNavigate() ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+                }`}
               />
             );
           })}
@@ -563,6 +589,69 @@ export default function SetupPage() {
 
         <Card class="backdrop-blur-sm bg-[rgb(var(--color-surface))]/90">
           <SolidSwitch>
+            {/* ============================================================
+                Step 0: Connect to existing or create new
+                ============================================================ */}
+            <Match when={step() === "connect-or-create"}>
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Sparkles class="h-5 w-5 text-[rgb(var(--color-primary))]" />
+                  {t("setup_choose_action_title")}
+                </CardTitle>
+                <CardDescription>
+                  {t("setup_choose_action_desc")}
+                </CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-4">
+                <div class="flex flex-col gap-3">
+                  <button
+                    class="flex items-center gap-3 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-4 text-left transition-all duration-200 hover:border-[rgb(var(--color-primary))]/50 hover:shadow-md"
+                    onClick={() => {
+                      setError("");
+                      setCreatedNewServer(true);
+                      setStep("hosting");
+                    }}
+                  >
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-500/10">
+                      <Sparkles class="h-5 w-5 text-green-500" />
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                      <span class="text-sm font-bold font-display">
+                        {t("setup_choose_action_create")}
+                      </span>
+                      <span class="text-xs text-[rgb(var(--color-text-muted))]">
+                        {t("setup_choose_action_create_desc")}
+                      </span>
+                    </div>
+                    <ArrowRight class="ml-auto h-4 w-4 text-[rgb(var(--color-text-muted))]" />
+                  </button>
+
+                  <button
+                    class="flex items-center gap-3 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-4 text-left transition-all duration-200 hover:border-[rgb(var(--color-primary))]/50 hover:shadow-md"
+                    onClick={() => {
+                      setError("");
+                      setCreatedNewServer(false);
+                      setHostingMode("self-host");
+                      setStep("server-url");
+                    }}
+                  >
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10">
+                      <LinkIcon class="h-5 w-5 text-blue-500" />
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                      <span class="text-sm font-bold font-display">
+                        {t("setup_choose_action_connect")}
+                      </span>
+                      <span class="text-xs text-[rgb(var(--color-text-muted))]">
+                        {t("setup_choose_action_connect_desc")}
+                      </span>
+                    </div>
+                    <ArrowRight class="ml-auto h-4 w-4 text-[rgb(var(--color-text-muted))]" />
+                  </button>
+                </div>
+              </CardContent>
+            </Match>
+
             {/* ============================================================
                 Step 1: Hosting mode
                 ============================================================ */}
@@ -593,7 +682,11 @@ export default function SetupPage() {
                     },
                   ]}
                 />
-                <div class="flex justify-end pt-2">
+                <div class="flex justify-between pt-2">
+                  <Button variant="ghost" onClick={goBack}>
+                    <ArrowLeft class="h-4 w-4" />
+                    {t("common_back")}
+                  </Button>
                   <Button onClick={goNext}>
                     {t("common_continue")}
                     <ArrowRight class="h-4 w-4" />
@@ -603,7 +696,7 @@ export default function SetupPage() {
             </Match>
 
             {/* ============================================================
-                Step 2: Do you have a running server already?
+                Step 2: Where to set up your server (local vs remote)
                 ============================================================ */}
             <Match when={step() === "has-server"}>
               <CardHeader>
@@ -617,27 +710,6 @@ export default function SetupPage() {
               </CardHeader>
               <CardContent class="space-y-4">
                 <div class="flex flex-col gap-3">
-                  <button
-                    class="flex items-center gap-3 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-4 text-left transition-all duration-200 hover:border-[rgb(var(--color-primary))]/50 hover:shadow-md"
-                    onClick={() => {
-                      setError("");
-                      setStep("server-url");
-                    }}
-                  >
-                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-500/10">
-                      <Check class="h-5 w-5 text-green-500" />
-                    </div>
-                    <div class="flex flex-col gap-0.5">
-                      <span class="text-sm font-bold font-display">
-                        {t("setup_has_server_yes")}
-                      </span>
-                      <span class="text-xs text-[rgb(var(--color-text-muted))]">
-                        {t("setup_has_server_yes_desc")}
-                      </span>
-                    </div>
-                    <ArrowRight class="ml-auto h-4 w-4 text-[rgb(var(--color-text-muted))]" />
-                  </button>
-
                   <button
                     class="flex items-center gap-3 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-4 text-left transition-all duration-200 hover:border-[rgb(var(--color-primary))]/50 hover:shadow-md"
                     onClick={() => {
