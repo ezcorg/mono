@@ -11,6 +11,7 @@ pub mod events;
 pub mod http;
 pub mod plugins;
 pub mod proxy;
+pub mod telemetry;
 pub mod tenant;
 pub mod wasm;
 pub mod web;
@@ -45,6 +46,8 @@ pub struct WitmProxy {
     ca: CertificateAuthority,
     plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
     config: AppConfig,
+    config_path: Option<std::path::PathBuf>,
+    db_pool: Option<sqlx::SqlitePool>,
     proxy_server: Option<ProxyServer>,
     web_server: Option<WebServer>,
     shutdown_notify: Arc<Notify>,
@@ -66,6 +69,8 @@ impl WitmProxy {
             ca,
             plugin_registry,
             config,
+            config_path: None,
+            db_pool: None,
             proxy_server: None,
             web_server: None,
             shutdown_notify: Arc::new(Notify::new()),
@@ -87,6 +92,18 @@ impl WitmProxy {
         &self.plugin_registry
     }
 
+    /// Set the database pool for management API endpoints.
+    pub fn with_db_pool(mut self, pool: sqlx::SqlitePool) -> Self {
+        self.db_pool = Some(pool);
+        self
+    }
+
+    /// Set the config file path so the management API can persist changes.
+    pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
+        self.config_path = Some(path);
+        self
+    }
+
     /// Get the proxy server listen address (only available after start() is called)
     pub fn proxy_listen_addr(&self) -> Option<SocketAddr> {
         self.proxy_server.as_ref().and_then(|s| s.listen_addr())
@@ -102,12 +119,18 @@ impl WitmProxy {
         let _ = rustls::crypto::ring::default_provider().install_default();
         info!("Hi there! Starting up witmproxy for ya");
 
-        // Start web server for certificate distribution
+        // Start web server for certificate distribution and management API
         let mut web_server = WebServer::new(
             self.ca.clone(),
             self.plugin_registry.clone(),
             self.config.clone(),
         );
+        if let Some(ref path) = self.config_path {
+            web_server = web_server.with_config_path(path.clone());
+        }
+        if let Some(ref pool) = self.db_pool {
+            web_server = web_server.with_db_pool(pool.clone());
+        }
         web_server.start().await?;
         let web_addr = web_server
             .listen_addr()
@@ -121,6 +144,9 @@ impl WitmProxy {
             self.plugin_registry.clone(),
             self.config.clone(),
         )?;
+        // Tell the proxy where its own management server is so it can
+        // short-circuit traffic targeting that port back to loopback.
+        proxy_server.set_management_addr(web_addr);
         proxy_server.start().await?;
         let proxy_addr = proxy_server
             .listen_addr()

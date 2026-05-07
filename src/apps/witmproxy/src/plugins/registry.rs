@@ -85,6 +85,10 @@ impl PluginRegistry {
         &self.plugins
     }
 
+    pub fn plugins_mut(&mut self) -> &mut HashMap<String, WitmPlugin> {
+        &mut self.plugins
+    }
+
     pub async fn load_plugins(&mut self) -> Result<()> {
         let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine, self.env).await?;
         for plugin in plugins.into_iter() {
@@ -324,6 +328,7 @@ impl PluginRegistry {
 
     /// Handle a generic event, passing it through all registered plugins, and returning the final [Event] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
     /// Validates that the final [Event] matches the expected output type for its event kind, returning an error if not
+    #[tracing::instrument(skip(self, event), fields(event_kind = ?event.kind()))]
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
         let any_plugins = self.plugins.values().any(|p| p.can_handle(&*event));
         if !any_plugins {
@@ -348,7 +353,13 @@ impl PluginRegistry {
         while let Some(plugin) =
             { self.find_first_unexecuted_plugin(&*current_event, &executed_plugins) }
         {
-            debug!("Executing handle_event for plugin: {}", plugin.id(),);
+            tracing::info!(
+                plugin.id = %plugin.id(),
+                plugin.namespace = %plugin.namespace,
+                plugin.name = %plugin.name,
+                plugin.version = %plugin.version,
+                "Executing plugin"
+            );
 
             executed_plugins.insert(plugin.id());
             let kind = current_event.kind();
@@ -488,6 +499,7 @@ impl PluginRegistry {
 
     /// Handle an event with tenant-specific plugin filtering and configuration.
     /// Uses `effective_set` to filter plugins and `tenant_config` to override per-plugin config.
+    #[tracing::instrument(skip(self, event, effective_set, tenant_config), fields(event_kind = ?event.kind()))]
     pub async fn handle_event_for_tenant(
         &self,
         event: Box<dyn Event>,
@@ -515,6 +527,14 @@ impl PluginRegistry {
         while let Some(plugin) =
             { self.find_first_unexecuted_in_set(&*current_event, &executed_plugins, effective_set) }
         {
+            tracing::info!(
+                plugin.id = %plugin.id(),
+                plugin.namespace = %plugin.namespace,
+                plugin.name = %plugin.name,
+                plugin.version = %plugin.version,
+                scope = "tenant",
+                "Executing plugin (tenant-scoped)"
+            );
             debug!(
                 "Executing handle_event for plugin: {} (tenant-scoped)",
                 plugin.id()

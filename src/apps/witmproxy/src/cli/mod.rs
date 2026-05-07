@@ -101,6 +101,10 @@ enum Commands {
         #[arg(short, long)]
         detach: bool,
     },
+    /// Stop the daemon service
+    ///
+    /// Stops the running witmproxy daemon service.
+    Stop,
     /// Run the proxy server directly in the foreground (no daemon)
     ///
     /// This starts the web and proxy servers directly in the current terminal.
@@ -140,6 +144,17 @@ enum Commands {
         #[command(subcommand)]
         command: ServiceCommands,
     },
+    /// Show the status of the witmproxy service (alias for `service status`)
+    Status,
+    /// Show the daemon log file (alias for `service logs`)
+    Logs {
+        /// Follow the log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+        /// Number of lines to show from the end
+        #[arg(short, long, default_value = "50")]
+        lines: usize,
+    },
     /// Authentication commands (for remote management)
     Auth {
         #[command(subcommand)]
@@ -166,6 +181,16 @@ enum Commands {
     },
     /// Print version and build information
     Version,
+    /// Fetch and output the OpenAPI specification from a running server
+    Openapi {
+        /// URL of a running witmproxy server (reads from services.json if not specified)
+        #[arg(long)]
+        server: Option<String>,
+
+        /// Output file path (prints to stdout if not specified)
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -183,10 +208,32 @@ impl Cli {
         let is_serve = matches!(&self.command, Commands::Serve { .. });
 
         if !is_serve {
-            let log_level = if self.verbose { "debug" } else { "info" };
-            tracing_subscriber::fmt()
-                .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
-                .init();
+            // Load config early to check telemetry/log settings (best-effort, fall back to defaults)
+            let config_path_resolved = expand_home_in_path(&self.config_path).ok();
+            let early_config = config_path_resolved
+                .as_ref()
+                .and_then(|p| crate::config::AppConfig::load(p).ok());
+            let otel_config = early_config
+                .as_ref()
+                .map(|c| c.telemetry.clone())
+                .unwrap_or_default();
+            let mut log_config = early_config
+                .as_ref()
+                .map(|c| c.log.clone())
+                .unwrap_or_default();
+            // --verbose flag overrides configured log level
+            if self.verbose {
+                log_config.log_level = "debug".to_string();
+            }
+            let _telemetry_guard = if otel_config.enabled {
+                crate::telemetry::otel::init_telemetry(&otel_config, &log_config, None)
+            } else {
+                crate::telemetry::otel::init_telemetry(
+                    &crate::config::TelemetryConfig::default(),
+                    &log_config,
+                    None,
+                )
+            };
         }
 
         let config_path = expand_home_in_path(&self.config_path)?;
@@ -198,6 +245,14 @@ impl Cli {
                     ResolvedCli::from_proxy_options(options, &config_path, verbose, detach)?;
                 let check = Self::maybe_spawn_update_check(&resolved.config);
                 let result = resolved.run_start().await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Stop => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let service_handler = service::ServiceHandler::new(config, verbose, None, false);
+                let result = service_handler.stop_service().await;
                 Self::show_update_warning(check).await;
                 result
             }
@@ -243,6 +298,26 @@ impl Cli {
                     result
                 }
             },
+            Commands::Status => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let service_handler = service::ServiceHandler::new(config, verbose, None, false);
+                let result = service_handler
+                    .handle(&ServiceCommands::Status)
+                    .await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Logs { follow, lines } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let service_handler = service::ServiceHandler::new(config, verbose, None, false);
+                let result = service_handler
+                    .handle(&ServiceCommands::Logs { follow, lines })
+                    .await;
+                Self::show_update_warning(check).await;
+                result
+            }
             Commands::Plugin { command } => {
                 let config = Self::load_config(&config_path)?;
                 let check = Self::maybe_spawn_update_check(&config);
@@ -298,6 +373,60 @@ impl Cli {
             }
             Commands::Version => {
                 Self::print_version();
+                Ok(())
+            }
+            Commands::Openapi { server, output } => {
+                let url = if let Some(s) = server {
+                    s
+                } else {
+                    // Try to read from services.json
+                    let config = Self::load_config(&config_path)?;
+                    let app_dir = config
+                        .tls
+                        .cert_dir
+                        .parent()
+                        .unwrap_or(&PathBuf::from("."))
+                        .to_path_buf();
+                    let services_path = app_dir.join("services.json");
+                    let services: Services = serde_json::from_str(
+                        &std::fs::read_to_string(&services_path)
+                            .map_err(|_| anyhow::anyhow!(
+                                "No --server specified and no services.json found at {:?}. Is witmproxy running?",
+                                services_path
+                            ))?,
+                    )?;
+                    format!("https://{}", services.web)
+                };
+
+                // Fetch the OpenAPI spec, accepting self-signed certs
+                let client = reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .build()?;
+                let spec = client
+                    .get(format!(
+                        "{}/api/docs/openapi.json",
+                        url.trim_end_matches('/')
+                    ))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .text()
+                    .await?;
+
+                // Pretty-print the JSON
+                let parsed: serde_json::Value = serde_json::from_str(&spec)?;
+                let pretty = serde_json::to_string_pretty(&parsed)?;
+
+                if let Some(output_path) = output {
+                    if let Some(parent) = output_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&output_path, &pretty)?;
+                    eprintln!("OpenAPI spec written to: {:?}", output_path);
+                } else {
+                    println!("{}", pretty);
+                }
+
                 Ok(())
             }
         }
@@ -448,27 +577,36 @@ impl ResolvedCli {
     /// Run the proxy server directly (daemon mode)
     /// This method is called by the daemon service and writes logs to a file
     async fn run_serve(&self, log_file: Option<PathBuf>) -> Result<()> {
-        // Set up file-based logging if a log file path is provided
-        if let Some(ref log_path) = log_file {
-            // Create parent directories if needed
-            if let Some(parent) = log_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
+        let mut log_config = self.config.log.clone();
+        // --verbose flag overrides configured log level
+        if self.verbose {
+            log_config.log_level = "debug".to_string();
+        }
 
-            // Set up file-based tracing subscriber
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)?;
+        // Determine the log directory for rolling files.
+        // If --log-file was passed (legacy), use its parent directory.
+        // Otherwise fall back to the configured log_dir or the app directory.
+        let log_dir = if let Some(ref log_path) = log_file {
+            log_path.parent().map(|p| p.to_path_buf())
+        } else {
+            log_config
+                .log_dir
+                .clone()
+                .or_else(|| self.config.tls.cert_dir.parent().map(|p| p.to_path_buf()))
+        };
 
-            let log_level = if self.verbose { "debug" } else { "info" };
-            tracing_subscriber::fmt()
-                .with_env_filter(format!("witmproxy={},{}", log_level, log_level))
-                .with_writer(file)
-                .with_ansi(false) // No ANSI colors in log file
-                .init();
+        if let Some(ref dir) = log_dir {
+            std::fs::create_dir_all(dir)?;
+        }
 
-            info!("witmproxy daemon starting, logging to {:?}", log_path);
+        let _telemetry_guard = crate::telemetry::otel::init_telemetry(
+            &self.config.telemetry,
+            &log_config,
+            log_dir.as_deref(),
+        );
+
+        if let Some(ref dir) = log_dir {
+            info!("witmproxy daemon starting, logging to {:?}", dir);
         }
 
         // Now run the proxy (same as run_proxy but without log initialization)
@@ -496,6 +634,17 @@ impl ResolvedCli {
 
         info!("Loaded proxy configuration");
 
+        // Spawn system resource metrics if OTel is enabled
+        #[cfg(feature = "otel")]
+        let _resource_metrics_handle =
+            if self.config.telemetry.enabled && self.config.telemetry.resource_metrics_enabled {
+                Some(crate::telemetry::otel::spawn_resource_metrics(
+                    self.config.telemetry.resource_metrics_interval_secs,
+                ))
+            } else {
+                None
+            };
+
         // Create certificate authority using pre-resolved cert_dir
         std::fs::create_dir_all(&self.config.tls.cert_dir)?;
         let ca = CertificateAuthority::new(self.config.tls.cert_dir.clone()).await?;
@@ -518,6 +667,69 @@ impl ResolvedCli {
             "Database initialized and migrated at: {}",
             self.config.db.db_path.display()
         );
+
+        // Provision default admin account if it doesn't exist
+        if self.config.auth.enabled {
+            use crate::db::tenants::Tenant;
+            use crate::web::auth::hash_password;
+
+            let admin_email = &self.config.auth.admin_email;
+            match Tenant::by_email(&db.pool, admin_email).await {
+                Ok(Some(_)) => {
+                    info!("Admin account already exists: {}", admin_email);
+                }
+                Ok(None) => {
+                    let password = self.config.auth.admin_password.clone().unwrap_or_else(|| {
+                        use argon2::password_hash::rand_core::{OsRng, RngCore};
+                        let mut bytes = [0u8; 18];
+                        OsRng.fill_bytes(&mut bytes);
+                        hex::encode(bytes)[..24].to_string()
+                    });
+
+                    let password_hash = hash_password(&password)
+                        .map_err(|e| anyhow::anyhow!("Failed to hash admin password: {}", e))?;
+
+                    let tenant_id = uuid::Uuid::new_v4().to_string();
+                    Tenant::create(
+                        &db.pool,
+                        &tenant_id,
+                        "Admin",
+                        Some(admin_email),
+                        Some(&password_hash),
+                        None,
+                        None,
+                    )
+                    .await?;
+
+                    // Create "admins" group with full access and add the admin to it
+                    use crate::db::tenants::Group;
+                    let group_id = uuid::Uuid::new_v4().to_string();
+                    let perm_id = uuid::Uuid::new_v4().to_string();
+                    Group::create(&db.pool, &group_id, "admins", "Full administrative access")
+                        .await?;
+                    Group::add_permission(&db.pool, &perm_id, &group_id, "grant", "*:*:*").await?;
+                    Group::add_member(&db.pool, &group_id, &tenant_id).await?;
+                    info!("Admin group created with full access");
+
+                    info!("Default admin account created: {}", admin_email);
+                    if self.config.auth.admin_password.is_none() {
+                        println!("\n╔══════════════════════════════════════════╗");
+                        println!("║  Default admin account created           ║");
+                        println!("║  Email:    {}", admin_email);
+                        println!("║  Password: {}", password);
+                        println!("║                                          ║");
+                        println!("║  Save this password - it won't be        ║");
+                        println!("║  shown again. Set AUTH_ADMIN_PASSWORD     ║");
+                        println!("║  or --auth-admin-password to use your    ║");
+                        println!("║  own.                                    ║");
+                        println!("╚══════════════════════════════════════════╝\n");
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to check for admin account: {}", e);
+                }
+            }
+        }
 
         // Keep a pool handle for transparent proxy tenant resolution
         let db_pool = db.pool.clone();
@@ -548,7 +760,10 @@ impl ResolvedCli {
         }
 
         let ca_for_proxy = CertificateAuthority::new(self.config.tls.cert_dir.clone()).await?;
-        let mut proxy = WitmProxy::new(ca_for_proxy, plugin_registry.clone(), self.config.clone());
+        let config_path = app_dir.join("config.toml");
+        let mut proxy = WitmProxy::new(ca_for_proxy, plugin_registry.clone(), self.config.clone())
+            .with_config_path(config_path)
+            .with_db_pool(db_pool.clone());
         proxy.start().await?;
 
         // Capture the bound addresses

@@ -88,6 +88,11 @@ pub async fn jwt_auth(
         }
     };
 
+    // Skip auth for CORS preflight requests
+    if req.method() == salvo::http::Method::OPTIONS {
+        return;
+    }
+
     if !auth_config.enabled {
         // Auth disabled: allow all requests through without authentication
         return;

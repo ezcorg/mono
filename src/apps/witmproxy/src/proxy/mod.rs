@@ -26,6 +26,7 @@ use wasmtime_wasi_http::p3::WasiHttpView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
+use std::sync::OnceLock;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
@@ -56,6 +57,11 @@ pub struct ProxyServer {
     config: Arc<AppConfig>,
     upstream: UpstreamClient,
     shutdown_notify: Arc<Notify>,
+    /// Local bind address of our own management web server, if known.
+    /// Connections targeting this port are short-circuited to a direct
+    /// loopback connection so the management UI keeps working when the
+    /// system proxy is enabled and the user opens it via a public hostname.
+    management_addr: Arc<OnceLock<SocketAddr>>,
 }
 
 impl ProxyServer {
@@ -72,12 +78,34 @@ impl ProxyServer {
             config: Arc::new(config),
             upstream,
             shutdown_notify: Arc::new(Notify::new()),
+            management_addr: Arc::new(OnceLock::new()),
         })
     }
 
     /// Returns the actual bound listen address, if the server has been started
     pub fn listen_addr(&self) -> Option<SocketAddr> {
         self.listen_addr
+    }
+
+    /// Tell the proxy where its own management web server is listening.
+    /// Connections to that port are then routed directly to loopback
+    /// instead of being treated as ordinary upstream traffic — without
+    /// this, opening the management UI through the system proxy loops
+    /// (or fails) because the proxy has no idea the destination is itself.
+    pub fn set_management_addr(&self, addr: SocketAddr) {
+        let _ = self.management_addr.set(addr);
+    }
+
+    /// If `authority` targets our own management server's port, return the
+    /// loopback host:port that should be used as the actual upstream.
+    fn rewrite_management_authority(&self, authority: &str) -> Option<String> {
+        let mgmt = self.management_addr.get()?;
+        let (_, port) = parse_authority_host_port(authority, 0).ok()?;
+        if port == mgmt.port() {
+            Some(format!("127.0.0.1:{}", mgmt.port()))
+        } else {
+            None
+        }
     }
 
     /// Starts the server: binds the listener and spawns the accept loop.
@@ -183,6 +211,7 @@ impl ProxyServer {
 
     /// Determine whether any plugins want to handle this connection
     /// Returns true if MITM should be performed, false if connection should be forwarded transparently
+    #[tracing::instrument(skip(self), fields(authority = %authority))]
     async fn handle_connect(&self, authority: &str) -> bool {
         let Some(plugin_registry) = &self.plugin_registry else {
             debug!("No plugin registry, skipping MITM for {}", authority);
@@ -268,7 +297,7 @@ impl ProxyServer {
             debug!("Handling CONNECT request");
 
             // Host:port lives in the request-target for CONNECT (authority-form)
-            let authority = req
+            let mut authority = req
                 .uri()
                 .authority()
                 .map(|a| a.as_str().to_string())
@@ -283,8 +312,28 @@ impl ProxyServer {
                 return Ok::<_, ProxyError>(resp);
             }
 
-            // Check if any plugins want to handle this connection
-            let should_mitm = self.handle_connect(&authority).await;
+            // If this CONNECT is targeting our own management server (matched
+            // by port), rewrite the upstream authority to loopback so the
+            // tunnel terminates locally instead of looping back through the
+            // system proxy or hitting an unreachable public hostname.
+            let mut is_management_loopback = false;
+            if let Some(loopback) = self.rewrite_management_authority(&authority) {
+                debug!(
+                    "CONNECT authority {} matches management port; rewriting to {}",
+                    authority, loopback
+                );
+                authority = loopback;
+                is_management_loopback = true;
+            }
+
+            // Check if any plugins want to handle this connection. Skip the
+            // plugin path entirely for management-loopback so the UI bytes
+            // aren't fed through MITM.
+            let should_mitm = if is_management_loopback {
+                false
+            } else {
+                self.handle_connect(&authority).await
+            };
 
             let on_upgrade = upgrade::on(&mut req);
 
@@ -359,6 +408,33 @@ impl ProxyServer {
         );
         strip_proxy_headers(req.headers_mut());
         // TODO: plugin: on_request(&mut req, &conn).await;
+
+        // Short-circuit plain HTTP requests that target our own management
+        // server's port: rewrite the URI's authority to 127.0.0.1 so the
+        // upstream client talks to ourselves instead of trying to resolve
+        // the public hostname.
+        if let Some(authority) = req.uri().authority().map(|a| a.as_str().to_string())
+            && let Some(loopback) = self.rewrite_management_authority(&authority)
+        {
+            let path_and_query = req
+                .uri()
+                .path_and_query()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| "/".to_string());
+            let scheme = req.uri().scheme_str().unwrap_or("http").to_string();
+            if let Ok(new_uri) = hyper::Uri::builder()
+                .scheme(scheme.as_str())
+                .authority(loopback.as_str())
+                .path_and_query(path_and_query.as_str())
+                .build()
+            {
+                debug!(
+                    "Rewriting plain HTTP authority {} -> {} (management loopback)",
+                    authority, loopback
+                );
+                *req.uri_mut() = new_uri;
+            }
+        }
 
         // Convert hyper request to reqwest request
         let reqwest_req = convert_hyper_incoming_to_reqwest_request(req, &self.upstream)?;
@@ -465,6 +541,7 @@ fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
 ///
 /// Generic over the IO type so it can be used from both the standard proxy
 /// (with `TokioIo<Upgraded>`) and the transparent proxy (with `TcpStream`).
+#[tracing::instrument(skip(upstream, stream, ca, plugin_registry), fields(authority = %authority))]
 pub(crate) async fn run_tls_mitm<IO>(
     upstream: reqwest::Client,
     stream: IO,
@@ -475,7 +552,7 @@ pub(crate) async fn run_tls_mitm<IO>(
 where
     IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    debug!("Running TLS MITM for {}", authority);
+    debug!("Running TLS interception for {}", authority);
 
     // Extract host + port, default :443
     let (host, _port) = parse_authority_host_port(&authority, 443)?;

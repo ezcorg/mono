@@ -1,6 +1,6 @@
-use salvo::http::StatusCode;
-use salvo::oapi::endpoint;
-use salvo::oapi::extract::PathParam;
+use salvo::http::{StatusCode, StatusError};
+use salvo::oapi::extract::{JsonBody, PathParam};
+use salvo::oapi::{ToSchema, endpoint};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -9,10 +9,21 @@ use tracing::warn;
 use crate::db::tenants::{self, Group, Tenant};
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn db(depot: &mut Depot) -> Result<SqlitePool, StatusError> {
+    depot
+        .obtain::<SqlitePool>()
+        .cloned()
+        .map_err(|_| StatusError::internal_server_error().brief("Database not available"))
+}
+
+// ---------------------------------------------------------------------------
 // Tenant endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct TenantResponse {
     id: String,
     display_name: String,
@@ -34,97 +45,55 @@ impl From<Tenant> for TenantResponse {
 }
 
 /// GET /api/manage/tenants -- list all tenants.
-#[endpoint]
-pub async fn list_tenants(depot: &mut Depot, res: &mut Response) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
-    match Tenant::all(&pool).await {
-        Ok(tenants) => {
-            let resp: Vec<TenantResponse> = tenants.into_iter().map(Into::into).collect();
-            res.render(Json(resp));
-        }
-        Err(e) => {
-            warn!("Failed to list tenants: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
-        }
-    }
+#[endpoint(security(("bearer" = [])), status_codes(200, 401, 403, 500))]
+pub async fn list_tenants(depot: &mut Depot) -> Result<Json<Vec<TenantResponse>>, StatusError> {
+    let pool = db(depot)?;
+    let tenants = Tenant::all(&pool).await.map_err(|e| {
+        warn!("Failed to list tenants: {}", e);
+        StatusError::internal_server_error().brief("Internal error")
+    })?;
+    Ok(Json(tenants.into_iter().map(Into::into).collect()))
 }
 
 /// GET /api/manage/tenants/:id -- get tenant by ID.
-#[endpoint]
-pub async fn get_tenant(id: PathParam<String>, depot: &mut Depot, res: &mut Response) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn get_tenant(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<Json<TenantResponse>, StatusError> {
+    let pool = db(depot)?;
     match Tenant::by_id(&pool, &id.into_inner()).await {
-        Ok(Some(tenant)) => res.render(Json(TenantResponse::from(tenant))),
-        Ok(None) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Plain("Tenant not found"));
-        }
+        Ok(Some(tenant)) => Ok(Json(TenantResponse::from(tenant))),
+        Ok(None) => Err(StatusError::not_found().brief("Tenant not found")),
         Err(e) => {
             warn!("Failed to get tenant: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
+            Err(StatusError::internal_server_error().brief("Internal error"))
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTenantRequest {
     pub display_name: Option<String>,
     pub enabled: Option<bool>,
 }
 
 /// PUT /api/manage/tenants/:id -- update tenant.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn update_tenant(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<UpdateTenantRequest>,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
-    let body: UpdateTenantRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
+) -> Result<Json<TenantResponse>, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
     let tenant_id = id.into_inner();
 
     if let Some(enabled) = body.enabled
         && let Err(e) = Tenant::update_enabled(&pool, &tenant_id, enabled).await
     {
         warn!("Failed to update tenant: {}", e);
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Text::Plain("Internal error"));
-        return;
+        return Err(StatusError::internal_server_error().brief("Internal error"));
     }
 
     if let Some(ref display_name) = body.display_name
@@ -135,50 +104,36 @@ pub async fn update_tenant(
             .await
     {
         warn!("Failed to update tenant display_name: {}", e);
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Text::Plain("Internal error"));
-        return;
+        return Err(StatusError::internal_server_error().brief("Internal error"));
     }
 
     match Tenant::by_id(&pool, &tenant_id).await {
-        Ok(Some(tenant)) => res.render(Json(TenantResponse::from(tenant))),
-        Ok(None) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Plain("Tenant not found"));
-        }
+        Ok(Some(tenant)) => Ok(Json(TenantResponse::from(tenant))),
+        Ok(None) => Err(StatusError::not_found().brief("Tenant not found")),
         Err(e) => {
             warn!("Failed to get tenant after update: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
+            Err(StatusError::internal_server_error().brief("Internal error"))
         }
     }
 }
 
 /// DELETE /api/manage/tenants/:id -- delete tenant.
-#[endpoint]
-pub async fn delete_tenant(id: PathParam<String>, depot: &mut Depot, res: &mut Response) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn delete_tenant(
+    id: PathParam<String>,
+    depot: &mut Depot,
+    res: &mut Response,
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
     match Tenant::delete(&pool, &id.into_inner()).await {
         Ok(true) => {
             res.status_code(StatusCode::OK);
-            res.render(Text::Plain("Tenant deleted"));
+            Ok("Tenant deleted")
         }
-        Ok(false) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Plain("Tenant not found"));
-        }
+        Ok(false) => Err(StatusError::not_found().brief("Tenant not found")),
         Err(e) => {
             warn!("Failed to delete tenant: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
+            Err(StatusError::internal_server_error().brief("Internal error"))
         }
     }
 }
@@ -187,7 +142,7 @@ pub async fn delete_tenant(id: PathParam<String>, depot: &mut Depot, res: &mut R
 // Group endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct GroupResponse {
     id: String,
     name: String,
@@ -205,98 +160,60 @@ impl From<Group> for GroupResponse {
 }
 
 /// GET /api/manage/groups -- list all groups.
-#[endpoint]
-pub async fn list_groups(depot: &mut Depot, res: &mut Response) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
-    match Group::all(&pool).await {
-        Ok(groups) => {
-            let resp: Vec<GroupResponse> = groups.into_iter().map(Into::into).collect();
-            res.render(Json(resp));
-        }
-        Err(e) => {
-            warn!("Failed to list groups: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
-        }
-    }
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn list_groups(depot: &mut Depot) -> Result<Json<Vec<GroupResponse>>, StatusError> {
+    let pool = db(depot)?;
+    let groups = Group::all(&pool).await.map_err(|e| {
+        warn!("Failed to list groups: {}", e);
+        StatusError::internal_server_error().brief("Internal error")
+    })?;
+    Ok(Json(groups.into_iter().map(Into::into).collect()))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateGroupRequest {
     pub name: String,
     pub description: Option<String>,
 }
 
 /// POST /api/manage/groups -- create a group.
-#[endpoint]
-pub async fn create_group(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
-    let body: CreateGroupRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn create_group(
+    body: JsonBody<CreateGroupRequest>,
+    depot: &mut Depot,
+    res: &mut Response,
+) -> Result<Json<GroupResponse>, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
     let group_id = uuid::Uuid::new_v4().to_string();
     let description = body.description.as_deref().unwrap_or("");
 
     match Group::create(&pool, &group_id, &body.name, description).await {
         Ok(group) => {
             res.status_code(StatusCode::CREATED);
-            res.render(Json(GroupResponse::from(group)));
+            Ok(Json(GroupResponse::from(group)))
         }
         Err(e) => {
             warn!("Failed to create group: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed to create group: {}", e)));
+            Err(StatusError::internal_server_error()
+                .brief(format!("Failed to create group: {}", e)))
         }
     }
 }
 
 /// DELETE /api/manage/groups/:id -- delete a group.
-#[endpoint]
-pub async fn delete_group(id: PathParam<String>, depot: &mut Depot, res: &mut Response) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn delete_group(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
     match Group::delete(&pool, &id.into_inner()).await {
-        Ok(true) => {
-            res.status_code(StatusCode::OK);
-            res.render(Text::Plain("Group deleted"));
-        }
-        Ok(false) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Plain("Group not found"));
-        }
+        Ok(true) => Ok("Group deleted"),
+        Ok(false) => Err(StatusError::not_found().brief("Group not found")),
         Err(e) => {
             warn!("Failed to delete group: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
+            Err(StatusError::internal_server_error().brief("Internal error"))
         }
     }
 }
@@ -305,135 +222,121 @@ pub async fn delete_group(id: PathParam<String>, depot: &mut Depot, res: &mut Re
 // Group membership endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct MemberRequest {
     pub tenant_id: String,
 }
 
+/// GET /api/manage/groups/:id/members -- list group members.
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn list_group_members(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<Json<Vec<String>>, StatusError> {
+    let pool = db(depot)?;
+    let members = Group::members(&pool, &id.into_inner()).await.map_err(|e| {
+        warn!("Failed to list group members: {}", e);
+        StatusError::internal_server_error().brief(format!("Failed: {}", e))
+    })?;
+    Ok(Json(members))
+}
+
+/// GET /api/manage/groups/:id/permissions -- list group permissions.
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn list_group_permissions(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<Json<Vec<PermissionResponse>>, StatusError> {
+    let pool = db(depot)?;
+    let perms = Group::permissions_with_ids(&pool, &id.into_inner())
+        .await
+        .map_err(|e| {
+            warn!("Failed to list group permissions: {}", e);
+            StatusError::internal_server_error().brief(format!("Failed: {}", e))
+        })?;
+    Ok(Json(
+        perms
+            .into_iter()
+            .map(|(id, effect, resource)| PermissionResponse {
+                id,
+                effect,
+                resource,
+            })
+            .collect(),
+    ))
+}
+
 /// POST /api/manage/groups/:id/members -- add member to group.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn add_group_member(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<MemberRequest>,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
-    let body: MemberRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
-    match Group::add_member(&pool, &id.into_inner(), &body.tenant_id).await {
-        Ok(()) => {
-            res.status_code(StatusCode::OK);
-            res.render(Text::Plain("Member added"));
-        }
-        Err(e) => {
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
+    Group::add_member(&pool, &id.into_inner(), &body.tenant_id)
+        .await
+        .map_err(|e| {
             warn!("Failed to add group member: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed: {}", e)));
-        }
-    }
+            StatusError::internal_server_error().brief(format!("Failed: {}", e))
+        })?;
+    Ok("Member added")
 }
 
 /// DELETE /api/manage/groups/:id/members -- remove member from group.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn remove_group_member(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<MemberRequest>,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
-    let body: MemberRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
-    match Group::remove_member(&pool, &id.into_inner(), &body.tenant_id).await {
-        Ok(()) => {
-            res.status_code(StatusCode::OK);
-            res.render(Text::Plain("Member removed"));
-        }
-        Err(e) => {
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
+    Group::remove_member(&pool, &id.into_inner(), &body.tenant_id)
+        .await
+        .map_err(|e| {
             warn!("Failed to remove group member: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed: {}", e)));
-        }
-    }
+            StatusError::internal_server_error().brief(format!("Failed: {}", e))
+        })?;
+    Ok("Member removed")
 }
 
 // ---------------------------------------------------------------------------
 // Group permissions endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AddPermissionRequest {
     pub effect: String,
     pub resource: String,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+struct PermissionResponse {
+    id: String,
+    effect: String,
+    resource: String,
+}
+
 /// POST /api/manage/groups/:id/permissions -- add permission to group.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn add_group_permission(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<AddPermissionRequest>,
     depot: &mut Depot,
     res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
+) -> Result<Json<PermissionResponse>, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
 
-    let body: AddPermissionRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
-    // Validate effect
     if body.effect != "grant" && body.effect != "deny" {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Text::Plain("Effect must be 'grant' or 'deny'"));
-        return;
+        return Err(StatusError::bad_request().brief("Effect must be 'grant' or 'deny'"));
     }
 
     let permission_id = uuid::Uuid::new_v4().to_string();
 
-    match Group::add_permission(
+    Group::add_permission(
         &pool,
         &permission_id,
         &id.into_inner(),
@@ -441,55 +344,35 @@ pub async fn add_group_permission(
         &body.resource,
     )
     .await
-    {
-        Ok(()) => {
-            res.status_code(StatusCode::CREATED);
-            res.render(Json(serde_json::json!({
-                "id": permission_id,
-                "effect": body.effect,
-                "resource": body.resource,
-            })));
-        }
-        Err(e) => {
-            warn!("Failed to add permission: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed: {}", e)));
-        }
-    }
+    .map_err(|e| {
+        warn!("Failed to add permission: {}", e);
+        StatusError::internal_server_error().brief(format!("Failed: {}", e))
+    })?;
+
+    res.status_code(StatusCode::CREATED);
+    Ok(Json(PermissionResponse {
+        id: permission_id,
+        effect: body.effect,
+        resource: body.resource,
+    }))
 }
 
 /// DELETE /api/manage/groups/:id/permissions/:permission_id -- remove permission.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn remove_group_permission(
     id: PathParam<String>,
     permission_id: PathParam<String>,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
     let _ = id.into_inner(); // group_id for ACL context (already checked by middleware)
 
     match Group::remove_permission(&pool, &permission_id.into_inner()).await {
-        Ok(true) => {
-            res.status_code(StatusCode::OK);
-            res.render(Text::Plain("Permission removed"));
-        }
-        Ok(false) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Plain("Permission not found"));
-        }
+        Ok(true) => Ok("Permission removed"),
+        Ok(false) => Err(StatusError::not_found().brief("Permission not found")),
         Err(e) => {
             warn!("Failed to remove permission: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
+            Err(StatusError::internal_server_error().brief("Internal error"))
         }
     }
 }
@@ -498,40 +381,24 @@ pub async fn remove_group_permission(
 // Tenant plugin configuration endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetPluginEnabledRequest {
     pub enabled: bool,
 }
 
 /// PUT /api/manage/tenants/:id/plugins/:ns/:name/enabled -- set per-tenant plugin enabled state.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn set_tenant_plugin_enabled(
     id: PathParam<String>,
     ns: PathParam<String>,
     name: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<SetPluginEnabledRequest>,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
 
-    let body: SetPluginEnabledRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
-    match tenants::set_plugin_override(
+    tenants::set_plugin_override(
         &pool,
         &id.into_inner(),
         &ns.into_inner(),
@@ -539,58 +406,36 @@ pub async fn set_tenant_plugin_enabled(
         Some(body.enabled),
     )
     .await
-    {
-        Ok(()) => {
-            res.status_code(StatusCode::OK);
-            res.render(Text::Plain("Plugin override set"));
-        }
-        Err(e) => {
-            warn!("Failed to set plugin override: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed: {}", e)));
-        }
-    }
+    .map_err(|e| {
+        warn!("Failed to set plugin override: {}", e);
+        StatusError::internal_server_error().brief(format!("Failed: {}", e))
+    })?;
+
+    Ok("Plugin override set")
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetPluginConfigRequest {
     pub config: std::collections::HashMap<String, String>,
 }
 
 /// PUT /api/manage/tenants/:id/plugins/:ns/:name/config -- set per-tenant plugin config.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn set_tenant_plugin_config(
     id: PathParam<String>,
     ns: PathParam<String>,
     name: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<SetPluginConfigRequest>,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
-    let body: SetPluginConfigRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
     let tenant_id = id.into_inner();
     let namespace = ns.into_inner();
     let plugin_name = name.into_inner();
 
     for (input_name, input_value) in &body.config {
-        if let Err(e) = tenants::set_plugin_config(
+        tenants::set_plugin_config(
             &pool,
             &tenant_id,
             &namespace,
@@ -599,138 +444,170 @@ pub async fn set_tenant_plugin_config(
             input_value,
         )
         .await
-        {
+        .map_err(|e| {
             warn!("Failed to set plugin config: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed: {}", e)));
-            return;
-        }
+            StatusError::internal_server_error().brief(format!("Failed: {}", e))
+        })?;
     }
 
-    res.status_code(StatusCode::OK);
-    res.render(Text::Plain("Plugin config updated"));
+    Ok("Plugin config updated")
 }
 
 // ---------------------------------------------------------------------------
 // Tenant IP mapping endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IpMappingRequest {
     pub ip_address: String,
 }
 
 /// GET /api/manage/tenants/:id/ip-mappings -- list IP mappings for a tenant.
-#[endpoint]
-pub async fn list_ip_mappings(id: PathParam<String>, depot: &mut Depot, res: &mut Response) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
-
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn list_ip_mappings(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<Json<Vec<String>>, StatusError> {
+    let pool = db(depot)?;
     let tenant_id = id.into_inner();
-    match Tenant::by_id(&pool, &tenant_id).await {
-        Ok(Some(tenant)) => match tenant.ip_mappings(&pool).await {
-            Ok(mappings) => {
-                let ips: Vec<&str> = mappings.iter().map(|m| m.ip_address.as_str()).collect();
-                res.render(Json(ips));
-            }
-            Err(e) => {
-                warn!("Failed to list IP mappings: {}", e);
-                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                res.render(Text::Plain("Internal error"));
-            }
-        },
-        Ok(None) => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Plain("Tenant not found"));
-        }
-        Err(e) => {
+
+    let tenant = Tenant::by_id(&pool, &tenant_id)
+        .await
+        .map_err(|e| {
             warn!("Failed to get tenant: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Internal error"));
-        }
-    }
+            StatusError::internal_server_error().brief("Internal error")
+        })?
+        .ok_or_else(|| StatusError::not_found().brief("Tenant not found"))?;
+
+    let mappings = tenant.ip_mappings(&pool).await.map_err(|e| {
+        warn!("Failed to list IP mappings: {}", e);
+        StatusError::internal_server_error().brief("Internal error")
+    })?;
+
+    Ok(Json(
+        mappings.iter().map(|m| m.ip_address.clone()).collect(),
+    ))
 }
 
 /// POST /api/manage/tenants/:id/ip-mappings -- add IP mapping.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn add_ip_mapping(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<IpMappingRequest>,
     depot: &mut Depot,
     res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
 
-    let body: IpMappingRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
-    match tenants::add_ip_mapping(&pool, &id.into_inner(), &body.ip_address).await {
-        Ok(()) => {
-            res.status_code(StatusCode::CREATED);
-            res.render(Text::Plain("IP mapping added"));
-        }
-        Err(e) => {
+    tenants::add_ip_mapping(&pool, &id.into_inner(), &body.ip_address)
+        .await
+        .map_err(|e| {
             warn!("Failed to add IP mapping: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed: {}", e)));
-        }
-    }
+            StatusError::internal_server_error().brief(format!("Failed: {}", e))
+        })?;
+
+    res.status_code(StatusCode::CREATED);
+    Ok("IP mapping added")
 }
 
 /// DELETE /api/manage/tenants/:id/ip-mappings -- remove IP mapping.
-#[endpoint]
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn remove_ip_mapping(
     id: PathParam<String>,
-    req: &mut Request,
+    body: JsonBody<IpMappingRequest>,
     depot: &mut Depot,
-    res: &mut Response,
-) {
-    let pool = match depot.obtain::<SqlitePool>() {
-        Ok(p) => p.clone(),
-        Err(_) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain("Database not available"));
-            return;
-        }
-    };
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
 
-    let body: IpMappingRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Text::Plain(format!("Invalid request: {}", e)));
-            return;
-        }
-    };
-
-    match tenants::remove_ip_mapping(&pool, &id.into_inner(), &body.ip_address).await {
-        Ok(()) => {
-            res.status_code(StatusCode::OK);
-            res.render(Text::Plain("IP mapping removed"));
-        }
-        Err(e) => {
+    tenants::remove_ip_mapping(&pool, &id.into_inner(), &body.ip_address)
+        .await
+        .map_err(|e| {
             warn!("Failed to remove IP mapping: {}", e);
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Text::Plain(format!("Failed: {}", e)));
+            StatusError::internal_server_error().brief(format!("Failed: {}", e))
+        })?;
+
+    Ok("IP mapping removed")
+}
+
+// ---------------------------------------------------------------------------
+// Configuration endpoints
+// ---------------------------------------------------------------------------
+
+/// Subset of AppConfig fields that are safe to expose and modify at runtime.
+/// Excludes sensitive fields (db_password, jwt_secret, admin_password) and
+/// fields that require a restart to take effect (bind addresses, cert paths).
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeConfig {
+    pub plugins_enabled: bool,
+    pub plugins_timeout_ms: u64,
+    pub plugins_max_memory_mb: u64,
+    pub plugins_max_fuel: u64,
+    pub auto_update: bool,
+    pub transparent_enabled: bool,
+}
+
+impl RuntimeConfig {
+    fn from_app_config(config: &crate::config::AppConfig) -> Self {
+        Self {
+            plugins_enabled: config.plugins.enabled,
+            plugins_timeout_ms: config.plugins.timeout_ms,
+            plugins_max_memory_mb: config.plugins.max_memory_mb,
+            plugins_max_fuel: config.plugins.max_fuel,
+            auto_update: config.update.auto_update,
+            transparent_enabled: config.transparent.enabled,
         }
     }
+
+    fn apply_to(&self, config: &mut crate::config::AppConfig) {
+        config.plugins.enabled = self.plugins_enabled;
+        config.plugins.timeout_ms = self.plugins_timeout_ms;
+        config.plugins.max_memory_mb = self.plugins_max_memory_mb;
+        config.plugins.max_fuel = self.plugins_max_fuel;
+        config.update.auto_update = self.auto_update;
+        config.transparent.enabled = self.transparent_enabled;
+    }
 }
+
+/// GET /api/manage/config -- get current runtime configuration.
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn get_config(depot: &mut Depot) -> Result<Json<RuntimeConfig>, StatusError> {
+    let config = depot
+        .obtain::<crate::config::AppConfig>()
+        .cloned()
+        .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
+
+    Ok(Json(RuntimeConfig::from_app_config(&config)))
+}
+
+/// PUT /api/manage/config -- update runtime configuration and persist to disk.
+#[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
+pub async fn update_config(
+    body: JsonBody<RuntimeConfig>,
+    depot: &mut Depot,
+) -> Result<Json<RuntimeConfig>, StatusError> {
+    let mut config = depot
+        .obtain::<crate::config::AppConfig>()
+        .cloned()
+        .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
+
+    let config_path = depot
+        .obtain::<ConfigPath>()
+        .map(|p| p.0.clone())
+        .map_err(|_| StatusError::internal_server_error().brief("Config path not available"))?;
+
+    let updates = body.into_inner();
+    updates.apply_to(&mut config);
+
+    config.save(&config_path).map_err(|e| {
+        warn!("Failed to save config: {}", e);
+        StatusError::internal_server_error().brief(format!("Failed to save config: {}", e))
+    })?;
+
+    Ok(Json(RuntimeConfig::from_app_config(&config)))
+}
+
+/// Newtype for injecting the config file path via depot
+#[derive(Clone)]
+pub struct ConfigPath(pub std::path::PathBuf);

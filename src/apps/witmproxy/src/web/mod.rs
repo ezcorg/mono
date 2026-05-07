@@ -49,9 +49,16 @@ pub struct FormatInfo {
     pub platforms: Vec<String>,
 }
 
-// Main certificate download endpoint
-#[endpoint]
-pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut Depot) {
+// Main certificate download endpoint.
+// Returns either a binary file download or an HTML instructions page.
+// We return Result<(), StatusError> so error responses are documented in OpenAPI;
+// the success response writes directly to `res` because it can be HTML or binary.
+#[endpoint(status_codes(200, 500))]
+pub async fn download_certificate(
+    res: &mut Response,
+    req: &Request,
+    depot: &mut Depot,
+) -> Result<(), salvo::http::StatusError> {
     let user_agent = req
         .headers()
         .get("user-agent")
@@ -59,13 +66,9 @@ pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut
         .unwrap_or("Unknown");
     let device_info = DeviceInfo::from_user_agent(user_agent);
 
-    let state = if let Ok(state) = depot.obtain::<AppState>() {
-        state
-    } else {
-        res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Text::Plain("Internal server error"));
-        return;
-    };
+    let state = depot
+        .obtain::<AppState>()
+        .map_err(|_| salvo::http::StatusError::internal_server_error().brief("Internal error"))?;
 
     // Determine format
     let format = if let Some(fmt) = req.query::<String>("format") {
@@ -80,24 +83,12 @@ pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut
         device_info.recommended_format()
     };
 
-    let cert_pem = if let Ok(cert_pem) = state.ca.get_root_certificate_pem() {
-        cert_pem
-    } else {
-        res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Text::Plain("Internal server error"));
-        return;
-    };
+    let cert_pem = state.ca.get_root_certificate_pem().map_err(|_| {
+        salvo::http::StatusError::internal_server_error().brief("Certificate error")
+    })?;
 
-    // Generate certificate bundle
-    let bundle = if let Ok(bundle) =
-        CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
-    {
-        bundle
-    } else {
-        res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Text::Plain("Internal server error"));
-        return;
-    };
+    let bundle = CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
+        .map_err(|_| salvo::http::StatusError::internal_server_error().brief("Bundle error"))?;
 
     // Return file download or instructions page
     if req.query::<bool>("download").unwrap_or(false) {
@@ -112,21 +103,15 @@ pub async fn download_certificate(res: &mut Response, req: &Request, depot: &mut
             .unwrap()
             .body(bundle.data);
     } else {
-        // Return instructions page
-        let template = InstructionsTemplate::new(&bundle);
-        let template = match template.render() {
-            Ok(html) => html,
-            Err(_) => {
-                res.status_code(salvo::http::StatusCode::INTERNAL_SERVER_ERROR);
-                res.render(Text::Plain("Internal server error"));
-                return;
-            }
-        };
+        let html = InstructionsTemplate::new(&bundle).render().map_err(|_| {
+            salvo::http::StatusError::internal_server_error().brief("Template error")
+        })?;
         res.status_code(salvo::http::StatusCode::OK);
         res.add_header(salvo::http::header::CONTENT_TYPE, "text/html", true)
             .unwrap();
-        res.render(Text::Html(template));
+        res.render(Text::Html(html));
     }
+    Ok(())
 }
 
 #[endpoint]

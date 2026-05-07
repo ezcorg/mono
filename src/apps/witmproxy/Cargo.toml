@@ -7,7 +7,7 @@ description = "A WASM-in-the-middle proxy"
 license = "AGPL-3.0-only"
 readme = "README.md"
 repository = "https://github.com/ezcorg/mono"
-keywords = ["wasm", "mitm", "proxy"]
+keywords = ["wasm", "witmproxy", "proxy"]
 categories = ["network-programming", "wasm", "web-programming"]
 
 [lib]
@@ -69,7 +69,16 @@ argon2 = "0.5"
 anyhow = "1.0"
 thiserror = "2.0.12"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+tracing-appender = "0.2"
+
+# OpenTelemetry (behind `otel` feature flag)
+opentelemetry = { version = "0.30", optional = true }
+opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic", "metrics", "logs", "trace"], optional = true }
+opentelemetry-semantic-conventions = { version = "0.30", optional = true }
+tracing-opentelemetry = { version = "0.31", optional = true }
+sysinfo = { version = "0.35", optional = true }
 uuid = { version = "1.0", features = ["v4"] }
 base64 = "0.22"
 hex = "0.4"
@@ -116,7 +125,17 @@ tokio-test = "0.4"
 tempfile = "3.8"
 
 [features]
+default = ["otel"]
 # Feature to expose test utilities for integration tests in other crates
 test-helpers = ["dep:tempfile"]
 # Include cargo-generate for `witm plugin new` (large dependency tree)
 plugin-new = ["dep:cargo-generate"]
+# OpenTelemetry metrics, logs, and tracing
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:tracing-opentelemetry",
+    "dep:sysinfo",
+]

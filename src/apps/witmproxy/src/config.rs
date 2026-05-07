@@ -60,6 +60,12 @@ pub struct AppConfig {
 
     #[config(nested, layer_attr(command(flatten)))]
     pub update: UpdateConfig,
+
+    #[config(nested, layer_attr(command(flatten)))]
+    pub log: LogConfig,
+
+    #[config(nested, layer_attr(command(flatten)))]
+    pub telemetry: TelemetryConfig,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
@@ -108,6 +114,21 @@ pub struct AuthConfig {
     /// JWT secret for local token signing
     #[config(env = "AUTH_JWT_SECRET", layer_attr(arg(long = "auth-jwt-secret")))]
     pub jwt_secret: Option<String>,
+
+    /// Default admin email (default: admin@localhost)
+    #[config(
+        default = "admin@localhost",
+        env = "AUTH_ADMIN_EMAIL",
+        layer_attr(arg(long = "auth-admin-email"))
+    )]
+    pub admin_email: String,
+
+    /// Default admin password (if unset, a random password is generated on first startup)
+    #[config(
+        env = "AUTH_ADMIN_PASSWORD",
+        layer_attr(arg(long = "auth-admin-password"))
+    )]
+    pub admin_password: Option<String>,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
@@ -232,6 +253,18 @@ pub struct WebConfig {
     /// The address the web frontend will bind to (default: 127.0.0.1:0)
     #[config(env = "WEB_BIND_ADDR", layer_attr(arg(long)))]
     pub web_bind_addr: Option<String>,
+
+    /// Path to a TLS certificate file (PEM) for the web server.
+    /// When set (along with web_tls_key_path), the web server uses this
+    /// certificate instead of auto-generating one from the proxy CA.
+    /// Useful with `tailscale cert` which produces <hostname>.crt/.key files.
+    #[config(env = "WEB_TLS_CERT_PATH", layer_attr(arg(long)))]
+    pub web_tls_cert_path: Option<PathBuf>,
+
+    /// Path to a TLS private key file (PEM) for the web server.
+    /// Must be set together with web_tls_cert_path.
+    #[config(env = "WEB_TLS_KEY_PATH", layer_attr(arg(long)))]
+    pub web_tls_key_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
@@ -262,6 +295,88 @@ pub struct UpdateConfig {
     pub prefer_prebuilt: bool,
 }
 
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
+pub struct LogConfig {
+    /// Log level filter (default: info). Use "debug" or "trace" for more output.
+    #[config(default = "info", env = "LOG_LEVEL", layer_attr(arg(long)))]
+    pub log_level: String,
+
+    /// Directory where log files are written in daemon mode.
+    /// Defaults to the app directory (/var/lib/witmproxy on Linux, ~/.witmproxy otherwise).
+    #[config(env = "LOG_DIR", layer_attr(arg(long)))]
+    pub log_dir: Option<PathBuf>,
+
+    /// Log rotation policy: "daily", "hourly", or "never" (default: daily)
+    #[config(default = "daily", env = "LOG_ROTATION", layer_attr(arg(long)))]
+    pub rotation: String,
+
+    /// Maximum number of rotated log files to retain (default: 7).
+    /// Older files are deleted automatically. Only applies when rotation is not "never".
+    #[config(default = 7, env = "LOG_MAX_FILES", layer_attr(arg(long)))]
+    pub max_files: usize,
+}
+
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
+pub struct TelemetryConfig {
+    /// Enable OpenTelemetry export (default: false). Only effective when compiled with the `otel` feature.
+    #[config(
+        default = false,
+        env = "OTEL_ENABLED",
+        layer_attr(arg(long = "otel-enabled", id = "otel-enabled"))
+    )]
+    pub enabled: bool,
+
+    /// OTLP endpoint for traces, metrics, and logs (default: http://localhost:4317)
+    #[config(
+        default = "http://localhost:4317",
+        env = "OTEL_EXPORTER_OTLP_ENDPOINT",
+        layer_attr(arg(long = "otel-endpoint"))
+    )]
+    pub endpoint: String,
+
+    /// Enable trace export (default: true when telemetry is enabled)
+    #[config(
+        default = true,
+        env = "OTEL_TRACES_ENABLED",
+        layer_attr(arg(long = "otel-traces"))
+    )]
+    pub traces_enabled: bool,
+
+    /// Enable metrics export (default: true when telemetry is enabled)
+    #[config(
+        default = true,
+        env = "OTEL_METRICS_ENABLED",
+        layer_attr(arg(long = "otel-metrics"))
+    )]
+    pub metrics_enabled: bool,
+
+    /// Enable log export (default: true when telemetry is enabled)
+    #[config(
+        default = true,
+        env = "OTEL_LOGS_ENABLED",
+        layer_attr(arg(long = "otel-logs"))
+    )]
+    pub logs_enabled: bool,
+
+    /// Enable system resource metrics (CPU, memory, disk, network) (default: true)
+    #[config(
+        default = true,
+        env = "OTEL_RESOURCE_METRICS_ENABLED",
+        layer_attr(arg(long = "otel-resource-metrics"))
+    )]
+    pub resource_metrics_enabled: bool,
+
+    /// System resource metrics collection interval in seconds (default: 15)
+    #[config(
+        default = 15,
+        env = "OTEL_RESOURCE_METRICS_INTERVAL_SECS",
+        layer_attr(arg(long = "otel-resource-metrics-interval"))
+    )]
+    pub resource_metrics_interval_secs: u64,
+}
+
 impl AppConfig {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -283,6 +398,19 @@ impl AppConfig {
 
         // Resolve TLS certificate directory
         self.tls.cert_dir = expand_home_in_path(&self.tls.cert_dir)?;
+
+        // Resolve log directory
+        if let Some(ref p) = self.log.log_dir {
+            self.log.log_dir = Some(expand_home_in_path(p)?);
+        }
+
+        // Resolve web TLS paths
+        if let Some(ref p) = self.web.web_tls_cert_path {
+            self.web.web_tls_cert_path = Some(expand_home_in_path(p)?);
+        }
+        if let Some(ref p) = self.web.web_tls_key_path {
+            self.web.web_tls_key_path = Some(expand_home_in_path(p)?);
+        }
 
         Ok(self)
     }

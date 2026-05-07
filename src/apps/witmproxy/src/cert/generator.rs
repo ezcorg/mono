@@ -133,11 +133,11 @@ impl CertificateGenerator {
             <key>PayloadContent</key>
             <data>{}</data>
             <key>PayloadDescription</key>
-            <string>MITM Proxy Root Certificate</string>
+            <string>witmproxy Root Certificate</string>
             <key>PayloadDisplayName</key>
-            <string>MITM Proxy CA</string>
+            <string>witmproxy CA</string>
             <key>PayloadIdentifier</key>
-            <string>com.mitmproxy.ca.{}</string>
+            <string>co.ez.witmproxy.ca.{}</string>
             <key>PayloadType</key>
             <string>com.apple.security.root</string>
             <key>PayloadUUID</key>
@@ -147,11 +147,11 @@ impl CertificateGenerator {
         </dict>
     </array>
     <key>PayloadDescription</key>
-    <string>Install MITM Proxy Root Certificate</string>
+    <string>Install witmproxy Root Certificate</string>
     <key>PayloadDisplayName</key>
-    <string>MITM Proxy Certificate</string>
+    <string>witmproxy Certificate</string>
     <key>PayloadIdentifier</key>
-    <string>com.mitmproxy.profile</string>
+    <string>co.ez.witmproxy.profile</string>
     <key>PayloadRemovalDisallowed</key>
     <false/>
     <key>PayloadType</key>
@@ -202,7 +202,7 @@ impl CertificateGenerator {
 3. Tap on the downloaded profile under "Downloaded Profile"
 4. Tap "Install" and enter your passcode
 5. Go to Settings > General > About > Certificate Trust Settings
-6. Enable full trust for the MITM Proxy CA certificate"#
+6. Enable full trust for the witmproxy CA certificate"#
             .to_string()
     }
 }
