@@ -127,11 +127,11 @@ const en: Messages = {
   setup_server_desc: { message: "Enter the URL of your witmproxy web server" },
   setup_server_url_label: { message: "Server URL" },
   setup_server_url_placeholder: { message: "https://my-proxy.example.com" },
-  setup_server_url_hint: { message: "The full URL including protocol (https://)" },
+  setup_server_url_hint: { message: "Include the protocol, e.g. https://my-server.example.com" },
   setup_server_healthy: { message: "Server is reachable and healthy" },
   setup_server_tls_error: { message: "TLS certificate error" },
   setup_server_enter_url: { message: "Please enter a server URL" },
-  setup_server_wait_health: { message: "Waiting for health check to complete..." },
+  setup_server_wait_health: { message: "Attempting to connect to server..." },
 
   setup_login_title: { message: "Sign in to your account" },
   setup_login_desc_managed: { message: "Sign in with your ezfilter account" },
@@ -258,6 +258,9 @@ const en: Messages = {
   settings_profile_new_password: { message: "New password" },
   settings_profile_icon: { message: "Profile icon" },
   settings_profile_icon_desc: { message: "An emoji that sparks joy" },
+
+  settings_animations: { message: "Animations" },
+  settings_animations_desc: { message: "Enable or disable all UI animations and transitions" },
 
   settings_dev_title: { message: "Developer" },
   settings_dev_mode: { message: "Developer mode" },

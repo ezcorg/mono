@@ -382,7 +382,7 @@ export default function AdminPage() {
               </CardTitle>
               <CardDescription>{t("admin_groups_desc")}</CardDescription>
             </div>
-            <Button size="sm" onClick={() => setGroupOpen(true)}>
+            <Button size="sm" class="whitespace-nowrap shrink-0" onClick={() => setGroupOpen(true)}>
               <Plus class="h-3.5 w-3.5" />
               {t("admin_groups_add")}
             </Button>

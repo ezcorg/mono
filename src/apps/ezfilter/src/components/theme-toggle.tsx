@@ -25,7 +25,6 @@ export function ThemeToggle() {
             title={t.label}
           >
             <Icon class="h-3.5 w-3.5" />
-            <span class="hidden sm:inline">{t.label}</span>
           </button>
         );
       })}

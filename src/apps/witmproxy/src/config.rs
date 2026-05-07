@@ -62,6 +62,9 @@ pub struct AppConfig {
     pub update: UpdateConfig,
 
     #[config(nested, layer_attr(command(flatten)))]
+    pub log: LogConfig,
+
+    #[config(nested, layer_attr(command(flatten)))]
     pub telemetry: TelemetryConfig,
 }
 
@@ -294,6 +297,28 @@ pub struct UpdateConfig {
 
 #[derive(Clone, Config, Deserialize, Serialize, Default)]
 #[config(layer_attr(derive(Args, Clone, Serialize,)))]
+pub struct LogConfig {
+    /// Log level filter (default: info). Use "debug" or "trace" for more output.
+    #[config(default = "info", env = "LOG_LEVEL", layer_attr(arg(long)))]
+    pub log_level: String,
+
+    /// Directory where log files are written in daemon mode.
+    /// Defaults to the app directory (/var/lib/witmproxy on Linux, ~/.witmproxy otherwise).
+    #[config(env = "LOG_DIR", layer_attr(arg(long)))]
+    pub log_dir: Option<PathBuf>,
+
+    /// Log rotation policy: "daily", "hourly", or "never" (default: daily)
+    #[config(default = "daily", env = "LOG_ROTATION", layer_attr(arg(long)))]
+    pub rotation: String,
+
+    /// Maximum number of rotated log files to retain (default: 7).
+    /// Older files are deleted automatically. Only applies when rotation is not "never".
+    #[config(default = 7, env = "LOG_MAX_FILES", layer_attr(arg(long)))]
+    pub max_files: usize,
+}
+
+#[derive(Clone, Config, Deserialize, Serialize, Default)]
+#[config(layer_attr(derive(Args, Clone, Serialize,)))]
 pub struct TelemetryConfig {
     /// Enable OpenTelemetry export (default: false). Only effective when compiled with the `otel` feature.
     #[config(
@@ -373,6 +398,11 @@ impl AppConfig {
 
         // Resolve TLS certificate directory
         self.tls.cert_dir = expand_home_in_path(&self.tls.cert_dir)?;
+
+        // Resolve log directory
+        if let Some(ref p) = self.log.log_dir {
+            self.log.log_dir = Some(expand_home_in_path(p)?);
+        }
 
         // Resolve web TLS paths
         if let Some(ref p) = self.web.web_tls_cert_path {

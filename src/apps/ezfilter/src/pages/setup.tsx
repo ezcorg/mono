@@ -1051,53 +1051,45 @@ export default function SetupPage() {
                       onInput={(e) => setServerUrl(e.currentTarget.value)}
                       class="pr-10"
                     />
-                    {/* Health status indicator */}
-                    <div class="absolute right-3 top-1/2 -translate-y-1/2">
-                      <SolidSwitch>
-                        <Match when={healthStatus() === "checking"}>
-                          <Loader2 class="h-4 w-4 animate-spin text-[rgb(var(--color-text-muted))]" />
-                        </Match>
-                        <Match when={healthStatus() === "ok"}>
-                          <Check class="h-4 w-4 text-green-500" />
-                        </Match>
-                        <Match when={healthStatus() === "error"}>
-                          <X class="h-4 w-4 text-red-500" />
-                        </Match>
-                        <Match when={healthStatus() === "tls-error"}>
-                          <X class="h-4 w-4 text-red-500" />
-                        </Match>
-                      </SolidSwitch>
-                    </div>
+                    {/* Health status icon inside input */}
+                    <Show when={healthStatus() !== "idle"}>
+                      <div class="absolute right-3 top-1/2 -translate-y-1/2">
+                        <SolidSwitch>
+                          <Match when={healthStatus() === "checking"}>
+                            <Loader2 class="h-4 w-4 animate-spin text-[rgb(var(--color-text-muted))]" />
+                          </Match>
+                          <Match when={healthStatus() === "ok"}>
+                            <Check class="h-4 w-4 text-green-500" />
+                          </Match>
+                          <Match when={healthStatus() === "error"}>
+                            <X class="h-4 w-4 text-red-500" />
+                          </Match>
+                          <Match when={healthStatus() === "tls-error"}>
+                            <ShieldCheck class="h-4 w-4 text-red-500" />
+                          </Match>
+                        </SolidSwitch>
+                      </div>
+                    </Show>
                   </div>
-                  <p class="text-xs text-[rgb(var(--color-text-muted))]">
-                    {t("setup_server_url_hint")}
-                  </p>
+                  {/* Status text below input — replaces the hint when a status is active */}
+                  <SolidSwitch>
+                    <Match when={healthStatus() === "ok"}>
+                      <p class="text-xs text-green-600 dark:text-green-400">{t("setup_server_healthy")}</p>
+                    </Match>
+                    <Match when={healthStatus() === "error"}>
+                      <p class="text-xs text-red-600 dark:text-red-400">{healthMessage() || t("error_server_unreachable")}</p>
+                    </Match>
+                    <Match when={healthStatus() === "tls-error"}>
+                      <p class="text-xs text-red-600 dark:text-red-400">{t("setup_server_tls_error")}</p>
+                    </Match>
+                    <Match when={healthStatus() === "checking"}>
+                      <p class="text-xs text-[rgb(var(--color-text-muted))]">{t("setup_server_wait_health")}</p>
+                    </Match>
+                    <Match when={true}>
+                      <p class="text-xs text-[rgb(var(--color-text-muted))]">{t("setup_server_url_hint")}</p>
+                    </Match>
+                  </SolidSwitch>
                 </div>
-
-                {/* Health check feedback */}
-                <Show when={healthStatus() === "ok"}>
-                  <p class="text-sm text-green-500 font-medium flex items-center gap-1.5">
-                    <Check class="h-4 w-4" />
-                    {t("setup_server_healthy")}
-                  </p>
-                </Show>
-
-                <Show when={healthStatus() === "error" && healthMessage()}>
-                  <p class="text-sm text-red-500 font-medium flex items-center gap-1.5">
-                    <X class="h-4 w-4 shrink-0" />
-                    {healthMessage()}
-                  </p>
-                </Show>
-
-                <Show when={healthStatus() === "tls-error" && healthMessage()}>
-                  <div class="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-1">
-                    <p class="text-sm text-red-500 font-medium flex items-center gap-1.5">
-                      <ShieldCheck class="h-4 w-4 shrink-0" />
-                      {t("setup_server_tls_error")}
-                    </p>
-                    <p class="text-xs text-red-400">{healthMessage()}</p>
-                  </div>
-                </Show>
 
                 <Show when={error()}>
                   <p class="text-sm text-red-500 font-medium">{error()}</p>

@@ -70,6 +70,7 @@ anyhow = "1.0"
 thiserror = "2.0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+tracing-appender = "0.2"
 
 # OpenTelemetry (behind `otel` feature flag)
 opentelemetry = { version = "0.30", optional = true }

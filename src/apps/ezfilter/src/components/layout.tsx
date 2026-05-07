@@ -1,4 +1,4 @@
-import { type JSX, Show, onMount } from "solid-js";
+import { type JSX, Show, onMount, createSignal, createEffect } from "solid-js";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { Puzzle, Settings, LogOut, Power, Loader2, ShieldCheck } from "lucide-solid";
 import { DayNightScene } from "./day-night-scene";
@@ -32,6 +32,23 @@ export function Layout(props: LayoutProps) {
   const isSetup = () =>
     location.pathname === "/" || location.pathname.startsWith("/setup");
 
+  // Re-trigger page transition animation on navigation.
+  // We collect refs to content wrappers and replay the animation class on
+  // each route change so every page gets a consistent fade-in.
+  const pageRefs: HTMLDivElement[] = [];
+  function registerPageRef(el: HTMLDivElement) {
+    pageRefs.push(el);
+  }
+  createEffect(() => {
+    void location.pathname; // track
+    for (const el of pageRefs) {
+      el.classList.remove("animate-fade-in");
+      // Force reflow to restart the animation
+      void el.offsetWidth;
+      el.classList.add("animate-fade-in");
+    }
+  });
+
   // Check proxy connection status on mount
   onMount(() => {
     checkProxyStatus();
@@ -58,14 +75,18 @@ export function Layout(props: LayoutProps) {
 
       <div class="relative z-10 h-full w-full">
         <Show when={isSetup()}>
-          <div class="fixed top-4 right-4 z-40 animate-fade-in">
+          <div class="fixed top-4 right-4 z-40">
             <ThemeToggle />
           </div>
         </Show>
         <Show
           when={!isSetup()}
           fallback={
-            <main class="h-full overflow-y-auto scrollbar-float animate-fade-in">{props.children}</main>
+            <main class="h-full overflow-y-auto scrollbar-float">
+              <div ref={registerPageRef} class="animate-fade-in">
+                {props.children}
+              </div>
+            </main>
           }
         >
           {/* Desktop: nav + scrollable content */}
@@ -131,7 +152,7 @@ export function Layout(props: LayoutProps) {
 
             {/* Scrollable area -- fills remaining width, overlay scrollbar */}
             <main class="flex-1 min-w-0 overflow-x-hidden overflow-y-auto scrollbar-float">
-              <div class="max-w-4xl w-full px-4 sm:px-6">
+              <div ref={registerPageRef} style="padding-left: 0;" class="max-w-4xl w-full px-4 sm:px-6 animate-fade-in">
                 {props.children}
               </div>
             </main>
@@ -139,7 +160,9 @@ export function Layout(props: LayoutProps) {
 
           {/* Mobile: full-width scrollable */}
           <main class="sm:hidden h-full w-full overflow-y-auto scrollbar-float px-4">
-            {props.children}
+            <div ref={registerPageRef} class="animate-fade-in">
+              {props.children}
+            </div>
           </main>
         </Show>
 

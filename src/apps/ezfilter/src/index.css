@@ -110,6 +110,16 @@
 
 /* Removed: text-over-image (replaced by scrim overlay on background) */
 
+/* ---- Animations disabled ---- */
+:root[data-animations="disabled"] *,
+:root[data-animations="disabled"] *::before,
+:root[data-animations="disabled"] *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
 /* Overlay scrollbar — floats over content, never causes layout shift */
 .scrollbar-float {
   overflow-y: overlay; /* WebKit/Blink: scrollbar overlays content */

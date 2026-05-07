@@ -197,20 +197,29 @@ impl Cli {
         let is_serve = matches!(&self.command, Commands::Serve { .. });
 
         if !is_serve {
-            let log_level = if self.verbose { "debug" } else { "info" };
-            // Load config early to check telemetry settings (best-effort, fall back to defaults)
+            // Load config early to check telemetry/log settings (best-effort, fall back to defaults)
             let config_path_resolved = expand_home_in_path(&self.config_path).ok();
-            let otel_config = config_path_resolved
+            let early_config = config_path_resolved
                 .as_ref()
-                .and_then(|p| crate::config::AppConfig::load(p).ok())
-                .map(|c| c.telemetry)
+                .and_then(|p| crate::config::AppConfig::load(p).ok());
+            let otel_config = early_config
+                .as_ref()
+                .map(|c| c.telemetry.clone())
                 .unwrap_or_default();
+            let mut log_config = early_config
+                .as_ref()
+                .map(|c| c.log.clone())
+                .unwrap_or_default();
+            // --verbose flag overrides configured log level
+            if self.verbose {
+                log_config.log_level = "debug".to_string();
+            }
             let _telemetry_guard = if otel_config.enabled {
-                crate::telemetry::otel::init_telemetry(&otel_config, log_level, None)
+                crate::telemetry::otel::init_telemetry(&otel_config, &log_config, None)
             } else {
                 crate::telemetry::otel::init_telemetry(
                     &crate::config::TelemetryConfig::default(),
-                    log_level,
+                    &log_config,
                     None,
                 )
             };
@@ -537,28 +546,36 @@ impl ResolvedCli {
     /// Run the proxy server directly (daemon mode)
     /// This method is called by the daemon service and writes logs to a file
     async fn run_serve(&self, log_file: Option<PathBuf>) -> Result<()> {
-        let log_level = if self.verbose { "debug" } else { "info" };
+        let mut log_config = self.config.log.clone();
+        // --verbose flag overrides configured log level
+        if self.verbose {
+            log_config.log_level = "debug".to_string();
+        }
 
-        // Set up logging (with optional file writer and OTel)
-        let writer = if let Some(ref log_path) = log_file {
-            if let Some(parent) = log_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            Some(
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_path)?,
-            )
+        // Determine the log directory for rolling files.
+        // If --log-file was passed (legacy), use its parent directory.
+        // Otherwise fall back to the configured log_dir or the app directory.
+        let log_dir = if let Some(ref log_path) = log_file {
+            log_path.parent().map(|p| p.to_path_buf())
         } else {
-            None
+            log_config
+                .log_dir
+                .clone()
+                .or_else(|| self.config.tls.cert_dir.parent().map(|p| p.to_path_buf()))
         };
 
-        let _telemetry_guard =
-            crate::telemetry::otel::init_telemetry(&self.config.telemetry, log_level, writer);
+        if let Some(ref dir) = log_dir {
+            std::fs::create_dir_all(dir)?;
+        }
 
-        if let Some(ref log_path) = log_file {
-            info!("witmproxy daemon starting, logging to {:?}", log_path);
+        let _telemetry_guard = crate::telemetry::otel::init_telemetry(
+            &self.config.telemetry,
+            &log_config,
+            log_dir.as_deref(),
+        );
+
+        if let Some(ref dir) = log_dir {
+            info!("witmproxy daemon starting, logging to {:?}", dir);
         }
 
         // Now run the proxy (same as run_proxy but without log initialization)
