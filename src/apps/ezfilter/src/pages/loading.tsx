@@ -26,11 +26,14 @@ export default function LoadingPage() {
 
       <div class="relative z-10 flex flex-col items-center gap-8">
         {/* Logo */}
-        <div>
+        <div class="flex flex-col items-center gap-2">
           <EzfilterLogo
             size="text-7xl sm:text-8xl"
             class="text-[rgb(var(--color-text))]"
           />
+          <p class="text-sm sm:text-base font-display tracking-wide text-[rgb(var(--color-text-muted))]">
+            {t("app_tagline")}
+          </p>
         </div>
 
         {/* Action area — fixed height to prevent layout shift */}

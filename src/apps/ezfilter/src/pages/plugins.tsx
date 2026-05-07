@@ -28,6 +28,7 @@ import { getToken } from "../lib/stores/auth";
 import { cn } from "../lib/cn";
 import { t } from "../lib/i18n";
 import { getCapMeta } from "../lib/capabilities";
+import { FilterExpressionHelp } from "../components/filter-expression-help";
 
 const PLUGIN_EMOJIS = ["🛡️", "🔍", "🌿", "⚡", "🎯", "🧩", "🔮", "🌊", "🔥", "🦊", "🐕", "🌸", "🎨", "🚀", "💎"];
 
@@ -43,6 +44,7 @@ export default function PluginsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = createSignal("");
   const [refreshKey, setRefreshKey] = createSignal(0);
+  const [lastSearched, setLastSearched] = createSignal("");
   const [importing, setImporting] = createSignal(false);
   const [importError, setImportError] = createSignal<string | null>(null);
   const [capReviewOpen, setCapReviewOpen] = createSignal(false);
@@ -216,23 +218,12 @@ export default function PluginsPage() {
         </div>
         <div class="flex items-center gap-2">
           <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              setRefreshKey((k) => k + 1);
-            }}
-            title={t("plugins_refresh")}
-          >
-            <RefreshCw class="h-4 w-4" />
-          </Button>
-          <Button
-            variant="secondary"
             size="sm"
             onClick={() => fileInputRef?.click()}
             disabled={importing()}
           >
             <FileDown class="h-4 w-4" />
-            <span class="hidden sm:inline">
+            <span>
               {importing() ? t("plugins_importing") : t("plugins_import")}
             </span>
           </Button>
@@ -248,12 +239,28 @@ export default function PluginsPage() {
 
       {/* Search */}
       <div class="relative mb-6">
-        <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--color-text-muted))]" />
+        <button
+          class="absolute left-3 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))] transition-colors"
+          onClick={() => {
+            setRefreshKey((k) => k + 1);
+            setLastSearched(search());
+          }}
+          title={t("plugins_refresh")}
+        >
+          <Show
+            when={search() !== lastSearched()}
+            fallback={<RefreshCw class="h-4 w-4" />}
+          >
+            <Search class="h-4 w-4" />
+          </Show>
+        </button>
         <Input
           placeholder={t("plugins_search_placeholder")}
           class="pl-10"
           value={search()}
-          onInput={(e) => setSearch(e.currentTarget.value)}
+          onInput={(e) => {
+            setSearch(e.currentTarget.value);
+          }}
         />
       </div>
 
@@ -286,11 +293,12 @@ export default function PluginsPage() {
           </div>
         </div>
       </Show>
+      <div class="min-h-[320px]">
       <Show
         when={!plugins.loading}
         fallback={
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <For each={[1, 2, 3, 4, 5, 6]}>
+            <For each={[1, 2, 3]}>
               {() => <Skeleton class="h-44 rounded-3xl" />}
             </For>
           </div>
@@ -299,17 +307,19 @@ export default function PluginsPage() {
         <Show
           when={(filteredPlugins()?.length ?? 0) > 0}
           fallback={
-            <div class="text-center py-16">
-              <Puzzle class="h-12 w-12 mx-auto text-[rgb(var(--color-text-muted))] opacity-40 mb-4" />
-              <h3 class="text-lg font-bold font-display mb-1">
-                {search() ? t("plugins_none_found") : t("plugins_none_installed")}
-              </h3>
-              <p class="text-sm text-[rgb(var(--color-text-muted))]">
-                {search()
-                  ? t("plugins_try_search")
-                  : t("plugins_get_started")}
-              </p>
-            </div>
+            <Card>
+              <CardContent class="text-center py-16">
+                <Puzzle class="h-12 w-12 mx-auto text-[rgb(var(--color-text-muted))] opacity-40 mb-4" />
+                <h3 class="text-lg font-bold font-display mb-1">
+                  {search() ? t("plugins_none_found") : t("plugins_none_installed")}
+                </h3>
+                <p class="text-sm text-[rgb(var(--color-text-muted))]">
+                  {search()
+                    ? t("plugins_try_search")
+                    : t("plugins_get_started")}
+                </p>
+              </CardContent>
+            </Card>
           }
         >
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -436,6 +446,7 @@ export default function PluginsPage() {
           </div>
         </Show>
       </Show>
+      </div>
 
       {/* Capability review dialog */}
       <Dialog open={capReviewOpen()} onOpenChange={(open) => { if (!open) cancelImport(); }}>
@@ -505,9 +516,12 @@ export default function PluginsPage() {
                             </p>
                             {/* Editable scope/filter expression */}
                             <div class="mt-2">
-                              <label class="text-[10px] font-display font-semibold text-[rgb(var(--color-text-muted))] uppercase tracking-wider">
-                                {t("plugin_config_scope_label")}
-                              </label>
+                              <div class="flex items-center gap-1.5">
+                                <label class="text-[10px] font-display font-semibold text-[rgb(var(--color-text-muted))] uppercase tracking-wider">
+                                  {t("plugin_config_scope_label")}
+                                </label>
+                                <FilterExpressionHelp />
+                              </div>
                               <input
                                 type="text"
                                 value={cap.scope}

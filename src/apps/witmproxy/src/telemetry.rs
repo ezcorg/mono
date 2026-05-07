@@ -4,9 +4,37 @@
 //! is enabled and the user has set `telemetry.enabled = true` in the config (or
 //! `OTEL_ENABLED=true` env var).
 
+use crate::config::LogConfig;
+use std::path::Path;
+use tracing_appender::non_blocking::WorkerGuard;
+
+/// Build a rolling file appender from the LogConfig, returning the non-blocking
+/// writer and a guard that must be held for the lifetime of the process.
+pub fn build_file_writer(
+    log_dir: &Path,
+    config: &LogConfig,
+) -> (tracing_appender::non_blocking::NonBlocking, WorkerGuard) {
+    let rotation = match config.rotation.as_str() {
+        "hourly" => tracing_appender::rolling::Rotation::HOURLY,
+        "never" => tracing_appender::rolling::Rotation::NEVER,
+        _ => tracing_appender::rolling::Rotation::DAILY,
+    };
+
+    let appender = tracing_appender::rolling::Builder::new()
+        .rotation(rotation)
+        .filename_prefix("witmproxy")
+        .filename_suffix("log")
+        .max_log_files(config.max_files)
+        .build(log_dir)
+        .expect("failed to create rolling file appender");
+
+    tracing_appender::non_blocking(appender)
+}
+
 #[cfg(feature = "otel")]
 pub mod otel {
-    use crate::config::TelemetryConfig;
+    use super::WorkerGuard;
+    use crate::config::{LogConfig, TelemetryConfig};
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry::{KeyValue, global};
     use opentelemetry_otlp::WithExportConfig;
@@ -19,11 +47,15 @@ pub mod otel {
 
     /// Initializes the full tracing subscriber stack with OTel layers.
     /// Returns a guard that shuts down the OTel pipeline on drop.
+    ///
+    /// When `log_dir` is provided, logs are written to rolling files in that
+    /// directory according to the `LogConfig` rotation/retention settings.
     pub fn init_telemetry(
         config: &TelemetryConfig,
-        log_level: &str,
-        writer: Option<std::fs::File>,
+        log_config: &LogConfig,
+        log_dir: Option<&std::path::Path>,
     ) -> TelemetryGuard {
+        let log_level = &log_config.log_level;
         let filter = EnvFilter::try_new(format!("witmproxy={},{}", log_level, log_level))
             .unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -75,20 +107,24 @@ pub mod otel {
             }
         }
 
+        // Build the file writer if a log directory was provided
+        let file_writer = log_dir.map(|dir| super::build_file_writer(dir, log_config));
+
         // Build the subscriber. We branch on whether we have OTel tracing enabled
         // and whether we write to a file, to avoid Option<Layer> type issues.
-        match (tracer_provider.as_ref(), writer) {
-            (Some(tp), Some(file)) => {
+        let worker_guard = match (tracer_provider.as_ref(), file_writer) {
+            (Some(tp), Some((writer, guard))) => {
                 let tracer = tp.tracer("witmproxy");
                 let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
                 let fmt_layer = tracing_subscriber::fmt::layer()
-                    .with_writer(file)
+                    .with_writer(writer)
                     .with_ansi(false);
                 tracing_subscriber::registry()
                     .with(filter)
                     .with(fmt_layer)
                     .with(otel_layer)
                     .init();
+                Some(guard)
             }
             (Some(tp), None) => {
                 let tracer = tp.tracer("witmproxy");
@@ -99,15 +135,17 @@ pub mod otel {
                     .with(fmt_layer)
                     .with(otel_layer)
                     .init();
+                None
             }
-            (None, Some(file)) => {
+            (None, Some((writer, guard))) => {
                 let fmt_layer = tracing_subscriber::fmt::layer()
-                    .with_writer(file)
+                    .with_writer(writer)
                     .with_ansi(false);
                 tracing_subscriber::registry()
                     .with(filter)
                     .with(fmt_layer)
                     .init();
+                Some(guard)
             }
             (None, None) => {
                 let fmt_layer = tracing_subscriber::fmt::layer();
@@ -115,12 +153,14 @@ pub mod otel {
                     .with(filter)
                     .with(fmt_layer)
                     .init();
+                None
             }
-        }
+        };
 
         TelemetryGuard {
             _tracer_provider: tracer_provider,
             _meter_provider: meter_provider,
+            _worker_guard: worker_guard,
         }
     }
 
@@ -128,6 +168,7 @@ pub mod otel {
     pub struct TelemetryGuard {
         _tracer_provider: Option<SdkTracerProvider>,
         _meter_provider: Option<SdkMeterProvider>,
+        _worker_guard: Option<WorkerGuard>,
     }
 
     impl Drop for TelemetryGuard {
@@ -190,25 +231,34 @@ pub mod otel {
 /// the standard tracing subscriber.
 #[cfg(not(feature = "otel"))]
 pub mod otel {
-    use crate::config::TelemetryConfig;
+    use super::WorkerGuard;
+    use crate::config::{LogConfig, TelemetryConfig};
 
-    pub struct TelemetryGuard;
+    pub struct TelemetryGuard {
+        _worker_guard: Option<WorkerGuard>,
+    }
 
     pub fn init_telemetry(
         _config: &TelemetryConfig,
-        log_level: &str,
-        writer: Option<std::fs::File>,
+        log_config: &LogConfig,
+        log_dir: Option<&std::path::Path>,
     ) -> TelemetryGuard {
+        let log_level = &log_config.log_level;
         let filter = format!("witmproxy={},{}", log_level, log_level);
-        if let Some(file) = writer {
+        let worker_guard = if let Some(dir) = log_dir {
+            let (writer, guard) = super::build_file_writer(dir, log_config);
             tracing_subscriber::fmt()
                 .with_env_filter(filter)
-                .with_writer(file)
+                .with_writer(writer)
                 .with_ansi(false)
                 .init();
+            Some(guard)
         } else {
             tracing_subscriber::fmt().with_env_filter(filter).init();
+            None
+        };
+        TelemetryGuard {
+            _worker_guard: worker_guard,
         }
-        TelemetryGuard
     }
 }

@@ -168,19 +168,35 @@ impl ServiceHandler {
         }
     }
 
-    /// On Linux, require root for daemon management commands.
+    /// On Linux, ensure root for daemon management commands.
+    /// If not running as root, automatically re-executes the current command
+    /// with `sudo` and exits with the child's exit code.
     #[cfg(target_os = "linux")]
-    fn require_root() -> Result<()> {
-        if std::process::Command::new("id")
+    fn ensure_root() -> Result<()> {
+        let is_root = std::process::Command::new("id")
             .arg("-u")
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
-            .is_none_or(|uid| uid.trim() != "0")
-        {
-            anyhow::bail!("This command must be run as root (use sudo)");
+            .is_some_and(|uid| uid.trim() == "0");
+
+        if is_root {
+            return Ok(());
         }
-        Ok(())
+
+        // Re-execute the full command under sudo
+        let exe = std::env::current_exe().context("failed to get current executable path")?;
+        let args: Vec<String> = std::env::args().skip(1).collect();
+
+        eprintln!("This command requires elevated privileges. Re-running with sudo...");
+        let status = std::process::Command::new("sudo")
+            .arg("--")
+            .arg(&exe)
+            .args(&args)
+            .status()
+            .context("failed to execute sudo — is it installed?")?;
+
+        std::process::exit(status.code().unwrap_or(1));
     }
 
     /// Ensure the service directory exists for the current platform
@@ -205,7 +221,7 @@ impl ServiceHandler {
     /// Install the service
     pub async fn install_service(&self, layer: AppConfigLayer, skip_confirm: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::require_root()?;
+        Self::ensure_root()?;
 
         if !skip_confirm {
             #[cfg(target_os = "linux")]
@@ -391,7 +407,7 @@ impl ServiceHandler {
     /// Uninstall the service
     pub async fn uninstall_service(&self, skip_confirm: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::require_root()?;
+        Self::ensure_root()?;
 
         if !skip_confirm {
             println!("This will uninstall the witmproxy service.");
@@ -428,7 +444,7 @@ impl ServiceHandler {
     /// Start the service
     pub async fn start_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::require_root()?;
+        Self::ensure_root()?;
 
         let manager = Self::get_manager()?;
         let label = Self::service_label();
@@ -446,7 +462,7 @@ impl ServiceHandler {
     /// Stop the service
     pub async fn stop_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::require_root()?;
+        Self::ensure_root()?;
 
         let manager = Self::get_manager()?;
         let label = Self::service_label();
@@ -463,7 +479,7 @@ impl ServiceHandler {
     /// Restart the service
     pub async fn restart_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::require_root()?;
+        Self::ensure_root()?;
 
         let manager = Self::get_manager()?;
         let label = Self::service_label();

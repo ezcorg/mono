@@ -30,6 +30,7 @@ import { getApiBaseUrl, getConfig, setConfig } from "../lib/stores/config";
 import { getToken, getEmail } from "../lib/stores/auth";
 import { getTheme, setTheme, getResolvedTheme, type Theme } from "../lib/stores/theme";
 import { isDevMode, setDevMode, clearAllAppState } from "../lib/stores/devmode";
+import { areAnimationsEnabled, setAnimationPref } from "../lib/stores/animations";
 import { cn } from "../lib/cn";
 import { t } from "../lib/i18n";
 
@@ -475,6 +476,19 @@ export default function SettingsPage() {
               </p>
             </div>
             <Switch checked={isDevMode()} onChange={setDevMode} />
+          </div>
+
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-display font-semibold">{t("settings_animations")}</p>
+              <p class="text-xs text-[rgb(var(--color-text-muted))]">
+                {t("settings_animations_desc")}
+              </p>
+            </div>
+            <Switch
+              checked={areAnimationsEnabled()}
+              onChange={(v) => setAnimationPref(v ? "enabled" : "disabled")}
+            />
           </div>
 
           <Show when={isDevMode()}>

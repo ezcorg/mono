@@ -3,7 +3,7 @@ import type { Messages } from "../index";
 const en: Messages = {
   // ── App ──
   app_name: { message: "ezfilter" },
-  app_tagline: { message: "your friendly content filter" },
+  app_tagline: { message: "content without the noise" },
   app_get_started: { message: "Get started" },
   app_sign_in: { message: "Sign In" },
 
@@ -31,6 +31,19 @@ const en: Messages = {
   // ── Setup wizard ──
   setup_heading: { message: "Let's get you set up" },
 
+  setup_choose_action_title: { message: "How do you want to start?" },
+  setup_choose_action_desc: {
+    message: "Connect to an existing backend instance, or create a new one.",
+  },
+  setup_choose_action_connect: { message: "Connect to an existing server" },
+  setup_choose_action_connect_desc: {
+    message: "Sign in to a server somewhere that's already running.",
+  },
+  setup_choose_action_create: { message: "Create a new one" },
+  setup_choose_action_create_desc: {
+    message: "Set up a fresh server, managed by us or self-hosted by you.",
+  },
+
   setup_hosting_title: { message: "How would you like to run it?" },
   setup_hosting_description: { message: "Choose between our managed service or your own server" },
   setup_hosting_managed_label: { message: "Managed by us" },
@@ -43,18 +56,15 @@ const en: Messages = {
     message: "Connect to another backend, hosted and maintained by you or someone else.",
   },
 
-  setup_has_server_title: { message: "Do you have a running server?" },
+  setup_has_server_title: { message: "Where should we set up your server?" },
   setup_has_server_desc: {
-    message:
-      "If you already have a witmproxy instance running, we can connect to it directly.",
+    message: "Pick where you want witmproxy to run.",
   },
-  setup_has_server_yes: { message: "Yes, I have a server" },
-  setup_has_server_yes_desc: { message: "I'll provide the URL to my running instance" },
-  setup_has_server_local: { message: "No \u2014 set up locally" },
+  setup_has_server_local: { message: "Set up locally" },
   setup_has_server_local_desc: {
     message: "We'll help you install and configure witmproxy on this machine",
   },
-  setup_has_server_remote: { message: "No \u2014 set up remotely" },
+  setup_has_server_remote: { message: "Set up remotely" },
   setup_has_server_remote_desc: {
     message: "I'll deploy witmproxy on my own infrastructure",
   },
@@ -117,11 +127,11 @@ const en: Messages = {
   setup_server_desc: { message: "Enter the URL of your witmproxy web server" },
   setup_server_url_label: { message: "Server URL" },
   setup_server_url_placeholder: { message: "https://my-proxy.example.com" },
-  setup_server_url_hint: { message: "The full URL including protocol (https://)" },
+  setup_server_url_hint: { message: "Include the protocol, e.g. https://my-server.example.com" },
   setup_server_healthy: { message: "Server is reachable and healthy" },
   setup_server_tls_error: { message: "TLS certificate error" },
   setup_server_enter_url: { message: "Please enter a server URL" },
-  setup_server_wait_health: { message: "Waiting for health check to complete..." },
+  setup_server_wait_health: { message: "Attempting to connect to server..." },
 
   setup_login_title: { message: "Sign in to your account" },
   setup_login_desc_managed: { message: "Sign in with your ezfilter account" },
@@ -205,6 +215,12 @@ const en: Messages = {
   plugin_config_cap_granted: { message: "Granted" },
   plugin_config_cap_denied: { message: "Denied" },
   plugin_config_scope_label: { message: "Filter expression" },
+  plugin_config_scope_help_title: { message: "Filter expressions" },
+  plugin_config_scope_help_body: {
+    message:
+      "Limit when this capability runs. Expressions are evaluated against the request/event context and must return a boolean. Use `true` to match every request.",
+  },
+  plugin_config_scope_help_examples: { message: "Examples" },
 
   // ── Settings page ──
   settings_title: { message: "Settings" },
@@ -242,6 +258,9 @@ const en: Messages = {
   settings_profile_new_password: { message: "New password" },
   settings_profile_icon: { message: "Profile icon" },
   settings_profile_icon_desc: { message: "An emoji that sparks joy" },
+
+  settings_animations: { message: "Animations" },
+  settings_animations_desc: { message: "Enable or disable all UI animations and transitions" },
 
   settings_dev_title: { message: "Developer" },
   settings_dev_mode: { message: "Developer mode" },
