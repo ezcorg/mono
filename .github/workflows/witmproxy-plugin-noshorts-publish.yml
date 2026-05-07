@@ -25,7 +25,7 @@ env:
 jobs:
   test:
     name: Check and test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, theo-msi]
 
     steps:
       - name: Checkout repository

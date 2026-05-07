@@ -144,6 +144,17 @@ enum Commands {
         #[command(subcommand)]
         command: ServiceCommands,
     },
+    /// Show the status of the witmproxy service (alias for `service status`)
+    Status,
+    /// Show the daemon log file (alias for `service logs`)
+    Logs {
+        /// Follow the log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+        /// Number of lines to show from the end
+        #[arg(short, long, default_value = "50")]
+        lines: usize,
+    },
     /// Authentication commands (for remote management)
     Auth {
         #[command(subcommand)]
@@ -278,6 +289,26 @@ impl Cli {
                     result
                 }
             },
+            Commands::Status => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let service_handler = service::ServiceHandler::new(config, verbose, None, false);
+                let result = service_handler
+                    .handle(&ServiceCommands::Status)
+                    .await;
+                Self::show_update_warning(check).await;
+                result
+            }
+            Commands::Logs { follow, lines } => {
+                let config = Self::load_config(&config_path)?;
+                let check = Self::maybe_spawn_update_check(&config);
+                let service_handler = service::ServiceHandler::new(config, verbose, None, false);
+                let result = service_handler
+                    .handle(&ServiceCommands::Logs { follow, lines })
+                    .await;
+                Self::show_update_warning(check).await;
+                result
+            }
             Commands::Plugin { command } => {
                 let config = Self::load_config(&config_path)?;
                 let check = Self::maybe_spawn_update_check(&config);

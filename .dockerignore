@@ -1,0 +1,10 @@
+**/target
+**/node_modules
+**/dist
+**/dist-ssr
+**/build
+**/.turbo
+**/.wrangler
+**/.next
+**/.DS_Store
+**/*.log

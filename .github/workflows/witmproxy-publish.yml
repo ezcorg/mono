@@ -23,7 +23,7 @@ env:
 jobs:
   test:
     name: Run tests before publishing
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, theo-msi]
 
     steps:
       - name: Checkout repository

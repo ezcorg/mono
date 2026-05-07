@@ -2,7 +2,6 @@
 import Layout from "../../layouts/Layout.astro";
 import Footer from "../../components/Footer.astro";
 import Navbar from "../../components/Navbar.astro";
-import { Clipboard, Check } from "lucide-astro";
 ---
 
 <Layout title="codeblock | ez co" description="An interactive demo of the @joinezco/codeblock component.">
@@ -10,13 +9,7 @@ import { Clipboard, Check } from "lucide-astro";
 		<div class="w-full mx-auto flex flex-col gap-8">
 			<Navbar currentPath="/work" />
 
-			<button class="install-cmd" data-cmd="npm install @joinezco/codeblock">
-				<span class="icon-copy"><Clipboard size={14} /></span>
-				<span class="icon-check"><Check size={14} /></span>
-				<code>npm install @joinezco/codeblock</code>
-			</button>
-
-			<div class="demo-container border-2 border-[#333333] overflow-hidden">
+			<div class="demo-container overflow-hidden">
 				<div id="codeblock-mount">
 					<div class="loading-indicator"><div class="loading-bar"></div></div>
 				</div>
@@ -70,47 +63,9 @@ import { Clipboard, Check } from "lucide-astro";
 		}
 
 		init().catch(console.error);
-
-		document.querySelector('.install-cmd')?.addEventListener('click', async (e) => {
-			const btn = (e.currentTarget as HTMLElement);
-			await navigator.clipboard.writeText(btn.dataset.cmd!);
-			btn.classList.add('copied');
-			setTimeout(() => btn.classList.remove('copied'), 1500);
-		});
 	</script>
 
 	<style>
-		.install-cmd {
-			font-family: monospace;
-			font-size: 0.875rem;
-			color: #F5F5F5;
-			opacity: 0.6;
-			display: inline-flex;
-			align-items: center;
-			gap: 0.5rem;
-			background: none;
-			border: 2px solid #333333;
-			padding: 0.5rem 0.75rem;
-			cursor: pointer;
-			transition: opacity 0.15s;
-		}
-
-		.install-cmd:hover {
-			opacity: 1;
-		}
-
-		.icon-check {
-			display: none;
-		}
-
-		.install-cmd.copied .icon-copy {
-			display: none;
-		}
-
-		.install-cmd.copied .icon-check {
-			display: inline-flex;
-		}
-
 		.demo-container {
 			width: 100%;
 			min-height: 70vh;
@@ -126,6 +81,50 @@ import { Clipboard, Check } from "lucide-astro";
 
 		#codeblock-mount :global(.cm-editor) {
 			flex: 1;
+		}
+
+		/* Override codeblock CSS variables to make the editor transparent.
+		   Needs higher specificity than the package's
+		   `[data-theme="dark"] .cm-editor` selector (0,2,0); the scoped
+		   `#codeblock-mount` adds an attribute selector to bring us to 1,3,0. */
+		#codeblock-mount :global([data-theme="dark"] .cm-editor),
+		#codeblock-mount :global(.cm-editor[data-theme="dark"]),
+		#codeblock-mount :global([data-theme="dark"] .cm-toolbar-panel),
+		#codeblock-mount :global(.cm-toolbar-panel[data-theme="dark"]) {
+			--cm-background: transparent;
+			/* Gutter stays solid black so line numbers don't clash with
+			   horizontally-scrolled code text underneath. */
+			--cm-gutter-background: #000000;
+			--cm-line-highlight: transparent;
+			--cm-toolbar-bg-dark: transparent;
+			--cm-toolbar-bg-light: transparent;
+			--cm-toolbar-background: transparent;
+		}
+
+		/* CodeMirror's baseTheme draws a focus outline on `.cm-editor.cm-focused`
+		   and a default background on `.cm-panels`/`.cm-panel`. Suppress both. */
+		#codeblock-mount :global(.cm-editor.cm-focused) {
+			outline: none;
+		}
+		#codeblock-mount :global(.cm-panels),
+		#codeblock-mount :global(.cm-panel) {
+			background: transparent;
+		}
+
+		/* Tooltips and the search-results dropdown render inside the
+		   `.cm-editor`, so a scoped descendant selector is enough. They
+		   read `--cm-toolbar-background` (transparent here), so override
+		   the background directly. */
+		#codeblock-mount :global(.cm-tooltip),
+		#codeblock-mount :global(.cm-search-results) {
+			background: #000000;
+		}
+
+		/* The right-click context menu is appended to `document.body`,
+		   outside `#codeblock-mount`, so it needs a fully-global selector.
+		   It copies `data-theme` from the editor onto itself. */
+		:global(.cm-context-menu[data-theme="dark"]) {
+			background: #000000;
 		}
 
 		.loading-indicator {

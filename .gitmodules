@@ -16,3 +16,6 @@
 [submodule "src/typescript/lsp-client"]
 	path = src/typescript/lsp-client
 	url = https://github.com/ezcorg/lsp-client
+[submodule "src/infra/witmproxy-tinfoil"]
+	path = src/infra/witmproxy-tinfoil
+	url = https://github.com/ezcorg/witmproxy-tinfoil

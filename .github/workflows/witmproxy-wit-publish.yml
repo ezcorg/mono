@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   publish-wit:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, theo-msi]
     
     steps:
       - name: Checkout repository
