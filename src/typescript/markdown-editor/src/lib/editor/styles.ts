@@ -32,7 +32,7 @@ export const styleModule: StyleModule = new StyleModule({
 
         // Typography scale based on perfect fourth ratio (1.333)
         '--ezco-mde-type-ratio': '1.25',
-        '--ezco-mde-base-font-size': '1rem',
+        '--ezco-mde-base-font-size': '1.25rem',
         '--ezco-mde-base-line-height': '1.5',
         
         // Font sizes using modular scale
@@ -226,7 +226,7 @@ export const styleModule: StyleModule = new StyleModule({
         // List item styles
         '& li > p': {
             'margin-top': 0,
-            'margin-bottom': 0,
+            'margin-bottom': '1rem',
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
         },
@@ -248,11 +248,11 @@ export const styleModule: StyleModule = new StyleModule({
                 'margin': 0,
             },
             '& p + ul[data-type="taskList"]': {
-                'margin-top': '0.25em'
+                'margin-top': '0.75em'
             },
 
             '& p + p': {
-                'margin-top': '0.25em',
+                'margin-top': '0.75em',
             },
 
             '& li': {
@@ -261,14 +261,17 @@ export const styleModule: StyleModule = new StyleModule({
             },
 
             '& li + li': {
-                'margin-top': '0.25em'
+                'margin-top': '0.75em'
             },
 
             '& li > label': {
-                'margin-right': '6px'
+                'margin-right': '1ch',
+                'margin-top': '4px'
             },
             '& li > label > input': {
-                margin: 0
+                margin: 0,
+                width: '1em',
+                height: '1em',
             },
             '& li > div': {
                 flex: 1

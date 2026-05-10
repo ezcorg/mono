@@ -2,13 +2,18 @@
 import Layout from "../../layouts/Layout.astro";
 import Footer from "../../components/Footer.astro";
 import Navbar from "../../components/Navbar.astro";
+import Logo from "../../components/Logo.astro";
 ---
 
 <Layout title="markdown-editor | ez co" description="An interactive demo of the @joinezco/markdown-editor component.">
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8">
+	<section class="markdown-page">
+		<div class="navbar-mobile">
 			<Navbar currentPath="/work" />
-
+		</div>
+		<aside class="logo-fixed" aria-hidden="true">
+			<Logo size={80} />
+		</aside>
+		<div class="markdown-content w-full mx-auto flex flex-col gap-8">
 			<div class="demo-container bg-[#1e1e1e] overflow-hidden">
 				<div id="editor-mount">
 					<div class="loading-indicator"><div class="loading-bar"></div></div>
@@ -116,12 +121,21 @@ import Navbar from "../../components/Navbar.astro";
 		}
 
 		/* Override markdown-editor CSS variables for transparent surfaces.
-		   Inline `<code>` keeps a white background (see rule below). */
+		   Inline `<code>` keeps a white background (see rule below).
+		   Bumping the base font-size scales every typographic var (text-base,
+		   text-lg, … text-4xl) since they're all derived from this one. */
 		#editor-mount :global(.ezco-mde[data-theme="dark"]),
 		#editor-mount :global([data-theme="dark"] .ezco-mde) {
 			--ezco-mde-bg: transparent;
 			--ezco-mde-code-bg: #ffffff;
 			--ezco-mde-table-bg: transparent;
+			--ezco-mde-base-font-size: 1.25rem;
+			/* Embedded codeblocks inherit this for monospace text sizing. */
+			--cm-font-size: 1.25rem;
+		}
+
+		#editor-mount :global(.ezco-mde li:not(.cm-search-result)::marker) {
+			font-size: var(--ezco-mde-text-base);
 		}
 
 		/* Inline `<code>`: dark text on the white background set above. */
@@ -171,6 +185,37 @@ import Navbar from "../../components/Navbar.astro";
 			flex-direction: column;
 			background-color: transparent;
 			border: none;
+		}
+
+		/* Two-column layout: editor keeps the section's natural width
+		   (max-width: min(80ch, 100vw), centered — defined in global.css),
+		   and the logo floats in the empty space to its left. The logo's
+		   right edge aligns with the section's left border, so it sits
+		   immediately adjacent to the editor. `position: fixed` keeps it
+		   pinned as <main> scrolls.
+		   Below the breakpoint, we fall back to the stacked navbar layout. */
+		.markdown-page {
+			position: relative;
+			padding: 4px 0 0 0;
+		}
+		.logo-fixed {
+			display: none;
+		}
+		@media (min-width: 1024px) {
+			.navbar-mobile {
+				display: none;
+			}
+			.logo-fixed {
+				display: block;
+				position: fixed;
+				top: 2rem;
+				/* Section is centered with max-width 80ch, so its left
+				   border sits at calc(50vw - 40ch). Setting `right` to the
+				   distance from the viewport's right edge to that point
+				   places the logo's right edge there. */
+				right: calc(50vw + 40ch);
+				z-index: 50;
+			}
 		}
 
 		#editor-mount {

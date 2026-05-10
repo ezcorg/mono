@@ -211,6 +211,14 @@ export const codeblockTheme = EditorView.theme({
         borderBottom: 'none',
         zIndex: 301,
     },
+    // When a codeblock's toolbar is in use (input focused, browse/search
+    // dropdown open, etc.), bump its panels-top above the default 301 used
+    // by other codeblocks. Otherwise a later codeblock's toolbar paints
+    // over this one's open dropdown, since dropdown's z-index: 200 is
+    // confined to the panels-top stacking context.
+    '.cm-panels-top:focus-within': {
+        zIndex: 401,
+    },
     // CSS border spinner for file loading indicator.
     // Rendered as a separate element inside .cm-toolbar-state-icon-container,
     // so it has fixed dimensions and doesn't inherit gutter-width sizing.

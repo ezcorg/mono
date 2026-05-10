@@ -117,7 +117,22 @@ class SlashCommandsView {
         // Look for slash command pattern
         const match = textBeforeCursor.match(new RegExp(`${this.char}([^\\s${this.char}]*)$`))
 
-        if (match && this.lastInputWasSlash) {
+        // Only trigger when the slash sits on a word boundary: the char
+        // immediately before the slash must be whitespace (or the slash
+        // is at the start of the block), AND the cursor must be at the end
+        // of the block or sitting on whitespace. This avoids firing when
+        // typing "/" mid-word (e.g. "TCP/IP" or URLs).
+        let onWordBoundary = false
+        if (match) {
+            const matchStart = posInNode - match[0].length
+            const charBefore = matchStart > 0 ? currentNodeText[matchStart - 1] : ''
+            const charAfter = posInNode < currentNodeText.length ? currentNodeText[posInNode] : ''
+            const beforeOk = matchStart === 0 || /\s/.test(charBefore)
+            const afterOk = posInNode === currentNodeText.length || /\s/.test(charAfter)
+            onWordBoundary = beforeOk && afterOk
+        }
+
+        if (match && onWordBoundary && this.lastInputWasSlash) {
             const query = match[1]
             const from = $from.pos - match[0].length
             const to = $from.pos
@@ -129,7 +144,7 @@ class SlashCommandsView {
         } else {
             this.hideSuggestions()
             // Reset the flag when we're not in a slash command context
-            if (!match) {
+            if (!match || !onWordBoundary) {
                 this.lastInputWasSlash = false
             }
         }

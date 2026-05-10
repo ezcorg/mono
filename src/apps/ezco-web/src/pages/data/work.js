@@ -82,8 +82,6 @@ init().catch(console.error);
 
 #### Bullets
 
-* Paragraphs
-* Headings
 * *Italic* and **Bold** text
 * \`Inline code\`
 * Links (auto-detected [example.com](http://example.com) and [manual](https://google.com)
