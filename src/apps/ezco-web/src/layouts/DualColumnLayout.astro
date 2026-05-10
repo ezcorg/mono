@@ -1,0 +1,65 @@
+---
+import Layout from "./Layout.astro";
+import Navbar from "../components/Navbar.astro";
+import Logo from "../components/Logo.astro";
+
+export interface Props {
+	title: string;
+	description?: string;
+	currentPath?: string;
+	sectionClass?: string;
+}
+
+const {
+	title,
+	description,
+	currentPath,
+	sectionClass = "",
+} = Astro.props;
+---
+
+<Layout title={title} description={description}>
+	<section class={`dual-col-page ${sectionClass}`.trim()}>
+		<div class="navbar-mobile">
+			<Navbar currentPath={currentPath} />
+		</div>
+		<aside class="logo-fixed" aria-hidden="true">
+			<Logo size={80} />
+		</aside>
+		<div class="dual-col-content w-full mx-auto flex flex-col gap-8">
+			<slot />
+		</div>
+	</section>
+
+	<slot name="footer" slot="footer" />
+</Layout>
+
+<style is:global>
+	.page-content > section.dual-col-page {
+		position: relative;
+		align-items: flex-start;
+		padding-top: 2rem;
+	}
+
+	.page-content > section.dual-col-page > div.dual-col-content {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.dual-col-page .logo-fixed {
+		display: none;
+	}
+
+	@media (min-width: 1024px) {
+		.dual-col-page .navbar-mobile {
+			display: none;
+		}
+		.dual-col-page .logo-fixed {
+			display: block;
+			position: fixed;
+			top: 2rem;
+			right: calc(50vw + 40ch);
+			z-index: 50;
+		}
+	}
+</style>

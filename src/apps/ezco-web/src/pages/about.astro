@@ -1,7 +1,6 @@
 ---
-import Layout from '../layouts/Layout.astro';
+import DualColumnLayout from '../layouts/DualColumnLayout.astro';
 import Footer from '../components/Footer.astro';
-import Navbar from '../components/Navbar.astro';
 import MissionSection from '../components/MissionSection.astro';
 
 // Content variables
@@ -46,23 +45,21 @@ const sections = [
 	}
 </style>
 
-<Layout
+<DualColumnLayout
 	title="About | ez co"
 	description="Learn more about ez co"
+	currentPath="/about"
 >
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8 about-content">
-			<Navbar currentPath="/about" />
-			{sections.map((section) => (
-				<MissionSection
-					heading={section.heading}
-					statements={section.statements}
-				/>
-			))}
-		</div>
-	</section>
+	<div class="about-content flex flex-col gap-8">
+		{sections.map((section) => (
+			<MissionSection
+				heading={section.heading}
+				statements={section.statements}
+			/>
+		))}
+	</div>
 
 	<Footer slot="footer" />
-</Layout>
+</DualColumnLayout>
 
 <script></script>

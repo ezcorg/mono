@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import { ClientRouter } from 'astro:transitions';
 
 export interface Props {
 	title: string;
@@ -20,6 +21,7 @@ const {
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<title>{title}</title>
+		<ClientRouter />
 	</head>
 	<body>
 		<div
@@ -30,5 +32,205 @@ const {
 			</main>
 			<slot name="footer" />
 		</div>
+
+		<style is:global>
+			/* Apply the view-transition name only to the Logo that's
+			   actually visible. On the home page that's the Navbar Logo;
+			   on dual-column pages it's the fixed-aside Logo (desktop) or
+			   the mobile Navbar Logo (below the breakpoint). The two
+			   media-query branches are mutually exclusive so only one
+			   element ever owns the name. */
+			.home-hero .logo-link {
+				view-transition-name: ezco-logo;
+			}
+			@media (min-width: 1024px) {
+				.dual-col-page .logo-fixed .logo-link {
+					view-transition-name: ezco-logo;
+				}
+			}
+			@media (max-width: 1023.98px) {
+				.dual-col-page .navbar-mobile .logo-link {
+					view-transition-name: ezco-logo;
+				}
+			}
+
+			/* Two-step (L-shaped) logo morph: horizontal first, then
+			   vertical. No scaling, no diagonal interpolation.
+			   `--ezco-logo-from-x/y` are computed in JS just before the
+			   animation runs (see the inline script below) and represent
+			   the old element's offset relative to the new element.
+
+			   We override `animation-name` to disable the UA's default
+			   diagonal transform morph and animate the standalone
+			   `translate` property instead. `translate` composes with
+			   the UA's positioning `transform` matrix rather than
+			   replacing it, so the element stays anchored at the new
+			   layout position while we add the L-shaped offset on top. */
+			:root {
+				--ezco-logo-from-x: 0px;
+				--ezco-logo-from-y: 0px;
+			}
+			::view-transition-group(ezco-logo) {
+				animation-duration: 560ms;
+				animation-timing-function: ease-in-out;
+				animation-name: ezco-logo-l-shape;
+			}
+			@keyframes ezco-logo-l-shape {
+				0% {
+					translate: var(--ezco-logo-from-x)
+						var(--ezco-logo-from-y);
+				}
+				50% {
+					translate: 0 var(--ezco-logo-from-y);
+				}
+				100% {
+					translate: 0 0;
+				}
+			}
+
+			/* "Push" the page along an L-shape that mirrors the logo's,
+			   reusing the same `--ezco-logo-from-*` deltas. The OLD page
+			   slides AWAY from the logo's destination (so the logo
+			   appears to shove content aside as it travels), and the NEW
+			   page slides INTO place from the logo's destination side.
+			   Both pages keep the same horizontal-then-vertical two-step
+			   timing as the logo, so nothing crosses the logo's path:
+			   when the logo is moving horizontally only the page also
+			   moves horizontally; same for the vertical leg.
+
+			   `view-transition-name: root` is the implicit name for the
+			   page snapshot — anything outside `::view-transition-group(ezco-logo)`. */
+			/* Single animation per pseudo with `ease-in-out`. Opacity is
+			   pinned to 0.5 at the L-shape kink (50%) so the cross-fade
+			   reads linearly: OLD and NEW are each 50% visible at
+			   midpoint, summing to 1 — no flash, no late-snap. */
+			::view-transition-old(root) {
+				animation: 560ms ease-in-out both ezco-page-out;
+			}
+			::view-transition-new(root) {
+				animation: 560ms ease-in-out both ezco-page-in;
+			}
+			@keyframes ezco-page-out {
+				0% {
+					translate: 0 0;
+					opacity: 1;
+				}
+				50% {
+					translate: var(--ezco-logo-from-x) 0;
+					opacity: 0.5;
+				}
+				100% {
+					translate: var(--ezco-logo-from-x)
+						var(--ezco-logo-from-y);
+					opacity: 0;
+				}
+			}
+			@keyframes ezco-page-in {
+				0% {
+					translate: calc(0px - var(--ezco-logo-from-x))
+						calc(0px - var(--ezco-logo-from-y));
+					opacity: 0;
+				}
+				50% {
+					translate: calc(0px - var(--ezco-logo-from-x)) 0;
+					opacity: 0.5;
+				}
+				100% {
+					translate: 0 0;
+					opacity: 1;
+				}
+			}
+
+			/* Demo content (markdown editor / codeblock embeds) gets a
+			   slide-down + fade-out on EXIT only. The view-transition
+			   name is set inline by the JS handler below in
+			   `astro:before-preparation`, so it's present on the OLD
+			   snapshot (giving the demo its own group on the way out)
+			   but absent on the NEW page — meaning entry doesn't lift
+			   the demo into a separate group, avoiding the unmatched-
+			   group squeeze, and the demo just slides in with the rest
+			   of the root pseudo. */
+			::view-transition-old(editor-demo),
+			::view-transition-old(install-demo),
+			::view-transition-old(main-demo) {
+				animation: 560ms ease-in-out both ezco-demo-out;
+			}
+			@keyframes ezco-demo-out {
+				from {
+					transform: translateY(0);
+					opacity: 1;
+				}
+				to {
+					transform: translateY(200px);
+					opacity: 0;
+				}
+			}
+		</style>
+
+		<script is:inline>
+			(() => {
+				let oldRect = null;
+
+				function findLogo() {
+					const els = document.querySelectorAll(".logo-link");
+					for (const el of els) {
+						if (
+							getComputedStyle(el).viewTransitionName ===
+							"ezco-logo"
+						) {
+							return el;
+						}
+					}
+					return null;
+				}
+
+				// Tag the demo containers on the page we're leaving with
+				// a `view-transition-name` so they're captured as their
+				// own group for the slide-down exit. Setting them inline
+				// here (before the OLD snapshot is captured) means the
+				// name only applies to the OLD side — the new page never
+				// has the name in CSS, so the NEW snapshot keeps the
+				// demo as part of the root pseudo and it slides in with
+				// the rest of the page (no unmatched-group squeeze).
+				function tagDemoContainersForExit() {
+					const path = location.pathname.replace(/\/$/, "");
+					if (path === "/work/markdown-editor") {
+						const el = document.querySelector(".demo-container");
+						if (el) el.style.viewTransitionName = "editor-demo";
+					} else if (path === "/work/codeblock") {
+						const ic = document.querySelector(".install-container");
+						if (ic) ic.style.viewTransitionName = "install-demo";
+						const dc = document.querySelector(".demo-container");
+						if (dc) dc.style.viewTransitionName = "main-demo";
+					}
+				}
+
+				document.addEventListener("astro:before-preparation", () => {
+					const el = findLogo();
+					oldRect = el ? el.getBoundingClientRect() : null;
+					tagDemoContainersForExit();
+				});
+
+				document.addEventListener("astro:after-swap", () => {
+					const root = document.documentElement;
+					if (!oldRect) return;
+					const el = findLogo();
+					if (!el) {
+						oldRect = null;
+						return;
+					}
+					const newRect = el.getBoundingClientRect();
+					root.style.setProperty(
+						"--ezco-logo-from-x",
+						`${oldRect.left - newRect.left}px`,
+					);
+					root.style.setProperty(
+						"--ezco-logo-from-y",
+						`${oldRect.top - newRect.top}px`,
+					);
+					oldRect = null;
+				});
+			})();
+		</script>
 	</body>
 </html>

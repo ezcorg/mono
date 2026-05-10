@@ -1,17 +1,14 @@
 ---
-import Layout from '../layouts/Layout.astro';
+import DualColumnLayout from '../layouts/DualColumnLayout.astro';
 import Footer from '../components/Footer.astro';
-import Navbar from '../components/Navbar.astro';
 ---
 
-<Layout
+<DualColumnLayout
 	title="Join us | ez co"
 	description="Join a team of passionate and thoughtful builders."
+	currentPath="/join"
 >
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8">
-			<Navbar currentPath="/join" />
-			<form
+		<form
 				class="space-y-6 max-w-2xl"
 				action="#"
 				method="POST"
@@ -88,10 +85,8 @@ import Navbar from '../components/Navbar.astro';
 					Submit
 				</button>
 			</form>
-		</div>
-	</section>
 	<Footer slot="footer" />
-</Layout>
+</DualColumnLayout>
 
 <script>
 	// Form submission handling

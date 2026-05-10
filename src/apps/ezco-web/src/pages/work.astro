@@ -1,20 +1,7 @@
 ---
-import Layout from "../layouts/Layout.astro";
+import DualColumnLayout from "../layouts/DualColumnLayout.astro";
 import Footer from "../components/Footer.astro";
-import Navbar from "../components/Navbar.astro";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
 
-// Read Packery script from public directory at build time
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const publicDir = join(__dirname, "../../public");
-const packeryScript = readFileSync(join(publicDir, "packery.min.js"), "utf-8");
-
-// Inline Packery script to avoid FOUC, sure would be nice if browser supported Masonry grid natively
-const packeryLoad =
-	"<script type='module'>" + packeryScript + ";window.PackeryInit()</script>";
 const projects = [
 	{
 		title: "markdown-editor",
@@ -47,204 +34,80 @@ const projects = [
 const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>`;
 ---
 
-<!-- Order is sequential, first we make the promise available to the window -->
-<script is:inline>
-	window.PackeryPromise = new Promise((resolve) => {
-		window.PackeryInit = () => {
-			resolve(window.Packery);
-		};
-	});
-</script>
-<!-- And then resolve it in our Fragment, which is our embedded Packery script -->
-<Fragment set:html={packeryLoad} />
-<!-- Then, as soon as our skeleton element is available, we use Packery to layout the skeleton -->
-<script is:inline>
-	function waitForElement(selector) {
-		return new Promise((resolve) => {
-			if (document.querySelector(selector)) {
-				return resolve(document.querySelector(selector));
-			}
+<DualColumnLayout title="Work | ez co" description="A showcase of projects we've built." currentPath="/work">
+	<div class="work-grid flex flex-col gap-4">
+		<div class="work-cell" data-project-title="new-project">
+			<a href="/newproject" class="block w-full">
+				<div class="new-project-card transition-colors duration-300">
+					<div class="p-6">
+						<div class="flex items-center justify-between mb-3">
+							<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title">[ your project here ]</h3>
+						</div>
+						<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
+							Want to see an idea come to life? See how we can help.
+						</p>
+						<div class="flex flex-wrap gap-2">
+							<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+								Start a new project
+							</span>
+						</div>
+					</div>
+				</div>
+			</a>
+		</div>
 
-			const observer = new MutationObserver((mutations) => {
-				if (document.querySelector(selector)) {
-					observer.disconnect();
-					resolve(document.querySelector(selector));
-				}
-			});
-
-			observer.observe(document.documentElement, {
-				childList: true,
-				subtree: true,
-			});
-		});
-	}
-
-	waitForElement("#loading-skeleton").then(async (loadingSkeleton) => {
-		await window.PackeryPromise;
-
-		window.skeletonPackery = new window.Packery(loadingSkeleton, {
-			itemSelector: ".grid-item",
-			sizer: ".grid-sizer",
-			gutter: 16,
-			percentPosition: true,
-		});
-	});
-</script>
-<Layout title="Work | ez co" description="A showcase of projects we've built.">
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8">
-			<Navbar currentPath="/work" />
-
-			{/* Loading skeleton placeholders - using same grid structure */}
-			<div id="loading-skeleton" class="opacity-100">
-				<div class="grid-sizer"></div>
-
-				{
-					/* New Project skeleton - matches the actual new-project card */
-				}
-				<div class="grid-item skeleton-item">
+		{
+			projects.map((project) => (
+				<div class="work-cell" data-project-title={project.title}>
 					<div
-						class="skeleton-card border-2 border-dashed border-[#666666] overflow-hidden"
+						class="work-item-card project-card hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden"
+						data-href={project.href || undefined}
 					>
 						<div class="p-6">
 							<div class="flex items-center justify-between mb-3">
-								<div class="skeleton-title"></div>
-								<div class="skeleton-button"></div>
+								<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
+									{project.href ? (
+										<a href={project.href} class="stretched-link">
+											{project.title}
+										</a>
+									) : (
+										project.title
+									)}
+								</h3>
 							</div>
-							<div class="skeleton-description mb-4"></div>
-							<div class="skeleton-description-line mb-4"></div>
+							<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
+								{project.description}
+							</p>
 							<div class="flex flex-wrap gap-2">
-								<div class="skeleton-tag"></div>
+								{project.tags.map((tech) => (
+									<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
+										{tech}
+									</span>
+								))}
+								{project.github && (
+									<a
+										href={project.github}
+										target="_blank"
+										rel="noopener noreferrer"
+										title={`${project.title} source on GitHub`}
+										class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag github-tag inline-flex items-center"
+									>
+										<Fragment set:html={githubSvg} />
+									</a>
+								)}
 							</div>
 						</div>
 					</div>
 				</div>
-
-				{/* Regular project skeletons */}
-				{
-					projects.map((_, index) => (
-						<div class="grid-item skeleton-item">
-							<div class="skeleton-card border-2 border-[#333333] overflow-hidden">
-								<div class="p-6">
-									<div class="flex items-center justify-between mb-3">
-										<div class="skeleton-title" />
-										<div class="skeleton-button" />
-									</div>
-									<div class="skeleton-description mb-4" />
-									<div class="skeleton-description-line mb-4" />
-									<div class="flex flex-wrap gap-2">
-										<div class="skeleton-tag" />
-										<div class="skeleton-tag" />
-										<div class="skeleton-tag" />
-									</div>
-								</div>
-							</div>
-						</div>
-					))
-				}
-			</div>
-
-			{/* Packery Grid Container - positioned over skeleton */}
-			<div
-				id="grid-container"
-				class="opacity-0 absolute top-0 left-0 w-full"
-			>
-				<div class="grid-sizer"></div>
-
-				{/* New Project Action Card - First Item */}
-				<div class="grid-item" data-project-title="new-project">
-					<a href="/newproject" class="block w-full h-full">
-						<div
-							class="work-item-card new-project-card h-full hover:bg-[#ffffff] active:bg-[#ffffff] transition-colors duration-300"
-						>
-							<div class="p-6">
-								<div
-									class="flex items-center justify-between mb-3"
-								>
-									<h3
-										class="text-2xl font-bold text-[#F5F5F5] work-item-title"
-									>
-										[ your project here ]
-									</h3>
-									<span>✨</span>
-								</div>
-								<p
-									class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description"
-								>
-									Want to see an idea come to life? See how we
-									can help.
-								</p>
-								<div class="flex flex-wrap gap-2">
-									<span
-										class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag"
-									>
-										Start a new project
-									</span>
-								</div>
-							</div>
-						</div>
-					</a>
-				</div>
-
-				{
-					projects.map((project) => (
-						<div
-							class="grid-item"
-							data-project-title={project.title}
-						>
-							<div
-								class="work-item-card project-card h-full border-2 border-[#333333] hover:border-[#ffffff] hover:bg-[#ffffff] active:border-[#ffffff] active:bg-[#ffffff] transition-all duration-300 overflow-hidden"
-								data-href={project.href || undefined}
-							>
-								<div class="p-6">
-									<div class="flex items-center justify-between mb-3">
-										<h3 class="text-2xl font-bold text-[#F5F5F5] work-item-title flex items-center gap-3">
-											{project.href ? (
-												<a href={project.href} class="stretched-link">
-													{project.title}
-												</a>
-											) : (
-												project.title
-											)}
-										</h3>
-									</div>
-									<p class="description-text text-[18px] text-[#F5F5F5] opacity-80 mb-4 work-item-description">
-										{project.description}
-									</p>
-									<div class="flex flex-wrap gap-2">
-										{project.tags.map((tech) => (
-											<span class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag">
-												{tech}
-											</span>
-										))}
-										{project.github && (
-											<a
-												href={project.github}
-												target="_blank"
-												rel="noopener noreferrer"
-												title={`${project.title} source on GitHub`}
-												class="px-2 py-1 text-xs rounded-full border border-[#333333] text-[#F5F5F5] opacity-70 work-item-tag github-tag inline-flex items-center"
-											>
-												<Fragment set:html={githubSvg} />
-											</a>
-										)}
-									</div>
-								</div>
-							</div>
-						</div>
-					))
-				}
-			</div>
-		</div>
-	</section>
+			))
+		}
+	</div>
 
 	<Footer slot="footer" />
 
-	<script>
-		function applyAnimatedPatternBorder(
-			element: HTMLElement,
-			options: any = {},
-		) {
+	<script data-astro-rerun>
+		(() => {
+		function applyAnimatedPatternBorder(element, options = {}) {
 			const {
 				dashWidth = 12,
 				dashGap = 6,
@@ -272,8 +135,8 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			} = options;
 
 			const svgNS = "http://www.w3.org/2000/svg";
-			let animations: SVGAnimateElement[] = [];
-			let colorAnimations: SVGAnimateElement[] = [];
+			let animations = [];
+			let colorAnimations = [];
 
 			if (getComputedStyle(element).position === "static") {
 				element.style.position = "relative";
@@ -315,11 +178,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				const colors = greyscaleColors;
 				const numColors = colors.length;
 
-				const createGradient = (
-					id: string,
-					isHorizontal: boolean,
-					length: number,
-				) => {
+				const createGradient = (id, isHorizontal, length) => {
 					const gradient = document.createElementNS(
 						svgNS,
 						"linearGradient",
@@ -362,7 +221,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 								"stop-color",
 							);
 
-							const animatedColors: string[] = [];
+							const animatedColors = [];
 							for (let cycle = 0; cycle < numColors; cycle++) {
 								const colorIndex = (i + cycle) % numColors;
 								animatedColors.push(colors[colorIndex]);
@@ -402,7 +261,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 						"attributeName",
 						"stop-color",
 					);
-					const finalAnimatedColors: string[] = [];
+					const finalAnimatedColors = [];
 					for (let cycle = 0; cycle < numColors; cycle++) {
 						const colorIndex = cycle % numColors;
 						finalAnimatedColors.push(colors[colorIndex]);
@@ -439,7 +298,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				const offset = strokeWidth / 2;
 				let runningOffset = 0;
 
-				const createEdge = (x1: string, y1: string, x2: string, y2: string, gradientId: string) => {
+				const createEdge = (x1, y1, x2, y2, gradientId) => {
 					const line = document.createElementNS(svgNS, "line");
 					line.setAttribute("x1", x1);
 					line.setAttribute("y1", y1);
@@ -471,7 +330,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				createEdge(`${offset}`, `${height - offset}`, `${offset}`, `${offset}`, "left-gradient");
 			};
 
-			const switchColors = (newColors: string[]) => {
+			const switchColors = (newColors) => {
 				const numC = newColors.length;
 				const reps = 3;
 				const stopsPerGradient = reps * numC + 1;
@@ -481,7 +340,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 					const isLast = gradientLocalIdx === reps * numC;
 					const stopIdx = isLast ? 0 : gradientLocalIdx % numC;
 
-					const vals: string[] = [];
+					const vals = [];
 					for (let cycle = 0; cycle < numC; cycle++) {
 						vals.push(newColors[(stopIdx + cycle) % numC]);
 					}
@@ -490,10 +349,7 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 				});
 			};
 
-			const updateAnimationSpeeds = (
-				newRainbowSpeed: number,
-				newDashSpeed: number,
-			) => {
+			const updateAnimationSpeeds = (newRainbowSpeed, newDashSpeed) => {
 				animations.forEach((animation) => {
 					const attributeName = animation.getAttribute("attributeName");
 					if (attributeName === "stop-color") {
@@ -535,84 +391,23 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			resizeObserver.observe(element);
 		}
 
-		document.addEventListener("DOMContentLoaded", () => {
-			const grid = document.querySelector("#grid-container") as HTMLElement;
-			const loadingSkeleton = document.querySelector("#loading-skeleton") as HTMLElement;
-
-			if (!grid) return;
-
-			let pckry: any | null = null;
-			let resizeObserver: ResizeObserver | null = null;
-
-			const initResizeObserver = () => {
-				if (!window.ResizeObserver) return;
-
-				let debounceTimeout: ReturnType<typeof setTimeout>;
-
-				resizeObserver = new ResizeObserver((entries) => {
-					if (!pckry) return;
-
-					clearTimeout(debounceTimeout);
-					debounceTimeout = setTimeout(() => {
-						let shouldRelayout = false;
-						for (const entry of entries) {
-							const gridItem = (entry.target as HTMLElement).closest(".grid-item") as HTMLElement;
-							if (gridItem) {
-								const prevHeight = gridItem.dataset.prevHeight;
-								const currentHeight = entry.contentRect.height.toString();
-								if (prevHeight !== currentHeight) {
-									gridItem.dataset.prevHeight = currentHeight;
-									shouldRelayout = true;
-								}
-							}
-						}
-						if (shouldRelayout) pckry.layout();
-					}, 100);
-				});
-
-				grid.querySelectorAll(".grid-item").forEach((item) => {
-					resizeObserver?.observe(item);
-				});
-			};
-
-			const initPackery = () => {
-				loadingSkeleton.style.display = "none";
-				// @ts-ignore
-				window.skeletonPackery.destroy();
-
-				// @ts-ignore
-				pckry = new (window.Packery as any)(grid, {
-					itemSelector: ".grid-item",
-					sizer: ".grid-sizer",
-					gutter: 16,
-					percentPosition: true,
-				});
-
-				initResizeObserver();
-				grid.style.opacity = "1";
-
-				// Apply animated border to the new-project-card itself (not the <a> wrapper)
-				const newProjectCard = grid.querySelector(
-					"[data-project-title='new-project'] .new-project-card",
-				) as HTMLElement;
-				applyAnimatedPatternBorder(newProjectCard, {
-					dashWidth: 4,
-					dashGap: 8,
-					strokeWidth: 2,
-					dashSpeed: 1,
-					rainbowSpeed: 2,
-					hoverRainbowSpeed: 1,
-				});
-			};
-
-			window.addEventListener("beforeunload", () => {
-				if (resizeObserver) {
-					resizeObserver.disconnect();
-					resizeObserver = null;
-				}
+		// `data-astro-rerun` on the script tag makes this body re-execute
+		// on every Astro view-transition navigation, so the SVG border is
+		// rebuilt after the previous run's DOM is swapped out.
+		const newProjectCard = document.querySelector(
+			"[data-project-title='new-project'] .new-project-card",
+		);
+		if (newProjectCard && !newProjectCard.querySelector(".rainbow-border-svg")) {
+			applyAnimatedPatternBorder(newProjectCard, {
+				dashWidth: 4,
+				dashGap: 8,
+				strokeWidth: 2,
+				dashSpeed: 1,
+				rainbowSpeed: 2,
+				hoverRainbowSpeed: 1,
 			});
-			initPackery();
-		});
+		}
+		})();
 	</script>
 
 	<style>
@@ -620,82 +415,20 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			font-family: Times, serif;
 		}
 
-		@keyframes shimmer {
-			0% { background-position: -200px 0; }
-			100% { background-position: calc(200px + 100%) 0; }
-		}
-
-		.skeleton-card {
-			background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
-			background-size: 200px 100%;
-			animation: shimmer 1.5s ease-in-out infinite;
-		}
-
-		.skeleton-title {
-			height: 32px; width: 60%;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
-		}
-
-		.skeleton-button {
-			height: 24px; width: 24px;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
-		}
-
-		.skeleton-description {
-			height: 18px; width: 85%;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
-		}
-
-		.skeleton-description-line {
-			height: 18px; width: 65%;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 4px;
-		}
-
-		.skeleton-tag {
-			height: 24px; width: 80px;
-			background: linear-gradient(90deg, #333333, #444444, #333333);
-			background-size: 200px 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 12px;
-		}
-
-		#loading-skeleton {
-			transition: opacity 0.3s ease-in-out;
+		.work-grid {
 			width: 100%;
 		}
 
-		#grid-container {
-			position: relative;
-		}
-
-		.grid-item {
-			box-sizing: border-box;
+		.work-cell {
 			width: 100%;
 		}
 
-		.grid-sizer {
-			width: 100%;
-		}
-
-		@media (min-width: 768px) {
-			.grid-item { width: calc(50% - 8px); }
-			.grid-sizer { width: calc(50% - 8px); }
-		}
-
-		/* New project card — SVG border replaces CSS border entirely */
 		.new-project-card {
 			position: relative;
 			border: 2px solid transparent;
 			transition: background-color 0.3s;
 		}
 
-		[data-project-title="new-project"] {
-			width: 100%;
-		}
-
-		/* Stretched link pattern: title link covers the whole card */
 		.project-card {
 			position: relative;
 		}
@@ -710,7 +443,6 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			z-index: 1;
 		}
 
-		/* GitHub tag sits above the stretched link */
 		.github-tag {
 			position: relative;
 			z-index: 2;
@@ -720,7 +452,6 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			background-color: #e0e0e0 !important;
 		}
 
-		/* Hover effects for work items */
 		.work-item-card {
 			position: relative;
 		}
@@ -738,7 +469,6 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			opacity: 1;
 		}
 
-		/* Link styling */
 		.stretched-link {
 			color: inherit;
 			text-decoration: none;
@@ -747,4 +477,4 @@ const githubSvg = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentCol
 			text-decoration: none;
 		}
 	</style>
-</Layout>
+</DualColumnLayout>

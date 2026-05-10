@@ -11,6 +11,8 @@ import { styleModule } from './styles';
 import { ExtendedLink } from './extensions/link';
 import { SlashCommands } from './extensions/slash-commands';
 import { Toolbar, ToolbarOptions } from './extensions/toolbar';
+import { InlineCodeExit } from './extensions/inline-code';
+import { BlockActions } from './extensions/block-actions';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -63,6 +65,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 codeBlock: false,
                 // bulletList: false, // As Markdown handles bullet lists and allows us to configure the marker to prevent task item conflicts
             }),
+            InlineCodeExit,
             Markdown.configure({
                 html: false,
                 tightLists: true,
@@ -88,6 +91,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 fs: options.fs?.fs,
                 filepath: options.fs?.filepath,
             }),
+            BlockActions,
             ...(options.extensions || []),
         ],
         editorProps: {

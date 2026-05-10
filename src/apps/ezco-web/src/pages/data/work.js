@@ -62,13 +62,14 @@ async function init() {
 
 init().catch(console.error);
 `],
-	['install.sh', 'pnpm i @joinezco/markdown-editor'],
+	['install-mde.sh', 'pnpm add @joinezco/markdown-editor'],
+	['install-cb.sh', 'pnpm add @joinezco/codeblock'],
 	['hello.md', `# \`@joinezco/markdown-editor\`
 
 ## Usage
 
 ### Install
-\`\`\`install.sh
+\`\`\`install-mde.sh
 \`\`\`
 
 ### Basic example

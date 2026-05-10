@@ -1,7 +1,6 @@
 ---
-import Layout from './Layout.astro';
+import DualColumnLayout from './DualColumnLayout.astro';
 import Footer from '../components/Footer.astro';
-import Navbar from '../components/Navbar.astro';
 
 export interface Props {
 	frontmatter: {
@@ -195,17 +194,13 @@ const formatDate = (date: string) => {
 	}
 </style>
 
-<Layout
+<DualColumnLayout
 	title={`${frontmatter.title} | ez co`}
 	description={frontmatter.description ||
 		`Read "${frontmatter.title}" on the ez co blog.`}
+	currentPath="/blog"
 >
-	<section
-		class="w-[min(80ch,100vw)] min-h-screen flex items-start justify-center px-6 md:px-8 mb-24"
-	>
-		<div class="w-full mx-auto flex flex-col gap-8">
-			<Navbar currentPath="/blog" />
-
+	<div class="flex flex-col gap-8">
 			<!-- Blog post header -->
 			<header class="space-y-6">
 				<h1
@@ -254,8 +249,7 @@ const formatDate = (date: string) => {
 			<article class="markdown-body max-w-none">
 				<slot />
 			</article>
-		</div>
-	</section>
+	</div>
 
 	<Footer slot="footer" />
-</Layout>
+</DualColumnLayout>

@@ -1,58 +1,58 @@
 ---
-import Layout from "../../layouts/Layout.astro";
+import DualColumnLayout from "../../layouts/DualColumnLayout.astro";
 import Footer from "../../components/Footer.astro";
-import Navbar from "../../components/Navbar.astro";
 ---
 
-<Layout title="codeblock | ez co" description="An interactive demo of the @joinezco/codeblock component.">
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8">
-			<Navbar currentPath="/work" />
-
-			<div class="demo-container overflow-hidden">
-				<div id="codeblock-mount">
-					<div class="loading-indicator"><div class="loading-bar"></div></div>
-				</div>
+<DualColumnLayout title="codeblock | ez co" description="An interactive demo of the @joinezco/codeblock component." currentPath="/work">
+		<div class="install-container overflow-hidden">
+			<div id="install-mount"></div>
+		</div>
+		<div class="demo-container overflow-hidden">
+			<div id="codeblock-mount">
+				<div class="loading-indicator"><div class="loading-bar"></div></div>
 			</div>
 		</div>
-	</section>
 
 	<Footer slot="footer" />
 
 	<script>
-		import { CodeblockFS } from "@joinezco/codeblock";
-		import { files } from "../data/work.js";
+		import { getDemoFs } from "../../scripts/demo-fs";
+		import { slideInDemo } from "../../scripts/demo-anim";
 
-		async function init() {
-			const fs = await CodeblockFS.worker(undefined, "ezco-demo");
+		let installView: any = null;
+		let mainView: any = null;
 
-			// Seed demo files — always write if content is empty or missing
-			await Promise.all(
-				files.map(async ([path, content]) => {
-					try {
-						const existing = await fs.exists(path);
-						if (!existing) {
-							await fs.writeFile(path, content);
-						} else {
-							const current = await fs.readFile(path);
-							if (!current || current.length === 0) {
-								await fs.writeFile(path, content);
-							}
-						}
-					} catch {
-						await fs.writeFile(path, content);
-					}
-				}),
-			);
+		async function mount() {
+			const installMount = document.getElementById("install-mount");
+			const container = document.getElementById("codeblock-mount");
+			if (!installMount || !container) return;
 
-			const { createCodeblock, SearchIndex } = await import(
-				"@joinezco/codeblock"
-			);
-			const container = document.getElementById("codeblock-mount")!;
+			if (installView) {
+				try { installView.destroy(); } catch {}
+				installView = null;
+			}
+			if (mainView) {
+				try { mainView.destroy(); } catch {}
+				mainView = null;
+			}
+
+			const { createCodeblock, SearchIndex } = await import("@joinezco/codeblock");
+
+			const fs = await getDemoFs();
+			installMount.innerHTML = '';
+			installView = createCodeblock({
+				parent: installMount,
+				fs,
+				filepath: "install.codeblock.sh",
+				cwd: "/",
+				dark: true,
+				toolbar: false,
+			});
+			slideInDemo(installMount);
+
 			container.innerHTML = '';
 			const index = await SearchIndex.get(fs, ".codeblock/index.json");
-
-			createCodeblock({
+			mainView = createCodeblock({
 				parent: container,
 				fs,
 				filepath: "example.ts",
@@ -60,12 +60,47 @@ import Navbar from "../../components/Navbar.astro";
 				cwd: "/",
 				dark: true,
 			});
+			slideInDemo(container);
 		}
 
-		init().catch(console.error);
+		mount().catch(console.error);
+		document.addEventListener("astro:page-load", () => {
+			if (location.pathname.replace(/\/$/, "") === "/work/codeblock") {
+				mount().catch(console.error);
+			}
+		});
+		document.addEventListener("astro:before-swap", () => {
+			if (installView) {
+				try { installView.destroy(); } catch {}
+				installView = null;
+			}
+			if (mainView) {
+				try { mainView.destroy(); } catch {}
+				mainView = null;
+			}
+		});
 	</script>
 
 	<style>
+		.install-container {
+			width: 100%;
+			display: flex;
+			flex-direction: column;
+		}
+
+		#install-mount {
+			display: flex;
+			flex-direction: column;
+		}
+
+		#install-mount :global(.cm-editor) {
+			min-height: 0;
+		}
+
+		/* `view-transition-name` is set inline only on exit (see
+		   Layout.astro's `astro:before-preparation` handler) — see the
+		   markdown-editor page for the rationale. */
+
 		.demo-container {
 			width: 100%;
 			min-height: 70vh;
@@ -87,6 +122,8 @@ import Navbar from "../../components/Navbar.astro";
 		   Needs higher specificity than the package's
 		   `[data-theme="dark"] .cm-editor` selector (0,2,0); the scoped
 		   `#codeblock-mount` adds an attribute selector to bring us to 1,3,0. */
+		#install-mount :global([data-theme="dark"] .cm-editor),
+		#install-mount :global(.cm-editor[data-theme="dark"]),
 		#codeblock-mount :global([data-theme="dark"] .cm-editor),
 		#codeblock-mount :global(.cm-editor[data-theme="dark"]),
 		#codeblock-mount :global([data-theme="dark"] .cm-toolbar-panel),
@@ -103,9 +140,12 @@ import Navbar from "../../components/Navbar.astro";
 
 		/* CodeMirror's baseTheme draws a focus outline on `.cm-editor.cm-focused`
 		   and a default background on `.cm-panels`/`.cm-panel`. Suppress both. */
+		#install-mount :global(.cm-editor.cm-focused),
 		#codeblock-mount :global(.cm-editor.cm-focused) {
 			outline: none;
 		}
+		#install-mount :global(.cm-panels),
+		#install-mount :global(.cm-panel),
 		#codeblock-mount :global(.cm-panels),
 		#codeblock-mount :global(.cm-panel) {
 			background: transparent;
@@ -148,4 +188,4 @@ import Navbar from "../../components/Navbar.astro";
 			50% { opacity: 1; }
 		}
 	</style>
-</Layout>
+</DualColumnLayout>

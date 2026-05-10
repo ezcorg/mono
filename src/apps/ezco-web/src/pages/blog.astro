@@ -1,7 +1,6 @@
 ---
-import Layout from '../layouts/Layout.astro';
+import DualColumnLayout from '../layouts/DualColumnLayout.astro';
 import Footer from '../components/Footer.astro';
-import Navbar from '../components/Navbar.astro';
 
 // Get all blog posts
 const allPosts = await Astro.glob('../content/blog/*.md');
@@ -146,13 +145,12 @@ const allPostsData = posts.map((post) => ({
 	}
 </style>
 
-<Layout
+<DualColumnLayout
 	title="Blog | ez co"
 	description="Some thoughts and writings from the ez co team."
+	currentPath="/blog"
 >
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8 blog-content">
-			<Navbar currentPath="/blog" />
+	<div class="blog-content flex flex-col gap-8">
 			<!-- Search Input -->
 			<!-- <div>
 				<form method="GET" action="/blog" class="search-form relative">
@@ -186,8 +184,7 @@ const allPostsData = posts.map((post) => ({
 			<div id="blog-posts-container" class="space-y-8 mb-24">
 				<!-- Posts will be rendered by JavaScript -->
 			</div>
-		</div>
-	</section>
+	</div>
 
 	<Footer slot="footer" />
 
@@ -432,4 +429,4 @@ const allPostsData = posts.map((post) => ({
 			}
 		});
 	</script>
-</Layout>
+</DualColumnLayout>

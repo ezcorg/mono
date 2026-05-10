@@ -1,17 +1,14 @@
 ---
-import Layout from '../layouts/Layout.astro';
-import Navbar from '../components/Navbar.astro';
+import DualColumnLayout from '../layouts/DualColumnLayout.astro';
 import Footer from '../components/Footer.astro';
 ---
 
-<Layout
+<DualColumnLayout
 	title="Start a Project | ez co"
 	description="Ready to start your next project? Let us know how we can help."
+	currentPath="/newproject"
 >
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8">
-			<Navbar currentPath="/newproject" />
-			<form class="space-y-6 max-w-2xl w-full" id="contact-form">
+		<form class="space-y-6 max-w-2xl w-full" id="contact-form">
 				<div>
 					<label for="name" class="block text-[#F5F5F5] mb-2"
 						>Name *</label
@@ -240,11 +237,9 @@ import Footer from '../components/Footer.astro';
 					</svg>
 				</button>
 			</form>
-		</div>
-	</section>
 
 	<Footer slot="footer" />
-</Layout>
+</DualColumnLayout>
 
 <script src="https://cdn.jsdelivr.net/npm/range-slider-element@2/+esm"></script>
 <script is:inline src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer

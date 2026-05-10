@@ -5,9 +5,27 @@
     --breakpoint-xs: 360px;
 }
 
+/* Nerd font for codeblock icons. Mirrors the @font-face the codeblock
+   library injects dynamically; declaring it statically here keeps the
+   font available across Astro view-transition document swaps, where the
+   library's dynamically-inserted <style> tag would otherwise be removed
+   while its idempotency flag prevents re-injection. */
+@font-face {
+    font-family: 'UbuntuMono NF';
+    src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 html {
     font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
     scroll-behavior: smooth;
+    /* Anchor the dark page background here (rather than only on the inner
+       `bg-black` div) so it's also visible behind the view-transition root
+       pseudo-elements when they translate off-axis during the L-shape page
+       slide — otherwise the default white shows through the offset gap. */
+    background: #000;
 }
 
 body {
@@ -81,8 +99,8 @@ body {
 }
 
 .ProseMirror {
-    padding: 1.5rem;
     flex: 1;
+    margin-top: -4px;
     max-width: 100%;
     font-optical-sizing: auto;
     font-synthesis: none;

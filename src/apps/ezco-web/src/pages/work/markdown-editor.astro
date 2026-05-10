@@ -1,60 +1,38 @@
 ---
-import Layout from "../../layouts/Layout.astro";
+import DualColumnLayout from "../../layouts/DualColumnLayout.astro";
 import Footer from "../../components/Footer.astro";
-import Navbar from "../../components/Navbar.astro";
-import Logo from "../../components/Logo.astro";
 ---
 
-<Layout title="markdown-editor | ez co" description="An interactive demo of the @joinezco/markdown-editor component.">
-	<section class="markdown-page">
-		<div class="navbar-mobile">
-			<Navbar currentPath="/work" />
-		</div>
-		<aside class="logo-fixed" aria-hidden="true">
-			<Logo size={80} />
-		</aside>
-		<div class="markdown-content w-full mx-auto flex flex-col gap-8">
-			<div class="demo-container bg-[#1e1e1e] overflow-hidden">
-				<div id="editor-mount">
-					<div class="loading-indicator"><div class="loading-bar"></div></div>
-				</div>
+<DualColumnLayout title="markdown-editor | ez co" description="An interactive demo of the @joinezco/markdown-editor component." currentPath="/work">
+		<div class="demo-container bg-[#1e1e1e] overflow-hidden">
+			<div id="editor-mount">
+				<div class="loading-indicator"><div class="loading-bar"></div></div>
 			</div>
 		</div>
-	</section>
 
 	<Footer slot="footer" />
 
 	<script>
-		import { CodeblockFS } from "@joinezco/codeblock";
-		import { files } from "../data/work.js";
+		import { getDemoFs } from "../../scripts/demo-fs";
+		import { slideInDemo } from "../../scripts/demo-anim";
 
-		async function init() {
-			const fs = await CodeblockFS.worker(undefined, "ezco-demo");
+		let editor: any = null;
 
-			// Seed demo files — always write if content is empty or missing
-			await Promise.all(
-				files.map(async ([path, content]) => {
-					try {
-						const existing = await fs.exists(path);
-						if (!existing) {
-							await fs.writeFile(path, content);
-						} else {
-							const current = await fs.readFile(path);
-							if (!current || current.length === 0) {
-								await fs.writeFile(path, content);
-							}
-						}
-					} catch {
-						await fs.writeFile(path, content);
-					}
-				}),
-			);
+		async function mount() {
+			const container = document.getElementById("editor-mount");
+			if (!container) return;
+			// If a previous editor instance is still attached, tear it down
+			// (CodeMirror inside ExtendedCodeblock may hold view references).
+			if (editor) {
+				try { editor.destroy(); } catch {}
+				editor = null;
+			}
+			container.innerHTML = '<div class="loading-indicator"><div class="loading-bar"></div></div>';
 
+			const fs = await getDemoFs();
 			const { createEditor } = await import("@joinezco/markdown-editor");
-			const container = document.getElementById("editor-mount")!;
 			container.innerHTML = '';
-
-			const editor = createEditor({
+			editor = createEditor({
 				element: container,
 				autofocus: false,
 				fs: {
@@ -64,9 +42,21 @@ import Logo from "../../components/Logo.astro";
 				toolbar: {},
 			});
 			editor.view.dom.setAttribute("data-theme", "dark");
+			slideInDemo(container);
 		}
 
-		init().catch(console.error);
+		mount().catch(console.error);
+		document.addEventListener("astro:page-load", () => {
+			if (location.pathname.replace(/\/$/, "") === "/work/markdown-editor") {
+				mount().catch(console.error);
+			}
+		});
+		document.addEventListener("astro:before-swap", () => {
+			if (editor) {
+				try { editor.destroy(); } catch {}
+				editor = null;
+			}
+		});
 	</script>
 
 	<style>
@@ -187,42 +177,21 @@ import Logo from "../../components/Logo.astro";
 			border: none;
 		}
 
-		/* Two-column layout: editor keeps the section's natural width
-		   (max-width: min(80ch, 100vw), centered — defined in global.css),
-		   and the logo floats in the empty space to its left. The logo's
-		   right edge aligns with the section's left border, so it sits
-		   immediately adjacent to the editor. `position: fixed` keeps it
-		   pinned as <main> scrolls.
-		   Below the breakpoint, we fall back to the stacked navbar layout. */
-		.markdown-page {
-			position: relative;
-			padding: 4px 0 0 0;
-		}
-		.logo-fixed {
-			display: none;
-		}
-		@media (min-width: 1024px) {
-			.navbar-mobile {
-				display: none;
-			}
-			.logo-fixed {
-				display: block;
-				position: fixed;
-				top: 2rem;
-				/* Section is centered with max-width 80ch, so its left
-				   border sits at calc(50vw - 40ch). Setting `right` to the
-				   distance from the viewport's right edge to that point
-				   places the logo's right edge there. */
-				right: calc(50vw + 40ch);
-				z-index: 50;
-			}
-		}
-
 		#editor-mount {
 			flex: 1;
 			display: flex;
 			flex-direction: column;
 		}
+
+		/* `view-transition-name` is NOT set in CSS because that would
+		   apply on both entry and exit. On entry the captured group's
+		   bounding box gets interpolated by the UA against a missing
+		   counterpart on the previous page, which produces a vertical
+		   squeeze. Instead, the name is toggled on inline only when
+		   leaving this page (see Layout.astro's `astro:before-preparation`
+		   handler) so the OLD snapshot is captured as a named group for
+		   the slide-down exit, while the NEW page has no separate group
+		   and slides in with the rest of the root. */
 
 		#editor-mount :global(.ezco-mde) {
 			flex: 1;
@@ -263,4 +232,4 @@ import Logo from "../../components/Logo.astro";
 			50% { opacity: 1; }
 		}
 	</style>
-</Layout>
+</DualColumnLayout>
