@@ -18,6 +18,20 @@
     font-display: swap;
 }
 
+/* Register `--logo-size` as a typed length so it's *animatable*. Without
+   this, CSS treats custom properties as opaque tokens and any change to
+   the variable (e.g. via a media query) reaches dependents as a discrete
+   jump — even though the dependent property (`width`, `height`, etc.) is
+   itself animatable. Registering with `<length>` lets the browser
+   interpolate the variable, so `calc(var(--logo-size) * 2)` and friends
+   transition smoothly along with `transition: --logo-size …` on the
+   element. */
+@property --logo-size {
+    syntax: '<length>';
+    inherits: true;
+    initial-value: 60px;
+}
+
 html {
     font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
     scroll-behavior: smooth;

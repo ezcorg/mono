@@ -4,7 +4,7 @@ import Footer from "../../components/Footer.astro";
 ---
 
 <DualColumnLayout title="markdown-editor | ez co" description="An interactive demo of the @joinezco/markdown-editor component." currentPath="/work">
-		<div class="demo-container bg-[#1e1e1e] overflow-hidden">
+		<div class="demo-container bg-[#1e1e1e]">
 			<div id="editor-mount">
 				<div class="loading-indicator"><div class="loading-bar"></div></div>
 			</div>
@@ -91,9 +91,12 @@ import Footer from "../../components/Footer.astro";
 			   horizontally-scrolled code text underneath. */
 			--cm-gutter-background: #000000;
 			--cm-line-highlight: transparent;
-			--cm-toolbar-bg-dark: transparent;
-			--cm-toolbar-bg-light: transparent;
-			--cm-toolbar-background: transparent;
+			/* Toolbar background stays solid black so it doesn't go
+			   transparent when stuck to the top of a scrolling
+			   codeblock. */
+			--cm-toolbar-bg-dark: #000000;
+			--cm-toolbar-bg-light: #000000;
+			--cm-toolbar-background: #000000;
 		}
 
 		/* CodeMirror's baseTheme draws a focus outline on `.cm-editor.cm-focused`

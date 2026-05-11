@@ -3,78 +3,108 @@ export interface Props {
 	size?: number;
 }
 
-const { size = 60 } = Astro.props;
+// Only emit the inline `--logo-size` when an explicit size is given,
+// so consumers that want CSS-driven (responsive) sizing can omit the
+// prop and have media queries pick it up without fighting an inline
+// style's higher specificity.
+const { size } = Astro.props;
+const inlineSizeStyle =
+	typeof size === "number" ? `--logo-size: ${size}px;` : undefined;
 ---
 
-<a href="/" class="logo-link">
-	<div
-		class="relative logo-wrapper"
-		style={`width: ${size * 2}px; height: ${size}px;`}
-	>
+<a href="/" class="logo-link" style={inlineSizeStyle}>
+	<div class="relative logo-wrapper">
 		<!-- Border elements -->
-		<div
-			class="absolute border-2 border-[#F5F5F5] logo-border-left"
-			style={`width: ${size}px; height: ${size}px; left: 0;`}
-		></div>
-		<div
-			class="absolute border-2 border-[#F5F5F5] logo-border-right"
-			style={`width: ${size}px; height: ${size}px; left: ${size}px;`}
-		></div>
-		
+		<div class="absolute border-2 border-[#F5F5F5] logo-border-left"></div>
+		<div class="absolute border-2 border-[#F5F5F5] logo-border-right"></div>
+
 		<!-- Base text elements (light colored) -->
-		<div
-			class="absolute flex items-center justify-center logo-text-base"
-			style={`width: ${size * 2}px; height: ${size}px; left: 0; font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500; color: #F5F5F5;`}
-		>
-			<span style={`width: ${size}px; text-align: center; display: inline-block;`}>ez</span><span style={`width: ${size}px; text-align: center; display: inline-block;`}>co</span>
+		<div class="absolute flex items-center justify-center logo-text-base">
+			<span>ez</span><span>co</span>
 		</div>
-		
+
 		<!-- Sliding white background with dark text overlay -->
-		<div
-			class="absolute bg-white sliding-background overflow-hidden"
-			style={`width: ${size}px; height: ${size}px; left: ${size}px;`}
-		>
-			<div
-				class="absolute flex items-center justify-center logo-text-masked"
-				style={`width: ${size * 2}px; height: ${size}px; left: ${-size}px; font-size: ${size * 0.4}px; font-family: Inter, Helvetica, sans-serif; font-weight: 500; color: #000000;`}
-			>
-				<span style={`width: ${size}px; text-align: center; display: inline-block;`}>ez</span><span style={`width: ${size}px; text-align: center; display: inline-block;`}>co</span>
+		<div class="absolute bg-white sliding-background overflow-hidden">
+			<div class="absolute flex items-center justify-center logo-text-masked">
+				<span>ez</span><span>co</span>
 			</div>
 		</div>
 	</div>
 </a>
 
 <style>
+	/* Everything is sized off `--logo-size`. With the variable
+	   registered as `<length>` in global.css (`@property`), animating it
+	   here cascades through every `calc(var(--logo-size) * ...)` in the
+	   descendants, so a single transition on `.logo-link` smoothly
+	   resizes the whole logo — no per-descendant transition rules
+	   needed. */
 	.logo-link {
+		--logo-size: 60px;
 		display: flex;
 		align-items: center;
 		cursor: pointer;
 		text-decoration: none;
+		transition: --logo-size 220ms cubic-bezier(0.4, 0, 0.2, 1);
 	}
 
 	.logo-wrapper {
 		position: relative;
 		overflow: hidden;
+		width: calc(var(--logo-size) * 2);
+		height: var(--logo-size);
 	}
 
 	.logo-border-left,
 	.logo-border-right {
-		transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+		width: var(--logo-size);
+		height: var(--logo-size);
+		transition:
+			border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+			box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 		z-index: 1;
 	}
+	.logo-border-left {
+		left: 0;
+	}
+	.logo-border-right {
+		left: var(--logo-size);
+	}
 
+	.logo-text-base,
+	.logo-text-masked {
+		width: calc(var(--logo-size) * 2);
+		height: var(--logo-size);
+		font-size: calc(var(--logo-size) * 0.4);
+		font-family: Inter, Helvetica, sans-serif;
+		font-weight: 500;
+		transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+	}
 	.logo-text-base {
+		left: 0;
+		color: #f5f5f5;
 		z-index: 2;
+	}
+	.logo-text-masked {
+		left: calc(var(--logo-size) * -1);
+		color: #000000;
+	}
+
+	.logo-text-base > span,
+	.logo-text-masked > span {
+		width: var(--logo-size);
+		text-align: center;
+		display: inline-block;
 	}
 
 	.sliding-background {
-		transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+		width: var(--logo-size);
+		height: var(--logo-size);
+		left: var(--logo-size);
+		transition:
+			transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+			box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 		z-index: 3;
-	}
-
-	.logo-text-masked {
-		/* This text moves with the sliding background to stay aligned */
-		transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 	}
 
 	/* Hover/Focus/Active state: slide background to cover ez */

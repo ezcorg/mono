@@ -1,6 +1,5 @@
 ---
 import Layout from "./Layout.astro";
-import Navbar from "../components/Navbar.astro";
 import Logo from "../components/Logo.astro";
 
 export interface Props {
@@ -13,7 +12,6 @@ export interface Props {
 const {
 	title,
 	description,
-	currentPath,
 	sectionClass = "",
 } = Astro.props;
 ---
@@ -21,7 +19,10 @@ const {
 <Layout title={title} description={description}>
 	<section class={`dual-col-page ${sectionClass}`.trim()}>
 		<div class="navbar-mobile">
-			<Navbar currentPath={currentPath} />
+			<!-- No `size` prop — CSS media queries below set the size
+			     responsively, with smooth transitions courtesy of the
+			     transitions on every dimension property in Logo.astro. -->
+			<Logo />
 		</div>
 		<aside class="logo-fixed" aria-hidden="true">
 			<Logo size={80} />
@@ -37,8 +38,20 @@ const {
 <style is:global>
 	.page-content > section.dual-col-page {
 		position: relative;
+		/* Force column stacking — the global section default is
+		   `display: flex` with implicit `flex-direction: row`, which on
+		   mobile lays out `.navbar-mobile` and `.dual-col-content`
+		   side-by-side (this is what's been reading as "still dual
+		   column on mobile"). On desktop the navbar is `display: none`
+		   and the logo aside is `position: fixed`, so only the content
+		   div is in-flow and the direction is moot. */
+		flex-direction: column;
 		align-items: flex-start;
 		padding-top: 2rem;
+		/* Gap separates the navbar logo from the content below on
+		   mobile/tablet (no effect on desktop where only the content is
+		   in flow). */
+		gap: 1.5rem;
 	}
 
 	.page-content > section.dual-col-page > div.dual-col-content {
@@ -48,6 +61,19 @@ const {
 
 	.dual-col-page .logo-fixed {
 		display: none;
+	}
+
+	/* CSS-driven sizing for the mobile navbar logo. The Logo component
+	   sizes everything off `--logo-size`, and every dimension property
+	   has a transition, so resizing across these breakpoints animates
+	   smoothly rather than snapping. */
+	.dual-col-page .navbar-mobile .logo-link {
+		--logo-size: 48px;
+	}
+	@media (max-width: 479.98px) {
+		.dual-col-page .navbar-mobile .logo-link {
+			--logo-size: 36px;
+		}
 	}
 
 	@media (min-width: 1024px) {

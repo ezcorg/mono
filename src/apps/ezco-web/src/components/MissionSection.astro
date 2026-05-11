@@ -128,8 +128,8 @@ function processStatementText(text: string, links?: Array<{text: string, href: s
 
 	.mission-item {
 		position: relative;
-		padding-left: 1.5rem;
-		margin-bottom: 1.5rem;
+		padding-left: 1.25rem;
+		margin-bottom: 1rem;
 		transition: all 0.3s ease;
 	}
 
@@ -141,7 +141,7 @@ function processStatementText(text: string, links?: Array<{text: string, href: s
 		content: '*';
 		position: absolute;
 		left: 0;
-		top: 0.5rem;
+		top: 0.4rem;
 		color: rgba(245, 245, 245, 0.6);
 		font-weight: bold;
 		transition: all 0.3s ease;
@@ -178,18 +178,18 @@ function processStatementText(text: string, links?: Array<{text: string, href: s
 </style>
 
 <h2
-	class="text-4xl md:text-6xl lg:text-7xl font-light text-[#F5F5F5] mt-8 mb-6"
+	class="text-3xl md:text-4xl font-light text-[#F5F5F5] mt-6 mb-4"
 	style="line-height: 1.2; letter-spacing: -0.02em;"
 >
 	{heading}
 </h2>
 
-<div class="mission-statement p-8 md:p-12">
+<div class="mission-statement p-6 md:p-8">
 	<ul class="mission-list">
 		{statements.map((statement) => (
 			<li class="mission-item">
 				<p
-					class={`text-lg md:text-xl text-[#F5F5F5] leading-relaxed ${statement.emphasis ? 'font-medium' : ''}`}
+					class={`text-base md:text-lg text-[#F5F5F5] leading-relaxed ${statement.emphasis ? 'font-medium' : ''}`}
 					set:html={processStatementText(statement.text, statement.links)}
 				>
 				</p>

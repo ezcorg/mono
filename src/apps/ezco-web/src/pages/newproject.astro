@@ -458,7 +458,13 @@ import Footer from '../components/Footer.astro';
 </style>
 
 <script>
-	import flatpickr from 'flatpickr';
+	// flatpickr is loaded lazily inside `initNewProjectPage` below — a
+	// static `import` here used to break the whole script when Vite's
+	// pre-bundle of flatpickr went stale (the dev server served the
+	// cached `.vite/deps/flatpickr.js` with an empty `Content-Type`,
+	// which the browser rejects as `NS_ERROR_CORRUPTED_CONTENT`).
+	// Dynamic-importing inside the init function isolates that failure:
+	// even if flatpickr can't load, the rest of the form still works.
 	import {
 		validateContactForm,
 		getValidationErrorMessage,
@@ -471,7 +477,29 @@ import Footer from '../components/Footer.astro';
 	} from '@joinezco/shared';
 	import { ValidationError } from '@joinezco/shared';
 
-	document.addEventListener('DOMContentLoaded', () => {
+	// `astro:page-load` instead of `DOMContentLoaded` so this also runs
+	// after ClientRouter SPA navigations (e.g. arriving via the home
+	// page's "Start a project" link) — `DOMContentLoaded` only fires on
+	// hard reloads.
+	async function initNewProjectPage() {
+		// On SPA navigation the `range-slider-element` CDN script may
+		// still be loading when this runs; without waiting, the slider
+		// DOM element is a plain unknown element and our event listeners
+		// attach before the custom-element upgrade brings the slider's
+		// real behaviour online. On hard reload the script blocks
+		// rendering so this resolves immediately.
+		if (typeof customElements !== 'undefined') {
+			try {
+				await Promise.race([
+					customElements.whenDefined('range-slider'),
+					new Promise((_, reject) =>
+						setTimeout(() => reject(new Error('timeout')), 3000),
+					),
+				]);
+			} catch {
+				console.warn('[newproject] range-slider custom element not defined within 3s — slider may be inert');
+			}
+		}
 		const minInput = document.getElementById(
 			'minBudget',
 		) as HTMLInputElement;
@@ -995,12 +1023,19 @@ import Footer from '../components/Footer.astro';
 		minInput.setAttribute('max', maxInput.value);
 		maxInput.setAttribute('min', minInput.value);
 
-		const fp = flatpickr('#date-range', {
-			mode: 'range',
-			dateFormat: 'Y-m-d',
-			altInput: true,
-			altFormat: 'F j, Y',
-		}) as flatpickr.Instance;
+		let fp: any = null;
+		try {
+			const flatpickrMod = await import('flatpickr');
+			const flatpickr = flatpickrMod.default;
+			fp = flatpickr('#date-range', {
+				mode: 'range',
+				dateFormat: 'Y-m-d',
+				altInput: true,
+				altFormat: 'F j, Y',
+			});
+		} catch (err) {
+			console.warn('[newproject] failed to load flatpickr — date picker will be unavailable:', err);
+		}
 
 		(window as any).checkMessageLength = function (
 			textarea: HTMLTextAreaElement,
@@ -1058,7 +1093,7 @@ import Footer from '../components/Footer.astro';
 					turnstileToken: turnstileResponse,
 				};
 
-				if (fp.selectedDates && fp.selectedDates.length >= 2) {
+				if (fp && fp.selectedDates && fp.selectedDates.length >= 2) {
 					formDataObject.dateRange = fp.selectedDates.slice(0, 2);
 				}
 
@@ -1117,5 +1152,13 @@ import Footer from '../components/Footer.astro';
 				submitButton.classList.remove('opacity-75', 'cursor-not-allowed');
 			}
 		});
+	}
+
+	document.addEventListener('astro:page-load', () => {
+		if (location.pathname.replace(/\/$/, '') === '/newproject') {
+			initNewProjectPage().catch((err) =>
+				console.error('[newproject] init failed:', err),
+			);
+		}
 	});
 </script>

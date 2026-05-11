@@ -29,10 +29,19 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-bg-dark': '#1e1e1e',
         '--ezco-mde-link-color': '#5861ff',
         '--ezco-mde-link-color-hover': '#383ea3',
-        '--ezco-mde-block-indicator-color': 'rgba(88, 97, 255, 0.5)',
+        '--ezco-mde-block-indicator-color': 'rgba(160, 160, 160, 0.45)',
         '--ezco-mde-block-action-btn-color': 'rgba(245, 245, 245, 0.6)',
         '--ezco-mde-block-action-btn-bg': 'rgba(245, 245, 245, 0.05)',
         '--ezco-mde-block-action-btn-bg-hover': 'rgba(245, 245, 245, 0.12)',
+        // Context-menu theming — dedicated variables (rather than
+        // reusing `--cm-toolbar-*` from the codeblock package) so the
+        // rich-text editor's menus can have their own visual identity:
+        // black background, light text, sans-serif, no monospace font.
+        '--ezco-mde-context-menu-bg': '#000000',
+        '--ezco-mde-context-menu-color': '#f5f5f5',
+        '--ezco-mde-context-menu-border': 'rgba(245, 245, 245, 0.16)',
+        '--ezco-mde-context-menu-item-bg-hover': 'rgba(245, 245, 245, 0.1)',
+        '--ezco-mde-context-menu-item-color-muted': 'rgba(245, 245, 245, 0.55)',
 
         // Typography scale based on perfect fourth ratio (1.333)
         '--ezco-mde-type-ratio': '1.25',
@@ -133,7 +142,10 @@ export const styleModule: StyleModule = new StyleModule({
         '& p': {
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
-            'margin': '1em 0',
+            // Bottom-only margin (matching `li > p` below) so converting a
+            // paragraph into a list item (`*` input rule, etc.) doesn't
+            // visually shift the surrounding layout.
+            'margin': '0 0 1em 0',
         },
         '& blockquote': {
             'font-size': 'var(--ezco-mde-text-base)',
@@ -227,10 +239,11 @@ export const styleModule: StyleModule = new StyleModule({
         '& ul, & ol, & menu': {
             padding: 0,
         },
-        // List item styles
+        // List item styles — bottom margin matches `& p` above so that
+        // toggling between paragraph and list doesn't change line height.
         '& li > p': {
             'margin-top': 0,
-            'margin-bottom': '1rem',
+            'margin-bottom': '1em',
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
         },
@@ -290,56 +303,73 @@ export const styleModule: StyleModule = new StyleModule({
             },
         },
     },
-    // Block-action overlay (cursor-following indicator + icon button)
-    '.ezco-mde-block-indicator': {
-        width: '2px',
-        background: 'var(--ezco-mde-block-indicator-color)',
-        'border-radius': '1px',
-        transition: 'top 120ms ease-out, height 120ms ease-out, opacity 120ms ease-out',
-        'z-index': 5,
-    },
+    // Block-action overlay — a tall narrow button that spans the full
+    // height of the active block. Its right border is the visible
+    // indicator line; the icon sits near the top (vertically aligned
+    // with the first line of the block via `--icon-offset-y`, set in
+    // JS); clicking anywhere on the button opens the action menu (so
+    // the whole indicator area is interactive, not just the icon).
     '.ezco-mde-block-action-btn': {
-        width: '24px',
-        height: '24px',
-        display: 'inline-flex',
-        'align-items': 'center',
+        width: '34px',
+        display: 'flex',
+        'align-items': 'flex-start',
         'justify-content': 'center',
-        background: 'var(--ezco-mde-block-action-btn-bg)',
+        // Inner padding leaves breathing room between the icon and the
+        // right-edge border (the indicator line), even for the widest
+        // glyphs we render (e.g. `</>`).
+        'padding-top': 'var(--ezco-mde-block-action-icon-offset-y, 6px)',
+        'padding-right': '8px',
+        'padding-left': '2px',
+        background: 'transparent',
         color: 'var(--ezco-mde-block-action-btn-color)',
-        border: '1px solid transparent',
-        'border-radius': '4px',
+        border: 'none',
+        'border-right': '2px solid var(--ezco-mde-block-indicator-color)',
         cursor: 'pointer',
         'font-family': 'var(--cm-font-family)',
-        'font-size': '12px',
+        'font-size': '13px',
         'line-height': 1,
-        padding: 0,
-        transition: 'top 120ms ease-out, opacity 120ms ease-out, background-color 120ms ease-out',
-        'z-index': 6,
+        transition:
+            'top 120ms ease-out, height 120ms ease-out, opacity 120ms ease-out, background-color 120ms ease-out, padding-top 120ms ease-out',
+        'z-index': 5,
     },
     '.ezco-mde-block-action-btn:hover': {
-        background: 'var(--ezco-mde-block-action-btn-bg-hover)',
-        color: 'currentColor',
+        // No background change on hover — the indicator stays unobtrusive.
+        // Brighten the indicator line and icon glyph instead so there's
+        // still some visual feedback that the button is interactive.
+        'border-right-color': 'rgba(220, 220, 220, 0.7)',
+        color: 'rgba(245, 245, 245, 0.95)',
     },
     '.ezco-mde-block-action-btn-icon': {
         'pointer-events': 'none',
+        // The icon stretches/squeezes its own width so multi-character
+        // glyphs like `</>` don't push outside the padded area.
+        'max-width': '100%',
+        'text-align': 'center',
     },
-    // Dropdown menu
-    '.ezco-mde-block-action-menu': {
+    // Generic context-menu component (also used by future menus —
+    // slash commands, link previews, etc.). Themed for a rich-text
+    // editor surface — sans-serif throughout, decoupled from the
+    // codeblock package's monospace toolbar vars.
+    '.ezco-mde-context-menu': {
         display: 'flex',
         'flex-direction': 'column',
-        'min-width': '180px',
+        'min-width': '200px',
         padding: '4px',
-        background: 'var(--cm-toolbar-background)',
-        color: 'var(--cm-toolbar-color)',
-        border: '1px solid var(--cm-tooltip-border)',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
         'border-radius': '6px',
-        'box-shadow': '0 8px 24px rgba(0, 0, 0, 0.25)',
+        'box-shadow': '0 8px 24px rgba(0, 0, 0, 0.45)',
+        outline: 'none',
+        // Sans-serif for the menu surface — the metaphor here is the
+        // rich-text editor's affordances, not the code editor's.
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
     },
-    '.ezco-mde-block-action-item': {
+    '.ezco-mde-context-menu-item': {
         display: 'flex',
         'align-items': 'center',
-        gap: '8px',
-        padding: '6px 8px',
+        gap: '10px',
+        padding: '7px 10px',
         background: 'transparent',
         color: 'inherit',
         border: 'none',
@@ -347,21 +377,34 @@ export const styleModule: StyleModule = new StyleModule({
         cursor: 'pointer',
         'font-family': 'inherit',
         'font-size': '13px',
+        'line-height': 1.3,
         'text-align': 'left',
+        outline: 'none',
     },
-    '.ezco-mde-block-action-item:hover': {
-        background: 'var(--cm-search-result-bg-hover)',
+    '.ezco-mde-context-menu-item:hover, .ezco-mde-context-menu-item:focus, .ezco-mde-context-menu-item:focus-visible': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+        outline: 'none',
     },
-    '.ezco-mde-block-action-item-icon': {
+    '.ezco-mde-context-menu-item[aria-disabled="true"]': {
+        opacity: 0.4,
+        cursor: 'default',
+    },
+    '.ezco-mde-context-menu-item-icon': {
         display: 'inline-flex',
         'align-items': 'center',
         'justify-content': 'center',
-        width: '18px',
-        'font-family': 'var(--cm-font-family)',
+        width: '20px',
+        // No monospace — keep the icon glyphs in the same family as
+        // the menu's labels for a coherent typographic feel.
+        'font-family': 'inherit',
         'font-size': '12px',
-        opacity: 0.8,
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        flex: 'none',
     },
-    '.ezco-mde-block-action-item-label': {
+    '.ezco-mde-context-menu-item:hover .ezco-mde-context-menu-item-icon, .ezco-mde-context-menu-item:focus .ezco-mde-context-menu-item-icon, .ezco-mde-context-menu-item:focus-visible .ezco-mde-context-menu-item-icon': {
+        color: 'inherit',
+    },
+    '.ezco-mde-context-menu-item-label': {
         flex: 1,
     },
     '.tippy-box[data-theme~="ezco-mde-block-actions"]': {

@@ -39,19 +39,23 @@ import Footer from "../../components/Footer.astro";
 			const { createCodeblock, SearchIndex } = await import("@joinezco/codeblock");
 
 			const fs = await getDemoFs();
+			// Shared search index between both codeblocks on this page so
+			// each consumer references the same instance instead of
+			// concurrently building/saving its own.
+			const index = await SearchIndex.get(fs, ".codeblock/index.json");
+
 			installMount.innerHTML = '';
 			installView = createCodeblock({
 				parent: installMount,
 				fs,
-				filepath: "install.codeblock.sh",
+				filepath: "install-cb.sh",
+				index,
 				cwd: "/",
 				dark: true,
-				toolbar: false,
 			});
 			slideInDemo(installMount);
 
 			container.innerHTML = '';
-			const index = await SearchIndex.get(fs, ".codeblock/index.json");
 			mainView = createCodeblock({
 				parent: container,
 				fs,
@@ -124,6 +128,8 @@ import Footer from "../../components/Footer.astro";
 		   `#codeblock-mount` adds an attribute selector to bring us to 1,3,0. */
 		#install-mount :global([data-theme="dark"] .cm-editor),
 		#install-mount :global(.cm-editor[data-theme="dark"]),
+		#install-mount :global([data-theme="dark"] .cm-toolbar-panel),
+		#install-mount :global(.cm-toolbar-panel[data-theme="dark"]),
 		#codeblock-mount :global([data-theme="dark"] .cm-editor),
 		#codeblock-mount :global(.cm-editor[data-theme="dark"]),
 		#codeblock-mount :global([data-theme="dark"] .cm-toolbar-panel),
@@ -133,9 +139,13 @@ import Footer from "../../components/Footer.astro";
 			   horizontally-scrolled code text underneath. */
 			--cm-gutter-background: #000000;
 			--cm-line-highlight: transparent;
-			--cm-toolbar-bg-dark: transparent;
-			--cm-toolbar-bg-light: transparent;
-			--cm-toolbar-background: transparent;
+			/* Toolbar gets a solid black background so it remains
+			   readable when stuck to the top of the viewport while the
+			   codeblock scrolls — a transparent toolbar would let the
+			   scrolling code text show through. */
+			--cm-toolbar-bg-dark: #000000;
+			--cm-toolbar-bg-light: #000000;
+			--cm-toolbar-background: #000000;
 		}
 
 		/* CodeMirror's baseTheme draws a focus outline on `.cm-editor.cm-focused`
@@ -155,6 +165,8 @@ import Footer from "../../components/Footer.astro";
 		   `.cm-editor`, so a scoped descendant selector is enough. They
 		   read `--cm-toolbar-background` (transparent here), so override
 		   the background directly. */
+		#install-mount :global(.cm-tooltip),
+		#install-mount :global(.cm-search-results),
 		#codeblock-mount :global(.cm-tooltip),
 		#codeblock-mount :global(.cm-search-results) {
 			background: #000000;

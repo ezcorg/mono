@@ -1,5 +1,26 @@
-import { CodeblockFS, type VfsInterface } from "@joinezco/codeblock";
+import { CodeblockFS, SearchIndex, type VfsInterface } from "@joinezco/codeblock";
 import { files } from "../pages/data/work.js";
+
+// `SearchIndex.get` doesn't cache — each caller builds and saves a new
+// instance. Multiple consumers on the same page (our two demo codeblocks
+// plus every codeblock embedded inside the markdown-editor's content)
+// then concurrently call `fs.writeFile('.codeblock/index.json', ...)`,
+// which the OPFS worker's sync access handle rejects with
+// `NoModificationAllowedError`. Dedup by path here so all consumers
+// share one Promise<SearchIndex> and only one save races to the file.
+const _searchIndexOrigGet = SearchIndex.get.bind(SearchIndex);
+const _searchIndexCache = new Map<string, Promise<SearchIndex>>();
+(SearchIndex as { get: typeof SearchIndex.get }).get = ((
+    fs: VfsInterface,
+    path: string,
+) => {
+    let cached = _searchIndexCache.get(path);
+    if (!cached) {
+        cached = _searchIndexOrigGet(fs, path);
+        _searchIndexCache.set(path, cached);
+    }
+    return cached;
+}) as typeof SearchIndex.get;
 
 // Shared singleton for the `ezco-demo` OPFS bucket.
 //

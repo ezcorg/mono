@@ -189,7 +189,12 @@ const allPostsData = posts.map((post) => ({
 	<Footer slot="footer" />
 
 	<script define:vars={{ allPostsData }}>
-		document.addEventListener('DOMContentLoaded', function () {
+		// `astro:page-load` instead of `DOMContentLoaded` so the post
+		// list also renders after ClientRouter SPA navigations into
+		// `/blog` — `DOMContentLoaded` only fires on hard reloads, and
+		// `define:vars` makes this script inline, so it's not bundled
+		// or re-run via `astro-rerun` mechanisms.
+		function initBlogPage() {
 			const searchForm = document.querySelector('form[action="/blog"]');
 			const searchInput = document.querySelector('input[name="search"]');
 			const postsContainer = document.getElementById(
@@ -426,6 +431,12 @@ const allPostsData = posts.map((post) => ({
 				window.addEventListener('resize', function () {
 					updateInputWidth();
 				});
+			}
+		}
+
+		document.addEventListener('astro:page-load', function () {
+			if (location.pathname.replace(/\/$/, '') === '/blog') {
+				initBlogPage();
 			}
 		});
 	</script>
