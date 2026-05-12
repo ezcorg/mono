@@ -16,6 +16,7 @@ import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
+import { copyButtonExtension } from "./panels/copy-button";
 import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
 import type { EditorSettings } from "./panels/settings";
 import { createAiExtension, reconfigureAi } from "./ai/extension";
@@ -101,6 +102,12 @@ export type CodeblockConfig = {
     };
     /** jswasi configuration. When provided, enables the "Open terminal" command. */
     jswasi?: JswasiConfig;
+    /** Show a hover-revealed copy-to-clipboard button in the top-right
+     *  of the editor. Particularly useful for short shell snippets where
+     *  the editor acts as a "code to run" rather than a workspace.
+     *  When unset, defaults to `true` for `.sh` files and `false`
+     *  otherwise. */
+    copyButton?: boolean;
 };
 export type CreateCodeblockArgs = CodeblockConfig & {
     parent: HTMLElement;
@@ -199,7 +206,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, settings, typescript, jswasi }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, settings, typescript, jswasi, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -207,6 +214,8 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     }
     const showLineNums = resolvedSettings.showLineNumbers !== false; // default true
     const showFold = resolvedSettings.showFoldGutter !== false; // default true
+    // Default-on for .sh; opt-in for everything else.
+    const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
         configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })),
@@ -230,6 +239,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         keymap.of(navigationKeymap.concat([indentWithTab])),
         vscodeLightDark,
         searchResultsField,
+        ...(wantsCopyButton ? [copyButtonExtension] : []),
     ];
 };
 

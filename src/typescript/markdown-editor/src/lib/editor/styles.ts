@@ -102,64 +102,65 @@ export const styleModule: StyleModule = new StyleModule({
             cursor: 'pointer',
         },
 
-        // Typography styles for Markdown elements using modular scale
+        // Block-level vertical rhythm uses *top-only* margins driven by
+        // the `& .ProseMirror > * + *` rules near the bottom of this
+        // block: each element declares its own size/weight/font here,
+        // but spacing between two adjacent blocks is owned by the
+        // *transition* (the `+` rule), not by either block alone.
+        // That means converting a paragraph to a list, a heading to a
+        // paragraph, etc. doesn't shift surrounding layout, and the
+        // last block always sits flush at the document's bottom edge.
         '& h1': {
             'font-size': 'var(--ezco-mde-text-4xl)',
             'line-height': 'var(--ezco-mde-leading-tight)',
-            'margin': '0.67em 0',
+            margin: 0,
             'font-weight': 'bold',
         },
         '& h2': {
             'font-size': 'var(--ezco-mde-text-3xl)',
             'line-height': 'var(--ezco-mde-leading-tight)',
-            'margin': '0.75em 0 0.5em 0',
+            margin: 0,
             'font-weight': 'bold',
         },
         '& h3': {
             'font-size': 'var(--ezco-mde-text-2xl)',
             'line-height': 'var(--ezco-mde-leading-snug)',
-            'margin': '0.83em 0 0.5em 0',
+            margin: 0,
             'font-weight': 'bold',
         },
         '& h4': {
             'font-size': 'var(--ezco-mde-text-xl)',
             'line-height': 'var(--ezco-mde-leading-snug)',
-            'margin': '1em 0 0.5em 0',
+            margin: 0,
             'font-weight': 'bold',
         },
         '& h5': {
             'font-size': 'var(--ezco-mde-text-lg)',
             'line-height': 'var(--ezco-mde-leading-normal)',
-            'margin': '1.17em 0 0.5em 0',
+            margin: 0,
             'font-weight': 'bold',
         },
         '& h6': {
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-normal)',
-            'margin': '1.33em 0 0.5em 0',
+            margin: 0,
             'font-weight': 'bold',
         },
         '& p': {
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
-            // Bottom-only margin (matching `li > p` below) so converting a
-            // paragraph into a list item (`*` input rule, etc.) doesn't
-            // visually shift the surrounding layout.
-            'margin': '0 0 1em 0',
+            margin: 0,
         },
         '& blockquote': {
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
-            'margin': '1.5em 0',
-            'padding': '0 1em',
+            margin: 0,
+            padding: '0 1em',
             'border-left': '4px solid #ddd',
         },
-        // Strip the trailing margin off whatever's last inside the
-        // blockquote (typically a `<p>` whose `1em` bottom margin would
-        // otherwise leave a chunk of empty space below the text but
-        // still inside the quoted region's border-left).
-        '& blockquote > :last-child': {
-            'margin-bottom': 0,
+        // Multi-paragraph quotes: keep the inter-paragraph rhythm.
+        '& blockquote > * + *': {
+            'margin-top': '1em',
         },
         '& small': {
             'font-size': 'var(--ezco-mde-text-sm)',
@@ -168,7 +169,7 @@ export const styleModule: StyleModule = new StyleModule({
 
         // Codeblock styles
         '& .cm-editor': {
-            margin: '2rem 0',
+            margin: 0,
             border: '2px solid var(--ezco-mde-table-bg)'
         },
 
@@ -181,21 +182,21 @@ export const styleModule: StyleModule = new StyleModule({
             '-webkit-box-decoration-break': 'clone',
             'box-decoration-break': 'clone',
         },
-        // Table styles
-        '&.tableWrapper': {
-            margin: '1.5rem 0',
+        // Table styles. (The `tableWrapper` selector was previously
+        // written `&.tableWrapper`, which compounds on `.ezco-mde`
+        // itself and never matches the ProseMirror-emitted wrapper —
+        // fixed here to `& .tableWrapper`.)
+        '& .tableWrapper': {
+            margin: 0,
             'overflow-x': 'auto'
         },
         '& table': {
             "border-collapse": "collapse",
             "width": "100%",
-            "margin": "2em 0",
+            margin: 0,
             border: '2px solid var(--ezco-mde-table-bg)',
             overflow: 'hidden',
             'table-layout': 'fixed',
-            '& p': {
-                margin: 0
-            },
 
             '& > .column-resize-handle': {
                 'background-color': 'red',
@@ -235,54 +236,29 @@ export const styleModule: StyleModule = new StyleModule({
             },
             cursor: 'col-resize',
         },
-        // Tight list styles. Margins are written as individual
-        // properties (no shorthand) so that `margin-top` is left to
-        // the cascade — the base `& ul, & ol, & menu` rule keeps it
-        // at 0 for top-level tight lists, and `& li > ul` overrides
-        // it to `1em` for *nested* tight lists. Using a `margin:`
-        // shorthand here (which implicitly sets `margin-top: 0`)
-        // would block that override because the `.tight` class beats
-        // `li > ul` on specificity.
+        // Tight list horizontal indent. No vertical margin here —
+        // top-level spacing is owned by the `.ProseMirror > * + *`
+        // rules, nested spacing by the `li > ul/ol/menu` rule below.
         '& .tight': {
             'margin-left': '18px',
             'margin-right': '18px',
-            'margin-bottom': '1em',
             '& li': {
                 'padding-left': '2px',
             },
         },
-        // List styles. The margin + font-size match `& p` above so a
-        // single-line paragraph and a single-item list occupy the
-        // same vertical space — converting between them (typing `*`
-        // to turn a paragraph into a list, or backspace-ing out of a
-        // list back to a paragraph) doesn't shift the surrounding
-        // layout. Without these, the browser default
-        // `margin-block-start: 1em` adds a chunk of space above lists,
-        // and `1em` on `<ul>` resolves to its own (16px) font-size
-        // while `1em` on `<p>` resolves to 20px, so the bottom margins
-        // look identical in CSS but render at different sizes.
+        // List base — zero margin; vertical rhythm comes from the
+        // sibling `+` rules. Font-size matches `& p` so converting a
+        // paragraph to a list doesn't shift layout (also dodges the
+        // browser default `margin-block-start: 1em` and the fact that
+        // `1em` resolves differently on `<ul>` vs `<p>` when they
+        // have different inherited font-sizes).
         '& ul, & ol, & menu': {
             padding: 0,
-            margin: '0 0 1em 0',
-            'font-size': 'var(--ezco-mde-text-base)',
-            'line-height': 'var(--ezco-mde-leading-relaxed)',
-        },
-        // List item paragraphs are margin-free; vertical rhythm
-        // between items comes from a `margin-top` on subsequent
-        // siblings (see the `li + li` rule below) instead of a
-        // `margin-bottom` on every item. With `margin-bottom`, the
-        // last item still pushed empty space down past the visible
-        // text, making lists feel bottom-heavy; switching to
-        // `margin-top` on "every item except the first" gives the
-        // same inter-item spacing without the trailing gap.
-        '& li > p': {
             margin: 0,
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
         },
-        // Multi-paragraph list items: keep the inter-paragraph rhythm
-        // by giving subsequent paragraphs within the same `<li>` a
-        // top margin (mirrors the inter-item rule).
+        // Multi-paragraph list items: keep the inter-paragraph rhythm.
         '& li > p + p': {
             'margin-top': '1em',
         },
@@ -294,24 +270,11 @@ export const styleModule: StyleModule = new StyleModule({
             {
                 'margin-top': '1em',
             },
-        // Nested non-task lists: give the nested list a top margin so
-        // it doesn't sit flush against the parent item's paragraph.
-        // Task lists handle this via their own
-        // `p + ul[data-type="taskList"]` rule below.
+        // Nested non-task lists: top margin so the nested list doesn't
+        // sit flush against the parent item's paragraph.
         '& li > ul, & li > ol, & li > menu': {
             'margin-top': '1em',
         },
-        // Strip the trailing bottom margin off the last child of a
-        // list item's content area, so a nested list (or final
-        // paragraph) doesn't compound its `margin-bottom` with the
-        // following item's `margin-top`. Regular lists put content
-        // directly inside `<li>`; task items wrap content in a `<div>`
-        // (the NodeView's contentDOM), so we also target the last
-        // child of that wrapper.
-        '& li > :last-child, & ul[data-type="taskList"] li > div > :last-child':
-            {
-                'margin-bottom': 0,
-            },
         // Task list styles
         '& li[data-checked="true"]>div>p': {
             "text-decoration": "line-through",
@@ -320,13 +283,9 @@ export const styleModule: StyleModule = new StyleModule({
         '& ul[data-type="taskList"]': {
             'list-style': 'none',
             'padding': 0,
-            // Bottom margin matches `& ul, & ol, & menu` above so a
-            // paragraph ↔ task-list conversion doesn't shift layout.
-            'margin': '0 0 1em 0',
+            margin: 0,
+            'margin-top': '1em',
 
-            '& p': {
-                'margin': 0,
-            },
             '& p + ul[data-type="taskList"]': {
                 'margin-top': '0.75em'
             },
@@ -365,6 +324,52 @@ export const styleModule: StyleModule = new StyleModule({
                 background: 'Highlight',
             },
         },
+
+        // ─────────────────────────────────────────────────────────────
+        // Top-only block spacing.
+        //
+        // Every block-level element above has `margin: 0`; this is
+        // where the visible vertical rhythm of the document is
+        // actually defined. The pattern: the gap between two adjacent
+        // blocks is a property of the *transition*, not of either
+        // block. So we set `margin-top` on the *following* sibling,
+        // varied by what each side is.
+        //
+        // Selectors use `& > …` directly: `editor.view.dom` is the
+        // ProseMirror element, and `createEditor` adds the `.ezco-mde`
+        // class onto that same element — so `.ezco-mde` and
+        // `.ProseMirror` always live on one element, not nested. A
+        // descendant selector like `.ezco-mde .ProseMirror > h2` would
+        // match nothing.
+        //
+        // Benefits: no margin-collapsing surprises, `:last-child`
+        // resets become unnecessary, the document hugs its bottom
+        // edge, and converting a paragraph ↔ heading ↔ list ↔ quote
+        // doesn't shift the document below.
+        // ─────────────────────────────────────────────────────────────
+        '& > * + *': { 'margin-top': '1em' },
+        // Body content that immediately follows a heading hugs it — a
+        // heading "owns" its body, so the intro paragraph / list / etc.
+        // should feel attached, not floating below. Scoped to non-heading
+        // followers so a sub-heading after a heading still gets its full
+        // top margin from the `* + h*` rules below.
+        '& > :is(h1, h2, h3, h4, h5, h6) + :not(h1, h2, h3, h4, h5, h6)':
+            {
+                'margin-top': '1em',
+            },
+        // Inset blocks want extra breathing room above (overrides the
+        // base 1em — these read as standalone surfaces).
+        '& > * + .cm-editor, & > * + .tableWrapper, & > * + blockquote':
+            {
+                'margin-top': '1.5em',
+            },
+        // Headings always claim their own top margin, even when
+        // following another heading. Declared last so they win over
+        // the `h* + *` tightening (same specificity, later cascade).
+        '& > * + h1': { 'margin-top': '1.5em' },
+        '& > * + h2': { 'margin-top': '1.2em' },
+        '& > * + h3': { 'margin-top': '1em' },
+        '& > * + h4, & > * + h5, & > * + h6': { 'margin-top': '0.8em' },
     },
     // Block-action overlay — a tall narrow button that spans the full
     // height of the active block. Its right border is the visible

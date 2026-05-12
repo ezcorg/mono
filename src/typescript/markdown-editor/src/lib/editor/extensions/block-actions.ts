@@ -599,7 +599,11 @@ class BlockActionsView {
         const iconOffsetY = computeIconOffsetY(dom)
 
         this.btn.style.top = `${top}px`
-        this.btn.style.left = '-40px'
+        // Position so the vertical indicator line (the button's right
+        // border) sits 8px away from the editor content — matching the
+        // 8px `padding-right` between the icon and that same line, so
+        // the gap is visually symmetric on either side.
+        this.btn.style.left = '-42px'
         this.btn.style.height = `${height}px`
         this.btn.style.opacity = '1'
         this.btn.style.setProperty(

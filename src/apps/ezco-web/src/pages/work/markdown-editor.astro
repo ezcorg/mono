@@ -206,12 +206,14 @@ import Footer from "../../components/Footer.astro";
 			flex: 1;
 		}
 
-		/* Tighten margins for embedded components */
-		#editor-mount :global(.cm-editor) {
-			margin: 1rem 0;
-		}
+		/* Embedded codeblocks and tables get a slightly wider top
+		   margin than the package default (1.5em → 1rem) to feel
+		   more inset on the dark demo surface. Top-only — bottom
+		   margins are owned by the *next* block's `margin-top`. */
+		#editor-mount :global(.cm-editor),
 		#editor-mount :global(table) {
-			margin: 1rem 0;
+			margin-top: 1rem;
+			margin-bottom: 0;
 		}
 
 		.loading-indicator {

@@ -404,4 +404,102 @@ export const codeblockTheme = EditorView.theme({
         overflow: 'hidden',
         transition: 'max-height 0.15s ease-out',
     },
+    // ── Toolbar-mode copy affordance ────────────────────────────────
+    // The state-icon's nerd-font glyph is hidden by setting
+    // `color: transparent` (keeps the text node in the DOM — see the
+    // comment in panels/copy-button.ts for why that matters) and
+    // overlaid with an absolutely-positioned SVG. The state-icon's
+    // own padding, width, display, and text-align are untouched,
+    // so the toolbar row's height is identical between modes — no
+    // codeblock-bounds shift, no block-action indicator drift.
+    '.cm-toolbar-state-icon.cm-copy-icon-active': {
+        color: 'transparent',
+        cursor: 'pointer',
+        position: 'relative',
+    },
+    '.cm-copy-icon-overlay': {
+        // Center the SVG over the glyph's character cell rather than
+        // right-aligning the box. The glyph sits in a `1ch`-wide cell
+        // whose right edge is at `padding-right` (= `calc(1ch + 3px)`)
+        // from the container's right; the cell's *center* is therefore
+        // at `calc(1.5ch + 3px)` from the right. Anchor the SVG's
+        // center there with `right` + `translateX(50%)`. This matters
+        // because `1ch` is typically narrower than `1em` (nerd-font's
+        // monospace `ch` ≈ 0.6em), so right-aligning a 1em-wide SVG
+        // puts its visible *center* a few pixels left of the glyph's
+        // visible center — exactly the offset users notice.
+        position: 'absolute',
+        top: '50%',
+        // `calc(1.5ch + 3px)` puts the SVG center on the glyph cell's
+        // center mathematically; the subtracted `2px` nudges it
+        // slightly right to land on the nerd-font glyph's *visible*
+        // center (the search icon's ink isn't perfectly centered in
+        // its character cell — sits a touch left of geometric centre).
+        right: 'calc(1.5ch + 1px)',
+        transform: 'translate(50%, -50%)',
+        width: '1em',
+        height: '1em',
+        display: 'block',
+        color: 'var(--cm-foreground)',
+        // The overlay paints, but doesn't capture clicks — the
+        // state-icon parent owns the hit area, ensuring the click
+        // handler also fires when the user clicks the (transparent)
+        // text underneath the SVG.
+        pointerEvents: 'none',
+    },
+    '.cm-copy-icon-overlay > svg': {
+        width: '100%',
+        height: '100%',
+        display: 'block',
+    },
+    '.cm-toolbar-state-icon.cm-copy-icon-active:hover .cm-copy-icon-overlay': {
+        color: 'var(--cm-search-result-color-hover, var(--cm-foreground))',
+    },
+    '.cm-toolbar-state-icon.cm-copy-icon-success .cm-copy-icon-overlay': {
+        color: '#3fb950',
+    },
+    // ── Inline-mode copy button (no toolbar) ────────────────────────
+    // Floating button positioned at the end of the first text line.
+    // `top` and `left` are set inline by JS based on the line's
+    // measured end-coordinates; CSS owns size, appearance, and the
+    // hover-reveal transition.
+    '.cm-copy-button-inline': {
+        position: 'absolute',
+        zIndex: 20,
+        width: '24px',
+        height: '24px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxSizing: 'border-box',
+        padding: 0,
+        border: '1px solid var(--cm-tooltip-border, rgba(128, 128, 128, 0.3))',
+        borderRadius: '4px',
+        background: 'var(--cm-toolbar-background, transparent)',
+        color: 'var(--cm-toolbar-color, currentColor)',
+        cursor: 'pointer',
+        lineHeight: 1,
+        opacity: '0',
+        transition: 'opacity 120ms ease-out, color 120ms ease-out, background-color 120ms ease-out',
+        // While hidden, click-through so the corner isn't a dead zone.
+        pointerEvents: 'none',
+    },
+    '.cm-copy-button-inline > svg': {
+        width: '13px',
+        height: '13px',
+        display: 'block',
+        pointerEvents: 'none',
+    },
+    '&:hover .cm-copy-button-inline, &:focus-within .cm-copy-button-inline': {
+        opacity: '1',
+        pointerEvents: 'auto',
+    },
+    '.cm-copy-button-inline:hover': {
+        background: 'var(--cm-search-result-bg-hover, rgba(128, 128, 128, 0.15))',
+    },
+    '.cm-copy-button-inline.cm-copy-button-success': {
+        opacity: '1',
+        pointerEvents: 'auto',
+        color: '#3fb950',
+    },
 });
