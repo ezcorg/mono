@@ -5,4 +5,5 @@ export { ContextMenu } from './editor/ui/context-menu';
 export type {
     ContextMenuItem,
     ContextMenuOptions,
+    ContextMenuCloseReason,
 } from './editor/ui/context-menu';

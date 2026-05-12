@@ -154,6 +154,13 @@ export const styleModule: StyleModule = new StyleModule({
             'padding': '0 1em',
             'border-left': '4px solid #ddd',
         },
+        // Strip the trailing margin off whatever's last inside the
+        // blockquote (typically a `<p>` whose `1em` bottom margin would
+        // otherwise leave a chunk of empty space below the text but
+        // still inside the quoted region's border-left).
+        '& blockquote > :last-child': {
+            'margin-bottom': 0,
+        },
         '& small': {
             'font-size': 'var(--ezco-mde-text-sm)',
             'line-height': 'var(--ezco-mde-leading-normal)',
@@ -228,29 +235,83 @@ export const styleModule: StyleModule = new StyleModule({
             },
             cursor: 'col-resize',
         },
-        // Tight list styles
+        // Tight list styles. Margins are written as individual
+        // properties (no shorthand) so that `margin-top` is left to
+        // the cascade — the base `& ul, & ol, & menu` rule keeps it
+        // at 0 for top-level tight lists, and `& li > ul` overrides
+        // it to `1em` for *nested* tight lists. Using a `margin:`
+        // shorthand here (which implicitly sets `margin-top: 0`)
+        // would block that override because the `.tight` class beats
+        // `li > ul` on specificity.
         '& .tight': {
-            margin: '0 18px',
+            'margin-left': '18px',
+            'margin-right': '18px',
+            'margin-bottom': '1em',
             '& li': {
                 'padding-left': '2px',
-            }
+            },
         },
-        // List styles
+        // List styles. The margin + font-size match `& p` above so a
+        // single-line paragraph and a single-item list occupy the
+        // same vertical space — converting between them (typing `*`
+        // to turn a paragraph into a list, or backspace-ing out of a
+        // list back to a paragraph) doesn't shift the surrounding
+        // layout. Without these, the browser default
+        // `margin-block-start: 1em` adds a chunk of space above lists,
+        // and `1em` on `<ul>` resolves to its own (16px) font-size
+        // while `1em` on `<p>` resolves to 20px, so the bottom margins
+        // look identical in CSS but render at different sizes.
         '& ul, & ol, & menu': {
             padding: 0,
+            margin: '0 0 1em 0',
+            'font-size': 'var(--ezco-mde-text-base)',
+            'line-height': 'var(--ezco-mde-leading-relaxed)',
         },
-        // List item styles — bottom margin matches `& p` above so that
-        // toggling between paragraph and list doesn't change line height.
+        // List item paragraphs are margin-free; vertical rhythm
+        // between items comes from a `margin-top` on subsequent
+        // siblings (see the `li + li` rule below) instead of a
+        // `margin-bottom` on every item. With `margin-bottom`, the
+        // last item still pushed empty space down past the visible
+        // text, making lists feel bottom-heavy; switching to
+        // `margin-top` on "every item except the first" gives the
+        // same inter-item spacing without the trailing gap.
         '& li > p': {
-            'margin-top': 0,
-            'margin-bottom': '1em',
+            margin: 0,
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
         },
-        '& ol > li > p, & ul > li > p': {
-            'font-size': 'var(--ezco-mde-text-base)',
-            'line-height': 'var(--ezco-mde-leading-relaxed)',
+        // Multi-paragraph list items: keep the inter-paragraph rhythm
+        // by giving subsequent paragraphs within the same `<li>` a
+        // top margin (mirrors the inter-item rule).
+        '& li > p + p': {
+            'margin-top': '1em',
         },
+        // Only target rich-text lists — exclude anything nested inside
+        // a CodeMirror editor (the codeblock's search-results dropdown
+        // is a `<ul>` inside `.cm-editor`, and was getting the same
+        // top margin and rendering as overly spaced rows).
+        '& ul:not(.cm-editor *) > li + li, & ol:not(.cm-editor *) > li + li, & menu:not(.cm-editor *) > li + li':
+            {
+                'margin-top': '1em',
+            },
+        // Nested non-task lists: give the nested list a top margin so
+        // it doesn't sit flush against the parent item's paragraph.
+        // Task lists handle this via their own
+        // `p + ul[data-type="taskList"]` rule below.
+        '& li > ul, & li > ol, & li > menu': {
+            'margin-top': '1em',
+        },
+        // Strip the trailing bottom margin off the last child of a
+        // list item's content area, so a nested list (or final
+        // paragraph) doesn't compound its `margin-bottom` with the
+        // following item's `margin-top`. Regular lists put content
+        // directly inside `<li>`; task items wrap content in a `<div>`
+        // (the NodeView's contentDOM), so we also target the last
+        // child of that wrapper.
+        '& li > :last-child, & ul[data-type="taskList"] li > div > :last-child':
+            {
+                'margin-bottom': 0,
+            },
         // Task list styles
         '& li[data-checked="true"]>div>p': {
             "text-decoration": "line-through",
@@ -259,7 +320,9 @@ export const styleModule: StyleModule = new StyleModule({
         '& ul[data-type="taskList"]': {
             'list-style': 'none',
             'padding': 0,
-            'margin': 0,
+            // Bottom margin matches `& ul, & ol, & menu` above so a
+            // paragraph ↔ task-list conversion doesn't shift layout.
+            'margin': '0 0 1em 0',
 
             '& p': {
                 'margin': 0,

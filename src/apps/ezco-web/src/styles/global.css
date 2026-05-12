@@ -133,10 +133,12 @@ body {
         cursor: pointer;
     }
 
-    li>p {
-        margin-top: 0;
-        margin-bottom: 1rem;
-    }
+    /* `li > p` margins are owned by the markdown-editor package now —
+       it uses `margin-top` on subsequent items (rather than
+       `margin-bottom` on every item) so lists hug their last line.
+       Leaving the previous `margin-bottom: 1rem` rule here was
+       winning the cascade against the package's `margin: 0` and
+       reintroducing the trailing gap. */
 
     ol,
     ul,

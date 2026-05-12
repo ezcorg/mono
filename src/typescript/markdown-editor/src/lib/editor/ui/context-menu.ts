@@ -20,10 +20,16 @@ export interface ContextMenuItem {
     onSelect: () => void
 }
 
+export type ContextMenuCloseReason = 'escape' | 'tab'
+
 export interface ContextMenuOptions {
     items: ContextMenuItem[]
     className?: string
-    onClose?: () => void
+    /** Fires when the user dismisses the menu without selecting an
+     *  item — currently via Escape or Tab. Consumers can use the
+     *  reason to decide whether to e.g. return focus to the previous
+     *  caller. */
+    onClose?: (reason: ContextMenuCloseReason) => void
 }
 
 export class ContextMenu {
@@ -160,13 +166,13 @@ export class ContextMenu {
             case 'Escape':
                 e.preventDefault()
                 e.stopPropagation()
-                this.options.onClose?.()
+                this.options.onClose?.('escape')
                 break
             case 'Tab':
                 // Close on Tab so focus returns to the page rather than
                 // wandering through other menu items + losing context.
                 e.preventDefault()
-                this.options.onClose?.()
+                this.options.onClose?.('tab')
                 break
         }
     }

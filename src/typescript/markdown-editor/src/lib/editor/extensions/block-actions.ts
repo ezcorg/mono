@@ -1,5 +1,5 @@
 import { Editor, Extension } from '@tiptap/core'
-import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, PluginKey, type Selection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
@@ -230,8 +230,17 @@ function actionsForNode(node: PMNode): BlockAction[] {
         label: 'Delete',
         icon: '✕',
         run: ({ editor, pos, node }) => {
-            const tr = editor.state.tr.delete(pos, pos + node.nodeSize)
-            editor.view.dispatch(tr)
+            // Use TipTap's command chain (not a raw `tr.delete` dispatch)
+            // so the editor regains focus and ProseMirror maps the
+            // selection to a sensible cursor position after the delete.
+            // The previous raw-transaction implementation left no
+            // selection / no focus, forcing the user to click back
+            // into the editor before they could keep typing.
+            editor
+                .chain()
+                .deleteRange({ from: pos, to: pos + node.nodeSize })
+                .focus()
+                .run()
         },
     }
 
@@ -377,6 +386,14 @@ class BlockActionsView {
     // window.
     private isOpen = false
     private lastOpenTime = 0
+    // When opening the menu we have to focus a menu item, which pulls
+    // the browser selection out of ProseMirror. ProseMirror's
+    // `state.selection` is preserved in state, but when focus comes
+    // back to the editor it syncs from the DOM selection — which is
+    // now wherever the menu put it — and the original cursor position
+    // is lost. We stash the selection on open and re-dispatch it on
+    // close (Esc / Tab) so the cursor lands where the user left it.
+    private savedSelection: Selection | null = null
     private activeNode: PMNode | null = null
     private activePos = -1
     private wrapperHadRelative = false
@@ -624,6 +641,10 @@ class BlockActionsView {
         }
         this.isOpen = true
         this.lastOpenTime = now
+        // Snapshot the editor selection BEFORE we move focus into the
+        // menu. Esc-close uses this to put the cursor back exactly
+        // where the user was.
+        this.savedSelection = this.editor.state.selection
 
         // Refresh active-block resolution; the keyboard path doesn't go
         // through the usual update/reposition cycle.
@@ -639,15 +660,26 @@ class BlockActionsView {
                 label: action.label,
                 icon: action.icon,
                 onSelect: () => {
+                    // Action runs its own `.focus()` chain, which
+                    // re-focuses the editor at the (possibly changed)
+                    // selection — so we don't need `restoreEditorFocus`
+                    // here, just close.
                     this.closeMenu()
                     action.run({
                         editor: this.editor,
                         pos: activePos,
                         node: activeNode,
                     })
+                    // Belt-and-suspenders: ensure the editor regains
+                    // focus regardless of how the action was
+                    // implemented. Actions that already chained
+                    // `.focus()` no-op here; raw-dispatch actions
+                    // (which would otherwise leave focus stranded on
+                    // the now-destroyed menu item) get rescued.
+                    this.editor.view.focus()
                 },
             })),
-            onClose: () => this.closeMenu(),
+            onClose: () => this.closeMenu({ restoreEditorFocus: true }),
         })
         this.activeMenu = menu
 
@@ -725,9 +757,26 @@ class BlockActionsView {
         }
     }
 
-    public closeMenu() {
+    public closeMenu(opts: { restoreEditorFocus?: boolean } = {}) {
         if (!this.isOpen) return
         this.isOpen = false
+        if (opts.restoreEditorFocus && this.savedSelection) {
+            // Re-dispatch the captured selection BEFORE focusing. If we
+            // only called `editor.view.focus()` the editor would sync
+            // its `state.selection` from the current DOM selection,
+            // which is wherever the menu placed it — losing the
+            // original cursor position. Dispatching first plus
+            // focusing puts the cursor exactly where the user left it.
+            try {
+                const tr = this.editor.state.tr.setSelection(this.savedSelection)
+                this.editor.view.dispatch(tr)
+            } catch {
+                // Selection is no longer valid (doc shape changed) —
+                // ignore, just focus the editor.
+            }
+            this.editor.view.focus()
+        }
+        this.savedSelection = null
         this.popup?.hide()
     }
 
