@@ -12,6 +12,7 @@ import { ExtendedLink } from './extensions/link';
 import { SlashCommands } from './extensions/slash-commands';
 import { Toolbar, ToolbarOptions } from './extensions/toolbar';
 import { InlineCodeExit } from './extensions/inline-code';
+import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions } from './extensions/block-actions';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
@@ -66,6 +67,11 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 // bulletList: false, // As Markdown handles bullet lists and allows us to configure the marker to prevent task item conflicts
             }),
             InlineCodeExit,
+            // Must come before `Markdown` so our higher-priority
+            // clipboardTextParser runs first and handles block-level
+            // paste content (bulleted "* test", headings, etc.) that
+            // tiptap-markdown's hardcoded `inline: true` parser drops.
+            MarkdownBlockPaste,
             Markdown.configure({
                 html: false,
                 tightLists: true,

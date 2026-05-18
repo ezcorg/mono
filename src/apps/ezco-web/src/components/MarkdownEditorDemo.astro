@@ -1,0 +1,213 @@
+---
+// The footer (slotted into `DualColumnLayout`'s `footer` slot) is
+// rendered by the consuming page, not by this component — `slot`
+// attributes only resolve against the *immediate* parent component's
+// named slots, and `MarkdownEditorDemo` itself has no footer slot.
+---
+
+<div class="demo-container bg-[#1e1e1e]">
+    <div id="editor-mount">
+        <div class="loading-indicator"><div class="loading-bar"></div></div>
+    </div>
+</div>
+
+<script>
+    import { getDemoFs } from "../scripts/demo-fs";
+    import { slideInDemo } from "../scripts/demo-anim";
+
+    let editor: any = null;
+
+    async function mount() {
+        const container = document.getElementById("editor-mount");
+        if (!container) return;
+        if (editor) {
+            try { editor.destroy(); } catch {}
+            editor = null;
+        }
+        container.innerHTML = '<div class="loading-indicator"><div class="loading-bar"></div></div>';
+
+        const fs = await getDemoFs();
+        const { createEditor } = await import("@joinezco/markdown-editor");
+        container.innerHTML = '';
+        editor = createEditor({
+            element: container,
+            autofocus: false,
+            fs: {
+                fs,
+                filepath: "hello.md",
+                // Debounced persistence: every edit writes back to
+                // the OPFS-backed demo filesystem after 500ms.
+                autoSave: true,
+            },
+            toolbar: {},
+        });
+        editor.view.dom.setAttribute("data-theme", "dark");
+        slideInDemo(container);
+    }
+
+    mount().catch(console.error);
+    document.addEventListener("astro:page-load", () => {
+        if (location.pathname.replace(/\/$/, "") === "/work/markdown-editor") {
+            mount().catch(console.error);
+        }
+    });
+    document.addEventListener("astro:before-swap", () => {
+        if (editor) {
+            try { editor.destroy(); } catch {}
+            editor = null;
+        }
+    });
+</script>
+
+<style>
+    @font-face {
+        font-family: "Source Serif 4";
+        src: url("/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf") format("truetype-variations");
+        font-weight: 200 900;
+        font-style: normal;
+    }
+
+    @font-face {
+        font-family: "Source Serif 4";
+        src: url("/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf") format("truetype-variations");
+        font-weight: 200 900;
+        font-style: italic;
+    }
+
+    #editor-mount :global(.ProseMirror) {
+        font-family: 'Source Serif 4', system-ui, Avenir, Helvetica, Arial, serif;
+    }
+
+    /* Override codeblock CSS variables to make embedded code editors
+       transparent. Needs higher specificity than the package's
+       `[data-theme="dark"] .cm-editor` selector (0,2,0); the scoped
+       `#editor-mount` adds an attribute selector to bring us to 1,3,0. */
+    #editor-mount :global([data-theme="dark"] .cm-editor),
+    #editor-mount :global(.cm-editor[data-theme="dark"]),
+    #editor-mount :global([data-theme="dark"] .cm-toolbar-panel),
+    #editor-mount :global(.cm-toolbar-panel[data-theme="dark"]) {
+        --cm-background: transparent;
+        --cm-gutter-background: #000000;
+        --cm-line-highlight: transparent;
+        --cm-toolbar-bg-dark: #000000;
+        --cm-toolbar-bg-light: #000000;
+        --cm-toolbar-background: #000000;
+    }
+
+    /* CodeMirror's baseTheme draws a focus outline on `.cm-editor.cm-focused`
+       and a gray default background on `.cm-panels`. Suppress both. We
+       do NOT clear `.cm-panel` here — CM adds that class to every
+       panel-dom including our `.cm-toolbar-panel`, so wiping it would
+       also wipe the toolbar's own background. */
+    #editor-mount :global(.cm-editor.cm-focused) {
+        outline: none;
+    }
+    #editor-mount :global(.cm-panels) {
+        background: transparent;
+    }
+
+    #editor-mount :global(.cm-lineNumbers .cm-gutterElement) {
+        padding: 0 3px 0 0px;
+    }
+
+    #editor-mount :global(.ezco-mde[data-theme="dark"]),
+    #editor-mount :global([data-theme="dark"] .ezco-mde) {
+        --ezco-mde-bg: transparent;
+        --ezco-mde-code-bg: #ffffff;
+        --ezco-mde-table-bg: transparent;
+        --ezco-mde-base-font-size: 1.25rem;
+        --cm-font-size: 1.25rem;
+    }
+
+    #editor-mount :global(.ezco-mde li:not(.cm-search-result)::marker) {
+        font-size: var(--ezco-mde-text-base);
+    }
+
+    #editor-mount :global(.ezco-mde > :not(.cm-editor) code) {
+        color: #1e1e1e;
+        border-radius: 0px;
+    }
+
+    #editor-mount :global(.ezco-mde table) {
+        border: none;
+    }
+    #editor-mount :global(.ezco-mde tr) {
+        border-bottom: 1px solid var(--ezco-mde-code-bg-dark);
+    }
+    #editor-mount :global(.ezco-mde tr:last-child) {
+        border-bottom: none;
+    }
+    #editor-mount :global(.ezco-mde th:first-child),
+    #editor-mount :global(.ezco-mde td:first-child) {
+        padding-left: 0;
+    }
+
+    #editor-mount :global(.cm-tooltip),
+    #editor-mount :global(.cm-search-results) {
+        background: #000000;
+    }
+
+    :global(.cm-context-menu[data-theme="dark"]) {
+        background: #000000;
+    }
+
+    .demo-container {
+        width: 100%;
+        min-height: 70vh;
+        display: flex;
+        flex-direction: column;
+        background-color: transparent;
+        border: none;
+    }
+
+    #editor-mount {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+    /* Narrow screens get every pixel of horizontal real estate; the
+       left-side breathing room only kicks in once there's room to
+       spare. Matches the `Layout.astro` desktop breakpoint so the
+       gutter appears together with the fixed-aside logo column. */
+    @media (min-width: 1024px) {
+        #editor-mount {
+            margin-left: 1rem;
+        }
+    }
+
+    #editor-mount :global(.ezco-mde) {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+
+    #editor-mount :global(.ProseMirror) {
+        flex: 1;
+    }
+
+    #editor-mount :global(.cm-editor),
+    #editor-mount :global(table) {
+        margin-bottom: 0;
+    }
+
+    .loading-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        min-height: 200px;
+    }
+
+    .loading-bar {
+        width: 48px;
+        height: 2px;
+        background: #444;
+        border-radius: 1px;
+        animation: loading-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes loading-pulse {
+        0%, 100% { opacity: 0.3; }
+        50% { opacity: 1; }
+    }
+</style>

@@ -21,6 +21,16 @@ export const styleModule: StyleModule = new StyleModule({
     '@media (prefers-color-scheme: dark)': {
         'div.ezco-mde': darkModeStyles
     },
+    // Width-constrained screens need every pixel of horizontal real
+    // estate, so the editor's left gutter (which only exists to give
+    // the block-action indicator a strip to live in) collapses to
+    // zero. Above 640px it returns to the comfortable 4px breathing
+    // room the indicator's rendering depends on for visual alignment.
+    '@media (min-width: 640px)': {
+        '.ezco-mde': {
+            'padding-left': '4px',
+        }
+    },
     ':root, :root[data-theme="light"], [data-theme="light"] .ezco-mde, .ezco-mde[data-theme="light"]': {
         // Light/dark mode vars
         '--ezco-mde-code-bg-light': '#f1f1f1',
@@ -92,6 +102,19 @@ export const styleModule: StyleModule = new StyleModule({
         // Base editor styles
         'background': 'transparent',
 
+        // `break-spaces` preserves trailing whitespace at the end of a
+        // line, where PM's default `pre-wrap` would otherwise collapse
+        // it visually. This is load-bearing for the `InlineCodeExit`
+        // extension's ArrowRight handler: when a code run is the last
+        // thing in a paragraph, the handler inserts a plain space
+        // outside the mark and parks the caret on it — but if the
+        // browser collapses that space, the visible caret slips back
+        // inside the `<code>` element and the next typed character is
+        // absorbed into the code mark (because PM's DOM observer reads
+        // marks straight off the resulting DOM node, not from
+        // `storedMarks`).
+        'white-space': 'break-spaces',
+
         '& a': {
             color: 'var(--ezco-mde-link-color)',
             'text-decoration': 'inherit',
@@ -103,13 +126,13 @@ export const styleModule: StyleModule = new StyleModule({
         },
 
         // Block-level vertical rhythm uses *top-only* margins driven by
-        // the `& .ProseMirror > * + *` rules near the bottom of this
-        // block: each element declares its own size/weight/font here,
-        // but spacing between two adjacent blocks is owned by the
-        // *transition* (the `+` rule), not by either block alone.
-        // That means converting a paragraph to a list, a heading to a
-        // paragraph, etc. doesn't shift surrounding layout, and the
-        // last block always sits flush at the document's bottom edge.
+        // the `& > * + *` rules near the bottom of this block: each
+        // element declares its own size/weight/font here, but spacing
+        // between two adjacent blocks is owned by the *transition*
+        // (the `+` rule), not by either block alone. That means
+        // converting a paragraph to a list, a heading to a paragraph,
+        // etc. doesn't shift surrounding layout, and the last block
+        // always sits flush at the document's bottom edge.
         '& h1': {
             'font-size': 'var(--ezco-mde-text-4xl)',
             'line-height': 'var(--ezco-mde-leading-tight)',
@@ -237,10 +260,10 @@ export const styleModule: StyleModule = new StyleModule({
             cursor: 'col-resize',
         },
         // Tight list horizontal indent. No vertical margin here —
-        // top-level spacing is owned by the `.ProseMirror > * + *`
-        // rules, nested spacing by the `li > ul/ol/menu` rule below.
+        // top-level spacing is owned by the `& > * + *` rules at the
+        // bottom of this block.
         '& .tight': {
-            'margin-left': '18px',
+            'margin-left': '21px',
             'margin-right': '18px',
             '& li': {
                 'padding-left': '2px',
@@ -249,31 +272,14 @@ export const styleModule: StyleModule = new StyleModule({
         // List base — zero margin; vertical rhythm comes from the
         // sibling `+` rules. Font-size matches `& p` so converting a
         // paragraph to a list doesn't shift layout (also dodges the
-        // browser default `margin-block-start: 1em` and the fact that
-        // `1em` resolves differently on `<ul>` vs `<p>` when they
-        // have different inherited font-sizes).
+        // browser default `margin-block-start: 1em` and the fact
+        // that `1em` resolves differently on `<ul>` vs `<p>` when
+        // they have different inherited font-sizes).
         '& ul, & ol, & menu': {
             padding: 0,
             margin: 0,
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
-        },
-        // Multi-paragraph list items: keep the inter-paragraph rhythm.
-        '& li > p + p': {
-            'margin-top': '1em',
-        },
-        // Only target rich-text lists — exclude anything nested inside
-        // a CodeMirror editor (the codeblock's search-results dropdown
-        // is a `<ul>` inside `.cm-editor`, and was getting the same
-        // top margin and rendering as overly spaced rows).
-        '& ul:not(.cm-editor *) > li + li, & ol:not(.cm-editor *) > li + li, & menu:not(.cm-editor *) > li + li':
-            {
-                'margin-top': '1em',
-            },
-        // Nested non-task lists: top margin so the nested list doesn't
-        // sit flush against the parent item's paragraph.
-        '& li > ul, & li > ol, & li > menu': {
-            'margin-top': '1em',
         },
         // Task list styles
         '& li[data-checked="true"]>div>p': {
@@ -283,42 +289,32 @@ export const styleModule: StyleModule = new StyleModule({
         '& ul[data-type="taskList"]': {
             'list-style': 'none',
             'padding': 0,
-            margin: 0,
-            'margin-top': '1em',
 
-            '& p + ul[data-type="taskList"]': {
-                'margin-top': '0.75em'
-            },
-
-            '& p + p': {
-                'margin-top': '0.75em',
-            },
-
+            // Task-list items inherit the same "no inter-item margin"
+            // baseline as bullet/ordered lists and paragraphs — the
+            // top-only `& > * + *` rule below provides spacing where
+            // it's needed (between top-level blocks). Within a list,
+            // items stack with line-height rhythm.
             '& li': {
                 display: 'flex',
                 'align-items': 'flex-start',
             },
 
-            '& li + li': {
-                'margin-top': '0.75em'
-            },
-
             '& li > label': {
-                'margin-right': '1ch',
-                'margin-top': '4px'
+                'margin-right': '6px',
             },
             '& li > label > input': {
                 margin: 0,
-                width: '1em',
-                height: '1em',
+                width: '0.8em',
+                height: '0.8em',
             },
             '& li > div': {
                 flex: 1
             }
         },
-        // Make task checkboxes visible when selected (Ctrl-A)
-        // Checkboxes don't natively show selection highlighting,
-        // so add an outline using the system Highlight color
+        // Make task checkboxes visible when selected (Ctrl-A).
+        // Checkboxes don't natively show selection highlighting, so
+        // add an outline using the system Highlight color.
         '& ul[data-type="taskList"] li > label > input[type="checkbox"]': {
             '&::selection': {
                 background: 'Highlight',
@@ -370,6 +366,20 @@ export const styleModule: StyleModule = new StyleModule({
         '& > * + h2': { 'margin-top': '1.2em' },
         '& > * + h3': { 'margin-top': '1em' },
         '& > * + h4, & > * + h5, & > * + h6': { 'margin-top': '0.8em' },
+        // Codeblocks sit flush against the previous block unless that
+        // previous block is a heading — a heading "introduces" the
+        // code surface and earns the inset margin (kept at the
+        // 1.5em set by the `& > * + .cm-editor` rule above). Other
+        // adjacent blocks (paragraphs, lists, another codeblock)
+        // pack against the codeblock without a gap.
+        //
+        // Specificity: `.ezco-mde` (0,1,0) + `:not(h*)` (0,0,1) +
+        // `.cm-editor` (0,1,0) = 0,2,1, which beats the
+        // `& > * + .cm-editor` rule's 0,2,0 — so this override
+        // applies whenever the preceding sibling is *not* a heading.
+        '& > :not(h1, h2, h3, h4, h5, h6) + .cm-editor': {
+            'margin-top': 0,
+        },
     },
     // Block-action overlay — a tall narrow button that spans the full
     // height of the active block. Its right border is the visible
@@ -382,10 +392,22 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'flex',
         'align-items': 'flex-start',
         'justify-content': 'center',
+        // `border-box` so the JS-set `height` is the *total* rendered
+        // height (including padding-top and padding-bottom) — without
+        // it, the indicator's border-right would extend past the
+        // block's bottom by the sum of top + bottom padding.
+        'box-sizing': 'border-box',
         // Inner padding leaves breathing room between the icon and the
         // right-edge border (the indicator line), even for the widest
         // glyphs we render (e.g. `</>`).
         'padding-top': 'var(--ezco-mde-block-action-icon-offset-y, 6px)',
+        // `padding-bottom` constrains the sticky icon's containing
+        // block, so the icon stops sticking with a visible gap above
+        // the block's bottom — symmetric with the `top: 6px` gap on
+        // the sticky pin line. Without this the icon stays glued to
+        // the block's bottom right up until detachment, giving a
+        // cramped "icon flush against the next block" feel.
+        'padding-bottom': '7px',
         'padding-right': '8px',
         'padding-left': '2px',
         background: 'transparent',
@@ -396,8 +418,14 @@ export const styleModule: StyleModule = new StyleModule({
         'font-family': 'var(--cm-font-family)',
         'font-size': '13px',
         'line-height': 1,
+        // `padding-top` is intentionally NOT in this transition list:
+        // it drives the icon's natural flow position, which the
+        // sticky child reads to compute its stuck/unstuck state.
+        // Animating it would mean the sticky calculation is fed a
+        // value that's mid-tween, causing visible "stutter" or the
+        // icon to appear stuck on a stale value after a reposition.
         transition:
-            'top 120ms ease-out, height 120ms ease-out, opacity 120ms ease-out, background-color 120ms ease-out, padding-top 120ms ease-out',
+            'top 120ms ease-out, height 120ms ease-out, opacity 120ms ease-out, background-color 120ms ease-out',
         'z-index': 5,
     },
     '.ezco-mde-block-action-btn:hover': {
@@ -413,6 +441,24 @@ export const styleModule: StyleModule = new StyleModule({
         // glyphs like `</>` don't push outside the padded area.
         'max-width': '100%',
         'text-align': 'center',
+        // Native sticky: the icon stays in its flow position (which
+        // the button's `padding-top` sets to the first-text-line
+        // baseline) until scrolling would push it above the sticky
+        // top from the viewport, at which point the browser pins it
+        // there. Once the indicator button's bottom approaches the
+        // pin line, the icon detaches and scrolls off with the
+        // block. This is GPU-compositor-accelerated; doing the same
+        // thing in JS (measure → set CSS variable → reflow on every
+        // scroll frame) is visibly choppy.
+        position: 'sticky',
+        top: '6px',
+    },
+    // Codeblocks have their own sticky toolbar at the top of the
+    // block. Align the indicator icon's stuck position with that
+    // toolbar so they read as a single horizontal band when both are
+    // pinned at the viewport top.
+    '.ezco-mde-block-action-btn[data-block-type="ezcodeBlock"] .ezco-mde-block-action-btn-icon, .ezco-mde-block-action-btn[data-block-type="codeBlock"] .ezco-mde-block-action-btn-icon': {
+        top: '6px',
     },
     // Generic context-menu component (also used by future menus —
     // slash commands, link previews, etc.). Themed for a rich-text

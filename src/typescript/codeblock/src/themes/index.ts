@@ -79,8 +79,16 @@ export const codeblockTheme = EditorView.theme({
             padding: '0 2px 0 6px',
         },
     },
+    // Sized to `--cm-gutter-lineno-width` (NOT `--cm-gutter-width`) so
+    // the container's right edge lines up with the right edge of
+    // `.cm-lineNumbers` in the rows below. When a fold gutter is also
+    // present, `--cm-gutter-width` is wider than `--cm-gutter-lineno-width`
+    // by the fold gutter's width; using lineno-width here keeps the
+    // toolbar's state-icon column and the gutter's line-number column
+    // visually as one vertical strip. Tests enforce this alignment in
+    // `markdown-editor/src/test/layout.test.ts`.
     '.cm-toolbar-state-icon-container': {
-        width: 'var(--cm-gutter-width)',
+        width: 'var(--cm-gutter-lineno-width)',
         minWidth: 'var(--cm-icon-col-width, 2ch)',
         display: 'flex',
     },
@@ -211,17 +219,32 @@ export const codeblockTheme = EditorView.theme({
         borderBottom: 'none',
         zIndex: 301,
     },
-    // When a codeblock's toolbar is in use (input focused, browse/search
-    // dropdown open, etc.), bump its panels-top above the default 301 used
-    // by other codeblocks. Otherwise a later codeblock's toolbar paints
-    // over this one's open dropdown, since dropdown's z-index: 200 is
-    // confined to the panels-top stacking context.
-    '.cm-panels-top:focus-within': {
+    // When a codeblock's toolbar is in use, bump its panels-top above
+    // the default 301 used by other codeblocks. Otherwise a later
+    // codeblock's toolbar paints over this one's open dropdown — the
+    // dropdown's own `z-index: 200` is confined to its panels-top
+    // stacking context, and that stacking context's z-index loses to
+    // any later sticky panels-top at the same z-index (document order
+    // tie-break).
+    //
+    // We trigger this on two conditions:
+    //   1. `:focus-within` — the user is interacting with the input.
+    //   2. `:has(.cm-search-results:not(:empty))` — the dropdown is
+    //      populated. This handles the case where focus has moved
+    //      away (e.g. into the dropdown's hover target) but the
+    //      dropdown is still visible and shouldn't be occluded.
+    '.cm-panels-top:focus-within, .cm-panels-top:has(.cm-search-results:not(:empty))': {
         zIndex: 401,
     },
-    // CSS border spinner for file loading indicator.
-    // Rendered as a separate element inside .cm-toolbar-state-icon-container,
-    // so it has fixed dimensions and doesn't inherit gutter-width sizing.
+    // CSS border spinner for file loading indicator. Rendered as a
+    // separate element inside .cm-toolbar-state-icon-container; the
+    // container is a flex row so `margin-left: auto` pushes the
+    // spinner against the container's right edge and `align-self:
+    // center` centers it vertically within the toolbar row.
+    //
+    // No horizontal margin math: alignment with the line-number
+    // column on the gutter row below is enforced by tests against
+    // `.cm-lineNumbers` rather than precomputed pixel offsets here.
     '.cm-loading': {
         display: 'inline-block',
         width: FS,
@@ -232,7 +255,8 @@ export const codeblockTheme = EditorView.theme({
         boxSizing: 'border-box',
         animation: 'cm-spin 0.8s linear infinite',
         transition: 'opacity 0.15s ease-out',
-        margin: 'auto',
+        marginLeft: 'auto',
+        alignSelf: 'center',
     },
     '@keyframes cm-spin': {
         '0%': { transform: 'rotate(0deg)' },

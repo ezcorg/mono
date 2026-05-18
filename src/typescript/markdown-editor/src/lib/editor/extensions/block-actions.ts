@@ -334,6 +334,11 @@ function actionsForNode(node: PMNode): BlockAction[] {
             ]
         case 'ezcodeBlock':
         case 'codeBlock':
+            // No `toParagraph` here: converting a codeblock to a
+            // paragraph is rarely useful (it inlines the source as
+            // plain prose with no formatting), and the action was
+            // also buggy. Keep Copy + Delete as the two relevant
+            // actions on a code surface.
             return [
                 {
                     label: 'Copy contents',
@@ -344,7 +349,6 @@ function actionsForNode(node: PMNode): BlockAction[] {
                         }
                     },
                 },
-                toParagraph,
                 remove,
             ]
         case 'table':
@@ -398,6 +402,21 @@ class BlockActionsView {
     private activePos = -1
     private wrapperHadRelative = false
     private onFocusChange: () => void
+    // Cached last-applied geometry. Reposition writes a lot of inline
+    // styles, and on every focus event / ResizeObserver tick those
+    // writes happen even if the values are unchanged. Repeated writes
+    // can invalidate the sticky child's positioning cache, so skip the
+    // write when nothing changed.
+    private lastTop = NaN
+    private lastHeight = NaN
+    private lastIconOffsetY = NaN
+    private lastBlockType: string | null = null
+    // The icon glyph is keyed separately from `blockType` because
+    // headings share one type name ("heading") across all six levels —
+    // only `iconForNode` knows to differentiate them via `attrs.level`.
+    // Using `blockType` alone for icon caching would freeze the
+    // displayed glyph at the first heading level encountered.
+    private lastIconText: string | null = null
 
     constructor(view: EditorView, editor: Editor) {
         this.view = view
@@ -436,7 +455,13 @@ class BlockActionsView {
         this.btn.addEventListener('click', (e) => {
             e.preventDefault()
             e.stopPropagation()
-            this.openMenu()
+            // Anchor the dropdown to the click's viewport Y so the menu
+            // opens near where the user clicked, rather than always at
+            // the icon at the top of the button. For tall blocks (long
+            // codeblocks, lists) a click near the bottom of the
+            // indicator could otherwise open a menu hundreds of pixels
+            // away from the cursor.
+            this.openMenu('click-point', { x: e.clientX, y: e.clientY })
         })
 
         this.wrapper.appendChild(this.btn)
@@ -591,27 +616,53 @@ class BlockActionsView {
         const top = blockRect.top - wrapperRect.top + this.wrapper.scrollTop
         const height = blockRect.height
 
-        // Align the icon vertically with the *first line* of content
-        // inside the block, not the block's top edge. The block's first
-        // line might be a list marker, the first row of a table, code
-        // text padded inside a NodeView, etc. — what's consistent is
-        // the line-height of its first text-bearing descendant.
+        // Natural alignment with the block's first text line. The
+        // sticky-on-scroll behaviour is handled by CSS
+        // (`position: sticky; top: 8px` on `.ezco-mde-block-action-btn-icon`)
+        // — the browser does the math on the compositor thread, so
+        // we don't need JS scroll listeners to track viewport position.
         const iconOffsetY = computeIconOffsetY(dom)
 
-        this.btn.style.top = `${top}px`
+        // Only write inline styles that actually changed. Writing the
+        // same `top`/`padding-top` on every focus event is enough to
+        // invalidate the sticky child's positioning state (the browser
+        // sees a style mutation on the containing block and may
+        // recompute), which manifests as the icon "freezing" at its
+        // last sticky offset until the next real scroll/click cycle.
+        if (top !== this.lastTop) {
+            this.btn.style.top = `${top}px`
+            this.lastTop = top
+        }
+        if (height !== this.lastHeight) {
+            this.btn.style.height = `${height}px`
+            this.lastHeight = height
+        }
+        if (iconOffsetY !== this.lastIconOffsetY) {
+            this.btn.style.setProperty(
+                '--ezco-mde-block-action-icon-offset-y',
+                `${iconOffsetY}px`,
+            )
+            this.lastIconOffsetY = iconOffsetY
+        }
         // Position so the vertical indicator line (the button's right
         // border) sits 8px away from the editor content — matching the
-        // 8px `padding-right` between the icon and that same line, so
-        // the gap is visually symmetric on either side.
-        this.btn.style.left = '-42px'
-        this.btn.style.height = `${height}px`
-        this.btn.style.opacity = '1'
-        this.btn.style.setProperty(
-            '--ezco-mde-block-action-icon-offset-y',
-            `${iconOffsetY}px`,
-        )
-        this.btn.dataset.blockType = blockNode.type.name
-        this.btnIcon.textContent = iconForNode(blockNode)
+        // 8px `padding-right` between the icon and that same line.
+        if (this.btn.style.left !== '-42px') this.btn.style.left = '-42px'
+        if (this.btn.style.opacity !== '1') this.btn.style.opacity = '1'
+        const blockTypeName = blockNode.type.name
+        if (blockTypeName !== this.lastBlockType) {
+            this.btn.dataset.blockType = blockTypeName
+            this.lastBlockType = blockTypeName
+        }
+        // Icon glyph is keyed by the icon string, not the type name —
+        // see the comment on `lastIconText`. Updating only when the
+        // glyph actually changes also avoids spurious textContent
+        // writes that could invalidate the sticky child's layout.
+        const iconText = iconForNode(blockNode)
+        if (iconText !== this.lastIconText) {
+            this.btnIcon.textContent = iconText
+            this.lastIconText = iconText
+        }
 
         this.activeNode = blockNode
         this.activePos = blockPos
@@ -630,7 +681,10 @@ class BlockActionsView {
      *    so the menu appears where the user is *looking* when they
      *    invoke it via keyboard, not at an indicator they may not have
      *    interacted with directly. */
-    public openMenu(at: 'icon' | 'cursor' = 'icon') {
+    public openMenu(
+        at: 'icon' | 'cursor' | 'click-point' = 'icon',
+        clickPoint?: { x: number; y: number },
+    ) {
         // Re-entry guard: ignore a second openMenu within 200ms of the
         // first. This fixes the "first Mod-/ press opens then
         // immediately closes" bug where the same keydown event was
@@ -699,15 +753,33 @@ class BlockActionsView {
             placement: 'bottom-start',
             theme: 'ezco-mde-block-actions',
             appendTo: () => document.body,
-            // Anchor either to the indicator icon (click) or to the
-            // editor's cursor position (keyboard). The button spans the
-            // entire block height, so anchoring against the button
-            // itself would open the menu at the bottom of the block —
-            // far from where the user is.
+            // Anchor selection:
+            //  - `'cursor'`  → editor's text cursor (keyboard invoke).
+            //  - `'click-point'` → click's viewport Y, horizontally
+            //    aligned with the icon column. This keeps the menu's
+            //    horizontal position consistent across clicks while
+            //    putting it vertically near where the user clicked,
+            //    rather than at the top of a tall block.
+            //  - `'icon'` (default) → the indicator icon at the top of
+            //    the button (used for non-click invocations).
             getReferenceClientRect:
                 at === 'cursor'
                     ? () => this.getCursorRect()
-                    : () => this.btnIcon.getBoundingClientRect(),
+                    : at === 'click-point' && clickPoint
+                        ? () => {
+                            const iconRect = this.btnIcon.getBoundingClientRect()
+                            // Zero-height rect at the click's Y, horizontally
+                            // matching the icon's column. With Tippy's
+                            // `placement: 'bottom-start'`, the menu opens
+                            // just below this point.
+                            return new DOMRect(
+                                iconRect.left,
+                                clickPoint.y,
+                                iconRect.width,
+                                0,
+                            )
+                        }
+                        : () => this.btnIcon.getBoundingClientRect(),
             // Tippy's default `hideOnClick: true` registers a
             // document-level pointerdown listener even when
             // `trigger: 'manual'` is set, and that listener has been

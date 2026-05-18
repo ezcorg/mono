@@ -96,9 +96,23 @@ function setupToolbarMode(view: EditorView) {
     // line-height. So instead: hide the glyph with `color: transparent`
     // (preserves layout *and* the text node) and overlay the SVG via
     // an absolutely-positioned span.
+    function isSearchActive(): boolean {
+        // The state-icon's role is contextual: when the user is
+        // actively interacting with the toolbar's search (input
+        // focused, or the dropdown is populated with results /
+        // commands), we should keep the original search/file glyph
+        // visible — not the copy clipboard. Suppress copy mode in
+        // both cases.
+        const input = view.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+        if (input && document.activeElement === input) return true;
+        const results = view.dom.querySelector('.cm-search-results');
+        if (results && results.childNodes.length > 0) return true;
+        return false;
+    }
     function enterCopyMode() {
         const el = resolveStateIcon();
         if (!el || inCopyMode) return;
+        if (isSearchActive()) return;
         inCopyMode = true;
         originalTitle = el.getAttribute('title');
         el.setAttribute('title', COPY_TITLE);
@@ -160,7 +174,17 @@ function setupToolbarMode(view: EditorView) {
 
     function onPointerEnter() { enterCopyMode(); }
     function onPointerLeave() { exitCopyMode(); }
-    function onFocusIn() { enterCopyMode(); }
+    function onFocusIn(e: FocusEvent) {
+        const target = e.target as Element | null;
+        // If focus landed on the toolbar input, the user is starting
+        // a search — bail out of copy mode (and don't re-enter it
+        // until focus leaves the input).
+        if (target && target.classList && target.classList.contains('cm-toolbar-input')) {
+            exitCopyMode();
+            return;
+        }
+        enterCopyMode();
+    }
     function onFocusOut(e: FocusEvent) {
         // Only exit if focus actually left the editor — relatedTarget
         // is null when focus leaves the window entirely.
@@ -174,8 +198,31 @@ function setupToolbarMode(view: EditorView) {
     view.dom.addEventListener('focusin', onFocusIn);
     view.dom.addEventListener('focusout', onFocusOut);
 
+    // Watch the search-results list for content changes: when the
+    // toolbar populates results (the user is searching), exit copy
+    // mode; when results clear and the user is still hovering, re-
+    // enter. Resolved lazily because the dropdown is created by the
+    // panel constructor after our plugin runs.
+    let resultsObserver: MutationObserver | null = null;
+    function ensureResultsObserver() {
+        if (resultsObserver) return;
+        const results = view.dom.querySelector('.cm-search-results');
+        if (!results) return;
+        resultsObserver = new MutationObserver(() => {
+            if (isSearchActive()) {
+                exitCopyMode();
+            } else if (view.dom.matches(':hover, :focus-within')) {
+                enterCopyMode();
+            }
+        });
+        resultsObserver.observe(results, { childList: true });
+    }
+    // Run after the panel is mounted; one rAF is usually enough.
+    requestAnimationFrame(() => ensureResultsObserver());
+
     return {
         destroy() {
+            resultsObserver?.disconnect();
             if (resetTimer !== null) window.clearTimeout(resetTimer);
             exitCopyMode();
             view.dom.removeEventListener('pointerenter', onPointerEnter);

@@ -4,7 +4,7 @@ import Footer from "../../components/Footer.astro";
 ---
 
 <DualColumnLayout title="codeblock | ez co" description="An interactive demo of the @joinezco/codeblock component." currentPath="/work">
-		<div class="install-container overflow-hidden">
+		<div class="install-container">
 			<div id="install-mount"></div>
 		</div>
 		<div class="demo-container overflow-hidden">
@@ -154,22 +154,30 @@ import Footer from "../../components/Footer.astro";
 		#codeblock-mount :global(.cm-editor.cm-focused) {
 			outline: none;
 		}
+		/* Only clear `.cm-panels` (the gray sticky container CodeMirror
+		   adds around panels). Do NOT clear `.cm-panel` — CM adds that
+		   class to every panel-dom *including* our `.cm-toolbar-panel`,
+		   so a `.cm-panel { background: transparent }` rule strips the
+		   toolbar's own background and the sticky toolbar renders
+		   transparent against the scrolling code beneath it. */
 		#install-mount :global(.cm-panels),
-		#install-mount :global(.cm-panel),
-		#codeblock-mount :global(.cm-panels),
-		#codeblock-mount :global(.cm-panel) {
+		#codeblock-mount :global(.cm-panels) {
 			background: transparent;
 		}
 
 		/* Tooltips and the search-results dropdown render inside the
-		   `.cm-editor`, so a scoped descendant selector is enough. They
-		   read `--cm-toolbar-background` (transparent here), so override
-		   the background directly. */
+		   `.cm-editor`, so a scoped descendant selector is enough.
+		   `!important` because the CodeMirror theme's matching rule
+		   (`.<themeId> .cm-search-results`) reaches comparable
+		   specificity (0,3,0 vs our 1,2,0 once Astro adds the id
+		   attribute) and which one wins depends on stylesheet load
+		   order — in dev that order can flip between codeblocks on
+		   the same page, leaving one dropdown transparent. */
 		#install-mount :global(.cm-tooltip),
 		#install-mount :global(.cm-search-results),
 		#codeblock-mount :global(.cm-tooltip),
 		#codeblock-mount :global(.cm-search-results) {
-			background: #000000;
+			background: #000000 !important;
 		}
 
 		/* The right-click context menu is appended to `document.body`,

@@ -287,8 +287,12 @@ const toolbarStyleModule = new StyleModule({
         alignItems: 'center',
         flex: '1',
     },
+    // See themes/index.ts for the rationale — sized to lineno-width
+    // (not gutter-width) so the right edge matches `.cm-lineNumbers`
+    // and not the wider total-gutters strip (which also includes the
+    // fold gutter when present).
     '.cm-toolbar-state-icon-container': {
-        width: 'var(--cm-gutter-width, 2em)',
+        width: 'var(--cm-gutter-lineno-width, 2em)',
         minWidth: 'var(--cm-icon-col-width, 2em)',
         display: 'flex',
     },
@@ -483,7 +487,17 @@ export class ToolbarCore {
         const hasValidFile = !!currentPath;
         const hasContent = this.host.getDocContent().length > 0;
         const isLanguageQuery = isValidProgrammingLanguage(query);
-        const hasExactFileMatch = searchResults.length > 0 && searchResults[0].id === query;
+        // "Exact match" = the typed query refers to an existing file.
+        // Two ways to confirm: the search index returned it as the top
+        // hit, *or* the query is literally the currently-open file's
+        // path (which is the case the moment the user clicks into the
+        // input without typing — the input is pre-populated with the
+        // current path). The path check is what suppresses bogus
+        // "Create new file 'X'" / "Rename to 'X'" entries when X is
+        // already open.
+        const hasExactFileMatch =
+            (searchResults.length > 0 && searchResults[0].id === query) ||
+            (currentPath !== null && currentPath === query);
 
         // Save as
         if (hasContent || hasValidFile) {
@@ -499,13 +513,13 @@ export class ToolbarCore {
             }
         }
 
-        // Create new file
+        // Create blank file
         if (!query.trim()) {
-            commands.push({ id: 'Create new file', type: 'create-file', icon: DEFAULT_FILE_ICON, query: '', requiresInput: true });
+            commands.push({ id: 'Create blank file', type: 'create-file', icon: DEFAULT_FILE_ICON, query: '', requiresInput: true });
         } else if (!hasExactFileMatch) {
             const langIcon = isLanguageQuery ? getLanguageIcon(query) : null;
             commands.push({
-                id: isLanguageQuery ? "Create new file" : `Create new file "${query}"`,
+                id: isLanguageQuery ? "Create blank file" : `Create blank file "${query}"`,
                 type: 'create-file', icon: langIcon?.glyph || DEFAULT_FILE_ICON,
                 iconColor: langIcon?.color, query, requiresInput: isLanguageQuery,
             });
@@ -1223,10 +1237,18 @@ export class ToolbarCore {
         const query = this.input.value;
         let results: SearchResult[] = [];
         if (query.trim()) {
+            // Even on the "untouched" path (user just clicked into the
+            // input without typing, so input.value is the current file
+            // path), we still need to run the FS search so
+            // `createCommandResults` can detect that the query matches
+            // an existing file. Without this, `hasExactFileMatch` is
+            // always false on first open and the dropdown shows
+            // nonsensical "Create new file 'X'" / "Rename to 'X'"
+            // entries for the file the user already has open.
+            const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 100);
             if (!this.inputTouched) {
-                results = this.createCommandResults(query, []);
+                results = this.createCommandResults(query, searchResults);
             } else {
-                const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 100);
                 const commands = this.createCommandResults(query, searchResults);
                 const { intent } = this.detectIntent(query, searchResults.length > 0);
                 results = this.prioritizeResults(searchResults, commands, intent);
