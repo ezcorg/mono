@@ -37,13 +37,53 @@ async function getDirHandle(dirPath: string): Promise<FileSystemDirectoryHandle>
     return handle;
 }
 
+function normalizePath(path: string): string {
+    // Strip leading slash and collapse /./ segments — same normalization
+    // used by splitPath, so a path always maps to one canonical key.
+    return path.replace(/^\//, '').replace(/\/\.(?=\/|$)/g, '');
+}
+
 function splitPath(path: string): { dir: string; name: string } {
-    // Normalize: strip leading slash and collapse /./  segments
-    const normalized = path.replace(/^\//, '').replace(/\/\.(?=\/|$)/g, '');
+    const normalized = normalizePath(path);
     const lastSlash = normalized.lastIndexOf('/');
     return lastSlash >= 0
         ? { dir: normalized.substring(0, lastSlash), name: normalized.substring(lastSlash + 1) }
         : { dir: '', name: normalized };
+}
+
+// ---------------------------------------------------------------------------
+// Per-file serialization.
+//
+// A sync access handle (createSyncAccessHandle) takes an *exclusive* lock on
+// its file in Chromium: a second handle on the same file — even for reading —
+// throws "Access Handles cannot be created if there is another open Access
+// Handle or Writable stream associated with the same file." The worker's
+// message handler runs operations concurrently (it doesn't await one message
+// before processing the next), and the same file is routinely touched by
+// overlapping callers: two snapshot hydrations under React StrictMode, the
+// LSP worker reading a lib file while the editor writes it, etc.
+//
+// Serialize all access-handle work per (normalized) path so only one handle
+// is ever open for a given file at a time, while still allowing full
+// concurrency across *different* files.
+// ---------------------------------------------------------------------------
+const fileLocks = new Map<string, Promise<unknown>>();
+
+function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+    const key = normalizePath(path);
+    const prev = fileLocks.get(key) ?? Promise.resolve();
+    // Run fn after the previous op on this path settles (ignore its outcome
+    // so one failure doesn't poison the queue).
+    const result = prev.then(fn, fn);
+    // The tail never rejects, so chaining the next op off it is safe.
+    const tail = result.then(() => { }, () => { });
+    fileLocks.set(key, tail);
+    // Drop the map entry once this op is the last one queued for the path,
+    // so the map doesn't grow unbounded across a long session.
+    tail.then(() => {
+        if (fileLocks.get(key) === tail) fileLocks.delete(key);
+    });
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,26 +97,34 @@ async function readFile(path: string): Promise<string> {
     const dirHandle = await getDirHandle(dir);
     const fileHandle = await dirHandle.getFileHandle(name);
 
-    // Try sync access handle (fast path in dedicated workers)
+    // Try sync access handle (fast path in dedicated workers). Serialize
+    // per-path so we never hold two handles on the same file at once.
     if (syncHandleSupported !== false) {
         try {
-            const accessHandle = await (fileHandle as any).createSyncAccessHandle();
-            if (syncHandleSupported === null) {
-                syncHandleSupported = true;
-                console.debug('[opfs-worker] createSyncAccessHandle: SUPPORTED');
-            }
-            try {
-                const size = accessHandle.getSize();
-                const buf = new Uint8Array(size);
-                accessHandle.read(buf, { at: 0 });
-                return new TextDecoder().decode(buf);
-            } finally {
-                accessHandle.close();
-            }
+            return await withFileLock(path, async () => {
+                const accessHandle = await (fileHandle as any).createSyncAccessHandle();
+                if (syncHandleSupported === null) {
+                    syncHandleSupported = true;
+                    console.debug('[opfs-worker] createSyncAccessHandle: SUPPORTED');
+                }
+                try {
+                    const size = accessHandle.getSize();
+                    const buf = new Uint8Array(size);
+                    accessHandle.read(buf, { at: 0 });
+                    return new TextDecoder().decode(buf);
+                } finally {
+                    accessHandle.close();
+                }
+            });
         } catch (e) {
             if (syncHandleSupported === null) {
                 syncHandleSupported = false;
                 console.warn('[opfs-worker] createSyncAccessHandle: NOT SUPPORTED, using getFile() fallback', e);
+            } else {
+                // Sync handles are supported but this read still failed
+                // (genuine I/O error) — surface it rather than masking it
+                // behind the getFile() fallback.
+                throw e;
             }
         }
     }
@@ -90,29 +138,33 @@ async function writeFile(path: string, data: string): Promise<void> {
     const { dir, name } = splitPath(path);
     const dirHandle = await getDirHandle(dir);
     const fileHandle = await dirHandle.getFileHandle(name, { create: true });
-    const accessHandle = await (fileHandle as any).createSyncAccessHandle();
-    try {
-        const encoded = new TextEncoder().encode(data);
-        accessHandle.truncate(0);
-        accessHandle.write(encoded, { at: 0 });
-        accessHandle.flush();
-    } finally {
-        accessHandle.close();
-    }
+    await withFileLock(path, async () => {
+        const accessHandle = await (fileHandle as any).createSyncAccessHandle();
+        try {
+            const encoded = new TextEncoder().encode(data);
+            accessHandle.truncate(0);
+            accessHandle.write(encoded, { at: 0 });
+            accessHandle.flush();
+        } finally {
+            accessHandle.close();
+        }
+    });
 }
 
 async function writeBinary(path: string, data: Uint8Array): Promise<void> {
     const { dir, name } = splitPath(path);
     const dirHandle = await getDirHandle(dir);
     const fileHandle = await dirHandle.getFileHandle(name, { create: true });
-    const accessHandle = await (fileHandle as any).createSyncAccessHandle();
-    try {
-        accessHandle.truncate(0);
-        accessHandle.write(data, { at: 0 });
-        accessHandle.flush();
-    } finally {
-        accessHandle.close();
-    }
+    await withFileLock(path, async () => {
+        const accessHandle = await (fileHandle as any).createSyncAccessHandle();
+        try {
+            accessHandle.truncate(0);
+            accessHandle.write(data, { at: 0 });
+            accessHandle.flush();
+        } finally {
+            accessHandle.close();
+        }
+    });
 }
 
 async function mkdir(path: string): Promise<void> {
@@ -284,15 +336,17 @@ async function mountLazy(opts: { manifestUrl: string; backingName: string }): Pr
             })();
             const dirHandle = await getDirHandle(dir);
             const fileHandle = await dirHandle.getFileHandle(name);
-            const accessHandle = await (fileHandle as any).createSyncAccessHandle();
-            try {
-                const size = accessHandle.getSize();
-                const buf = new ArrayBuffer(size);
-                accessHandle.read(new Uint8Array(buf), { at: 0 });
-                return buf;
-            } finally {
-                accessHandle.close();
-            }
+            return withFileLock(path, async () => {
+                const accessHandle = await (fileHandle as any).createSyncAccessHandle();
+                try {
+                    const size = accessHandle.getSize();
+                    const buf = new ArrayBuffer(size);
+                    accessHandle.read(new Uint8Array(buf), { at: 0 });
+                    return buf;
+                } finally {
+                    accessHandle.close();
+                }
+            });
         },
     });
     fetcher.prefetch();

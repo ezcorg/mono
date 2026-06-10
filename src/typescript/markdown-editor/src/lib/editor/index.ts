@@ -14,6 +14,7 @@ import { Toolbar, ToolbarOptions } from './extensions/toolbar';
 import { InlineCodeExit } from './extensions/inline-code';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions } from './extensions/block-actions';
+import { SelectionMenu } from './extensions/selection-menu';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -98,6 +99,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 filepath: options.fs?.filepath,
             }),
             BlockActions,
+            SelectionMenu,
             ...(options.extensions || []),
         ],
         editorProps: {

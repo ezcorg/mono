@@ -51,6 +51,8 @@ function App() {
             setMarkdownContent(markdown);
           },
         });
+        // Expose the editor for manual debugging / inspection in the dev preview.
+        (window as unknown as { editor?: MarkdownEditor }).editor = newEditor;
         setEditor(newEditor);
       });
     }

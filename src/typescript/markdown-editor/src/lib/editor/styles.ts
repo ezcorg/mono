@@ -529,6 +529,132 @@ export const styleModule: StyleModule = new StyleModule({
     '.tippy-box[data-theme~="ezco-mde-block-actions"] .tippy-content': {
         padding: 0,
     },
+    // ─────────────────────────────────────────────────────────────
+    // Slash command menu ("/" in the editor).
+    //
+    // Shares the rich-text context-menu palette (dark surface, light
+    // sans-serif text) so it reads as part of the same family as the
+    // block-action menu — and, unlike the previous hand-rolled CSS that
+    // only lived in the dev app's App.css, it now ships with the library
+    // so consumers get a styled, visible menu out of the box.
+    // ─────────────────────────────────────────────────────────────
+    '.tippy-box[data-theme~="ezco-mde-slash"]': {
+        background: 'transparent',
+        'box-shadow': 'none',
+        padding: 0,
+    },
+    '.tippy-box[data-theme~="ezco-mde-slash"] .tippy-content': {
+        padding: 0,
+    },
+    '.ezco-mde-slash-menu': {
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '1px',
+        'min-width': '260px',
+        'max-width': '340px',
+        'max-height': '320px',
+        'overflow-y': 'auto',
+        padding: '5px',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-radius': '8px',
+        'box-shadow': '0 10px 28px rgba(0, 0, 0, 0.5)',
+        outline: 'none',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+    },
+    '.ezco-mde-slash-item': {
+        display: 'flex',
+        'align-items': 'center',
+        gap: '11px',
+        width: '100%',
+        padding: '7px 9px',
+        background: 'transparent',
+        color: 'inherit',
+        border: 'none',
+        'border-radius': '6px',
+        cursor: 'pointer',
+        'text-align': 'left',
+        'font-family': 'inherit',
+        outline: 'none',
+    },
+    // Selected (keyboard) and hover share one highlight so the active
+    // row reads the same whether the user is arrowing or pointing.
+    '.ezco-mde-slash-item.is-selected, .ezco-mde-slash-item:hover': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+    },
+    '.ezco-mde-slash-item-icon': {
+        display: 'inline-flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        width: '28px',
+        height: '28px',
+        flex: 'none',
+        'border-radius': '5px',
+        background: 'rgba(245, 245, 245, 0.06)',
+        'font-size': '14px',
+        'line-height': 1,
+        color: 'var(--ezco-mde-context-menu-color)',
+    },
+    '.ezco-mde-slash-item-body': {
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '1px',
+        'min-width': 0,
+        flex: 1,
+    },
+    '.ezco-mde-slash-item-title': {
+        'font-size': '13px',
+        'font-weight': 500,
+        'line-height': 1.3,
+        color: 'var(--ezco-mde-context-menu-color)',
+    },
+    '.ezco-mde-slash-item-desc': {
+        'font-size': '11.5px',
+        'line-height': 1.3,
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        overflow: 'hidden',
+        'text-overflow': 'ellipsis',
+        'white-space': 'nowrap',
+    },
+    '.ezco-mde-slash-empty': {
+        padding: '10px 12px',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': '12.5px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+    },
+    // ─────────────────────────────────────────────────────────────
+    // Selection menu — a small icon button anchored at the end of a
+    // non-empty text selection. Focusable (Tab from the editor), opens
+    // the contextual action menu on activation.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-selection-menu-btn': {
+        display: 'inline-flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        width: '22px',
+        height: '22px',
+        // Vertically centre on the selection's end coordinate (top is set
+        // to the line's mid-point in JS).
+        transform: 'translateY(-50%)',
+        padding: 0,
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-radius': '5px',
+        'box-shadow': '0 2px 8px rgba(0, 0, 0, 0.35)',
+        cursor: 'pointer',
+        'z-index': 6,
+        transition: 'opacity 120ms ease-out, background-color 120ms ease-out, box-shadow 120ms ease-out',
+    },
+    '.ezco-mde-selection-menu-btn:hover': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+    },
+    // Clear, visible focus ring so the Tab landing point is obvious.
+    '.ezco-mde-selection-menu-btn:focus, .ezco-mde-selection-menu-btn:focus-visible': {
+        outline: '2px solid #2490e9',
+        'outline-offset': '1px',
+    },
     // Toolbar layout is provided by ToolbarCore's own StyleModule.
     // Only override the codeblock editor margin within the markdown editor.
 

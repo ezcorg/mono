@@ -1,5 +1,6 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
-import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
+import { Node, mergeAttributes, InputRule } from '@tiptap/core';
+import type { NodeType } from '@tiptap/pm/model';
 import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
@@ -192,18 +193,68 @@ export const ExtendedCodeblock = Node.create({
             return { language: 'markdown' };
         };
 
+        // Turn the matched "```"/"```lang" trigger into a codeblock.
+        //
+        // The default `textblockTypeInputRule` only converts the current
+        // textblock in place. That fails inside a list item, whose schema
+        // (`paragraph block*`) requires a *leading paragraph* — you can't
+        // replace that required paragraph with a codeblock. So when an
+        // in-place conversion isn't valid but we're inside a list item,
+        // insert the codeblock as the next block *within* the item. It
+        // then renders indented to the item's level (an "indented
+        // codeblock") and round-trips to markdown as a fenced block nested
+        // under the list item.
+        const codeblockType = this.type;
+        const applyCodeblock = (
+            state: any,
+            range: { from: number; to: number },
+            attrs: Record<string, unknown>,
+        ): null | void => {
+            const { tr } = state;
+            const $start = state.doc.resolve(range.from);
+            const type = codeblockType as NodeType;
+
+            const canReplaceInPlace = $start
+                .node(-1)
+                .canReplaceWith($start.index(-1), $start.indexAfter(-1), type);
+
+            if (canReplaceInPlace) {
+                tr.delete(range.from, range.to).setBlockType(range.from, range.from, type, attrs);
+                return;
+            }
+
+            const containerName = $start.node(-1)?.type.name;
+            if (containerName !== 'listItem' && containerName !== 'taskItem') {
+                // Nowhere valid to put a codeblock here — leave the text as
+                // typed rather than silently swallowing it.
+                return null;
+            }
+
+            // Drop the trigger text, then insert the codeblock as the
+            // sibling block right after the (now possibly empty) paragraph.
+            tr.delete(range.from, range.to);
+            const $pos = tr.doc.resolve(tr.mapping.map(range.from));
+            const insertAt = $pos.after($pos.depth);
+            const node = type.createAndFill(attrs);
+            if (!node) return null;
+            tr.insert(insertAt, node);
+            // Park the selection inside the new codeblock so its NodeView
+            // takes focus (empty codeblocks open their language toolbar).
+            tr.setSelection(TextSelection.near(tr.doc.resolve(insertAt + 1)));
+        };
+
         return [
             // ```language + space — more specific, checked first
-            textblockTypeInputRule({
+            new InputRule({
                 find: /^```([^\s`]+)\s$/,
-                type: this.type,
-                getAttributes: match => parseLanguageAttributes(match[1]?.trim()),
+                handler: ({ state, range, match }) =>
+                    applyCodeblock(state, range, parseLanguageAttributes(match[1]?.trim())),
             }),
             // ``` alone — triggers immediately on the third backtick
-            textblockTypeInputRule({
+            new InputRule({
                 find: /^```$/,
-                type: this.type,
-                getAttributes: () => ({ language: '' }),
+                handler: ({ state, range }) =>
+                    applyCodeblock(state, range, { language: '' }),
             }),
         ];
     },

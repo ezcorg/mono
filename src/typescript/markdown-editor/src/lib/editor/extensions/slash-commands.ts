@@ -48,11 +48,17 @@ export const SlashCommands = Extension.create<SlashCommandsOptions>({
                 props: {
                     handleKeyDown: (_, event) => {
                         if (slashView) {
-                            // Track when "/" is typed to distinguish from cursor movement
+                            // Mark when "/" is typed so we only open on a
+                            // freshly-typed slash (not when the cursor merely
+                            // lands after an existing "/"). Crucially we do
+                            // NOT reset this on other keys: typing the query
+                            // after "/" must keep the session alive so the
+                            // menu filters live instead of vanishing on the
+                            // first character. `selectionUpdate` clears the
+                            // flag when the slash context actually ends (a
+                            // space, deleting past the "/", moving away).
                             if (event.key === '/') {
                                 slashView.lastInputWasSlash = true
-                            } else {
-                                slashView.lastInputWasSlash = false
                             }
 
                             if (slashView.dropdown) {
@@ -152,36 +158,62 @@ class SlashCommandsView {
 
     createDropdown(): HTMLElement {
         const dropdown = document.createElement('div')
-        dropdown.className = 'slash-commands-dropdown'
+        dropdown.className = 'ezco-mde-slash-menu'
+        dropdown.setAttribute('role', 'listbox')
 
         const filteredCommands = this.getFilteredCommands()
 
         if (filteredCommands.length === 0) {
             const noResults = document.createElement('div')
-            noResults.className = 'slash-command-item'
-            noResults.innerHTML = `
-        <div class="slash-command-content">
-          <div class="slash-command-text">
-            <div class="slash-command-title">No results</div>
-            <div class="slash-command-description">No commands found for "${this.query}"</div>
-          </div>
-        </div>
-      `
+            noResults.className = 'ezco-mde-slash-empty'
+            noResults.textContent = this.query
+                ? `No commands matching “${this.query}”`
+                : 'No commands available'
             dropdown.appendChild(noResults)
         } else {
             filteredCommands.forEach((command, index) => {
                 const item = document.createElement('button')
-                item.className = `slash-command-item ${index === this.selectedIndex ? 'selected' : ''}`
-                item.innerHTML = `
-          <div class="slash-command-content">
-            ${command.icon ? `<span class="slash-command-icon">${command.icon}</span>` : ''}
-            <div class="slash-command-text">
-              <div class="slash-command-title">${command.title}</div>
-              <div class="slash-command-description">${command.description}</div>
-            </div>
-          </div>
-        `
+                item.type = 'button'
+                item.className = 'ezco-mde-slash-item'
+                item.setAttribute('role', 'option')
+                if (index === this.selectedIndex) {
+                    item.classList.add('is-selected')
+                    item.setAttribute('aria-selected', 'true')
+                }
 
+                if (command.icon) {
+                    const icon = document.createElement('span')
+                    icon.className = 'ezco-mde-slash-item-icon'
+                    icon.textContent = command.icon
+                    item.appendChild(icon)
+                }
+
+                const body = document.createElement('span')
+                body.className = 'ezco-mde-slash-item-body'
+
+                const title = document.createElement('span')
+                title.className = 'ezco-mde-slash-item-title'
+                title.textContent = command.title
+                body.appendChild(title)
+
+                if (command.description) {
+                    const desc = document.createElement('span')
+                    desc.className = 'ezco-mde-slash-item-desc'
+                    desc.textContent = command.description
+                    body.appendChild(desc)
+                }
+
+                item.appendChild(body)
+
+                // Keep editor focus/selection (the slash query) intact while
+                // the user clicks an item — mousedown must not steal focus.
+                item.addEventListener('mousedown', (e) => e.preventDefault())
+                item.addEventListener('mouseenter', () => {
+                    if (this.selectedIndex !== index) {
+                        this.selectedIndex = index
+                        this.updateSelection()
+                    }
+                })
                 item.addEventListener('click', () => this.selectCommand(command))
                 dropdown.appendChild(item)
             })
@@ -237,12 +269,17 @@ class SlashCommandsView {
     updateSelection() {
         if (!this.dropdown) return
 
-        const items = this.dropdown.querySelectorAll('.slash-command-item')
+        const items = this.dropdown.querySelectorAll('.ezco-mde-slash-item')
         items.forEach((item, index) => {
             if (index === this.selectedIndex) {
-                item.classList.add('selected')
+                item.classList.add('is-selected')
+                item.setAttribute('aria-selected', 'true')
+                // Keep the active item in view when arrowing through a
+                // long, scrollable list.
+                ;(item as HTMLElement).scrollIntoView({ block: 'nearest' })
             } else {
-                item.classList.remove('selected')
+                item.classList.remove('is-selected')
+                item.removeAttribute('aria-selected')
             }
         })
     }
@@ -255,8 +292,11 @@ class SlashCommandsView {
             // Update existing popup content
             this.popup.setContent(this.dropdown)
         } else {
-            // Create new popup
-            const instances = tippy(document.body, {
+            // Create new popup. `tippy()` on a single element returns a
+            // single Instance (not an array) — capturing `instances[0]`
+            // left `this.popup` undefined, so every keystroke spawned a
+            // fresh, never-destroyed tippy. Normalize both shapes.
+            const created = tippy(document.body, {
                 getReferenceClientRect: () => {
                     if (!this.range) {
                         // Return a default rect if range is null
@@ -294,7 +334,7 @@ class SlashCommandsView {
                 interactive: true,
                 trigger: 'manual',
                 placement: 'bottom-start',
-                theme: 'slash-commands',
+                theme: 'ezco-mde-slash',
                 maxWidth: 'none',
                 onShow: () => {
                     // Add outside click handler when dropdown is shown
@@ -304,8 +344,8 @@ class SlashCommandsView {
                     // Remove outside click handler when dropdown is hidden
                     this.removeOutsideClickHandler()
                 }
-            }) as any
-            this.popup = instances[0]
+            }) as TippyInstance | TippyInstance[]
+            this.popup = Array.isArray(created) ? created[0] : created
         }
     }
 
@@ -324,9 +364,8 @@ class SlashCommandsView {
         })
 
         // Also remove any dropdown elements that might be lingering
-        const existingDropdowns = document.querySelectorAll('.slash-commands-dropdown')
+        const existingDropdowns = document.querySelectorAll('.ezco-mde-slash-menu')
         existingDropdowns.forEach(dropdown => {
-            console.log('Force removing dropdown element')
             dropdown.remove()
         })
 
@@ -379,13 +418,10 @@ class SlashCommandsView {
         if (this.range) {
             // Store the range before hiding suggestions, as hideSuggestions() might clear it
             const range = this.range
-            console.log('Executing command, hiding suggestions first')
             // Hide suggestions first to ensure dropdown closes
             this.hideSuggestions()
-            console.log('Suggestions hidden, executing command')
             // Then execute the command with the stored range
             command.command({ editor: this.editor, range })
-            console.log('Command execution completed')
         }
     }
 
