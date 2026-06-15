@@ -14,7 +14,11 @@ export const ExtendedTaskItem = TaskItem.extend<ExtendedTaskItemOptions>({
         return {
             ...this.parent?.(),
             nested: true,
-            inputRegex: /^\s*[-+*]\s\[( |x|X)\](?:\s)?$/, // Match `- [ ]` or `- [x]`, with optional space
+            // Match `- [ ] ` or `- [x] ` — the trailing space is REQUIRED so
+            // the rule fires on the space (consuming the whole `- [ ] `
+            // marker) rather than on `]` (which would leave the space as a
+            // leading character in the task's text).
+            inputRegex: /^\s*[-+*]\s\[( |x|X)\]\s$/,
         };
     },
 

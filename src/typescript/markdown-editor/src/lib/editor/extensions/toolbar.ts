@@ -67,6 +67,12 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                         },
                     } satisfies ToolbarHost)
 
+                    // Tag the toolbar so the rich-text editor can restyle it
+                    // (sans-serif, embedded-in-document look) without touching
+                    // the codeblock package's own toolbar, which shares the
+                    // `.cm-toolbar-*` class names.
+                    core.dom.classList.add('ezco-mde-toolbar')
+
                     // Insert toolbar before the ProseMirror content
                     editorView.dom.parentElement?.insertBefore(core.dom, editorView.dom)
 

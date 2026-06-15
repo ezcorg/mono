@@ -1,7 +1,7 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import type { NodeType } from '@tiptap/pm/model';
-import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
+import { basicSetup, codeblock, CodeblockFS, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
@@ -341,6 +341,37 @@ export const ExtendedCodeblock = Node.create({
             }
 
             const maybeExit = () => {
+                // When the codeblock lives inside a list item, "exiting" it
+                // should continue the list — add a new sibling list item
+                // after the current one and drop the cursor into it. This is
+                // the intuitive counterpart to pressing Enter in a list.
+                // (The default `exitCode` only adds a paragraph *inside* the
+                // current item, and won't fire at all when there's no block
+                // after the codeblock — so Shift-Enter felt like it did
+                // nothing for indented codeblocks.)
+                const pos = getPos();
+                if (pos !== undefined) {
+                    const $pos = view.state.doc.resolve(pos);
+                    let liDepth = -1;
+                    for (let d = $pos.depth; d > 0; d--) {
+                        const name = $pos.node(d).type.name;
+                        if (name === 'listItem' || name === 'taskItem') { liDepth = d; break; }
+                    }
+                    if (liDepth >= 0) {
+                        const itemType = $pos.node(liDepth).type;
+                        const attrs = itemType.name === 'taskItem' ? { checked: false } : null;
+                        const newItem = itemType.createAndFill(attrs);
+                        if (newItem) {
+                            const insertAt = $pos.after(liDepth);
+                            const tr = view.state.tr.insert(insertAt, newItem);
+                            tr.setSelection(Selection.near(tr.doc.resolve(insertAt + 1)));
+                            view.dispatch(tr.scrollIntoView());
+                            view.focus();
+                            return true;
+                        }
+                    }
+                }
+
                 if (!exitCode(view.state, view.dispatch)) return false;
                 view.focus();
                 return true;
@@ -386,6 +417,43 @@ export const ExtendedCodeblock = Node.create({
                     }
                 ] as KeyBinding[]
             }
+
+            // Keep the ProseMirror node's `file`/`language` attributes in
+            // sync with the codeblock's live state. The filename can change
+            // *inside* CodeMirror — when the user picks/creates a file via
+            // the codeblock toolbar it updates `currentFileField` but not
+            // the PM node. Without this sync the node attr stays stale, so
+            // (a) the file is dropped from serialized markdown and (b) if
+            // the NodeView is ever recreated (e.g. an edit to a sibling
+            // list item reflows the list) it reloads from the stale attr
+            // and loses the filename + syntax/semantic highlighting.
+            const syncFileAttrs = (update: ViewUpdate) => {
+                if (updating) return;
+                const next = update.state.field(currentFileField, false);
+                if (!next || next.loading) return;
+                const prev = update.startState.field(currentFileField, false);
+                if (prev && prev.path === next.path && prev.language === next.language) return;
+
+                const pos = getPos();
+                if (pos === undefined) return;
+                const current = view.state.doc.nodeAt(pos);
+                if (!current || current.type !== node.type) return;
+
+                const newFile = next.path ?? null;
+                const newLang = next.language ?? current.attrs.language ?? 'markdown';
+                if (current.attrs.file === newFile && current.attrs.language === newLang) return;
+
+                updating = true;
+                try {
+                    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+                        ...current.attrs,
+                        file: newFile,
+                        language: newLang,
+                    }));
+                } finally {
+                    updating = false;
+                }
+            };
 
             // Create initial state without codeblock extension
             const initialState = EditorState.create({
@@ -443,6 +511,7 @@ export const ExtendedCodeblock = Node.create({
                             keymap.of(codemirrorKeymap()),
                             basicSetup,
                             EditorView.updateListener.of((update) => forwardUpdate(cm, update)),
+                            EditorView.updateListener.of(syncFileAttrs),
                             codeblock({
                                 content: node.textContent,
                                 fs: fsWorker,

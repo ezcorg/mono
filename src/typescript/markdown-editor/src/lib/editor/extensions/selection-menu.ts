@@ -28,12 +28,16 @@ interface SelectionAction {
     run: (editor: Editor) => void
 }
 
-// A compact "edit selection" affordance. Kept as an inline SVG (rather
-// than a text glyph) so it reads as a deliberate UI control distinct from
-// the prose, at any font size.
+// A compact "open contextual actions" affordance. A horizontal three-dot
+// (overflow / "more actions") glyph rather than a pencil — the menu isn't
+// limited to text-editing, so a neutral menu icon fits the range of
+// actions better. Inline SVG so it reads as a deliberate control distinct
+// from the prose at any font size.
 const SELECTION_MENU_ICON = `
-<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
-  <path fill="currentColor" d="M11.13 1.2a1.4 1.4 0 0 1 1.98 0l1.69 1.69a1.4 1.4 0 0 1 0 1.98l-7.4 7.4a1.4 1.4 0 0 1-.64.37l-3.2.86a.7.7 0 0 1-.86-.86l.86-3.2a1.4 1.4 0 0 1 .37-.64l7.4-7.4Zm.99.99-7.4 7.4a.35.35 0 0 0-.1.16l-.5 1.84 1.84-.5a.35.35 0 0 0 .16-.1l7.4-7.4-1.4-1.4Z"/>
+<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+  <circle cx="3.4" cy="8" r="1.45" fill="currentColor"/>
+  <circle cx="8" cy="8" r="1.45" fill="currentColor"/>
+  <circle cx="12.6" cy="8" r="1.45" fill="currentColor"/>
 </svg>`
 
 function actionsForSelection(editor: Editor): SelectionAction[] {
@@ -133,6 +137,12 @@ class SelectionMenuView {
     private popup: TippyInstance | null = null
     private activeMenu: ContextMenu | null = null
     private isOpen = false
+    // Whether the button itself currently holds focus. Tracked explicitly
+    // (rather than read from `document.activeElement` during a focus event)
+    // because the `focusout` that fires on the editor when Tab moves focus
+    // to the button races with `activeElement` updating — reading it there
+    // intermittently saw `body` and hid the button right as it gained focus.
+    private buttonFocused = false
     private onFocusChange: () => void
     private onDocumentMouseDown: ((e: MouseEvent) => void) | null = null
 
@@ -162,6 +172,14 @@ class SelectionMenuView {
             e.preventDefault()
             e.stopPropagation()
             this.toggleMenu()
+        })
+        this.btn.addEventListener('focus', () => {
+            this.buttonFocused = true
+            this.reposition()
+        })
+        this.btn.addEventListener('blur', () => {
+            this.buttonFocused = false
+            this.reposition()
         })
 
         this.wrapper.appendChild(this.btn)
@@ -243,6 +261,7 @@ class SelectionMenuView {
     private hasFocusInside(): boolean {
         if (this.view.hasFocus()) return true
         if (this.isOpen) return true
+        if (this.buttonFocused) return true
         const active = document.activeElement
         if (!active) return false
         return this.btn.contains(active) || !!this.activeMenu?.dom.contains(active)
@@ -277,10 +296,12 @@ class SelectionMenuView {
 
         this.ensureWrapperPositioned()
         const wrapperRect = this.wrapper.getBoundingClientRect()
-        const left = coords.right - wrapperRect.left + this.wrapper.scrollLeft + 4
-        const top =
-            coords.top - wrapperRect.top + this.wrapper.scrollTop +
-            (coords.bottom - coords.top) / 2
+        // Anchor the button just *below* the end of the selection (the next
+        // row), aligned to the selection's end x — rather than floating to
+        // the right of the last character. This keeps the affordance out of
+        // the line of text and reads as "actions for what's above".
+        const left = coords.right - wrapperRect.left + this.wrapper.scrollLeft - 2
+        const top = coords.bottom - wrapperRect.top + this.wrapper.scrollTop + 3
 
         this.btn.style.left = `${left}px`
         this.btn.style.top = `${top}px`
@@ -324,7 +345,17 @@ class SelectionMenuView {
             content: menu.dom,
             interactive: true,
             trigger: 'manual',
-            placement: 'bottom-end',
+            // Open to the *right* of the icon so the menu follows the
+            // natural left-to-right reading flow from where the selection
+            // ended. Tippy's flip modifier keeps it on-screen, falling back
+            // to the left only when there's no room on the right.
+            placement: 'right-start',
+            popperOptions: {
+                modifiers: [
+                    { name: 'flip', options: { fallbackPlacements: ['left-start', 'bottom-start', 'top-start'] } },
+                    { name: 'preventOverflow', options: { padding: 8 } },
+                ],
+            },
             theme: 'ezco-mde-block-actions',
             appendTo: () => document.body,
             hideOnClick: false,

@@ -15,6 +15,7 @@ import { InlineCodeExit } from './extensions/inline-code';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions } from './extensions/block-actions';
 import { SelectionMenu } from './extensions/selection-menu';
+import { BulletList } from './extensions/lists';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -65,8 +66,14 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             ExtendedLink.configure({}),
             StarterKit.configure({
                 codeBlock: false,
-                // bulletList: false, // As Markdown handles bullet lists and allows us to configure the marker to prevent task item conflicts
+                // Disable StarterKit's bulletList so we can swap in our own
+                // (extensions/lists.ts) with disambiguated dash input — a
+                // lone "- " stays plain text until it's clear it isn't the
+                // start of a task ("- [ ]"), so dash lists, star lists, and
+                // task lists can all be typed from the keyboard.
+                bulletList: false,
             }),
+            BulletList,
             InlineCodeExit,
             // Must come before `Markdown` so our higher-priority
             // clipboardTextParser runs first and handles block-level

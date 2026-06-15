@@ -281,6 +281,14 @@ export const styleModule: StyleModule = new StyleModule({
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
         },
+        // Dash lists (typed with `- `) render with a dash glyph instead of
+        // the default disc, so they read distinctly from star lists
+        // (`* `). Overriding the `::marker` content keeps the dash in the
+        // same gutter the disc would occupy, auto-aligned with the first
+        // line of each item.
+        '& ul[data-marker="dash"] > li::marker': {
+            content: '"–  "',
+        },
         // Task list styles
         '& li[data-checked="true"]>div>p': {
             "text-decoration": "line-through",
@@ -632,30 +640,125 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'inline-flex',
         'align-items': 'center',
         'justify-content': 'center',
-        width: '22px',
-        height: '22px',
-        // Vertically centre on the selection's end coordinate (top is set
-        // to the line's mid-point in JS).
-        transform: 'translateY(-50%)',
+        // A short, wide pill suits the horizontal three-dot glyph and sits
+        // just below the selection's end (positioned in JS).
+        width: '28px',
+        height: '20px',
         padding: 0,
-        background: 'var(--ezco-mde-context-menu-bg)',
-        color: 'var(--ezco-mde-context-menu-color)',
-        border: '1px solid var(--ezco-mde-context-menu-border)',
-        'border-radius': '5px',
+        // Solid, slightly-lifted dark surface (not pure black) so hover can
+        // read as a clear, opaque step up rather than a faint translucent
+        // wash over nothing.
+        background: '#1c1c20',
+        color: 'rgba(245, 245, 245, 0.82)',
+        border: '1px solid rgba(245, 245, 245, 0.18)',
+        'border-radius': '6px',
         'box-shadow': '0 2px 8px rgba(0, 0, 0, 0.35)',
         cursor: 'pointer',
         'z-index': 6,
-        transition: 'opacity 120ms ease-out, background-color 120ms ease-out, box-shadow 120ms ease-out',
+        transition: 'background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, box-shadow 120ms ease-out, opacity 120ms ease-out',
     },
     '.ezco-mde-selection-menu-btn:hover': {
-        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+        // Opaque lift + brighter glyph/border — a deliberate hover state
+        // instead of the previous see-through look.
+        background: '#2c2c33',
+        'border-color': 'rgba(245, 245, 245, 0.34)',
+        color: '#ffffff',
+        'box-shadow': '0 3px 10px rgba(0, 0, 0, 0.45)',
     },
     // Clear, visible focus ring so the Tab landing point is obvious.
     '.ezco-mde-selection-menu-btn:focus, .ezco-mde-selection-menu-btn:focus-visible': {
         outline: '2px solid #2490e9',
-        'outline-offset': '1px',
+        'outline-offset': '2px',
+        color: '#ffffff',
     },
-    // Toolbar layout is provided by ToolbarCore's own StyleModule.
-    // Only override the codeblock editor margin within the markdown editor.
-
+    // ─────────────────────────────────────────────────────────────
+    // Rich-text editor toolbar (the file search / command bar at the
+    // top of the document).
+    //
+    // ToolbarCore (from @joinezco/codeblock) provides the base layout via
+    // `.cm-toolbar-*` classes, tuned for the codeblock's monospace editor.
+    // Here we restyle ONLY the markdown editor's instance (tagged
+    // `.ezco-mde-toolbar`) so it reads as a sans-serif document header
+    // embedded in the page surface — the codeblock toolbar, which lacks
+    // this class, is untouched. Selectors carry the extra class for
+    // specificity so they win over the base rules regardless of mount
+    // order.
+    // ─────────────────────────────────────────────────────────────
+    '.cm-toolbar-panel.ezco-mde-toolbar': {
+        background: 'transparent',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        padding: '9px 14px',
+        // A hairline rule under the header, like a document title divider —
+        // this (plus the shared background) is what makes the toolbar read
+        // as the top of the editor surface rather than a floating bar.
+        'border-bottom': '1px solid var(--ezco-mde-toolbar-border, rgba(0, 0, 0, 0.08))',
+    },
+    // Collapse the wide CodeMirror gutter-sized icon column down to a
+    // tight, left-aligned search glyph next to the filename.
+    '.ezco-mde-toolbar .cm-toolbar-state-icon-container': {
+        width: 'auto',
+        'min-width': '0',
+    },
+    '.ezco-mde-toolbar .cm-toolbar-state-icon': {
+        width: 'auto',
+        'min-width': '0',
+        'font-size': '13px',
+        color: 'var(--ezco-mde-toolbar-icon, rgba(0, 0, 0, 0.38))',
+        'padding-right': '9px',
+        'text-align': 'left',
+    },
+    '.ezco-mde-toolbar .cm-toolbar-input': {
+        'font-family': 'inherit',
+        'font-size': '14px',
+        'font-weight': 500,
+        color: 'var(--ezco-mde-toolbar-color, rgba(0, 0, 0, 0.6))',
+        padding: '1px 0',
+    },
+    '.ezco-mde-toolbar .cm-toolbar-input::placeholder': {
+        color: 'rgba(0, 0, 0, 0.32)',
+        'font-weight': 400,
+    },
+    // Search-results dropdown — a clean popover that matches the header.
+    '.ezco-mde-toolbar .cm-search-results': {
+        'font-family': 'inherit',
+        background: 'var(--ezco-mde-toolbar-popover-bg, #ffffff)',
+        border: '1px solid rgba(0, 0, 0, 0.1)',
+        'border-radius': '10px',
+        'box-shadow': '0 10px 30px rgba(0, 0, 0, 0.14)',
+        'margin-top': '6px',
+        padding: '5px',
+        'max-height': '340px',
+        overflow: 'hidden auto',
+    },
+    '.ezco-mde-toolbar .cm-search-result': {
+        'font-family': 'inherit',
+        'align-items': 'center',
+        'border-radius': '7px',
+        padding: '3px 4px',
+        'line-height': '1.5',
+    },
+    '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container': {
+        width: '26px',
+        'min-width': '26px',
+    },
+    '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
+        width: '26px',
+        'min-width': '26px',
+        'padding-right': '8px',
+        'font-size': '14px',
+    },
+    '.ezco-mde-toolbar .cm-search-result > .cm-search-result-label': {
+        'font-size': '13px',
+        padding: '4px 4px',
+    },
+    // Re-theme the hover/selected colours for the light document surface.
+    '.ezco-mde-toolbar .cm-search-result:hover': {
+        'background-color': 'rgba(36, 144, 233, 0.1)',
+    },
+    '.ezco-mde-toolbar .cm-search-result.selected': {
+        'background-color': 'rgba(36, 144, 233, 0.16)',
+    },
+    '.ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-label': {
+        color: 'rgba(0, 0, 0, 0.85)',
+    },
 })
