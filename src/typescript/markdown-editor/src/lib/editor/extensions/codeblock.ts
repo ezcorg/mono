@@ -53,6 +53,35 @@ class CodeblockRegistry {
 
 export const codeblockRegistry = CodeblockRegistry.getInstance();
 
+/**
+ * Resolve the light/dark mode the editor is rendered in, so an embedded
+ * codeblock matches it by default. An explicit `data-theme` on the editor
+ * (or any ancestor) wins; otherwise we follow the OS colour-scheme.
+ */
+function isDarkMode(reference?: Element | null): boolean {
+    if (typeof document !== 'undefined') {
+        const themed = (reference ?? document.body)?.closest?.('[data-theme]') as HTMLElement | null;
+        const explicit = themed?.getAttribute('data-theme');
+        if (explicit === 'dark') return true;
+        if (explicit === 'light') return false;
+    }
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        : false;
+}
+
+// When the editor is in "system" mode (no pinned `data-theme`), keep all
+// codeblocks in step with the OS colour-scheme as it changes. Set up once.
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => {
+        if (typeof document !== 'undefined' && document.querySelector('[data-theme]')) return;
+        codeblockRegistry.setTheme({ dark: mql.matches });
+    };
+    if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onChange);
+    else if (typeof (mql as any).addListener === 'function') (mql as any).addListener(onChange);
+}
+
 let fsWorkerPromise: Promise<any> | null = null;
 
 function getFileSystemWorker() {
@@ -518,7 +547,10 @@ export const ExtendedCodeblock = Node.create({
                                 language: node.attrs.language,
                                 filepath: node.attrs.file,
                                 index,
-                                dark: true,
+                                // Match the editor's light/dark mode rather
+                                // than forcing dark; respects an explicit
+                                // `data-theme`, else follows the OS.
+                                dark: isDarkMode(view.dom),
                             }),
                         ]
                     }));

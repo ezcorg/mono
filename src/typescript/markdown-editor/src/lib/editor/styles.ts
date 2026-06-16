@@ -39,8 +39,12 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-bg-dark': '#1e1e1e',
         '--ezco-mde-link-color': '#5861ff',
         '--ezco-mde-link-color-hover': '#383ea3',
-        '--ezco-mde-block-indicator-color': 'rgba(160, 160, 160, 0.45)',
-        '--ezco-mde-block-action-btn-color': 'rgba(245, 245, 245, 0.6)',
+        // Mid-grey so the indicator reads on both light and dark surfaces —
+        // the block-action button renders OUTSIDE `.ezco-mde`, so it can't
+        // pick up the editor's theme-scoped vars (the old near-white value
+        // was invisible on a light editor).
+        '--ezco-mde-block-indicator-color': 'rgba(120, 120, 120, 0.4)',
+        '--ezco-mde-block-action-btn-color': 'rgba(120, 120, 120, 0.9)',
         '--ezco-mde-block-action-btn-bg': 'rgba(245, 245, 245, 0.05)',
         '--ezco-mde-block-action-btn-bg-hover': 'rgba(245, 245, 245, 0.12)',
         // Context-menu theming — dedicated variables (rather than
@@ -440,8 +444,8 @@ export const styleModule: StyleModule = new StyleModule({
         // No background change on hover — the indicator stays unobtrusive.
         // Brighten the indicator line and icon glyph instead so there's
         // still some visual feedback that the button is interactive.
-        'border-right-color': 'rgba(220, 220, 220, 0.7)',
-        color: 'rgba(245, 245, 245, 0.95)',
+        'border-right-color': 'rgba(120, 120, 120, 0.7)',
+        color: 'rgba(80, 80, 80, 1)',
     },
     '.ezco-mde-block-action-btn-icon': {
         'pointer-events': 'none',
@@ -672,29 +676,35 @@ export const styleModule: StyleModule = new StyleModule({
         color: '#ffffff',
     },
     // ─────────────────────────────────────────────────────────────
-    // Rich-text editor toolbar (the file search / command bar at the
-    // top of the document).
+    // File-search / command toolbar (tagged `.ezco-mde-toolbar`).
     //
-    // ToolbarCore (from @joinezco/codeblock) provides the base layout via
-    // `.cm-toolbar-*` classes, tuned for the codeblock's monospace editor.
-    // Here we restyle ONLY the markdown editor's instance (tagged
-    // `.ezco-mde-toolbar`) so it reads as a sans-serif document header
-    // embedded in the page surface — the codeblock toolbar, which lacks
-    // this class, is untouched. Selectors carry the extra class for
-    // specificity so they win over the base rules regardless of mount
-    // order.
+    // It renders OUTSIDE the editor body (see extensions/toolbar.ts), and the
+    // default presentation is a self-contained, centred "omnibar" — a
+    // rounded, bordered search field (à la Spotlight / a command palette)
+    // with a matching results popover dropping beneath it. Styling is a
+    // consumer concern, so everything visual is driven by
+    // `--ezco-mde-toolbar-*` custom properties: override the variables (or
+    // add your own class via the toolbar's `className` option) to retheme it
+    // without fighting these rules. The codeblock package's own toolbar
+    // lacks this class, so it's untouched.
     // ─────────────────────────────────────────────────────────────
     '.cm-toolbar-panel.ezco-mde-toolbar': {
-        background: 'transparent',
-        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
-        padding: '9px 14px',
-        // A hairline rule under the header, like a document title divider —
-        // this (plus the shared background) is what makes the toolbar read
-        // as the top of the editor surface rather than a floating bar.
-        'border-bottom': '1px solid var(--ezco-mde-toolbar-border, rgba(0, 0, 0, 0.08))',
+        // Centred rounded field.
+        'box-sizing': 'border-box',
+        width: '100%',
+        'max-width': 'var(--ezco-mde-toolbar-max-width, 460px)',
+        margin: 'var(--ezco-mde-toolbar-margin, 12px auto)',
+        background: 'var(--ezco-mde-toolbar-bg, #ffffff)',
+        color: 'var(--ezco-mde-toolbar-fg, #1a1a1a)',
+        border: 'var(--ezco-mde-toolbar-border, 1px solid rgba(0, 0, 0, 0.14))',
+        'border-radius': 'var(--ezco-mde-toolbar-radius, 12px)',
+        'box-shadow': 'var(--ezco-mde-toolbar-shadow, 0 1px 2px rgba(0, 0, 0, 0.06))',
+        'font-family': 'inherit',
+        'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
+        padding: 'var(--ezco-mde-toolbar-pad-y, 8px) var(--ezco-mde-toolbar-pad-x, 14px)',
     },
-    // Collapse the wide CodeMirror gutter-sized icon column down to a
-    // tight, left-aligned search glyph next to the filename.
+    // Collapse the wide CodeMirror gutter-sized icon column down to a tight,
+    // left-aligned search glyph next to the filename.
     '.ezco-mde-toolbar .cm-toolbar-state-icon-container': {
         width: 'auto',
         'min-width': '0',
@@ -702,63 +712,75 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-toolbar .cm-toolbar-state-icon': {
         width: 'auto',
         'min-width': '0',
-        'font-size': '13px',
-        color: 'var(--ezco-mde-toolbar-icon, rgba(0, 0, 0, 0.38))',
+        'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
+        color: 'var(--ezco-mde-toolbar-muted, rgba(0, 0, 0, 0.45))',
         'padding-right': '9px',
         'text-align': 'left',
     },
     '.ezco-mde-toolbar .cm-toolbar-input': {
         'font-family': 'inherit',
-        'font-size': '14px',
-        'font-weight': 500,
-        color: 'var(--ezco-mde-toolbar-color, rgba(0, 0, 0, 0.6))',
-        padding: '1px 0',
+        'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
+        'font-weight': 400,
+        color: 'var(--ezco-mde-toolbar-fg, #1a1a1a)',
+        padding: '0',
     },
     '.ezco-mde-toolbar .cm-toolbar-input::placeholder': {
-        color: 'rgba(0, 0, 0, 0.32)',
-        'font-weight': 400,
+        color: 'var(--ezco-mde-toolbar-muted, rgba(0, 0, 0, 0.4))',
     },
-    // Search-results dropdown — a clean popover that matches the header.
+    // Results popover — a rounded panel matching the field width, dropping
+    // just beneath it (left:0/right:0 keeps it aligned, not drifting right).
     '.ezco-mde-toolbar .cm-search-results': {
         'font-family': 'inherit',
         background: 'var(--ezco-mde-toolbar-popover-bg, #ffffff)',
-        border: '1px solid rgba(0, 0, 0, 0.1)',
-        'border-radius': '10px',
-        'box-shadow': '0 10px 30px rgba(0, 0, 0, 0.14)',
+        color: 'var(--ezco-mde-toolbar-fg, #1a1a1a)',
+        border: 'var(--ezco-mde-toolbar-popover-border, 1px solid rgba(0, 0, 0, 0.14))',
+        'border-radius': 'var(--ezco-mde-toolbar-radius, 12px)',
+        'box-shadow': 'var(--ezco-mde-toolbar-popover-shadow, 0 10px 30px rgba(0, 0, 0, 0.16))',
+        left: '0',
+        right: '0',
+        width: 'auto',
         'margin-top': '6px',
-        padding: '5px',
+        padding: '6px',
         'max-height': '340px',
         overflow: 'hidden auto',
     },
     '.ezco-mde-toolbar .cm-search-result': {
         'font-family': 'inherit',
         'align-items': 'center',
-        'border-radius': '7px',
-        padding: '3px 4px',
-        'line-height': '1.5',
+        'border-radius': 'var(--ezco-mde-toolbar-item-radius, 8px)',
+        padding: '7px 10px',
+        'line-height': '1.4',
     },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container': {
-        width: '26px',
-        'min-width': '26px',
+        width: 'auto',
+        'min-width': '0',
     },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
-        width: '26px',
-        'min-width': '26px',
-        'padding-right': '8px',
-        'font-size': '14px',
+        width: 'auto',
+        'min-width': '0',
+        'padding-right': '9px',
+        'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
+        'text-align': 'left',
     },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-label': {
-        'font-size': '13px',
-        padding: '4px 4px',
+        'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
+        padding: '0',
     },
-    // Re-theme the hover/selected colours for the light document surface.
     '.ezco-mde-toolbar .cm-search-result:hover': {
-        'background-color': 'rgba(36, 144, 233, 0.1)',
+        'background-color': 'var(--ezco-mde-toolbar-hover-bg, rgba(0, 0, 0, 0.05))',
     },
     '.ezco-mde-toolbar .cm-search-result.selected': {
-        'background-color': 'rgba(36, 144, 233, 0.16)',
+        'background-color': 'var(--ezco-mde-toolbar-active-bg, rgba(0, 0, 0, 0.06))',
     },
-    '.ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-label': {
-        color: 'rgba(0, 0, 0, 0.85)',
+    // The codeblock base styles paint hovered/selected row text + icons
+    // white (meant for its solid-blue selection). On the omnibar's soft
+    // light rows that makes labels/command-icons vanish — so keep them
+    // legible by following the row's own colour (`active-fg`, default the
+    // toolbar foreground) instead.
+    '.ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-icon-container > .cm-search-result-icon': {
+        color: 'inherit',
+    },
+    '.ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-icon-container > .cm-search-result-icon': {
+        color: 'var(--ezco-mde-toolbar-active-fg, inherit)',
     },
 })

@@ -2,7 +2,6 @@
   font-family: "Source Serif 4";
   src: url("/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf") format("truetype-variations");
   font-weight: 200 900;
-  /* range supported by the variable font */
   font-style: normal;
 }
 
@@ -13,31 +12,237 @@
   font-style: italic;
 }
 
-/* TODO: use unique CSS class so it's not likely to conflict with existing page styles */
+/* ──────────────────────────────────────────────────────────────
+   Dev preview page: a neutral "desktop" so the simulated windows
+   read as floating app windows. Two variants are shown one at a
+   time via the toggle: the DEFAULT (out-of-the-box library look)
+   and a CUSTOM theme (showing how far a consumer can take it).
+   ────────────────────────────────────────────────────────────── */
+.dev-page {
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: #ededf0;
+  padding: 20px 20px 96px;
+  font-family: system-ui, -apple-system, Avenir, Helvetica, Arial, sans-serif;
+}
 
-/* The editor "page": the bordered box wraps BOTH the toolbar and the
-   ProseMirror content, so the toolbar reads as a header embedded in the
-   document rather than a separate bar floating above it. */
-#md-editor {
-  border: 4px solid #000;
-  max-width: min(60ch, 85vw);
-  box-shadow: -1rem 1rem black;
+.dev-header,
+.dev-note,
+.mac-window,
+.dev-output {
+  width: 100%;
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.dev-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.dev-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dev-title code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.dev-subtitle {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* macOS-style segmented control */
+.variant-toggle {
+  display: inline-flex;
+  padding: 2px;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 9px;
+}
+
+.variant-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 5px 16px;
+  font: inherit;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.6);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.variant-toggle button.is-active {
   background: #fff;
+  color: #000;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
-/* Align the toolbar header with the body's 2rem text inset. */
-#md-editor .ezco-mde-toolbar {
-  padding-left: 2rem;
-  padding-right: 2rem;
+.dev-note {
+  margin: 0 auto 20px;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.5);
 }
 
-.ProseMirror {
-  font-family: 'Source Serif 4', system-ui, Avenir, Helvetica, Arial, serif;
-  padding: 2rem;
-  min-height: 200px;
+/* ──────────────────────────────────────────────────────────────
+   Simulated macOS window
+   ────────────────────────────────────────────────────────────── */
+.mac-window {
+  display: flex;
+  flex-direction: column;
+  height: min(72vh, 660px);
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.mac-titlebar {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 14px;
+  background: linear-gradient(#fbfbfb, #f0f0f0);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.mac-lights {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  z-index: 1;
+}
+
+.mac-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+.mac-light--close { background: #ff5f57; }
+.mac-light--min { background: #febc2e; }
+.mac-light--max { background: #28c840; }
+
+.mac-title {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+/* Toolbar slot: sits above the editor body. position/z-index let the
+   toolbar's search-results dropdown stack above the body. */
+.mac-toolbar-slot {
+  flex: none;
+  position: relative;
+  z-index: 3;
+}
+
+/* For the demo the toolbar is a full-width, transparent bar whose search
+   text lines up with the editor's left text column (the gutter below) —
+   rather than the library's default centred "omnibar" pill. */
+.mac-toolbar-slot .ezco-mde-toolbar {
+  --ezco-mde-toolbar-max-width: none;
+  --ezco-mde-toolbar-margin: 0;
+  --ezco-mde-toolbar-bg: transparent;
+  --ezco-mde-toolbar-border: none;
+  --ezco-mde-toolbar-shadow: none;
+  --ezco-mde-toolbar-pad-x: 44px;
+  --ezco-mde-toolbar-radius: 8px;
+}
+
+.mac-toolbar-slot .cm-toolbar-panel.ezco-mde-toolbar {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* The editor body — the scroll container. A left gutter gives the
+   block-action indicator (which renders to the left of the editor element)
+   room to show; without it the indicator sits outside the window and is
+   clipped. No body padding-top, so a codeblock's sticky toolbar still pins
+   flush to the top of the scroll area. */
+.mac-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 32px 0 44px;
+}
+
+/* Editor element fills the inset body; its own padding lives on .ezco-mde
+   (top/bottom only — horizontal insets come from .mac-body) so the focus
+   ring hugs the text and the left text column aligns with the gutter. */
+.mac-body .ezco-mde {
+  padding: 1.75rem 0;
   outline: none;
+}
 
-  h1 {
-    margin-top: 0;
-  }
+/* ── DEFAULT variant: out-of-the-box, nothing extra. The editor inherits
+   the page's system font; the toolbar uses library defaults. ── */
+
+/* ── CUSTOM variant: customize only the EDITOR within the (untouched)
+   native window — serif typography and a brand-accented toolbar — to show
+   the level of theming achievable without restyling the window chrome. ── */
+.mac-window--custom .mac-body .ezco-mde {
+  font-family: "Source Serif 4", system-ui, Georgia, serif;
+  padding: 2.25rem;
+}
+
+.mac-window--custom .mac-toolbar-slot .ezco-mde-toolbar {
+  --ezco-mde-toolbar-active-bg: #5861ff;
+  --ezco-mde-toolbar-active-fg: #ffffff;
+}
+
+/* White icons on the accent-filled selected row (overrides inline file-icon
+   colours). */
+.mac-window--custom .ezco-mde-toolbar .cm-search-result.selected .cm-search-result-icon {
+  color: #fff !important;
+}
+
+/* ── Live markdown output (QA aid) ── */
+.dev-output {
+  margin-top: 28px;
+}
+
+.dev-output summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.55);
+  user-select: none;
+}
+
+.dev-output pre {
+  margin-top: 10px;
+  white-space: pre-wrap;
+  background: #f6f6f8;
+  padding: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  max-height: 280px;
+  overflow: auto;
 }

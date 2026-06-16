@@ -101,9 +101,16 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             SlashCommands.configure({
                 commands: defaultSlashCommands,
             }),
-            Toolbar.configure(options.toolbar || {
-                fs: options.fs?.fs,
-                filepath: options.fs?.filepath,
+            // The toolbar reads its fs/filepath from `options.toolbar` when
+            // given, otherwise falls back to the editor's filesystem so a
+            // consumer can configure just `mount`/`className` and still get
+            // a working file search.
+            Toolbar.configure({
+                fs: options.toolbar?.fs ?? options.fs?.fs,
+                index: options.toolbar?.index,
+                filepath: options.toolbar?.filepath ?? options.fs?.filepath,
+                mount: options.toolbar?.mount,
+                className: options.toolbar?.className,
             }),
             BlockActions,
             SelectionMenu,
@@ -128,3 +135,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
     }
     return editor as MarkdownEditor;
 }
+
+// Re-export the toolbar so consumers can add/configure it themselves (e.g.
+// to control where it mounts or restyle it) instead of relying on the
+// `options.toolbar` convenience wiring.
+export { Toolbar } from './extensions/toolbar';
+export type { ToolbarOptions, ToolbarMount } from './extensions/toolbar';
