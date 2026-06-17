@@ -81,22 +81,13 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
             label: 'Link',
             icon: '🔗',
             isActive: (e) => e.isActive('link'),
+            // Open the inline link editor (LinkMenu) rather than a blocking
+            // window.prompt. Falls back to focusing the editor if the
+            // LinkMenu extension isn't installed.
             run: (e) => {
-                const previous = e.getAttributes('link').href as string | undefined
-                const url = window.prompt('Link URL', previous ?? 'https://')
-                if (url === null) {
-                    e.chain().focus().run()
-                    return
-                }
-                if (url.trim() === '') {
-                    e.chain().focus().extendMarkRange('link').unsetLink().run()
-                    return
-                }
-                e.chain()
-                    .focus()
-                    .extendMarkRange('link')
-                    .setLink({ href: url.trim() })
-                    .run()
+                e.chain().focus().run()
+                const linkView = (e.storage as Record<string, any>).linkMenu?.view
+                if (linkView?.startEdit) linkView.startEdit()
             },
         })
     }

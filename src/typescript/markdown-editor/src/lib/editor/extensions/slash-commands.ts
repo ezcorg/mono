@@ -357,15 +357,16 @@ class SlashCommandsView {
             this.popup = null
         }
 
-        // Force cleanup of any remaining tippy instances
-        const existingTippyInstances = document.querySelectorAll('[data-tippy-root]')
-        existingTippyInstances.forEach(instance => {
-            instance.remove()
+        // Defensive cleanup of any *slash* popovers that escaped destroy()
+        // (e.g. across HMR / re-init). This MUST stay scoped to our own
+        // dropdown: a previous version removed every `[data-tippy-root]` in
+        // the document, which — because this runs on every selection change —
+        // wiped unrelated popovers (the inline link popover, the block-action
+        // and selection menus) the instant the caret moved.
+        document.querySelectorAll('[data-tippy-root]').forEach(root => {
+            if (root.querySelector('.ezco-mde-slash-menu')) root.remove()
         })
-
-        // Also remove any dropdown elements that might be lingering
-        const existingDropdowns = document.querySelectorAll('.ezco-mde-slash-menu')
-        existingDropdowns.forEach(dropdown => {
+        document.querySelectorAll('.ezco-mde-slash-menu').forEach(dropdown => {
             dropdown.remove()
         })
 

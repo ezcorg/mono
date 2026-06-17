@@ -1,5 +1,6 @@
-import { Node, mergeAttributes, wrappingInputRule, InputRule } from '@tiptap/core'
-import { TextSelection, type Transaction } from '@tiptap/pm/state'
+import { Node, Extension, mergeAttributes, wrappingInputRule, InputRule } from '@tiptap/core'
+import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { findWrapping, canSplit } from '@tiptap/pm/transform'
 import type { NodeType, ResolvedPos } from '@tiptap/pm/model'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
@@ -206,6 +207,46 @@ export const BulletList = Node.create({
                     tr.wrap(blockRange, wrapping)
                     // Cursor right after the kept char.
                     tr.setSelection(TextSelection.create(tr.doc, tr.mapping.map(range.to)))
+                },
+            }),
+        ]
+    },
+})
+
+/**
+ * Ordered lists are numbered with a CSS counter (so the number sits
+ * left-aligned in the shared decoration gutter — see styles.ts). A bare
+ * `counter-reset` in CSS always restarts at 1, which would drop an ordered
+ * list's `start` attribute (e.g. markdown `3. …`). This plugin re-applies a
+ * non-default `start` by decorating each `<ol>` with an inline `counter-reset`
+ * seeding the counter to `start - 1`. (Lists that start at 1 need nothing —
+ * the stylesheet's reset covers them, including nested lists, which each reset
+ * their own counter.)
+ */
+export const OrderedListStart = Extension.create({
+    name: 'orderedListStart',
+
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: new PluginKey('orderedListStart'),
+                props: {
+                    decorations(state) {
+                        const decorations: Decoration[] = []
+                        state.doc.descendants((node, pos) => {
+                            if (node.type.name !== 'orderedList') return
+                            const start = Number(node.attrs.start ?? 1)
+                            if (!Number.isFinite(start) || start === 1) return
+                            decorations.push(
+                                Decoration.node(pos, pos + node.nodeSize, {
+                                    style: `counter-reset: ezco-mde-ol ${start - 1}`,
+                                }),
+                            )
+                        })
+                        return decorations.length
+                            ? DecorationSet.create(state.doc, decorations)
+                            : DecorationSet.empty
+                    },
                 },
             }),
         ]

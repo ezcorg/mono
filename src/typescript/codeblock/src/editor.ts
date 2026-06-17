@@ -214,6 +214,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     }
     const showLineNums = resolvedSettings.showLineNumbers !== false; // default true
     const showFold = resolvedSettings.showFoldGutter !== false; // default true
+    const wrapLines = resolvedSettings.lineWrap === true; // default false
     // Default-on for .sh; opt-in for everything else.
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
@@ -225,7 +226,10 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
         readOnlyCompartment.of(EditorState.readOnly.of(false)),
-        lineWrappingCompartment.of([]),
+        // Honour the initial `lineWrap` setting (consistent with
+        // showLineNumbers/showFoldGutter above); the settings panel later
+        // reconfigures this same compartment to toggle it.
+        lineWrappingCompartment.of(wrapLines ? EditorView.lineWrapping : []),
         lineNumbersCompartment.of(showLineNums ? [lineNumbers(), highlightActiveLineGutter()] : []),
         foldGutterCompartment.of(showFold ? [foldGutter()] : []),
         tooltips({ position: "fixed" }),

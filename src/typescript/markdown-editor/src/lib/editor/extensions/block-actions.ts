@@ -1,9 +1,9 @@
 import { Editor, Extension } from '@tiptap/core'
-import { NodeSelection, Plugin, PluginKey, type Selection } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, PluginKey, TextSelection, type Selection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
-import { ContextMenu } from '../ui/context-menu'
+import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 
 interface BlockAction {
     label: string
@@ -140,10 +140,11 @@ function convertList(
     pos: number,
     node: PMNode,
     targetListType: ListTypeName,
+    listAttrs: Record<string, unknown> = {},
 ): void {
     const { state } = editor
     const { schema } = state
-    const rebuilt = rebuildListNode(node, targetListType, schema)
+    const rebuilt = rebuildListNode(node, targetListType, schema, listAttrs)
     if (!rebuilt) return
     const tr = state.tr.replaceRangeWith(pos, pos + node.nodeSize, rebuilt)
     editor.view.dispatch(tr)
@@ -153,6 +154,7 @@ function rebuildListNode(
     listNode: PMNode,
     targetListType: ListTypeName,
     schema: PMNode['type']['schema'],
+    listAttrs: Record<string, unknown> = {},
 ): PMNode | null {
     const listType = schema.nodes[targetListType]
     const itemTypeName = targetListType === 'taskList' ? 'taskItem' : 'listItem'
@@ -163,11 +165,12 @@ function rebuildListNode(
     listNode.forEach((child) => {
         // child is a listItem or taskItem in the source list. Map its
         // content node-by-node so any nested lists are recursively
-        // rebuilt as the same target type.
+        // rebuilt as the same target type (and same attrs, e.g. the dash
+        // marker, so the whole tree converts consistently).
         const newChildren: PMNode[] = []
         child.forEach((grandchild) => {
             if (isListType(grandchild.type.name)) {
-                const rebuilt = rebuildListNode(grandchild, targetListType, schema)
+                const rebuilt = rebuildListNode(grandchild, targetListType, schema, listAttrs)
                 if (rebuilt) newChildren.push(rebuilt)
             } else {
                 newChildren.push(grandchild)
@@ -186,7 +189,7 @@ function rebuildListNode(
         items.push(itemType.create(itemAttrs, Fragment.from(newChildren)))
     })
 
-    return listType.create({}, Fragment.from(items))
+    return listType.create(listAttrs, Fragment.from(items))
 }
 
 /**
@@ -225,7 +228,7 @@ function collectParagraphs(listNode: PMNode): PMNode[] {
     return out
 }
 
-function actionsForNode(node: PMNode): BlockAction[] {
+export function actionsForNode(node: PMNode): BlockAction[] {
     const remove: BlockAction = {
         label: 'Delete',
         icon: '✕',
@@ -256,7 +259,8 @@ function actionsForNode(node: PMNode): BlockAction[] {
                 { label: 'Heading 1', icon: 'H1', run: ({ editor }) => editor.chain().focus().setHeading({ level: 1 }).run() },
                 { label: 'Heading 2', icon: 'H2', run: ({ editor }) => editor.chain().focus().setHeading({ level: 2 }).run() },
                 { label: 'Heading 3', icon: 'H3', run: ({ editor }) => editor.chain().focus().setHeading({ level: 3 }).run() },
-                { label: 'Bullet list', icon: '•', run: ({ editor }) => editor.chain().focus().toggleBulletList().run() },
+                { label: 'Bullet list', icon: '•', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run() },
+                { label: 'Dashed list', icon: '–', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run() },
                 { label: 'Ordered list', icon: '1.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().run() },
                 { label: 'Task list', icon: '☐', run: ({ editor }) => editor.chain().focus().toggleTaskList().run() },
                 { label: 'Quote', icon: '"', run: ({ editor }) => editor.chain().focus().toggleBlockquote().run() },
@@ -277,23 +281,33 @@ function actionsForNode(node: PMNode): BlockAction[] {
                 remove,
             ]
         }
-        case 'bulletList':
+        case 'bulletList': {
+            // Offer the *other* marker so a bullet (•) list can become a
+            // dashed (–) list and vice-versa.
+            const isDash = (node.attrs as { marker?: string }).marker === 'dash'
+            const markerSwap: BlockAction = isDash
+                ? { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) }
+                : { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) }
             return [
+                markerSwap,
                 { label: 'Ordered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
                 { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
                 { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
+        }
         case 'orderedList':
             return [
-                { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList') },
+                { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
+                { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
                 { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
                 { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
         case 'taskList':
             return [
-                { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList') },
+                { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
+                { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
                 { label: 'Ordered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
                 {
                     label: 'Mark all complete',
@@ -328,7 +342,41 @@ function actionsForNode(node: PMNode): BlockAction[] {
             ]
         case 'blockquote':
             return [
-                { label: 'Unwrap quote', icon: '⇤', run: ({ editor }) => editor.chain().focus().lift('blockquote').run() },
+                {
+                    label: 'Unwrap quote',
+                    icon: '⇤',
+                    // Lift the *entire* quote's content out, not just the
+                    // block under the cursor — replace the blockquote node
+                    // with its children.
+                    run: ({ editor, pos, node }) => {
+                        const { state } = editor
+                        const { from, to } = state.selection
+                        const tr = state.tr.replaceWith(
+                            pos,
+                            pos + node.nodeSize,
+                            node.content,
+                        )
+                        // Preserve the caret. `replaceWith` treats the quote as
+                        // delete+insert, so `tr.mapping` would collapse a caret
+                        // inside it to the content boundary. Removing the single
+                        // blockquote wrapper token shifts every interior
+                        // position left by exactly 1, so map by that instead.
+                        const clamp = (p: number) =>
+                            Math.min(Math.max(p - 1, 0), tr.doc.content.size)
+                        try {
+                            tr.setSelection(
+                                TextSelection.between(
+                                    tr.doc.resolve(clamp(from)),
+                                    tr.doc.resolve(clamp(to)),
+                                ),
+                            )
+                        } catch {
+                            /* doc shape changed too much — keep PM's mapping */
+                        }
+                        editor.view.dispatch(tr)
+                        editor.view.focus()
+                    },
+                },
                 toParagraph,
                 remove,
             ]
@@ -438,6 +486,8 @@ class BlockActionsView {
         // interactive rather than just the icon.
         this.btn = document.createElement('button')
         this.btn.type = 'button'
+        // Just the component class — its variables live at `:root`, and the
+        // bare `.ezco-mde` class would pull in content-layout rules.
         this.btn.className = 'ezco-mde-block-action-btn'
         this.btn.style.position = 'absolute'
         this.btn.style.opacity = '0'
@@ -591,9 +641,139 @@ class BlockActionsView {
         return null
     }
 
+    /** A non-empty text selection that crosses a top-level block boundary
+     *  (e.g. selecting from one paragraph into the next). Returns the range
+     *  and the positions of its first/last top-level blocks. */
+    private resolveSpanningSelection(): {
+        from: number
+        to: number
+        fromBlockPos: number
+        toBlockPos: number
+    } | null {
+        const { selection } = this.view.state
+        if (!(selection instanceof TextSelection) || selection.empty) return null
+        const { $from, $to } = selection
+        if ($from.depth < 1 || $to.depth < 1) return null
+        const fromBlockPos = $from.before(1)
+        const toBlockPos = $to.before(1)
+        if (fromBlockPos === toBlockPos) return null
+        return { from: selection.from, to: selection.to, fromBlockPos, toBlockPos }
+    }
+
+    /** Position the indicator to span the full height of a multi-block
+     *  selection (first block's top → last block's bottom) and show the
+     *  `✳` glyph. */
+    private positionSpanning(span: {
+        from: number
+        to: number
+        fromBlockPos: number
+        toBlockPos: number
+    }) {
+        const firstDom = this.view.nodeDOM(span.fromBlockPos) as HTMLElement | null
+        const lastDom = this.view.nodeDOM(span.toBlockPos) as HTMLElement | null
+        if (
+            !firstDom || typeof firstDom.getBoundingClientRect !== 'function' ||
+            !lastDom || typeof lastDom.getBoundingClientRect !== 'function'
+        ) {
+            requestAnimationFrame(() => this.reposition())
+            return
+        }
+
+        const wrapperRect = this.wrapper.getBoundingClientRect()
+        const firstRect = firstDom.getBoundingClientRect()
+        const lastRect = lastDom.getBoundingClientRect()
+        const top = firstRect.top - wrapperRect.top + this.wrapper.scrollTop
+        const height = Math.max(lastRect.bottom - firstRect.top, firstRect.height)
+        const iconOffsetY = computeIconOffsetY(firstDom)
+
+        if (top !== this.lastTop) { this.btn.style.top = `${top}px`; this.lastTop = top }
+        if (height !== this.lastHeight) { this.btn.style.height = `${height}px`; this.lastHeight = height }
+        if (iconOffsetY !== this.lastIconOffsetY) {
+            this.btn.style.setProperty('--ezco-mde-block-action-icon-offset-y', `${iconOffsetY}px`)
+            this.lastIconOffsetY = iconOffsetY
+        }
+        if (this.btn.style.left !== '-42px') this.btn.style.left = '-42px'
+        if (this.btn.style.opacity !== '1') this.btn.style.opacity = '1'
+        if (this.lastBlockType !== 'spanning') {
+            this.btn.dataset.blockType = 'spanning'
+            this.lastBlockType = 'spanning'
+        }
+        if (this.lastIconText !== '✳') {
+            this.btnIcon.textContent = '✳'
+            this.lastIconText = '✳'
+        }
+
+        this.activeNode = null
+        this.activePos = -1
+    }
+
+    /** Build the menu for a multi-block selection: only the block
+     *  conversions that `editor.can()` apply to the whole range, plus a
+     *  always-available Delete. If no conversion applies, a disabled "None"
+     *  filler is shown so the menu never reads as empty. */
+    private buildSpanningMenuItems(span: {
+        from: number
+        to: number
+    }): ContextMenuItem[] {
+        const editor = this.editor
+        const items: ContextMenuItem[] = []
+        const add = (label: string, icon: string, can: boolean, run: () => void) => {
+            if (!can) return
+            items.push({
+                label,
+                icon,
+                onSelect: () => {
+                    this.closeMenu()
+                    run()
+                    editor.view.focus()
+                },
+            })
+        }
+
+        add('Heading 1', 'H1', editor.can().setHeading({ level: 1 }), () => editor.chain().focus().setHeading({ level: 1 }).run())
+        add('Heading 2', 'H2', editor.can().setHeading({ level: 2 }), () => editor.chain().focus().setHeading({ level: 2 }).run())
+        add('Heading 3', 'H3', editor.can().setHeading({ level: 3 }), () => editor.chain().focus().setHeading({ level: 3 }).run())
+        add('Paragraph', '¶', editor.can().setParagraph(), () => editor.chain().focus().setParagraph().run())
+        add('Bullet list', '•', editor.can().toggleBulletList(), () => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run())
+        add('Dashed list', '–', editor.can().toggleBulletList(), () => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run())
+        add('Ordered list', '1.', editor.can().toggleOrderedList(), () => editor.chain().focus().toggleOrderedList().run())
+        add('Task list', '☐', editor.can().toggleTaskList(), () => editor.chain().focus().toggleTaskList().run())
+        add('Quote', '"', editor.can().toggleBlockquote(), () => editor.chain().focus().toggleBlockquote().run())
+
+        if (items.length === 0) {
+            items.push({
+                label: 'No combined actions',
+                icon: '∅',
+                disabled: true,
+                onSelect: () => { },
+            })
+        }
+
+        // Deleting the whole range always applies.
+        items.push({
+            label: 'Delete',
+            icon: '✕',
+            onSelect: () => {
+                this.closeMenu()
+                editor.chain().focus().deleteRange({ from: span.from, to: span.to }).run()
+            },
+        })
+
+        return items
+    }
+
     private reposition() {
         if (!this.hasFocusInside()) {
             this.btn.style.opacity = '0'
+            return
+        }
+
+        // A selection that spans multiple blocks gets the spanning indicator
+        // (block-level ops that apply to the whole range) instead of a
+        // single-block one.
+        const span = this.resolveSpanningSelection()
+        if (span) {
+            this.positionSpanning(span)
             return
         }
 
@@ -704,17 +884,26 @@ class BlockActionsView {
         // where the user was.
         this.savedSelection = this.editor.state.selection
 
-        // Refresh active-block resolution; the keyboard path doesn't go
-        // through the usual update/reposition cycle.
-        this.refreshActiveBlock()
-        if (!this.activeNode || this.activePos < 0) return
-        const actions = actionsForNode(this.activeNode)
-        const activeNode = this.activeNode
-        const activePos = this.activePos
-
-        const menu = new ContextMenu({
-            className: 'ezco-mde-block-action-menu',
-            items: actions.map((action) => ({
+        // Build the menu items. A multi-block selection gets the spanning
+        // actions (whatever can apply to every block in the range); a single
+        // block gets that block's own actions.
+        let items: ContextMenuItem[]
+        const span = this.resolveSpanningSelection()
+        if (span) {
+            items = this.buildSpanningMenuItems(span)
+        } else {
+            // Refresh active-block resolution; the keyboard path doesn't go
+            // through the usual update/reposition cycle.
+            this.refreshActiveBlock()
+            if (!this.activeNode || this.activePos < 0) {
+                this.isOpen = false
+                this.savedSelection = null
+                return
+            }
+            const actions = actionsForNode(this.activeNode)
+            const activeNode = this.activeNode
+            const activePos = this.activePos
+            items = actions.map((action) => ({
                 label: action.label,
                 icon: action.icon,
                 onSelect: () => {
@@ -736,7 +925,12 @@ class BlockActionsView {
                     // the now-destroyed menu item) get rescued.
                     this.editor.view.focus()
                 },
-            })),
+            }))
+        }
+
+        const menu = new ContextMenu({
+            className: 'ezco-mde-block-action-menu',
+            items,
             onClose: () => this.closeMenu({ restoreEditorFocus: true }),
         })
         this.activeMenu = menu

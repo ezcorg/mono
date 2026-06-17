@@ -91,7 +91,21 @@ function getFileSystemWorker() {
     return fsWorkerPromise;
 }
 
-export const ExtendedCodeblock = Node.create({
+export interface ExtendedCodeblockOptions {
+    /**
+     * Default CodeMirror editor settings applied to every embedded
+     * codeblock. Merged over the extension's own defaults (line wrap on),
+     * so a consumer can override any of them, e.g.
+     * `ExtendedCodeblock.configure({ settings: { lineWrap: false } })`.
+     */
+    settings: Record<string, unknown>;
+    /** Attributes spread onto the rendered `<code>` element. */
+    HTMLAttributes: Record<string, unknown>;
+    /** Class prefix used when parsing/serializing the language (default `language-`). */
+    languageClassPrefix: string;
+}
+
+export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
     name: 'ezcodeBlock', // Unique name for your node
     group: 'block', // Belongs to the 'block' group (like paragraph, heading)
     content: 'text*', // Can contain text content
@@ -99,6 +113,17 @@ export const ExtendedCodeblock = Node.create({
     defining: true, // A defining node encapsulates its content
     code: true, // Indicates this node represents code
     isolating: true, // Content inside is isolated from outside editing actions
+
+    addOptions() {
+        return {
+            // Long lines inside prose shouldn't force a horizontal scrollbar,
+            // so embedded codeblocks soft-wrap by default. Override per-editor
+            // via `ExtendedCodeblock.configure({ settings: { lineWrap: false } })`.
+            settings: { lineWrap: true },
+            HTMLAttributes: {},
+            languageClassPrefix: 'language-',
+        };
+    },
 
     addAttributes() {
         return {
@@ -289,6 +314,9 @@ export const ExtendedCodeblock = Node.create({
     },
 
     addNodeView() {
+        // Snapshot the configured defaults; `lineWrap: true` unless a
+        // consumer overrode it via `configure({ settings })`.
+        const codeblockSettings = { lineWrap: true, ...(this.options.settings || {}) };
         return ({ editor, node, getPos }: any) => {
             const { view, schema } = editor;
             let updating = false;
@@ -551,6 +579,9 @@ export const ExtendedCodeblock = Node.create({
                                 // than forcing dark; respects an explicit
                                 // `data-theme`, else follows the OS.
                                 dark: isDarkMode(view.dom),
+                                // Soft-wrap long lines by default (configurable
+                                // via the extension's `settings` option).
+                                settings: codeblockSettings,
                             }),
                         ]
                     }));

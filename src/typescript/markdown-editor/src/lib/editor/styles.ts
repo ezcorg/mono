@@ -4,15 +4,16 @@ const darkModeStyles: Record<string, string> = {
     '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-dark)',
     '--ezco-mde-bg': 'var(--ezco-mde-bg-dark)',
     '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-dark)',
+    '--ezco-mde-divider': 'rgba(255, 255, 255, 0.14)',
     // Toolbar variables (shared with @joinezco/codeblock ToolbarCore)
     '--cm-toolbar-background': '#2a2a2f',
     '--cm-toolbar-color': '#ffffff',
     '--cm-foreground': '#9cdcfe',
     '--cm-search-result-color': '#9cdcfe',
     '--cm-search-result-color-hover': '#ffffff',
-    '--cm-search-result-bg-hover': 'rgba(36, 144, 233, 0.31)',
+    '--cm-search-result-bg-hover': 'rgba(88, 97, 255, 0.28)',
     '--cm-search-result-color-selected': '#ffffff',
-    '--cm-search-result-select-bg': '#2490e9',
+    '--cm-search-result-select-bg': '#5861ff',
     '--cm-command-result-color': '#ffffff',
     '--cm-tooltip-border': '#000000',
 }
@@ -39,6 +40,14 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-bg-dark': '#1e1e1e',
         '--ezco-mde-link-color': '#5861ff',
         '--ezco-mde-link-color-hover': '#383ea3',
+        // List decoration gutter — the shared column every list item reserves
+        // on its left for its marker/checkbox; text starts after it. Sized to
+        // fit the checkbox with a small gap, kept tight to avoid excess space.
+        // `list-line` is one text line's box height (used to vertically centre
+        // the checkbox on the first line).
+        '--ezco-mde-list-gutter': '1.05em',
+        '--ezco-mde-list-line': 'calc(var(--ezco-mde-text-base) * var(--ezco-mde-leading-relaxed))',
+        '--ezco-mde-checkbox-size': '0.9em',
         // Mid-grey so the indicator reads on both light and dark surfaces —
         // the block-action button renders OUTSIDE `.ezco-mde`, so it can't
         // pick up the editor's theme-scoped vars (the old near-white value
@@ -84,6 +93,7 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-light)',
         '--ezco-mde-bg': 'var(--ezco-mde-bg-light)',
         '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-light)',
+        '--ezco-mde-divider': 'rgba(0, 0, 0, 0.12)',
 
         // Toolbar variables (shared with @joinezco/codeblock ToolbarCore)
         '--cm-font-family': 'Menlo, Monaco, Consolas, "Andale Mono", "Ubuntu Mono", "Courier New", monospace',
@@ -95,9 +105,9 @@ export const styleModule: StyleModule = new StyleModule({
         '--cm-foreground': '#383a42',
         '--cm-search-result-color': '#383a42',
         '--cm-search-result-color-hover': '#000000',
-        '--cm-search-result-bg-hover': 'rgba(36, 144, 233, 0.31)',
+        '--cm-search-result-bg-hover': 'rgba(88, 97, 255, 0.28)',
         '--cm-search-result-color-selected': '#ffffff',
-        '--cm-search-result-select-bg': '#2490e9',
+        '--cm-search-result-select-bg': '#5861ff',
         '--cm-command-result-color': '#000000',
         '--cm-tooltip-border': '#c8c8c8',
     },
@@ -194,10 +204,13 @@ export const styleModule: StyleModule = new StyleModule({
             'line-height': 'var(--ezco-mde-leading-normal)',
         },
 
-        // Codeblock styles
+        // Codeblock styles. No box border — the code surface is set apart by
+        // its own background + the surrounding vertical spacing, not a line.
         '& .cm-editor': {
             margin: 0,
-            border: '2px solid var(--ezco-mde-table-bg)'
+            border: 'none',
+            'border-radius': '6px',
+            overflow: 'hidden',
         },
 
         // Inline code styles
@@ -217,11 +230,14 @@ export const styleModule: StyleModule = new StyleModule({
             margin: 0,
             'overflow-x': 'auto'
         },
+        // No outer table border — rows are separated by internal horizontal
+        // dividers only (and the header by its weight), so the table reads as
+        // content rather than a boxed grid.
         '& table': {
             "border-collapse": "collapse",
             "width": "100%",
             margin: 0,
-            border: '2px solid var(--ezco-mde-table-bg)',
+            border: 'none',
             overflow: 'hidden',
             'table-layout': 'fixed',
 
@@ -236,14 +252,24 @@ export const styleModule: StyleModule = new StyleModule({
             },
             '& th': {
                 'font-weight': 'bold',
-                'background-color': 'var(--ezco-mde-table-bg)',
                 'text-align': 'left',
+            },
+            // Internal row dividers, no last-row line, no vertical lines.
+            '& tr': {
+                'border-bottom': '1px solid var(--ezco-mde-divider)',
+            },
+            '& tr:last-child': {
+                'border-bottom': 'none',
             },
             '& th, & td': {
                 border: 'none',
-                padding: '0.5em',
+                padding: '0.4em 0.7em',
                 'vertical-align': 'top',
                 position: 'relative',
+            },
+            // Flush the first column with the text column to the left.
+            '& th:first-child, & td:first-child': {
+                'padding-left': 0,
             },
         },
         '& .selectedCell::after': {
@@ -263,74 +289,104 @@ export const styleModule: StyleModule = new StyleModule({
             },
             cursor: 'col-resize',
         },
-        // Tight list horizontal indent. No vertical margin here —
-        // top-level spacing is owned by the `& > * + *` rules at the
-        // bottom of this block.
-        '& .tight': {
-            'margin-left': '21px',
-            'margin-right': '18px',
-            '& li': {
-                'padding-left': '2px',
-            },
-        },
-        // List base — zero margin; vertical rhythm comes from the
-        // sibling `+` rules. Font-size matches `& p` so converting a
-        // paragraph to a list doesn't shift layout (also dodges the
-        // browser default `margin-block-start: 1em` and the fact
-        // that `1em` resolves differently on `<ul>` vs `<p>` when
-        // they have different inherited font-sizes).
+        // ─────────────────────────────────────────────────────────────
+        // Lists — one uniform model for every type so that, at every nesting
+        // level, all decorations (bullet / number / dash / checkbox) share a
+        // start-x and all item text shares a start-x. (See
+        // list-alignment.test.ts, which pins this with adjacent + nested lists
+        // of all four types.)
+        //
+        // Each item reserves a fixed decoration gutter on its left
+        // (`--ezco-mde-list-gutter`, sized to fit the widest decoration — the
+        // checkbox — kept as tight as possible to avoid "excess space" and to
+        // minimise the shift when a typed "1. "/"- " becomes a list). The
+        // decoration is pinned to the item's left edge: an absolutely
+        // positioned `::before` for bullet/ordered/dash, the checkbox
+        // `<label>` for tasks. Native `::marker` isn't used — `outside`
+        // markers right-align to the text (so "•" and "10." get different
+        // start-x) and `inside` markers shift the text.
+        // ─────────────────────────────────────────────────────────────
         '& ul, & ol, & menu': {
             padding: 0,
             margin: 0,
             'font-size': 'var(--ezco-mde-text-base)',
             'line-height': 'var(--ezco-mde-leading-relaxed)',
-        },
-        // Dash lists (typed with `- `) render with a dash glyph instead of
-        // the default disc, so they read distinctly from star lists
-        // (`* `). Overriding the `::marker` content keeps the dash in the
-        // same gutter the disc would occupy, auto-aligned with the first
-        // line of each item.
-        '& ul[data-marker="dash"] > li::marker': {
-            content: '"–  "',
-        },
-        // Task list styles
-        '& li[data-checked="true"]>div>p': {
-            "text-decoration": "line-through",
-            "color": "#888",
-        },
-        '& ul[data-type="taskList"]': {
             'list-style': 'none',
-            'padding': 0,
-
-            // Task-list items inherit the same "no inter-item margin"
-            // baseline as bullet/ordered lists and paragraphs — the
-            // top-only `& > * + *` rule below provides spacing where
-            // it's needed (between top-level blocks). Within a list,
-            // items stack with line-height rhythm.
-            '& li': {
-                display: 'flex',
-                'align-items': 'flex-start',
-            },
-
-            '& li > label': {
-                'margin-right': '6px',
-            },
-            '& li > label > input': {
-                margin: 0,
-                width: '0.8em',
-                height: '0.8em',
-            },
-            '& li > div': {
-                flex: 1
-            }
         },
-        // Make task checkboxes visible when selected (Ctrl-A).
-        // Checkboxes don't natively show selection highlighting, so
-        // add an outline using the system Highlight color.
-        '& ul[data-type="taskList"] li > label > input[type="checkbox"]': {
-            '&::selection': {
-                background: 'Highlight',
-            },
+        // Gutter + hanging text indent (all list-item types).
+        '& ul > li, & ol > li': {
+            position: 'relative',
+            'padding-left': 'var(--ezco-mde-list-gutter)',
+        },
+        // Decoration pinned to the item's left edge → identical start-x.
+        '& ul > li::before, & ol > li::before': {
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            'line-height': 'var(--ezco-mde-leading-relaxed)',
+            color: 'inherit',
+            content: '"•"',
+        },
+        '& ul[data-marker="dash"] > li::before': {
+            content: '"–"',
+        },
+        // Ordered lists: number via a CSS counter (kept left-aligned in the
+        // gutter). Every `<ol>` resets its own counter so nesting restarts;
+        // a non-1 `start` is applied as an inline counter-reset by the
+        // OrderedListStart plugin (extensions/lists.ts).
+        '& ol': {
+            'counter-reset': 'ezco-mde-ol',
+        },
+        '& ol > li': {
+            'counter-increment': 'ezco-mde-ol',
+        },
+        '& ol > li::before': {
+            content: 'counter(ezco-mde-ol) "."',
+        },
+        // Task lists: the checkbox is the decoration. Suppress the bullet
+        // `::before` and park the checkbox at the item's left edge (same
+        // start-x as the other decorations), centred on the first line.
+        '& ul[data-type="taskList"] > li::before': {
+            content: 'none',
+        },
+        '& ul[data-type="taskList"] > li > label': {
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            height: 'var(--ezco-mde-list-line)',
+            display: 'inline-flex',
+            'align-items': 'center',
+            margin: 0,
+            'user-select': 'none',
+        },
+        '& ul[data-type="taskList"] > li > label > input': {
+            margin: 0,
+            width: 'var(--ezco-mde-checkbox-size)',
+            height: 'var(--ezco-mde-checkbox-size)',
+            cursor: 'pointer',
+        },
+        '& ul[data-type="taskList"] > li > div': {
+            'min-width': 0,
+        },
+        // Completed task items: strike + mute the text.
+        '& li[data-checked="true"]>div>p': {
+            'text-decoration': 'line-through',
+            color: '#888',
+        },
+        // Make task checkboxes visible when selected (Ctrl-A). Checkboxes
+        // don't natively show selection highlighting, so add an outline
+        // using the system Highlight color.
+        '& ul[data-type="taskList"] li > label > input[type="checkbox"]::selection': {
+            background: 'Highlight',
+        },
+        // Keep this model out of CodeMirror's own <ul>/<li> UI (autocomplete
+        // tooltips, the codeblock toolbar) which lives inside `.cm-editor`.
+        '& .cm-editor ul > li::before, & .cm-editor ol > li::before': {
+            content: 'none',
+        },
+        '& .cm-editor ul > li, & .cm-editor ol > li': {
+            position: 'static',
+            'padding-left': 0,
         },
 
         // ─────────────────────────────────────────────────────────────
@@ -426,6 +482,12 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-block-action-btn-color)',
         border: 'none',
         'border-right': '2px solid var(--ezco-mde-block-indicator-color)',
+        // The indicator is a flat vertical line — never a rounded control.
+        // `appearance: none` also strips the platform <button> focus ring,
+        // which renders with rounded corners on macOS WebKit.
+        'border-radius': 0,
+        appearance: 'none',
+        '-webkit-appearance': 'none',
         cursor: 'pointer',
         'font-family': 'var(--cm-font-family)',
         'font-size': '13px',
@@ -671,9 +733,72 @@ export const styleModule: StyleModule = new StyleModule({
     },
     // Clear, visible focus ring so the Tab landing point is obvious.
     '.ezco-mde-selection-menu-btn:focus, .ezco-mde-selection-menu-btn:focus-visible': {
-        outline: '2px solid #2490e9',
+        outline: '2px solid var(--ezco-mde-link-color)',
         'outline-offset': '2px',
         color: '#ffffff',
+    },
+    // ─────────────────────────────────────────────────────────────
+    // Inline link popover (extensions/link-menu.ts) — the editable URL card
+    // shown when the caret is in a link (input + Save + Remove). Shares the
+    // dark context-menu palette so it reads as part of the same family as the
+    // block-action / selection menus. Both buttons are neutral (no coloured
+    // "primary" fill).
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-link-popover': {
+        display: 'flex',
+        'align-items': 'center',
+        gap: '2px',
+        'max-width': '400px',
+        padding: '4px 5px',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-radius': '8px',
+        'box-shadow': '0 8px 24px rgba(0, 0, 0, 0.45)',
+        outline: 'none',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': '13px',
+    },
+    '.ezco-mde-link-popover-divider': {
+        width: '1px',
+        'align-self': 'stretch',
+        margin: '4px 3px',
+        background: 'var(--ezco-mde-context-menu-border)',
+    },
+    '.ezco-mde-link-popover-btn': {
+        appearance: 'none',
+        '-webkit-appearance': 'none',
+        background: 'transparent',
+        color: 'inherit',
+        border: 'none',
+        padding: '5px 9px',
+        'border-radius': '5px',
+        cursor: 'pointer',
+        'font-family': 'inherit',
+        'font-size': '12.5px',
+        'line-height': 1.2,
+        'white-space': 'nowrap',
+    },
+    '.ezco-mde-link-popover-btn:hover, .ezco-mde-link-popover-btn:focus-visible': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+        outline: 'none',
+    },
+    '.ezco-mde-link-popover-input': {
+        width: '250px',
+        padding: '6px 9px',
+        'border-radius': '6px',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        background: 'rgba(255, 255, 255, 0.06)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        'font-family': 'inherit',
+        'font-size': '13px',
+        outline: 'none',
+    },
+    '.ezco-mde-link-popover-input:focus': {
+        'border-color': 'var(--ezco-mde-link-color)',
+    },
+    '.ezco-mde-link-popover-input::placeholder': {
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
     // ─────────────────────────────────────────────────────────────
     // File-search / command toolbar (tagged `.ezco-mde-toolbar`).
@@ -688,23 +813,39 @@ export const styleModule: StyleModule = new StyleModule({
     // without fighting these rules. The codeblock package's own toolbar
     // lacks this class, so it's untouched.
     // ─────────────────────────────────────────────────────────────
+    // A floating pill that sticks to the top of the editor's scroll area,
+    // sized to its content (grows with the input), left-aligned with
+    // transparent surroundings. Dark, matching the block-action / selection
+    // menus so the whole family reads consistently. Auto-hide (toolbar.ts)
+    // toggles the `-retracted` class below.
     '.cm-toolbar-panel.ezco-mde-toolbar': {
-        // Centred rounded field.
         'box-sizing': 'border-box',
-        width: '100%',
-        'max-width': 'var(--ezco-mde-toolbar-max-width, 460px)',
-        margin: 'var(--ezco-mde-toolbar-margin, 12px auto)',
-        background: 'var(--ezco-mde-toolbar-bg, #ffffff)',
-        color: 'var(--ezco-mde-toolbar-fg, #1a1a1a)',
-        border: 'var(--ezco-mde-toolbar-border, 1px solid rgba(0, 0, 0, 0.14))',
-        'border-radius': 'var(--ezco-mde-toolbar-radius, 12px)',
-        'box-shadow': 'var(--ezco-mde-toolbar-shadow, 0 1px 2px rgba(0, 0, 0, 0.06))',
-        'font-family': 'inherit',
+        position: 'sticky',
+        top: 'var(--ezco-mde-toolbar-top, 8px)',
+        'z-index': 4,
+        display: 'flex',
+        'align-items': 'center',
+        width: 'fit-content',
+        'min-width': 'var(--ezco-mde-toolbar-min-width, 200px)',
+        'max-width': 'calc(100% - 12px)',
+        margin: 'var(--ezco-mde-toolbar-margin, 0 0 0 4px)',
+        background: 'var(--ezco-mde-toolbar-bg, var(--ezco-mde-context-menu-bg))',
+        color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
+        border: 'var(--ezco-mde-toolbar-border, 1px solid var(--ezco-mde-context-menu-border))',
+        'border-radius': 'var(--ezco-mde-toolbar-radius, 9px)',
+        'box-shadow': 'var(--ezco-mde-toolbar-shadow, 0 6px 18px rgba(0, 0, 0, 0.28))',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
-        padding: 'var(--ezco-mde-toolbar-pad-y, 8px) var(--ezco-mde-toolbar-pad-x, 14px)',
+        padding: 'var(--ezco-mde-toolbar-pad-y, 6px) var(--ezco-mde-toolbar-pad-x, 11px)',
+        transition: 'transform 160ms ease, opacity 160ms ease',
     },
-    // Collapse the wide CodeMirror gutter-sized icon column down to a tight,
-    // left-aligned search glyph next to the filename.
+    // Auto-hidden: slide up out of the way (no reflow) and ignore the pointer.
+    '.cm-toolbar-panel.ezco-mde-toolbar.ezco-mde-toolbar-retracted': {
+        transform: 'translateY(calc(-100% - var(--ezco-mde-toolbar-top, 8px) - 8px))',
+        opacity: 0,
+        'pointer-events': 'none',
+    },
+    // Tight, left-aligned search glyph + filename.
     '.ezco-mde-toolbar .cm-toolbar-state-icon-container': {
         width: 'auto',
         'min-width': '0',
@@ -713,43 +854,48 @@ export const styleModule: StyleModule = new StyleModule({
         width: 'auto',
         'min-width': '0',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
-        color: 'var(--ezco-mde-toolbar-muted, rgba(0, 0, 0, 0.45))',
-        'padding-right': '9px',
+        color: 'var(--ezco-mde-toolbar-muted, var(--ezco-mde-context-menu-item-color-muted))',
+        'padding-right': '8px',
         'text-align': 'left',
     },
     '.ezco-mde-toolbar .cm-toolbar-input': {
         'font-family': 'inherit',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         'font-weight': 400,
-        color: 'var(--ezco-mde-toolbar-fg, #1a1a1a)',
+        color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
+        background: 'transparent',
         padding: '0',
     },
     '.ezco-mde-toolbar .cm-toolbar-input::placeholder': {
-        color: 'var(--ezco-mde-toolbar-muted, rgba(0, 0, 0, 0.4))',
+        color: 'var(--ezco-mde-toolbar-muted, var(--ezco-mde-context-menu-item-color-muted))',
     },
-    // Results popover — a rounded panel matching the field width, dropping
-    // just beneath it (left:0/right:0 keeps it aligned, not drifting right).
+    // Results dropdown — styled like the block-action / selection context
+    // menus (dark surface, soft hover rows), dropping beneath the pill and
+    // growing with its content.
     '.ezco-mde-toolbar .cm-search-results': {
         'font-family': 'inherit',
-        background: 'var(--ezco-mde-toolbar-popover-bg, #ffffff)',
-        color: 'var(--ezco-mde-toolbar-fg, #1a1a1a)',
-        border: 'var(--ezco-mde-toolbar-popover-border, 1px solid rgba(0, 0, 0, 0.14))',
-        'border-radius': 'var(--ezco-mde-toolbar-radius, 12px)',
-        'box-shadow': 'var(--ezco-mde-toolbar-popover-shadow, 0 10px 30px rgba(0, 0, 0, 0.16))',
+        background: 'var(--ezco-mde-toolbar-popover-bg, var(--ezco-mde-context-menu-bg))',
+        color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
+        border: 'var(--ezco-mde-toolbar-popover-border, 1px solid var(--ezco-mde-context-menu-border))',
+        'border-radius': '8px',
+        'box-shadow': '0 10px 28px rgba(0, 0, 0, 0.5)',
         left: '0',
-        right: '0',
-        width: 'auto',
+        right: 'auto',
+        width: 'max-content',
+        'min-width': '100%',
+        'max-width': '420px',
         'margin-top': '6px',
-        padding: '6px',
-        'max-height': '340px',
+        padding: '4px',
+        'max-height': '320px',
         overflow: 'hidden auto',
     },
     '.ezco-mde-toolbar .cm-search-result': {
         'font-family': 'inherit',
         'align-items': 'center',
-        'border-radius': 'var(--ezco-mde-toolbar-item-radius, 8px)',
-        padding: '7px 10px',
+        'border-radius': '6px',
+        padding: '6px 9px',
         'line-height': '1.4',
+        color: 'inherit',
     },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container': {
         width: 'auto',
@@ -761,26 +907,18 @@ export const styleModule: StyleModule = new StyleModule({
         'padding-right': '9px',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         'text-align': 'left',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-label': {
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         padding: '0',
     },
-    '.ezco-mde-toolbar .cm-search-result:hover': {
-        'background-color': 'var(--ezco-mde-toolbar-hover-bg, rgba(0, 0, 0, 0.05))',
+    '.ezco-mde-toolbar .cm-search-result:hover, .ezco-mde-toolbar .cm-search-result.selected': {
+        'background-color': 'var(--ezco-mde-context-menu-item-bg-hover)',
     },
-    '.ezco-mde-toolbar .cm-search-result.selected': {
-        'background-color': 'var(--ezco-mde-toolbar-active-bg, rgba(0, 0, 0, 0.06))',
-    },
-    // The codeblock base styles paint hovered/selected row text + icons
-    // white (meant for its solid-blue selection). On the omnibar's soft
-    // light rows that makes labels/command-icons vanish — so keep them
-    // legible by following the row's own colour (`active-fg`, default the
-    // toolbar foreground) instead.
-    '.ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-icon-container > .cm-search-result-icon': {
+    // Keep labels/icons legible on hover/selected (the codeblock base paints
+    // them white for its solid-blue selection, which vanishes here).
+    '.ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-icon-container > .cm-search-result-icon, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-icon-container > .cm-search-result-icon': {
         color: 'inherit',
-    },
-    '.ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-icon-container > .cm-search-result-icon': {
-        color: 'var(--ezco-mde-toolbar-active-fg, inherit)',
     },
 })

@@ -4,6 +4,16 @@ import Link from "@tiptap/extension-link";
 const LINK_INPUT_REGEX = /\[([^[]+)]\((\S+)\)$/;
 
 export const ExtendedLink = Link.extend({
+    addOptions() {
+        return {
+            ...this.parent?.(),
+            // A plain click should place the caret, not navigate. Following a
+            // link is a deliberate gesture (⌘/Ctrl-click, the inline popover's
+            // Open button, or Mod-Enter) — see extensions/link-menu.ts.
+            openOnClick: false,
+        };
+    },
+
     addInputRules() {
         return [
             {

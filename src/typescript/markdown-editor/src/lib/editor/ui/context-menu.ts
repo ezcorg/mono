@@ -89,6 +89,10 @@ export class ContextMenu {
 
     private buildDom(): HTMLDivElement {
         const root = document.createElement('div')
+        // NB: do NOT add the bare `.ezco-mde` class here — it carries the
+        // editor's *content* layout rules (e.g. `& > * + * { margin-top }`),
+        // which would space the menu items apart. The menu's own variables
+        // are defined at `:root`, so they resolve without it.
         root.className = ['ezco-mde-context-menu', this.options.className]
             .filter(Boolean)
             .join(' ')

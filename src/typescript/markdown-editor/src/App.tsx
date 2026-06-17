@@ -36,7 +36,6 @@ function App() {
   const [markdownContent, setMarkdownContent] = useState('');
   const [variant, setVariant] = useState<Variant>('default');
   const editorBodyRef = useRef<HTMLDivElement>(null);
-  const toolbarSlotRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MarkdownEditor | null>(null);
 
   async function loadFs() {
@@ -58,16 +57,16 @@ function App() {
     let ed: MarkdownEditor | null = null;
 
     loadFs().then(async ({ fs, index }) => {
-      if (cancelled || !editorBodyRef.current || !toolbarSlotRef.current) return;
+      if (cancelled || !editorBodyRef.current) return;
       await fs.writeFile('test.md', file);
       if (cancelled) return;
 
       ed = createEditor({
         element: editorBodyRef.current,
         fs: { fs, filepath: 'test.md', autoSave: false },
-        // Render the toolbar into a dedicated slot above the editor body,
-        // outside the editor element itself.
-        toolbar: { fs, index, filepath: 'test.md', mount: toolbarSlotRef.current },
+        // Default toolbar placement: a floating, auto-hiding pill at the top
+        // of the editor's scroll area (inside `.mac-body`, before the editor).
+        toolbar: { fs, index, filepath: 'test.md' },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
         },
@@ -118,10 +117,11 @@ function App() {
       </p>
 
       <MacWindow variant={variant} title="Hello World">
-        <div className="mac-toolbar-slot" ref={toolbarSlotRef} />
         {/* .mac-body is the scroll container with a left gutter; the editor
             mounts into the inset .mac-editor so the block-action indicator
-            (which sits to the left of the editor element) has room. */}
+            (which sits to the left of the editor element) has room. The
+            floating toolbar is inserted before .mac-editor, inside the scroll
+            container, so it can stick to the top + auto-hide on scroll. */}
         <div className="mac-body">
           <div className="mac-editor" ref={editorBodyRef} />
         </div>

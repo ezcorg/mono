@@ -9,13 +9,14 @@ import { FileSystem, FileSystemOptions } from './extensions/filesystem';
 import { styleModule } from './styles';
 
 import { ExtendedLink } from './extensions/link';
+import { LinkMenu } from './extensions/link-menu';
 import { SlashCommands } from './extensions/slash-commands';
 import { Toolbar, ToolbarOptions } from './extensions/toolbar';
 import { InlineCodeExit } from './extensions/inline-code';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions } from './extensions/block-actions';
 import { SelectionMenu } from './extensions/selection-menu';
-import { BulletList } from './extensions/lists';
+import { BulletList, OrderedListStart } from './extensions/lists';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -45,6 +46,8 @@ export type MarkdownEditorOptions = Partial<EditorOptions> & {
     extensions?: Extension[];
     fs?: FileSystemOptions;
     toolbar?: ToolbarOptions;
+    /** Defaults for embedded codeblocks (e.g. `{ settings: { lineWrap: false } }`). */
+    codeblock?: { settings?: Record<string, unknown> };
 }
 
 export type MarkdownEditor = Editor & {
@@ -72,8 +75,13 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 // start of a task ("- [ ]"), so dash lists, star lists, and
                 // task lists can all be typed from the keyboard.
                 bulletList: false,
+                // StarterKit v3 bundles Link; disable it so our ExtendedLink
+                // (custom click-to-follow + inline editor) is the only link
+                // extension (avoids the "Duplicate extension names" warning).
+                link: false,
             }),
             BulletList,
+            OrderedListStart,
             InlineCodeExit,
             // Must come before `Markdown` so our higher-priority
             // clipboardTextParser runs first and handles block-level
@@ -90,7 +98,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 transformPastedText: true,
                 transformCopiedText: true,
             }),
-            ExtendedCodeblock,
+            // Embedded codeblocks soft-wrap by default; a consumer can flip
+            // this (or any codeblock setting) via `options.codeblock.settings`.
+            ExtendedCodeblock.configure({ settings: options.codeblock?.settings ?? {} }),
             TaskList,
             ExtendedTaskItem.configure({
                 nested: true,
@@ -111,9 +121,11 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 filepath: options.toolbar?.filepath ?? options.fs?.filepath,
                 mount: options.toolbar?.mount,
                 className: options.toolbar?.className,
+                autoHide: options.toolbar?.autoHide,
             }),
             BlockActions,
             SelectionMenu,
+            LinkMenu,
             ...(options.extensions || []),
         ],
         editorProps: {

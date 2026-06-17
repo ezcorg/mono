@@ -155,30 +155,9 @@
   pointer-events: none;
 }
 
-/* Toolbar slot: sits above the editor body. position/z-index let the
-   toolbar's search-results dropdown stack above the body. */
-.mac-toolbar-slot {
-  flex: none;
-  position: relative;
-  z-index: 3;
-}
-
-/* For the demo the toolbar is a full-width, transparent bar whose search
-   text lines up with the editor's left text column (the gutter below) —
-   rather than the library's default centred "omnibar" pill. */
-.mac-toolbar-slot .ezco-mde-toolbar {
-  --ezco-mde-toolbar-max-width: none;
-  --ezco-mde-toolbar-margin: 0;
-  --ezco-mde-toolbar-bg: transparent;
-  --ezco-mde-toolbar-border: none;
-  --ezco-mde-toolbar-shadow: none;
-  --ezco-mde-toolbar-pad-x: 44px;
-  --ezco-mde-toolbar-radius: 8px;
-}
-
-.mac-toolbar-slot .cm-toolbar-panel.ezco-mde-toolbar {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-}
+/* The toolbar is the library's default floating, auto-hiding pill — it
+   mounts inside .mac-body (before the editor) and sticks to the top of the
+   scroll area, so no slot styling is needed here. */
 
 /* The editor body — the scroll container. A left gutter gives the
    block-action indicator (which renders to the left of the editor element)
@@ -211,15 +190,9 @@
   padding: 2.25rem;
 }
 
-.mac-window--custom .mac-toolbar-slot .ezco-mde-toolbar {
-  --ezco-mde-toolbar-active-bg: #5861ff;
-  --ezco-mde-toolbar-active-fg: #ffffff;
-}
-
-/* White icons on the accent-filled selected row (overrides inline file-icon
-   colours). */
-.mac-window--custom .ezco-mde-toolbar .cm-search-result.selected .cm-search-result-icon {
-  color: #fff !important;
+/* Custom variant: give the floating toolbar a brand accent. */
+.mac-window--custom .ezco-mde-toolbar {
+  --ezco-mde-toolbar-radius: 12px;
 }
 
 /* ── Live markdown output (QA aid) ── */
