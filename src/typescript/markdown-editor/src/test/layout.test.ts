@@ -68,27 +68,6 @@ describe('MarkdownEditor layout alignment', () => {
     }
 
     describe('Codeblock toolbar gutter alignment', () => {
-        it('aligns the right edge of .cm-toolbar-state-icon-container with the right edge of .cm-lineNumbers', async () => {
-            const cmEditor = await getCodeblockEditor()
-            await waitForRect('.cm-toolbar-state-icon-container', cmEditor)
-            await waitForRect('.cm-lineNumbers', cmEditor)
-            // Give the gutter-width ResizeObserver a frame to settle —
-            // `--cm-gutter-width` is computed off `.cm-gutters` rect width,
-            // and the toolbar layout depends on the resulting var.
-            await new Promise(r => requestAnimationFrame(() => r(null)))
-
-            const stateIconContainer = find('.cm-toolbar-state-icon-container', cmEditor)!
-            const lineNumbers = find('.cm-lineNumbers', cmEditor)!
-
-            const stateRight = stateIconContainer.getBoundingClientRect().right
-            const lineNumbersRight = lineNumbers.getBoundingClientRect().right
-
-            // Sub-pixel rounding can leave a hair of difference between
-            // a flex-sized box and a CM-internal gutter — anything within
-            // a single CSS pixel reads as aligned to the eye.
-            expect(Math.abs(stateRight - lineNumbersRight)).toBeLessThanOrEqual(1)
-        })
-
         it('right-aligns the state icon glyph with the first line-number gutter cell', async () => {
             const cmEditor = await getCodeblockEditor()
             await waitForRect('.cm-toolbar-state-icon-container', cmEditor)
@@ -100,6 +79,8 @@ describe('MarkdownEditor layout alignment', () => {
                 const cells = cmEditor.querySelectorAll('.cm-lineNumbers .cm-gutterElement')
                 return Array.from(cells).some(c => c.textContent?.trim().length! > 0)
             })
+            // Let the gutter-width ResizeObserver publish its vars and the
+            // layout settle for a frame before comparing edges.
             await new Promise(r => requestAnimationFrame(() => r(null)))
 
             const stateIcon = find('.cm-toolbar-state-icon', cmEditor)!
@@ -128,18 +109,23 @@ describe('MarkdownEditor layout alignment', () => {
             const spinner = document.createElement('div')
             spinner.className = 'cm-loading'
             stateIconContainer.appendChild(spinner)
-            await new Promise(r => requestAnimationFrame(() => r(null)))
 
             await waitForRect('.cm-loading', cmEditor)
             await waitForRect('.cm-lineNumbers', cmEditor)
+            // The spinner's right edge is `container.left + --cm-gutter-lineno-width`
+            // (the `--cm-gutter-width` terms in its margin math cancel out), so
+            // a frame to let the layout settle is enough before measuring.
+            await new Promise(r => requestAnimationFrame(() => r(null)))
 
             const spinnerRect = spinner.getBoundingClientRect()
             const lineNumbers = find('.cm-lineNumbers', cmEditor)!.getBoundingClientRect()
 
-            // The spinner sits inside a flex container sized to
-            // lineno-width; `margin-left: auto` pushes its right edge
-            // to the container's right edge, which by our state-icon
-            // container width rule matches `.cm-lineNumbers`' right edge.
+            // The spinner sits inside a flex container now sized to the
+            // FULL gutter width. `margin-left: auto` pushes it right, and
+            // `margin-right: calc(--cm-gutter-width - --cm-gutter-lineno-width)`
+            // pulls its right edge back off the far gutter edge onto the
+            // line-number column's right edge — so the loading indicator
+            // stays in the same column as the file-type glyph it replaces.
             expect(Math.abs(spinnerRect.right - lineNumbers.right)).toBeLessThanOrEqual(1)
         })
     })

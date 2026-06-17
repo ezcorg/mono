@@ -287,12 +287,16 @@ const toolbarStyleModule = new StyleModule({
         alignItems: 'center',
         flex: '1',
     },
-    // See themes/index.ts for the rationale — sized to lineno-width
-    // (not gutter-width) so the right edge matches `.cm-lineNumbers`
-    // and not the wider total-gutters strip (which also includes the
-    // fold gutter when present).
+    // Sized to the FULL gutter width (line numbers + fold gutter) —
+    // matching `.cm-search-result-icon-container` below — so the toolbar
+    // input that follows starts at the same x as the code content (which
+    // begins after the full gutter) AND as the dropdown result labels.
+    // The glyph inside (width `--cm-gutter-lineno-width`, right-aligned)
+    // still lines up with the line-number column. Kept in sync with the
+    // scoped rule in themes/index.ts (which wins when the toolbar is
+    // inside a `.cm-editor`); this standalone copy covers detached use.
     '.cm-toolbar-state-icon-container': {
-        width: 'var(--cm-gutter-lineno-width, 2em)',
+        width: 'var(--cm-gutter-width, 2em)',
         minWidth: 'var(--cm-icon-col-width, 2em)',
         display: 'flex',
     },

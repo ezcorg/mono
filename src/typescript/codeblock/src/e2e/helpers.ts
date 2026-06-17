@@ -1,7 +1,14 @@
 import { Browser, Page } from 'puppeteer-core';
 import puppeteer from 'puppeteer-core';
 
-export const CHROME_PATH = '/usr/bin/google-chrome';
+// Resolve a Chrome binary: explicit `CHROME_PATH` env wins, otherwise
+// fall back to the platform default. CI runs on Linux (`/usr/bin/...`);
+// the macOS default lets the same suite run locally without extra setup.
+export const CHROME_PATH =
+    process.env.CHROME_PATH ||
+    (process.platform === 'darwin'
+        ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        : '/usr/bin/google-chrome');
 
 /** Get the dev server URL started by globalSetup. */
 export function getDevServerUrl(): string {

@@ -79,16 +79,15 @@ export const codeblockTheme = EditorView.theme({
             padding: '0 2px 0 6px',
         },
     },
-    // Sized to `--cm-gutter-lineno-width` (NOT `--cm-gutter-width`) so
-    // the container's right edge lines up with the right edge of
-    // `.cm-lineNumbers` in the rows below. When a fold gutter is also
-    // present, `--cm-gutter-width` is wider than `--cm-gutter-lineno-width`
-    // by the fold gutter's width; using lineno-width here keeps the
-    // toolbar's state-icon column and the gutter's line-number column
-    // visually as one vertical strip. Tests enforce this alignment in
-    // `markdown-editor/src/test/layout.test.ts`.
+    // Sized to the FULL gutter width (line numbers + fold gutter) — matching
+    // `.cm-search-result-icon-container` below — so the toolbar input that
+    // follows it starts at the same x as the code content (which begins after
+    // the full gutter) AND as the dropdown result labels. The glyph inside
+    // (width `--cm-gutter-lineno-width`, right-aligned) still lines up with
+    // the line-number column. Tests enforce this in codeblock's
+    // toolbar-align test and `markdown-editor/src/test/layout.test.ts`.
     '.cm-toolbar-state-icon-container': {
-        width: 'var(--cm-gutter-lineno-width)',
+        width: 'var(--cm-gutter-width)',
         minWidth: 'var(--cm-icon-col-width, 2ch)',
         display: 'flex',
     },
@@ -239,12 +238,17 @@ export const codeblockTheme = EditorView.theme({
     // CSS border spinner for file loading indicator. Rendered as a
     // separate element inside .cm-toolbar-state-icon-container; the
     // container is a flex row so `margin-left: auto` pushes the
-    // spinner against the container's right edge and `align-self:
-    // center` centers it vertically within the toolbar row.
+    // spinner toward the right and `align-self: center` centers it
+    // vertically within the toolbar row.
     //
-    // No horizontal margin math: alignment with the line-number
-    // column on the gutter row below is enforced by tests against
-    // `.cm-lineNumbers` rather than precomputed pixel offsets here.
+    // The container spans the FULL gutter width (so the toolbar input
+    // that follows starts at the code's x — see the state-icon-container
+    // rule above), but the spinner should sit in the *line-number*
+    // sub-column where the file-type glyph lives, not at the far gutter
+    // edge. `margin-right` pulls it back from the container's right edge
+    // by the non-lineno portion of the gutter, landing its right edge on
+    // the line-number column's right edge (enforced by markdown-editor's
+    // layout.test.ts against `.cm-lineNumbers`).
     '.cm-loading': {
         display: 'inline-block',
         width: FS,
@@ -256,6 +260,7 @@ export const codeblockTheme = EditorView.theme({
         animation: 'cm-spin 0.8s linear infinite',
         transition: 'opacity 0.15s ease-out',
         marginLeft: 'auto',
+        marginRight: 'calc(var(--cm-gutter-width) - var(--cm-gutter-lineno-width))',
         alignSelf: 'center',
     },
     '@keyframes cm-spin': {

@@ -16,7 +16,7 @@ import { InlineCodeExit } from './extensions/inline-code';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions } from './extensions/block-actions';
 import { SelectionMenu } from './extensions/selection-menu';
-import { BulletList, OrderedListStart } from './extensions/lists';
+import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -82,6 +82,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             }),
             BulletList,
             OrderedListStart,
+            DashListKeymap,
             InlineCodeExit,
             // Must come before `Markdown` so our higher-priority
             // clipboardTextParser runs first and handles block-level

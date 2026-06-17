@@ -223,6 +223,57 @@ export const BulletList = Node.create({
  * the stylesheet's reset covers them, including nested lists, which each reset
  * their own counter.)
  */
+/**
+ * When a bullet-list item is indented (Tab → sinkListItem), the new nested
+ * `bulletList` is created with the default marker ('bullet'), so indenting a
+ * dash list would turn the sublist into a dotted list. This keymap runs the
+ * sink and then makes the new nested list's marker match the parent's, so a
+ * dash list stays dashed at every level. (Parsing already preserves the
+ * marker; this only fixes interactive nesting.)
+ */
+export const DashListKeymap = Extension.create({
+    name: 'dashListKeymap',
+    // Above the list keymap (so this Tab runs first) but below the selection
+    // menu (priority 1000), which Tabs to its button on a non-empty selection.
+    priority: 200,
+
+    addKeyboardShortcuts() {
+        return {
+            Tab: () => {
+                const editor = this.editor
+                if (!editor.can().sinkListItem('listItem')) return false
+                const { $from } = editor.state.selection
+                // Marker of the bullet list we're sinking within (if any).
+                let marker: string | null = null
+                for (let d = $from.depth; d > 0; d--) {
+                    const name = $from.node(d).type.name
+                    if (name === 'bulletList') { marker = $from.node(d).attrs.marker; break }
+                    if (name === 'orderedList' || name === 'taskList') break
+                }
+                if (marker == null) return false // not a bullet list → default sink
+                return editor
+                    .chain()
+                    .sinkListItem('listItem')
+                    .command(({ tr }) => {
+                        // Set the now-nested bulletList's marker to the parent's.
+                        const $pos = tr.selection.$from
+                        for (let d = $pos.depth; d > 0; d--) {
+                            const node = $pos.node(d)
+                            if (node.type.name === 'bulletList') {
+                                if (node.attrs.marker !== marker) {
+                                    tr.setNodeMarkup($pos.before(d), undefined, { ...node.attrs, marker })
+                                }
+                                break
+                            }
+                        }
+                        return true
+                    })
+                    .run()
+            },
+        }
+    },
+})
+
 export const OrderedListStart = Extension.create({
     name: 'orderedListStart',
 

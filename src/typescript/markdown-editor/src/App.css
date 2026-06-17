@@ -179,20 +179,8 @@
   outline: none;
 }
 
-/* ── DEFAULT variant: out-of-the-box, nothing extra. The editor inherits
-   the page's system font; the toolbar uses library defaults. ── */
-
-/* ── CUSTOM variant: customize only the EDITOR within the (untouched)
-   native window — serif typography and a brand-accented toolbar — to show
-   the level of theming achievable without restyling the window chrome. ── */
 .mac-window--custom .mac-body .ezco-mde {
   font-family: "Source Serif 4", system-ui, Georgia, serif;
-  padding: 2.25rem;
-}
-
-/* Custom variant: give the floating toolbar a brand accent. */
-.mac-window--custom .ezco-mde-toolbar {
-  --ezco-mde-toolbar-radius: 12px;
 }
 
 /* ── Live markdown output (QA aid) ── */

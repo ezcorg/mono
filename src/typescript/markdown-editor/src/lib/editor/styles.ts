@@ -56,11 +56,15 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-block-action-btn-color': 'rgba(120, 120, 120, 0.9)',
         '--ezco-mde-block-action-btn-bg': 'rgba(245, 245, 245, 0.05)',
         '--ezco-mde-block-action-btn-bg-hover': 'rgba(245, 245, 245, 0.12)',
-        // Context-menu theming — dedicated variables (rather than
-        // reusing `--cm-toolbar-*` from the codeblock package) so the
-        // rich-text editor's menus can have their own visual identity:
-        // black background, light text, sans-serif, no monospace font.
-        '--ezco-mde-context-menu-bg': '#000000',
+        // Context-menu theming — the shared surface for every floating
+        // chrome element: the block-action / selection menus, the link
+        // popover, the selection affordance button, and the search toolbar
+        // (which may override `--ezco-mde-toolbar-bg`). A soft charcoal
+        // rather than jet black, so it reads as a panel, not a hole.
+        // Sans-serif, light text, decoupled from the codeblock's monospace
+        // toolbar vars.
+        '--ezco-mde-context-menu-bg': '#26262c',
+        '--ezco-mde-context-menu-bg-hover': '#34343c',
         '--ezco-mde-context-menu-color': '#f5f5f5',
         '--ezco-mde-context-menu-border': 'rgba(245, 245, 245, 0.16)',
         '--ezco-mde-context-menu-item-bg-hover': 'rgba(245, 245, 245, 0.1)',
@@ -211,6 +215,13 @@ export const styleModule: StyleModule = new StyleModule({
             border: 'none',
             'border-radius': '6px',
             overflow: 'hidden',
+        },
+        // The codeblock toolbar blends with the editor background. The
+        // codeblock scopes `--cm-toolbar-background` on `.cm-editor[data-theme]`
+        // (0,2,0) and mounts later, so we need the extra `[data-theme]`
+        // (0,3,0) to win.
+        '& .cm-editor[data-theme]': {
+            '--cm-toolbar-background': 'var(--ezco-mde-bg)',
         },
 
         // Inline code styles
@@ -387,6 +398,29 @@ export const styleModule: StyleModule = new StyleModule({
         '& .cm-editor ul > li, & .cm-editor ol > li': {
             position: 'static',
             'padding-left': 0,
+        },
+        // Likewise keep the editor's content typography (the `& p` / `& h1…`
+        // font sizes below) from leaking into CodeMirror tooltips — LSP
+        // hover docs and diagnostics render markdown as <p>/<h*>/<code>/<li>,
+        // which would otherwise pick up the (much larger) prose sizes (the
+        // reported `.cm-diagnosticText` "var(--ezco-mde-text-base)" bug). Reset
+        // font-size/line-height to inherit so all tooltip text follows the
+        // codeblock's own font size (`var(--cm-font-size)`, set per-codeblock
+        // from settings); the codeblock's tooltip CSS can still size things
+        // specifically. We deliberately do NOT touch font-weight, so a markdown
+        // heading or **bold** in a hover doc keeps its emphasis.
+        '& .cm-tooltip :is(p, h1, h2, h3, h4, h5, h6, blockquote, li, small, code, pre, ul, ol, table, th, td), & .cm-editor .cm-tooltip :is(p, h1, h2, h3, h4, h5, h6, blockquote, li, small, code, pre, ul, ol, table, th, td)': {
+            'font-size': 'inherit',
+            'line-height': 'inherit',
+        },
+        // The embedded codeblock's search-results dropdown: now that its
+        // toolbar matches the editor background, give the dropdown a distinct
+        // elevated surface (the code surface colour) so it reads as a popover
+        // rather than blending into the toolbar.
+        '& .cm-editor .cm-search-results': {
+            background: 'var(--ezco-mde-code-bg)',
+            'box-shadow': '0 8px 24px rgba(0, 0, 0, 0.18)',
+            'border-radius': '0 0 6px 6px',
         },
 
         // ─────────────────────────────────────────────────────────────
@@ -711,10 +745,9 @@ export const styleModule: StyleModule = new StyleModule({
         width: '28px',
         height: '20px',
         padding: 0,
-        // Solid, slightly-lifted dark surface (not pure black) so hover can
-        // read as a clear, opaque step up rather than a faint translucent
-        // wash over nothing.
-        background: '#1c1c20',
+        // Shares the menu surface var (a soft charcoal) so all the floating
+        // chrome stays in one palette; hover steps up to the lighter variant.
+        background: 'var(--ezco-mde-context-menu-bg)',
         color: 'rgba(245, 245, 245, 0.82)',
         border: '1px solid rgba(245, 245, 245, 0.18)',
         'border-radius': '6px',
@@ -726,7 +759,7 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-selection-menu-btn:hover': {
         // Opaque lift + brighter glyph/border — a deliberate hover state
         // instead of the previous see-through look.
-        background: '#2c2c33',
+        background: 'var(--ezco-mde-context-menu-bg-hover)',
         'border-color': 'rgba(245, 245, 245, 0.34)',
         color: '#ffffff',
         'box-shadow': '0 3px 10px rgba(0, 0, 0, 0.45)',
@@ -819,6 +852,20 @@ export const styleModule: StyleModule = new StyleModule({
     // menus so the whole family reads consistently. Auto-hide (toolbar.ts)
     // toggles the `-retracted` class below.
     '.cm-toolbar-panel.ezco-mde-toolbar': {
+        // Re-point the codeblock toolbar/result colour vars at the menu
+        // palette so the dropdown's text + icons are light on the dark
+        // surface (they default to dark `:root` values otherwise — the cause
+        // of black, invisible command-menu text). Hover keeps the same text
+        // colour (only the row background changes), so icons never black out
+        // and behave consistently with the file-type icons.
+        '--cm-toolbar-color': 'var(--ezco-mde-context-menu-color)',
+        '--cm-foreground': 'var(--ezco-mde-context-menu-color)',
+        '--cm-command-result-color': 'var(--ezco-mde-context-menu-color)',
+        '--cm-search-result-color': 'var(--ezco-mde-context-menu-color)',
+        '--cm-search-result-color-hover': 'var(--ezco-mde-context-menu-color)',
+        '--cm-search-result-color-selected': 'var(--ezco-mde-context-menu-color)',
+        '--cm-search-result-bg-hover': 'var(--ezco-mde-context-menu-item-bg-hover)',
+        '--cm-search-result-select-bg': 'var(--ezco-mde-context-menu-item-bg-hover)',
         'box-sizing': 'border-box',
         position: 'sticky',
         top: 'var(--ezco-mde-toolbar-top, 8px)',

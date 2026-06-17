@@ -70,6 +70,23 @@ function isDarkMode(reference?: Element | null): boolean {
         : false;
 }
 
+/**
+ * Measure the editor's base paragraph font size in px (resolving
+ * `--ezco-mde-text-base`), so an embedded codeblock can default to the same
+ * size — keeping prose and code at one scale unless a consumer overrides it.
+ * Returns null if it can't be measured.
+ */
+function measureBaseFontPx(): number | null {
+    if (typeof document === 'undefined') return null;
+    const probe = document.createElement('span');
+    probe.style.cssText =
+        'position:absolute;visibility:hidden;pointer-events:none;font-size:var(--ezco-mde-text-base)';
+    document.body.appendChild(probe);
+    const px = parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    return Number.isFinite(px) && px > 0 ? px : null;
+}
+
 // When the editor is in "system" mode (no pinned `data-theme`), keep all
 // codeblocks in step with the OS colour-scheme as it changes. Set up once.
 if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
@@ -561,6 +578,14 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             fsPromise.then(fs => {
                 fsWorker = fs;
                 SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
+                    // Default the code font size to the editor's paragraph
+                    // size so prose and code match; an explicit
+                    // `settings.fontSize` (configured on the extension) still
+                    // wins.
+                    const baseFontPx = measureBaseFontPx();
+                    const resolvedSettings = baseFontPx
+                        ? { fontSize: baseFontPx, ...codeblockSettings }
+                        : codeblockSettings;
                     // Reconfigure with codeblock extension once fs is ready
                     cm.setState(EditorState.create({
                         doc: node.textContent || '',
@@ -579,9 +604,9 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                                 // than forcing dark; respects an explicit
                                 // `data-theme`, else follows the OS.
                                 dark: isDarkMode(view.dom),
-                                // Soft-wrap long lines by default (configurable
-                                // via the extension's `settings` option).
-                                settings: codeblockSettings,
+                                // Soft-wrap by default + match the editor font
+                                // size (configurable via the `settings` option).
+                                settings: resolvedSettings,
                             }),
                         ]
                     }));
