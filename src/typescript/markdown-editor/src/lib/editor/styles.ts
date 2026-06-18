@@ -3,6 +3,7 @@ import { StyleModule } from 'style-mod';
 const darkModeStyles: Record<string, string> = {
     '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-dark)',
     '--ezco-mde-bg': 'var(--ezco-mde-bg-dark)',
+    '--ezco-mde-fg': '#e4e4e7',
     '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-dark)',
     '--ezco-mde-divider': 'rgba(255, 255, 255, 0.14)',
     // Toolbar variables (shared with @joinezco/codeblock ToolbarCore)
@@ -96,6 +97,7 @@ export const styleModule: StyleModule = new StyleModule({
         // Default to light mode, overridden by media query
         '--ezco-mde-code-bg': 'var(--ezco-mde-code-bg-light)',
         '--ezco-mde-bg': 'var(--ezco-mde-bg-light)',
+        '--ezco-mde-fg': '#1d1d1f',
         '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-light)',
         '--ezco-mde-divider': 'rgba(0, 0, 0, 0.12)',
 
@@ -117,8 +119,12 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde': {
 
-        // Base editor styles
+        // Base editor styles. The background stays transparent (the host
+        // container supplies `--ezco-mde-bg`), but we set the prose text
+        // colour so it flips with the theme instead of inheriting the page's
+        // — otherwise dark mode would be near-black text on a dark surface.
         'background': 'transparent',
+        'color': 'var(--ezco-mde-fg)',
 
         // `break-spaces` preserves trailing whitespace at the end of a
         // line, where PM's default `pre-wrap` would otherwise collapse
@@ -210,18 +216,26 @@ export const styleModule: StyleModule = new StyleModule({
 
         // Codeblock styles. No box border — the code surface is set apart by
         // its own background + the surrounding vertical spacing, not a line.
+        // `overflow: visible` (rather than hidden) lets the toolbar's search
+        // dropdown extend past the bottom of a short codeblock instead of
+        // being clipped to the editor box — the code itself still scrolls
+        // within `.cm-scroller`, so nothing else spills.
         '& .cm-editor': {
             margin: 0,
             border: 'none',
-            'border-radius': '6px',
-            overflow: 'hidden',
+            overflow: 'visible',
+            outline: 'none',
         },
-        // The codeblock toolbar blends with the editor background. The
-        // codeblock scopes `--cm-toolbar-background` on `.cm-editor[data-theme]`
-        // (0,2,0) and mounts later, so we need the extra `[data-theme]`
-        // (0,3,0) to win.
-        '& .cm-editor[data-theme]': {
-            '--cm-toolbar-background': 'var(--ezco-mde-bg)',
+        // The codeblock toolbar + its results dropdown blend with the
+        // codeblock's own background (`--cm-background`) in BOTH themes. The
+        // codeblock's dark theme re-points `--cm-toolbar-background` to a
+        // lighter grey *directly on* `[data-theme='dark'] .cm-toolbar-panel`
+        // (specificity 0,2,0), which beats the value we set on `.cm-editor`
+        // (it's a direct rule on the panel, not inheritance). The extra
+        // `.cm-toolbar-panel` selector below (0,4,0) wins it back so dark
+        // matches light; the dropdown (a child of the panel) inherits it.
+        '& .cm-editor[data-theme], & .cm-editor[data-theme] .cm-toolbar-panel': {
+            '--cm-toolbar-background': 'var(--cm-background)',
         },
 
         // Inline code styles
@@ -413,16 +427,6 @@ export const styleModule: StyleModule = new StyleModule({
             'font-size': 'inherit',
             'line-height': 'inherit',
         },
-        // The embedded codeblock's search-results dropdown: now that its
-        // toolbar matches the editor background, give the dropdown a distinct
-        // elevated surface (the code surface colour) so it reads as a popover
-        // rather than blending into the toolbar.
-        '& .cm-editor .cm-search-results': {
-            background: 'var(--ezco-mde-code-bg)',
-            'box-shadow': '0 8px 24px rgba(0, 0, 0, 0.18)',
-            'border-radius': '0 0 6px 6px',
-        },
-
         // ─────────────────────────────────────────────────────────────
         // Top-only block spacing.
         //
@@ -951,7 +955,10 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
         width: 'auto',
         'min-width': '0',
-        'padding-right': '9px',
+        // Roomier gap between the result icon and its label. 1.5ch of padding
+        // lands the *visible* glyph about a character clear of the text once
+        // the icon glyph's own right-side bearing is accounted for.
+        'padding-right': '1.5ch',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         'text-align': 'left',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',

@@ -7,14 +7,18 @@ import { file } from './test/example';
 type Variant = 'custom' | 'default';
 
 /** A simulated macOS window — the editor renders inside it as the
- *  fullscreen input component. The variant drives the chrome's styling. */
+ *  fullscreen input component. The variant drives the chrome's styling.
+ *  The library's file-search toolbar is mounted into the titlebar (in place
+ *  of a window title) via `toolbarMountRef`. */
 function MacWindow({
   variant,
-  title,
+  toolbarMountRef,
+  titlebarExtra,
   children,
 }: {
   variant: Variant;
-  title: string;
+  toolbarMountRef: React.Ref<HTMLDivElement>;
+  titlebarExtra?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -25,9 +29,57 @@ function MacWindow({
           <span className="mac-light mac-light--min" />
           <span className="mac-light mac-light--max" />
         </span>
-        <span className="mac-title">{title}</span>
+        {/* The search toolbar mounts here (replacing the window title) —
+            see the createEditor `toolbar.mount` below. */}
+        <div className="mac-titlebar-toolbar" ref={toolbarMountRef} />
+        {titlebarExtra}
       </div>
       {children}
+    </div>
+  );
+}
+
+type ThemeMode = 'light' | 'dark' | 'system';
+
+/** Resolve whether `mode` should render dark right now. */
+function isDark(mode: ThemeMode): boolean {
+  if (mode === 'system') {
+    return typeof window !== 'undefined'
+      && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  return mode === 'dark';
+}
+
+const THEME_OPTIONS: { mode: ThemeMode; glyph: string; label: string }[] = [
+  { mode: 'light', glyph: '☀', label: 'Light' },
+  { mode: 'system', glyph: '◐', label: 'System' },
+  { mode: 'dark', glyph: '☾', label: 'Dark' },
+];
+
+/** A light / system / dark segmented control for the titlebar. */
+function ThemeToggle({
+  mode,
+  onChange,
+}: {
+  mode: ThemeMode;
+  onChange: (mode: ThemeMode) => void;
+}) {
+  return (
+    <div className="theme-toggle" role="radiogroup" aria-label="Color theme">
+      {THEME_OPTIONS.map(({ mode: m, glyph, label }) => (
+        <button
+          key={m}
+          type="button"
+          role="radio"
+          aria-checked={mode === m}
+          aria-label={label}
+          title={label}
+          className={mode === m ? 'is-active' : ''}
+          onClick={() => onChange(m)}
+        >
+          <span aria-hidden="true">{glyph}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -35,8 +87,10 @@ function MacWindow({
 function App() {
   const [markdownContent, setMarkdownContent] = useState('');
   const [variant, setVariant] = useState<Variant>('default');
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system');
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MarkdownEditor | null>(null);
+  const toolbarMountRef = useRef<HTMLDivElement>(null);
 
   async function loadFs() {
     const fs = await CodeblockFS.worker('/snapshot.bin');
@@ -64,9 +118,18 @@ function App() {
       ed = createEditor({
         element: editorBodyRef.current,
         fs: { fs, filepath: 'test.md', autoSave: false },
-        // Default toolbar placement: a floating, auto-hiding pill at the top
-        // of the editor's scroll area (inside `.mac-body`, before the editor).
-        toolbar: { fs, index, filepath: 'test.md' },
+        // Mount the file-search toolbar into the window titlebar (in place of
+        // a title) and keep it always visible there, instead of the default
+        // floating auto-hiding pill. `.mac-titlebar-search` retheme lives in
+        // App.css.
+        toolbar: {
+          fs,
+          index,
+          filepath: 'test.md',
+          mount: () => toolbarMountRef.current,
+          autoHide: false,
+          className: 'mac-titlebar-search',
+        },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
         },
@@ -82,6 +145,18 @@ function App() {
       editorRef.current = null;
     };
   }, []);
+
+  // Drive the editor's light/dark theme from the titlebar toggle. A
+  // `data-theme` on the root element flips the markdown-editor's CSS
+  // variables and is read by embedded codeblocks; `system` removes it so the
+  // OS `prefers-color-scheme` wins (and the codeblocks' own OS listener keeps
+  // them in step). `setCodeblockTheme` re-themes already-mounted codeblocks.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (themeMode === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', themeMode);
+    editorRef.current?.commands.setCodeblockTheme({ dark: isDark(themeMode) });
+  }, [themeMode]);
 
   return (
     <div className="dev-page">
@@ -116,12 +191,15 @@ function App() {
           : 'The unstyled, out-of-the-box editor.'}
       </p>
 
-      <MacWindow variant={variant} title="Hello World">
+      <MacWindow
+        variant={variant}
+        toolbarMountRef={toolbarMountRef}
+        titlebarExtra={<ThemeToggle mode={themeMode} onChange={setThemeMode} />}
+      >
         {/* .mac-body is the scroll container with a left gutter; the editor
             mounts into the inset .mac-editor so the block-action indicator
             (which sits to the left of the editor element) has room. The
-            floating toolbar is inserted before .mac-editor, inside the scroll
-            container, so it can stick to the top + auto-hide on scroll. */}
+            search toolbar lives up in the titlebar (see MacWindow). */}
         <div className="mac-body">
           <div className="mac-editor" ref={editorBodyRef} />
         </div>

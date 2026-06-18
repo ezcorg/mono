@@ -118,11 +118,31 @@ export const codeblockTheme = EditorView.theme({
         fontSize: FS,
         maxWidth: 'min(100vw - 2rem, 80ch)',
         border: '2px solid var(--cm-tooltip-border)',
-        overflow: 'auto',
-        overflowWrap: 'break-word',
+        // Prefer wrapping over a horizontal scrollbar: long hover docs and
+        // signatures should grow the tooltip *downward*, never sideways.
+        // (`overflow-y: auto` still lets a very tall tooltip scroll.)
+        overflowX: 'hidden',
+        overflowY: 'auto',
+        overflowWrap: 'anywhere',
         wordBreak: 'break-word',
         background: 'var(--cm-tooltip-background)',
         color: 'var(--cm-tooltip-color)',
+        // Tooltip docs/diagnostics are read-only reference text; let it be
+        // selected/copied with a normal text cursor rather than inheriting the
+        // editor chrome's behaviour.
+        userSelect: 'text',
+        WebkitUserSelect: 'text',
+        cursor: 'auto',
+    },
+    // LSP hover docs (`@codemirror/lsp-client` renders markdown into
+    // `.cm-lsp-documentation`) include code fences as <pre>/<code>, which
+    // default to `white-space: pre` and would push the tooltip wide enough
+    // to scroll horizontally. Force them to soft-wrap instead. (The package's
+    // own `.documentation` rules below target a class it no longer emits.)
+    '.cm-lsp-documentation, .cm-lsp-documentation pre, .cm-lsp-documentation code': {
+        whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
     },
     // The autocomplete dropdown must allow overflow so the completion
     // info panel (detail/docs) can render beside it without clipping.
@@ -152,18 +172,25 @@ export const codeblockTheme = EditorView.theme({
     '.cm-tooltip-lint': {
         order: -1,
     },
+    // Diagnostics (lint hover/panel) lost CodeMirror's default `border-left`
+    // severity bar, which also carried its left inset — so they read tighter
+    // than LSP hover docs (`.cm-lsp-documentation`, 4px). Give every severity
+    // a uniform, comfortable padding so error text isn't crammed against the
+    // tooltip border, and break long messages instead of overflowing.
     '.cm-diagnostic': {
-        padding: '3px 6px',
+        padding: '4px 8px',
         whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
         marginLeft: 0,
         borderLeft: 'none',
     },
+    // Error and info differ only in colour; padding/border come from the
+    // shared `.cm-diagnostic` rule above so the two stay consistent.
     '.cm-diagnostic-info': {
         backgroundColor: 'var(--cm-diagnostic-info-bg)',
         color: 'var(--cm-diagnostic-info-color)',
     },
     '.cm-diagnostic-error': {
-        borderLeft: 'none',
         backgroundColor: 'var(--cm-diagnostic-error-bg)',
         color: 'var(--cm-diagnostic-error-color)',
     },

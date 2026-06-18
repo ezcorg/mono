@@ -209,7 +209,11 @@ const ELLIPSIS_ICON = '\uf141';
 export const DEFAULT_FILE_ICON = '\ue64e';
 export const COG_ICON = '\uf013';
 export const FOLDER_ICON = '\ue613';
-export const FOLDER_OPEN_ICON = '\ue614';
+// FontAwesome "folder-open" (U+F07C). The Seti open-folder glyph (U+E614)
+// renders as a stray "#" in fonts that don't carry that private-use slot,
+// whereas the FontAwesome range is reliably present -- and an open folder
+// reads more idiomatically as "browse/open a file" than a hash ever did.
+export const FOLDER_OPEN_ICON = '\uf07c';
 const PARENT_DIR_ICON = '\uf112';
 export const TERMINAL_ICON = '\uf120';
 

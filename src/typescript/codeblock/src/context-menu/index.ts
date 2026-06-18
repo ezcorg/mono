@@ -65,6 +65,17 @@ export function contextMenu(config?: ContextMenuConfig): Extension {
 
     const plugin = ViewPlugin.define(view => {
         function onContextMenu(e: MouseEvent) {
+            // The editor context menu is for the *code*. Don't hijack
+            // right-clicks on the search toolbar / its dropdown (`.cm-panels`,
+            // `.cm-search-results`) or on hover/diagnostic tooltips
+            // (`.cm-tooltip`) — those aren't code, and the menu's actions don't
+            // apply. Leaving the event alone lets the native menu appear (e.g.
+            // cut/copy/paste in the search input, or copy from a tooltip, which
+            // is now selectable).
+            const target = e.target as Element | null;
+            if (target?.closest?.('.cm-panels, .cm-search-results, .cm-tooltip')) {
+                return;
+            }
             e.preventDefault();
             const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head;
             const ctx = buildMenuContext(view, pos);

@@ -579,12 +579,14 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 fsWorker = fs;
                 SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
                     // Default the code font size to the editor's paragraph
-                    // size so prose and code match; an explicit
-                    // `settings.fontSize` (configured on the extension) still
-                    // wins.
+                    // size MINUS 2px: an equal px value reads visually larger in
+                    // the monospace code font (wider glyphs, tighter leading)
+                    // than in the prose font, so we nudge it down to balance the
+                    // two. An explicit `settings.fontSize` (configured on the
+                    // extension) still wins.
                     const baseFontPx = measureBaseFontPx();
                     const resolvedSettings = baseFontPx
-                        ? { fontSize: baseFontPx, ...codeblockSettings }
+                        ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
                         : codeblockSettings;
                     // Reconfigure with codeblock extension once fs is ready
                     cm.setState(EditorState.create({
@@ -633,8 +635,23 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 dom,
                 setSelection(anchor, head) {
                     // If the codeblock wasn't focused (entering from outside),
-                    // direct to the toolbar input for keyboard navigation
+                    // direct to the toolbar input for keyboard navigation —
+                    // EXCEPT when the user is selecting text inside a hover or
+                    // diagnostic tooltip rendered within this codeblock. Those
+                    // tooltips live in the CodeMirror DOM, so dragging a
+                    // selection across one makes ProseMirror's DOM observer call
+                    // setSelection; stealing focus to the toolbar there collapses
+                    // the selection and reads as "my selection jumped into the
+                    // search box". Leave the tooltip selection alone instead.
                     if (!cm.hasFocus) {
+                        const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+                        const anchorNode = sel?.anchorNode ?? null;
+                        const anchorEl = anchorNode
+                            ? (anchorNode.nodeType === 1
+                                ? (anchorNode as Element)
+                                : anchorNode.parentElement)
+                            : null;
+                        if (anchorEl?.closest('.cm-tooltip')) return;
                         const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
                         if (toolbarInput) {
                             toolbarInput.focus();
@@ -656,6 +673,23 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 stopEvent() { return true },
                 update(updated) {
                     if (updated.type != node.type) return false
+                    // The embedded CodeMirror is configured for a specific
+                    // language/file at creation and can't hot-swap them. When
+                    // the whole document is replaced (the toolbar's open-file
+                    // does `setContent`), ProseMirror reconciles codeblocks by
+                    // position and may reuse THIS NodeView for a *different*
+                    // codeblock — one with another language or filename. Left
+                    // alone, CodeMirror would keep rendering the previous file's
+                    // language (e.g. an unnamed `sh` block bleeding into a
+                    // reopened doc's `javascript` block). Bail out so PM rebuilds
+                    // the NodeView from the new attrs. Attr writes that originate
+                    // from this codeblock (syncFileAttrs) set `updating`, so the
+                    // codeblock's own file picks don't trip this and lose focus.
+                    if (!updating &&
+                        (updated.attrs.language !== node.attrs.language ||
+                            updated.attrs.file !== node.attrs.file)) {
+                        return false
+                    }
                     node = updated
                     if (updating) return true
 

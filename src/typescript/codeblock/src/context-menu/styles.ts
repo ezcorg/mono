@@ -15,7 +15,14 @@ export const contextMenuStyles = new StyleModule({
         fontSize: FS,
         boxShadow: '-12px 12px 0px rgba(0,0,0,0.3)',
         minWidth: '180px',
-        maxWidth: '340px',
+        // Grow to fit the widest item (e.g. a long "Shift+Alt+F" shortcut)
+        // instead of capping at a fixed width and letting it spill past the
+        // border. Only when the menu would run off the viewport does it cap
+        // there and expose a scrollbar (`overflow: auto`); the off-screen
+        // positioning in menu.ts already clamps it back on-screen.
+        maxWidth: 'calc(100vw - 8px)',
+        maxHeight: 'calc(100vh - 8px)',
+        overflow: 'auto',
         outline: 'none',
     },
     '.cm-context-menu-item': {
@@ -26,6 +33,10 @@ export const contextMenuStyles = new StyleModule({
         gap: '6px',
         lineHeight: '1.4',
         whiteSpace: 'nowrap',
+        // Keep each row at its natural width so the menu sizes to the widest
+        // row (and, once the menu hits the viewport cap, the rows overflow
+        // into the horizontal scroll rather than squashing label vs shortcut).
+        minWidth: 'max-content',
         userSelect: 'none',
         '&:hover': {
             '& span': { color: 'var(--cm-search-result-color-hover)' },
@@ -64,6 +75,15 @@ export const contextMenuStyles = new StyleModule({
         background: 'var(--cm-tooltip-border)',
         margin: '2px 0',
         opacity: '0.3',
+    },
+    // While a context menu is open, hide hover tooltips anywhere in the
+    // document. The `cm-context-menu-open` class lives on <html> (see
+    // menu.ts), so this matches LSP/diagnostic hovers wherever CodeMirror
+    // parents them — inside `.cm-editor` or reparented out to a fixed/sticky
+    // ancestor — which an editor-scoped rule couldn't reach. `!important`
+    // beats the codeblock theme's `.cm-tooltip { display: flex }`.
+    'html.cm-context-menu-open .cm-tooltip-hover': {
+        display: 'none !important',
     },
 });
 

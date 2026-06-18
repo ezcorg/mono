@@ -21,7 +21,6 @@
 .dev-page {
   min-height: 100vh;
   box-sizing: border-box;
-  background: #ededf0;
   padding: 20px 20px 96px;
   font-family: system-ui, -apple-system, Avenir, Helvetica, Arial, sans-serif;
 }
@@ -107,11 +106,15 @@
   display: flex;
   flex-direction: column;
   height: min(72vh, 660px);
-  background: #fff;
+  /* Follow the editor's theme so dark mode is cohesive (the editor itself is
+     transparent and renders over this surface). */
+  background: var(--ezco-mde-bg, #fff);
+  color: var(--ezco-mde-fg, #1d1d1f);
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--ezco-mde-divider, rgba(0, 0, 0, 0.12));
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
 .mac-titlebar {
@@ -119,10 +122,13 @@
   flex: none;
   display: flex;
   align-items: center;
+  gap: 12px;
   height: 40px;
   padding: 0 14px;
-  background: linear-gradient(#fbfbfb, #f0f0f0);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  /* A neutral translucent overlay reads as a subtle titlebar on both light
+     and dark window surfaces. */
+  background: rgba(127, 127, 127, 0.08);
+  border-bottom: 1px solid var(--ezco-mde-divider, rgba(0, 0, 0, 0.1));
 }
 
 .mac-lights {
@@ -143,16 +149,87 @@
 .mac-light--min { background: #febc2e; }
 .mac-light--max { background: #28c840; }
 
-.mac-title {
-  position: absolute;
-  inset: 0;
+/* The library's file-search toolbar mounts here, filling the titlebar
+   between the traffic lights and the theme toggle (in place of a window
+   title). The toolbar is fully driven by `--ezco-mde-toolbar-*` custom
+   properties (which inherit), so we retheme it into a slim, titlebar-native
+   search field by overriding those; only the hardcoded position/width need an
+   element-level override (below). */
+.mac-titlebar-toolbar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  --ezco-mde-toolbar-bg: rgba(127, 127, 127, 0.14);
+  --ezco-mde-toolbar-fg: var(--ezco-mde-fg, currentColor);
+  --ezco-mde-toolbar-muted: rgba(127, 127, 127, 0.95);
+  --ezco-mde-toolbar-border: 1px solid transparent;
+  --ezco-mde-toolbar-radius: 7px;
+  --ezco-mde-toolbar-shadow: none;
+  --ezco-mde-toolbar-pad-y: 3px;
+  --ezco-mde-toolbar-pad-x: 8px;
+  --ezco-mde-toolbar-min-width: 0;
+  --ezco-mde-toolbar-margin: 0;
+  --ezco-mde-toolbar-font-size: 13px;
+}
+
+/* The toolbar root defaults to `position: sticky; width: fit-content` (its
+   floating-pill behavior). In the titlebar it's a static, full-width field —
+   `position: relative` keeps it the positioning context for the results
+   dropdown that drops beneath it. */
+.cm-toolbar-panel.ezco-mde-toolbar.mac-titlebar-search {
+  position: relative;
+  top: auto;
+  width: 100%;
+  max-width: none;
+}
+
+/* Light / system / dark segmented control in the titlebar. Colours derive
+   from the window's themed `currentColor` / `--ezco-mde-bg` so it reads on
+   both surfaces. */
+.theme-toggle {
+  position: relative;
+  z-index: 1;
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(127, 127, 127, 0.16);
+}
+
+.theme-toggle button {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(0, 0, 0, 0.55);
-  pointer-events: none;
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: currentColor;
+  opacity: 0.5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 120ms ease, opacity 120ms ease;
+}
+
+.theme-toggle button:hover {
+  opacity: 0.85;
+}
+
+.theme-toggle button:focus-visible {
+  outline: 2px solid var(--ezco-mde-link-color, #5861ff);
+  outline-offset: 1px;
+}
+
+.theme-toggle button.is-active {
+  background: var(--ezco-mde-bg, #fff);
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 
 /* The toolbar is the library's default floating, auto-hiding pill — it
