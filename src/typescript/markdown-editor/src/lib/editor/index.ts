@@ -17,6 +17,7 @@ import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions } from './extensions/block-actions';
 import { SelectionMenu } from './extensions/selection-menu';
 import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
+import { Paragraph } from './extensions/paragraph';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -75,11 +76,16 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 // start of a task ("- [ ]"), so dash lists, star lists, and
                 // task lists can all be typed from the keyboard.
                 bulletList: false,
+                // Swap StarterKit's paragraph for ours (extensions/paragraph.ts)
+                // so runs of empty paragraphs (deliberate vertical spacing)
+                // survive a Markdown save+reload instead of collapsing.
+                paragraph: false,
                 // StarterKit v3 bundles Link; disable it so our ExtendedLink
                 // (custom click-to-follow + inline editor) is the only link
                 // extension (avoids the "Duplicate extension names" warning).
                 link: false,
             }),
+            Paragraph,
             BulletList,
             OrderedListStart,
             DashListKeymap,

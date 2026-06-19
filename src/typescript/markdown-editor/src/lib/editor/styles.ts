@@ -22,11 +22,18 @@ const darkModeStyles: Record<string, string> = {
     '--cm-foreground': '#9cdcfe',
     '--cm-search-result-color': '#9cdcfe',
     '--cm-search-result-color-hover': '#ffffff',
-    '--cm-search-result-bg-hover': 'rgba(88, 97, 255, 0.28)',
+    '--cm-search-result-bg-hover': 'rgba(59, 158, 239, 0.30)',
     '--cm-search-result-color-selected': '#ffffff',
-    '--cm-search-result-select-bg': '#5861ff',
+    '--cm-search-result-select-bg': '#3b9eef',
     '--cm-command-result-color': '#ffffff',
     '--cm-tooltip-border': '#000000',
+    // macOS-style accent blue — links and selected/hovered menu rows. A touch
+    // brighter than the light-mode blue for contrast on dark surfaces. The
+    // family matches the codeblock search dropdown's blue.
+    '--ezco-mde-accent': '#3b9eef',
+    '--ezco-mde-accent-fg': '#ffffff',
+    '--ezco-mde-link-color': '#54a8f2',
+    '--ezco-mde-link-color-hover': '#85c3f7',
 }
 export const styleModule: StyleModule = new StyleModule({
     ':root[data-theme="dark"], [data-theme="dark"] .ezco-mde, .ezco-mde[data-theme="dark"]': darkModeStyles,
@@ -54,8 +61,12 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-code-bg-dark': '#2c2c2c',
         '--ezco-mde-bg-light': '#ffffff',
         '--ezco-mde-bg-dark': '#1e1e1e',
-        '--ezco-mde-link-color': '#5861ff',
-        '--ezco-mde-link-color-hover': '#383ea3',
+        // macOS-style accent blue — links and selected/hovered menu rows,
+        // matching the codeblock search dropdown's blue (was an indigo/purple).
+        '--ezco-mde-accent': '#2490e9',
+        '--ezco-mde-accent-fg': '#ffffff',
+        '--ezco-mde-link-color': '#2490e9',
+        '--ezco-mde-link-color-hover': '#1a6fbf',
         // List decoration gutter — the shared column every list item reserves
         // on its left for its marker/checkbox; text starts after it. Sized to
         // fit the checkbox with a small gap, kept tight to avoid excess space.
@@ -126,9 +137,9 @@ export const styleModule: StyleModule = new StyleModule({
         '--cm-foreground': '#383a42',
         '--cm-search-result-color': '#383a42',
         '--cm-search-result-color-hover': '#000000',
-        '--cm-search-result-bg-hover': 'rgba(88, 97, 255, 0.28)',
+        '--cm-search-result-bg-hover': 'rgba(36, 144, 233, 0.30)',
         '--cm-search-result-color-selected': '#ffffff',
-        '--cm-search-result-select-bg': '#5861ff',
+        '--cm-search-result-select-bg': '#2490e9',
         '--cm-command-result-color': '#000000',
         '--cm-tooltip-border': '#c8c8c8',
     },
@@ -600,7 +611,7 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-context-menu-color)',
         border: '1px solid var(--ezco-mde-context-menu-border)',
         'border-radius': '6px',
-        'box-shadow': '0 8px 24px rgba(0, 0, 0, 0.45)',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07)',
         outline: 'none',
         // Sans-serif for the menu surface — the metaphor here is the
         // rich-text editor's affordances, not the code editor's.
@@ -623,7 +634,9 @@ export const styleModule: StyleModule = new StyleModule({
         outline: 'none',
     },
     '.ezco-mde-context-menu-item:hover, .ezco-mde-context-menu-item:focus, .ezco-mde-context-menu-item:focus-visible': {
-        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+        // macOS-style highlight: solid accent blue with white label + icon.
+        background: 'var(--ezco-mde-accent)',
+        color: 'var(--ezco-mde-accent-fg)',
         outline: 'none',
     },
     '.ezco-mde-context-menu-item[aria-disabled="true"]': {
@@ -643,7 +656,7 @@ export const styleModule: StyleModule = new StyleModule({
         flex: 'none',
     },
     '.ezco-mde-context-menu-item:hover .ezco-mde-context-menu-item-icon, .ezco-mde-context-menu-item:focus .ezco-mde-context-menu-item-icon, .ezco-mde-context-menu-item:focus-visible .ezco-mde-context-menu-item-icon': {
-        color: 'inherit',
+        color: 'var(--ezco-mde-accent-fg)',
     },
     '.ezco-mde-context-menu-item-label': {
         flex: 1,
@@ -686,7 +699,7 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-context-menu-color)',
         border: '1px solid var(--ezco-mde-context-menu-border)',
         'border-radius': '8px',
-        'box-shadow': '0 10px 28px rgba(0, 0, 0, 0.5)',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07)',
         outline: 'none',
         'font-family': 'Inter, system-ui, -apple-system, sans-serif',
     },
@@ -764,30 +777,31 @@ export const styleModule: StyleModule = new StyleModule({
         width: '28px',
         height: '20px',
         padding: 0,
-        // Shares the menu surface var (a soft charcoal) so all the floating
-        // chrome stays in one palette; hover steps up to the lighter variant.
+        // Shares the menu surface var so all the floating chrome stays in one
+        // palette; uses the themed text/border vars so the glyph stays legible
+        // on the light surface (light mode) as well as the dark one.
         background: 'var(--ezco-mde-context-menu-bg)',
-        color: 'rgba(245, 245, 245, 0.82)',
-        border: '1px solid rgba(245, 245, 245, 0.18)',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
         'border-radius': '6px',
-        'box-shadow': '0 2px 8px rgba(0, 0, 0, 0.35)',
+        'box-shadow': '0 1px 4px rgba(0, 0, 0, 0.12)',
         cursor: 'pointer',
         'z-index': 6,
         transition: 'background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, box-shadow 120ms ease-out, opacity 120ms ease-out',
     },
     '.ezco-mde-selection-menu-btn:hover': {
-        // Opaque lift + brighter glyph/border — a deliberate hover state
+        // Opaque lift + full-contrast themed glyph — a deliberate hover state
         // instead of the previous see-through look.
         background: 'var(--ezco-mde-context-menu-bg-hover)',
-        'border-color': 'rgba(245, 245, 245, 0.34)',
-        color: '#ffffff',
-        'box-shadow': '0 3px 10px rgba(0, 0, 0, 0.45)',
+        'border-color': 'var(--ezco-mde-context-menu-border)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        'box-shadow': '0 2px 6px rgba(0, 0, 0, 0.16)',
     },
     // Clear, visible focus ring so the Tab landing point is obvious.
     '.ezco-mde-selection-menu-btn:focus, .ezco-mde-selection-menu-btn:focus-visible': {
         outline: '2px solid var(--ezco-mde-link-color)',
         'outline-offset': '2px',
-        color: '#ffffff',
+        color: 'var(--ezco-mde-context-menu-color)',
     },
     // ─────────────────────────────────────────────────────────────
     // Inline link popover (extensions/link-menu.ts) — the editable URL card
@@ -806,7 +820,7 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-context-menu-color)',
         border: '1px solid var(--ezco-mde-context-menu-border)',
         'border-radius': '8px',
-        'box-shadow': '0 8px 24px rgba(0, 0, 0, 0.45)',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07)',
         outline: 'none',
         'font-family': 'Inter, system-ui, -apple-system, sans-serif',
         'font-size': '13px',
@@ -899,7 +913,7 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
         border: 'var(--ezco-mde-toolbar-border, 1px solid var(--ezco-mde-context-menu-border))',
         'border-radius': 'var(--ezco-mde-toolbar-radius, 9px)',
-        'box-shadow': 'var(--ezco-mde-toolbar-shadow, 0 6px 18px rgba(0, 0, 0, 0.28))',
+        'box-shadow': 'var(--ezco-mde-toolbar-shadow, 0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07))',
         'font-family': 'Inter, system-ui, -apple-system, sans-serif',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         padding: 'var(--ezco-mde-toolbar-pad-y, 6px) var(--ezco-mde-toolbar-pad-x, 11px)',
@@ -944,7 +958,7 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
         border: 'var(--ezco-mde-toolbar-popover-border, 1px solid var(--ezco-mde-context-menu-border))',
         'border-radius': '8px',
-        'box-shadow': '0 10px 28px rgba(0, 0, 0, 0.5)',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07)',
         left: '0',
         right: 'auto',
         width: 'max-content',
@@ -983,11 +997,11 @@ export const styleModule: StyleModule = new StyleModule({
         padding: '0',
     },
     '.ezco-mde-toolbar .cm-search-result:hover, .ezco-mde-toolbar .cm-search-result.selected': {
-        'background-color': 'var(--ezco-mde-context-menu-item-bg-hover)',
+        // macOS-style highlight: solid accent blue (matches the codeblock
+        // search dropdown) with white label + icon.
+        'background-color': 'var(--ezco-mde-accent)',
     },
-    // Keep labels/icons legible on hover/selected (the codeblock base paints
-    // them white for its solid-blue selection, which vanishes here).
     '.ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-icon-container > .cm-search-result-icon, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-icon-container > .cm-search-result-icon': {
-        color: 'inherit',
+        color: 'var(--ezco-mde-accent-fg)',
     },
 })

@@ -430,7 +430,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
     // --- Gutter width ---
     function updateGutterWidthVariables() {
         const chWidth = view.defaultCharacterWidth;
-        const iconColWidth = Math.ceil(2 * chWidth);
+        // Minimum width for the icon columns (search-result icons, toolbar
+        // state icon) when the real gutter is narrower than them — e.g. a
+        // 1-digit line-number gutter for a file under 10 lines. A right-aligned
+        // icon needs room for the glyph (~1ch) + its `padding-right` (1ch+3px)
+        // PLUS a few px of left breathing room, or it hugs the left border. The
+        // line-number gutter is held to this same minimum (themes/index.ts) so
+        // the line numbers and icons still share one left-aligned column.
+        const iconColWidth = Math.ceil(2 * chWidth) + 8;
         view.dom.style.setProperty('--cm-icon-col-width', `${iconColWidth}px`);
         const gutters = view.dom.querySelector('.cm-gutters');
         if (gutters) {

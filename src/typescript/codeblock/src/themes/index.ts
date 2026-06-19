@@ -114,7 +114,7 @@ export const codeblockTheme = EditorView.theme({
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'var(--cm-font-family)',
-        boxShadow: '-12px 12px 0px rgba(0,0,0,0.3)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18), 0 1px 4px rgba(0, 0, 0, 0.1)',
         fontSize: FS,
         maxWidth: 'min(100vw - 2rem, 80ch)',
         border: '2px solid var(--cm-tooltip-border)',
@@ -240,6 +240,13 @@ export const codeblockTheme = EditorView.theme({
     },
     '.cm-gutters': {
         borderRight: 'none',
+    },
+    // Hold the line-number gutter to the same minimum the icon columns use, so
+    // a narrow (e.g. 1-digit) gutter widens to match — keeping the line numbers
+    // in the same left-aligned column as the search-result / toolbar icons, and
+    // giving the right-aligned numbers the same left breathing room.
+    '.cm-lineNumbers': {
+        minWidth: 'var(--cm-icon-col-width, 2ch)',
     },
     '.cm-panels-top': {
         borderBottom: 'none',

@@ -155,8 +155,14 @@
    search field by overriding those; only the hardcoded position/width need an
    element-level override (below). */
 .mac-titlebar-toolbar {
-  flex: 1;
-  min-width: 0;
+  /* Centered in the titlebar (like a macOS toolbar search field) with a
+     sensible max width, rather than filling the whole bar. Absolute so it
+     centers on the titlebar regardless of the (asymmetric) lights/toggle. */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(360px, calc(100% - 210px));
   display: flex;
   align-items: center;
   --ezco-mde-toolbar-bg: rgba(127, 127, 127, 0.14);

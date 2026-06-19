@@ -13,7 +13,7 @@ export const contextMenuStyles = new StyleModule({
         padding: '0',
         fontFamily: 'var(--cm-font-family)',
         fontSize: FS,
-        boxShadow: '-12px 12px 0px rgba(0,0,0,0.3)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18), 0 1px 4px rgba(0, 0, 0, 0.1)',
         minWidth: '180px',
         // Grow to fit the widest item (e.g. a long "Shift+Alt+F" shortcut)
         // instead of capping at a fixed width and letting it spill past the
