@@ -112,12 +112,14 @@ function App() {
 
     loadFs().then(async ({ fs, index }) => {
       if (cancelled || !editorBodyRef.current) return;
-      await fs.writeFile('test.md', file);
+      if (!fs.exists('test.md')) {
+        await fs.writeFile('test.md', file);
+      }
       if (cancelled) return;
 
       ed = createEditor({
         element: editorBodyRef.current,
-        fs: { fs, filepath: 'test.md', autoSave: false },
+        fs: { fs, filepath: 'test.md', autoSave: true },
         // Mount the file-search toolbar into the window titlebar (in place of
         // a title) and keep it always visible there, instead of the default
         // floating auto-hiding pill. `.mac-titlebar-search` retheme lives in

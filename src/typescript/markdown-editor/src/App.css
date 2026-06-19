@@ -128,7 +128,6 @@
   /* A neutral translucent overlay reads as a subtle titlebar on both light
      and dark window surfaces. */
   background: rgba(127, 127, 127, 0.08);
-  border-bottom: 1px solid var(--ezco-mde-divider, rgba(0, 0, 0, 0.1));
 }
 
 .mac-lights {
@@ -182,6 +181,20 @@
   top: auto;
   width: 100%;
   max-width: none;
+  /* Match the theme toggle's height so the two titlebar controls line up. */
+  height: 28px;
+  box-sizing: border-box;
+}
+
+/* Constrain the results dropdown to the field's width (the default
+   `width: max-content` + `min-width: 100%` lets it spill past the field's
+   right edge); anchoring both sides matches it to the search field. */
+.cm-toolbar-panel.ezco-mde-toolbar.mac-titlebar-search .cm-search-results {
+  left: 0;
+  right: 0;
+  width: auto;
+  min-width: 0;
+  max-width: none;
 }
 
 /* Light / system / dark segmented control in the titlebar. Colours derive
@@ -192,8 +205,11 @@
   z-index: 1;
   margin-left: auto;
   display: flex;
+  align-items: center;
   gap: 2px;
   padding: 2px;
+  height: 28px;
+  box-sizing: border-box;
   border-radius: 7px;
   background: rgba(127, 127, 127, 0.16);
 }
@@ -203,7 +219,7 @@
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 20px;
+  height: 24px;
   padding: 0;
   border: none;
   border-radius: 5px;

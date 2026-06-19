@@ -6,6 +6,16 @@ const darkModeStyles: Record<string, string> = {
     '--ezco-mde-fg': '#e4e4e7',
     '--ezco-mde-table-bg': 'var(--cm-toolbar-bg-dark)',
     '--ezco-mde-divider': 'rgba(255, 255, 255, 0.14)',
+    // Popover surface (block-action / selection menus, link popover, search
+    // toolbar + its results). Dark mode keeps the charcoal palette; light mode
+    // (in the `:root`/`[data-theme="light"]` block below) uses a light surface
+    // so popovers match the editor + the titlebar search field.
+    '--ezco-mde-context-menu-bg': '#26262c',
+    '--ezco-mde-context-menu-bg-hover': '#34343c',
+    '--ezco-mde-context-menu-color': '#f5f5f5',
+    '--ezco-mde-context-menu-border': 'rgba(245, 245, 245, 0.16)',
+    '--ezco-mde-context-menu-item-bg-hover': 'rgba(245, 245, 245, 0.1)',
+    '--ezco-mde-context-menu-item-color-muted': 'rgba(245, 245, 245, 0.55)',
     // Toolbar variables (shared with @joinezco/codeblock ToolbarCore)
     '--cm-toolbar-background': '#2a2a2f',
     '--cm-toolbar-color': '#ffffff',
@@ -20,8 +30,13 @@ const darkModeStyles: Record<string, string> = {
 }
 export const styleModule: StyleModule = new StyleModule({
     ':root[data-theme="dark"], [data-theme="dark"] .ezco-mde, .ezco-mde[data-theme="dark"]': darkModeStyles,
+    // `system` theme (no explicit `data-theme`): follow the OS. Apply to
+    // `:root` as well as the editor so that chrome rendered OUTSIDE the editor
+    // (block-action / selection menus, link popover — all appended to body)
+    // and host containers (e.g. the demo window) pick up the dark vars too.
+    // An explicit `[data-theme]` still wins by specificity.
     '@media (prefers-color-scheme: dark)': {
-        'div.ezco-mde': darkModeStyles
+        ':root, div.ezco-mde': darkModeStyles
     },
     // Width-constrained screens need every pixel of horizontal real
     // estate, so the editor's left gutter (which only exists to give
@@ -57,19 +72,19 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-block-action-btn-color': 'rgba(120, 120, 120, 0.9)',
         '--ezco-mde-block-action-btn-bg': 'rgba(245, 245, 245, 0.05)',
         '--ezco-mde-block-action-btn-bg-hover': 'rgba(245, 245, 245, 0.12)',
-        // Context-menu theming — the shared surface for every floating
-        // chrome element: the block-action / selection menus, the link
-        // popover, the selection affordance button, and the search toolbar
-        // (which may override `--ezco-mde-toolbar-bg`). A soft charcoal
-        // rather than jet black, so it reads as a panel, not a hole.
-        // Sans-serif, light text, decoupled from the codeblock's monospace
-        // toolbar vars.
-        '--ezco-mde-context-menu-bg': '#26262c',
-        '--ezco-mde-context-menu-bg-hover': '#34343c',
-        '--ezco-mde-context-menu-color': '#f5f5f5',
-        '--ezco-mde-context-menu-border': 'rgba(245, 245, 245, 0.16)',
-        '--ezco-mde-context-menu-item-bg-hover': 'rgba(245, 245, 245, 0.1)',
-        '--ezco-mde-context-menu-item-color-muted': 'rgba(245, 245, 245, 0.55)',
+        // Context-menu theming — the shared surface for every floating chrome
+        // element: the block-action / selection menus, the link popover, the
+        // selection affordance button, and the search toolbar + its results
+        // dropdown. Light mode uses a light elevated surface with dark text (so
+        // popovers match the editor + the titlebar search field); dark mode
+        // (darkModeStyles, above) keeps the charcoal palette. Decoupled from
+        // the codeblock's monospace toolbar vars.
+        '--ezco-mde-context-menu-bg': '#ffffff',
+        '--ezco-mde-context-menu-bg-hover': '#f0f0f3',
+        '--ezco-mde-context-menu-color': '#1d1d1f',
+        '--ezco-mde-context-menu-border': 'rgba(0, 0, 0, 0.12)',
+        '--ezco-mde-context-menu-item-bg-hover': 'rgba(0, 0, 0, 0.06)',
+        '--ezco-mde-context-menu-item-color-muted': 'rgba(0, 0, 0, 0.5)',
 
         // Typography scale based on perfect fourth ratio (1.333)
         '--ezco-mde-type-ratio': '1.25',
