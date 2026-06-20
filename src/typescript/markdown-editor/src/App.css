@@ -162,6 +162,13 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
+  /* The `transform` makes this mount its own stacking context, so the
+     results dropdown (which drops down over the document) is painted at
+     the titlebar's level. Without a z-index that level sits *below* the
+     editor body — embedded codeblocks get their own positive z-indexes
+     (lower in the document = higher z) and would paint over the dropdown.
+     Lift the whole mount above the body so the dropdown is never occluded. */
+  z-index: 50;
   width: min(360px, calc(100% - 210px));
   display: flex;
   align-items: center;

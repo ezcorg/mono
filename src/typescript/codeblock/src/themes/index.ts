@@ -62,12 +62,10 @@ export const codeblockTheme = EditorView.theme({
                 minWidth: 'var(--cm-icon-col-width, 2ch)',
             }
         },
-        '&:hover': {
-            '& div': {
-                color: 'var(--cm-search-result-color-hover)',
-            },
-            backgroundColor: 'var(--cm-search-result-bg-hover)',
-        },
+        // macOS-style single highlight: only the `.selected` row is coloured
+        // (no `&:hover` — pointing at a row moves `selectedIndex` to it, see
+        // toolbar-core.ts's `mouseenter`, so pointer + keyboard share one
+        // highlight instead of lighting up two rows).
         '&.selected': {
             '& div': {
                 color: 'var(--cm-search-result-color-selected)',

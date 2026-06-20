@@ -546,10 +546,13 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // This ensures proper stacking order based on DOM position
             reassignZIndexes();
 
-            // Handle ArrowUp from toolbar to escape to ProseMirror above
+            // Handle toolbar-input keys that need to act on the surrounding
+            // ProseMirror document rather than the codeblock's search box.
             dom.addEventListener('keydown', (e) => {
                 const target = e.target as HTMLElement;
-                if (target.classList.contains('cm-toolbar-input') && e.key === 'ArrowUp') {
+                if (!target.classList.contains('cm-toolbar-input')) return;
+
+                if (e.key === 'ArrowUp') {
                     // Check if the dropdown is open — if so, let toolbar handle it
                     const dropdown = dom.querySelector('.cm-search-results');
                     if (dropdown && dropdown.children.length > 0) return;
@@ -564,6 +567,36 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                         view.dispatch(tr);
                         view.focus();
                     }
+                } else if (e.key === 'Escape') {
+                    // Aborting the language/file picker on a codeblock that's
+                    // still empty — i.e. one just created by typing ``` , with no
+                    // language chosen, no file, and no body — should remove the
+                    // stub rather than leave an empty codeblock behind. A
+                    // codeblock with real content lets Escape fall through to the
+                    // toolbar's normal reset/blur.
+                    const pos = getPos();
+                    if (pos === undefined) return;
+                    const current = view.state.doc.nodeAt(pos);
+                    const stillEmpty = !!current && current.type === node.type &&
+                        current.textContent.length === 0 &&
+                        !current.attrs.file &&
+                        (!current.attrs.language || current.attrs.language === '');
+                    if (!stillEmpty) return;
+
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Replace the stub with an empty paragraph so the caret lands
+                    // back where the user was (and the doc never ends up with an
+                    // invalid/empty top node).
+                    const paragraph = view.state.schema.nodes.paragraph;
+                    const filler = paragraph?.createAndFill();
+                    const tr = filler
+                        ? view.state.tr.replaceWith(pos, pos + current.nodeSize, filler)
+                        : view.state.tr.delete(pos, pos + current.nodeSize);
+                    tr.setSelection(Selection.near(tr.doc.resolve(Math.min(pos + 1, tr.doc.content.size))))
+                        .scrollIntoView();
+                    view.dispatch(tr);
+                    view.focus();
                 }
             }, true);
 

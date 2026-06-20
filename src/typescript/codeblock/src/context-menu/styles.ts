@@ -38,10 +38,10 @@ export const contextMenuStyles = new StyleModule({
         // into the horizontal scroll rather than squashing label vs shortcut).
         minWidth: 'max-content',
         userSelect: 'none',
-        '&:hover': {
-            '& span': { color: 'var(--cm-search-result-color-hover)' },
-            backgroundColor: 'var(--cm-search-result-bg-hover)',
-        },
+        // macOS-style single highlight: only the `.selected` row is coloured.
+        // There's no `&:hover` rule — pointing at a row sets it as selected
+        // (see menu.ts's `mouseenter` → updateSelection), so the pointer and
+        // keyboard share one highlight instead of lighting up two rows.
         '&.selected': {
             '& span': { color: 'var(--cm-search-result-color-selected)' },
             backgroundColor: 'var(--cm-search-result-select-bg)',
@@ -49,7 +49,7 @@ export const contextMenuStyles = new StyleModule({
         '&.disabled': {
             opacity: '0.4',
             cursor: 'default',
-            '&:hover, &.selected': {
+            '&.selected': {
                 backgroundColor: 'transparent',
                 '& span': { color: 'inherit' },
             },

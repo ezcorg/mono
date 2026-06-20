@@ -352,10 +352,11 @@ const toolbarStyleModule = new StyleModule({
                 minWidth: 'var(--cm-icon-col-width, 2em)',
             },
         },
-        '&:hover': {
-            '& div': { color: 'var(--cm-search-result-color-hover)' },
-            backgroundColor: 'var(--cm-search-result-bg-hover)',
-        },
+        // macOS-style single highlight: only the `.selected` row is coloured.
+        // There's deliberately no `&:hover` rule — pointing at a row instead
+        // moves `selectedIndex` to it (see renderItem's `mouseenter`), so the
+        // pointer and the keyboard drive the *same* single highlight rather
+        // than lighting up two rows at once.
         '&.selected': {
             '& div': { color: 'var(--cm-search-result-color-selected)' },
             backgroundColor: 'var(--cm-search-result-select-bg)',
@@ -734,8 +735,41 @@ export class ToolbarCore {
 
         if (i === this.selectedIndex) li.classList.add("selected");
         li.addEventListener("mousedown", (ev) => ev.preventDefault());
+        li.addEventListener("mouseenter", () => this.hoverSelect(i));
         li.addEventListener("click", (ev) => { ev.stopPropagation(); this.selectResult(result); });
         return li;
+    }
+
+    /** macOS-style hover: pointing at a row makes it *the* selected row, so
+     *  there's only ever one highlight and keyboard nav continues from the
+     *  pointed-at item. */
+    private hoverSelect(i: number) {
+        if (this.selectedIndex === i) return;
+        this.selectedIndex = i;
+        this.highlightSelection(false);
+    }
+
+    /** Reflect `selectedIndex` onto the already-rendered rows *in place*
+     *  (toggle the `.selected` class) instead of rebuilding the list.
+     *
+     *  This is what lets keyboard nav take precedence over the mouse: a full
+     *  `updateDropdown()` re-render replaces the row under a stationary
+     *  cursor, and the browser fires a fresh `mouseenter` on the new element
+     *  — which would snap the selection straight back to the hovered row,
+     *  defeating the arrow keys. Toggling a class moves no DOM, so no
+     *  `mouseenter` fires and the keyboard selection holds until the pointer
+     *  actually moves again. (It's also far cheaper per keystroke.)
+     *
+     *  `scrollIntoView` is true for keyboard moves (keep the active row
+     *  visible while arrowing a long list) and false for hover (the row is
+     *  already under the cursor, so scrolling would yank the list around). */
+    private highlightSelection(scrollIntoView: boolean) {
+        const items = this.resultsList.querySelectorAll<HTMLElement>('.cm-search-result');
+        items.forEach((el, idx) => el.classList.toggle('selected', idx === this.selectedIndex));
+        if (scrollIntoView) {
+            const sel = items[this.selectedIndex];
+            if (sel) sel.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     private updateDropdown() {
@@ -773,6 +807,7 @@ export class ToolbarCore {
                 li.appendChild(label);
                 if (i === this.selectedIndex) li.classList.add("selected");
                 li.addEventListener("mousedown", ev => ev.preventDefault());
+                li.addEventListener("mouseenter", () => this.hoverSelect(i));
                 li.addEventListener("click", ev => { ev.stopPropagation(); this.expandResults(); });
                 children.push(li);
             } else {
@@ -1394,8 +1429,8 @@ export class ToolbarCore {
                 else if (event.key === "Escape") { event.preventDefault(); this.cancelSettingsEdit(); }
                 return;
             }
-            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.updateDropdown(); } }
-            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.updateDropdown(); } }
+            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.highlightSelection(true); } }
+            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.highlightSelection(true); } }
             else if (event.key === "Enter" && results.length && this.selectedIndex >= 0) { event.preventDefault(); this.selectResult(results[this.selectedIndex]); }
             else if (event.key === "Backspace") { if (this.settingsMode.filter === '') { event.preventDefault(); this.exitSettingsMode(); this.setResults([]); this.resetInputToCurrentFile(); } }
             else if (event.key === "Escape") { event.preventDefault(); this.exitSettingsMode(); this.setResults([]); this.resetInputToCurrentFile(); this.input.blur(); }
@@ -1404,8 +1439,8 @@ export class ToolbarCore {
         // Browse mode
         if (this.browseMode.active) {
             const results = this.results;
-            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.updateDropdown(); } }
-            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.updateDropdown(); } }
+            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.highlightSelection(true); } }
+            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.highlightSelection(true); } }
             else if (event.key === "Enter" && results.length && this.selectedIndex >= 0) { event.preventDefault(); this.selectResult(results[this.selectedIndex]); }
             else if (event.key === "Backspace") {
                 if (this.browseMode.filter === '' && this.browseMode.currentPath !== '/') {
@@ -1428,11 +1463,11 @@ export class ToolbarCore {
         // Normal search mode — navigate visibleItems
         if (event.key === "ArrowDown") {
             event.preventDefault();
-            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex + 1, this.visibleItems.length); this.updateDropdown(); }
+            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex + 1, this.visibleItems.length); this.highlightSelection(true); }
             else { this.host.focusEditor(); }
         } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex - 1, this.visibleItems.length); this.updateDropdown(); }
+            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex - 1, this.visibleItems.length); this.highlightSelection(true); }
         } else if (event.key === "Enter" && this.visibleItems.length && this.selectedIndex >= 0) {
             event.preventDefault();
             const item = this.visibleItems[this.selectedIndex];

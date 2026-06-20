@@ -60,6 +60,12 @@ class LinkPopoverView {
     private getRect: () => DOMRect = () => new DOMRect()
     private onDocMouseDown: (e: MouseEvent) => void
     private onDocKeyDown: (e: KeyboardEvent) => void
+    /** Status-bar-style chip showing the URL of the link under the pointer —
+     *  replaces the native preview browsers suppress inside contenteditable. */
+    private hoverEl: HTMLElement
+    private hoverHref: string | null = null
+    private onLinkOver: (e: MouseEvent) => void
+    private onLinkLeave: () => void
 
     constructor(view: EditorView, editor: Editor) {
         this.view = view
@@ -107,6 +113,38 @@ class LinkPopoverView {
             this.cancel()
         }
         document.addEventListener('keydown', this.onDocKeyDown, true)
+
+        // Hover preview: show the URL of the link under the pointer in a
+        // bottom-left chip (browsers don't surface their native status-bar URL
+        // preview for links inside contenteditable). Passive — doesn't affect
+        // click/edit behaviour; following a link is still ⌘/Ctrl-click.
+        this.hoverEl = document.createElement('div')
+        this.hoverEl.className = 'ezco-mde-link-hover-preview'
+        this.hoverEl.setAttribute('aria-hidden', 'true')
+        this.hoverEl.style.display = 'none'
+        document.body.appendChild(this.hoverEl)
+        this.onLinkOver = (e: MouseEvent) => {
+            const a = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+            if (a && this.view.dom.contains(a)) this.showHover(a.getAttribute('href') ?? '')
+            else this.hideHover()
+        }
+        this.onLinkLeave = () => this.hideHover()
+        view.dom.addEventListener('mouseover', this.onLinkOver)
+        view.dom.addEventListener('mouseleave', this.onLinkLeave)
+    }
+
+    private showHover(href: string) {
+        if (!href) { this.hideHover(); return }
+        if (this.hoverHref === href) return
+        this.hoverHref = href
+        this.hoverEl.textContent = href
+        this.hoverEl.style.display = 'block'
+    }
+
+    private hideHover() {
+        if (this.hoverHref === null) return
+        this.hoverHref = null
+        this.hoverEl.style.display = 'none'
     }
 
     update(view: EditorView) {
@@ -139,6 +177,9 @@ class LinkPopoverView {
     destroy() {
         document.removeEventListener('mousedown', this.onDocMouseDown, true)
         document.removeEventListener('keydown', this.onDocKeyDown, true)
+        this.view.dom.removeEventListener('mouseover', this.onLinkOver)
+        this.view.dom.removeEventListener('mouseleave', this.onLinkLeave)
+        this.hoverEl.remove()
         this.popup?.destroy()
         this.popup = null
         this.popover.destroy()
@@ -218,6 +259,13 @@ class LinkPopoverView {
     /** Open the popover with its input focused — used by the selection menu's
      *  "Link" action to create a link on the current selection. */
     startEdit() {
+        // Mark editing *now*, not when the input's focus event fires a frame
+        // later (the input is focused via rAF). The caller typically runs an
+        // `editor.focus()` chain right before this, whose transaction triggers
+        // `update()` — which, with no link mark yet (empty href), would
+        // otherwise immediately hide the popover we're trying to open.
+        this.editing = true
+        this.dismissed = false
         const range = this.linkRangeAtSelection()
         this.getRect = () => this.anchorRect(range)
         this.ensurePopup()

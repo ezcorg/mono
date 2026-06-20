@@ -43,7 +43,14 @@ export const styleModule: StyleModule = new StyleModule({
     // and host containers (e.g. the demo window) pick up the dark vars too.
     // An explicit `[data-theme]` still wins by specificity.
     '@media (prefers-color-scheme: dark)': {
-        ':root, div.ezco-mde': darkModeStyles
+        // The base light vars live on `:root` and are declared *later* in this
+        // module, so a plain `:root` selector here would lose the same-specificity
+        // cascade tie and system dark mode would render light (white editor bg).
+        // `:root:not([data-theme="light"])` outranks the base `:root` so the OS
+        // preference wins — while still letting an explicit `data-theme="light"`
+        // override the OS. The editor body and body-appended chrome (menus,
+        // popovers) inherit these custom properties from :root.
+        ':root:not([data-theme="light"])': darkModeStyles
     },
     // Width-constrained screens need every pixel of horizontal real
     // estate, so the editor's left gutter (which only exists to give
@@ -633,8 +640,12 @@ export const styleModule: StyleModule = new StyleModule({
         'text-align': 'left',
         outline: 'none',
     },
-    '.ezco-mde-context-menu-item:hover, .ezco-mde-context-menu-item:focus, .ezco-mde-context-menu-item:focus-visible': {
-        // macOS-style highlight: solid accent blue with white label + icon.
+    // macOS-style single highlight: only the *focused* item is coloured.
+    // Pointer hover doesn't get its own `:hover` rule — instead the menu
+    // moves DOM focus to the hovered item (see ContextMenu.buildDom's
+    // `mouseenter` handler), so there's only ever one accented row whether
+    // the user is arrowing with the keyboard or pointing with the mouse.
+    '.ezco-mde-context-menu-item:focus, .ezco-mde-context-menu-item:focus-visible': {
         background: 'var(--ezco-mde-accent)',
         color: 'var(--ezco-mde-accent-fg)',
         outline: 'none',
@@ -655,7 +666,7 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
         flex: 'none',
     },
-    '.ezco-mde-context-menu-item:hover .ezco-mde-context-menu-item-icon, .ezco-mde-context-menu-item:focus .ezco-mde-context-menu-item-icon, .ezco-mde-context-menu-item:focus-visible .ezco-mde-context-menu-item-icon': {
+    '.ezco-mde-context-menu-item:focus .ezco-mde-context-menu-item-icon, .ezco-mde-context-menu-item:focus-visible .ezco-mde-context-menu-item-icon': {
         color: 'var(--ezco-mde-accent-fg)',
     },
     '.ezco-mde-context-menu-item-label': {
@@ -718,10 +729,30 @@ export const styleModule: StyleModule = new StyleModule({
         'font-family': 'inherit',
         outline: 'none',
     },
-    // Selected (keyboard) and hover share one highlight so the active
-    // row reads the same whether the user is arrowing or pointing.
-    '.ezco-mde-slash-item.is-selected, .ezco-mde-slash-item:hover': {
-        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+    // macOS-style single highlight: only `.is-selected` is coloured, with the
+    // same solid accent blue as the other dropdowns (block-action menu, search
+    // toolbar). Hovering doesn't get its own `:hover` rule — the menu sets
+    // `selectedIndex` to the hovered row on `mouseenter` (see slash-commands.ts),
+    // so the keyboard and the pointer drive the *same* single highlight.
+    // Because the row is two-line (title + description + an icon chip), the
+    // selected state recolours each part to read on the blue fill.
+    '.ezco-mde-slash-item.is-selected': {
+        background: 'var(--ezco-mde-accent)',
+    },
+    '.ezco-mde-slash-item.is-selected .ezco-mde-slash-item-title': {
+        color: 'var(--ezco-mde-accent-fg)',
+    },
+    '.ezco-mde-slash-item.is-selected .ezco-mde-slash-item-desc': {
+        // The secondary line stays legible but recedes — a translucent white
+        // (rather than full white) keeps the title/description hierarchy.
+        color: 'var(--ezco-mde-accent-fg)',
+        opacity: 0.8,
+    },
+    '.ezco-mde-slash-item.is-selected .ezco-mde-slash-item-icon': {
+        // A translucent-white chip + white glyph reads cleanly on the blue,
+        // instead of the dark-on-dark the resting chip colours would give.
+        background: 'rgba(255, 255, 255, 0.22)',
+        color: 'var(--ezco-mde-accent-fg)',
     },
     '.ezco-mde-slash-item-icon': {
         display: 'inline-flex',
@@ -866,6 +897,35 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-link-popover-input::placeholder': {
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
+    // Link hover preview — a status-bar-style chip pinned to the bottom-left,
+    // showing the URL of the link under the pointer. Browsers don't show their
+    // native status-bar URL preview for links inside `contenteditable`, so we
+    // replicate it here (preserving inline editing + the Alt/⌘-click gesture).
+    // Toggled via inline `display` from the LinkMenu extension.
+    '.ezco-mde-link-hover-preview': {
+        position: 'fixed',
+        bottom: '0',
+        left: '0',
+        'z-index': '2147483640',
+        'max-width': 'min(60vw, 520px)',
+        overflow: 'hidden',
+        'text-overflow': 'ellipsis',
+        'white-space': 'nowrap',
+        padding: '3px 9px',
+        'font-size': '12px',
+        'line-height': 1.4,
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-left': 'none',
+        'border-bottom': 'none',
+        'border-top-right-radius': '5px',
+        'box-shadow': '0 -1px 6px rgba(0, 0, 0, 0.08)',
+        // A passive readout — never intercept pointer events or take selection.
+        'pointer-events': 'none',
+        'user-select': 'none',
+    },
     // ─────────────────────────────────────────────────────────────
     // File-search / command toolbar (tagged `.ezco-mde-toolbar`).
     //
@@ -996,12 +1056,15 @@ export const styleModule: StyleModule = new StyleModule({
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         padding: '0',
     },
-    '.ezco-mde-toolbar .cm-search-result:hover, .ezco-mde-toolbar .cm-search-result.selected': {
-        // macOS-style highlight: solid accent blue (matches the codeblock
-        // search dropdown) with white label + icon.
+    // macOS-style single highlight: only the `.selected` row is coloured
+    // (solid accent blue, matching the codeblock search dropdown). No
+    // `:hover` rule — the toolbar moves `.selected` to the pointed-at row
+    // on `mouseenter` (toolbar-core.ts), so pointer + keyboard share one
+    // highlight instead of lighting up two rows.
+    '.ezco-mde-toolbar .cm-search-result.selected': {
         'background-color': 'var(--ezco-mde-accent)',
     },
-    '.ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result:hover > .cm-search-result-icon-container > .cm-search-result-icon, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-icon-container > .cm-search-result-icon': {
+    '.ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-icon-container > .cm-search-result-icon': {
         color: 'var(--ezco-mde-accent-fg)',
     },
 })

@@ -175,12 +175,22 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                         index,
                         filepath,
                         openFile(path) {
+                            // Route through the persistence extension when present:
+                            // it flushes the outgoing file's pending autosave, points
+                            // autosave at the new path, and loads the content without
+                            // it counting as an edit — all in the right order, so the
+                            // new file's content can't be written to the old file's
+                            // path (the autosave file-navigation race).
+                            const persistence = (extension.editor.storage as any).persistence
+                            if (typeof persistence?.loadFile === 'function') {
+                                persistence.loadFile(path).catch((err: unknown) => {
+                                    console.warn(`[Toolbar] Failed to open ${path}:`, err)
+                                })
+                                return
+                            }
+                            // No persistence extension → plain load (nothing autosaves).
                             fs.readFile(path).then(content => {
                                 extension.editor.commands.setContent(content)
-                                const persistence = (extension.editor.storage as any).persistence
-                                if (persistence?.options) {
-                                    persistence.options.filepath = path
-                                }
                             }).catch(err => {
                                 console.warn(`[Toolbar] Failed to open ${path}:`, err)
                             })
@@ -194,6 +204,16 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                         },
                         focusEditor() {
                             editorView.focus()
+                        },
+                        getCurrentFilePath() {
+                            // The live current file is the persistence layer's
+                            // filepath (updated on every open/create/rename).
+                            // Without this the toolbar falls back to its *initial*
+                            // filepath, so after creating/opening a file the
+                            // displayed path reverts to the original on the next
+                            // input reset (e.g. clicking into the editor to type).
+                            const persistence = (extension.editor.storage as any).persistence
+                            return persistence?.options?.filepath ?? extension.options.filepath ?? null
                         },
                     } satisfies ToolbarHost)
 

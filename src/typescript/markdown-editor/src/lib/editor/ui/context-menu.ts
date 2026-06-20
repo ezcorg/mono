@@ -122,6 +122,14 @@ export class ContextMenu {
             label.textContent = item.label
             btn.appendChild(label)
 
+            // macOS-style single highlight: pointing at a row *selects* it
+            // (moves DOM focus to it) rather than lighting up a second row
+            // via `:hover`. Keyboard nav then continues from the pointed-at
+            // item, so there's only ever one highlighted row.
+            btn.addEventListener('mouseenter', () => {
+                if (!item.disabled) this.setFocus(index)
+            })
+
             // Prevent the parent editor from receiving the mousedown and
             // moving focus/selection out from under us before the click
             // fires.

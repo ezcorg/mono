@@ -40,6 +40,19 @@ const SELECTION_MENU_ICON = `
   <circle cx="12.6" cy="8" r="1.45" fill="currentColor"/>
 </svg>`
 
+/** The list-item type the selection's start sits in (`listItem` for
+ *  bullet/ordered lists, `taskItem` for task lists), or null when the
+ *  selection isn't inside a list. Used to gate the indent/outdent actions
+ *  and to decide whether Tab should indent rather than focus the menu. */
+function listItemTypeAt(editor: Editor): 'listItem' | 'taskItem' | null {
+    const { $from } = editor.state.selection
+    for (let d = $from.depth; d > 0; d--) {
+        const name = $from.node(d).type.name
+        if (name === 'listItem' || name === 'taskItem') return name
+    }
+    return null
+}
+
 function actionsForSelection(editor: Editor): SelectionAction[] {
     const marks = editor.schema.marks
     const actions: SelectionAction[] = []
@@ -111,6 +124,34 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         isActive: (e) => e.isActive('blockquote'),
         run: (e) => e.chain().focus().toggleBlockquote().run(),
     })
+    // Indent / outdent for list selections — a discoverable, pointer-friendly
+    // way to bulk-indent the selected items (Tab/Shift+Tab still work too).
+    // Only shown inside a list. `⇥` = ⇥ (tab-to-bar), `⇤` = ⇤.
+    actions.push({
+        label: 'Indent',
+        icon: '⇥',
+        isAvailable: (e) => {
+            const t = listItemTypeAt(e)
+            return !!t && e.can().sinkListItem(t)
+        },
+        run: (e) => {
+            const t = listItemTypeAt(e)
+            if (t) e.chain().focus().sinkListItem(t).run()
+        },
+    })
+    actions.push({
+        label: 'Outdent',
+        icon: '⇤',
+        isAvailable: (e) => {
+            const t = listItemTypeAt(e)
+            return !!t && e.can().liftListItem(t)
+        },
+        run: (e) => {
+            const t = listItemTypeAt(e)
+            if (t) e.chain().focus().liftListItem(t).run()
+        },
+    })
+
     actions.push({
         label: 'Clear formatting',
         icon: '⌫',
@@ -415,9 +456,13 @@ export const SelectionMenu = Extension.create<unknown, SelectionMenuStorage>({
                         if (event.key !== 'Tab' || event.shiftKey) return false
                         const menuView = storage.selectionMenuView
                         if (!menuView) return false
-                        // Only intercept Tab when there's an active text
-                        // selection (otherwise Tab keeps its normal job,
-                        // e.g. indenting a list item at an empty cursor).
+                        // In a list, Tab's natural job is to indent the selected
+                        // item(s) — don't hijack it; let the list keymap handle
+                        // it (Shift+Tab already falls through to outdent, and the
+                        // menu's Indent/Outdent items cover the pointer path).
+                        // Elsewhere Tab has no editing role in prose, so we use
+                        // it to move focus to the contextual-actions button.
+                        if (listItemTypeAt(editor)) return false
                         if (menuView.focusButton()) {
                             event.preventDefault()
                             return true

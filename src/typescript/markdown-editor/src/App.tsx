@@ -112,9 +112,7 @@ function App() {
 
     loadFs().then(async ({ fs, index }) => {
       if (cancelled || !editorBodyRef.current) return;
-      if (!fs.exists('test.md')) {
-        await fs.writeFile('test.md', file);
-      }
+      await fs.writeFile('test.md', file);
       if (cancelled) return;
 
       ed = createEditor({
