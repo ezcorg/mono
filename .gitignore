@@ -46,3 +46,4 @@ src/wasm/*
 !src/wasm/README.md
 
 .vitest-attachments
+**/__screenshots__/

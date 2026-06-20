@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { actionsForNode } from '../lib/editor/extensions/block-actions'
-import { MarkdownEditor } from '../lib/editor'
-import { createTestContainer, createTestEditor, cleanupEditor } from './utils'
+import { actionsForNode } from './block-actions'
+import { MarkdownEditor } from '../index'
+import { createTestContainer, createTestEditor, cleanupEditor } from '../../../test/utils'
 
 /**
  * Exercises every block-action a node type offers (run via `actionsForNode`),

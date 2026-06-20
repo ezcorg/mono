@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { MarkdownEditor } from '../lib/editor'
+import { MarkdownEditor } from '../index'
 import {
     createTestContainer,
     createTestEditor,
     cleanupEditor,
-} from './utils'
+} from '../../../test/utils'
 
 describe('MarkdownEditor Extensions', () => {
     let container: HTMLElement

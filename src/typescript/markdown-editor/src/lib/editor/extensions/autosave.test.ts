@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from 'tiptap-markdown'
-import { FileSystem } from '../lib/editor/extensions/filesystem'
+import { FileSystem } from './filesystem'
 
 /**
  * Autosave + file-navigation race.

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { MarkdownEditor } from '../lib/editor'
+import { MarkdownEditor } from '../index'
 import {
     createTestContainer,
     createTestEditor,
     cleanupEditor,
     waitFor,
-} from './utils'
+} from '../../../test/utils'
 
 /**
  * Inline link popover + follow behaviour (browser provider — needs real

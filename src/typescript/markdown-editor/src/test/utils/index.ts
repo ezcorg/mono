@@ -1,4 +1,4 @@
-import { MarkdownEditor, createEditor, MarkdownEditorOptions } from '../lib/editor'
+import { MarkdownEditor, createEditor, MarkdownEditorOptions } from '../../lib/editor'
 import { CodeblockFS, type Fs } from '@joinezco/codeblock'
 
 /**

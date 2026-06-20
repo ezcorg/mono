@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
 import { CodeblockFS, SearchIndex } from '@joinezco/codeblock';
 import './App.css'
-import { file } from './test/example';
+import { file } from './example';
 
 type Variant = 'custom' | 'default';
 

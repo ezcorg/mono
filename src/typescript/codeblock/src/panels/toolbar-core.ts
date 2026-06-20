@@ -504,9 +504,7 @@ export class ToolbarCore {
         // current path). The path check is what suppresses bogus
         // "Create new file 'X'" / "Rename to 'X'" entries when X is
         // already open.
-        const hasExactFileMatch =
-            (searchResults.length > 0 && searchResults[0].id === query) ||
-            (currentPath !== null && currentPath === query);
+        const hasExactFileMatch = this.queryMatchesExistingFile(query, searchResults);
 
         // Save as
         if (hasContent || hasValidFile) {
@@ -522,13 +520,13 @@ export class ToolbarCore {
             }
         }
 
-        // Create blank file
+        // Create new file
         if (!query.trim()) {
-            commands.push({ id: 'Create blank file', type: 'create-file', icon: DEFAULT_FILE_ICON, query: '', requiresInput: true });
+            commands.push({ id: 'Create new file', type: 'create-file', icon: DEFAULT_FILE_ICON, query: '', requiresInput: true });
         } else if (!hasExactFileMatch) {
             const langIcon = isLanguageQuery ? getLanguageIcon(query) : null;
             commands.push({
-                id: isLanguageQuery ? "Create blank file" : `Create blank file "${query}"`,
+                id: isLanguageQuery ? "Create new file" : `Create new file "${query}"`,
                 type: 'create-file', icon: langIcon?.glyph || DEFAULT_FILE_ICON,
                 iconColor: langIcon?.color, query, requiresInput: isLanguageQuery,
             });
@@ -596,20 +594,40 @@ export class ToolbarCore {
      * Analyze input query to detect user intent using heuristics.
      * Returns a confidence-weighted intent.
      */
-    private detectIntent(query: string, hasFileResults: boolean): { intent: ToolbarIntent; confidence: number } {
+    /** True when `query` refers to a file that already exists — either the top
+     *  search hit is an exact path match, or it's literally the open file. Used
+     *  to tell "open/search this file" apart from "create this new file". */
+    private queryMatchesExistingFile(query: string, searchResults: SearchResult[]): boolean {
+        const currentPath = this.getCurrentFilePath();
+        return (searchResults.length > 0 && searchResults[0].id === query) ||
+            (currentPath !== null && currentPath === query);
+    }
+
+    /** A complete filename with an extension, e.g. `readme.md`, `src/main.ts`. */
+    private static readonly COMPLETE_FILENAME = /[^/\\]\.\w{1,10}$/;
+
+    private detectIntent(query: string, searchResults: SearchResult[]): { intent: ToolbarIntent; confidence: number } {
         const q = query.trim();
         if (!q) return { intent: 'unknown', confidence: 0 };
         const ql = q.toLowerCase();
+        const hasFileResults = searchResults.length > 0;
+        // A complete, valid filepath that doesn't already exist is a create —
+        // not a search — so the create-file commands get promoted to the top.
+        const completeNewFile =
+            ToolbarCore.COMPLETE_FILENAME.test(q) && !this.queryMatchesExistingFile(q, searchResults);
 
         // Direct path: contains slash or starts with dot — clearly looking for a file
         if (q.includes('/')) {
             if (q.endsWith('/')) return { intent: 'browse', confidence: 0.9 };
+            if (completeNewFile) return { intent: 'file-create', confidence: 0.85 };
             return { intent: 'file-search', confidence: 0.85 };
         }
         if (q.startsWith('.')) return { intent: 'file-search', confidence: 0.8 };
 
         // File extension pattern: e.g. "main.ts", "readme.md"
-        if (/\.\w{1,10}$/.test(q)) return { intent: 'file-search', confidence: 0.8 };
+        if (ToolbarCore.COMPLETE_FILENAME.test(q)) {
+            return { intent: completeNewFile ? 'file-create' : 'file-search', confidence: 0.8 };
+        }
 
         // Command keywords
         for (const [pattern, intent] of ToolbarCore.COMMAND_PATTERNS) {
@@ -642,10 +660,14 @@ export class ToolbarCore {
                 return [...fileResults, ...commands];
 
             case 'file-create': {
-                // Promote create/save-as commands above file results
-                const create = commands.filter(c => c.type === 'create-file' || c.type === 'save-as');
-                const rest = commands.filter(c => c.type !== 'create-file' && c.type !== 'save-as');
-                return [...create, ...fileResults, ...rest];
+                // Create the new file first, then the "save/rename the current
+                // file to this path" actions, then any incidental matches, then
+                // the rest.
+                const create = commands.filter(c => c.type === 'create-file');
+                const saveRename = commands.filter(c => c.type === 'save-as' || c.type === 'rename-file');
+                const rest = commands.filter(c =>
+                    c.type !== 'create-file' && c.type !== 'save-as' && c.type !== 'rename-file');
+                return [...create, ...saveRename, ...fileResults, ...rest];
             }
 
             case 'file-action': {
@@ -776,11 +798,21 @@ export class ToolbarCore {
         const results = this.results;
         const children: HTMLElement[] = [];
 
+        // Preserve the prioritized order: commands that come *before* the first
+        // file result stay pinned at the top (e.g. "Create new file" for a
+        // complete, new filepath), the file results are collapsed in the
+        // middle, and the remaining commands follow. Without this split the
+        // collapse logic would force every command below every file result,
+        // undoing `prioritizeResults`' create-first ordering.
+        const leadingCommands: SearchResult[] = [];
         const fileResults: SearchResult[] = [];
-        const commandResults: SearchResult[] = [];
+        const trailingCommands: SearchResult[] = [];
+        let seenFile = false;
         for (const r of results) {
-            if (!isCommandResult(r) && !isBrowseEntry(r) && !isSettingsEntry(r)) fileResults.push(r);
-            else commandResults.push(r);
+            const isCommand = isCommandResult(r) || isBrowseEntry(r) || isSettingsEntry(r);
+            if (!isCommand) { fileResults.push(r); seenFile = true; }
+            else if (seenFile) trailingCommands.push(r);
+            else leadingCommands.push(r);
         }
 
         const total = fileResults.length;
@@ -789,9 +821,10 @@ export class ToolbarCore {
         const hiddenCount = total - visibleFileCount;
 
         this.visibleItems = [];
+        for (const cmd of leadingCommands) this.visibleItems.push(cmd);
         for (let i = 0; i < visibleFileCount; i++) this.visibleItems.push(fileResults[i]);
         if (shouldCollapse) this.visibleItems.push(SHOW_MORE_SENTINEL);
-        for (const cmd of commandResults) this.visibleItems.push(cmd);
+        for (const cmd of trailingCommands) this.visibleItems.push(cmd);
 
         this.visibleItems.forEach((item, i) => {
             if (item === SHOW_MORE_SENTINEL) {
@@ -1293,7 +1326,7 @@ export class ToolbarCore {
                 results = this.createCommandResults(query, searchResults);
             } else {
                 const commands = this.createCommandResults(query, searchResults);
-                const { intent } = this.detectIntent(query, searchResults.length > 0);
+                const { intent } = this.detectIntent(query, searchResults);
                 results = this.prioritizeResults(searchResults, commands, intent);
             }
         } else {
@@ -1321,16 +1354,26 @@ export class ToolbarCore {
         }
         if (this.browseMode.active) {
             const prefix = this.browseMode.currentPath === '/' ? '/' : this.browseMode.currentPath + '/';
-            this.browseMode.filter = query.startsWith(prefix) ? query.slice(prefix.length) : query;
-            this.refreshBrowseEntries();
-            return;
+            const filter = query.startsWith(prefix) ? query.slice(prefix.length) : query;
+            // If the user has typed a complete filename inside the browsed
+            // directory (e.g. `src/example.md`), they're creating a file, not
+            // navigating — leave browse mode and fall through to the normal
+            // search/create flow so the create-file commands are offered for
+            // the full path. Otherwise keep filtering the directory listing.
+            if (ToolbarCore.COMPLETE_FILENAME.test(filter.trim())) {
+                this.exitBrowseMode();
+            } else {
+                this.browseMode.filter = filter;
+                this.refreshBrowseEntries();
+                return;
+            }
         }
 
         let results: SearchResult[] = [];
         if (query.trim()) {
             const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 1000);
             const commands = this.createCommandResults(query, searchResults);
-            const { intent, confidence } = this.detectIntent(query, searchResults.length > 0);
+            const { intent, confidence } = this.detectIntent(query, searchResults);
             this.lastIntent = intent;
 
             // Auto-enter modes for high-confidence structural intents

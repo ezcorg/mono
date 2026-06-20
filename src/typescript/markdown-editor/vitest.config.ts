@@ -21,7 +21,7 @@ export default defineConfig({
         },
         // Test environment setup
         environment: 'happy-dom',
-        setupFiles: ['./src/test/setup.ts'],
+        setupFiles: ['./src/test/utils/setup.ts'],
         // Test file patterns
         include: [
             'src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',

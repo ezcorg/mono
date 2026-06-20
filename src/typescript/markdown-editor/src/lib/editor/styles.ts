@@ -897,35 +897,6 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-link-popover-input::placeholder': {
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
-    // Link hover preview — a status-bar-style chip pinned to the bottom-left,
-    // showing the URL of the link under the pointer. Browsers don't show their
-    // native status-bar URL preview for links inside `contenteditable`, so we
-    // replicate it here (preserving inline editing + the Alt/⌘-click gesture).
-    // Toggled via inline `display` from the LinkMenu extension.
-    '.ezco-mde-link-hover-preview': {
-        position: 'fixed',
-        bottom: '0',
-        left: '0',
-        'z-index': '2147483640',
-        'max-width': 'min(60vw, 520px)',
-        overflow: 'hidden',
-        'text-overflow': 'ellipsis',
-        'white-space': 'nowrap',
-        padding: '3px 9px',
-        'font-size': '12px',
-        'line-height': 1.4,
-        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
-        background: 'var(--ezco-mde-context-menu-bg)',
-        color: 'var(--ezco-mde-context-menu-item-color-muted)',
-        border: '1px solid var(--ezco-mde-context-menu-border)',
-        'border-left': 'none',
-        'border-bottom': 'none',
-        'border-top-right-radius': '5px',
-        'box-shadow': '0 -1px 6px rgba(0, 0, 0, 0.08)',
-        // A passive readout — never intercept pointer events or take selection.
-        'pointer-events': 'none',
-        'user-select': 'none',
-    },
     // ─────────────────────────────────────────────────────────────
     // File-search / command toolbar (tagged `.ezco-mde-toolbar`).
     //
