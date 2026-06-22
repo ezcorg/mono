@@ -53,4 +53,33 @@ describe('Selection menu', () => {
         await tick()
         expect(btnOpacity(container)).toBe('0')
     })
+
+    it('anchors at the end of the text on select-all (not the editor corner)', async () => {
+        // The doc ends with a horizontal rule, so the document's very end (what
+        // the button used to track on select-all) sits below/after the last
+        // text — dropping the menu away from the content.
+        const { editor, container } = await make('# Title\n\nThe last line of text.\n\n---')
+        editor.view.focus()
+        editor.view.dispatch(editor.state.tr.setSelection(new AllSelection(editor.state.doc)))
+        await tick()
+
+        const btn = container.querySelector('.ezco-mde-selection-menu-btn') as HTMLElement
+        expect(btn?.style.opacity).toBe('1')
+
+        let lastTextEnd = -1
+        editor.state.doc.descendants((node, pos) => {
+            if (node.isText) lastTextEnd = pos + node.nodeSize
+            return true
+        })
+        // The trailing rule really is past the last text.
+        expect(lastTextEnd).toBeGreaterThan(0)
+        expect(lastTextEnd).toBeLessThan(editor.state.doc.content.size)
+
+        // The button is anchored just below the end of the last *text* line,
+        // not down at the rule / editor bottom-right.
+        const wrapper = (editor.view.dom.parentElement as HTMLElement).getBoundingClientRect()
+        const textCoords = editor.view.coordsAtPos(lastTextEnd, -1)
+        const expectedTop = textCoords.bottom - wrapper.top + 3
+        expect(Math.abs(parseFloat(btn.style.top) - expectedTop)).toBeLessThan(8)
+    })
 })

@@ -325,10 +325,27 @@ class SelectionMenuView {
             return
         }
 
-        const { to } = this.view.state.selection
+        // Anchor at the end of the selection. For a select-all (`AllSelection`)
+        // the raw `to` is the document's very end, whose coords `coordsAtPos`
+        // can resolve to the editor's bottom-right corner; anchor at the end of
+        // the last actual text instead so the affordance sits with the content.
+        const { selection } = this.view.state
+        let anchorPos = selection.to
+        let side = 1
+        if (selection instanceof AllSelection) {
+            let lastTextEnd = -1
+            this.view.state.doc.descendants((node, pos) => {
+                if (node.isText) lastTextEnd = pos + node.nodeSize
+                return true
+            })
+            if (lastTextEnd >= 0) {
+                anchorPos = lastTextEnd
+                side = -1 // measure the end of the last char, not the next slot
+            }
+        }
         let coords
         try {
-            coords = this.view.coordsAtPos(to)
+            coords = this.view.coordsAtPos(anchorPos, side)
         } catch {
             this.btn.style.opacity = '0'
             return

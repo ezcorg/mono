@@ -15,7 +15,7 @@ import { Toolbar, ToolbarOptions } from './extensions/toolbar';
 import { InlineCodeExit } from './extensions/inline-code';
 import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
-import { BlockActions } from './extensions/block-actions';
+import { BlockActions, BlockActionsOptions } from './extensions/block-actions';
 import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
@@ -51,6 +51,8 @@ export type MarkdownEditorOptions = Partial<EditorOptions> & {
     toolbar?: ToolbarOptions;
     /** Auto-generated document outline/sidebar (mounts left of the editor by default). */
     sidebar?: SidebarOptions;
+    /** Block-action indicator placement (e.g. a dedicated column via `mount`). */
+    blockActions?: BlockActionsOptions;
     /** Defaults for embedded codeblocks (e.g. `{ settings: { lineWrap: false } }`). */
     codeblock?: { settings?: Record<string, unknown> };
 }
@@ -139,7 +141,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 // pill with `toolbar.autoHide: true`.
                 autoHide: options.toolbar?.autoHide ?? false,
             }),
-            BlockActions,
+            BlockActions.configure({ mount: options.blockActions?.mount }),
             SelectionMenu,
             LinkMenu,
             // Auto-generated document outline. Mounts to the left of the editor
@@ -181,3 +183,8 @@ export type { ToolbarOptions, ToolbarMount } from './extensions/toolbar';
 // restyle it instead of relying on the `options.sidebar` convenience wiring.
 export { Sidebar } from './extensions/sidebar';
 export type { SidebarOptions, SidebarMount } from './extensions/sidebar';
+
+// Re-export block-actions so consumers can mount the indicator into a dedicated
+// column instead of overlaying it in the editor's left gutter.
+export { BlockActions } from './extensions/block-actions';
+export type { BlockActionsOptions, BlockActionsMount } from './extensions/block-actions';

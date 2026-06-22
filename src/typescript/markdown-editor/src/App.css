@@ -285,7 +285,6 @@
 .mac-body-row {
   display: flex;
   flex-direction: row;
-  gap: 6px;
   min-height: 100%;
   padding: 0 24px 0 0px;
 }
@@ -296,12 +295,24 @@
   flex: none;
 }
 
-/* Editor column. Its own left gutter gives the block-action indicator (which
-   renders to the left of the editor element) room; the right inset balances it. */
+/* Middle column — reserves room for the block-action indicator (the library
+   mounts the button here via `blockActions.mount`). `position: relative` makes
+   it the positioning context for the absolutely-positioned button, and
+   stretching to the row height keeps the button aligned with its block as the
+   document scrolls. The fixed width means the editor never has to hand-account
+   for the indicator's size, and it can't overlap the outline. */
+.mac-blockaction-col {
+  flex: none;
+  width: 48px;
+  position: relative;
+}
+
+/* Editor column — no left gutter now (the block-action column owns that
+   space); a small right inset balances the layout. */
 .mac-editor {
   flex: 1;
   min-width: 0;
-  padding: 0 8px 0 36px;
+  padding: 0 8px 0 0;
 }
 
 /* Editor element fills the inset body; its own padding lives on .ezco-mde

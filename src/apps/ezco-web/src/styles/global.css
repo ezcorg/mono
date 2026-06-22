@@ -138,13 +138,13 @@ body {
        `margin-bottom` on every item) so lists hug their last line.
        Leaving the previous `margin-bottom: 1rem` rule here was
        winning the cascade against the package's `margin: 0` and
-       reintroducing the trailing gap. */
+       reintroducing the trailing gap.
 
-    ol,
-    ul,
-    menu {
-        list-style: revert;
-    }
+       List MARKERS are likewise owned by the package: it sets
+       `list-style: none` and draws its own bullet/number/dash via `::before`
+       (and task checkboxes via a `<label>`). A `list-style: revert` here
+       re-introduced the browser's native marker *on top of* the package's,
+       doubling every list decoration — so it's intentionally not set. */
 
     .cm-editor[data-theme='dark'] {
         --cm-line-highlight: #ffffff1a;

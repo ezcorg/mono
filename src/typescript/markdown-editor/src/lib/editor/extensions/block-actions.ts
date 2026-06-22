@@ -5,6 +5,41 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 
+/** Where the block-action indicator should mount (same shape as the toolbar /
+ *  sidebar `mount`). */
+export type BlockActionsMount =
+    | HTMLElement
+    | ((editorRoot: HTMLElement) => HTMLElement | null | void)
+
+export interface BlockActionsOptions {
+    /**
+     * Render the indicator into a dedicated element instead of overlaying it in
+     * the editor's left gutter. With a mount, the button lives *inside* that
+     * element (a fixed-width "block action" column) and is right-aligned so its
+     * indicator line hugs the editor — so it never overlaps a sidebar, and the
+     * host reserves its width via layout instead of the editor accounting for
+     * the indicator's size by hand.
+     *
+     * The mount should be a sibling laid out in the same row + scroll container
+     * as the editor, so the button's vertical position tracks the active block.
+     */
+    mount?: BlockActionsMount
+}
+
+/** Resolve a `mount` option to a concrete element (or null for the default
+ *  in-gutter overlay behavior). */
+function resolveBlockActionsMount(
+    mount: BlockActionsMount | undefined,
+    editorRoot: HTMLElement | null,
+): HTMLElement | null {
+    if (mount instanceof HTMLElement) return mount
+    if (typeof mount === 'function' && editorRoot) {
+        const el = mount(editorRoot)
+        return el instanceof HTMLElement ? el : null
+    }
+    return null
+}
+
 interface BlockAction {
     label: string
     icon: string
@@ -449,6 +484,9 @@ class BlockActionsView {
     private activeNode: PMNode | null = null
     private activePos = -1
     private wrapperHadRelative = false
+    // True when the indicator lives in its own mounted column (see the `mount`
+    // option) rather than overlaying the editor's left gutter.
+    private columnMode = false
     private onFocusChange: () => void
     // Cached last-applied geometry. Reposition writes a lot of inline
     // styles, and on every focus event / ResizeObserver tick those
@@ -466,11 +504,18 @@ class BlockActionsView {
     // displayed glyph at the first heading level encountered.
     private lastIconText: string | null = null
 
-    constructor(view: EditorView, editor: Editor) {
+    constructor(view: EditorView, editor: Editor, options: BlockActionsOptions) {
         this.view = view
         this.editor = editor
 
-        this.wrapper = (view.dom.parentElement as HTMLElement) ?? view.dom
+        // With a `mount`, the button lives in its own column; otherwise it
+        // overlays the editor's left gutter (the original behavior).
+        const mountEl = resolveBlockActionsMount(
+            options.mount,
+            view.dom.parentElement as HTMLElement | null,
+        )
+        this.columnMode = !!mountEl
+        this.wrapper = mountEl ?? (view.dom.parentElement as HTMLElement) ?? view.dom
         const computed = getComputedStyle(this.wrapper)
         if (computed.position === 'static') {
             this.wrapper.style.position = 'relative'
@@ -692,7 +737,7 @@ class BlockActionsView {
             this.btn.style.setProperty('--ezco-mde-block-action-icon-offset-y', `${iconOffsetY}px`)
             this.lastIconOffsetY = iconOffsetY
         }
-        if (this.btn.style.left !== '-42px') this.btn.style.left = '-42px'
+        this.positionHorizontally()
         if (this.btn.style.opacity !== '1') this.btn.style.opacity = '1'
         if (this.lastBlockType !== 'spanning') {
             this.btn.dataset.blockType = 'spanning'
@@ -762,6 +807,20 @@ class BlockActionsView {
         return items
     }
 
+    /** Place the indicator horizontally: right-aligned inside its own column
+     *  (so the indicator line hugs the editor), or — without a mount — overlaid
+     *  in the editor's left gutter via a negative offset. */
+    private positionHorizontally() {
+        if (this.columnMode) {
+            if (this.btn.style.right !== '8px') {
+                this.btn.style.right = '8px'
+                this.btn.style.left = 'auto'
+            }
+        } else if (this.btn.style.left !== '-42px') {
+            this.btn.style.left = '-42px'
+        }
+    }
+
     private reposition() {
         if (!this.hasFocusInside()) {
             this.btn.style.opacity = '0'
@@ -824,10 +883,10 @@ class BlockActionsView {
             )
             this.lastIconOffsetY = iconOffsetY
         }
-        // Position so the vertical indicator line (the button's right
-        // border) sits 8px away from the editor content — matching the
-        // 8px `padding-right` between the icon and that same line.
-        if (this.btn.style.left !== '-42px') this.btn.style.left = '-42px'
+        // Place the indicator horizontally: in its own column, or overlaid in
+        // the editor's left gutter (the default). Either way the button's right
+        // border is the vertical indicator line, sitting just left of the text.
+        this.positionHorizontally()
         if (this.btn.style.opacity !== '1') this.btn.style.opacity = '1'
         const blockTypeName = blockNode.type.name
         if (blockTypeName !== this.lastBlockType) {
@@ -1066,8 +1125,12 @@ interface BlockActionsStorage {
     blockActionsView: BlockActionsView | null
 }
 
-export const BlockActions = Extension.create<unknown, BlockActionsStorage>({
+export const BlockActions = Extension.create<BlockActionsOptions, BlockActionsStorage>({
     name: 'blockActions',
+
+    addOptions() {
+        return { mount: undefined }
+    },
 
     addStorage() {
         return {
@@ -1081,11 +1144,12 @@ export const BlockActions = Extension.create<unknown, BlockActionsStorage>({
     addProseMirrorPlugins() {
         const editor = this.editor
         const storage = this.storage
+        const options = this.options
         return [
             new Plugin({
                 key: new PluginKey('blockActions'),
                 view: (view) => {
-                    const blockView = new BlockActionsView(view, editor)
+                    const blockView = new BlockActionsView(view, editor, options)
                     storage.blockActionsView = blockView
                     const origDestroy = blockView.destroy.bind(blockView)
                     blockView.destroy = () => {

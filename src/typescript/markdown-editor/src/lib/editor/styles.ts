@@ -1056,7 +1056,7 @@ export const styleModule: StyleModule = new StyleModule({
         top: 0,
         'max-height': '100vh',
         'overflow-y': 'auto',
-        padding: '0.5rem 0.75rem',
+        padding: '0.5rem 0 0.5rem 0.7rem',
         'font-family': 'Inter, system-ui, -apple-system, sans-serif',
         'font-size': 'var(--ezco-mde-text-xs, 13px)',
         color: 'var(--ezco-mde-fg)',
@@ -1128,5 +1128,15 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-sidebar-link.is-active code': {
         background: 'rgba(255, 255, 255, 0.22)',
         color: 'var(--ezco-mde-accent-fg, #fff)',
+    },
+    // Host for the standalone code editor swapped in for a non-prose file
+    // (extensions/filesystem.ts) — it replaces the rich-text editable in flow,
+    // and the codeblock's own `.cm-editor` fills it.
+    '.ezco-mde-code-host': {
+        display: 'block',
+        width: '100%',
+    },
+    '.ezco-mde-code-host .cm-editor': {
+        'max-width': '100%',
     },
 })
