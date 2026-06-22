@@ -1,15 +1,215 @@
-:root {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans',
-    'Helvetica Neue', sans-serif;
+/* ──────────────────────────────────────────────────────────────
+   eznote — the markdown-editor as a full-window Markdown scratch pad.
+   The chrome (titlebar with the file-search toolbar + theme toggle)
+   mirrors the library demo's "custom" variant, adapted to fill the
+   native Tauri window rather than a simulated floating card.
+   ────────────────────────────────────────────────────────────── */
+
+/* The "custom" variant typeface (same as the demo). */
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf") format("truetype-variations");
+  font-weight: 200 900;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf") format("truetype-variations");
+  font-weight: 200 900;
+  font-style: italic;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
 }
 
+/* The window. Follows the editor's theme (the editor itself is transparent and
+   renders over this surface), so light/dark is cohesive across the whole app. */
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ezco-mde-bg, #fff);
+  color: var(--ezco-mde-fg, #1d1d1f);
+  transition: background-color 120ms ease, color 120ms ease;
+}
 
-@media (prefers-color-scheme: dark) {
-  :root {}
+/* ──────────────────────────────────────────────────────────────
+   Titlebar — draggable (data-tauri-drag-region), holds the centered
+   search toolbar and the theme toggle. The native macOS traffic
+   lights are drawn by the OS over our content (titleBarStyle:
+   Overlay), so we only reserve space for them.
+   ────────────────────────────────────────────────────────────── */
+.titlebar {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 14px;
+  /* A neutral translucent overlay reads as a subtle titlebar on both light
+     and dark window surfaces. */
+  background: rgba(127, 127, 127, 0.08);
+}
+
+/* Clearance for the native traffic-light buttons (top-left on macOS). */
+.titlebar-lights-spacer {
+  flex: none;
+  width: 68px;
+  height: 100%;
+}
+
+/* The library's file-search toolbar mounts here, centered in the titlebar
+   (like a macOS toolbar search field) in place of a window title. The toolbar
+   is driven entirely by `--ezco-mde-toolbar-*` custom properties (which
+   inherit), so we retheme it into a slim, titlebar-native search field by
+   overriding those; only the hardcoded position/width need an element-level
+   override (below). */
+.titlebar-toolbar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  /* The transform makes this its own stacking context; lift it above the
+     editor body so the results dropdown (and embedded codeblocks' own
+     positive z-indexes) never occlude it. */
+  z-index: 50;
+  width: min(380px, calc(100% - 220px));
+  display: flex;
+  align-items: center;
+  --ezco-mde-toolbar-bg: rgba(127, 127, 127, 0.14);
+  --ezco-mde-toolbar-fg: var(--ezco-mde-fg, currentColor);
+  --ezco-mde-toolbar-muted: rgba(127, 127, 127, 0.95);
+  --ezco-mde-toolbar-border: 1px solid transparent;
+  --ezco-mde-toolbar-radius: 7px;
+  --ezco-mde-toolbar-shadow: none;
+  --ezco-mde-toolbar-pad-y: 3px;
+  --ezco-mde-toolbar-pad-x: 8px;
+  --ezco-mde-toolbar-min-width: 0;
+  --ezco-mde-toolbar-margin: 0;
+  --ezco-mde-toolbar-font-size: 13px;
+}
+
+/* The toolbar root defaults to `position: sticky; width: fit-content` (its
+   floating-pill behavior). In the titlebar it's a static, full-width field —
+   `position: relative` keeps it the positioning context for the results
+   dropdown that drops beneath it. */
+.cm-toolbar-panel.ezco-mde-toolbar.mac-titlebar-search {
+  position: relative;
+  top: auto;
+  width: 100%;
+  max-width: none;
+  /* Match the theme toggle's height so the two titlebar controls line up. */
+  height: 28px;
+  box-sizing: border-box;
+}
+
+/* Constrain the results dropdown to the field's width and anchor both sides. */
+.cm-toolbar-panel.ezco-mde-toolbar.mac-titlebar-search .cm-search-results {
+  left: 0;
+  right: 0;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Theme toggle (light / system / dark). Colours derive from the
+   window's themed currentColor / --ezco-mde-bg so it reads on both
+   surfaces.
+   ────────────────────────────────────────────────────────────── */
+.theme-toggle {
+  position: relative;
+  z-index: 1;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  height: 28px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: rgba(127, 127, 127, 0.16);
+}
+
+.theme-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: currentColor;
+  opacity: 0.5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 120ms ease, opacity 120ms ease;
+}
+
+.theme-toggle button:hover {
+  opacity: 0.85;
+}
+
+.theme-toggle button:focus-visible {
+  outline: 2px solid var(--ezco-mde-link-color, #5861ff);
+  outline-offset: 1px;
+}
+
+.theme-toggle button.is-active {
+  background: var(--ezco-mde-bg, #fff);
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Editor body — the scroll container that takes all remaining
+   vertical space (this is the sizing fix). The reading column is
+   centered with a comfortable max width and a left gutter so the
+   block-action indicator (rendered to the left of the editor
+   element) has room.
+   ────────────────────────────────────────────────────────────── */
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.editor-host {
+  max-width: 900px;
+  margin: 0 auto;
+  /* Left gutter for the block-action indicator; right inset for symmetry. */
+  padding: 0 32px 0 44px;
+}
+
+/* The editor element fills the inset host; vertical padding lives here so the
+   focus ring hugs the text. The "custom" variant typeface is applied here. */
+.editor-host .ezco-mde {
+  padding: 1.75rem 0 4rem;
+  outline: none;
+  font-family: "Source Serif 4", system-ui, Georgia, serif;
 }

@@ -20,6 +20,21 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Pin the wry runtime stack to a self-consistent set. tauri-runtime-wry's latest
+# (2.10.1) lags tauri-runtime (2.11.3) and wry (0.54.2) on crates.io, and Cargo's
+# version maximization otherwise pairs 2.10.1 with APIs it predates — a missing
+# `eval_script_with_callback` impl and wry's now-non-Send `NewWindowResponse`,
+# both of which fail to compile. Remove once tauri-runtime-wry catches up.
+# (default-features=false on wry only constrains the version; its features still
+# unify with what tauri-runtime-wry requests.)
+tauri-runtime = "=2.10.1"
+wry = { version = "=0.54.0", default-features = false }
+
+# Desktop-only: global shortcuts aren't available on mobile targets.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut = "2"
 

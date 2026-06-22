@@ -13,8 +13,12 @@
     "windows": [
       {
         "title": "eznote",
-        "width": 800,
-        "height": 600
+        "width": 900,
+        "height": 680,
+        "minWidth": 480,
+        "minHeight": 360,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

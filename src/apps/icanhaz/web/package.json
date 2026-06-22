@@ -1,0 +1,10 @@
+{
+  "name": "@joinezco/icanhaz-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser/PWA NoCap client — wires markdown-editor codeblocks to a consented runtime (icanhazd) over wRPC.",
+  "scripts": {
+    "build": "echo 'icanhaz-web: scaffold — see README.md' && exit 0"
+  }
+}

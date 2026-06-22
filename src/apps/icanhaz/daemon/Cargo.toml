@@ -1,0 +1,18 @@
+[package]
+name = "icanhazd"
+version = "0.1.0"
+edition = "2021"
+description = "icanhaz daemon — serves consented capabilities (NoCap) over wRPC."
+publish = false
+
+# Scaffold: no dependencies yet, so the workspace keeps building. The intended
+# implementation stack (add when wiring it up):
+#
+#   wasmtime              # WASI / Component-Model host that runs the provider world
+#   wrpc, wrpc-transport  # component-native RPC — serve `provider` over the tailnet
+#   tokio                 # async runtime
+#   portable-pty          # the host PTY behind the `terminal` capability
+#   anyhow                # error plumbing
+#
+# Pin to current releases at implementation time — wasmtime and wrpc move fast.
+[dependencies]

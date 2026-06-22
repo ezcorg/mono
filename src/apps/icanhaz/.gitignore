@@ -1,0 +1,7 @@
+/target
+**/node_modules
+**/dist
+
+# Vendored WASI WIT packages — fetched during setup (see wit/deps/README.md)
+/wit/deps/*
+!/wit/deps/README.md
