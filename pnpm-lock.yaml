@@ -214,6 +214,25 @@ importers:
         specifier: ^2.11.0
         version: 2.11.6(solid-js@1.9.6)(vite@8.0.16(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(sass@1.92.1)(terser@5.39.2)(tsx@4.19.4)(yaml@2.8.0))
 
+  src/apps/icanhaz/web:
+    dependencies:
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
+    devDependencies:
+      '@tiptap/core':
+        specifier: ^3.0.0
+        version: 3.4.1(@tiptap/pm@3.4.1)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vite:
+        specifier: ^5.4.0
+        version: 5.4.19(@types/node@25.5.0)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2)
+
   src/typescript/codeblock:
     dependencies:
       '@codemirror/autocomplete':
@@ -5297,6 +5316,14 @@ packages:
     peerDependenciesMeta:
       webpack-dev-server:
         optional: true
+
+  '@xterm/addon-fit@0.10.0':
+    resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/xterm@5.5.0':
+    resolution: {integrity: sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A==}
 
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
@@ -16646,6 +16673,12 @@ snapshots:
     optionalDependencies:
       webpack-dev-server: 4.15.2(webpack-cli@5.1.4)(webpack@5.99.9)
 
+  '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/xterm@5.5.0': {}
+
   '@xtuc/ieee754@1.2.0': {}
 
   '@xtuc/long@4.2.2': {}
@@ -23648,8 +23681,8 @@ snapshots:
   vite@5.4.19(@types/node@25.5.0)(lightningcss@1.32.0)(sass@1.92.1)(terser@5.39.2):
     dependencies:
       esbuild: 0.21.5
-      postcss: 8.5.8
-      rollup: 4.40.1
+      postcss: 8.5.15
+      rollup: 4.50.1
     optionalDependencies:
       '@types/node': 25.5.0
       fsevents: 2.3.3

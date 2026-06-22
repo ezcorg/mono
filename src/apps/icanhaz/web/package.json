@@ -3,8 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Browser/PWA NoCap client — wires markdown-editor codeblocks to a consented runtime (icanhazd) over wRPC.",
+  "description": "Browser NoCap client + terminal — connects markdown-editor to icanhazd over a (Tailscale-fronted) WebSocket.",
+  "main": "src/lib.ts",
+  "exports": {
+    ".": "./src/lib.ts",
+    "./client": "./src/client.ts",
+    "./terminal-block": "./src/terminal-block.ts",
+    "./xterm-view": "./src/xterm-view.ts"
+  },
   "scripts": {
-    "build": "echo 'icanhaz-web: scaffold — see README.md' && exit 0"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
+  },
+  "peerDependencies": {
+    "@tiptap/core": "^3.0.0"
+  },
+  "devDependencies": {
+    "@tiptap/core": "^3.0.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0"
   }
 }

@@ -11,9 +11,13 @@ furnishes the capabilities the browser is missing — primarily **WASI (and
 extended)** interfaces, so you can build real applications that run in a browser
 tab.
 
-> **Status: design scaffold.** This directory contains the architecture, the
-> WIT contracts (`wit/`), and crate/package skeletons. The daemon and browser
-> client are not implemented yet — see [Status](#status--whats-hard).
+> **Status: terminal works end-to-end; broadening to the full capability set.**
+> The daemon, the browser client, and an in-editor terminal block are implemented
+> and compile — see [Running the v0 terminal](#running-the-v0-terminal) and
+> [Embedding a terminal in a note](#embedding-a-terminal-in-a-note). The transport
+> is a multiplexed capability RPC modelled on **wRPC**; the validated WIT in
+> [`wit/`](wit/) is the contract for wire-compatible wRPC + the remaining
+> capabilities — see [Status / roadmap](#status--roadmap).
 
 ---
 
@@ -185,17 +189,20 @@ pitch in a few lines.
 ```
 src/apps/icanhaz/
   README.md            ← you are here
-  wit/                 ← NoCap + runtime contracts (WIT)
-    nocap.wit
-    runtime.wit
-    worlds.wit
-    deps/              ← vendored WASI packages (wasi:io, wasi:clocks, …)
-  daemon/              ← `icanhazd`: Rust, wasmtime host + wRPC provider  (workspace member)
-    Cargo.toml
-    src/main.rs
-  web/                 ← browser nocap client (jco bindings + a wRPC/WSS transport)
-    package.json
-    src/index.ts
+  wit/                 ← NoCap + runtime contracts (WIT) — the v1 capability layer
+    nocap.wit · runtime.wit · worlds.wit · deps/
+  daemon/              ← icanhazd (Rust) — v0 terminal server   (root-workspace member)
+    src/main.rs        ← CLI + consent (PIN) + tailscale-serve hint
+    src/server.rs      ← WebSocket ⇄ PTY bridge
+    src/pty.rs         ← portable-pty spawn + async bridging
+    src/protocol.rs    ← v0 wire framing (mirrors the WIT)
+  web/                 ← browser client + codeblock integration + demo
+    src/client.ts      ← Session RPC + openTerminal() — the Runtime backend
+    src/protocol.ts    ← TS mirror of the multiplexed wire
+    src/terminal-block.ts ← TipTap node: a live terminal inline (renderer injected)
+    src/xterm-view.ts  ← default xterm.js renderer + createXtermTerminalBlock
+    src/lib.ts         ← public exports
+    src/index.ts · index.html   ← standalone terminal demo
 ```
 
 `markdown-editor`/`codeblock` consume the `web/` client behind the
@@ -228,36 +235,74 @@ design. Tailscale removes the network-trust problems; what's left is the
 
 ---
 
-## Status / what's hard
+## Status / roadmap
 
-Honest list of what isn't built and where the real work is:
+**Done — a working terminal, end to end:**
+- `icanhazd` — a **multiplexed capability RPC** over one WS: hello/consent (PIN),
+  `request → grant → claim → streamed PTY`, *multiple terminals per socket*,
+  resize/signal/close, exit events. Compiles clean, 0 warnings.
+- `web` — a `Session` RPC + `openTerminal()` (the `Runtime` backend), a TipTap
+  `terminalBlock` that renders a **live terminal inline**, and an xterm.js demo.
 
-- **Browser-side wRPC transport.** wRPC is Rust-first (NATS / QUIC / TCP / Unix
-  transports). The browser needs a wRPC client over **WSS** (safe on iOS Safari
-  today; **WebTransport** as the upgrade once Safari's HTTP/3 support is solid) —
-  either a TS implementation of the wire protocol or a wRPC client compiled to
-  wasm and driven by `jco`. This is the main unknown.
-- **`jco` bindings for the `client` world**, and the async glue (the P2→P3 risk
-  above lives here).
-- **`icanhazd`:** wasmtime host serving the `provider` world over wRPC; the NoCap
-  broker (grant store, attenuation, revocation); the consent UI; `terminal` via a
-  host PTY (`portable-pty`); `tailscale serve` integration for the TLS endpoint.
-- **The consent UX** — durable grants, remote approval, the audit dashboard.
+**Next — toward the full capability set:**
+- **Wire-compatible wRPC.** The transport above is wRPC-*modelled* (invocation +
+  indexed byte-streams + resource handles). Making it interoperate with a real
+  wRPC server means a TS wRPC-over-**WSS** transport + `jco` bindings for the
+  `client` world (WebTransport once Safari's HTTP/3 is solid) — a swap of the
+  codec, not this surface. This is the remaining unknown.
+- **More capabilities** — `filesystem` / `sockets` / `process` behind the same
+  `request → grant → claim` shape (the WIT in `wit/` already defines them).
+- **Consent UX** — durable grants, remote (cross-device) approval, audit
+  dashboard; a real jailed shell so `--allow-host-shell` isn't the only mode.
+- **Markdown parse rule** so a saved ```terminal fence reloads as a live block.
 
 ---
 
-## Getting started (scaffold)
+## Running the v0 terminal
 
 ```sh
-# daemon (once implemented)
-cargo run -p icanhazd
+# 1. start the daemon — prints a one-time PIN; --allow-host-shell for a real shell
+cargo run -p icanhazd -- --allow-host-shell
 
-# expose it on your tailnet with a real cert
+# 2. expose it on your tailnet with a real TLS cert
 tailscale serve https / http://127.0.0.1:7777
 
-# browser client
-cd src/apps/icanhaz/web && pnpm install && pnpm build
+# 3. run the browser client
+cd src/apps/icanhaz/web && pnpm install && pnpm dev
 ```
 
-WASI deps for the WIT are vendored under `wit/deps/` — see
-[`wit/deps/README.md`](wit/deps/README.md).
+Open the demo — locally at `http://localhost:5173`, or as an installed PWA on any
+tailnet device pointed at `https://<your-mac>.<tailnet>.ts.net/` — enter the
+daemon's URL and PIN, and you have a live shell. On macOS or iOS.
+
+The **PIN is your consent gate**; **Tailscale is the encrypted reachability**.
+Until sandboxing lands, `--allow-host-shell` is full access to your account — so
+treat the PIN like a password, and prefer leaving it off (jailed-only) by default.
+
+(The v1 WIT's WASI deps vendor under `wit/deps/` via `wkg wit fetch` — git-ignored.)
+
+## Embedding a terminal in a note
+
+Register the terminal block on your editor, wired to a connection you choose:
+
+```ts
+import { createEditor } from "@joinezco/markdown-editor";
+import { createXtermTerminalBlock, openTerminal } from "@joinezco/icanhaz-web";
+
+const editor = createEditor({
+  extensions: [
+    createXtermTerminalBlock({
+      open: (req) => openTerminal({ url: TERMINAL_URL, pin: TERMINAL_PIN, request: req }),
+    }),
+  ],
+});
+
+editor.commands.insertTerminal();   // from a slash menu / toolbar / shortcut
+```
+
+The node is an atom that opens a NoCap terminal in its NodeView and pipes the PTY
+streams into xterm.js; it serializes to a ```terminal fence. (Parsing that fence
+*back* into a live block — vs a plain codeblock — is a one-rule markdown-it
+addition; inserted-in-session terminals work today.) The `mount` renderer is
+injectable, so the node itself stays UI-agnostic — `createXtermTerminalBlock`
+just wires in the xterm default.

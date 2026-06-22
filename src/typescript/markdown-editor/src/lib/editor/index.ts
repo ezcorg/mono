@@ -13,9 +13,11 @@ import { LinkMenu } from './extensions/link-menu';
 import { SlashCommands } from './extensions/slash-commands';
 import { Toolbar, ToolbarOptions } from './extensions/toolbar';
 import { InlineCodeExit } from './extensions/inline-code';
+import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions } from './extensions/block-actions';
 import { SelectionMenu } from './extensions/selection-menu';
+import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { defaultSlashCommands } from './commands';
@@ -47,6 +49,8 @@ export type MarkdownEditorOptions = Partial<EditorOptions> & {
     extensions?: Extension[];
     fs?: FileSystemOptions;
     toolbar?: ToolbarOptions;
+    /** Auto-generated document outline/sidebar (mounts left of the editor by default). */
+    sidebar?: SidebarOptions;
     /** Defaults for embedded codeblocks (e.g. `{ settings: { lineWrap: false } }`). */
     codeblock?: { settings?: Record<string, unknown> };
 }
@@ -90,6 +94,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             OrderedListStart,
             DashListKeymap,
             InlineCodeExit,
+            // Wrap a non-empty selection on ` (inline code) / [ (brackets)
+            // instead of replacing it.
+            WrapSelection,
             // Must come before `Markdown` so our higher-priority
             // clipboardTextParser runs first and handles block-level
             // paste content (bulleted "* test", headings, etc.) that
@@ -128,11 +135,20 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 filepath: options.toolbar?.filepath ?? options.fs?.filepath,
                 mount: options.toolbar?.mount,
                 className: options.toolbar?.className,
-                autoHide: options.toolbar?.autoHide,
+                // Static (always-visible) by default; opt into the auto-hiding
+                // pill with `toolbar.autoHide: true`.
+                autoHide: options.toolbar?.autoHide ?? false,
             }),
             BlockActions,
             SelectionMenu,
             LinkMenu,
+            // Auto-generated document outline. Mounts to the left of the editor
+            // by default; `options.sidebar.mount` relocates it elsewhere.
+            Sidebar.configure({
+                mount: options.sidebar?.mount,
+                className: options.sidebar?.className,
+                title: options.sidebar?.title,
+            }),
             ...(options.extensions || []),
         ],
         editorProps: {
@@ -160,3 +176,8 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 // `options.toolbar` convenience wiring.
 export { Toolbar } from './extensions/toolbar';
 export type { ToolbarOptions, ToolbarMount } from './extensions/toolbar';
+
+// Re-export the sidebar/outline so consumers can configure where it mounts or
+// restyle it instead of relying on the `options.sidebar` convenience wiring.
+export { Sidebar } from './extensions/sidebar';
+export type { SidebarOptions, SidebarMount } from './extensions/sidebar';

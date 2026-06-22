@@ -6,6 +6,7 @@
 ---
 
 <div class="demo-container bg-[#1e1e1e]">
+    <div id="doc-outline"></div>
     <div id="editor-mount">
         <div class="loading-indicator"><div class="loading-bar"></div></div>
     </div>
@@ -16,33 +17,46 @@
     import { slideInDemo } from "../scripts/demo-anim";
 
     let editor: any = null;
+    let mounting = false;
 
     async function mount() {
         const container = document.getElementById("editor-mount");
         if (!container) return;
-        if (editor) {
-            try { editor.destroy(); } catch {}
-            editor = null;
-        }
-        container.innerHTML = '<div class="loading-indicator"><div class="loading-bar"></div></div>';
+        // Astro fires `astro:page-load` on the initial load too, so mount() is
+        // invoked twice; this guard stops the second (concurrent) call from
+        // racing past the async awaits below and creating a duplicate editor
+        // (which would stack a second toolbar + outline as sibling chrome).
+        if (mounting) return;
+        mounting = true;
+        try {
+            if (editor) {
+                try { editor.destroy(); } catch {}
+                editor = null;
+            }
+            container.innerHTML = '<div class="loading-indicator"><div class="loading-bar"></div></div>';
 
-        const fs = await getDemoFs();
-        const { createEditor } = await import("@joinezco/markdown-editor");
-        container.innerHTML = '';
-        editor = createEditor({
-            element: container,
-            autofocus: false,
-            fs: {
-                fs,
-                filepath: "hello.md",
-                // Debounced persistence: every edit writes back to
-                // the OPFS-backed demo filesystem after 500ms.
-                autoSave: true,
-            },
-            toolbar: {},
-        });
-        editor.view.dom.setAttribute("data-theme", "dark");
-        slideInDemo(container);
+            const fs = await getDemoFs();
+            const { createEditor } = await import("@joinezco/markdown-editor");
+            container.innerHTML = '';
+            editor = createEditor({
+                element: container,
+                autofocus: false,
+                fs: {
+                    fs,
+                    filepath: "hello.md",
+                    // Debounced persistence: every edit writes back to
+                    // the OPFS-backed demo filesystem after 500ms.
+                    autoSave: true,
+                },
+                toolbar: {},
+                // Auto-generated document outline, mounted into the left gutter.
+                sidebar: { mount: () => document.getElementById("doc-outline"), title: "Outline" },
+            });
+            editor.view.dom.setAttribute("data-theme", "dark");
+            slideInDemo(container);
+        } finally {
+            mounting = false;
+        }
     }
 
     mount().catch(console.error);
@@ -158,6 +172,33 @@
         flex-direction: column;
         background-color: transparent;
         border: none;
+    }
+
+    /* The outline lives OUTSIDE the editor and the page root has no
+       data-theme, so set the dark theming vars locally. Hidden by default; on
+       wide screens it floats in the left gutter (just left of the centered
+       content column, like the fixed logo) so it reads as a left sidebar
+       without stealing width from the editor. */
+    #doc-outline {
+        display: none;
+        --ezco-mde-fg: #e4e4e7;
+        --ezco-mde-accent: #2490e9;
+        --ezco-mde-accent-fg: #ffffff;
+        --ezco-mde-context-menu-item-color-muted: rgba(245, 245, 245, 0.5);
+        --ezco-mde-context-menu-item-bg-hover: rgba(245, 245, 245, 0.08);
+    }
+
+    @media (min-width: 1200px) {
+        #doc-outline {
+            display: block;
+            position: fixed;
+            top: 9rem;
+            /* The content column is ~648px wide and centered; sit just to its left. */
+            right: calc(50% + 332px);
+            width: 210px;
+            max-height: calc(100vh - 11rem);
+            overflow-y: auto;
+        }
     }
 
     #editor-mount {

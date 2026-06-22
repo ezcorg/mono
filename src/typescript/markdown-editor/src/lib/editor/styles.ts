@@ -1038,4 +1038,95 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-label, .ezco-mde-toolbar .cm-search-result.selected > .cm-search-result-icon-container > .cm-search-result-icon': {
         color: 'var(--ezco-mde-accent-fg)',
     },
+    // ─────────────────────────────────────────────────────────────
+    // Document outline sidebar (extensions/sidebar.ts).
+    //
+    // Rendered OUTSIDE the editor body; the host lays it out (a left column in
+    // a flex row by default — the library only inserts the node + supplies this
+    // look). Themed via the shared `--ezco-mde-*` vars so it follows the
+    // editor's light/dark mode. `position: sticky` is harmless when the parent
+    // isn't a scroller (it just behaves static).
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-sidebar': {
+        'box-sizing': 'border-box',
+        flex: 'none',
+        width: '220px',
+        'align-self': 'flex-start',
+        position: 'sticky',
+        top: 0,
+        'max-height': '100vh',
+        'overflow-y': 'auto',
+        padding: '0.5rem 0.75rem',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': 'var(--ezco-mde-text-xs, 13px)',
+        color: 'var(--ezco-mde-fg)',
+        'user-select': 'none',
+    },
+    // Nothing to outline → take up no space.
+    '.ezco-mde-sidebar.ezco-mde-sidebar--empty': {
+        display: 'none',
+    },
+    '.ezco-mde-sidebar-title': {
+        'font-size': '11px',
+        'font-weight': 600,
+        'text-transform': 'uppercase',
+        'letter-spacing': '0.06em',
+        opacity: 0.5,
+        padding: '0 8px 8px',
+    },
+    '.ezco-mde-sidebar-list': {
+        'list-style': 'none',
+        margin: 0,
+        padding: 0,
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '1px',
+    },
+    '.ezco-mde-sidebar-item': {
+        margin: 0,
+        // Indent by heading depth (the view sets `--depth` inline).
+        'padding-left': 'calc(var(--depth, 0) * 0.75rem)',
+    },
+    '.ezco-mde-sidebar-link': {
+        display: 'block',
+        padding: '3px 8px',
+        'border-radius': '5px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        'text-decoration': 'none',
+        'line-height': 1.35,
+        'white-space': 'nowrap',
+        overflow: 'hidden',
+        'text-overflow': 'ellipsis',
+        cursor: 'pointer',
+        transition: 'color 120ms ease, background-color 120ms ease',
+    },
+    '.ezco-mde-sidebar-link:hover': {
+        color: 'var(--ezco-mde-fg)',
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.1))',
+    },
+    // Top-level headings read a touch stronger than nested ones.
+    '.ezco-mde-sidebar-link[data-level="1"]': {
+        'font-weight': 600,
+        color: 'var(--ezco-mde-fg)',
+    },
+    // Current section — solid accent fill (matches the other menus' highlight).
+    '.ezco-mde-sidebar-link.is-active': {
+        color: 'var(--ezco-mde-accent-fg, #fff)',
+        background: 'var(--ezco-mde-accent, #2490e9)',
+    },
+    // Outline entries mirror a heading's inline marks: `<strong>`/`<em>`/`<s>`
+    // render via their natural styling; inline `code` gets the editor's
+    // monospace chip so an `H1` with `inline code` reads the same in the list.
+    '.ezco-mde-sidebar-link code': {
+        'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        'font-size': '0.92em',
+        background: 'var(--ezco-mde-code-bg, rgba(127, 127, 127, 0.16))',
+        padding: '0.05em 0.3em',
+        'border-radius': '3px',
+    },
+    // Keep inline code legible on the active (accent-filled) row.
+    '.ezco-mde-sidebar-link.is-active code': {
+        background: 'rgba(255, 255, 255, 0.22)',
+        color: 'var(--ezco-mde-accent-fg, #fff)',
+    },
 })

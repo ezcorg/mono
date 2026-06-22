@@ -1,5 +1,5 @@
 import { Editor, Extension } from '@tiptap/core'
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection, AllSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { ContextMenu } from '../ui/context-menu'
@@ -277,8 +277,16 @@ class SelectionMenuView {
      *  selection, not inside a code surface). */
     private shouldShow(): boolean {
         const { selection } = this.view.state
-        if (!(selection instanceof TextSelection)) return false
         if (selection.empty) return false
+        // Select-all (Cmd/Ctrl-A) yields an `AllSelection`, NOT a
+        // `TextSelection` — which is why select-all never used to surface this
+        // menu. It spans the whole document, so the per-textblock checks below
+        // don't apply (its `$from` resolves to the doc root, not a textblock);
+        // show it (anchored at the doc end) whenever focus is in the editor.
+        if (selection instanceof AllSelection) return this.hasFocusInside()
+        // Otherwise only ordinary range selections in prose. NodeSelections
+        // (atoms/images) get no prose actions.
+        if (!(selection instanceof TextSelection)) return false
         const { $from } = selection
         const parent = $from.parent
         // Code blocks edit through their own nested editor; offer no

@@ -45,8 +45,9 @@ export interface ToolbarOptions {
     className?: string
     /**
      * Auto-hide the toolbar when the editor scrolls down, revealing it on
-     * scroll up / hover near the top / initially. Defaults to `true`; set
-     * `false` to keep it always visible.
+     * scroll up / hover near the top / initially. Defaults to `false` (the
+     * toolbar stays put as a static search field); set `true` to opt into the
+     * auto-hiding pill behavior.
      */
     autoHide?: boolean
 }
@@ -154,7 +155,7 @@ export const Toolbar = Extension.create<ToolbarOptions>({
             filepath: undefined,
             mount: undefined,
             className: undefined,
-            autoHide: true,
+            autoHide: false,
         }
     },
 

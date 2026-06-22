@@ -84,6 +84,23 @@ function ThemeToggle({
   );
 }
 
+// A small non-Markdown file the demo seeds into the VFS, to show that opening
+// it renders as a single syntax-highlighted codeblock rather than parsed prose.
+const exampleTs = `// example.ts — opened as a single syntax-highlighted codeblock,
+// not parsed as Markdown. Edits autosave back to disk as raw .ts.
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+}
+
+export function wordCount(text: string): number {
+  return text.split(/\\s+/).filter(Boolean).length;
+}
+
+const notes: Note[] = [];
+`;
+
 function App() {
   const [markdownContent, setMarkdownContent] = useState('');
   const [variant, setVariant] = useState<Variant>('default');
@@ -91,6 +108,7 @@ function App() {
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MarkdownEditor | null>(null);
   const toolbarMountRef = useRef<HTMLDivElement>(null);
+  const sidebarMountRef = useRef<HTMLDivElement>(null);
 
   async function loadFs() {
     const fs = await CodeblockFS.worker('/snapshot.bin');
@@ -113,6 +131,10 @@ function App() {
     loadFs().then(async ({ fs, index }) => {
       if (cancelled || !editorBodyRef.current) return;
       await fs.writeFile('test.md', file);
+      // Seed a non-Markdown file so the titlebar search can open it and show
+      // the "code files render as a single codeblock" behavior (and round-trip
+      // back to raw .ts on edit).
+      await fs.writeFile('example.ts', exampleTs);
       if (cancelled) return;
 
       ed = createEditor({
@@ -129,6 +151,11 @@ function App() {
           mount: () => toolbarMountRef.current,
           autoHide: false,
           className: 'mac-titlebar-search',
+        },
+        // Auto-generated document outline, mounted into the window's left column.
+        sidebar: {
+          mount: () => sidebarMountRef.current,
+          title: 'Outline',
         },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
@@ -201,7 +228,13 @@ function App() {
             (which sits to the left of the editor element) has room. The
             search toolbar lives up in the titlebar (see MacWindow). */}
         <div className="mac-body">
-          <div className="mac-editor" ref={editorBodyRef} />
+          {/* A flex row INSIDE the scroller, so the sticky sidebar column spans
+              the editor's full scroll height (a flex item placed directly in
+              the scroller is clipped to one viewport and scrolls away). */}
+          <div className="mac-body-row">
+            <div className="mac-sidebar" ref={sidebarMountRef} />
+            <div className="mac-editor" ref={editorBodyRef} />
+          </div>
         </div>
       </MacWindow>
 

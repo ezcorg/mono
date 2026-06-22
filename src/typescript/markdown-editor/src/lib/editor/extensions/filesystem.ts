@@ -1,5 +1,48 @@
-import { Extension } from '@tiptap/core'
-import { VfsInterface } from '@joinezco/codeblock'
+import { Editor, Extension } from '@tiptap/core'
+import { VfsInterface, extOrLanguageToLanguageId, ExtensionOrLanguage } from '@joinezco/codeblock'
+
+// File extensions that open as prose (the normal Markdown editor). Everything
+// else opens as a single syntax-highlighted codeblock (see `loadContent`) and
+// round-trips its raw bytes back to disk, instead of being parsed as Markdown
+// (which would mangle code — `#`→headings, ``` fences, etc.).
+const PROSE_EXTENSIONS = new Set(['md', 'markdown', 'mdx', 'txt', 'text'])
+
+/** True for Markdown / plain-text files (and extensionless paths). */
+function isProseFile(path: string): boolean {
+    const base = path.split('/').pop() ?? path
+    if (!base.includes('.')) return true
+    const ext = base.split('.').pop()!.toLowerCase()
+    return PROSE_EXTENSIONS.has(ext)
+}
+
+/** CodeMirror language id for a (non-prose) file path. */
+function languageForPath(path: string): string {
+    const ext = path.split('.').pop()?.toLowerCase() ?? ''
+    return extOrLanguageToLanguageId[ext as ExtensionOrLanguage] ?? ext ?? 'plaintext'
+}
+
+/**
+ * Serialize the current document for writing to disk. Normally Markdown — but
+ * for a file opened as raw code (rendered as a single codeblock) it returns the
+ * codeblock's raw text (no ``` fences, no language line), so e.g. a `.ts`
+ * round-trips byte-for-byte rather than gaining Markdown fences.
+ */
+function serializeForDisk(editor: Editor, storage: FileSystemStorage): string {
+    if (storage.rawCode) {
+        let raw: string | null = null
+        editor.state.doc.descendants((node) => {
+            if (raw !== null) return false
+            if (node.type.name === 'ezcodeBlock') {
+                raw = node.textContent
+                return false
+            }
+            return true
+        })
+        if (raw !== null) return raw
+    }
+    // @ts-expect-error markdown storage is provided by the Markdown extension
+    return editor.storage.markdown.getMarkdown()
+}
 
 export interface FileSystemOptions {
     fs?: VfsInterface
@@ -13,6 +56,12 @@ export interface FileSystemStorage {
     saveTimeout: ReturnType<typeof setTimeout> | null
     /** True while a programmatic load is replacing the document. */
     loadingFile: boolean
+    /**
+     * Non-null when the active file was opened as raw code (rendered as a
+     * single codeblock) rather than parsed as Markdown — holds the resolved
+     * CodeMirror language. Drives raw (fence-less) saving via `serializeForDisk`.
+     */
+    rawCode: { language: string } | null
     /**
      * Persist the current document to the current filepath *now* if (and only
      * if) a debounced save is pending, cancelling that pending save. No-ops
@@ -48,6 +97,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             options: this.options,
             saveTimeout: null,
             loadingFile: false,
+            rawCode: null,
             // Real implementations are installed in onCreate (they need the
             // live editor).
             flushPendingSave: () => {},
@@ -62,10 +112,6 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // toolbar can read/update `filepath` through it.
         storage.options = this.options
 
-        const getMarkdown = (): string =>
-            // @ts-expect-error markdown storage is provided by the Markdown extension
-            editor.storage.markdown.getMarkdown()
-
         // Replace the document *without it counting as a user edit*, so a
         // programmatic load never schedules an autosave (a load isn't a change
         // to the file — it *is* the file). The update is still emitted so other
@@ -73,10 +119,30 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // onUpdate is gated, via `loadingFile`. That gating is what stops the
         // load from scheduling a save against the file being navigated away
         // from — the source of the cross-file overwrite.
+        //
+        // Non-prose files (.ts, .json, …) load as a SINGLE codeblock with the
+        // resolved language instead of being parsed as Markdown; `rawCode` then
+        // routes saves back out as the codeblock's raw text (see
+        // `serializeForDisk`). Prose files clear `rawCode` and parse as before.
         const loadContent = (content: string) => {
             storage.loadingFile = true
             try {
-                editor.commands.setContent(content)
+                const path = storage.options.filepath
+                if (path && !isProseFile(path)) {
+                    const language = languageForPath(path)
+                    storage.rawCode = { language }
+                    editor.commands.setContent({
+                        type: 'doc',
+                        content: [{
+                            type: 'ezcodeBlock',
+                            attrs: { language },
+                            content: content ? [{ type: 'text', text: content }] : [],
+                        }],
+                    })
+                } else {
+                    storage.rawCode = null
+                    editor.commands.setContent(content)
+                }
             } finally {
                 storage.loadingFile = false
             }
@@ -92,7 +158,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             storage.saveTimeout = null
             const { fs, filepath, autoSave } = storage.options
             if (!fs || !filepath || !autoSave) return
-            fs.writeFile(filepath, getMarkdown()).catch(error => {
+            fs.writeFile(filepath, serializeForDisk(editor, storage)).catch(error => {
                 console.error(`[Filesystem] Failed to save content to ${filepath}:`, error)
             })
         }
@@ -141,8 +207,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // one.
             const { fs: currentFs, filepath: currentPath } = storage.options
             if (!currentFs || !currentPath) return
-            // @ts-expect-error markdown storage is provided by the Markdown extension
-            const markdown = this.editor.storage.markdown.getMarkdown()
+            const markdown = serializeForDisk(this.editor, storage)
             currentFs.writeFile(currentPath, markdown).catch(error => {
                 console.error(`[Filesystem] Failed to save content to ${currentPath}:`, error)
             })
