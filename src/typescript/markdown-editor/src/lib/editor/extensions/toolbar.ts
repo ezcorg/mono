@@ -229,6 +229,36 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                         }
                     }
 
+                    // Tab/keyboard focus into the search field opens the results
+                    // dropdown. A pointer click already opens it (the toolbar's own
+                    // click handler), so we only act on non-pointer focus — a
+                    // `mousedown` flag distinguishes the two — and dispatch a click
+                    // to reuse that same open path.
+                    const toolbarInput = core.dom.querySelector('.cm-toolbar-input') as HTMLInputElement | null
+                    if (toolbarInput) {
+                        // A pointer press immediately before focus means a click is
+                        // already opening the dropdown (the toolbar's own handler),
+                        // so skip those. The flag clears on the next tick so a stray
+                        // mousedown (no following focus) can't wedge it on and
+                        // suppress a later genuine keyboard focus.
+                        let pointerFocus = false
+                        toolbarInput.addEventListener('mousedown', () => {
+                            pointerFocus = true
+                            setTimeout(() => { pointerFocus = false }, 0)
+                        })
+                        toolbarInput.addEventListener('focus', () => {
+                            if (pointerFocus) return
+                            const results = core.dom.querySelector('.cm-search-results')
+                            if (!results || results.children.length === 0) {
+                                // Non-bubbling: the input's own click handler opens
+                                // the dropdown, but if this synthetic click reached
+                                // `document` the toolbar's freshly-added click-
+                                // outside listener would catch it and close again.
+                                toolbarInput.dispatchEvent(new MouseEvent('click', { bubbles: false }))
+                            }
+                        })
+                    }
+
                     // The editor's root element (the node passed as
                     // `options.element`, into which ProseMirror is mounted).
                     const editorRoot = editorView.dom.parentElement as HTMLElement | null

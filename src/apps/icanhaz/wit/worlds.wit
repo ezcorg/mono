@@ -7,6 +7,7 @@ interface broker {
   use wasi:filesystem/types@0.2.0.{ descriptor };
   use types.{ principal, capability-kind, caveat, denied, grant-info };
   use runtime.{ terminal, process-host };
+  use mediation.{ selection };
 
   /// Unforgeable, attenuable, revocable handle. You can't conjure one — only be
   /// granted one — which is how "no ambient authority" is enforced by the types.
@@ -37,9 +38,10 @@ interface broker {
   /// The authenticated link to a provider, over your tailnet.
   resource session {
     principal: func() -> principal;
-    /// Ask for authority — this *is* the consent prompt. The user may narrow the
-    /// request before granting.
-    request: func(want: capability-kind, reason: string) -> grant-request;
+    /// Ask for authority — this *is* the consent prompt. `via` is how the user
+    /// chose to mediate it (a parameterised attenuator, or a policy component).
+    /// The dialog lets them narrow the scope / pick a policy before granting.
+    request: func(want: capability-kind, reason: string, via: selection) -> grant-request;
     /// Re-acquire a still-valid durable grant without re-prompting.
     resume:  func(grant-id: string) -> result<capability, denied>;
     /// What this principal currently holds — for the app UI + audit view.

@@ -48,7 +48,7 @@ describe('MarkdownEditor list alignment', () => {
     beforeEach(async () => {
         container = createTestContainer()
         editor = await createTestEditor(container, { content: CONTENT })
-        await waitFor(() => container.querySelectorAll('.ezco-mde > ul, .ezco-mde > ol').length >= 4)
+        await waitFor(() => container.querySelectorAll('.ezco-mde-body >ul, .ezco-mde-body >ol').length >= 4)
         await new Promise((r) => requestAnimationFrame(() => r(null)))
     })
 
@@ -85,13 +85,13 @@ describe('MarkdownEditor list alignment', () => {
     }
 
     function topLevel(): Metrics[] {
-        return Array.from(container.querySelectorAll('.ezco-mde > ul, .ezco-mde > ol'))
+        return Array.from(container.querySelectorAll('.ezco-mde-body >ul, .ezco-mde-body >ol'))
             .map(measureItem)
             .filter((m): m is Metrics => m !== null)
     }
 
     function nested(): Metrics[] {
-        return Array.from(container.querySelectorAll('.ezco-mde > ul > li, .ezco-mde > ol > li'))
+        return Array.from(container.querySelectorAll('.ezco-mde-body >ul > li, .ezco-mde-body >ol > li'))
             .map((li) => li.querySelector(':scope > ul, :scope > ol, :scope > div > ul, :scope > div > ol'))
             .filter((l): l is Element => l !== null)
             .map(measureItem)

@@ -295,35 +295,34 @@
   flex: none;
 }
 
-/* Middle column — reserves room for the block-action indicator (the library
-   mounts the button here via `blockActions.mount`). `position: relative` makes
-   it the positioning context for the absolutely-positioned button, and
-   stretching to the row height keeps the button aligned with its block as the
-   document scrolls. The fixed width means the editor never has to hand-account
-   for the indicator's size, and it can't overlap the outline. */
-.mac-blockaction-col {
-  flex: none;
-  width: 48px;
-  position: relative;
-}
-
-/* Editor column — no left gutter now (the block-action column owns that
-   space); a small right inset balances the layout. */
+/* Editor column. The library's `.ezco-mde` wrapper — which now owns the
+   block-action gutter and the editable — renders inside it; `display: flex`
+   lets that wrapper fill the column's height. A small right inset balances the
+   layout. */
 .mac-editor {
   flex: 1;
   min-width: 0;
+  display: flex;
   padding: 0 8px 0 0;
 }
 
 /* Editor element fills the inset body; its own padding lives on .ezco-mde
    (top/bottom only — horizontal insets come from .mac-body) so the focus
    ring hugs the text and the left text column aligns with the gutter. */
-.mac-body .ezco-mde {
+.mac-body .ezco-mde-body {
   padding: 1.75rem 0;
   outline: none;
 }
 
-.mac-window--custom .mac-body .ezco-mde {
+.mac-window--custom .mac-body .ezco-mde-body {
+  font-family: "Source Serif 4", system-ui, Georgia, serif;
+}
+
+/* In the Custom variant the outline adopts the document's serif, so the table
+   of contents reads in the same voice as the prose it maps. The library's
+   `.ezco-mde-sidebar` sets its own `font-family` (Inter), so override it on the
+   nav itself (an ancestor font-family wouldn't win against that explicit rule). */
+.mac-window--custom .mac-sidebar .ezco-mde-sidebar {
   font-family: "Source Serif 4", system-ui, Georgia, serif;
 }
 

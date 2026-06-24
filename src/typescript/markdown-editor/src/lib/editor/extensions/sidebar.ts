@@ -14,6 +14,7 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
+import { computeHeadingSlugs } from './slug-utils'
 
 /** Where the sidebar DOM should be placed (same shape as `ToolbarMount`). */
 export type SidebarMount =
@@ -234,11 +235,15 @@ class SidebarView {
 
         this.list.replaceChildren()
         this.entries = []
+        // Real header-anchor slugs (same dedup as the heading-id decorations),
+        // so each outline entry links to its heading's actual `#id`. Walks
+        // headings in the same order as `collectHeadings`, so indices align.
+        const slugs = computeHeadingSlugs(this.view.state.doc)
         // Normalize indentation to the shallowest heading present, so a doc
         // whose top level is H2 doesn't render with a wasted leading indent.
         const minLevel = headings.reduce((m, h) => Math.min(m, h.level), 6)
 
-        for (const h of headings) {
+        headings.forEach((h, i) => {
             const li = document.createElement('li')
             li.className = 'ezco-mde-sidebar-item'
             li.style.setProperty('--depth', String(h.level - minLevel))
@@ -253,7 +258,9 @@ class SidebarView {
             } else {
                 a.textContent = 'Untitled'
             }
-            a.href = '#'
+            // A real anchor to the heading's generated id (deep-linkable); the
+            // click handler still drives the smooth in-editor scroll.
+            a.href = `#${slugs[i]?.slug ?? ''}`
 
             // `entry.pos` is kept live by the fast path above, so a click always
             // scrolls to the heading's CURRENT position even after later edits.
@@ -267,7 +274,7 @@ class SidebarView {
             li.appendChild(a)
             this.list.appendChild(li)
             this.entries.push(entry)
-        }
+        })
 
         // Hide the chrome entirely when there's nothing to outline.
         this.nav.classList.toggle('ezco-mde-sidebar--empty', this.entries.length === 0)
@@ -289,13 +296,22 @@ class SidebarView {
             this.scroller === document.scrollingElement
             ? 0
             : this.scroller.getBoundingClientRect().top
-        const threshold = scrollerTop + 80
+        // The "top of the readable area" sits below any sticky chrome the consumer
+        // pins over the scroll start — which is exactly the headings'
+        // `scroll-margin-top` (where a clicked anchor lands). Use it so the
+        // highlighted entry matches the heading scrolled to, instead of the one
+        // above it. Falls back to a small default when no margin is set.
+        const firstDom = this.view.nodeDOM(this.entries[0].pos) as HTMLElement | null
+        const marginTop = firstDom
+            ? parseFloat(getComputedStyle(firstDom).scrollMarginTop) || 0
+            : 0
+        const threshold = scrollerTop + (marginTop || 80)
 
         let activeIndex = 0
         for (let i = 0; i < this.entries.length; i++) {
             const dom = this.view.nodeDOM(this.entries[i].pos) as HTMLElement | null
             if (!dom) continue
-            if (dom.getBoundingClientRect().top <= threshold) activeIndex = i
+            if (dom.getBoundingClientRect().top <= threshold + 1) activeIndex = i
             else break
         }
 

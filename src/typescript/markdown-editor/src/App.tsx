@@ -109,7 +109,6 @@ function App() {
   const editorRef = useRef<MarkdownEditor | null>(null);
   const toolbarMountRef = useRef<HTMLDivElement>(null);
   const sidebarMountRef = useRef<HTMLDivElement>(null);
-  const blockActionMountRef = useRef<HTMLDivElement>(null);
 
   async function loadFs() {
     const fs = await CodeblockFS.worker('/snapshot.bin');
@@ -156,12 +155,7 @@ function App() {
         // Auto-generated document outline, mounted into the window's left column.
         sidebar: {
           mount: () => sidebarMountRef.current,
-          title: 'Outline',
-        },
-        // The block-action indicator gets its own dedicated column (between the
-        // outline and the editor) so it never overlaps the sidebar.
-        blockActions: {
-          mount: () => blockActionMountRef.current,
+          title: 'Document',
         },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
@@ -239,9 +233,8 @@ function App() {
               the scroller is clipped to one viewport and scrolls away). */}
           <div className="mac-body-row">
             <div className="mac-sidebar" ref={sidebarMountRef} />
-            {/* Three columns: Sidebar | Block-action | Editor. The middle
-                column reserves room for the indicator so nothing overlaps. */}
-            <div className="mac-blockaction-col" ref={blockActionMountRef} />
+            {/* The block-action gutter is now a default *inside* the editor —
+                the library's `.ezco-mde` wrapper owns it. */}
             <div className="mac-editor" ref={editorBodyRef} />
           </div>
         </div>

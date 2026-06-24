@@ -58,9 +58,65 @@ export const styleModule: StyleModule = new StyleModule({
     // zero. Above 640px it returns to the comfortable 4px breathing
     // room the indicator's rendering depends on for visual alignment.
     '@media (min-width: 640px)': {
-        '.ezco-mde': {
+        '.ezco-mde-body': {
             'padding-left': '4px',
         }
+    },
+    // ─────────────────────────────────────────────────────────────
+    // Editor shell. `.ezco-mde` is the parent that lays out the default chrome:
+    // a (stationary) toolbar slot above a content row of [navbar | block-action
+    // gutter | editable]. Empty slots collapse (toolbar mounted elsewhere, or no
+    // outline). A consumer bounds the height + makes `.ezco-mde-content` scroll
+    // to pin the toolbar while only the body scrolls.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde': {
+        display: 'flex',
+        'flex-direction': 'column',
+        'min-height': 0,
+    },
+    '.ezco-mde-content': {
+        display: 'flex',
+        'flex-direction': 'row',
+        'align-items': 'stretch',
+        'min-height': 0,
+        flex: 1,
+        // Establish a stacking context so embedded codeblocks' internal z-indexes
+        // (their sticky panel header uses z-index: 200) stay confined to the
+        // content region and can't paint over chrome pinned in the toolbar slot
+        // above (e.g. the search results dropdown when the toolbar is pinned).
+        position: 'relative',
+        'z-index': 0,
+    },
+    // Sits above the content's stacking context so a pinned toolbar (and its
+    // results dropdown) is never occluded by body content scrolling beneath it.
+    '.ezco-mde-toolbar-slot': {
+        flex: 'none',
+        position: 'relative',
+        'z-index': 1,
+    },
+    '.ezco-mde-nav': {
+        flex: 'none',
+    },
+    // The block-action indicator's column — a fixed width so the indicator never
+    // overlaps the navbar or the prose; `position: relative` is the positioning
+    // context for the absolutely-positioned button.
+    '.ezco-mde-gutter': {
+        flex: 'none',
+        width: '48px',
+        position: 'relative',
+    },
+    '.ezco-mde-body-host': {
+        flex: 1,
+        'min-width': 0,
+        // A flex column so the editable can grow to fill the host's height: that
+        // gives a click target below a short document, so clicking the empty area
+        // places the caret instead of only the lines of text being clickable.
+        display: 'flex',
+        'flex-direction': 'column',
+    },
+    // Empty slots take no space (toolbar mounted elsewhere; outline disabled).
+    '.ezco-mde-nav:empty, .ezco-mde-toolbar-slot:empty': {
+        display: 'none',
     },
     ':root, :root[data-theme="light"], [data-theme="light"] .ezco-mde, .ezco-mde[data-theme="light"]': {
         // Light/dark mode vars
@@ -150,7 +206,12 @@ export const styleModule: StyleModule = new StyleModule({
         '--cm-command-result-color': '#000000',
         '--cm-tooltip-border': '#c8c8c8',
     },
-    '.ezco-mde': {
+    '.ezco-mde-body': {
+
+        // Grow to fill the (flex-column) body host so the whole area is a click
+        // target — clicking below a short document still lands the caret in it —
+        // while never shrinking below the document's own height.
+        'flex': '1 0 auto',
 
         // Base editor styles. The background stays transparent (the host
         // container supplies `--ezco-mde-bg`), but we set the prose text
@@ -970,7 +1031,10 @@ export const styleModule: StyleModule = new StyleModule({
         'text-align': 'left',
     },
     '.ezco-mde-toolbar .cm-toolbar-input': {
-        'font-family': 'inherit',
+        // The toolbar reads as a file/command field, so its input + results use
+        // the editor's monospace (filepaths/commands line up like code) rather
+        // than inheriting the panel's sans-serif.
+        'font-family': 'var(--cm-font-family)',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         'font-weight': 400,
         color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
@@ -984,7 +1048,7 @@ export const styleModule: StyleModule = new StyleModule({
     // menus (dark surface, soft hover rows), dropping beneath the pill and
     // growing with its content.
     '.ezco-mde-toolbar .cm-search-results': {
-        'font-family': 'inherit',
+        'font-family': 'var(--cm-font-family)',
         background: 'var(--ezco-mde-toolbar-popover-bg, var(--ezco-mde-context-menu-bg))',
         color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
         border: 'var(--ezco-mde-toolbar-popover-border, 1px solid var(--ezco-mde-context-menu-border))',
@@ -1001,7 +1065,7 @@ export const styleModule: StyleModule = new StyleModule({
         overflow: 'hidden auto',
     },
     '.ezco-mde-toolbar .cm-search-result': {
-        'font-family': 'inherit',
+        'font-family': 'var(--cm-font-family)',
         'align-items': 'center',
         'border-radius': '6px',
         padding: '6px 9px',
@@ -1109,7 +1173,8 @@ export const styleModule: StyleModule = new StyleModule({
         'font-weight': 600,
         color: 'var(--ezco-mde-fg)',
     },
-    // Current section — solid accent fill (matches the other menus' highlight).
+    // Current section — solid accent fill (the scrolled-to anchor stays blue
+    // independent of where the pointer is).
     '.ezco-mde-sidebar-link.is-active': {
         color: 'var(--ezco-mde-accent-fg, #fff)',
         background: 'var(--ezco-mde-accent, #2490e9)',

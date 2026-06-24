@@ -24,6 +24,27 @@ function isProseFile(path: string): boolean {
     return PROSE_EXTENSIONS.has(ext)
 }
 
+/**
+ * Reset the editor's scroll to the top — so a newly-opened file starts at the
+ * top of the view rather than inheriting the previous file's scroll offset
+ * (which can land on empty space when the new file is shorter). Scrolls the
+ * editor's nearest scrollable ancestor, or the page if the editor itself isn't
+ * the scroll container.
+ */
+function scrollEditorToTop(el: HTMLElement | null): void {
+    let node = el?.parentElement ?? null
+    while (node && node !== document.body) {
+        const oy = getComputedStyle(node).overflowY
+        if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') {
+            node.scrollTo({ top: 0 })
+            return
+        }
+        node = node.parentElement
+    }
+    const doc = (document.scrollingElement as HTMLElement | null) ?? document.documentElement
+    doc?.scrollTo({ top: 0 })
+}
+
 /** CodeMirror language id for a (non-prose) file path. */
 function languageForPath(path: string): string {
     const ext = path.split('.').pop()?.toLowerCase() ?? ''
@@ -52,6 +73,10 @@ export interface FileSystemOptions {
     fs?: VfsInterface
     filepath?: string
     autoSave?: boolean
+    /** When a file is opened/created (every load after the initial mount),
+     *  move focus to the start of the file. Default `true`; set `false` to leave
+     *  focus where it is (e.g. on the toolbar). */
+    focusOnLoad?: boolean
 }
 
 export interface FileSystemStorage {
@@ -222,6 +247,10 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // Non-prose files (.ts, .json, …) swap the rich-text editor out for a
         // standalone code editor (`showCodeEditor`); prose files tear it down
         // and parse as Markdown as before.
+        // The very first load is the initial mount (already at the top); every
+        // load after it is a file *switch*, so reset the scroll to the top of the
+        // new file rather than inheriting the previous file's scroll offset.
+        let didInitialLoad = false
         const loadContent = (content: string) => {
             storage.loadingFile = true
             try {
@@ -236,6 +265,16 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             } finally {
                 storage.loadingFile = false
             }
+            if (didInitialLoad) {
+                scrollEditorToTop(editor.view.dom as HTMLElement)
+                // Move the caret to the start of the freshly-opened file (focus
+                // follows from the toolbar into the document), unless opted out.
+                if (storage.options.focusOnLoad !== false) {
+                    if (storage.codeView) storage.codeView.focus()
+                    else editor.commands.focus('start', { scrollIntoView: false })
+                }
+            }
+            didInitialLoad = true
         }
 
         const flushPendingSave = () => {

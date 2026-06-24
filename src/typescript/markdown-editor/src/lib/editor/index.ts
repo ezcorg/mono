@@ -20,6 +20,7 @@ import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
+import { HeadingAnchors } from './extensions/heading-anchors';
 import { defaultSlashCommands } from './commands';
 import { StyleModule } from 'style-mod';
 
@@ -31,10 +32,10 @@ function injectCaretBlink() {
     const style = document.createElement('style');
     style.textContent = `
 @supports (caret-animation: manual) {
-    .ezco-mde .ProseMirror {
+    .ezco-mde-body {
         caret-animation: manual;
     }
-    .ezco-mde .ProseMirror:focus {
+    .ezco-mde-body:focus {
         animation: ezco-mde-caret-blink 530ms step-end infinite;
     }
     @keyframes ezco-mde-caret-blink {
@@ -70,6 +71,42 @@ export type MarkdownEditor = Editor & {
  * @returns An instance of Tiptap Editor.
  */
 export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEditor {
+    const userEl = options.element as HTMLElement | undefined
+
+    // `.ezco-mde` is now a PARENT wrapper that owns the editor's default layout:
+    // a (stationary) toolbar slot above a content row of [navbar | block-action
+    // gutter | editable]. Chrome defaults into these slots, but any piece can be
+    // relocated via its own `mount` option. Built up front so the extensions
+    // can mount into the slots during editor creation. (No element → headless;
+    // we skip the wrapper and keep `.ezco-mde` on the editable itself.)
+    let toolbarSlot: HTMLElement | undefined
+    let navHost: HTMLElement | undefined
+    let gutter: HTMLElement | undefined
+    let bodyHost: HTMLElement | undefined
+    if (userEl && typeof document !== 'undefined') {
+        const make = (cls: string) => {
+            const el = document.createElement('div')
+            el.className = cls
+            return el
+        }
+        const wrapper = make('ezco-mde')
+        toolbarSlot = make('ezco-mde-toolbar-slot')
+        const content = make('ezco-mde-content')
+        navHost = make('ezco-mde-nav')
+        gutter = make('ezco-mde-gutter')
+        bodyHost = make('ezco-mde-body-host')
+        content.append(navHost, gutter, bodyHost)
+        wrapper.append(toolbarSlot, content)
+        userEl.appendChild(wrapper)
+    }
+    /** A default `mount` for a piece of chrome → its slot (only when we built
+     *  the wrapper). */
+    const slotMount = (el: HTMLElement | undefined) => (el ? () => el : undefined)
+
+    // `element` and `extensions` are handled explicitly below, so keep them out
+    // of the spread that applies the consumer's remaining options.
+    const { element: _ignoredElement, extensions: _extraExtensions, ...restOptions } = options
+
     const editor = new Editor({
         extensions: [
             FileSystem.configure(options.fs || {}),
@@ -95,6 +132,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
             BulletList,
             OrderedListStart,
             DashListKeymap,
+            // Real header anchors: each heading gets a slug `id` (DOM-only, via
+            // decorations — never serialized), so the outline links to `#id`.
+            HeadingAnchors,
             InlineCodeExit,
             // Wrap a non-empty selection on ` (inline code) / [ (brackets)
             // instead of replacing it.
@@ -135,23 +175,29 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
                 fs: options.toolbar?.fs ?? options.fs?.fs,
                 index: options.toolbar?.index,
                 filepath: options.toolbar?.filepath ?? options.fs?.filepath,
-                mount: options.toolbar?.mount,
+                // Defaults into the wrapper's (stationary) toolbar slot.
+                mount: options.toolbar?.mount ?? slotMount(toolbarSlot),
                 className: options.toolbar?.className,
                 // Static (always-visible) by default; opt into the auto-hiding
                 // pill with `toolbar.autoHide: true`.
                 autoHide: options.toolbar?.autoHide ?? false,
             }),
-            BlockActions.configure({ mount: options.blockActions?.mount }),
+            // The block-action indicator gets its own gutter column by default
+            // (always present); `blockActions.mount` relocates it.
+            BlockActions.configure({ mount: options.blockActions?.mount ?? slotMount(gutter) }),
             SelectionMenu,
             LinkMenu,
-            // Auto-generated document outline. Mounts to the left of the editor
-            // by default; `options.sidebar.mount` relocates it elsewhere.
-            Sidebar.configure({
-                mount: options.sidebar?.mount,
-                className: options.sidebar?.className,
-                title: options.sidebar?.title,
-            }),
-            ...(options.extensions || []),
+            // The outline is opt-in (generated only when `sidebar` is set). It
+            // defaults into the wrapper's nav column (left of the gutter);
+            // `sidebar.mount` relocates it elsewhere.
+            ...(options.sidebar
+                ? [Sidebar.configure({
+                    mount: options.sidebar.mount ?? slotMount(navHost),
+                    className: options.sidebar.className,
+                    title: options.sidebar.title,
+                })]
+                : []),
+            ...(_extraExtensions || []),
         ],
         editorProps: {
             attributes: options.editorProps?.attributes || {},
@@ -162,9 +208,17 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         autofocus: options.autofocus,
         editable: options.editable,
         injectCSS: options.injectCSS,
-        ...options,
+        ...restOptions,
+        // Mount ProseMirror into the wrapper's body host (or the consumer's
+        // element if no wrapper was built). With neither (headless), leave
+        // `element` UNSET so Tiptap creates its own detached view — explicitly
+        // passing `element: undefined` would instead leave the view unmounted.
+        ...((bodyHost ?? userEl) ? { element: bodyHost ?? userEl } : {}),
     });
-    editor.view.dom.classList.add('ezco-mde');
+    // The editable carries `.ezco-mde-body` (the content styles). With no
+    // wrapper (headless), it also keeps `.ezco-mde` so the theme vars resolve.
+    editor.view.dom.classList.add('ezco-mde-body');
+    if (!bodyHost) editor.view.dom.classList.add('ezco-mde');
 
     if (typeof document !== 'undefined') {
         StyleModule.mount(document, styleModule);

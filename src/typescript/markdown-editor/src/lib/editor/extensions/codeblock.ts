@@ -597,6 +597,23 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                         .scrollIntoView();
                     view.dispatch(tr);
                     view.focus();
+                } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                    // Mirror the "clear the code, then Backspace deletes the
+                    // block" affordance on the toolbar/filepath field: once that
+                    // field has been cleared, a further Backspace/Delete removes
+                    // the whole codeblock (instead of no-op'ing on the already-
+                    // empty input).
+                    const input = target as HTMLInputElement;
+                    if (input.value !== '') return;
+                    const pos = getPos();
+                    if (pos === undefined) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const selection = Selection.near(view.state.doc.resolve(pos), -1);
+                    const tr = view.state.tr.setSelection(selection).scrollIntoView();
+                    tr.delete(pos, pos + node.nodeSize);
+                    view.dispatch(tr);
+                    view.focus();
                 }
             }, true);
 
