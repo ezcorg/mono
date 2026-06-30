@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { userEvent } from '@vitest/browser/context'
 import { MarkdownEditor } from './index'
 import {
     createTestContainer,
@@ -39,8 +40,11 @@ describe('MarkdownEditor', () => {
             expect(content).toContain('This is a test document.')
         })
 
-        it('should be focusable', () => {
-            editor.commands.focus()
+        it('should be focusable', async () => {
+            // A programmatic `.focus()` is a no-op in a headless browser when the
+            // page lacks system focus, so drive it with a real pointer interaction
+            // (Playwright), which gives the editable genuine focus.
+            await userEvent.click(editor.view.dom)
             expect(editor.isFocused).toBe(true)
         })
     })

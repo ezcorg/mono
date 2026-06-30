@@ -286,13 +286,16 @@
   display: flex;
   flex-direction: row;
   min-height: 100%;
-  padding: 0 24px 0 0px;
 }
 
 /* Left outline column. Stretches to the row's full height (default
    `align-items: stretch`) so the sidebar's sticky <nav> can stay pinned. */
 .mac-sidebar {
   flex: none;
+}
+
+.mac-sidebar:has(.ezco-mde-sidebar--empty) {
+  display: none;
 }
 
 /* Editor column. The library's `.ezco-mde` wrapper — which now owns the
@@ -303,14 +306,13 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  padding: 0 8px 0 0;
 }
 
 /* Editor element fills the inset body; its own padding lives on .ezco-mde
    (top/bottom only — horizontal insets come from .mac-body) so the focus
    ring hugs the text and the left text column aligns with the gutter. */
 .mac-body .ezco-mde-body {
-  padding: 1.75rem 0;
+  padding: 10px 0;
   outline: none;
 }
 

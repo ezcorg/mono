@@ -11,8 +11,18 @@ members = [
     "src/apps/ezfilter/src-tauri",
     "src/apps/ezfilter/e2e",
     "src/apps/icanhaz/daemon",
+    "src/apps/icanhaz/host",
 ]
-exclude = []
+exclude = [
+    # Vendored upstream workspace (bytecodealliance/wrpc). It defines its own
+    # [workspace]; we depend on its crates by path (wrpc-transport, wrpc-wasmtime,
+    # wrpc-websockets, wit-bindgen-wrpc). Excluded so Cargo doesn't try to pull
+    # them into the mono workspace.
+    "src/rust/wrpc",
+    # Policy components are wasm32-wasip2 guests (cdylib); keep them out of the
+    # host workspace so a host-target `cargo build` never tries to compile them.
+    "src/apps/icanhaz/policies",
+]
 
 # Workspace-wide configuration
 [profile.release]

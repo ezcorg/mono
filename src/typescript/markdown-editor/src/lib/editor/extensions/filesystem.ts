@@ -161,7 +161,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             storage.codeView = null
             storage.codeHost?.remove()
             storage.codeHost = null
-            editableEl().style.display = ''
+            const editable = editableEl()
+            editable.style.display = ''
+            editable.closest('.ezco-mde')?.classList.remove('ezco-mde--code-file')
         }
 
         const scheduleCodeSave = () => {
@@ -208,6 +210,16 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 host.setAttribute('data-theme', themeAttr)
             }
             const dark = isDarkContext(editable)
+            // Match the embedded codeblocks' defaults: soft-wrap on, and the code
+            // font nudged 2px below the prose size (monospace reads larger at an
+            // equal px). Measured before the editable is hidden, below.
+            const baseFontPx = parseFloat(getComputedStyle(editable).fontSize) || 0
+            const settings = baseFontPx
+                ? { lineWrap: true, fontSize: Math.max(baseFontPx - 2, 1) }
+                : { lineWrap: true }
+            // Flag the wrapper so the (now-redundant) block-action gutter is
+            // hidden — a full-file code editor brings its own line-number gutter.
+            editable.closest('.ezco-mde')?.classList.add('ezco-mde--code-file')
             if (parent) parent.insertBefore(host, editable)
             else editable.before(host)
             editable.style.display = 'none'
@@ -228,6 +240,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                             language: language as ExtensionOrLanguage,
                             toolbar: false,
                             dark,
+                            settings,
                         }),
                     ],
                 }),

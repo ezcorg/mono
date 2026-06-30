@@ -283,13 +283,13 @@ const toolbarStyleModule = new StyleModule({
         color: 'var(--cm-toolbar-color)',
         padding: '0 2px 0 6px',
         width: '100%',
-        flex: '1',
+        flex: 1,
     },
     '.cm-toolbar-input-container': {
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
-        flex: '1',
+        flex: 1,
     },
     // Sized to the FULL gutter width (line numbers + fold gutter) —
     // matching `.cm-search-result-icon-container` below — so the toolbar
@@ -362,7 +362,7 @@ const toolbarStyleModule = new StyleModule({
             backgroundColor: 'var(--cm-search-result-select-bg)',
         },
         '& > .cm-search-result-label': {
-            flex: '1',
+            flex: 1,
             padding: '0 2px 0 6px',
         },
     },

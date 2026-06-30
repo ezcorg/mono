@@ -3,6 +3,7 @@
   "private": false,
   "version": "0.0.8",
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,7 +27,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs.js"
-    }
+    },
+    "./extensions/*": {
+      "types": "./dist/editor/extensions/*.d.ts",
+      "import": "./dist/editor/extensions/*.js"
+    },
+    "./styles": {
+      "types": "./dist/editor/styles.d.ts",
+      "import": "./dist/editor/styles.js"
+    },
+    "./package.json": "./package.json"
   },
   "dependencies": {
     "@codemirror/state": "^6.5.2",
@@ -40,6 +50,7 @@
     "@tiptap/pm": "^3.4.1",
     "@tiptap/react": "^3.4.1",
     "@tiptap/starter-kit": "^3.4.1",
+    "emojibase-data": "^17.0.0",
     "multimatch": "^8.0.0",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-history": "^1.4.1",

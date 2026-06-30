@@ -62,7 +62,7 @@ export const contextMenuStyles = new StyleModule({
         fontFamily: 'system-ui, sans-serif',
     },
     '.cm-context-menu-label': {
-        flex: '1',
+        flex: 1,
     },
     '.cm-context-menu-shortcut': {
         marginLeft: '2em',

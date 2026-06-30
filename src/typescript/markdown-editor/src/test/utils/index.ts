@@ -126,12 +126,19 @@ export function typeText(editor: MarkdownEditor, text: string): void {
  * Simulates key press in the editor
  */
 export function pressKey(editor: MarkdownEditor, key: string, modifiers: { ctrl?: boolean, shift?: boolean, alt?: boolean } = {}): void {
+    // `ctrl` here means the platform "Mod" key the editor's shortcuts bind to.
+    // ProseMirror maps `Mod-*` to Cmd (metaKey) on macOS and Ctrl elsewhere, so
+    // a hardcoded `ctrlKey` never matches the keymap on a Mac. Route the modifier
+    // to the right key for the platform the test happens to run on.
+    const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|[oa]d)/.test(navigator.platform)
     const event = new KeyboardEvent('keydown', {
         key,
-        ctrlKey: modifiers.ctrl || false,
+        ctrlKey: (modifiers.ctrl && !isMac) || false,
+        metaKey: (modifiers.ctrl && isMac) || false,
         shiftKey: modifiers.shift || false,
         altKey: modifiers.alt || false,
         bubbles: true,
+        cancelable: true,
     })
 
     editor.view.dom.dispatchEvent(event)

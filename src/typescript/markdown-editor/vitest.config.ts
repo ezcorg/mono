@@ -52,6 +52,15 @@ export default defineConfig({
         alias: {
             '@': path.resolve(__dirname, './src'),
             '@/lib': path.resolve(__dirname, './src/lib'),
+            // The emoji picker lazy-loads the ~550KB `emojibase-data` dataset via a
+            // dynamic import. In Vite's browser-test mode, discovering that
+            // node_modules dep while crawling the test files mid-run triggers a
+            // re-optimize + page reload that aborts other concurrently-loading test
+            // files (passes warm, fails cold — i.e. flaky in CI). Redirect it to a
+            // small local fixture: a local file is never an "optimized dep", so
+            // there's nothing to re-bundle, and the heavy dataset stays out of the
+            // test graph. The fixture mirrors the real shape so the picker still works.
+            'emojibase-data/en/compact.json': path.resolve(__dirname, './src/test/fixtures/emoji-stub.json'),
         },
     },
     // @joinezco/codeblock is a workspace link — exclude it from optimization so
@@ -99,7 +108,13 @@ export default defineConfig({
             '@joinezco/codeblock > lodash',
             '@joinezco/codeblock > minisearch',
             '@joinezco/codeblock > path-browserify',
-            'marked',
+            '@joinezco/codeblock > @marimo-team/codemirror-ai',
+            '@joinezco/codeblock > vscode-languageserver-protocol',
+            '@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborDecoder',
+            '@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborEncoder',
+            '@joinezco/codeblock > @jsonjoy.com/util/lib/buffers/Writer',
+            '@joinezco/codeblock > @codemirror/lsp-client > marked',
+            'multimatch',
         ],
     },
     // Server configuration for tests

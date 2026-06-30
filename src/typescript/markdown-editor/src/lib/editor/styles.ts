@@ -73,6 +73,7 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'flex',
         'flex-direction': 'column',
         'min-height': 0,
+        flex: 1,
     },
     '.ezco-mde-content': {
         display: 'flex',
@@ -104,6 +105,34 @@ export const styleModule: StyleModule = new StyleModule({
         flex: 'none',
         width: '48px',
         position: 'relative',
+    },
+    // A full-file code editor (a non-prose file swapped in by the filesystem
+    // extension) carries its own line-number gutter, so the block-action gutter
+    // is redundant — hide it while such a file is shown (the wrapper carries
+    // `--code-file` for the duration).
+    '.ezco-mde--code-file .ezco-mde-gutter': {
+        display: 'none',
+    },
+    // Frame the embedded/standalone codeblock tooltips (LSP hover, autocomplete,
+    // diagnostics) like the editor's own dropdowns (block-action / slash menus)
+    // rather than the codeblock's default 2px-border look: a 1px themed border,
+    // the menu's radius + shadow, and a touch of padding. Driven by the same
+    // `--ezco-mde-context-menu-*` vars, so a consumer restyles tooltips + menus
+    // together. The `--cm-tooltip-border` alias keeps the codeblock's own
+    // tooltip parts (e.g. the pointer/arrow) on the same colour.
+    '.ezco-mde .cm-tooltip': {
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-radius': '6px',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07)',
+        '--cm-tooltip-border': 'var(--ezco-mde-context-menu-border)',
+    },
+    // Autocomplete list: inset its rows from the rounded frame like a menu, and
+    // round the active row so it doesn't square off against the border.
+    '.ezco-mde .cm-tooltip.cm-tooltip-autocomplete > ul': {
+        padding: '4px',
+    },
+    '.ezco-mde .cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+        'border-radius': '4px',
     },
     '.ezco-mde-body-host': {
         flex: 1,
@@ -211,7 +240,7 @@ export const styleModule: StyleModule = new StyleModule({
         // Grow to fill the (flex-column) body host so the whole area is a click
         // target — clicking below a short document still lands the caret in it —
         // while never shrinking below the document's own height.
-        'flex': '1 0 auto',
+        flex: '1 0 auto',
 
         // Base editor styles. The background stays transparent (the host
         // container supplies `--ezco-mde-bg`), but we set the prose text
@@ -758,6 +787,82 @@ export const styleModule: StyleModule = new StyleModule({
     '.tippy-box[data-theme~="ezco-mde-slash"] .tippy-content': {
         padding: 0,
     },
+    // ── Emoji picker (`:` trigger) — an OS-style searchable grid ──
+    // Transparent tippy box so our surface shows through; the surface + accent
+    // use the same context-menu vars as the other menus.
+    '.tippy-box[data-theme~="ezco-mde-emoji"]': {
+        background: 'transparent',
+        'box-shadow': 'none',
+        padding: 0,
+    },
+    '.tippy-box[data-theme~="ezco-mde-emoji"] .tippy-content': {
+        padding: 0,
+    },
+    '.ezco-mde-emoji-menu': {
+        width: 'max-content',
+        padding: '6px',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-radius': '8px',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07)',
+        outline: 'none',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+    },
+    '.ezco-mde-emoji-grid': {
+        display: 'grid',
+        // Must match COLUMNS in emoji-picker.ts (2-D arrow navigation).
+        'grid-template-columns': 'repeat(9, 1fr)',
+        gap: '2px',
+        'max-height': '232px',
+        'overflow-y': 'auto',
+    },
+    '.ezco-mde-emoji-cell': {
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        width: '32px',
+        height: '32px',
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        'border-radius': '6px',
+        'font-size': '20px',
+        'line-height': 1,
+        cursor: 'pointer',
+        'font-family': '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
+    },
+    '.ezco-mde-emoji-cell:hover, .ezco-mde-emoji-cell.is-selected': {
+        background: 'var(--ezco-mde-accent)',
+    },
+    '.ezco-mde-emoji-footer': {
+        display: 'flex',
+        'align-items': 'center',
+        gap: '8px',
+        padding: '6px 4px 2px',
+        'margin-top': '4px',
+        'border-top': '1px solid var(--ezco-mde-context-menu-border)',
+        'font-size': '12px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        'max-width': '312px',
+    },
+    '.ezco-mde-emoji-footer-glyph': {
+        'font-size': '18px',
+        'line-height': 1,
+        flex: 'none',
+        'font-family': '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
+    },
+    '.ezco-mde-emoji-footer-name': {
+        overflow: 'hidden',
+        'text-overflow': 'ellipsis',
+        'white-space': 'nowrap',
+    },
+    '.ezco-mde-emoji-note': {
+        padding: '10px 12px',
+        'font-size': '13px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+    },
     '.ezco-mde-slash-menu': {
         display: 'flex',
         'flex-direction': 'column',
@@ -945,7 +1050,8 @@ export const styleModule: StyleModule = new StyleModule({
         width: '250px',
         padding: '6px 9px',
         'border-radius': '6px',
-        border: '1px solid var(--ezco-mde-context-menu-border)',
+        border: 'none',
+        // border: '1px solid var(--ezco-mde-context-menu-border)',
         background: 'rgba(255, 255, 255, 0.06)',
         color: 'var(--ezco-mde-context-menu-color)',
         'font-family': 'inherit',
@@ -1198,8 +1304,8 @@ export const styleModule: StyleModule = new StyleModule({
     // (extensions/filesystem.ts) — it replaces the rich-text editable in flow,
     // and the codeblock's own `.cm-editor` fills it.
     '.ezco-mde-code-host': {
-        display: 'block',
-        width: '100%',
+        display: 'flex',
+        flex: 1,
     },
     '.ezco-mde-code-host .cm-editor': {
         'max-width': '100%',

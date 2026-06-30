@@ -1,5 +1,5 @@
 import { Node, mergeAttributes } from "@tiptap/core";
-import type { TerminalHandle } from "./client";
+import type { TerminalHandle } from "./wrpc";
 
 /** Renders a live terminal into `container`, driven by `handle`. Returns cleanup.
  *  Injected so this node stays free of any specific terminal UI (the default is

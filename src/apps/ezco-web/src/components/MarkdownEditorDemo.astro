@@ -9,7 +9,12 @@
     <!-- The outline lives in a column that spans the editor's height (inside the
          relative .demo-container, before the footer), so its sticky child is
          bounded by the editor and scrolls away before the footer. -->
-    <div class="outline-col"><div id="doc-outline"></div></div>
+    <div class="outline-col">
+        <!-- Left-gutter chrome, stacked under the fixed `ez co` logo: the file
+             search field, then the document outline. -->
+        <div id="doc-toolbar"></div>
+        <div id="doc-outline"></div>
+    </div>
     <div id="editor-mount">
         <div class="loading-indicator"><div class="loading-bar"></div></div>
     </div>
@@ -51,8 +56,12 @@
                     // the OPFS-backed demo filesystem after 500ms.
                     autoSave: true,
                 },
-                // Static, full-width frosted search row (styled via `.ezweb-toolbar`).
-                toolbar: { className: "ezweb-toolbar" },
+                // Search field, mounted into the left gutter above the outline
+                // (under the logo) rather than the default in-editor toolbar slot.
+                toolbar: {
+                    className: "ezweb-toolbar",
+                    mount: () => document.getElementById("doc-toolbar"),
+                },
                 // Auto-generated document outline, mounted into the left gutter.
                 // No visible title — the outline's purpose reads from context; the
                 // package's `<nav aria-label="Document outline">` keeps it described.
@@ -144,6 +153,10 @@
         --ezco-mde-table-bg: transparent;
         --ezco-mde-base-font-size: 1.25rem;
         --cm-font-size: 1.25rem;
+        /* In-wrapper chrome (the codeblock tooltips, the search dropdown) reads
+           its border from this var; pin it to the page's menu border so those
+           match the body-appended menus (block-action / selection) exactly. */
+        --ezco-mde-context-menu-border: rgba(255, 255, 255, 0.12);
     }
 
     #editor-mount :global(.ezco-mde > :not(.cm-editor) code) {
@@ -191,15 +204,16 @@
 
     /* ── Search toolbar (`.ezweb-toolbar`): styled as a real search field —
        bordered, rounded, on a slightly raised surface — so it's obvious you can
-       click and type into it (not a static label). It fills the content-width
-       header band (`.ezco-mde-toolbar-slot`, below), which pins it to its bottom
-       on the logo's bottom line. The triple class beats the package's
-       `.cm-toolbar-panel .ezco-mde-toolbar` (0,2,0) defaults. ── */
+       click and type into it (not a static label). It's mounted in the left
+       gutter (`#doc-toolbar`) under the logo, so it fills that column's width.
+       The triple class beats the package's `.cm-toolbar-panel .ezco-mde-toolbar`
+       (0,2,0) defaults. ── */
     :global(.cm-toolbar-panel.ezco-mde-toolbar.ezweb-toolbar) {
         position: relative;
         /* Cancel the package toolbar's default sticky inset (`top: 8px`). */
         top: 0;
         z-index: 1;
+        width: 100%;
         min-width: 0;
         max-width: none;
         box-sizing: border-box;
@@ -208,15 +222,23 @@
         display: flex;
         align-items: center;
         padding: 0 14px;
-        background: rgba(255, 255, 255, 0.06);
+        /* Opaque (not the old translucent `rgba(255,255,255,.06)`): the outline
+           slides up behind this field as it un-sticks on scroll, and a see-
+           through surface let those rows show through. Solid, slightly-raised
+           dark over the page's black keeps the field reading as a field. */
+        background: #18181b;
         border: 1px solid rgba(255, 255, 255, 0.18);
         border-radius: 10px;
         box-shadow: none;
         color: #e4e4e7;
         --ezco-mde-toolbar-font-size: 14px;
     }
+    /* Let the field's input shrink to the gutter width instead of forcing
+       overflow from its `size` attribute (the package grows it to fit content). */
     :global(.ezweb-toolbar .cm-toolbar-input) {
         color: #e4e4e7;
+        min-width: 0;
+        flex: 1 1 auto;
     }
     :global(.ezweb-toolbar .cm-toolbar-input::placeholder),
     :global(.ezweb-toolbar .cm-toolbar-state-icon) {
@@ -246,6 +268,13 @@
         position: relative;
     }
 
+    /* The file-search field, mounted in the left gutter under the logo. On narrow
+       screens (where there's no gutter) the column falls back to normal flow, so
+       this lands as a full-width search field at the top of the content. */
+    #doc-toolbar {
+        margin-bottom: 1rem;
+    }
+
     /* The outline lives OUTSIDE the editor and the page root has no
        data-theme, so set the dark theming vars locally. Hidden by default; on
        wide screens it floats in the left gutter (just left of the centered
@@ -271,7 +300,6 @@
         font-family: 'Source Serif 4', system-ui, Avenir, Helvetica, Arial, serif;
         width: 100%;
         box-sizing: border-box;
-        padding-right: 0.5rem;
     }
     /* Unselected inline code in the outline: the editor's `--ezco-mde-code-bg`
        doesn't reach out here (the outline lives outside the themed wrapper), so
@@ -302,22 +330,47 @@
             top: 0;
             bottom: 0;
             right: calc(50% + 356px);
-            width: 160px;
             pointer-events: none;
+            /* The column shrink-wraps its content (so the outline can size to its
+               longest heading), but clamp it: a `min-width` so the search field
+               never collapses when the outline is empty (a doc with no headings),
+               and a `max-width` so a long filepath/heading can't push the column
+               off the left edge of the screen. 160px matches the logo's width. */
+            min-width: 160px;
+            max-width: 220px;
+            /* Lift the gutter chrome above the document content so the search
+               field's results dropdown (wider than the column, so it spills
+               toward the content) paints over the prose, not under it. Still
+               below the logo (z-index: 50). The column is transparent +
+               click-through, so this doesn't occlude or block the content. */
+            z-index: 30;
         }
+        /* Search field pinned just under the logo's bottom line (logo: 2rem top +
+           80px tall = 7rem). `pointer-events: auto` re-enables clicks the column
+           opts out of; the higher `z-index` keeps its dropdown above the outline
+           (a later-in-DOM sticky sibling that would otherwise paint over it). */
+        #doc-toolbar {
+            position: sticky;
+            top: 7.5rem;
+            margin-bottom: 0;
+            pointer-events: auto;
+            z-index: 2;
+        }
+        /* Outline below the search field. */
         #doc-outline {
             display: block;
             position: sticky;
-            top: 9rem;
+            top: 11rem;
             width: 100%;
-            max-height: calc(100vh - 11rem);
-            overflow-y: auto;
+            max-height: calc(100vh - 13rem);
+            /* overflow-y: auto; */
             pointer-events: auto;
+            z-index: 1;
         }
     }
 
     /* The editor flows at its natural height so the PAGE scrolls (no inner
-       scroll pane); the toolbar slot is pinned via `position: sticky` below. */
+       scroll pane). The search field and outline stick in the left gutter. */
     #editor-mount {
         display: block;
     }
@@ -332,64 +385,19 @@
         }
     }
 
-    /* The sticky header band that carries the search field. Pinned at the logo's
-       `2rem` top and as tall as the logo, so the field (pinned to the band's
-       bottom) lands on the logo's bottom line. `margin-left` clears the 48px
-       gutter so the band is never wider than the editor content. Opaque, so
-       document text scrolling up hides behind it instead of showing above the
-       field; its containing block is the tall `.ezco-mde` wrapper (so it sticks
-       across the whole scroll), and `z-index` lifts it above the content's own
-       stacking context (codeblocks, etc.). */
-    #editor-mount :global(.ezco-mde-toolbar-slot) {
-        position: sticky;
-        top: 2rem;
-        z-index: 20;
-        height: 80px;
-        margin-left: 48px;
-        display: flex;
-        align-items: flex-end;
-        background: black;
-    }
-    /* Cover the page's 2rem top padding above the band so nothing peeks above it. */
-    #editor-mount :global(.ezco-mde-toolbar-slot)::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 100%;
-        height: 2rem;
-        background: black;
-        pointer-events: none;
-    }
-    /* No gradient: the whole region above the document is solid black, so content
-       scrolling up is occluded hard rather than fading. This strip continues the
-       band's black down over the document's top padding (matched below), so the
-       first heading sits just beneath it. */
-    #editor-mount :global(.ezco-mde-toolbar-slot)::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        right: 0;
-        top: 100%;
-        height: 2.5rem;
-        background: black;
-        pointer-events: none;
-    }
-    /* Start the document below the band + its fade, so the first heading has
-       clear breathing room instead of sitting under the search field. */
-    #editor-mount :global(.ezco-mde-content) {
-        padding-top: 2.5rem;
-    }
+    /* The search field now lives in the left gutter (see `#doc-toolbar`), so the
+       in-editor toolbar slot is unused — the package hides it (`:empty`) and the
+       document flows from the top with just a little breathing room. */
+    #editor-mount :global(.ezco-mde-content) {}
     /* Anchor links (outline + heading ids) scroll via `scrollIntoView`, which
-       honours `scroll-margin-top` — offset the headings down so a clicked anchor
-       lands BELOW the pinned search band instead of behind it. */
+       honours `scroll-margin-top` — keep a small offset so a clicked anchor lands
+       a touch below the viewport top rather than flush against it. */
     #editor-mount :global(.ezco-mde-body :is(h1, h2, h3, h4, h5, h6)) {
-        scroll-margin-top: 140px;
+        scroll-margin-top: 2rem;
     }
     /* Give a short/empty document a full-height click target: the editable fills
-       the viewport below the band, so clicking the empty area places the caret
-       (at the top, for an empty document) rather than only the text rows being
-       live. */
+       the viewport, so clicking the empty area places the caret (at the top, for
+       an empty document) rather than only the text rows being live. */
     #editor-mount :global(.ezco-mde-body) {
         min-height: 60vh;
     }

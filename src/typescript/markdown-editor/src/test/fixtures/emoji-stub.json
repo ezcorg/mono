@@ -1,0 +1,14 @@
+[
+    { "unicode": "😀", "label": "grinning face", "tags": ["face", "grin", "smile"] },
+    { "unicode": "😃", "label": "grinning face with big eyes", "tags": ["face", "mouth", "open", "smile"] },
+    { "unicode": "😄", "label": "grinning face with smiling eyes", "tags": ["eye", "face", "mouth", "open", "smile"] },
+    { "unicode": "😊", "label": "smiling face with smiling eyes", "tags": ["blush", "eye", "face", "smile"] },
+    { "unicode": "🙂", "label": "slightly smiling face", "tags": ["face", "smile"] },
+    { "unicode": "😍", "label": "smiling face with heart-eyes", "tags": ["eye", "face", "love", "smile"] },
+    { "unicode": "🥰", "label": "smiling face with hearts", "tags": ["adore", "crush", "hearts", "in love"] },
+    { "unicode": "😎", "label": "smiling face with sunglasses", "tags": ["bright", "cool", "face"] },
+    { "unicode": "❤️", "label": "red heart", "tags": ["heart", "love"] },
+    { "unicode": "👍", "label": "thumbs up", "tags": ["+1", "hand", "thumb", "up"] },
+    { "unicode": "🔥", "label": "fire", "tags": ["burn", "flame", "hot"] },
+    { "unicode": "🎉", "label": "party popper", "tags": ["celebration", "party", "popper", "tada"] }
+]
