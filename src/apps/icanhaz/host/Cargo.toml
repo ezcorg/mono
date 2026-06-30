@@ -1,0 +1,41 @@
+[package]
+name = "icanhaz-host"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "icanhaz policy engine: embeds wasmtime (via wrpc-wasmtime) to run capability policy components and serve their mediated exports over wRPC."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "fs", "net", "io-std", "io-util", "process"] }
+tracing = "0.1"
+futures = "0.3"
+
+# wasmtime MUST resolve to the exact version `wrpc-wasmtime` uses (crates.io
+# 46.0.0) — a version/source mismatch across the path-dep boundary yields two
+# incompatible `wasmtime` crates and the component-model types won't unify.
+wasmtime = { version = "46", features = ["async", "component-model", "cranelift", "runtime"] }
+wasmtime-wasi = { version = "46", features = ["p2"] }
+
+# Vendored wrpc (submodule at src/rust/wrpc), referenced by path. Its own
+# [workspace] governs these crates; the mono workspace excludes that subtree.
+wrpc-transport = { path = "../../../../src/rust/wrpc/crates/transport", features = ["net"] }
+wrpc-wasmtime = { path = "../../../../src/rust/wrpc/crates/wasmtime" }
+# tokio-websockets refuses to build without a SHA1 + RNG backend; wrpc selects
+# these at its own root, so depending on wrpc-websockets directly we must too.
+wrpc-websockets = { path = "../../../../src/rust/wrpc/crates/websockets", features = ["ring", "rand"] }
+wit-bindgen-wrpc = { path = "../../../../src/rust/wrpc/crates/wit-bindgen" }
+wrpc-webtransport = { path = "../../../../src/rust/wrpc/crates/webtransport" }
+wtransport = { version = "0.7.0", features = ["self-signed"] }
+portable-pty = "0.8"
+tokio-stream = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+# For the WebTransport roundtrip test's insecure (self-signed) client verifier.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

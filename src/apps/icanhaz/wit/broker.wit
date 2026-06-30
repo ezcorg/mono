@@ -1,0 +1,39 @@
+package icanhaz:nocap@0.1.0;
+
+/// The consent gate. Authority is never ambient: a caller must `request` a
+/// capability — which raises a consent decision on the host — and is issued an
+/// unforgeable bearer **grant** token (a secret + its caveats, recorded host-side
+/// as principal · kind · caveats · expiry). The capability interfaces then
+/// require that token. Grants are scoped and revocable. Built-in attenuators and
+/// policy components (the membrane) narrow what a grant actually permits.
+interface broker {
+  use types.{ capability-kind, denied, grant-info };
+
+  /// A successful grant. `token` is the bearer to present when claiming/using the
+  /// capability. `pairing` is set only when the host *first* pairs this origin: a
+  /// durable, origin-bound secret the client stores (origin-partitioned) and
+  /// presents on later `request`s to skip re-consent. `none` once already paired
+  /// (or when there is no origin to pair, e.g. a non-browser peer).
+  record grant {
+    token: string,
+    pairing: option<string>,
+  }
+
+  /// Ask for authority. `pairing` is a previously-issued pairing secret for this
+  /// origin (or `none`); a valid one skips the consent prompt. Otherwise consent
+  /// is raised, and on approval the origin is paired (a new secret may be
+  /// returned) before the grant is issued.
+  request: func(want: capability-kind, reason: string, pairing: option<string>) -> result<grant, denied>;
+
+  /// What the caller currently holds — for the audit view.
+  granted: func() -> list<grant-info>;
+
+  /// Drop a grant now (and anything attenuated from it).
+  revoke: func(token: string);
+}
+
+/// Loopback world for the native wRPC bridge (client stub + server Handler).
+world broker-wrpc {
+  import broker;
+  export broker;
+}

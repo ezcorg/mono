@@ -1,0 +1,36 @@
+package icanhaz:nocap@0.1.0;
+
+/// An interactive PTY to **your login shell**, exposed as wRPC **streams**:
+/// `stdin` carries keystrokes (client→host); the returned stream carries the
+/// merged stdout+stderr (host→client). `cols`/`rows` set the tty window size
+/// (the client's viewport). The session ends when the shell exits or either
+/// stream closes.
+///
+/// The shell is the *host's* — the user's configured login shell — never named
+/// by the requestor: a terminal grant is "a shell as you", not "run a program I
+/// choose" (that would be a broader, separately-consented `process` capability).
+/// Unlike `wasi:cli` — which runs a *sandboxed wasm component* with pipe stdio —
+/// this is a real native PTY (tty semantics: resize, job control, `isatty`,
+/// curses apps), reachable over the network with consent. A **native** host
+/// capability, served directly by icanhazd. P3-shaped: native `stream<u8>`.
+interface terminal {
+  /// `grant` is a bearer token from the broker for a consented `terminal`
+  /// capability; the daemon refuses an unknown, expired, or wrong-kind token
+  /// before spawning anything. `control` carries window-resize events — each a
+  /// 4-byte frame `[cols: u16 big-endian][rows: u16 big-endian]` — so the tty can
+  /// be reshaped mid-session (curses apps, `$COLUMNS`/`$LINES`, `SIGWINCH`).
+  open: func(
+    grant: string,
+    stdin: stream<u8>,
+    control: stream<u8>,
+    cols: u16,
+    rows: u16,
+  ) -> result<stream<u8>, string>;
+}
+
+/// Loopback world for the native wRPC bridge: importing `terminal` generates the
+/// client stub, exporting it generates the server Handler.
+world terminal-wrpc {
+  import terminal;
+  export terminal;
+}

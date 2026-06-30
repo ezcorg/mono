@@ -1,0 +1,22 @@
+package demo:res@0.1.0;
+
+/// A minimal resource interface used to prove the host can serve guest-exported
+/// resources over wRPC (ServeExt + a shared store + SharedResourceTable) — the
+/// machinery the real wasi:filesystem serving needs, on a 3-method surface.
+interface counter {
+  resource counter {
+    constructor(start: u32);
+    increment: func(by: u32) -> u32;
+    value: func() -> u32;
+  }
+}
+
+world counter-host {
+  export counter;
+}
+
+/// The mirror world a wRPC *client* generates against (imports what the host
+/// serves) — used by the host's own round-trip test.
+world counter-client {
+  import counter;
+}

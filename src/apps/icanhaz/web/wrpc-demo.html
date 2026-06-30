@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>icanhaz — browser wRPC (WebTransport / WebSocket)</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 56rem; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.1rem; } .sub { opacity: .7; font-weight: normal; }
+      code { background: #8882; padding: 0 .25rem; border-radius: 4px; }
+      fieldset { border: 1px solid #8884; border-radius: 8px; margin: 1rem 0; }
+      legend { opacity: .7; }
+      label { display: block; margin: .35rem 0; }
+      input[type=text] { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid #8886; min-width: 22rem; }
+      button { font: inherit; padding: .3rem .8rem; border-radius: 6px; border: 1px solid #8886; cursor: pointer; background: #8881; }
+      button:hover { background: #8883; }
+      .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .4rem 0; }
+      #log { white-space: pre-wrap; background: #8881; border-radius: 8px; padding: .8rem; min-height: 8rem; }
+      .ok { color: #1a7f37; } .err { color: #c0392b; } .dim { opacity: .6; }
+    </style>
+  </head>
+  <body>
+    <h1>icanhaz <span class="sub">— a browser speaking wRPC to a wasmtime policy membrane</span></h1>
+    <p class="dim">
+      The daemon serves a path-jailed <code>fs-lite</code> capability: reads/writes under <code>/jail/</code> pass through the
+      wasm <em>policy component</em> to real files; anything else is denied before it reaches the host fs. This page speaks the
+      raw wRPC frame codec over <strong>WebTransport</strong> when available (paste the daemon's cert hash below), falling back to
+      <strong>WebSocket</strong> otherwise. Run <code>icanhazd</code>, then <code>vite</code>, and open this page.
+    </p>
+
+    <fieldset>
+      <legend>daemon</legend>
+      <label>WebSocket url <input id="ws" type="text" value="ws://127.0.0.1:7777" /></label>
+      <label>WebTransport url <input id="wt" type="text" value="https://127.0.0.1:7778" /></label>
+      <label>cert hashes <input id="certHashes" type="text" placeholder="[253, 100, …]  ← paste from icanhazd output" /></label>
+      <div class="row"><button id="connectBtn">connect</button> <span id="status" class="dim">not connected</span></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>read</legend>
+      <div class="row">
+        <input id="readPath" type="text" value="/jail/hello.txt" />
+        <button id="readBtn">read</button>
+        <button class="ex" data-path="/jail/hello.txt">/jail/hello.txt ✓</button>
+        <button class="ex" data-path="/etc/passwd">/etc/passwd ✗</button>
+        <button class="ex" data-path="/secret.txt">/secret.txt ✗</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>write</legend>
+      <div class="row">
+        <input id="writePath" type="text" value="/jail/scratch.txt" />
+        <input id="writeData" type="text" value="hello from the browser" />
+        <button id="writeBtn">write</button>
+      </div>
+    </fieldset>
+
+    <div id="log"></div>
+
+    <script type="module">
+      import { FsLite, connect } from './src/wrpc.ts';
+      const $ = (id) => document.getElementById(id);
+      const log = $('log'), status = $('status');
+      const enc = new TextEncoder(), dec = new TextDecoder();
+      const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const line = (html) => { const d = document.createElement('div'); d.innerHTML = html; log.prepend(d); };
+
+      let fs = null, transport = null;
+
+      function certHashes() {
+        const raw = $('certHashes').value.trim();
+        if (!raw) return undefined;
+        try { return [new Uint8Array(JSON.parse(raw))]; }
+        catch { line('<span class="err">bad cert hashes — expect a JSON array like [1, 2, 3, …]</span>'); return undefined; }
+      }
+
+      async function doConnect() {
+        try {
+          if (transport) { try { transport.close(); } catch {} }
+          transport = await connect({ ws: $('ws').value.trim(), wt: $('wt').value.trim() || undefined, certHashes: certHashes() });
+          fs = new FsLite(transport);
+          status.textContent = `connected via ${transport.kind}`;
+          status.className = 'ok';
+          line(`<span class="ok">connected via ${transport.kind}</span>`);
+          return fs;
+        } catch (e) {
+          status.textContent = 'connect failed';
+          status.className = 'err';
+          line(`<span class="err">connect failed</span> <span class="dim">${esc(e)}</span>`);
+          throw e;
+        }
+      }
+      const ensure = async () => fs ?? (await doConnect());
+
+      async function doRead(path) {
+        try {
+          const r = await (await ensure()).read(path);
+          if ('ok' in r) line(`<span class="ok">read ${esc(path)} → ok</span> ${esc(JSON.stringify(dec.decode(r.ok)))}`);
+          else line(`<span class="err">read ${esc(path)} → denied</span> <span class="dim">${esc(r.err)}</span>`);
+        } catch (e) { line(`<span class="err">read ${esc(path)} → error</span> <span class="dim">${esc(e)}</span>`); }
+      }
+      async function doWrite(path, data) {
+        try {
+          const r = await (await ensure()).write(path, enc.encode(data));
+          if ('ok' in r) line(`<span class="ok">write ${esc(path)} → ok</span> <span class="dim">(${data.length} bytes)</span>`);
+          else line(`<span class="err">write ${esc(path)} → denied</span> <span class="dim">${esc(r.err)}</span>`);
+        } catch (e) { line(`<span class="err">write ${esc(path)} → error</span> <span class="dim">${esc(e)}</span>`); }
+      }
+
+      // Changing a connection field invalidates the current transport.
+      ['ws', 'wt', 'certHashes'].forEach((id) => $(id).addEventListener('change', () => {
+        fs = null; status.textContent = 'not connected'; status.className = 'dim';
+      }));
+      $('connectBtn').onclick = () => doConnect();
+      $('readBtn').onclick = () => doRead($('readPath').value);
+      $('writeBtn').onclick = () => doWrite($('writePath').value, $('writeData').value);
+      document.querySelectorAll('.ex').forEach((b) => (b.onclick = () => { $('readPath').value = b.dataset.path; doRead(b.dataset.path); }));
+    </script>
+  </body>
+</html>

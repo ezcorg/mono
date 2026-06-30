@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>icanhaz — terminal</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 62rem; margin: 1.5rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.1rem; } .sub { opacity: .6; font-weight: normal; }
+      code { background: #8882; padding: 0 .25rem; border-radius: 4px; }
+      label { display: block; margin: .35rem 0; }
+      .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+      input { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid #8886; min-width: 20rem; }
+      button { font: inherit; padding: .3rem .8rem; border-radius: 6px; border: 1px solid #8886; cursor: pointer; background: #8881; }
+      button:hover { background: #8883; }
+      #term { height: 58vh; margin-top: .6rem; border: 1px solid #8884; border-radius: 8px; padding: 6px; background: #1e1e1e; }
+      .dim { opacity: .6; }
+    </style>
+  </head>
+  <body>
+    <h1>icanhaz <span class="sub">— an interactive terminal to your machine, in the browser, over wRPC</span></h1>
+    <p class="dim">
+      xterm.js ⟷ the wRPC streaming client (<code>openTerminal</code>) ⟷ <code>icanhazd</code> ⟷ a real PTY running your login
+      shell. Keystrokes and output are <code>stream&lt;u8&gt;</code> sub-channels multiplexed over one connection. Prefers
+      <strong>WebTransport</strong> (paste the daemon's cert hash) and falls back to <strong>WebSocket</strong>. Run
+      <code>icanhazd</code>, then <code>vite</code>, and click below. (Live resize is a TODO — the PTY is fixed at 80×24.)
+    </p>
+
+    <label>WebSocket url <input id="ws" type="text" value="ws://127.0.0.1:7777" /></label>
+    <label>WebTransport url <input id="wt" type="text" value="https://127.0.0.1:7778" /></label>
+    <label>cert hashes <input id="certHashes" type="text" placeholder="[30, 7, …]  ← paste from icanhazd output" /></label>
+    <div class="row">
+      <button id="go">open terminal</button>
+      <span id="status" class="dim"></span>
+    </div>
+    <div id="term"></div>
+
+    <script type="module">
+      import { connect, openTerminal } from './src/wrpc.ts';
+      import { mountXterm } from './src/xterm-view.ts';
+      const $ = (id) => document.getElementById(id);
+      let cleanup = null;
+
+      function certHashes() {
+        const raw = $('certHashes').value.trim();
+        if (!raw) return undefined;
+        try { return [new Uint8Array(JSON.parse(raw))]; }
+        catch { $('status').textContent = 'bad cert hashes (expect a JSON array)'; return undefined; }
+      }
+
+      $('go').onclick = async () => {
+        if (cleanup) { cleanup(); cleanup = null; }
+        $('term').innerHTML = '';
+        $('status').textContent = 'connecting…';
+        try {
+          const t = await connect({
+            ws: $('ws').value.trim(),
+            wt: $('wt').value.trim() || undefined,
+            certHashes: certHashes(),
+          });
+          const handle = await openTerminal(t, { cols: 80, rows: 24 });
+          handle.onExit(() => { $('status').textContent = 'session ended'; });
+          cleanup = mountXterm($('term'), handle);
+          $('status').textContent = `connected via ${t.kind}`;
+        } catch (e) {
+          $('status').textContent = 'failed: ' + e;
+        }
+      };
+    </script>
+  </body>
+</html>

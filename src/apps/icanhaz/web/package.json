@@ -18,6 +18,8 @@
     "test:browser": "vitest run"
   },
   "dependencies": {
+    "@joinezco/codeblock": "workspace:*",
+    "@joinezco/markdown-editor": "workspace:*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0"
   },

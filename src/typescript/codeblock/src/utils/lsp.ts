@@ -1,12 +1,12 @@
 import { VfsInterface } from "../types";
 import * as Comlink from 'comlink';
-import { LSPClient, languageServerExtensions } from "@codemirror/lsp-client";
+import { LSPClient, languageServerExtensions, type Transport } from "@codemirror/lsp-client";
 import { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { messagePortTransport } from "../rpc/transport";
 import { openFileEffect, currentFileField } from "../editor";
 
-const clients: Map<string, LSPClient> = new Map();
+const clients: Map<string, LspHandle> = new Map();
 
 // FileChangeType from LSP spec
 export const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
@@ -50,6 +50,67 @@ export type ClientOptions = {
     libFiles?: Record<string, string>,
 }
 
+// ── Pluggable language servers ──────────────────────────────────────────────
+//
+// A code block's LSP can be served two ways:
+//   1. An IN-BROWSER server (the built-in Volar TypeScript worker) — `LSP.worker`.
+//   2. A REMOTE server reached over some transport (e.g. rust-analyzer spawned on a
+//      host and bridged over icanhaz/wRPC) — supplied by a `RemoteLspProvider`.
+//
+// Both drive the same `@codemirror/lsp-client` `LSPClient`; they differ only in how
+// the transport is obtained and in the workspace/URI model (a remote native server
+// reads real host paths, not the in-browser virtual FS). A provider is *injected*
+// by the host app, so codeblock stays decoupled from any particular connection.
+// **With no provider set, behaviour is exactly as before** — the in-browser servers
+// run and every other language has no LSP.
+
+/**
+ * A language server reachable over `transport`, with the workspace + path↔URI
+ * mapping it expects. The built-in worker uses a virtual `file:///<path>` model;
+ * a remote native server uses real host URIs under a real workspace `rootUri`.
+ */
+export interface LspConnection {
+    transport: Transport;
+    /** The LSP `initialize` rootUri (a real workspace for a native server). */
+    rootUri: string;
+    /** Map a code block's VFS path → the document URI the server expects. */
+    uriForPath: (path: string) => string;
+    /** Inverse of `uriForPath`, for cross-file navigation (Go to Definition). */
+    pathForUri: (uri: string) => string;
+}
+
+/**
+ * Supplies an `LspConnection` for the languages it serves. Injected via
+ * {@link setRemoteLspProvider} by the host app when an out-of-browser connection
+ * exists (e.g. icanhaz/wRPC wiring rust-analyzer); generic across languages — adding
+ * one is registering its server, not touching codeblock.
+ */
+export interface RemoteLspProvider {
+    /** Does this provider serve `language`? (Cheap — checked before connecting.) */
+    serves(language: string): boolean;
+    /** Establish a connection for `opts`, or null to defer to the built-in servers. */
+    connect(opts: ClientOptions): Promise<LspConnection | null>;
+}
+
+/** A live language server plus the path↔URI mapping its connection uses. */
+interface LspHandle {
+    client: LSPClient;
+    uriForPath: (path: string) => string;
+    pathForUri: (uri: string) => string;
+}
+
+let remoteLspProvider: RemoteLspProvider | null = null;
+
+/**
+ * Register the connection-backed LSP provider (e.g. rust-analyzer over wRPC), or
+ * pass `null` to clear it (→ only the built-in in-browser servers run). The host app
+ * calls this once it has a connection; without it, codeblock's LSP behaviour is
+ * unchanged.
+ */
+export function setRemoteLspProvider(provider: RemoteLspProvider | null): void {
+    remoteLspProvider = provider;
+}
+
 // Cached factory and LSP port per language
 type WorkerFactory = (config: { fsPort: MessagePort; libFiles?: Record<string, string> }) => Promise<MessagePort>;
 const languageServerFactory: Map<string, WorkerFactory> = new Map();
@@ -58,7 +119,7 @@ export const lspWorkers: Map<string, SharedWorker> = new Map()
 
 // Cache initialization promises to prevent concurrent calls from creating
 // duplicate LSP clients for the same language (race condition).
-const clientInitPromises: Map<string, Promise<LSPClient | null>> = new Map();
+const clientInitPromises: Map<string, Promise<LspHandle | null>> = new Map();
 
 export namespace LSP {
     export async function worker(language: string, fs: VfsInterface, libFiles?: Record<string, string>): Promise<{ worker: SharedWorker, lspPort: MessagePort } | null> {
@@ -104,20 +165,39 @@ export namespace LSP {
         return { worker: w!, lspPort };
     }
 
-    export async function client({ language, path, fs, libFiles }: ClientOptions): Promise<Extension | null> {
-        const uri = `file:///${path}`;
+    /**
+     * Resolve how to reach a language server for `opts`: a configured remote provider
+     * (connection-gated) wins for the languages it serves; otherwise the built-in
+     * in-browser worker (TS/JS); otherwise no LSP — exactly the prior behaviour.
+     */
+    async function resolveConnection(opts: ClientOptions): Promise<LspConnection | null> {
+        if (remoteLspProvider?.serves(opts.language)) {
+            const conn = await remoteLspProvider.connect(opts);
+            if (conn) return conn;
+            // The provider declined (transient / not ready) — fall through to a
+            // built-in server rather than leaving the block with no LSP.
+        }
+        const result = await worker(opts.language, opts.fs, opts.libFiles);
+        if (!result) return null;
+        return {
+            transport: messagePortTransport(result.lspPort),
+            rootUri: 'file:///',
+            uriForPath: (p) => `file:///${p}`,
+            pathForUri: (uri) => decodeURIComponent(uri.replace(/^file:\/\/\//, '')),
+        };
+    }
 
+    export async function client({ language, path, fs, libFiles }: ClientOptions): Promise<Extension | null> {
         // Use a cached promise to ensure only one LSPClient is created per language,
         // even when multiple codeblocks call client() concurrently.
         let initPromise = clientInitPromises.get(language);
         if (!initPromise) {
             initPromise = (async () => {
-                const result = await LSP.worker(language, fs, libFiles);
-                if (!result) return null;
-                const { lspPort } = result;
+                const conn = await resolveConnection({ language, path, fs, libFiles });
+                if (!conn) return null;
 
                 const lspClient = new LSPClient({
-                    rootUri: 'file:///',
+                    rootUri: conn.rootUri,
                     timeout: 30000,
                     extensions: languageServerExtensions(),
                     notificationHandlers: {
@@ -128,7 +208,7 @@ export namespace LSP {
                         }
                     },
                 });
-                lspClient.connect(messagePortTransport(lspPort));
+                lspClient.connect(conn.transport);
 
                 // Override displayFile to support cross-file navigation
                 // (e.g. Go to Definition jumping to a different file).
@@ -138,9 +218,9 @@ export namespace LSP {
                     const existing = await origDisplayFile(uri);
                     if (existing) return existing;
 
-                    // Extract path from file:/// URI, decoding percent-encoded
-                    // characters like %40 → @ so VFS paths stay correct.
-                    const filePath = decodeURIComponent(uri.replace(/^file:\/\/\//, ''));
+                    // Map the server's URI back to a VFS path (per the connection's
+                    // model — virtual file:/// for the worker, real host paths remote).
+                    const filePath = conn.pathForUri(uri);
                     if (!filePath) return null;
 
                     // Find any active view for this client
@@ -167,15 +247,16 @@ export namespace LSP {
                     });
                 };
 
-                clients.set(language, lspClient);
-                return lspClient;
+                const handle: LspHandle = { client: lspClient, uriForPath: conn.uriForPath, pathForUri: conn.pathForUri };
+                clients.set(language, handle);
+                return handle;
             })();
             clientInitPromises.set(language, initPromise);
         }
 
-        const client = await initPromise;
-        if (!client) return null;
-        return client.plugin(uri, language);
+        const handle = await initPromise;
+        if (!handle) return null;
+        return handle.client.plugin(handle.uriForPath(path), language);
     }
 
     /**
@@ -183,10 +264,9 @@ export namespace LSP {
      * This sends workspace/didChangeWatchedFiles so the server re-evaluates the project.
      */
     export function notifyFileChanged(path: string, type: number = FileChangeType.Changed) {
-        const uri = `file:///${path}`;
-        for (const client of clients.values()) {
-            client.notification("workspace/didChangeWatchedFiles", {
-                changes: [{ uri, type }]
+        for (const handle of clients.values()) {
+            handle.client.notification("workspace/didChangeWatchedFiles", {
+                changes: [{ uri: handle.uriForPath(path), type }]
             });
         }
     }

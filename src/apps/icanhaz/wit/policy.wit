@@ -1,0 +1,63 @@
+package icanhaz:nocap@0.1.0;
+
+/// Capability **policies** — the membrane that mediates a granted capability.
+///
+/// Every grant is exercised *through* a policy: a wasm component that re-exports
+/// a capability interface and implements it by delegating, *attenuated*, to the
+/// raw host interface it imports — plus a `context` describing who is asking and
+/// the caveats in force. Built-in policies are parameterised attenuators (the
+/// common "restrict scope" cases); a user-supplied policy component is
+/// "capability as code". Same membrane, different author — so scope-restriction
+/// and programmable capabilities are one mechanism, not two.
+interface policy {
+  use types.{ principal, caveat };
+
+  /// Handed to every policy instance by the host.
+  resource context {
+    /// Who is exercising the mediated capability.
+    principal: func() -> principal;
+    /// The caveats the user attached at grant time. The policy may enforce more;
+    /// the host independently enforces the structural ones.
+    caveats: func() -> list<caveat>;
+    /// Append to this capability's audit trail (surfaced in the dashboard).
+    audit: func(event: string);
+    /// Ask the user to confirm a sensitive *in-flight* operation — a second,
+    /// runtime consent ("allow writing outside the granted folder?"). The host
+    /// raises the dialog; the policy gets the decision. (Preview 2: the host
+    /// blocks the call; Preview 3 ⇒ `future<bool>`.)
+    escalate: func(prompt: string) -> bool;
+  }
+
+  /// The policy context the host bound to this policy instance (its grant).
+  /// Mirrors `wasi:cli/stdout.get-stdout`: a policy calls this to obtain the
+  /// context for consulting caveats, writing the audit trail, or escalating —
+  /// there is no other way to forge one, so authority stays unambient.
+  get-context: func() -> context;
+}
+
+/// How a request is mediated — chosen in the permission dialog.
+interface mediation {
+  use types.{ caveat };
+
+  variant selection {
+    /// The built-in parameterised attenuator, narrowed by these caveats — the
+    /// "restrict scope" path. No code to write.
+    attenuate(list<caveat>),
+    /// A user-supplied policy component ("capability as code"), addressed by
+    /// content hash (`sha256:...`) and resolved from the host's component store.
+    /// The user vouches for it once; the dialog shows its hash + declared world.
+    component(string),
+  }
+}
+
+/// Authoring world for a **filesystem** policy component: it imports the raw host
+/// filesystem (the real authority) + a policy context, and exports the
+/// *attenuated* filesystem the requestor actually sees. The component is the
+/// membrane — e.g. a path jail, a copy-on-write overlay, an audited/rate-limited
+/// view. (Terminal / sockets / process policies follow the same shape: import the
+/// raw capability, export the mediated one.)
+world fs-policy {
+  import policy;
+  import wasi:filesystem/types@0.2.0;   // raw host filesystem — the authority
+  export wasi:filesystem/types@0.2.0;   // the mediated view the grant exposes
+}

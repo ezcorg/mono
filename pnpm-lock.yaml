@@ -216,6 +216,12 @@ importers:
 
   src/apps/icanhaz/web:
     dependencies:
+      '@joinezco/codeblock':
+        specifier: workspace:*
+        version: link:../../../typescript/codeblock
+      '@joinezco/markdown-editor':
+        specifier: workspace:*
+        version: link:../../../typescript/markdown-editor
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)

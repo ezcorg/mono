@@ -1,0 +1,18 @@
+[package]
+name = "fs-lite-pathjail"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Walking-skeleton policy component: a path-jail membrane over the fs-lite stand-in capability (world fs-lite-policy). Builds to a wasm32-wasip2 component."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.58"
+
+# Small wasm: the policy is a tiny membrane, not a program.
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
