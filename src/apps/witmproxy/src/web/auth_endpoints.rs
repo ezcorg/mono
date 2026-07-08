@@ -41,11 +41,6 @@ pub async fn register(
         .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Database not available"))?;
 
-    let auth_config = depot
-        .obtain::<AuthConfig>()
-        .cloned()
-        .map_err(|_| StatusError::internal_server_error().brief("Auth config not available"))?;
-
     let body = body.into_inner();
 
     // Check if email already exists
@@ -77,20 +72,18 @@ pub async fn register(
         StatusError::internal_server_error().brief(format!("Failed to create tenant: {}", e))
     })?;
 
-    let secret = auth_config
-        .jwt_secret
-        .as_deref()
-        .unwrap_or("default-secret");
-    let issuer = auth_config.jwt_issuer.as_deref().unwrap_or("witmproxy");
-    let claims = Claims::new(&tenant_id, Some(&body.email), issuer, 86400);
+    // Self-registration is gated behind admin approval: the new tenant is created
+    // disabled and cannot log in until an admin enables it (`witm tenant enable <id>`).
+    // No token is issued here, so a self-registered account is inert until approved.
+    if let Err(e) = Tenant::update_enabled(&pool, &tenant_id, false).await {
+        warn!("Failed to mark new tenant pending approval: {}", e);
+    }
 
-    let token = create_token(&claims, secret).map_err(|e| {
-        warn!("Token creation failed: {}", e);
-        StatusError::internal_server_error().brief("Failed to create token")
-    })?;
-
-    res.status_code(StatusCode::CREATED);
-    Ok(Json(AuthResponse { token, tenant_id }))
+    res.status_code(StatusCode::ACCEPTED);
+    Ok(Json(AuthResponse {
+        token: String::new(),
+        tenant_id,
+    }))
 }
 
 /// POST /api/auth/login -- authenticate with email/password, return JWT.
@@ -133,10 +126,14 @@ pub async fn login(
 
     match verify_password(&body.password, password_hash) {
         Ok(true) => {
-            let secret = auth_config
-                .jwt_secret
-                .as_deref()
-                .unwrap_or("default-secret");
+            // Never fall back to a well-known signing key. If auth is enabled the
+            // daemon generates and persists a secret at startup, so this is set;
+            // refuse to mint a token rather than sign with a guessable default.
+            let secret = auth_config.jwt_secret.as_deref().ok_or_else(|| {
+                warn!("Login attempted but no JWT signing secret is configured");
+                StatusError::internal_server_error()
+                    .brief("Server authentication is not fully configured")
+            })?;
             let issuer = auth_config.jwt_issuer.as_deref().unwrap_or("witmproxy");
             let claims = Claims::new(&tenant.id, tenant.email.as_deref(), issuer, 86400);
 

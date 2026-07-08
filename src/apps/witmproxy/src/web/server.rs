@@ -89,7 +89,10 @@ impl WebServer {
             plugin_registry: self.plugin_registry.clone(),
         };
 
-        salvo::http::request::set_global_secure_max_size(1024 * 1024 * 1024); // 1 GB
+        // Cap request bodies at 64 MiB. The largest legitimate body is a plugin
+        // upload (a WASM component, a few MB); the previous 1 GiB ceiling let a
+        // single unauthenticated client exhaust memory.
+        salvo::http::request::set_global_secure_max_size(64 * 1024 * 1024);
 
         // Build TLS config: use user-provided cert/key if available,
         // otherwise generate one from our CA (e.g. for localhost dev).
@@ -138,16 +141,48 @@ impl WebServer {
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
-        // Inject db pool and auth config for auth + management endpoints
+        // Auth + app config are always available (unlike the optional DB pool) and
+        // are needed by the JWT/ACL hoops, so inject them unconditionally. This
+        // lets plugin management work even when the web server has no DB pool of
+        // its own — the plugin registry carries its own database.
+        app = app
+            .hoop(affix_state::inject(self.config.auth.clone()))
+            .hoop(affix_state::inject(self.config.clone()))
+            .hoop(affix_state::inject(management::ConfigPath(
+                self.config_path.clone().unwrap_or_default(),
+            )));
         if let Some(ref pool) = self.db_pool {
-            app = app
-                .hoop(affix_state::inject(pool.clone()))
-                .hoop(affix_state::inject(self.config.auth.clone()))
-                .hoop(affix_state::inject(self.config.clone()))
-                .hoop(affix_state::inject(management::ConfigPath(
-                    self.config_path.clone().unwrap_or_default(),
-                )));
+            app = app.hoop(affix_state::inject(pool.clone()));
+        }
 
+        // Global plugin-management routes only need the plugin registry (already
+        // in AppState), not the web DB pool — register them whenever the plugin
+        // system is enabled, regardless of whether a DB pool was provided.
+        if self.plugin_registry.is_some() {
+            let plugin_router = Router::new()
+                .hoop(jwt_auth)
+                .hoop(acl_check)
+                .push(
+                    Router::with_path("/api/plugins")
+                        .get(list_plugins)
+                        .post(upsert_plugin)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/plugins/{namespace}/{name}/enabled")
+                        .put(set_plugin_enabled)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/plugins/{namespace}/{name}")
+                        .delete(delete_plugin)
+                        .options(preflight),
+                );
+            app = app.push(plugin_router);
+        }
+
+        // Auth endpoints and tenant/group/config management need the DB pool.
+        if self.db_pool.is_some() {
             // Auth endpoints (unauthenticated, but need db pool + auth config)
             app = app
                 .push(
@@ -228,22 +263,6 @@ impl WebServer {
                     Router::with_path("/api/manage/config")
                         .get(management::get_config)
                         .put(management::update_config)
-                        .options(preflight),
-                )
-                .push(
-                    Router::with_path("/api/plugins")
-                        .get(list_plugins)
-                        .post(upsert_plugin)
-                        .options(preflight),
-                )
-                .push(
-                    Router::with_path("/api/plugins/{namespace}/{name}/enabled")
-                        .put(set_plugin_enabled)
-                        .options(preflight),
-                )
-                .push(
-                    Router::with_path("/api/plugins/{namespace}/{name}")
-                        .delete(delete_plugin)
                         .options(preflight),
                 );
 

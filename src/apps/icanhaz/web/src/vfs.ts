@@ -19,6 +19,7 @@
 import type { Transport } from "./wrpc";
 import * as fsmount from "./generated/fs-mount";
 import * as fs from "./generated/wasi-filesystem";
+import { open as watchOpen } from "./generated/watch";
 
 /** `@volar/language-service` FileType values (Unknown/File/Directory/SymbolicLink). */
 export type FileType = 0 | 1 | 2 | 64;
@@ -90,7 +91,11 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
         },
 
         async writeFile(path, data) {
-            const fd = await open(path, { create: true, truncate: true }, { read: true, write: true });
+            // Do NOT open with truncate: it empties the file on disk first, and a native
+            // watcher (rust-analyzer's cargo-check/flycheck) can read that empty window and
+            // cache a bogus error (e.g. "main function not found"). Instead overwrite in place,
+            // then set-size to trim any leftover tail — the file is never empty on disk.
+            const fd = await open(path, { create: true, truncate: false }, { read: true, write: true });
             const bytes = te.encode(data);
             let offset = 0n;
             const len = BigInt(bytes.length);
@@ -100,12 +105,62 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
                 if (r.val === 0n) break; // guard against a 0-byte write looping forever
                 offset += r.val;
             }
+            // Trim to the exact length (removes any tail left when overwriting longer content).
+            const s = await fs.descriptorSetSize(t, fd, len);
+            if (s.tag !== "ok") throw new Error(`set-size ${path}: ${s.val}`);
         },
 
-        // wasi:filesystem@0.2 has no change-notification interface — live updates
-        // would need a poll loop or a dedicated host watch capability.
-        async *watch() {
-            return;
+        // Native change events via the host `watch` capability (a `notify` watcher
+        // under the grant's jail). Events arrive framed as [kind u8][len u16 BE][path]
+        // and are decoded here into codeblock's {eventType, filename} stream. The
+        // watcher stops when this generator returns (abort → session close).
+        async *watch(path, options) {
+            const signal = options?.signal;
+            const session = await watchOpen(t, grant, rel(path), true);
+            const events: Array<{ eventType: "rename" | "change"; filename: string }> = [];
+            let buf: Uint8Array = new Uint8Array(0);
+            let ended = false;
+            let wake: (() => void) | undefined;
+
+            session.onData((chunk) => {
+                if (chunk === null) {
+                    ended = true;
+                } else {
+                    buf = concat([buf, chunk]);
+                    while (buf.length >= 3) {
+                        const len = (buf[1]! << 8) | buf[2]!;
+                        if (buf.length < 3 + len) break;
+                        events.push({
+                            eventType: buf[0] === 0 ? "rename" : "change",
+                            filename: td.decode(buf.subarray(3, 3 + len)),
+                        });
+                        buf = buf.subarray(3 + len);
+                    }
+                }
+                wake?.();
+            });
+            const onAbort = () => {
+                ended = true;
+                session.close();
+                wake?.();
+            };
+            signal?.addEventListener("abort", onAbort, { once: true });
+
+            try {
+                while (!ended || events.length) {
+                    if (events.length) {
+                        yield events.shift()!;
+                        continue;
+                    }
+                    await new Promise<void>((resolve) => {
+                        wake = resolve;
+                    });
+                    wake = undefined;
+                }
+            } finally {
+                signal?.removeEventListener("abort", onAbort);
+                session.close();
+            }
         },
 
         async mkdir(path, options) {

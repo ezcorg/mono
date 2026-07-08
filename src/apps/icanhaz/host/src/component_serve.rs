@@ -621,4 +621,78 @@ mod tests {
 
         accept.abort();
     }
+
+    /// Revocation is **retroactive**: a client holding a live root descriptor loses
+    /// access the instant its grant is revoked, because every descriptor op
+    /// re-authorizes through the gate (the grant is checked per op, not just at mount).
+    /// This also covers derived descriptors + expiry, which a mount-time-only gate can't.
+    #[tokio::test]
+    async fn revoking_a_grant_denies_further_filesystem_ops() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use fs_client::icanhaz::fspass::mount;
+        use fs_client::wasi::filesystem::types::{Descriptor, DescriptorFlags, OpenFlags, PathFlags};
+        use wasmtime_wasi::{DirPerms, FilePerms};
+
+        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"live\n").unwrap();
+        let mut builder = WasiCtxBuilder::new();
+        builder.preopened_dir(dir.path(), "/", DirPerms::all(), FilePerms::all()).unwrap();
+        let wasi = builder.build();
+
+        let grants = GrantStore::shared();
+        let grant = grants.lock().unwrap().issue(
+            CapabilityKind::Filesystem(FsRequest {
+                roots: vec![PathGrant { path: "/".to_string(), rights: FsRights::READ | FsRights::WRITE }],
+            }),
+            "filesystem (/)".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let _handlers = serve_filesystem(
+            srv.as_ref(),
+            &wasm,
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        // Mount, and confirm the held descriptor works while the grant is live.
+        let root = mount::open_root(&wrpc, (), &grant).await.unwrap().expect("mount with a valid grant");
+        let before = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "hello.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
+            .await
+            .unwrap();
+        assert!(before.is_ok(), "open must succeed while the grant is live, got {before:?}");
+
+        // Revoke — the client still holds the very same root descriptor handle.
+        assert!(grants.lock().unwrap().revoke(&grant), "grant should have been live");
+
+        // The next op on that descriptor is refused: revocation reaches the live handle.
+        let after = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "hello.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
+            .await
+            .unwrap();
+        assert!(after.is_err(), "after revoke, ops on the held descriptor must be denied, got {after:?}");
+        // And a fresh mount is refused too.
+        assert!(mount::open_root(&wrpc, (), &grant).await.unwrap().is_err(), "a revoked grant can't re-mount");
+
+        accept.abort();
+    }
 }

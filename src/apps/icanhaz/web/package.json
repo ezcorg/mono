@@ -7,7 +7,6 @@
   "main": "src/lib.ts",
   "exports": {
     ".": "./src/lib.ts",
-    "./client": "./src/client.ts",
     "./terminal-block": "./src/terminal-block.ts",
     "./xterm-view": "./src/xterm-view.ts"
   },

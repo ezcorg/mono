@@ -1,14 +1,12 @@
 use crate::{
     AppConfig, Db, Runtime,
     cli::load_plugins_from_directory,
-    config::confique_app_config_layer::AppConfigLayer,
     plugins::{WitmPlugin, registry::PluginRegistry},
     test_utils::test_component_path,
     wasm::bindgen::Event,
 };
 use anyhow::Result;
 use cel_cxx::{Env, EnvBuilder};
-use confique::{Config, Layer};
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -26,17 +24,11 @@ fn create_static_cel_env() -> Result<&'static Env<'static>> {
 
 /// Test helper that creates an AppConfig with test paths
 fn create_test_config(temp_path: &Path) -> AppConfig {
-    let db_path = temp_path.join("test.db");
-    let cert_dir = temp_path.join("certs");
-    let mut partial_config = AppConfigLayer::default_values();
-    partial_config.db.db_path = Some(db_path);
-    partial_config.db.db_password = Some("test_password".to_string());
-    partial_config.tls.cert_dir = Some(cert_dir);
-
-    AppConfig::builder()
-        .preloaded(partial_config)
-        .load()
-        .expect("Failed to load test config")
+    let mut config = AppConfig::default();
+    config.db.db_path = temp_path.join("test.db");
+    config.db.db_password = Some("test_password".to_string());
+    config.tls.cert_dir = temp_path.join("certs");
+    config
         .with_resolved_paths()
         .expect("Failed to resolve paths in test config")
 }
@@ -55,10 +47,10 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
 
     // Test adding the plugin
     plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             source: wasm_path.clone(),
             public_key: None,
-        })
+        }))
         .await?;
 
     // Verify the plugin was actually added to the database
@@ -103,10 +95,10 @@ async fn test_witm_plugin_add_nonexistent_file() {
 
     // Test with non-existent file
     let result = plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             source: "/nonexistent/file.wasm".to_string(),
             public_key: None,
-        })
+        }))
         .await;
 
     assert!(result.is_err(), "Should fail for non-existent file");
@@ -132,10 +124,10 @@ async fn test_witm_plugin_add_non_wasm_file() {
 
     // Test with non-WASM file
     let result = plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             source: dummy_file.to_str().unwrap().to_string(),
             public_key: None,
-        })
+        }))
         .await;
 
     assert!(result.is_err(), "Should fail for non-WASM file");
@@ -160,10 +152,10 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
 
     // Add the plugin first
     plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             source: wasm_path.clone(),
             public_key: None,
-        })
+        }))
         .await?;
 
     // Verify plugin was added
@@ -182,9 +174,9 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
 
     // Test removing the plugin by name
     plugin_handler
-        .handle(&plugin::PluginCommands::Remove {
+        .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
             plugin_name: plugin_name.clone(),
-        })
+        }))
         .await?;
 
     // Verify plugin was removed
@@ -211,10 +203,10 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
 
     // Add the plugin first
     plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             source: wasm_path.clone(),
             public_key: None,
-        })
+        }))
         .await?;
 
     // Verify plugin was added and get its full ID
@@ -233,9 +225,9 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
 
     // Test removing the plugin by namespace/name
     plugin_handler
-        .handle(&plugin::PluginCommands::Remove {
+        .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
             plugin_name: full_plugin_id.clone(),
-        })
+        }))
         .await?;
 
     // Verify plugin was removed
@@ -259,9 +251,9 @@ async fn test_witm_plugin_remove_nonexistent() {
 
     // Test removing a nonexistent plugin
     let result = plugin_handler
-        .handle(&plugin::PluginCommands::Remove {
+        .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
             plugin_name: "nonexistent_plugin".to_string(),
-        })
+        }))
         .await;
     assert!(
         result.is_ok(),

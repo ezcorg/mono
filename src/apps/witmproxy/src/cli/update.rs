@@ -237,25 +237,33 @@ async fn download_release_binary(version: &semver::Version) -> Result<Vec<u8>> {
 
     let bytes = resp.bytes().await?.to_vec();
 
-    // Basic magic-byte validation
-    let valid = if cfg!(target_os = "macos") {
-        // Mach-O: 0xFEEDFACE, 0xFEEDFACF, or fat binary 0xCAFEBABE
-        bytes.len() >= 4
-            && (bytes[..4] == [0xFE, 0xED, 0xFA, 0xCE]
-                || bytes[..4] == [0xFE, 0xED, 0xFA, 0xCF]
-                || bytes[..4] == [0xCF, 0xFA, 0xED, 0xFE]
-                || bytes[..4] == [0xCE, 0xFA, 0xED, 0xFE]
-                || bytes[..4] == [0xCA, 0xFE, 0xBA, 0xBE])
-    } else {
-        // ELF: 0x7F ELF
-        bytes.len() >= 4 && bytes[..4] == [0x7F, b'E', b'L', b'F']
-    };
-
-    if !valid {
+    if !looks_like_executable(&bytes) {
         anyhow::bail!("Downloaded binary has invalid magic bytes — not a valid executable");
     }
 
     Ok(bytes)
+}
+
+/// True if `bytes` begins with a plausible executable magic number for the
+/// current platform (Mach-O / fat binary on macOS, ELF otherwise).
+fn looks_like_executable(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    let magic = &bytes[..4];
+    if cfg!(target_os = "macos") {
+        // Mach-O (thin, either endianness/width) or fat binary (0xCAFEBABE).
+        matches!(
+            magic,
+            [0xFE, 0xED, 0xFA, 0xCE]
+                | [0xFE, 0xED, 0xFA, 0xCF]
+                | [0xCF, 0xFA, 0xED, 0xFE]
+                | [0xCE, 0xFA, 0xED, 0xFE]
+                | [0xCA, 0xFE, 0xBA, 0xBE]
+        )
+    } else {
+        magic == [0x7F, b'E', b'L', b'F']
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -316,18 +324,7 @@ async fn try_delta_update(
         .context("failed to apply delta patch")?;
 
     // Validate the patched binary
-    let valid = if cfg!(target_os = "macos") {
-        new_binary.len() >= 4
-            && (new_binary[..4] == [0xFE, 0xED, 0xFA, 0xCE]
-                || new_binary[..4] == [0xFE, 0xED, 0xFA, 0xCF]
-                || new_binary[..4] == [0xCF, 0xFA, 0xED, 0xFE]
-                || new_binary[..4] == [0xCE, 0xFA, 0xED, 0xFE]
-                || new_binary[..4] == [0xCA, 0xFE, 0xBA, 0xBE])
-    } else {
-        new_binary.len() >= 4 && new_binary[..4] == [0x7F, b'E', b'L', b'F']
-    };
-
-    if !valid {
+    if !looks_like_executable(&new_binary) {
         anyhow::bail!("Patched binary has invalid magic bytes — patch may be corrupt");
     }
 
@@ -594,10 +591,7 @@ pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
                                 None,
                                 false,
                             );
-                            if let Err(e) = handler
-                                .install_service(confique::Layer::default_values(), true)
-                                .await
-                            {
+                            if let Err(e) = handler.install_service(true).await {
                                 warn!("Auto-update: failed to reinstall service: {:#}", e);
                             }
                             if let Err(e) = handler.restart_service().await {

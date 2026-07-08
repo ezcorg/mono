@@ -54,6 +54,21 @@ impl ProcessProvider {
     }
 }
 
+/// Teardown for a process session: aborts its pump tasks on drop. The stdout task
+/// owns the `Child`, so aborting it drops the child — `kill_on_drop` then kills the
+/// process. Dropped when the output stream is (revoke, expiry, disconnect, exit).
+struct ProcGuard {
+    handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for ProcGuard {
+    fn drop(&mut self) {
+        for h in &self.handles {
+            h.abort();
+        }
+    }
+}
+
 impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handler<C>
     for ProcessProvider
 {
@@ -71,17 +86,23 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handl
             Err(denied) => return Ok(Err(format!("process denied: {denied:?}"))),
         };
 
-        // The grant pins the image; caller-chosen argv is honoured only if the grant
-        // negotiated it — otherwise a non-empty `args` is refused (the consented
-        // program runs as the host configured it, not as the caller re-specifies).
-        if !args.is_empty() && !req.guest_chooses_argv {
+        // The grant pins the image and — unless it negotiated `guest-chooses-argv` —
+        // its argv. When the guest may choose, the caller's `args` run; otherwise the
+        // grant's pinned `args` do, and a caller passing anything other than those
+        // (empty, or exactly the pinned set) is refused. So a grant for
+        // `rust-analyzer --stdio` can't be turned into `rust-analyzer --rm-rf`.
+        let effective_args = if req.guest_chooses_argv {
+            args
+        } else if args.is_empty() || args == req.args {
+            req.args.clone()
+        } else {
             return Ok(Err(
-                "process denied: this grant does not permit caller-chosen arguments".to_string(),
+                "process denied: this grant pins its arguments; the requested argv isn't permitted".to_string(),
             ));
-        }
+        };
 
         let mut child = match Command::new(&req.image)
-            .args(&args)
+            .args(&effective_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -95,10 +116,15 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handl
         let mut child_stdin = child.stdin.take().expect("piped stdin");
         let mut child_stdout = child.stdout.take().expect("piped stdout");
         let mut child_stderr = child.stderr.take().expect("piped stderr");
+        // Telemetry: makes a "spawned but silent / crashed" child visible in the log
+        // (`RUST_LOG=icanhaz_host=info`). Pairs with the browser's setLspTrace to place
+        // the break — no `first stdout` here + no `recv` in the browser ⇒ the child never
+        // produced output (crashed / wrong PATH); `exited` right after ⇒ startup failure.
+        tracing::info!(image = %req.image, pid = ?child.id(), args = ?effective_args, "process spawned");
 
         // Forward the wRPC stdin stream → the child until the client closes it;
         // dropping `child_stdin` then sends EOF (the LSP `exit` convention).
-        tokio::spawn(async move {
+        let stdin_h = tokio::spawn(async move {
             let mut stdin = stdin;
             while let Some(chunk) = stdin.next().await {
                 if child_stdin.write_all(&chunk).await.is_err() {
@@ -111,7 +137,7 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handl
         // The child's stderr is logged, never streamed: folding it into stdout would
         // corrupt a length-framed protocol on the wire (LSP, DAP, …).
         let image = req.image.clone();
-        tokio::spawn(async move {
+        let stderr_h = tokio::spawn(async move {
             let mut buf = [0u8; 4096];
             loop {
                 match child_stderr.read(&mut buf).await {
@@ -127,23 +153,38 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handl
         // child closes stdout (it has exited or is exiting). Drain to EOF *then*
         // reap, so a full pipe buffer can never deadlock `wait()`.
         let (out_tx, output) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
-        tokio::spawn(async move {
+        let image_out = req.image.clone();
+        let stdout_h = tokio::spawn(async move {
             let mut buf = [0u8; 8192];
+            let mut total = 0usize;
             loop {
                 match child_stdout.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
+                        if total == 0 {
+                            tracing::info!(image = %image_out, bytes = n, "process: first stdout");
+                        }
+                        total += n;
                         if out_tx.send(Bytes::copy_from_slice(&buf[..n])).is_err() {
                             break;
                         }
                     }
                 }
             }
-            let _ = child.wait().await;
+            let status = child.wait().await;
+            tracing::info!(image = %image_out, total_stdout = total, ?status, "process exited");
         });
 
+        // Bind the session to the grant: on revoke/expiry the output stream ends and
+        // the guard aborts the pump tasks — dropping `child`, which `kill_on_drop`
+        // then kills. Also releases on client disconnect / natural exit.
+        let revocation = self.store.lock().unwrap().revocation(&grant);
         let out = UnboundedReceiverStream::new(output);
-        Ok(Ok(Box::pin(out)))
+        Ok(Ok(crate::session::grant_scoped(
+            Box::pin(out),
+            revocation,
+            ProcGuard { handles: vec![stdin_h, stderr_h, stdout_h] },
+        )))
     }
 }
 
@@ -203,7 +244,7 @@ mod tests {
     /// Mint a `process` grant pinning `image` (optionally allowing caller argv).
     fn process_grant(store: &Arc<Mutex<GrantStore>>, image: &str, guest_chooses_argv: bool) -> String {
         store.lock().unwrap().issue(
-            CapabilityKind::Process(ProcessRequest { image: image.to_string(), guest_chooses_argv }),
+            CapabilityKind::Process(ProcessRequest { image: image.to_string(), args: vec![], guest_chooses_argv }),
             format!("process: {image}"),
             Duration::from_secs(60),
             anonymous_principal(),
@@ -266,6 +307,46 @@ mod tests {
         let text = collect_output!(io, output);
         assert!(text.contains("hello over wrpc"), "process output missing echo:\n{text}");
 
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn revoking_a_grant_tears_down_the_running_process() {
+        // `cat` with a never-closing stdin runs forever — until the grant is revoked,
+        // which must end the output stream and kill the child (the generic session
+        // teardown, shared by terminal + watch).
+        let store = GrantStore::shared();
+        let grant = process_grant(&store, "cat", false);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(serve_tcp(listener, ProcessProvider::new(store.clone())));
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        // stdin never ends ⇒ `cat` never sees EOF ⇒ it only stops when killed.
+        let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::pending());
+        let (result, io) = client::spawn(&wrpc, (), &grant, &[], stdin).await.expect("invoke process.spawn");
+        let mut output = result.expect("spawn cat");
+
+        // Drive the client I/O so the stream can advance + close.
+        let io_task = tokio::spawn(async move {
+            if let Some(io) = io {
+                let _ = io.await;
+            }
+        });
+
+        // Revoke — the running `cat` must be torn down and its output stream ended.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(store.lock().unwrap().revoke(&grant), "grant should have been live");
+
+        let drained = tokio::time::timeout(Duration::from_secs(5), async {
+            while output.next().await.is_some() {}
+        })
+        .await;
+        assert!(drained.is_ok(), "revoke must end the process's output stream (session torn down)");
+
+        io_task.abort();
         server.abort();
     }
 

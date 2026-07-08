@@ -61,6 +61,9 @@ struct PtyIo {
     stdin: std::sync::mpsc::Sender<Vec<u8>>,
     output: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     resize: std::sync::mpsc::Sender<(u16, u16)>,
+    /// Kills the shell independently of the reaper thread's blocking `wait()` — used
+    /// to tear the session down when the grant is revoked or expires.
+    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
 }
 
 fn spawn_pty(shell: &str, cols: u16, rows: u16) -> anyhow::Result<PtyIo> {
@@ -78,6 +81,8 @@ fn spawn_pty(shell: &str, cols: u16, rows: u16) -> anyhow::Result<PtyIo> {
     cmd.env("TERM", "xterm-256color");
 
     let mut child = pair.slave.spawn_command(cmd)?;
+    // A kill handle that works while the reaper thread is blocked in `wait()`.
+    let killer = child.clone_killer();
     drop(pair.slave); // let EOF propagate when the child exits
 
     // Share the master so the resize thread can reshape the tty while the reaper
@@ -135,7 +140,24 @@ fn spawn_pty(shell: &str, cols: u16, rows: u16) -> anyhow::Result<PtyIo> {
         drop(master);
     });
 
-    Ok(PtyIo { stdin, output, resize })
+    Ok(PtyIo { stdin, output, resize, killer })
+}
+
+/// Teardown for a terminal session: kills the shell (via the independent killer) and
+/// aborts the stdin/control pumps on drop. Dropped when the output stream is (revoke,
+/// expiry, client disconnect, or the shell exiting on its own).
+struct PtyGuard {
+    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for PtyGuard {
+    fn drop(&mut self) {
+        let _ = self.killer.kill();
+        for h in &self.handles {
+            h.abort();
+        }
+    }
 }
 
 impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Handler<C>
@@ -170,10 +192,10 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Hand
             Ok(p) => p,
             Err(e) => return Ok(Err(format!("failed to spawn `{shell}`: {e}"))),
         };
-        let PtyIo { stdin: pty_stdin, output, resize } = pty;
+        let PtyIo { stdin: pty_stdin, output, resize, killer } = pty;
 
         // Forward the wRPC stdin stream → the PTY until the client closes it.
-        tokio::spawn(async move {
+        let stdin_h = tokio::spawn(async move {
             let mut stdin = stdin;
             while let Some(chunk) = stdin.next().await {
                 if pty_stdin.send(chunk.to_vec()).is_err() {
@@ -184,7 +206,7 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Hand
 
         // Control sub-channel: each 4-byte frame `[cols u16 BE][rows u16 BE]`
         // reshapes the tty (the kernel then SIGWINCHes the shell).
-        tokio::spawn(async move {
+        let control_h = tokio::spawn(async move {
             let mut control = control;
             let mut buf: Vec<u8> = Vec::new();
             while let Some(chunk) = control.next().await {
@@ -200,10 +222,16 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Hand
             }
         });
 
-        // The PTY's output becomes the returned wRPC stream; it ends when the
-        // shell exits (reader hits EOF → the channel closes).
+        // The PTY's output becomes the returned wRPC stream; it ends when the shell
+        // exits — or, bound to the grant, when it's revoked/expires (the guard then
+        // kills the shell and aborts the pumps).
+        let revocation = self.store.lock().unwrap().revocation(&grant);
         let out = UnboundedReceiverStream::new(output).map(Bytes::from);
-        Ok(Ok(Box::pin(out)))
+        Ok(Ok(crate::session::grant_scoped(
+            Box::pin(out),
+            revocation,
+            PtyGuard { killer, handles: vec![stdin_h, control_h] },
+        )))
     }
 }
 

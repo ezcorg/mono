@@ -4,7 +4,7 @@ import { createWrpcLspProvider } from "./lsp-provider";
 
 // Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`) with `rust-analyzer` on
 // its PATH. Proves the codeblock RemoteLspProvider wiring, not the editor UI.
-const WS = "ws://127.0.0.1:7777";
+import { WS } from "./test-ws";
 
 const config = (transport: any) => ({
     transport,

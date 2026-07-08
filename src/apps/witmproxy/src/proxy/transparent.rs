@@ -266,15 +266,29 @@ async fn handle_transparent_connection(
     }
 
     if peek_buf[0] == 22 {
-        // TLS ClientHello -- read enough to extract SNI
-        let mut hello_buf = vec![0u8; 4096];
+        // TLS ClientHello -- peek enough to extract SNI. We use a single 16KB
+        // peek (up from 4KB), which covers essentially all ClientHellos already
+        // buffered by the kernel. NOTE: this is still a single peek, so a
+        // ClientHello fragmented across TCP segments that hasn't fully arrived
+        // yet may not yield SNI. Looping the peek safely is awkward here because
+        // peeked (unconsumed) data keeps the socket perpetually readable, which
+        // would busy-spin; if SNI can't be determined we pass through rather than
+        // guessing a destination.
+        let mut hello_buf = vec![0u8; 16 * 1024];
         let n = stream.peek(&mut hello_buf).await?;
         let hello_data = &hello_buf[..n];
 
-        let hostname = extract_sni_from_client_hello(hello_data).unwrap_or_else(|| {
-            warn!("Could not extract SNI from ClientHello from {}", peer);
-            "unknown".to_string()
-        });
+        let Some(hostname) = extract_sni_from_client_hello(hello_data) else {
+            // Without SNI we have no reliable destination: this transparent proxy
+            // derives the upstream host from SNI and there is no SO_ORIGINAL_DST
+            // lookup available here. Never dial a bogus "unknown:443"; drop the
+            // connection instead of connecting somewhere wrong.
+            warn!(
+                "Could not extract SNI from ClientHello from {}; passing through (dropping) rather than guessing a destination",
+                peer
+            );
+            return Ok(());
+        };
 
         info!("Transparent TLS: SNI={} from {}", hostname, peer);
 
@@ -307,18 +321,24 @@ async fn handle_transparent_connection(
         let mut buf = vec![0u8; 8192];
         let n = stream.peek(&mut buf).await?;
         let request_data = std::str::from_utf8(&buf[..n]).unwrap_or("");
-        let host = request_data
+        let host_header = request_data
             .lines()
             .find(|l| l.to_lowercase().starts_with("host:"))
             .and_then(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()))
             .unwrap_or_default();
 
-        if host.is_empty() {
+        if host_header.is_empty() {
             debug!("Transparent HTTP: no Host header found, dropping");
             return Ok(());
         }
 
-        let mut upstream_stream = TcpStream::connect(format!("{}:80", host)).await?;
+        // The Host header may carry an explicit port (e.g. "example.com:8080").
+        // Parse host/port out rather than blindly appending ":80", which would
+        // otherwise produce a bogus "host:port:80" connect target.
+        let (host, port) =
+            parse_authority_host_port(&host_header, 80).unwrap_or((host_header.clone(), 80));
+
+        let mut upstream_stream = TcpStream::connect(format!("{}:{}", host, port)).await?;
         match tokio::io::copy_bidirectional(&mut stream, &mut upstream_stream).await {
             Ok(_) => {}
             Err(e) if is_closed(&e) => {}

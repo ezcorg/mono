@@ -4,7 +4,7 @@ import { createWrpcLspProvider } from "./lsp-provider";
 
 // Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`) with `rust-analyzer` +
 // `cargo` on its PATH (~/.cargo/bin). Analyzes the .ra-fixture/ host Cargo project.
-const WS = "ws://127.0.0.1:7777";
+import { WS } from "./test-ws";
 const WORKSPACE = "/Users/theo/dev/mono/src/apps/icanhaz/web/.ra-fixture";
 
 describe("rust-analyzer real analysis over wRPC", () => {

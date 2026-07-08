@@ -5,7 +5,6 @@ use cel_cxx::Activation;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
 use tracing::error;
-use wasmtime::Engine;
 use wasmtime::component::Component;
 
 use crate::events::Event;
@@ -14,9 +13,8 @@ use crate::{
     db::{Db, Insert},
     plugins::capabilities::Capability,
     wasm::{
-        Host,
         bindgen::{
-            Plugin, PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
+            PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
             witmproxy::plugin::capabilities::Capability as WitCapability,
         },
     },
@@ -79,23 +77,22 @@ impl WitmPlugin {
         Ok(self)
     }
 
-    /// Only needs the `component` column
+    /// Needs the `component` and `enabled` columns.
+    ///
+    /// Takes a shared `&Runtime` (borrowing its engine + linker) instead of
+    /// building a fresh `Runtime` (new Engine + linker) per row.
     pub async fn from_db_row(
         plugin_row: SqliteRow,
         db: &mut Db,
-        engine: &Engine,
+        runtime: &Runtime,
         env: &'static cel_cxx::Env<'static>,
     ) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
-        let component = Component::from_binary(engine, &component_bytes)?;
-        let runtime = Runtime::try_default()?;
-        let mut store = wasmtime::Store::new(engine, Host::default());
-        let instance = runtime
-            .linker
-            .instantiate_async(&mut store, &component)
-            .await?;
-        let plugin_instance = Plugin::new(&mut store, &instance)?;
+        let enabled: bool = plugin_row.try_get("enabled")?;
+        let component = Component::from_binary(&runtime.engine, &component_bytes)?;
+        let (plugin_instance, mut store) =
+            runtime.instantiate_plugin_component(&component).await?;
         let guest_result = store
             .run_concurrent(async move |store| {
                 let manifest = match plugin_instance
@@ -114,6 +111,8 @@ impl WitmPlugin {
             .await??;
 
         let mut plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes);
+        // Reflect the stored enabled flag (the manifest defaults it to `true`).
+        plugin.enabled = enabled;
         let capabilities = query(
             "
             SELECT capability, config, granted
@@ -171,16 +170,21 @@ impl WitmPlugin {
     ) -> Result<Vec<Self>> {
         let rows = query(
             "
-            SELECT component
+            SELECT component, enabled
             FROM plugins
             ",
         )
         .fetch_all(&db.pool)
         .await?;
 
+        // Reuse the caller's engine (cheap Arc clone) and build the linker once
+        // here, instead of constructing a fresh Runtime (new Engine + linker)
+        // per row inside `from_db_row`.
+        let runtime = Runtime::from_engine(engine.clone())?;
+
         let mut plugins = Vec::new();
         for row in rows {
-            match WitmPlugin::from_db_row(row, db, engine, env).await {
+            match WitmPlugin::from_db_row(row, db, &runtime, env).await {
                 Ok(plugin) => plugins.push(plugin),
                 Err(e) => {
                     error!(
@@ -207,6 +211,10 @@ impl WitmPlugin {
     }
 
     pub fn can_handle(&self, event: &dyn Event) -> bool {
+        // A globally-disabled plugin never handles events.
+        if !self.enabled {
+            return false;
+        }
         self.capabilities
             .iter()
             // Have we been granted the associated event capability?

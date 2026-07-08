@@ -9,6 +9,9 @@
 
 import { connect, requestFilesystemGrant, type Transport } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
+import { rootPath } from "./generated/workspace";
+import { createWrpcLspProvider } from "./lsp-provider";
+import { setRemoteLspProvider } from "@joinezco/codeblock";
 import { createEditor, type FileSystemOptions } from "@joinezco/markdown-editor";
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
@@ -35,6 +38,20 @@ async function open() {
         transport = await connect({ ws });
         const grant = await requestFilesystemGrant(transport, "edit a host file in the browser");
         const fs = await wrpcFilesystem(transport, grant);
+
+        // Light up rust-analyzer (on the host) for Rust files when the grant's jail
+        // is a Cargo project — open e.g. src/main.rs to get diagnostics/completions.
+        // No connection / non-Rust files → codeblock's built-in behaviour is untouched.
+        const rp = await rootPath(transport, grant);
+        if (rp.tag === "ok") {
+            setRemoteLspProvider(
+                createWrpcLspProvider({
+                    transport,
+                    workspaceRoot: rp.val,
+                    servers: { rust: { image: "rust-analyzer" } },
+                }),
+            );
+        }
 
         // Seed the file the first time so there's always something to edit.
         if (!(await fs.exists(filepath))) {

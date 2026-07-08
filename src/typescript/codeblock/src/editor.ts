@@ -314,7 +314,12 @@ const codeblockView = ViewPlugin.define((view) => {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
             await fs.writeFile(fileState.path, content).catch(console.error)
-            LSP.notifyFileChanged(fileState.path, FileChangeType.Changed);
+            // The OPEN document is now persisted → send textDocument/didSave. This is what
+            // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
+            // borrow, and other errors that don't run off the live edit buffer, and which
+            // otherwise never update until reload). We write the disk BEFORE didSave so flycheck
+            // reads current content. (didChangeWatchedFiles is for OTHER files — see below.)
+            LSP.notifyFileSaved(fileState.path, content);
 
             // Notify other views of the same file
             fileChangeBus.notify(fileState.path, content, view);

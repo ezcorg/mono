@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>icanhaz — Rust LSP demo</title>
+        <style>
+            :root { color-scheme: light dark; }
+            body { margin: 0; font: 14px ui-sans-serif, system-ui, sans-serif; }
+            #status { padding: .5rem 1rem; background: #8881; border-bottom: 1px solid #8883; }
+            #editor { height: calc(100vh - 2.6rem); }
+        </style>
+    </head>
+    <body>
+        <div id="status">loading…</div>
+        <div id="editor"></div>
+        <script type="module" src="/src/rust-demo.ts"></script>
+    </body>
+</html>

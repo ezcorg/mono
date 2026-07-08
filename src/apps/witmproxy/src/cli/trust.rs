@@ -1,29 +1,27 @@
 use crate::{cert::CertificateAuthority, config::AppConfig};
 use anyhow::Result;
-use clap::Subcommand;
+use conf::{Conf, Subcommands};
 
-#[derive(Subcommand)]
+#[derive(Subcommands)]
+#[conf(serde)]
 pub enum CaCommands {
     /// Install the root CA certificate to system trust store
-    Install {
-        /// Skip confirmation prompts
-        #[arg(short, long)]
-        yes: bool,
-        /// Show what would be done without actually doing it
-        #[arg(short = 'n', long)]
-        dry_run: bool,
-    },
+    Install(CaActionArgs),
     /// Uninstall the root CA certificate from system trust store
-    Uninstall {
-        /// Skip confirmation prompts
-        #[arg(short, long)]
-        yes: bool,
-        /// Show what would be done without actually doing it
-        #[arg(short = 'n', long)]
-        dry_run: bool,
-    },
+    Uninstall(CaActionArgs),
     /// Show the status of the root CA certificate in system trust store
     Status,
+}
+
+#[derive(Conf)]
+#[conf(serde)]
+pub struct CaActionArgs {
+    /// Skip confirmation prompts
+    #[arg(short, long)]
+    pub yes: bool,
+    /// Show what would be done without actually doing it
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
 }
 
 pub struct CaHandler {
@@ -40,12 +38,8 @@ impl CaHandler {
         let ca = CertificateAuthority::new(&self.config.tls.cert_dir).await?;
 
         match command {
-            CaCommands::Install { yes, dry_run } => {
-                ca.install_root_certificate(*yes, *dry_run).await
-            }
-            CaCommands::Uninstall { yes, dry_run } => {
-                ca.remove_root_certificate(*yes, *dry_run).await
-            }
+            CaCommands::Install(a) => ca.install_root_certificate(a.yes, a.dry_run).await,
+            CaCommands::Uninstall(a) => ca.remove_root_certificate(a.yes, a.dry_run).await,
             CaCommands::Status => ca.check_root_certificate_status().await,
         }
     }

@@ -10,8 +10,8 @@ members = [
     "src/rust/cicd",
     "src/apps/ezfilter/src-tauri",
     "src/apps/ezfilter/e2e",
-    "src/apps/icanhaz/daemon",
     "src/apps/icanhaz/host",
+    "src/apps/icanhaz/app/src-tauri",
 ]
 exclude = [
     # Vendored upstream workspace (bytecodealliance/wrpc). It defines its own
@@ -22,6 +22,10 @@ exclude = [
     # Policy components are wasm32-wasip2 guests (cdylib); keep them out of the
     # host workspace so a host-target `cargo build` never tries to compile them.
     "src/apps/icanhaz/policies",
+    # Vendored upstream workspace (cbeck88/conf-rs). Defines its own [workspace];
+    # witmproxy depends on the `conf` crate by path. Excluded so Cargo doesn't
+    # pull it (and its conf_derive/conf_extra members) into the mono workspace.
+    "src/rust/conf-rs",
 ]
 
 # Workspace-wide configuration

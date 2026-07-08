@@ -7,7 +7,7 @@ import * as wasifs from "./generated/wasi-filesystem";
 
 // A real browser webpage consuming the capability. Run against a daemon in
 // auto-consent mode: `ICANHAZ_CONSENT=auto icanhazd`.
-const WS = "ws://127.0.0.1:7777";
+import { WS } from "./test-ws";
 
 describe("icanhaz browser consumer", () => {
     it("the daemon attributes a grant to this page's real Origin", async () => {

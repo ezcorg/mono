@@ -270,4 +270,19 @@ export namespace LSP {
             });
         }
     }
+
+    /**
+     * Notify connected LSP servers that an OPEN document was saved (textDocument/didSave).
+     * This is what triggers on-save analysis — e.g. rust-analyzer's cargo-check/flycheck, the
+     * source of "cannot find ..."/borrow/type errors that do NOT run off the live edit buffer.
+     * Without it those diagnostics never update until the file is reopened.
+     */
+    export function notifyFileSaved(path: string, text?: string) {
+        for (const handle of clients.values()) {
+            handle.client.notification("textDocument/didSave", {
+                textDocument: { uri: handle.uriForPath(path) },
+                ...(text != null ? { text } : {}),
+            });
+        }
+    }
 }

@@ -24,6 +24,12 @@ use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, Buf
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 
+/// Grant-lifetime bounds for the surface: the human picks a TTL on the page, and a
+/// malformed / hostile POST is clamped into this range (the broker honours the value).
+const DEFAULT_TTL_SECS: u64 = 3600; // 1 hour
+const MIN_TTL_SECS: u64 = 60; // 1 minute
+const MAX_TTL_SECS: u64 = 7 * 24 * 3600; // 1 week
+
 /// A request awaiting the human's decision — what the approval UI displays.
 #[derive(Clone)]
 pub struct PendingRequest {
@@ -34,38 +40,63 @@ pub struct PendingRequest {
     pub summary: String,
     /// The requestor's stated reason (website-supplied — untrusted text).
     pub reason: String,
+    /// The structured capability requested — what a rich (native) surface renders as
+    /// editable controls and attenuates. The loopback page ignores it (approve-as-is).
+    pub want: crate::broker::CapabilityKind,
+}
+
+/// The human's approval, carrying an optional **attenuated** grant. `grant: None`
+/// means "approve exactly as requested" (the loopback page, which has no attenuation
+/// UI); `Some(g)` is the narrowed capability a rich surface produced — the broker
+/// clamps it to a subset of the request regardless.
+pub struct Approval {
+    pub grant: Option<crate::broker::CapabilityKind>,
+    pub remember: bool,
+    pub ttl_secs: u64,
 }
 
 struct Waiting {
     info: PendingRequest,
-    /// `None` = deny, `Some(remember)` = approve (with the "remember this site" choice).
-    decide: oneshot::Sender<Option<bool>>,
+    /// `None` = deny; `Some(Approval)` = approve (with the optional narrowed grant,
+    /// the "remember this site" choice, and the human-chosen grant lifetime).
+    decide: oneshot::Sender<Option<Approval>>,
 }
 
 /// The registry of requests awaiting a decision, shared between the broker (which
-/// parks into it) and the approval server (which resolves out of it). Also holds
-/// the approve URL, for the notification.
+/// parks into it) and whatever surface resolves out of it — the loopback page, or the
+/// native app's consent window. `notifier` is how a freshly-parked request alerts the
+/// human: the loopback surface posts an OS notification pointing at its URL; the native
+/// app shows + focuses its window (and posts a native notification).
 #[derive(Clone)]
 pub struct PendingConsent {
     inner: Arc<Mutex<HashMap<String, Waiting>>>,
-    approve_url: Arc<str>,
+    notifier: Arc<dyn Fn(&PendingRequest) + Send + Sync>,
 }
 
 impl PendingConsent {
+    /// The loopback surface: alert by posting an OS notification pointing at `approve_url`.
     pub fn new(approve_url: impl Into<Arc<str>>) -> Self {
+        let url: Arc<str> = approve_url.into();
+        Self::with_notifier(move |req| notify(req, &url))
+    }
+
+    /// A custom surface: `notifier` runs whenever a request is parked (e.g. the native
+    /// app shows its window + posts a native notification).
+    pub fn with_notifier(notifier: impl Fn(&PendingRequest) + Send + Sync + 'static) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
-            approve_url: approve_url.into(),
+            notifier: Arc::new(notifier),
         }
     }
 
-    pub fn approve_url(&self) -> &str {
-        &self.approve_url
+    /// Alert the human that `req` is waiting (invokes the configured notifier).
+    pub fn alert(&self, req: &PendingRequest) {
+        (self.notifier)(req);
     }
 
     /// Park a request and hand back the receiver the broker awaits. Resolving it
     /// (via the approval UI) delivers the human's decision.
-    pub(crate) fn park(&self, info: PendingRequest) -> oneshot::Receiver<Option<bool>> {
+    pub(crate) fn park(&self, info: PendingRequest) -> oneshot::Receiver<Option<Approval>> {
         let (tx, rx) = oneshot::channel();
         self.inner
             .lock()
@@ -79,12 +110,13 @@ impl PendingConsent {
         self.inner.lock().unwrap().remove(id);
     }
 
-    fn list(&self) -> Vec<PendingRequest> {
+    /// The requests currently awaiting a decision — what a surface renders.
+    pub fn list(&self) -> Vec<PendingRequest> {
         self.inner.lock().unwrap().values().map(|w| w.info.clone()).collect()
     }
 
     /// Deliver a decision to a parked request. Returns whether one matched.
-    pub(crate) fn resolve(&self, id: &str, decision: Option<bool>) -> bool {
+    pub fn resolve(&self, id: &str, decision: Option<Approval>) -> bool {
         match self.inner.lock().unwrap().remove(id) {
             Some(w) => {
                 let _ = w.decide.send(decision);
@@ -112,6 +144,24 @@ pub fn notify(req: &PendingRequest, approve_url: &str) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = body;
+}
+
+/// Open the approval page in the human's browser (best-effort, `open`/`xdg-open`).
+/// Called once when a backgrounded daemon starts in surface mode, so the page is
+/// already up (polling `/pending`) when a request + its notification arrive.
+pub fn open_approval_page(url: &str) {
+    let opener = if cfg!(target_os = "macos") {
+        Some("open")
+    } else if cfg!(target_os = "linux") {
+        Some("xdg-open")
+    } else {
+        None
+    };
+    if let Some(bin) = opener {
+        if let Err(err) = std::process::Command::new(bin).arg(url).spawn() {
+            tracing::debug!(?err, url, "could not open the approval page");
+        }
+    }
 }
 
 /// Serve the loopback approval UI on `listener` until cancelled. `nonce` gates the
@@ -214,18 +264,23 @@ fn decide(
     let mut id = "";
     let mut allow = false;
     let mut remember = false;
+    let mut ttl_secs = DEFAULT_TTL_SECS;
     for kv in body.split('&') {
         match kv.split_once('=') {
             Some(("id", v)) => id = v,
             Some(("allow", v)) => allow = v == "true",
             Some(("remember", v)) => remember = v == "1" || v == "true",
+            Some(("ttl", v)) => ttl_secs = v.parse().unwrap_or(DEFAULT_TTL_SECS),
             _ => {}
         }
     }
     if id.is_empty() {
         return http_status(400, "Bad Request");
     }
-    let decision = if allow { Some(remember) } else { None };
+    // Clamp the client-supplied lifetime into range (the broker honours this value).
+    let ttl_secs = ttl_secs.clamp(MIN_TTL_SECS, MAX_TTL_SECS);
+    // The loopback page approves as-requested (no attenuation UI) ⇒ `grant: None`.
+    let decision = if allow { Some(Approval { grant: None, remember, ttl_secs }) } else { None };
     if pending.resolve(id, decision) {
         http_ok("application/json", b"{\"ok\":true}".to_vec())
     } else {
@@ -303,6 +358,7 @@ const PAGE: &str = r#"<!doctype html>
   .reason { opacity: .8; margin: .3rem 0 .6rem; }
   button { font: inherit; padding: .35rem .9rem; border-radius: 8px; border: 1px solid #8886; cursor: pointer; margin-right: .5rem; }
   .yes { background: #1c7c3c; color: #fff; border-color: #1c7c3c; } .no { background: #8881; }
+  select.ttl { font: inherit; padding: .3rem; border-radius: 8px; border: 1px solid #8886; margin-right: .5rem; }
 </style></head><body>
 <h1>icanhaz <span class="dim">— pending consent</span></h1>
 <p class="dim">Requests reaching your machine. Approve only what you recognise.</p>
@@ -310,10 +366,10 @@ const PAGE: &str = r#"<!doctype html>
 <script>
 const NONCE = "__NONCE__";
 function esc(s){ const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
-async function decide(id, allow, remember){
+async function decide(id, allow, remember, ttl){
   await fetch("/decide", { method:"POST",
     headers:{ "X-Csrf": NONCE, "Content-Type":"application/x-www-form-urlencoded" },
-    body:`id=${encodeURIComponent(id)}&allow=${allow}&remember=${remember?1:0}` });
+    body:`id=${encodeURIComponent(id)}&allow=${allow}&remember=${remember?1:0}&ttl=${ttl||0}` });
   refresh();
 }
 async function refresh(){
@@ -326,13 +382,18 @@ async function refresh(){
     const div = document.createElement("div"); div.className="req";
     div.innerHTML = `<div><b>${esc(it.requester)}</b> wants <code>${esc(it.summary)}</code></div>`
       + `<div class="reason">${esc(it.reason)}</div>`;
+    const ttl = document.createElement("select"); ttl.className="ttl";
+    for (const [label, secs] of [["10 min",600],["1 hour",3600],["8 hours",28800],["1 day",86400]]){
+      const o = document.createElement("option"); o.value=secs; o.textContent="for "+label;
+      if (secs===3600) o.selected=true; ttl.append(o);
+    }
     const once = document.createElement("button"); once.className="yes"; once.textContent="Approve once";
-    once.onclick = () => decide(it.id, true, false);
+    once.onclick = () => decide(it.id, true, false, ttl.value);
     const rem = document.createElement("button"); rem.className="yes"; rem.textContent="Approve & remember";
-    rem.onclick = () => decide(it.id, true, true);
+    rem.onclick = () => decide(it.id, true, true, ttl.value);
     const no = document.createElement("button"); no.className="no"; no.textContent="Deny";
-    no.onclick = () => decide(it.id, false, false);
-    div.append(once, rem, no); list.append(div);
+    no.onclick = () => decide(it.id, false, false, 0);
+    div.append(ttl, once, rem, no); list.append(div);
   }
 }
 setInterval(refresh, 1000); refresh();
@@ -390,6 +451,10 @@ mod tests {
             requester: "https://notes.example.com".to_string(),
             summary: "terminal (your login shell)".to_string(),
             reason: "open a \"shell\"".to_string(),
+            want: crate::broker::CapabilityKind::Terminal(crate::broker::TerminalRequest {
+                shell: None,
+                jailed: false,
+            }),
         });
 
         // It shows up on the surface.
@@ -410,9 +475,12 @@ mod tests {
 
         // A legitimate decide (page nonce, same-origin) approves it, and the
         // broker's parked future resolves.
-        let r = http_post(addr, "/decide", "id=req-1&allow=true&remember=1", Some(&nonce), None).await;
+        let r = http_post(addr, "/decide", "id=req-1&allow=true&remember=1&ttl=28800", Some(&nonce), None).await;
         assert!(r.starts_with("HTTP/1.1 200"), "valid decide should 200:\n{r}");
-        assert_eq!(rx.await.unwrap(), Some(true));
+        let approval = rx.await.unwrap().expect("approved");
+        assert!(approval.grant.is_none(), "loopback approves as-requested");
+        assert!(approval.remember);
+        assert_eq!(approval.ttl_secs, 28800);
 
         // And it's gone from the surface.
         assert!(!http_get(addr, "/pending").await.contains("req-1"));

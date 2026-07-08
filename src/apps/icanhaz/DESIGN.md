@@ -82,6 +82,20 @@ Where the dialog runs depends on the device: on the Mac, icanhazd's own UI; from
 the phone, a paired-device approval (durable grants + `session.resume` cover the
 "approve once" case).
 
+**As built (`app/`).** icanhazd is now a Tauri **tray app** (`src/apps/icanhaz/app`) that embeds
+the daemon (`icanhaz_host::daemon::run`) and *is* the consent surface. A request parks in a shared
+registry (`approve::PendingConsent`) whose notifier **shows + focuses** the app window and posts a
+native notification; the Solid window renders who/what/why from the structured `capability-kind`
+and generates **scope controls** — per-path fs-rights checkboxes (clear a row to exclude it), the
+pinned process command line, a force-jailed terminal toggle — plus a TTL picker and "remember this
+site". Approve returns the **narrowed** capability; `broker::narrow` clamps it to a subset
+server-side, so the monotonic property holds even if the window is compromised. A tray badge shows
+the pending count, and an **active-grants** view lists + revokes live grants. Still aspirational
+above: the per-grant *policy-component* engine (steps 4–5, `context.escalate`) and paired-device
+(phone) approval — today's attenuator is the built-in narrowing, and approval is the Mac's own
+window. The headless `icanhazd` binary remains for tests + servers (console / loopback-page / auto
+consent).
+
 ---
 
 ## Inside the daemon (wasmtime + wRPC)

@@ -22,3 +22,6 @@
 [submodule "src/rust/wrpc"]
 	path = src/rust/wrpc
 	url = https://github.com/bytecodealliance/wrpc
+[submodule "src/rust/conf-rs"]
+	path = src/rust/conf-rs
+	url = https://github.com/cbeck88/conf-rs

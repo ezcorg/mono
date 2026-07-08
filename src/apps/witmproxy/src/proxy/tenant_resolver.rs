@@ -304,6 +304,21 @@ impl std::fmt::Display for TenantResolverKind {
     }
 }
 
+impl std::str::FromStr for TenantResolverKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ip-mapping" => Ok(TenantResolverKind::IpMapping),
+            "tailscale" => Ok(TenantResolverKind::Tailscale),
+            "header" => Ok(TenantResolverKind::Header),
+            other => Err(format!(
+                "unknown tenant resolver '{other}' (expected ip-mapping, tailscale, or header)"
+            )),
+        }
+    }
+}
+
 /// Build a boxed TenantResolver from config.
 pub fn build_resolver(
     kind: &TenantResolverKind,

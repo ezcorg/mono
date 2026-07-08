@@ -26,6 +26,12 @@ pub struct InboundContent {
     parts: Parts,
     content_type: String,
     body: Option<UnsyncBoxBody<Bytes, ErrorCode>>,
+    /// True when the body was left in its original wire form because its
+    /// `Content-Encoding` is unsupported and could not be decompressed. In this
+    /// mode the body must be forwarded untouched (so we must not strip the
+    /// `Content-Encoding`/`Content-Length` headers) and callers should skip
+    /// plugin content processing.
+    passthrough: bool,
 }
 
 impl Event for InboundContent {
@@ -73,12 +79,27 @@ impl InboundContent {
         content_type: String,
         body: UnsyncBoxBody<Bytes, ErrorCode>,
     ) -> Result<Self> {
+        // If the Content-Encoding is unrecognized we can't safely decompress the
+        // body. Rather than erroring (which would tear down the connection), fall
+        // back to passing the response through untouched: keep the original,
+        // still-encoded body and flag it so the caller skips plugin content
+        // processing and we don't strip the Content-Encoding header on the way out.
+        if matches!(parts.encoding(), ContentEncoding::Unknown) {
+            return Ok(Self {
+                parts,
+                content_type,
+                body: Some(body),
+                passthrough: true,
+            });
+        }
+
         let body = InboundContent::decompress(&parts, body)?;
 
         Ok(Self {
             parts,
             content_type,
             body: Some(body),
+            passthrough: false,
         })
     }
 
@@ -207,6 +228,13 @@ impl InboundContent {
         self.content_type.clone()
     }
 
+    /// Whether this content is being passed through untouched because its
+    /// `Content-Encoding` is unsupported. Callers should skip plugin content
+    /// processing when this is `true`.
+    pub fn is_passthrough(&self) -> bool {
+        self.passthrough
+    }
+
     pub fn body(&mut self) -> Result<Option<UnsyncBoxBody<Bytes, ErrorCode>>> {
         Ok(self.body.take())
     }
@@ -218,6 +246,7 @@ impl InboundContent {
     pub fn into_response(self) -> Result<Response<UnsyncBoxBody<Bytes, ErrorCode>>> {
         // Build the HTTP response using the parts
         // If data was taken, provide an empty body
+        let passthrough = self.passthrough;
         let body = self.body.unwrap_or_else(|| {
             use http_body_util::Empty;
             Empty::<Bytes>::new()
@@ -228,10 +257,12 @@ impl InboundContent {
         // let body = InboundContent::compress(&self.parts, body)?;
 
         let mut parts = self.parts;
-        // Content length is no longer valid after decompression/modification
-        parts.headers.remove(hyper::header::CONTENT_LENGTH);
-        // Remove content-encoding as we have decompressed the body
-        parts.headers.remove(hyper::header::CONTENT_ENCODING);
+        if !passthrough {
+            // The body was decompressed (and possibly modified), so the original
+            // Content-Length and Content-Encoding headers no longer describe it.
+            parts.headers.remove(hyper::header::CONTENT_LENGTH);
+            parts.headers.remove(hyper::header::CONTENT_ENCODING);
+        }
         Ok(Response::from_parts(parts, body))
     }
 }

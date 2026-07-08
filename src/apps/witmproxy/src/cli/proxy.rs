@@ -1,29 +1,30 @@
 use super::Services;
 use crate::config::AppConfig;
 use anyhow::Result;
-use clap::Subcommand;
+use conf::{Conf, Subcommands};
 use std::path::PathBuf;
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use tracing::error;
 use tracing::{info, warn};
 
-#[derive(Subcommand)]
+#[derive(Subcommands)]
+#[conf(serde)]
 pub enum ProxyCommands {
     /// Enable system HTTP proxy to route through witmproxy
-    Enable {
-        /// Show what would be done without actually doing it
-        #[arg(short = 'n', long)]
-        dry_run: bool,
-    },
+    Enable(ProxyDryRunArgs),
     /// Disable system HTTP proxy
-    Disable {
-        /// Show what would be done without actually doing it
-        #[arg(short = 'n', long)]
-        dry_run: bool,
-    },
+    Disable(ProxyDryRunArgs),
     /// Show current proxy status
     Status,
+}
+
+#[derive(Conf)]
+#[conf(serde)]
+pub struct ProxyDryRunArgs {
+    /// Show what would be done without actually doing it
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
 }
 
 pub struct ProxyHandler {
@@ -37,8 +38,8 @@ impl ProxyHandler {
 
     pub async fn handle(&self, command: &ProxyCommands) -> Result<()> {
         match command {
-            ProxyCommands::Enable { dry_run } => self.enable_proxy(*dry_run).await,
-            ProxyCommands::Disable { dry_run } => self.disable_proxy(*dry_run).await,
+            ProxyCommands::Enable(a) => self.enable_proxy(a.dry_run).await,
+            ProxyCommands::Disable(a) => self.disable_proxy(a.dry_run).await,
             ProxyCommands::Status => self.show_proxy_status().await,
         }
     }

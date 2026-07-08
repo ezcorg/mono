@@ -7,7 +7,7 @@ import { createEditor, type FileSystemOptions } from "@joinezco/markdown-editor"
 // rendering a real HOST file read through the wRPC filesystem adapter, gated by
 // a consented grant. Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`);
 // the grant scopes everything to the host jail.
-const WS = "ws://127.0.0.1:7777";
+import { WS } from "./test-ws";
 const FILE = "editor-demo.md";
 const BODY = "# Hello from the host\n\nEdited over wRPC.\n";
 

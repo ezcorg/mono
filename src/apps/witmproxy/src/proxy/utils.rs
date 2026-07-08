@@ -3,7 +3,7 @@ use crate::cert::{CertError, CertificateAuthority};
 use bytes::Bytes;
 use futures::TryStreamExt;
 use http_body_util::combinators::UnsyncBoxBody;
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
 use hyper::body::{Body, Incoming};
 use hyper::{Method, Request, Response, header};
 use reqwest::Certificate;
@@ -156,81 +156,19 @@ pub fn wrap_box_body(body: UnsyncBoxBody<Bytes, ErrorCode>) -> reqwest::Body {
     reqwest::Body::wrap_stream(stream)
 }
 
-pub fn convert_hyper_boxed_body_to_reqwest_request(
-    hyper_req: Request<UnsyncBoxBody<Bytes, ErrorCode>>,
+/// Shared conversion from a hyper `Request<B>` to a `reqwest::Request`.
+///
+/// The two public entry points differ only in their body type and in how that
+/// body is wrapped into a `reqwest::Body`; that difference is supplied via the
+/// `wrap` closure so the URL/method/header logic isn't duplicated.
+fn convert_hyper_request_to_reqwest<B>(
+    hyper_req: Request<B>,
     client: &reqwest::Client,
-) -> ProxyResult<reqwest::Request> {
-    let (parts, body) = hyper_req.into_parts();
-
-    let method = match parts.method {
-        Method::GET => reqwest::Method::GET,
-        Method::POST => reqwest::Method::POST,
-        Method::PUT => reqwest::Method::PUT,
-        Method::DELETE => reqwest::Method::DELETE,
-        Method::HEAD => reqwest::Method::HEAD,
-        Method::OPTIONS => reqwest::Method::OPTIONS,
-        Method::PATCH => reqwest::Method::PATCH,
-        Method::TRACE => reqwest::Method::TRACE,
-        _ => {
-            return Err(ProxyError::Generic(format!(
-                "Unsupported method: {}",
-                parts.method
-            )));
-        }
-    };
-
-    // Build the URL properly - for TLS MITM, we need to construct the full URL
-    let url = if parts.uri.scheme().is_some() {
-        // Already has scheme (absolute URI)
-        parts.uri.to_string()
-    } else {
-        // Origin form - need to construct full URL from Host header or URI authority
-        let host = parts
-            .headers
-            .get(header::HOST)
-            .and_then(|h| h.to_str().ok())
-            .or_else(|| parts.uri.authority().map(|auth| auth.as_str()))
-            .ok_or_else(|| {
-                ProxyError::Generic("Missing Host header and URI authority".to_string())
-            })?;
-
-        // TODO: fixme this to handle http vs https properly
-        let scheme = "https";
-        let path = parts
-            .uri
-            .path_and_query()
-            .map(|pq| pq.as_str())
-            .unwrap_or("/");
-
-        format!("{}://{}{}", scheme, host, path)
-    };
-
-    let mut req_builder = client.request(method, &url);
-
-    for (name, value) in parts.headers.iter() {
-        // Filter headers to prevent HTTP/2 protocol errors
-        if should_forward_header(name)
-            && let Ok(value_str) = value.to_str()
-        {
-            req_builder = req_builder.header(name.as_str(), value_str);
-        }
-    }
-
-    // Add body if present
-    if !body.is_end_stream() {
-        req_builder = req_builder.body(wrap_box_body(body));
-    }
-
-    req_builder
-        .build()
-        .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest request: {}", e)))
-}
-
-/// Convert a hyper Request to a reqwest Request
-pub fn convert_hyper_incoming_to_reqwest_request(
-    hyper_req: Request<Incoming>,
-    client: &reqwest::Client,
-) -> ProxyResult<reqwest::Request> {
+    wrap: impl FnOnce(B) -> reqwest::Body,
+) -> ProxyResult<reqwest::Request>
+where
+    B: Body,
+{
     let (parts, body) = hyper_req.into_parts();
 
     let method = match parts.method {
@@ -280,7 +218,6 @@ pub fn convert_hyper_incoming_to_reqwest_request(
 
     // Copy headers, but filter out those that can cause HTTP/2 protocol errors
     for (name, value) in parts.headers.iter() {
-        // Skip headers that are invalid in HTTP/2 or handled by reqwest
         if should_forward_header(name)
             && let Ok(value_str) = value.to_str()
         {
@@ -290,12 +227,27 @@ pub fn convert_hyper_incoming_to_reqwest_request(
 
     // Add body if present
     if !body.is_end_stream() {
-        req_builder = req_builder.body(wrap_body(body));
+        req_builder = req_builder.body(wrap(body));
     }
 
     req_builder
         .build()
         .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest request: {}", e)))
+}
+
+pub fn convert_hyper_boxed_body_to_reqwest_request(
+    hyper_req: Request<UnsyncBoxBody<Bytes, ErrorCode>>,
+    client: &reqwest::Client,
+) -> ProxyResult<reqwest::Request> {
+    convert_hyper_request_to_reqwest(hyper_req, client, wrap_box_body)
+}
+
+/// Convert a hyper Request to a reqwest Request
+pub fn convert_hyper_incoming_to_reqwest_request(
+    hyper_req: Request<Incoming>,
+    client: &reqwest::Client,
+) -> ProxyResult<reqwest::Request> {
+    convert_hyper_request_to_reqwest(hyper_req, client, wrap_body)
 }
 
 /// Convert a reqwest Response to a hyper Response with streaming body
@@ -324,34 +276,6 @@ pub async fn convert_reqwest_to_hyper_response(
     response
         .body(boxed)
         .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
-}
-
-/// Convert a Response<BoxBody<Bytes, ErrorCode>> to a Response<Full<Bytes>>
-pub async fn convert_boxbody_to_full_response(
-    response: Response<UnsyncBoxBody<Bytes, ErrorCode>>,
-) -> ProxyResult<Response<Full<Bytes>>> {
-    let (parts, body) = response.into_parts();
-
-    // Collect all body data into bytes
-    let body_bytes = body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Generic(format!("Failed to collect body data: {}", e)))?
-        .to_bytes();
-
-    // Build new response with Full<Bytes> body
-    let mut response_builder = Response::builder()
-        .status(parts.status)
-        .version(parts.version);
-
-    // Copy all headers
-    for (name, value) in parts.headers.iter() {
-        response_builder = response_builder.header(name, value);
-    }
-
-    response_builder
-        .body(Full::new(body_bytes))
-        .map_err(|e| ProxyError::Generic(format!("Failed to build response: {}", e)))
 }
 
 /// Create a configured reqwest client for upstream requests
@@ -434,7 +358,9 @@ pub async fn build_server_tls_for_host(
 
 /// Check if a header should be forwarded to avoid HTTP/2 protocol errors
 fn should_forward_header(name: &hyper::header::HeaderName) -> bool {
-    match name.as_str().to_lowercase().as_str() {
+    // `HeaderName::as_str()` is already lowercase, so match on it directly to
+    // avoid allocating a `String` per header on this hot path.
+    match name.as_str() {
         // Skip pseudo-headers (HTTP/2 specific, start with :)
         h if h.starts_with(':') => false,
         // Skip connection-specific headers that are invalid in HTTP/2

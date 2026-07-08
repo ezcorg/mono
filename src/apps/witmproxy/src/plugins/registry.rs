@@ -1,26 +1,26 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::Result;
-use bytes::Bytes;
 use cel_cxx::Env;
-use http_body::Body;
-use http_body_util::{Full, combinators::UnsyncBoxBody};
-use hyper::{Request, Response, body::Incoming};
 use tracing::{debug, info, warn};
 use wasmtime::Store;
-use wasmtime_wasi_http::p3::{
-    Request as WasiRequest, WasiHttpView, bindings::http::types::ErrorCode,
-};
+use wasmtime::component::Resource;
+use wasmtime_wasi_http::p3::{Request as WasiRequest, WasiHttpView};
 
 use crate::{
     db::{Db, Insert},
     events::{Event, connect::Connect, content::InboundContent, response::ContextualResponse},
     plugins::WitmPlugin,
     wasm::{
-        CapabilityProvider, Host, Runtime,
+        CapabilityProvider, Host, LocalStorageClient, PluginLimits, Runtime,
         bindgen::{
             Plugin, UserInput,
-            witmproxy::plugin::capabilities::{Event as WasmEvent, EventKind},
+            witmproxy::plugin::capabilities::{
+                ContextualResponse as WasiContextualResponse, Event as WasmEvent, EventKind,
+                RequestContext, TimerContext,
+            },
         },
     },
 };
@@ -30,27 +30,10 @@ pub struct PluginRegistry {
     pub db: Db,
     pub runtime: Runtime,
     env: &'static Env<'static>,
-}
-
-/// Result of handling a request through the plugin chain.
-/// Omits any internal WASI types, only exposes HTTP types.
-pub enum HostHandleRequestResult<T = Incoming>
-where
-    T: Body<Data = Bytes> + Send + Sync + 'static,
-{
-    None,
-    Noop(Request<T>),
-    Request(Request<UnsyncBoxBody<Bytes, ErrorCode>>),
-    Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
-}
-
-pub enum HostHandleResponseResult<T = Full<Bytes>>
-where
-    T: Body<Data = Bytes> + Send + Sync + 'static,
-{
-    None,
-    Noop(Response<T>),
-    Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
+    /// One persistent local-storage client per plugin id, so `set` survives
+    /// across events (a fresh `Store` is created per event for isolation).
+    /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
+    local_storage: Mutex<HashMap<String, LocalStorageClient>>,
 }
 
 impl WasmEvent {
@@ -66,6 +49,56 @@ impl WasmEvent {
     }
 }
 
+/// Signals how the plugin chain should proceed after one plugin runs.
+enum GuestStep {
+    /// Continue the chain with this event (guest-produced or recovered).
+    Next(Box<dyn Event>),
+    /// A timer plugin returned None (side-effect only); stop the chain.
+    StopTimer,
+}
+
+/// A lightweight snapshot of the in-flight event, captured BEFORE handing it to
+/// the guest, so the *unmodified* event can be rebuilt from the store if the
+/// guest fails (fail-open recovery). Holds only resource reps + non-resource
+/// aux data.
+enum EventRecovery {
+    Request(u32),
+    Response { rep: u32, request: RequestContext },
+    InboundContent(u32),
+    Timer(u64),
+}
+
+impl EventRecovery {
+    fn capture(ev: &WasmEvent) -> Self {
+        match ev {
+            WasmEvent::Request(r) => EventRecovery::Request(r.rep()),
+            WasmEvent::Response(r) => EventRecovery::Response {
+                rep: r.response.rep(),
+                request: r.request.clone(),
+            },
+            WasmEvent::InboundContent(c) => EventRecovery::InboundContent(c.rep()),
+            WasmEvent::Timer(ctx) => EventRecovery::Timer(ctx.timestamp),
+        }
+    }
+
+    fn rebuild(self, store: &mut Store<Host>) -> Result<Box<dyn Event>> {
+        let ev = match self {
+            EventRecovery::Request(rep) => WasmEvent::Request(Resource::new_own(rep)),
+            EventRecovery::Response { rep, request } => {
+                WasmEvent::Response(WasiContextualResponse {
+                    request,
+                    response: Resource::new_own(rep),
+                })
+            }
+            EventRecovery::InboundContent(rep) => {
+                WasmEvent::InboundContent(Resource::new_own(rep))
+            }
+            EventRecovery::Timer(ts) => WasmEvent::Timer(TimerContext { timestamp: ts }),
+        };
+        PluginRegistry::wasm_event_into_boxed(store, ev)
+    }
+}
+
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
         let env = WasmEvent::register(Env::builder().with_standard(true))?.build()?;
@@ -78,7 +111,29 @@ impl PluginRegistry {
             db,
             runtime,
             env,
+            local_storage: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Set the per-plugin resource limits enforced during guest execution.
+    /// A value of `0` for any limit disables that dimension (unlimited).
+    pub fn set_limits(&mut self, max_fuel: u64, max_memory_mb: u64, timeout_ms: u64) {
+        self.runtime.limits = PluginLimits {
+            max_fuel,
+            max_memory_mb,
+            timeout_ms,
+        };
+    }
+
+    /// Get (or lazily create) the persistent local-storage client for a plugin.
+    fn local_storage_for(&self, plugin_id: &str) -> LocalStorageClient {
+        let mut map = self
+            .local_storage
+            .lock()
+            .expect("local_storage mutex poisoned");
+        map.entry(plugin_id.to_string())
+            .or_insert_with(LocalStorageClient::new)
+            .clone()
     }
 
     pub fn plugins(&self) -> &HashMap<String, WitmPlugin> {
@@ -114,13 +169,8 @@ impl PluginRegistry {
     ) -> Result<WitmPlugin> {
         let component =
             wasmtime::component::Component::from_binary(&self.runtime.engine, &component_bytes)?;
-        let mut store = wasmtime::Store::new(&self.runtime.engine, Host::default());
-        let instance = self
-            .runtime
-            .linker
-            .instantiate_async(&mut store, &component)
-            .await?;
-        let plugin_instance = Plugin::new(&mut store, &instance)?;
+        let (plugin_instance, mut store) =
+            self.runtime.instantiate_plugin_component(&component).await?;
         let guest_result = store
             .run_concurrent(async move |store| {
                 let manifest = match plugin_instance
@@ -233,6 +283,130 @@ impl PluginRegistry {
 
     fn new_store(&self) -> Store<Host> {
         self.runtime.new_store()
+    }
+
+    /// Run one plugin's `create` + `handle` against `store`, enforcing the
+    /// configured fuel/timeout limits and FAILING OPEN: on any create/handle
+    /// error, fuel/memory exhaustion, or timeout the plugin is skipped and the
+    /// (unmodified) event continues down the chain.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_plugin_in_store(
+        &self,
+        plugin_id: &str,
+        plugin_instance: Plugin,
+        mut store: Store<Host>,
+        event_data: WasmEvent,
+        cap_resource: Resource<CapabilityProvider>,
+        config: Vec<UserInput>,
+        kind: EventKind,
+    ) -> Result<(GuestStep, Store<Host>)> {
+        // Apply the per-call fuel budget (the memory cap, if any, is already
+        // installed on the store). A `0` limit means unbounded.
+        self.runtime.apply_call_limits(&mut store);
+        let timeout_ms = self.runtime.limits.timeout_ms;
+
+        // Snapshot enough to rebuild the *unmodified* event from the store if the
+        // guest fails, so the chain can continue (fail open).
+        let recovery = EventRecovery::capture(&event_data);
+
+        let guest = store.run_concurrent(async move |store| {
+            // Create the plugin resource with the user-supplied configuration.
+            let plugin_resource = match plugin_instance
+                .witmproxy_plugin_witm_plugin()
+                .plugin()
+                .call_create(store, config)
+                .await?
+            {
+                Ok(resource) => resource,
+                Err(e) => {
+                    // A configure error is a plugin-level failure: surface it as
+                    // an error so the caller fails open. (Previously this
+                    // silently returned None and aborted the whole request.)
+                    return Err(anyhow::anyhow!(
+                        "plugin create returned configure error: {e:?}"
+                    ));
+                }
+            };
+
+            // Handle the event using the plugin resource.
+            let result = plugin_instance
+                .witmproxy_plugin_witm_plugin()
+                .plugin()
+                .call_handle(store, plugin_resource, event_data, cap_resource)
+                .await?;
+            Ok::<Option<WasmEvent>, anyhow::Error>(result)
+        });
+
+        // Enforce the wall-clock timeout (`0` == no timeout).
+        let outcome: Result<Option<WasmEvent>> = if timeout_ms > 0 {
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), guest).await {
+                Ok(Ok(inner)) => inner,
+                Ok(Err(e)) => Err(e.into()),
+                Err(_elapsed) => Err(anyhow::anyhow!(
+                    "plugin execution exceeded timeout of {timeout_ms}ms"
+                )),
+            }
+        } else {
+            match guest.await {
+                Ok(inner) => inner,
+                Err(e) => Err(e.into()),
+            }
+        };
+
+        match outcome {
+            Ok(Some(new_event_data)) => {
+                let event = Self::wasm_event_into_boxed(&mut store, new_event_data)?;
+                Ok((GuestStep::Next(event), store))
+            }
+            // Timer events may legitimately return None (side-effect only).
+            Ok(None) if kind == EventKind::Timer => Ok((GuestStep::StopTimer, store)),
+            Ok(None) => {
+                warn!(
+                    target: "plugins",
+                    plugin_id = %plugin_id,
+                    event_kind = kind.to_string(),
+                    "Plugin returned no event data; failing open and continuing with the unmodified event"
+                );
+                let event = recovery.rebuild(&mut store)?;
+                Ok((GuestStep::Next(event), store))
+            }
+            Err(e) => {
+                warn!(
+                    target: "plugins",
+                    plugin_id = %plugin_id,
+                    event_kind = kind.to_string(),
+                    error = %e,
+                    "Plugin execution failed (error/limit/timeout); failing open and continuing with the unmodified event"
+                );
+                let event = recovery.rebuild(&mut store)?;
+                Ok((GuestStep::Next(event), store))
+            }
+        }
+    }
+
+    /// Extract a returned guest [`WasmEvent`] back into an owned, store-independent
+    /// [`Event`] for the next iteration of the plugin chain.
+    fn wasm_event_into_boxed(store: &mut Store<Host>, ev: WasmEvent) -> Result<Box<dyn Event>> {
+        Ok(match ev {
+            WasmEvent::Request(r) => {
+                let req = store.data_mut().http().table.delete(r)?;
+                Box::new(req)
+            }
+            WasmEvent::Response(r) => {
+                let response = store.data_mut().http().table.delete(r.response)?;
+                Box::new(ContextualResponse {
+                    request: r.request,
+                    response,
+                })
+            }
+            WasmEvent::InboundContent(c) => {
+                let content = store.data_mut().table.delete(c)?;
+                Box::new(content)
+            }
+            WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
+                timestamp: ctx.timestamp,
+            }),
+        })
     }
 
     pub fn find_first_unexecuted_plugin(
@@ -361,7 +535,8 @@ impl PluginRegistry {
                 "Executing plugin"
             );
 
-            executed_plugins.insert(plugin.id());
+            let plugin_id = plugin.id();
+            executed_plugins.insert(plugin_id.clone());
             let kind = current_event.kind();
             let component = if let Some(c) = &plugin.component {
                 c
@@ -393,100 +568,34 @@ impl PluginRegistry {
             store = component_store;
             let event_data = current_event.into_event_data(&mut store)?;
 
-            // Build the capability provider based on the plugin's granted capabilities
-            let provider = CapabilityProvider::from(&plugin.capabilities);
+            // Build the capability provider, handing the plugin its PERSISTENT
+            // local-storage client so writes survive across events.
+            let provider = CapabilityProvider::build(
+                &plugin.capabilities,
+                Some(self.local_storage_for(&plugin_id)),
+            );
             let cap_resource = store.data_mut().table.push(provider)?;
             let config = plugin.configuration.clone();
 
-            let guest_result = store
-                .run_concurrent(async move |store| {
-                    // Create the plugin resource with user-supplied configuration
-                    let create_result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_create(store, config)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling plugin create"
-                            );
-                            return Err(e);
-                        }
-                    };
-
-                    let plugin_resource = match create_result {
-                        Ok(resource) => resource,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = ?e,
-                                "Plugin create returned configure error"
-                            );
-                            return Ok(None);
-                        }
-                    };
-
-                    // Handle the event using the plugin resource
-                    let result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_handle(store, plugin_resource, event_data, cap_resource)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling handle"
-                            );
-                            return Err(e);
-                        }
-                    };
-                    Ok(result)
-                })
-                .await??;
-            match guest_result {
-                Some(new_event_data) => {
-                    // Create a new event from the returned Event for the next iteration
-                    current_event = match new_event_data {
-                        WasmEvent::Request(r) => {
-                            let req = store.data_mut().http().table.delete(r)?;
-                            Box::new(req)
-                        }
-                        WasmEvent::Response(r) => {
-                            let response = store.data_mut().http().table.delete(r.response)?;
-                            let request_ctx = r.request;
-                            Box::new(ContextualResponse {
-                                request: request_ctx,
-                                response,
-                            })
-                        }
-                        WasmEvent::InboundContent(c) => {
-                            let content = store.data_mut().table.delete(c)?;
-                            Box::new(content)
-                        }
-                        WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
-                            timestamp: ctx.timestamp,
-                        }),
-                    };
-                }
-                None => {
-                    // Timer events may legitimately return None (side-effect only)
-                    if kind == EventKind::Timer {
-                        debug!("Timer plugin returned None; stopping timer chain");
-                        let timer_event = crate::events::timer::TimerEvent::now();
-                        let event_data = Box::new(timer_event).into_event_data(&mut store)?;
-                        return Ok((event_data, store));
-                    }
-                    anyhow::bail!("Plugin returned no event data; cannot continue processing");
+            let (step, next_store) = self
+                .run_plugin_in_store(
+                    &plugin_id,
+                    plugin_instance,
+                    store,
+                    event_data,
+                    cap_resource,
+                    config,
+                    kind,
+                )
+                .await?;
+            store = next_store;
+            match step {
+                GuestStep::Next(event) => current_event = event,
+                GuestStep::StopTimer => {
+                    debug!("Timer plugin returned None; stopping timer chain");
+                    let timer_event = crate::events::timer::TimerEvent::now();
+                    let event_data = Box::new(timer_event).into_event_data(&mut store)?;
+                    return Ok((event_data, store));
                 }
             }
         }
@@ -497,181 +606,6 @@ impl PluginRegistry {
         Ok((event_data, store))
     }
 
-    /// Handle an event with tenant-specific plugin filtering and configuration.
-    /// Uses `effective_set` to filter plugins and `tenant_config` to override per-plugin config.
-    #[tracing::instrument(skip(self, event, effective_set, tenant_config), fields(event_kind = ?event.kind()))]
-    pub async fn handle_event_for_tenant(
-        &self,
-        event: Box<dyn Event>,
-        effective_set: &HashSet<String>,
-        tenant_config: &[crate::db::tenants::TenantPluginConfig],
-    ) -> Result<(WasmEvent, Store<Host>)> {
-        let any_plugins = self
-            .plugins
-            .values()
-            .any(|p| effective_set.contains(&p.id()) && p.can_handle(&*event));
-        if !any_plugins {
-            debug!(
-                "No effective tenant plugins for event of kind: {:?}",
-                event.kind()
-            );
-            let mut store = self.new_store();
-            let event_data = event.into_event_data(&mut store)?;
-            return Ok((event_data, store));
-        }
-
-        let mut current_event = event;
-        let mut store = self.new_store();
-        let mut executed_plugins = HashSet::new();
-
-        while let Some(plugin) =
-            { self.find_first_unexecuted_in_set(&*current_event, &executed_plugins, effective_set) }
-        {
-            tracing::info!(
-                plugin.id = %plugin.id(),
-                plugin.namespace = %plugin.namespace,
-                plugin.name = %plugin.name,
-                plugin.version = %plugin.version,
-                scope = "tenant",
-                "Executing plugin (tenant-scoped)"
-            );
-            debug!(
-                "Executing handle_event for plugin: {} (tenant-scoped)",
-                plugin.id()
-            );
-
-            executed_plugins.insert(plugin.id());
-            let kind = current_event.kind();
-            let component = if let Some(c) = &plugin.component {
-                c
-            } else {
-                warn!(
-                    target: "plugins",
-                    plugin_id = %plugin.id(),
-                    event_kind = kind.to_string(),
-                    "Plugin component missing; skipping"
-                );
-                continue;
-            };
-
-            let (plugin_instance, component_store) =
-                match self.runtime.instantiate_plugin_component(component).await {
-                    Ok(pi) => pi,
-                    Err(e) => {
-                        warn!(
-                            target: "plugins",
-                            plugin_id = %plugin.id(),
-                            event_kind = kind.to_string(),
-                            error = %e,
-                            "Failed to instantiate plugin component; skipping"
-                        );
-                        continue;
-                    }
-                };
-
-            store = component_store;
-            let event_data = current_event.into_event_data(&mut store)?;
-
-            let provider = CapabilityProvider::from(&plugin.capabilities);
-            let cap_resource = store.data_mut().table.push(provider)?;
-            // Use tenant-resolved config
-            let config = self.resolve_config(plugin, tenant_config);
-
-            let guest_result = store
-                .run_concurrent(async move |store| {
-                    let create_result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_create(store, config)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling plugin create"
-                            );
-                            return Err(e);
-                        }
-                    };
-
-                    let plugin_resource = match create_result {
-                        Ok(resource) => resource,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = ?e,
-                                "Plugin create returned configure error"
-                            );
-                            return Ok(None);
-                        }
-                    };
-
-                    let result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_handle(store, plugin_resource, event_data, cap_resource)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling handle"
-                            );
-                            return Err(e);
-                        }
-                    };
-                    Ok(result)
-                })
-                .await??;
-
-            match guest_result {
-                Some(new_event_data) => {
-                    current_event = match new_event_data {
-                        WasmEvent::Request(r) => {
-                            let req = store.data_mut().http().table.delete(r)?;
-                            Box::new(req)
-                        }
-                        WasmEvent::Response(r) => {
-                            let response = store.data_mut().http().table.delete(r.response)?;
-                            let request_ctx = r.request;
-                            Box::new(ContextualResponse {
-                                request: request_ctx,
-                                response,
-                            })
-                        }
-                        WasmEvent::InboundContent(c) => {
-                            let content = store.data_mut().table.delete(c)?;
-                            Box::new(content)
-                        }
-                        WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
-                            timestamp: ctx.timestamp,
-                        }),
-                    };
-                }
-                None => {
-                    if kind == EventKind::Timer {
-                        debug!("Timer plugin returned None; stopping timer chain");
-                        let timer_event = crate::events::timer::TimerEvent::now();
-                        let event_data = Box::new(timer_event).into_event_data(&mut store)?;
-                        return Ok((event_data, store));
-                    }
-                    anyhow::bail!("Plugin returned no event data; cannot continue processing");
-                }
-            }
-        }
-
-        let kind = current_event.kind();
-        let event_data = current_event.into_event_data(&mut store)?;
-        kind.validate_output(&event_data)?;
-        Ok((event_data, store))
-    }
 }
 
 #[cfg(test)]

@@ -58,11 +58,14 @@ export function createWrpcLspProvider(config: WrpcLspConfig): RemoteLspProvider 
             if (!spec) return null;
 
             const args = spec.args ?? [];
-            // The grant pins the server's image; caller-chosen argv only if needed.
+            // The grant pins the server's image AND its argv — the human sees the exact
+            // command at consent. We don't need to vary argv at spawn, so `guest-chooses-
+            // argv` stays false and the pinned `args` run verbatim.
             const grant = await requestProcessGrant(
                 config.transport,
                 spec.image,
-                args.length > 0,
+                args,
+                false,
                 `language server for ${opts.language} (${spec.image})`,
             );
             const session = await spawn(config.transport, grant, args);

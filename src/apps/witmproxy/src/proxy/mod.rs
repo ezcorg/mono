@@ -42,12 +42,32 @@ pub mod transparent;
 mod utils;
 pub use utils::{
     ProxyError, ProxyResult, UpstreamClient, build_server_tls_for_host, client,
-    convert_boxbody_to_full_response, convert_hyper_incoming_to_reqwest_request,
-    convert_reqwest_to_hyper_response, is_closed, parse_authority_host_port, strip_proxy_headers,
+    convert_hyper_incoming_to_reqwest_request, convert_reqwest_to_hyper_response, is_closed,
+    parse_authority_host_port, strip_proxy_headers,
 };
 
 #[cfg(test)]
 mod tests;
+
+/// Build a plaintext `Response` with the given status and body.
+///
+/// Centralizes the `Response::builder().status(..).body(Full::new(..)..boxed_unsync())`
+/// construction used throughout this module and removes the inconsistent
+/// `unwrap()`/`expect()` calls: the builder can only fail here if given an invalid
+/// status or header, and we set neither, so the `expect` is unreachable.
+fn plain_response(
+    status: StatusCode,
+    msg: impl Into<Bytes>,
+) -> Response<UnsyncBoxBody<Bytes, ErrorCode>> {
+    Response::builder()
+        .status(status)
+        .body(
+            Full::new(msg.into())
+                .map_err(|_| ErrorCode::InternalError(Some("conversion error".to_string())))
+                .boxed_unsync(),
+        )
+        .expect("plain_response builder cannot fail with a valid status and static body")
+}
 
 #[derive(Clone)]
 pub struct ProxyServer {
@@ -304,12 +324,10 @@ impl ProxyServer {
                 .unwrap_or_default();
             debug!("CONNECT request authority: {}", authority);
             if authority.is_empty() {
-                let resp = Response::builder().status(StatusCode::BAD_REQUEST).body(
-                    Full::new(Bytes::from("CONNECT missing authority"))
-                        .map_err(|_| ErrorCode::InternalError(Some("conversion error".to_string())))
-                        .boxed_unsync(),
-                )?;
-                return Ok::<_, ProxyError>(resp);
+                return Ok::<_, ProxyError>(plain_response(
+                    StatusCode::BAD_REQUEST,
+                    "CONNECT missing authority",
+                ));
             }
 
             // If this CONNECT is targeting our own management server (matched
@@ -393,11 +411,7 @@ impl ProxyServer {
             }
 
             // Return 200 Connection Established for CONNECT
-            return Ok(Response::builder().status(StatusCode::OK).body(
-                Full::new(Bytes::new())
-                    .map_err(|_| ErrorCode::InternalError(Some("conversion error".to_string())))
-                    .boxed_unsync(),
-            )?);
+            return Ok(plain_response(StatusCode::OK, Bytes::new()));
         }
 
         // ----- Plain HTTP proxying (request line is absolute-form from clients) -----
@@ -466,29 +480,16 @@ pub(crate) async fn perform_upstream(
                 }
                 Err(err) => {
                     error!("Failed to convert response: {}", err);
-                    Response::builder()
-                        .status(StatusCode::BAD_GATEWAY)
-                        .body(
-                            Full::new(Bytes::from("Failed to convert upstream response"))
-                                .map_err(|_| {
-                                    ErrorCode::InternalError(Some("conversion error".to_string()))
-                                })
-                                .boxed_unsync(),
-                        )
-                        .unwrap()
+                    plain_response(
+                        StatusCode::BAD_GATEWAY,
+                        "Failed to convert upstream response",
+                    )
                 }
             }
         }
         Err(err) => {
             error!("Upstream request failed with detailed error: {:?}", err);
-            Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(
-                    Full::new(Bytes::from(err.to_string()))
-                        .map_err(|_| ErrorCode::InternalError(Some("conversion error".to_string())))
-                        .boxed_unsync(),
-                )
-                .unwrap()
+            plain_response(StatusCode::BAD_GATEWAY, err.to_string())
         }
     }
 }
@@ -595,18 +596,19 @@ where
                 } else {
                     let request_result = convert_hyper_incoming_to_reqwest_request(req, &upstream);
                     match request_result {
-                        Ok(rq) => return Ok(perform_upstream(&upstream, rq).await),
-                        Err(err) => {
-                            return Response::builder().status(StatusCode::BAD_REQUEST).body(
-                                Full::new(Bytes::from(format!(
-                                    "Failed to convert request: {}",
-                                    err
-                                )))
-                                .map_err(|_| {
-                                    ErrorCode::InternalError(Some("conversion error".to_string()))
-                                })
-                                .boxed_unsync(),
+                        // Annotating the error type here pins the whole service
+                        // closure's return type to `hyper::http::Error` now that the
+                        // other arms build responses via `plain_response`.
+                        Ok(rq) => {
+                            return Ok::<_, hyper::http::Error>(
+                                perform_upstream(&upstream, rq).await,
                             );
+                        }
+                        Err(err) => {
+                            return Ok(plain_response(
+                                StatusCode::BAD_REQUEST,
+                                format!("Failed to convert request: {}", err),
+                            ));
                         }
                     }
                 };
@@ -619,60 +621,70 @@ where
 
                 let upstream_start = std::time::Instant::now();
                 let initial_response = match request_event_result {
-                    Err(e) => Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(
-                            Full::new(Bytes::from(format!("Plugin event handling error: {}", e)))
-                                .map_err(|_| {
-                                    ErrorCode::InternalError(Some("conversion error".to_string()))
-                                })
-                                .boxed_unsync(),
-                        )
-                        .expect("Could not construct error Response"),
+                    Err(e) => plain_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Plugin event handling error: {}", e),
+                    ),
                     Ok((event_data, mut store)) => match event_data {
                         WasmEvent::Request(rq) => {
-                            // TODO: no unwraps
-                            let rq = store.data_mut().http().table.delete(rq).unwrap();
+                            let rq = match store.data_mut().http().table.delete(rq) {
+                                Ok(rq) => rq,
+                                Err(e) => {
+                                    error!("Failed to take request from plugin table: {}", e);
+                                    return Ok(plain_response(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Failed to process plugin request",
+                                    ));
+                                }
+                            };
                             request_ctx = CelRequest::from(&rq);
-                            let (rq, _io) = rq.into_http(store, async { Ok(()) }).unwrap();
+                            let (rq, _io) = match rq.into_http(store, async { Ok(()) }) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    error!("Failed to convert plugin request to http: {}", e);
+                                    return Ok(plain_response(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Failed to process plugin request",
+                                    ));
+                                }
+                            };
 
                             let rq: Result<reqwest::Request, ProxyError> =
                                 convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
                             match rq {
                                 Ok(rq) => perform_upstream(&upstream, rq).await,
-                                Err(err) => Response::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .body(
-                                        Full::new(Bytes::from(format!(
-                                            "Failed to convert request: {}",
-                                            err
-                                        )))
-                                        .map_err(|_| {
-                                            ErrorCode::InternalError(Some(
-                                                "conversion error".to_string(),
-                                            ))
-                                        })
-                                        .boxed_unsync(),
-                                    )
-                                    .unwrap(),
+                                Err(err) => plain_response(
+                                    StatusCode::BAD_REQUEST,
+                                    format!("Failed to convert request: {}", err),
+                                ),
                             }
                         }
                         WasmEvent::Response(WasiContextualResponse { response, .. }) => {
-                            let response = store.data_mut().http().table.delete(response).unwrap();
-                            response.into_http(store, async { Ok(()) }).unwrap()
+                            let response = match store.data_mut().http().table.delete(response) {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    error!("Failed to take response from plugin table: {}", e);
+                                    return Ok(plain_response(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Failed to process plugin response",
+                                    ));
+                                }
+                            };
+                            match response.into_http(store, async { Ok(()) }) {
+                                Ok(response) => response,
+                                Err(e) => {
+                                    error!("Failed to convert plugin response to http: {}", e);
+                                    return Ok(plain_response(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Failed to process plugin response",
+                                    ));
+                                }
+                            }
                         }
-                        _ => Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(
-                                Full::new(Bytes::from("Unexpected event data type from plugin"))
-                                    .map_err(|_| {
-                                        ErrorCode::InternalError(Some(
-                                            "conversion error".to_string(),
-                                        ))
-                                    })
-                                    .boxed_unsync(),
-                            )
-                            .expect("Could not construct error Response"),
+                        _ => plain_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Unexpected event data type from plugin",
+                        ),
                     },
                 };
 
@@ -710,41 +722,31 @@ where
                                 (response, store)
                             }
                             _ => {
-                                return Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(
-                                        Full::new(Bytes::from(
-                                            "Unexpected event data type from plugin",
-                                        ))
-                                        .map_err(|_| {
-                                            ErrorCode::InternalError(Some(
-                                                "conversion error".to_string(),
-                                            ))
-                                        })
-                                        .boxed_unsync(),
-                                    );
+                                return Ok(plain_response(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "Unexpected event data type from plugin",
+                                ));
                             }
                         },
                         Err(e) => {
                             error!("Response event handling error: {}", e);
-                            return Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(
-                                    Full::new(Bytes::from(format!(
-                                        "Plugin response event handling error: {}",
-                                        e
-                                    )))
-                                    .map_err(|_| {
-                                        ErrorCode::InternalError(Some(
-                                            "conversion error".to_string(),
-                                        ))
-                                    })
-                                    .boxed_unsync(),
-                                );
+                            return Ok(plain_response(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("Plugin response event handling error: {}", e),
+                            ));
                         }
                     };
                     let registry = registry.read().await;
-                    let response = store.data_mut().http().table.delete(response).unwrap();
+                    let response = match store.data_mut().http().table.delete(response) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("Failed to take response from plugin table: {}", e);
+                            return Ok(plain_response(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to process plugin response",
+                            ));
+                        }
+                    };
                     let content_type = response.content_type();
 
                     // Check if this response should have content that plugins should process
@@ -757,17 +759,43 @@ where
                     );
 
                     debug!("Content type for InboundContent: {}", content_type);
-                    let response = response.into_http(&mut store, async { Ok(()) }).unwrap();
+                    let response = match response.into_http(&mut store, async { Ok(()) }) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("Failed to convert plugin response to http: {}", e);
+                            return Ok(plain_response(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to process plugin response",
+                            ));
+                        }
+                    };
                     let (parts, body) = response.into_parts();
-                    let content = InboundContent::new(parts, content_type.clone(), body).unwrap();
+                    let content = match InboundContent::new(parts, content_type.clone(), body) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("Failed to build inbound content: {}", e);
+                            return Ok(plain_response(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Failed to process response content",
+                            ));
+                        }
+                    };
                     // Skip content event processing if:
-                    // 1. Content-type is unknown (no Content-Type header)
-                    // 2. Response status indicates content should not be processed by plugins
-                    //    (only 2xx success responses are processed, excluding 204 No Content)
-                    if content_type.eq("unknown") || !should_process_content {
+                    // 1. The body was passed through untouched because its
+                    //    Content-Encoding is unsupported (forward it unmodified
+                    //    rather than tearing down the connection).
+                    // 2. Content-type is unknown (no Content-Type header).
+                    // 3. Response status indicates content should not be processed by
+                    //    plugins (only 2xx success responses, excluding 204 No Content).
+                    if content.is_passthrough()
+                        || content_type.eq("unknown")
+                        || !should_process_content
+                    {
                         debug!(
-                            "Skipping InboundContent event processing (content_type={}, should_process_content={})",
-                            content_type, should_process_content
+                            "Skipping InboundContent event processing (passthrough={}, content_type={}, should_process_content={})",
+                            content.is_passthrough(),
+                            content_type,
+                            should_process_content
                         );
                         (content, None)
                     } else {
@@ -777,7 +805,16 @@ where
                             content_type
                         );
                         let start_handle = std::time::Instant::now();
-                        let (event, mut store) = registry.handle_event(content).await.unwrap();
+                        let (event, mut store) = match registry.handle_event(content).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                error!("InboundContent event handling error: {}", e);
+                                return Ok(plain_response(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    format!("Plugin content event handling error: {}", e),
+                                ));
+                            }
+                        };
                         debug!(
                             "InboundContent event handled in {:?}",
                             start_handle.elapsed()
@@ -785,24 +822,24 @@ where
 
                         match event {
                             WasmEvent::InboundContent(content_resource) => {
-                                let content =
-                                    store.data_mut().table.delete(content_resource).unwrap();
+                                let content = match store.data_mut().table.delete(content_resource)
+                                {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        error!("Failed to take content from plugin table: {}", e);
+                                        return Ok(plain_response(
+                                            StatusCode::INTERNAL_SERVER_ERROR,
+                                            "Failed to process response content",
+                                        ));
+                                    }
+                                };
                                 (content, Some(store))
                             }
                             _ => {
-                                return Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(
-                                        Full::new(Bytes::from(
-                                            "Unexpected event data type from plugin",
-                                        ))
-                                        .map_err(|_| {
-                                            ErrorCode::InternalError(Some(
-                                                "conversion error".to_string(),
-                                            ))
-                                        })
-                                        .boxed_unsync(),
-                                    );
+                                return Ok(plain_response(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "Unexpected event data type from plugin",
+                                ));
                             }
                         }
                     }
@@ -847,18 +884,10 @@ where
                     }
                     Err(err) => {
                         error!("Error getting streaming response: {}", err);
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(
-                                http_body_util::Full::new(Bytes::from(format!(
-                                    "Failed to get streaming response: {}",
-                                    err
-                                )))
-                                .map_err(|_| {
-                                    ErrorCode::InternalError(Some("conversion error".to_string()))
-                                })
-                                .boxed_unsync(),
-                            )
+                        Ok(plain_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Failed to get streaming response: {}", err),
+                        ))
                     }
                 }
             }

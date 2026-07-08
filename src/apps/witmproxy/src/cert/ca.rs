@@ -130,6 +130,15 @@ impl CertificateAuthority {
         fs::write(cert_path, cert_pem).await?;
         fs::write(key_path, key_pem).await?;
 
+        // The CA private key can mint certificates trusted by the user's browser,
+        // so restrict it to the owner (0o600) — otherwise any other local user
+        // could read it and transparently MITM the victim's HTTPS traffic.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
         info!("Root certificate saved to {:?}", cert_path);
         Ok(())
     }

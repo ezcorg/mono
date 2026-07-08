@@ -35,7 +35,10 @@ interface types {
   record endpoint       { host: string, lo-port: u16, hi-port: u16, proto: transport }
   enum   transport      { tcp, udp }
 
-  record process-request { image: string, guest-chooses-argv: bool }
+  /// `args` is the argv (after argv[0]) the grant pins — shown to the human at
+  /// consent and run verbatim, unless `guest-chooses-argv` lets the caller override
+  /// it at spawn time.
+  record process-request { image: string, args: list<string>, guest-chooses-argv: bool }
 
   /// Open an interactive shell. `jailed` requests a sandboxed shell; clearing it
   /// asks for the *real* host shell — which the daemon may still refuse.

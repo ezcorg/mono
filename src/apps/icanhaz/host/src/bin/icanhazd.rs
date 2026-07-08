@@ -1,12 +1,13 @@
-//! icanhazd (skeleton) — serve the NoCap surface (the consent **broker** plus the
-//! `fs-lite` and **terminal** capabilities) over BOTH WebTransport (QUIC, the
-//! primary browser transport) and WebSocket (the fallback), so any browser can
-//! request a grant and exercise a consented capability over a real socket.
+//! icanhazd — serve the NoCap surface (the consent **broker** plus the real
+//! `wasi:filesystem`, **terminal**, **process**, **workspace**, and **watch**
+//! capabilities) over BOTH WebTransport (QUIC, the primary browser transport) and
+//! WebSocket (the fallback), so any browser can request a grant and exercise a
+//! consented capability over a real socket.
 //!
 //! ```text
-//! browser ──WebTransport/QUIC─┐                 ┌─ broker  (consent → grant token)
-//!                             ├─▶ icanhazd ──▶──┤─ fs-lite (policy membrane → raw fs)
-//! browser ──WebSocket─────────┘                 └─ terminal (grant-gated PTY)
+//! browser ──WebTransport/QUIC─┐                 ┌─ broker   (consent → grant token)
+//!                             ├─▶ icanhazd ──▶──┤─ wasi:filesystem · terminal · process
+//! browser ──WebSocket─────────┘                 └─ workspace · watch  (all grant-gated)
 //! ```
 //!
 //! Consent defaults to a **console prompt** (`[y/N]` per request, fail-closed);
@@ -15,23 +16,19 @@
 //! for a backgrounded daemon. `=auto` / `=deny` skip the human (dev/tests).
 //!
 //! Env: `ICANHAZ_WS_BIND` (default `127.0.0.1:7777`), `ICANHAZ_WT_BIND` (default
-//! `127.0.0.1:7778`), `ICANHAZ_COMPONENT` (the policy `.wasm`), `ICANHAZ_ROOT`
-//! (the raw fs root the policy mediates), and `ICANHAZ_CERT` + `ICANHAZ_KEY`
-//! (PEM paths; a self-signed cert is generated if either is absent),
-//! `ICANHAZ_CONSENT` (`prompt` default · `surface` · `auto` · `deny`), and
-//! `ICANHAZ_APPROVE_BIND` (the approval page, default `127.0.0.1:7779`).
+//! `127.0.0.1:7778`), `ICANHAZ_ROOT` (the fs root the jail lives under),
+//! `ICANHAZ_FS_COMPONENT` (the wasi:filesystem passthrough `.wasm`), `ICANHAZ_CERT`
+//! + `ICANHAZ_KEY` (PEM paths; a self-signed cert is generated if either is
+//! absent), `ICANHAZ_CONSENT` (`prompt` default · `surface` · `auto` · `deny`),
+//! and `ICANHAZ_APPROVE_BIND` (the approval page, default `127.0.0.1:7779`).
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context as _;
-use icanhaz_host::approve::{serve_approval, PendingConsent};
-use icanhaz_host::broker::{BrokerProvider, Consent, GrantStore, Pairings};
-use icanhaz_host::process::ProcessProvider;
-use icanhaz_host::provider::FsLiteProvider;
-use icanhaz_host::serve::{serve_webtransport_all, serve_websocket_all, FsServe};
-use icanhaz_host::terminal::TerminalProvider;
-use icanhaz_host::Composed;
+use icanhaz_host::approve::{open_approval_page, serve_approval, PendingConsent};
+use icanhaz_host::broker::{Consent, GrantStore, Hosts, Pairings};
+use icanhaz_host::daemon::{run, DaemonConfig};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -50,30 +47,23 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "127.0.0.1:7778".to_string())
         .parse()
         .context("invalid ICANHAZ_WT_BIND")?;
-    let component = std::env::var("ICANHAZ_COMPONENT").unwrap_or_else(|_| {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../policies/fs-lite-pathjail/target/wasm32-wasip2/debug/fs_lite_pathjail.wasm"
-        )
-        .to_string()
-    });
     let root = std::env::var("ICANHAZ_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir().join("icanhaz-demo-root"));
 
-    // Seed a demo tree: one file inside the jail, one outside.
-    std::fs::create_dir_all(root.join("jail")).context("create demo root")?;
-    std::fs::write(root.join("jail/hello.txt"), b"hello from inside the jail\n")?;
-    std::fs::write(root.join("secret.txt"), b"this file is OUTSIDE the jail\n")?;
-
-    let composed = Composed::load(Path::new(&component), &root)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to load policy composition: {e:?}"))?;
-    // The grant store the broker mints into and every gated capability checks:
-    // one token from `broker.request` is the same one fs + terminal validate.
+    // The grant store the broker mints into and every gated capability checks.
     let grants = GrantStore::shared();
-    let pairings = Pairings::shared();
-    let provider = FsLiteProvider::new(composed, grants.clone());
+    // Durable, origin-bound trust: pairings persist across restarts (override the
+    // location with ICANHAZ_PAIRINGS; default a dotfile in $HOME).
+    let pairings_path = std::env::var("ICANHAZ_PAIRINGS").map(PathBuf::from).unwrap_or_else(|_| {
+        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".icanhaz-pairings.json")
+    });
+    let pairings = Pairings::load(pairings_path);
+    // Approved-hosts allowlist (who may initiate requests). Empty ⇒ allow all.
+    let hosts_path = std::env::var("ICANHAZ_HOSTS").map(PathBuf::from).unwrap_or_else(|_| {
+        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".icanhaz-hosts.json")
+    });
+    let hosts = Hosts::load(hosts_path, false); // headless: permissive (empty ⇒ allow all)
     let (consent, consent_label) = match std::env::var("ICANHAZ_CONSENT").as_deref() {
         Ok("auto") => (Consent::AutoApprove, "auto-approve (ICANHAZ_CONSENT=auto)".to_string()),
         Ok("deny") => (Consent::AutoDeny, "auto-deny (ICANHAZ_CONSENT=deny)".to_string()),
@@ -86,16 +76,16 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .with_context(|| format!("failed to bind approval surface on {approve_bind}"))?;
             tokio::spawn(serve_approval(approve_listener, pending.clone(), uuid::Uuid::new_v4().to_string()));
-            (Consent::Surface(pending), format!("approve at {approve_url}"))
+            // Bring the approval page up now, so it's already polling `/pending` when
+            // a request (and its notification) arrives on this backgrounded daemon.
+            open_approval_page(&approve_url);
+            (Consent::Surface(pending), format!("approve at {approve_url} (loopback page)"))
         }
         _ => (Consent::cli_prompt(), "prompt — approve each request at this console [y/N]".to_string()),
     };
-    let broker = BrokerProvider::new(grants.clone(), consent, pairings);
-    let terminal = TerminalProvider::new(grants.clone());
-    let process = ProcessProvider::new(grants.clone());
 
-    // Real wasi:filesystem@0.2 (the gated passthrough), preopen-jailed to the demo
-    // jail. Component path overridable via ICANHAZ_FS_COMPONENT.
+    // Real wasi:filesystem@0.2 (the gated passthrough). Path overridable via
+    // ICANHAZ_FS_COMPONENT; default relative to this crate.
     let fs_component = std::env::var("ICANHAZ_FS_COMPONENT").unwrap_or_else(|_| {
         concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -103,43 +93,15 @@ async fn main() -> anyhow::Result<()> {
         )
         .to_string()
     });
-    let fs_serve = FsServe {
-        component_path: PathBuf::from(&fs_component),
-        root: root.clone(),
-        grants: grants.clone(),
+
+    let config = DaemonConfig {
+        ws_bind,
+        wt_bind,
+        root,
+        fs_component: PathBuf::from(fs_component),
+        cert: std::env::var("ICANHAZ_CERT").ok(),
+        key: std::env::var("ICANHAZ_KEY").ok(),
+        consent_label,
     };
-
-    // TLS identity for WebTransport: user-supplied cert/key, else self-signed.
-    let identity = match (std::env::var("ICANHAZ_CERT"), std::env::var("ICANHAZ_KEY")) {
-        (Ok(cert), Ok(key)) => wtransport::Identity::load_pemfiles(&cert, &key)
-            .await
-            .with_context(|| format!("failed to load cert `{cert}` / key `{key}`"))?,
-        _ => wtransport::Identity::self_signed(["localhost", "127.0.0.1", "::1"])
-            .context("failed to generate self-signed certificate")?,
-    };
-    let cert_hashes = identity.certificate_chain().as_slice()[0]
-        .hash()
-        .fmt(wtransport::tls::Sha256DigestFmt::BytesArray);
-
-    let ws_listener = TcpListener::bind(&ws_bind)
-        .await
-        .with_context(|| format!("failed to bind WebSocket on {ws_bind}"))?;
-
-    eprintln!("icanhazd — broker (consent gate) + fs (gated; path-jail to /jail/) + terminal (login shell) + process (grant-pinned programs), one endpoint:");
-    eprintln!("  WebSocket    : ws://{ws_bind}");
-    eprintln!("  WebTransport : https://{wt_bind}");
-    eprintln!("  cert hashes  : {cert_hashes}");
-    eprintln!("                 ^ paste into the browser demo (serverCertificateHashes)");
-    eprintln!("  consent      : {consent_label}");
-    eprintln!("  fs-lite root : {}", root.display());
-    eprintln!("  wasi:fs      : real wasi:filesystem@0.2.12 (gated; mount → grant-scoped descriptor), preopen {}", root.display());
-    eprintln!("  process      : spawn grant-pinned host programs (LSP / build tools), piped stdio");
-
-    // One wRPC server per transport, all capabilities on it (wRPC routes by
-    // instance name); broker + terminal + process share `grants`.
-    tokio::try_join!(
-        serve_websocket_all(ws_listener, broker.clone(), provider.clone(), terminal.clone(), process.clone(), fs_serve.clone()),
-        serve_webtransport_all(wt_bind, identity, broker, provider, terminal, process, fs_serve),
-    )?;
-    Ok(())
+    run(config, grants, pairings, hosts, consent).await
 }

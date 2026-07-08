@@ -4,7 +4,7 @@ import { spawn } from "./generated/process";
 
 // Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`) serving the process
 // capability. `cat` is on PATH on the host.
-const WS = "ws://127.0.0.1:7777";
+import { WS } from "./test-ws";
 
 function concat(chunks: Uint8Array[]): Uint8Array {
     const total = chunks.reduce((n, c) => n + c.length, 0);
@@ -21,7 +21,7 @@ describe("process capability over wRPC (browser → host)", () => {
     it("spawns a grant-pinned `cat` and round-trips stdin → stdout", async () => {
         const t = await connect({ ws: WS });
         // Consent for the `cat` image specifically — the grant pins which program.
-        const grant = await requestProcessGrant(t, "cat", false, "echo over wRPC");
+        const grant = await requestProcessGrant(t, "cat", [], false, "echo over wRPC");
         const session = await spawn(t, grant, []);
 
         const chunks: Uint8Array[] = [];

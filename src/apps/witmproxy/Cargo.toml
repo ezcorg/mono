@@ -95,7 +95,9 @@ cargo-generate = { version = "0.23.7", features = ["vendored-openssl"], optional
 
 clap = { version = "4.5.47", features = ["derive"] }
 semver = "1"
-confique = { version = "0.4.0", features = ["toml"] }
+# Unified CLI + env + config-file layering (vendored submodule at src/rust/conf-rs).
+# `serde` feature enables the config-file (TOML) layer via a self-describing document.
+conf = { path = "../../rust/conf-rs", features = ["serde"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 # Must match version in sqlx
 libsqlite3-sys = { version = "0.30.1", features = [

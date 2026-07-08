@@ -2,47 +2,68 @@ use super::Services;
 use crate::cert::ca::get_root_cert_path;
 use crate::{AppConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
-use clap::Subcommand;
+use conf::{Conf, Subcommands};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-#[derive(Subcommand)]
+#[derive(Subcommands)]
+#[conf(serde)]
 pub enum PluginCommands {
     /// List all installed plugins
     List,
     /// Create a new plugin from a template
-    New {
-        /// Name of the plugin
-        plugin_name: String,
-        /// Programming language for the plugin
-        #[arg(short, long, default_value = "rust")]
-        language: String,
-        /// Destination directory for the generated plugin
-        #[arg(short, long)]
-        dest: Option<PathBuf>,
-    },
+    New(PluginNewArgs),
     /// Add a plugin from a local path or URL
-    Add {
-        /// Local .wasm file path or URL (https://...)
-        source: String,
-        /// Path to a trusted public key file to verify the plugin was signed
-        /// by a known author (not just self-signed)
-        #[arg(short, long)]
-        public_key: Option<PathBuf>,
-    },
+    Add(PluginAddArgs),
     /// Remove a plugin by name or namespace/name
-    Remove {
-        /// Plugin name or namespace/name to remove
-        plugin_name: String,
-    },
+    Remove(PluginRemoveArgs),
     /// View or set configuration values for an installed plugin
-    Configure {
-        /// Plugin name or namespace/name (e.g. "@ezco/noop")
-        plugin_name: String,
-        /// Set a configuration value (format: key=value), may be repeated
-        #[arg(short, long = "set", value_name = "KEY=VALUE")]
-        set_values: Vec<String>,
-    },
+    Configure(PluginConfigureArgs),
+}
+
+#[derive(Conf)]
+#[conf(serde)]
+pub struct PluginNewArgs {
+    /// Name of the plugin
+    #[arg(pos)]
+    pub plugin_name: String,
+    /// Programming language for the plugin
+    #[arg(short, long, default_value = "rust")]
+    pub language: String,
+    /// Destination directory for the generated plugin
+    #[arg(short, long)]
+    pub dest: Option<PathBuf>,
+}
+
+#[derive(Conf)]
+#[conf(serde)]
+pub struct PluginAddArgs {
+    /// Local .wasm file path or URL (https://...)
+    #[arg(pos)]
+    pub source: String,
+    /// Path to a trusted public key file to verify the plugin was signed
+    /// by a known author (not just self-signed)
+    #[arg(short, long)]
+    pub public_key: Option<PathBuf>,
+}
+
+#[derive(Conf)]
+#[conf(serde)]
+pub struct PluginRemoveArgs {
+    /// Plugin name or namespace/name to remove
+    #[arg(pos)]
+    pub plugin_name: String,
+}
+
+#[derive(Conf)]
+#[conf(serde)]
+pub struct PluginConfigureArgs {
+    /// Plugin name or namespace/name (e.g. "@ezco/noop")
+    #[arg(pos)]
+    pub plugin_name: String,
+    /// Set a configuration value (format: key=value), may be repeated
+    #[arg(repeat, short = 's', long = "set")]
+    pub set_values: Vec<String>,
 }
 
 /// Plugin command handler that contains the resolved configuration and verbose flag
@@ -60,19 +81,14 @@ impl PluginHandler {
     pub async fn handle(&self, command: &PluginCommands) -> Result<()> {
         match command {
             PluginCommands::List => self.list_plugins().await,
-            PluginCommands::New {
-                plugin_name,
-                language,
-                dest,
-            } => self.create_new_plugin(plugin_name, language, dest).await,
-            PluginCommands::Add { source, public_key } => {
-                self.add_plugin(source, public_key.as_deref()).await
+            PluginCommands::New(a) => {
+                self.create_new_plugin(&a.plugin_name, &a.language, &a.dest).await
             }
-            PluginCommands::Remove { plugin_name } => self.remove_plugin(plugin_name).await,
-            PluginCommands::Configure {
-                plugin_name,
-                set_values,
-            } => self.configure_plugin(plugin_name, set_values).await,
+            PluginCommands::Add(a) => self.add_plugin(&a.source, a.public_key.as_deref()).await,
+            PluginCommands::Remove(a) => self.remove_plugin(&a.plugin_name).await,
+            PluginCommands::Configure(a) => {
+                self.configure_plugin(&a.plugin_name, &a.set_values).await
+            }
         }
     }
 
@@ -193,7 +209,7 @@ impl PluginHandler {
     }
 
     async fn list_plugins(&self) -> Result<()> {
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
         db.migrate().await?;
 
         let rows = sqlx::query(
@@ -405,7 +421,7 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
         db.migrate().await?;
 
         // Create runtime and registry
@@ -440,7 +456,7 @@ impl PluginHandler {
             None => (plugin_name.to_string(), "default".to_string()),
         };
 
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
         db.migrate().await?;
 
         if set_values.is_empty() {
@@ -512,7 +528,7 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
         db.migrate().await?;
 
         let runtime = Runtime::try_default()?;

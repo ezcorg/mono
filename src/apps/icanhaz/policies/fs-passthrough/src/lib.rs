@@ -3,6 +3,15 @@
 //! to a browser. The jail is the host's preopen; richer policy (audit / escalate /
 //! copy-on-write) layers on later by replacing these forwarders with mediation.
 //!
+//! **Revocation / expiry live here.** Every descriptor (and directory-entry stream)
+//! carries the `grant` it was opened under — the root gets it at `open-root`, and
+//! `open-at`/`read-directory` propagate it to derived descriptors. Every operation
+//! re-calls the host `gate` before forwarding, so a grant that has been revoked (or
+//! has expired) makes the *already-open* descriptor fail with `access` on its next
+//! use. This is the only place the full descriptor tree ↔ grant association can be
+//! made, because only the component sees descriptor derivation (`open-at`); the host
+//! just sees opaque, freshly-minted wRPC handles.
+//!
 //! The one subtlety: importing *and* exporting `wasi:filesystem/types` would
 //! normally generate two distinct Rust type universes. We avoid a conversion
 //! layer by generating the value types **once** (the import-only `fs-raw` world,
@@ -50,9 +59,38 @@ use raw::wasi::filesystem::types as ty;
 use raw::wasi::io::error::Error as IoError;
 use raw::wasi::io::streams::{InputStream, OutputStream};
 
+/// Re-authorize `grant` with the host gate. A revoked or expired grant returns
+/// `Err`, which every operation turns into `access` — this is what makes revocation
+/// and expiry take effect on an already-open descriptor (the grant is the gate,
+/// checked per op, not just at mount).
+fn reauthorize(grant: &str) -> Result<(), ty::ErrorCode> {
+    icanhaz::fspass::gate::authorize(grant).map(|_| ()).map_err(|_| ty::ErrorCode::Access)
+}
+
 struct Component;
-struct Desc(imp::Descriptor);
-struct DirStream(imp::DirectoryEntryStream);
+
+/// A descriptor plus the grant it was opened under. The grant is re-checked on every
+/// operation and propagated to descriptors/streams derived from this one.
+struct Desc {
+    inner: imp::Descriptor,
+    grant: String,
+}
+
+impl Desc {
+    fn check(&self) -> Result<(), ty::ErrorCode> {
+        reauthorize(&self.grant)
+    }
+    /// Wrap a descriptor derived from this one (e.g. via `open-at`), inheriting the grant.
+    fn derive(&self, inner: imp::Descriptor) -> ex_types::Descriptor {
+        ex_types::Descriptor::new(Desc { inner, grant: self.grant.clone() })
+    }
+}
+
+/// A directory-entry stream, likewise scoped to the grant of the descriptor it came from.
+struct DirStream {
+    inner: imp::DirectoryEntryStream,
+    grant: String,
+}
 
 impl ex_types::Guest for Component {
     type Descriptor = Desc;
@@ -65,52 +103,70 @@ impl ex_types::Guest for Component {
 
 impl ex_types::GuestDescriptor for Desc {
     fn read_via_stream(&self, offset: u64) -> Result<InputStream, ty::ErrorCode> {
-        self.0.read_via_stream(offset)
+        self.check()?;
+        self.inner.read_via_stream(offset)
     }
     fn write_via_stream(&self, offset: u64) -> Result<OutputStream, ty::ErrorCode> {
-        self.0.write_via_stream(offset)
+        self.check()?;
+        self.inner.write_via_stream(offset)
     }
     fn append_via_stream(&self) -> Result<OutputStream, ty::ErrorCode> {
-        self.0.append_via_stream()
+        self.check()?;
+        self.inner.append_via_stream()
     }
     fn advise(&self, offset: u64, length: u64, advice: ty::Advice) -> Result<(), ty::ErrorCode> {
-        self.0.advise(offset, length, advice)
+        self.check()?;
+        self.inner.advise(offset, length, advice)
     }
     fn sync_data(&self) -> Result<(), ty::ErrorCode> {
-        self.0.sync_data()
+        self.check()?;
+        self.inner.sync_data()
     }
     fn get_flags(&self) -> Result<ty::DescriptorFlags, ty::ErrorCode> {
-        self.0.get_flags()
+        self.check()?;
+        self.inner.get_flags()
     }
     fn get_type(&self) -> Result<ty::DescriptorType, ty::ErrorCode> {
-        self.0.get_type()
+        self.check()?;
+        self.inner.get_type()
     }
     fn set_size(&self, size: u64) -> Result<(), ty::ErrorCode> {
-        self.0.set_size(size)
+        self.check()?;
+        self.inner.set_size(size)
     }
     fn set_times(&self, atime: ty::NewTimestamp, mtime: ty::NewTimestamp) -> Result<(), ty::ErrorCode> {
-        self.0.set_times(atime, mtime)
+        self.check()?;
+        self.inner.set_times(atime, mtime)
     }
     fn read(&self, length: u64, offset: u64) -> Result<(Vec<u8>, bool), ty::ErrorCode> {
-        self.0.read(length, offset)
+        self.check()?;
+        self.inner.read(length, offset)
     }
     fn write(&self, buffer: Vec<u8>, offset: u64) -> Result<u64, ty::ErrorCode> {
-        self.0.write(&buffer, offset)
+        self.check()?;
+        self.inner.write(&buffer, offset)
     }
     fn read_directory(&self) -> Result<ex_types::DirectoryEntryStream, ty::ErrorCode> {
-        self.0.read_directory().map(|s| ex_types::DirectoryEntryStream::new(DirStream(s)))
+        self.check()?;
+        self.inner
+            .read_directory()
+            .map(|s| ex_types::DirectoryEntryStream::new(DirStream { inner: s, grant: self.grant.clone() }))
     }
     fn sync(&self) -> Result<(), ty::ErrorCode> {
-        self.0.sync()
+        self.check()?;
+        self.inner.sync()
     }
     fn create_directory_at(&self, path: String) -> Result<(), ty::ErrorCode> {
-        self.0.create_directory_at(&path)
+        self.check()?;
+        self.inner.create_directory_at(&path)
     }
     fn stat(&self) -> Result<ty::DescriptorStat, ty::ErrorCode> {
-        self.0.stat()
+        self.check()?;
+        self.inner.stat()
     }
     fn stat_at(&self, path_flags: ty::PathFlags, path: String) -> Result<ty::DescriptorStat, ty::ErrorCode> {
-        self.0.stat_at(path_flags, &path)
+        self.check()?;
+        self.inner.stat_at(path_flags, &path)
     }
     fn set_times_at(
         &self,
@@ -119,7 +175,8 @@ impl ex_types::GuestDescriptor for Desc {
         atime: ty::NewTimestamp,
         mtime: ty::NewTimestamp,
     ) -> Result<(), ty::ErrorCode> {
-        self.0.set_times_at(path_flags, &path, atime, mtime)
+        self.check()?;
+        self.inner.set_times_at(path_flags, &path, atime, mtime)
     }
     fn link_at(
         &self,
@@ -128,7 +185,8 @@ impl ex_types::GuestDescriptor for Desc {
         new_descriptor: ex_types::DescriptorBorrow<'_>,
         new_path: String,
     ) -> Result<(), ty::ErrorCode> {
-        self.0.link_at(old_path_flags, &old_path, &new_descriptor.get::<Desc>().0, &new_path)
+        self.check()?;
+        self.inner.link_at(old_path_flags, &old_path, &new_descriptor.get::<Desc>().inner, &new_path)
     }
     fn open_at(
         &self,
@@ -137,15 +195,16 @@ impl ex_types::GuestDescriptor for Desc {
         open_flags: ty::OpenFlags,
         flags: ty::DescriptorFlags,
     ) -> Result<ex_types::Descriptor, ty::ErrorCode> {
-        self.0
-            .open_at(path_flags, &path, open_flags, flags)
-            .map(|d| ex_types::Descriptor::new(Desc(d)))
+        self.check()?;
+        self.inner.open_at(path_flags, &path, open_flags, flags).map(|d| self.derive(d))
     }
     fn readlink_at(&self, path: String) -> Result<String, ty::ErrorCode> {
-        self.0.readlink_at(&path)
+        self.check()?;
+        self.inner.readlink_at(&path)
     }
     fn remove_directory_at(&self, path: String) -> Result<(), ty::ErrorCode> {
-        self.0.remove_directory_at(&path)
+        self.check()?;
+        self.inner.remove_directory_at(&path)
     }
     fn rename_at(
         &self,
@@ -153,32 +212,39 @@ impl ex_types::GuestDescriptor for Desc {
         new_descriptor: ex_types::DescriptorBorrow<'_>,
         new_path: String,
     ) -> Result<(), ty::ErrorCode> {
-        self.0.rename_at(&old_path, &new_descriptor.get::<Desc>().0, &new_path)
+        self.check()?;
+        self.inner.rename_at(&old_path, &new_descriptor.get::<Desc>().inner, &new_path)
     }
     fn symlink_at(&self, old_path: String, new_path: String) -> Result<(), ty::ErrorCode> {
-        self.0.symlink_at(&old_path, &new_path)
+        self.check()?;
+        self.inner.symlink_at(&old_path, &new_path)
     }
     fn unlink_file_at(&self, path: String) -> Result<(), ty::ErrorCode> {
-        self.0.unlink_file_at(&path)
+        self.check()?;
+        self.inner.unlink_file_at(&path)
     }
     fn is_same_object(&self, other: ex_types::DescriptorBorrow<'_>) -> bool {
-        self.0.is_same_object(&other.get::<Desc>().0)
+        // Pure identity comparison — no authority is exercised, so no re-check.
+        self.inner.is_same_object(&other.get::<Desc>().inner)
     }
     fn metadata_hash(&self) -> Result<ty::MetadataHashValue, ty::ErrorCode> {
-        self.0.metadata_hash()
+        self.check()?;
+        self.inner.metadata_hash()
     }
     fn metadata_hash_at(
         &self,
         path_flags: ty::PathFlags,
         path: String,
     ) -> Result<ty::MetadataHashValue, ty::ErrorCode> {
-        self.0.metadata_hash_at(path_flags, &path)
+        self.check()?;
+        self.inner.metadata_hash_at(path_flags, &path)
     }
 }
 
 impl ex_types::GuestDirectoryEntryStream for DirStream {
     fn read_directory_entry(&self) -> Result<Option<ty::DirectoryEntry>, ty::ErrorCode> {
-        self.0.read_directory_entry()
+        reauthorize(&self.grant)?;
+        self.inner.read_directory_entry()
     }
 }
 
@@ -192,7 +258,7 @@ impl exports::icanhaz::fspass::mount::Guest for Component {
         let (root, _path) = dirs.into_iter().next().ok_or_else(|| "no preopened directory".to_string())?;
         let scope = scope.trim_matches('/');
         if scope.is_empty() {
-            return Ok(ex_types::Descriptor::new(Desc(root)));
+            return Ok(ex_types::Descriptor::new(Desc { inner: root, grant }));
         }
         // Mediation: scope the capability to the grant's subtree by opening it as a
         // directory. wasi:filesystem sandboxes the returned descriptor — every
@@ -206,7 +272,7 @@ impl exports::icanhaz::fspass::mount::Guest for Component {
                 ty::DescriptorFlags::READ | ty::DescriptorFlags::MUTATE_DIRECTORY,
             )
             .map_err(|e| format!("granted scope {scope:?} unavailable: {e:?}"))?;
-        Ok(ex_types::Descriptor::new(Desc(sub)))
+        Ok(ex_types::Descriptor::new(Desc { inner: sub, grant }))
     }
 }
 

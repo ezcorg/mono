@@ -216,54 +216,158 @@ export interface Duplex {
     close(): void;
 }
 
-/** WebSocket fallback — a fresh connection per invocation; EOF = empty text frame. */
+// ---- WebSocket transport: a stream-mux over ONE persistent socket ----------
+// Every invocation (simple `exchange` + streaming `openDuplex`) is an id-tagged virtual
+// byte-stream multiplexed over a single WebSocket — mirroring how WebTransport multiplexes bidi
+// streams over one QUIC session (serve_webtransport_all's accept_bi loop). This removes the old
+// one-socket-per-invocation model whose per-call handshake (~10ms+, far worse on Firefox)
+// dominated every fs op. Wire framing, per WS BINARY message: [stream_id u32 LE][kind u8][payload]
+// — kind 0 = data, 1 = end (this direction's EOF). No text frames.
+const MUX_DATA = 0;
+const MUX_END = 1;
+
+interface MuxStream {
+    onBytes(b: Uint8Array): void;
+    onEnd(): void; // peer half-closed its write side (its EOF)
+    onError(e: Error): void; // the socket failed/closed
+}
+
 export class WebSocketTransport implements Transport {
     readonly kind = "websocket";
     private readonly url: string;
+    private sock: WebSocket | null = null;
+    private opening: Promise<WebSocket> | null = null;
+    private nextId = 1;
+    private readonly streams = new Map<number, MuxStream>();
+    private shut = false;
 
     constructor(url: string) {
         this.url = url;
     }
 
-    exchange(frame: Uint8Array): Promise<Uint8Array> {
-        const url = this.url;
-        return new Promise((resolve, reject) => {
-            const ws = new WebSocket(url);
+    /** The shared socket, (re)connecting on demand. */
+    private socket(): Promise<WebSocket> {
+        if (this.sock && this.sock.readyState === WebSocket.OPEN) return Promise.resolve(this.sock);
+        if (this.shut) return Promise.reject(new Error("transport closed"));
+        if (this.opening) return this.opening;
+        this.opening = new Promise<WebSocket>((resolve, reject) => {
+            const ws = new WebSocket(this.url);
             ws.binaryType = "arraybuffer";
+            ws.addEventListener("open", () => { this.sock = ws; this.opening = null; resolve(ws); }, { once: true });
+            ws.addEventListener("error", () => {
+                if (this.opening) { this.opening = null; reject(new Error("WebSocket error")); }
+                this.failAll(new Error("WebSocket error"));
+            });
+            ws.addEventListener("close", () => {
+                if (this.sock === ws) this.sock = null;
+                this.opening = null;
+                this.failAll(new Error("WebSocket closed"));
+            });
+            ws.addEventListener("message", (e) => this.dispatch(e.data));
+        });
+        return this.opening;
+    }
+
+    private failAll(err: Error): void {
+        const streams = [...this.streams.values()];
+        this.streams.clear();
+        for (const s of streams) s.onError(err);
+    }
+
+    private dispatch(data: unknown): void {
+        if (!(data instanceof ArrayBuffer) || data.byteLength < 5) return;
+        const view = new DataView(data);
+        const id = view.getUint32(0, true);
+        const kind = view.getUint8(4);
+        const s = this.streams.get(id);
+        if (!s) return;
+        if (kind === MUX_DATA) s.onBytes(new Uint8Array(data, 5));
+        else if (kind === MUX_END) s.onEnd();
+    }
+
+    /** @internal — frame + send on the shared socket (no-op if it's gone). */
+    sendFrame(ws: WebSocket, id: number, kind: number, payload?: Uint8Array): void {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const n = payload ? payload.length : 0;
+        const buf = new Uint8Array(5 + n);
+        const view = new DataView(buf.buffer);
+        view.setUint32(0, id, true);
+        view.setUint8(4, kind);
+        if (payload && n) buf.set(payload, 5);
+        ws.send(buf);
+    }
+
+    /** @internal */
+    register(id: number, s: MuxStream): void { this.streams.set(id, s); }
+    /** @internal */
+    unregister(id: number): void { this.streams.delete(id); }
+
+    async exchange(frame: Uint8Array): Promise<Uint8Array> {
+        const ws = await this.socket();
+        const id = this.nextId++;
+        return new Promise<Uint8Array>((resolve, reject) => {
             let resp = new Uint8Array(0);
-            let done = false;
-            const finish = (fn: () => void) => {
-                if (done) return;
-                done = true;
-                fn();
-                try { ws.close(); } catch { /* ignore */ }
-            };
-            ws.addEventListener("open", () => {
-                ws.send(frame);
-                ws.send(""); // EOF sentinel (empty text frame)
+            this.streams.set(id, {
+                onBytes: (b) => { resp = concat(resp, b); },
+                onEnd: () => { this.streams.delete(id); resolve(resp); },
+                onError: (e) => { this.streams.delete(id); reject(e); },
             });
-            ws.addEventListener("message", (e: MessageEvent) => {
-                if (typeof e.data === "string") {
-                    if (e.data === "") finish(() => resolve(resp));
-                    else finish(() => reject(new Error("unexpected non-empty text frame")));
-                    return;
-                }
-                resp = concat(resp, new Uint8Array(e.data as ArrayBuffer));
-            });
-            ws.addEventListener("error", () => finish(() => reject(new Error("WebSocket error"))));
-            ws.addEventListener("close", () =>
-                finish(() => (resp.length ? resolve(resp) : reject(new Error("closed before response")))),
-            );
+            this.sendFrame(ws, id, MUX_DATA, frame);
+            this.sendFrame(ws, id, MUX_END); // our input EOF
         });
     }
 
     async openDuplex(): Promise<Duplex> {
-        return WsDuplex.connect(this.url);
+        const ws = await this.socket();
+        return new MuxDuplex(this, ws, this.nextId++);
     }
 
     close(): void {
-        /* per-invocation connections; nothing is held open */
+        this.shut = true;
+        this.failAll(new Error("transport closed"));
+        if (this.sock) { try { this.sock.close(); } catch { /* ignore */ } this.sock = null; }
     }
+}
+
+/** A streaming invocation carried as one mux stream over the shared WebSocket. */
+class MuxDuplex implements Duplex {
+    private bytesCb: ((b: Uint8Array) => void) | null = null;
+    private closeCb: (() => void) | null = null;
+    private backlog: Uint8Array[] = [];
+    private closed = false;
+    private writeClosed = false;
+    constructor(
+        private readonly t: WebSocketTransport,
+        private readonly ws: WebSocket,
+        private readonly id: number,
+    ) {
+        this.t.register(this.id, {
+            onBytes: (b) => (this.bytesCb ? this.bytesCb(b) : this.backlog.push(b)),
+            onEnd: () => this.fireClose(),
+            onError: () => this.fireClose(),
+        });
+    }
+    private fireClose(): void {
+        if (this.closed) return;
+        this.closed = true;
+        this.closeCb?.();
+    }
+    write(bytes: Uint8Array): void { this.t.sendFrame(this.ws, this.id, MUX_DATA, bytes); }
+    onBytes(cb: (b: Uint8Array) => void): void {
+        this.bytesCb = cb;
+        for (const b of this.backlog) cb(b);
+        this.backlog = [];
+    }
+    onClose(cb: () => void): void {
+        this.closeCb = cb;
+        if (this.closed) cb();
+    }
+    closeWrite(): void {
+        if (this.writeClosed) return;
+        this.writeClosed = true;
+        this.t.sendFrame(this.ws, this.id, MUX_END);
+    }
+    close(): void { this.closeWrite(); this.t.unregister(this.id); }
 }
 
 /** WebTransport (QUIC) — one session, a bidi stream per invocation; EOF = stream FIN. */
@@ -344,42 +448,6 @@ export function invoke(t: Transport, instance: string, func: string, params: num
     return t.exchange(requestFrame(instance, func, params));
 }
 
-/** Typed client for the consented `icanhaz:nocap/fs` capability over any
- *  [`Transport`]. Lazily acquires one filesystem grant from the broker and
- *  presents it on every call (the daemon refuses calls without it). */
-export class FsLite {
-    private readonly t: Transport;
-    private grant?: string;
-
-    constructor(transport: Transport) {
-        this.t = transport;
-    }
-
-    /** Acquire (once) a filesystem grant from the broker, reused for every call. */
-    private async ensureGrant(): Promise<string> {
-        if (this.grant === undefined) this.grant = await requestFilesystemGrant(this.t);
-        return this.grant;
-    }
-
-    async read(path: string): Promise<Result<Uint8Array>> {
-        const g = await this.ensureGrant();
-        const resp = await invoke(this.t, FsLite.INSTANCE, "read", [...encodeString(g), ...encodeString(path)]);
-        return decodeResult(resp, (b, o) => readBytes(b, o));
-    }
-    async write(path: string, data: Uint8Array): Promise<Result<void>> {
-        const g = await this.ensureGrant();
-        const resp = await invoke(this.t, FsLite.INSTANCE, "write", [...encodeString(g), ...encodeString(path), ...encodeBytes(data)]);
-        return decodeResult(resp, () => [undefined as void, 1]);
-    }
-    async readDir(dir: string): Promise<Result<string[]>> {
-        const g = await this.ensureGrant();
-        const resp = await invoke(this.t, FsLite.INSTANCE, "read-dir", [...encodeString(g), ...encodeString(dir)]);
-        return decodeResult(resp, (b, o) => readList(b, o, readString));
-    }
-
-    static readonly INSTANCE = "icanhaz:nocap/fs@0.1.0";
-}
-
 // ---- consent broker --------------------------------------------------------
 //
 // Before using a capability you must hold a grant for it. `broker.request(want,
@@ -406,10 +474,12 @@ function encodeFilesystemWant(): number[] {
     ];
 }
 
-/** Encode `capability-kind::process(process-request{ image, guest-chooses-argv })`. */
-function encodeProcessWant(image: string, guestChoosesArgv: boolean): number[] {
-    // variant disc 2 = process; payload = { image: string, guest-chooses-argv: bool }.
-    return [...leb128(2), ...encodeString(image), guestChoosesArgv ? 1 : 0];
+/** Encode `capability-kind::process(process-request{ image, args, guest-chooses-argv })`. */
+function encodeProcessWant(image: string, args: string[], guestChoosesArgv: boolean): number[] {
+    // variant disc 2 = process; payload = { image: string, args: list<string>, guest-chooses-argv: bool }.
+    const argsEnc: number[] = [...leb128(args.length)];
+    for (const a of args) argsEnc.push(...encodeString(a));
+    return [...leb128(2), ...encodeString(image), ...argsEnc, guestChoosesArgv ? 1 : 0];
 }
 
 /** Encode an `option<string>`: 0 = none, 1 = some + the string. */
@@ -523,18 +593,19 @@ export async function requestFilesystemGrant(t: Transport, reason = "access file
 }
 
 /**
- * Request a consented `process` grant pinning `image` (the program the host will
- * spawn). `guestChoosesArgv` asks for the right to pass argv at spawn time (an LSP
- * needs e.g. `--stdio`); without it the host runs the image as configured. Throws
- * if denied.
+ * Request a consented `process` grant pinning `image` + `args` (the exact command the
+ * host will spawn — shown to the human at consent). `guestChoosesArgv` asks for the
+ * right to pass *different* argv at spawn time; without it the pinned `args` are run
+ * verbatim. Throws if denied.
  */
 export async function requestProcessGrant(
     t: Transport,
     image: string,
+    args: string[] = [],
     guestChoosesArgv = false,
-    reason = `run ${image}`,
+    reason = `run ${[image, ...args].join(" ")}`,
 ): Promise<string> {
-    return requestGrant(t, encodeProcessWant(image, guestChoosesArgv), reason, "process");
+    return requestGrant(t, encodeProcessWant(image, args, guestChoosesArgv), reason, "process");
 }
 
 // ---- broker: audit view (who holds what) -----------------------------------
@@ -682,64 +753,6 @@ function encodeChunk(bytes: Uint8Array): Uint8Array {
     return new Uint8Array([...leb128(bytes.length), ...bytes]);
 }
 
-/** WebSocket-backed duplex (the connection stays open for the whole session). */
-class WsDuplex implements Duplex {
-    private ws: WebSocket;
-    private bytesCb?: (b: Uint8Array) => void;
-    private closeCb?: () => void;
-    private backlog: Uint8Array[] = [];
-    private closed = false;
-
-    private constructor(ws: WebSocket) {
-        this.ws = ws;
-        ws.binaryType = "arraybuffer";
-        ws.addEventListener("message", (e: MessageEvent) => {
-            if (typeof e.data === "string") {
-                if (e.data === "") this.fireClose(); // server end-of-output sentinel
-                return;
-            }
-            const bytes = new Uint8Array(e.data as ArrayBuffer);
-            if (this.bytesCb) this.bytesCb(bytes);
-            else this.backlog.push(bytes);
-        });
-        ws.addEventListener("close", () => this.fireClose());
-        ws.addEventListener("error", () => this.fireClose());
-    }
-
-    static connect(url: string): Promise<WsDuplex> {
-        return new Promise((resolve, reject) => {
-            const ws = new WebSocket(url);
-            ws.binaryType = "arraybuffer";
-            ws.addEventListener("open", () => resolve(new WsDuplex(ws)));
-            ws.addEventListener("error", () => reject(new Error("WebSocket error")));
-        });
-    }
-
-    private fireClose(): void {
-        if (this.closed) return;
-        this.closed = true;
-        this.closeCb?.();
-    }
-
-    write(bytes: Uint8Array): void {
-        this.ws.send(bytes);
-    }
-    onBytes(cb: (b: Uint8Array) => void): void {
-        this.bytesCb = cb;
-        for (const b of this.backlog) cb(b);
-        this.backlog = [];
-    }
-    onClose(cb: () => void): void {
-        this.closeCb = cb;
-        if (this.closed) cb();
-    }
-    closeWrite(): void {
-        try { this.ws.send(""); } catch { /* ignore */ }
-    }
-    close(): void {
-        try { this.ws.close(); } catch { /* ignore */ }
-    }
-}
 
 /** WebTransport-backed duplex (one bidi stream for the whole session). */
 class WtDuplex implements Duplex {

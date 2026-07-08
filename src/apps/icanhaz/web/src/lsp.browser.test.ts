@@ -5,13 +5,13 @@ import { processLspTransport } from "./lsp-transport";
 
 // Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`) and `rust-analyzer` on
 // the daemon's PATH (~/.cargo/bin). The grant pins the `rust-analyzer` image.
-const WS = "ws://127.0.0.1:7777";
+import { WS } from "./test-ws";
 
 describe("remote LSP over the wRPC process capability (rust-analyzer)", () => {
     it("completes the LSP initialize handshake with the host's rust-analyzer", async () => {
         const t = await connect({ ws: WS });
         // Consent pins the `rust-analyzer` image; it needs no argv for stdio mode.
-        const grant = await requestProcessGrant(t, "rust-analyzer", false, "rust language server");
+        const grant = await requestProcessGrant(t, "rust-analyzer", [], false, "rust language server");
         const session = await spawn(t, grant, []);
         const lsp = processLspTransport(session);
 

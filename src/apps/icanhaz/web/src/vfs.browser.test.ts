@@ -4,7 +4,7 @@ import { wrpcFilesystem } from "./vfs";
 
 // Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`). The grant scopes to the
 // jail; the daemon seeds jail/hello.txt.
-const WS = "ws://127.0.0.1:7777";
+import { WS } from "./test-ws";
 
 describe("wrpcFilesystem — VfsInterface over wRPC", () => {
     it("round-trips files + dirs against the daemon's real wasi:filesystem", async () => {

@@ -31,7 +31,7 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     HostContentWithStore, HostLocalStorageClient, HostLocalStorageClientWithStore, HostLogger,
     HostLoggerWithStore,
 };
-pub use runtime::Runtime;
+pub use runtime::{PluginLimits, Runtime};
 
 pub mod bindgen;
 
@@ -97,31 +97,49 @@ impl CapabilityProvider {
     }
 }
 
-impl From<&Vec<Capability>> for CapabilityProvider {
-    fn from(capabilities: &Vec<Capability>) -> Self {
+impl CapabilityProvider {
+    /// Build a provider from a plugin's granted capabilities.
+    ///
+    /// `local_storage` is the plugin's PERSISTENT storage client (one per
+    /// plugin, owned by the registry). A clone is handed to the provider so
+    /// that writes survive across events for the same plugin. `None` disables
+    /// the local-storage capability even if granted.
+    pub fn build(capabilities: &[Capability], local_storage: Option<LocalStorageClient>) -> Self {
         let mut provider = CapabilityProvider::new();
         for cap in capabilities {
-            if cap.granted {
-                match &cap.inner.kind {
-                    CapabilityKind::Logger => {
-                        provider = provider.with_logger(Logger::new());
+            if !cap.granted {
+                continue;
+            }
+            match &cap.inner.kind {
+                CapabilityKind::Logger => {
+                    provider = provider.with_logger(Logger::new());
+                }
+                CapabilityKind::Annotator => {
+                    provider = provider.with_annotator(AnnotatorClient::new());
+                }
+                CapabilityKind::LocalStorage => {
+                    if let Some(client) = local_storage.clone() {
+                        provider = provider.with_local_storage(client);
                     }
-                    CapabilityKind::Annotator => {
-                        provider = provider.with_annotator(AnnotatorClient::new());
-                    }
-                    CapabilityKind::LocalStorage => {
-                        provider = provider.with_local_storage(LocalStorageClient::new());
-                    }
-                    CapabilityKind::Clock => {
-                        provider = provider.with_clock(ClockClient::new());
-                    }
-                    CapabilityKind::HandleEvent(_) => {
-                        // Event handling capabilities are managed separately
-                    }
+                }
+                CapabilityKind::Clock => {
+                    provider = provider.with_clock(ClockClient::new());
+                }
+                CapabilityKind::HandleEvent(_) => {
+                    // Event handling capabilities are managed separately
                 }
             }
         }
         provider
+    }
+}
+
+impl From<&Vec<Capability>> for CapabilityProvider {
+    fn from(capabilities: &Vec<Capability>) -> Self {
+        // Fresh (non-persistent) local storage. Callers that need storage to
+        // survive across events should use `CapabilityProvider::build` with a
+        // persistent client instead.
+        Self::build(capabilities, Some(LocalStorageClient::new()))
     }
 }
 
@@ -388,6 +406,10 @@ pub struct Host {
     pub wasi: WasiCtx,
     pub http: WasiHttpCtx,
     pub witmproxy_ctx: WitmProxyCtx,
+    /// Per-store resource limits (memory cap). Defaults to unbounded; the
+    /// `Runtime` installs a real cap via `store.limiter(|h| &mut h.limits)`
+    /// only when a memory limit is configured.
+    pub limits: wasmtime::StoreLimits,
 }
 
 impl Default for Host {
@@ -397,6 +419,7 @@ impl Default for Host {
             wasi: WasiCtxBuilder::new().build(),
             http: WasiHttpCtx::new(),
             witmproxy_ctx: WitmProxyCtxBuilder::new().build(),
+            limits: wasmtime::StoreLimits::default(),
         }
     }
 }

@@ -33,10 +33,11 @@ impl AuthStore {
     pub fn save(&self) -> Result<()> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            crate::fs_secure::create_dir_secure(parent)?;
         }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
+        // auth.json holds a bearer token granting management-API access; keep it 0o600.
+        crate::fs_secure::write_secret(&path, content)?;
         Ok(())
     }
 

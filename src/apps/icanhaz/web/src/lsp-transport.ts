@@ -22,6 +22,81 @@ export interface LspTransport {
     unsubscribe(handler: (value: string) => void): void;
 }
 
+/** One traced LSP message (see {@link setLspTrace}). `t` = ms since the transport
+ *  was created, so you can see how long a server takes before it answers. */
+export interface LspTraceEvent {
+    dir: "send" | "recv";
+    t: number;
+    kind: "request" | "response" | "notification" | "error";
+    method?: string;
+    id?: number | string;
+    /** window/showMessage · logMessage text, $/progress phase, an error message, or
+     *  the document URI (+ diagnostic count for publishDiagnostics). */
+    detail?: string;
+}
+
+let lspTrace: ((ev: LspTraceEvent) => void) | null = null;
+
+/**
+ * Install a global LSP wire tracer (or `null` to clear). EVERY message crossing ANY
+ * `processLspTransport` — including the editor's — is reported, so you can see what a
+ * language server actually does: did `initialize` get a response? is it emitting
+ * `$/progress` (indexing) and does it finish? did a `window/showMessage` report
+ * "Failed to load workspaces"? did a hover get answered, or just time out?
+ */
+export function setLspTrace(fn: ((ev: LspTraceEvent) => void) | null): void {
+    lspTrace = fn;
+}
+
+function emitTrace(dir: "send" | "recv", raw: string, t0: number): void {
+    if (!lspTrace) return;
+    let m: any;
+    try {
+        m = JSON.parse(raw);
+    } catch {
+        return;
+    }
+    const kind: LspTraceEvent["kind"] =
+        m.method !== undefined
+            ? m.id !== undefined
+                ? "request"
+                : "notification"
+            : m.error !== undefined
+              ? "error"
+              : "response";
+    let detail: string | undefined;
+    if (m.method === "window/showMessage" || m.method === "window/logMessage") {
+        detail = String(m.params?.message).slice(0, 200);
+    } else if (m.method === "$/progress") {
+        detail = `${m.params?.value?.kind ?? ""} ${m.params?.value?.title ?? m.params?.value?.message ?? ""}`.trim();
+    } else if (m.method === "textDocument/publishDiagnostics") {
+        // The URI rust-analyzer diagnoses + how many + the doc VERSION it analyzed.
+        // Compare the URI against the didOpen URI (a mismatch hides them) and the version
+        // against the client's latest didChange (a lag makes the client skip rendering).
+        detail = `${m.params?.uri} · ${m.params?.diagnostics?.length ?? 0} diag · v${m.params?.version ?? "-"}`;
+    } else if (m.method === "textDocument/didOpen") {
+        const td = m.params?.textDocument;
+        detail = `v${td?.version} len=${String(td?.text ?? "").length}`;
+    } else if (m.method === "textDocument/didChange") {
+        const ver = m.params?.textDocument?.version;
+        const cc = (m.params?.contentChanges ?? [])
+            .map((c: any) =>
+                c.range
+                    ? `@${c.range.start.line}:${c.range.start.character}-${c.range.end.line}:${c.range.end.character}="${String(c.text ?? "").replace(/\n/g, "\\n").slice(0, 15)}"`
+                    : `FULL(${String(c.text ?? "").length})`,
+            )
+            .join(" ");
+        detail = `v${ver} ${cc}`;
+    } else if (typeof m.method === "string" && m.method.startsWith("textDocument/")) {
+        const uri = m.params?.textDocument?.uri; // didOpen/didChange/hover/… carry the URI here
+        const ver = m.params?.textDocument?.version;
+        if (uri) detail = String(uri) + (ver != null ? ` v${ver}` : "");
+    } else if (m.error !== undefined) {
+        detail = JSON.stringify(m.error).slice(0, 200);
+    }
+    lspTrace({ dir, t: Date.now() - t0, kind, method: m.method, id: m.id, detail });
+}
+
 const te = new TextEncoder();
 const td = new TextDecoder();
 
@@ -49,6 +124,7 @@ function headerEnd(buf: Uint8Array): number {
  * message anywhere — the buffer reassembles).
  */
 export function processLspTransport(session: SpawnSession): LspTransport {
+    const t0 = Date.now();
     let handlers: ((value: string) => void)[] = [];
     let buf = new Uint8Array(0);
 
@@ -69,12 +145,14 @@ export function processLspTransport(session: SpawnSession): LspTransport {
             if (buf.length < bodyStart + len) break; // body not fully arrived yet
             const body = td.decode(buf.subarray(bodyStart, bodyStart + len));
             buf = buf.subarray(bodyStart + len);
+            emitTrace("recv", body, t0);
             for (const h of handlers) h(body);
         }
     });
 
     return {
         send(message) {
+            emitTrace("send", message, t0);
             const body = te.encode(message);
             const header = te.encode(`Content-Length: ${body.length}\r\n\r\n`);
             session.stdin(concat(header, body));

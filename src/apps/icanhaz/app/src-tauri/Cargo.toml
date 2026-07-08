@@ -1,0 +1,29 @@
+[package]
+name = "icanhaz-app"
+version = "0.1.0"
+description = "icanhaz — native (tray) consent app; embeds the icanhaz daemon"
+edition = "2021"
+publish = false
+
+[lib]
+# `_lib` suffix keeps the lib name distinct from the bin (a Windows quirk).
+name = "icanhaz_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["time"] }
+# The daemon itself — this app IS the icanhaz backend.
+icanhaz-host = { path = "../../host" }
+
+# Pin the wry runtime stack to a self-consistent set (see eznote): tauri-runtime-wry
+# 2.10.1 lags newer tauri-runtime/wry on crates.io and Cargo's version maximization
+# otherwise pairs them with APIs they predate, failing to compile. Remove once
+# tauri-runtime-wry catches up.
+tauri-runtime = "=2.10.1"
+wry = { version = "=0.54.0", default-features = false }
