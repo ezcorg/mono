@@ -185,7 +185,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // codeblock's own search toolbar is hidden (`toolbar: false`) — the
         // markdown-editor's toolbar stays in control of open/save — so the
         // document area simply appears to swap from rich text to code.
-        const showCodeEditor = (content: string, language: string, fs: VfsInterface) => {
+        const showCodeEditor = (content: string, language: string, fs: VfsInterface, filepath: string) => {
             const editable = editableEl()
             const parent = editable.parentElement
             // Empty the now-hidden rich-text document so doc-derived chrome —
@@ -237,6 +237,15 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                         codeblock({
                             content,
                             fs,
+                            // Give the codeblock the real path so it drives a per-file
+                            // language server (the codeblock's `handleOpen` wires LSP only
+                            // when it has a filepath): a remote `RemoteLspProvider` (e.g.
+                            // rust-analyzer over wRPC) is requested for this file, and the
+                            // codeblock's save emits `didSave` → on-save diagnostics. We
+                            // still own persistence (`scheduleCodeSave`, flushed on
+                            // navigate) — the codeblock's own write is a harmless same-bytes
+                            // duplicate, but its LSP wiring is what a bare content view lacks.
+                            filepath,
                             language: language as ExtensionOrLanguage,
                             toolbar: false,
                             dark,
@@ -270,7 +279,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 const path = storage.options.filepath
                 const fs = storage.options.fs
                 if (path && fs && !isProseFile(path)) {
-                    showCodeEditor(content, languageForPath(path), fs)
+                    showCodeEditor(content, languageForPath(path), fs, path)
                 } else {
                     hideCodeEditor()
                     editor.commands.setContent(content)
