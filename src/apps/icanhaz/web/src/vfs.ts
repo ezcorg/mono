@@ -10,13 +10,16 @@
 //! Structurally matches codeblock's `VfsInterface` (kept dependency-free here on
 //! purpose — no `@volar`/codeblock import; the editor consumes it structurally).
 //!
-//! KNOWN LIMITATION: `readFile`/`writeFile`/`readDir` open a descriptor (and
-//! `readDir` a directory-entry-stream) that wRPC has no way to drop — they
-//! accumulate in the host's resource table. Fine for a demo; a real editor needs a
-//! descriptor-drop path (host GC, or wRPC gaining resource-drop) or descriptor
-//! reuse. `watch` is a no-op (wasi:filesystem@0.2 has no change notifications).
+//! DESCRIPTOR LIFETIME: `readFile`/`writeFile`/`readDir` open a per-op descriptor
+//! (and `readDir` a directory-entry-stream). These are guest-exported resources the
+//! host holds in its shared-resource table; without a drop they'd accumulate for the
+//! connection's life. So each of those ops **drops the handle it opened** when it's
+//! done, via `dropHandle` → the host's `icanhaz:fspass/resources@0.1.0#drop` (which
+//! evicts the table entry and runs the guest destructor, closing the real fd). The
+//! long-lived mount `root` is kept. `watch` is a no-op (wasi:filesystem@0.2 has no
+//! change notifications).
 
-import type { Transport } from "./wrpc";
+import { type Transport, invoke, encodeBytes, readBool, resultValue } from "./wrpc";
 import * as fsmount from "./generated/fs-mount";
 import * as fs from "./generated/wasi-filesystem";
 import { open as watchOpen } from "./generated/watch";
@@ -59,6 +62,31 @@ function concat(chunks: Uint8Array[]): Uint8Array {
     return out;
 }
 
+// The host serves this alongside the filesystem: `drop(handle: list<u8>)` evicts a
+// guest-exported resource handle (descriptor / directory-entry-stream) from the
+// shared-resource table and runs its guest destructor (closing the fd).
+const RESOURCES_INSTANCE = "icanhaz:fspass/resources@0.1.0";
+
+/** Release a guest resource handle (descriptor / directory-entry-stream) the host
+ *  holds for us. Resolves to whether a live handle was actually released (the host
+ *  ran its destructor + evicted it); `false` if it was already gone. Throws on
+ *  transport error. Exported so a caller/test that obtained a handle directly can
+ *  release it. */
+export async function dropResource(t: Transport, handle: Uint8Array): Promise<boolean> {
+    const resp = await invoke(t, RESOURCES_INSTANCE, "drop", encodeBytes(handle));
+    return readBool(resultValue(resp), 0)[0];
+}
+
+/** Best-effort drop used internally: a failure is non-fatal — the handle would just
+ *  linger until the transport closes (the old behavior) — so we never surface it. */
+async function dropHandle(t: Transport, handle: Uint8Array): Promise<void> {
+    try {
+        await dropResource(t, handle);
+    } catch {
+        /* best-effort: the handle is still reclaimed when the connection closes */
+    }
+}
+
 /**
  * Mount a NoCap filesystem grant and present it as a `VfsInterface`. Throws if the
  * grant is refused at the consent gate.
@@ -77,17 +105,21 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
     return {
         async readFile(path) {
             const fd = await open(path, {}, { read: true });
-            const chunks: Uint8Array[] = [];
-            let offset = 0n;
-            for (;;) {
-                const r = await fs.descriptorRead(t, fd, 65536n, offset);
-                if (r.tag !== "ok") throw new Error(`read ${path}: ${r.val}`);
-                const [chunk, eof] = r.val;
-                chunks.push(chunk);
-                offset += BigInt(chunk.length);
-                if (eof) break;
+            try {
+                const chunks: Uint8Array[] = [];
+                let offset = 0n;
+                for (;;) {
+                    const r = await fs.descriptorRead(t, fd, 65536n, offset);
+                    if (r.tag !== "ok") throw new Error(`read ${path}: ${r.val}`);
+                    const [chunk, eof] = r.val;
+                    chunks.push(chunk);
+                    offset += BigInt(chunk.length);
+                    if (eof) break;
+                }
+                return td.decode(concat(chunks));
+            } finally {
+                await dropHandle(t, fd);
             }
-            return td.decode(concat(chunks));
         },
 
         async writeFile(path, data) {
@@ -96,18 +128,22 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
             // cache a bogus error (e.g. "main function not found"). Instead overwrite in place,
             // then set-size to trim any leftover tail — the file is never empty on disk.
             const fd = await open(path, { create: true, truncate: false }, { read: true, write: true });
-            const bytes = te.encode(data);
-            let offset = 0n;
-            const len = BigInt(bytes.length);
-            while (offset < len) {
-                const r = await fs.descriptorWrite(t, fd, bytes.subarray(Number(offset)), offset);
-                if (r.tag !== "ok") throw new Error(`write ${path}: ${r.val}`);
-                if (r.val === 0n) break; // guard against a 0-byte write looping forever
-                offset += r.val;
+            try {
+                const bytes = te.encode(data);
+                let offset = 0n;
+                const len = BigInt(bytes.length);
+                while (offset < len) {
+                    const r = await fs.descriptorWrite(t, fd, bytes.subarray(Number(offset)), offset);
+                    if (r.tag !== "ok") throw new Error(`write ${path}: ${r.val}`);
+                    if (r.val === 0n) break; // guard against a 0-byte write looping forever
+                    offset += r.val;
+                }
+                // Trim to the exact length (removes any tail left when overwriting longer content).
+                const s = await fs.descriptorSetSize(t, fd, len);
+                if (s.tag !== "ok") throw new Error(`set-size ${path}: ${s.val}`);
+            } finally {
+                await dropHandle(t, fd);
             }
-            // Trim to the exact length (removes any tail left when overwriting longer content).
-            const s = await fs.descriptorSetSize(t, fd, len);
-            if (s.tag !== "ok") throw new Error(`set-size ${path}: ${s.val}`);
         },
 
         // Native change events via the host `watch` capability (a `notify` watcher
@@ -180,19 +216,29 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
 
         async readDir(path) {
             const p = rel(path);
+            // `.` reuses the long-lived mount root (don't drop it); any other path
+            // opens a fresh directory descriptor that we drop when done.
             const dir = p === "." ? root : await open(path, { directory: true }, { read: true });
-            const sr = await fs.descriptorReadDirectory(t, dir);
-            if (sr.tag !== "ok") throw new Error(`readDir ${path}: ${sr.val}`);
-            const stream = sr.val;
-            const out: [string, FileType][] = [];
-            for (;;) {
-                const er = await fs.directoryEntryStreamReadDirectoryEntry(t, stream);
-                if (er.tag !== "ok") throw new Error(`readDir ${path}: ${er.val}`);
-                const entry = er.val; // option<directory-entry>
-                if (entry === undefined) break;
-                out.push([entry.name, fileType(entry.type)]);
+            try {
+                const sr = await fs.descriptorReadDirectory(t, dir);
+                if (sr.tag !== "ok") throw new Error(`readDir ${path}: ${sr.val}`);
+                const stream = sr.val;
+                try {
+                    const out: [string, FileType][] = [];
+                    for (;;) {
+                        const er = await fs.directoryEntryStreamReadDirectoryEntry(t, stream);
+                        if (er.tag !== "ok") throw new Error(`readDir ${path}: ${er.val}`);
+                        const entry = er.val; // option<directory-entry>
+                        if (entry === undefined) break;
+                        out.push([entry.name, fileType(entry.type)]);
+                    }
+                    return out;
+                } finally {
+                    await dropHandle(t, stream); // the directory-entry-stream
+                }
+            } finally {
+                if (dir !== root) await dropHandle(t, dir);
             }
-            return out;
         },
 
         async exists(path) {

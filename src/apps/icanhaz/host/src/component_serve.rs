@@ -20,20 +20,22 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use bytes::Bytes;
 use futures::StreamExt as _;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
+use uuid::Uuid;
 use wasmtime::component::{Component, Instance, Linker, ResourceTable, ResourceType, types};
 use wasmtime::{Engine, Store};
 
 use crate::broker::GrantStore;
 use wasmtime_wasi::p2::bindings::io;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
-use wrpc_transport::{Invoke, Serve};
+use wrpc_transport::{Invoke, Serve, ServeExt as _}; // ServeExt: serve_values (the drop meta-op)
 use wrpc_wasmtime::{
     RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
     collect_component_resource_exports, collect_component_resource_imports,
-};
+}; // ServeExt: serve_function_shared (component exports)
 
 /// Per-invocation wRPC state. `client` satisfies *polyfilled* imports (imports a
 /// component makes that are themselves served over wRPC); our components import
@@ -367,7 +369,119 @@ where
     let io_streams: Arc<[ResourceType]> =
         wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &component.component_type()).into();
     let store = Arc::new(Mutex::new(store));
-    drive_exports(srv, store, instance, &component.component_type(), &engine, guest_resources, host_resources, io_streams).await
+    let mut handlers = drive_exports(
+        srv,
+        Arc::clone(&store),
+        instance,
+        &component.component_type(),
+        &engine,
+        guest_resources,
+        host_resources,
+        io_streams,
+    )
+    .await?;
+    // Serve the resource-drop meta-op alongside the component's exports so a client
+    // can release descriptors / dir-streams it's finished with instead of leaking them.
+    serve_resource_drop(srv, store, &mut handlers).await?;
+    Ok(handlers)
+}
+
+/// The wRPC instance the resource-drop meta-op is served on. It is **not** a component
+/// export — the host handles it directly, the component never sees it — so it gets its
+/// own `icanhaz:fspass/resources` namespace next to the served filesystem.
+const RESOURCES_INSTANCE: &str = "icanhaz:fspass/resources@0.1.0";
+
+/// Serve `drop(handle: list<u8>)` on [`RESOURCES_INSTANCE`], draining it on a task
+/// spawned into `handlers`. Each call evicts the guest-exported resource the opaque
+/// `handle` names from the [`SharedResourceTable`] and runs its destructor — closing
+/// the underlying fd (or releasing the directory-entry stream).
+///
+/// This is the descriptor-drop wRPC can't relay on its own: `own<T>`/`borrow<T>` carry
+/// no lifetime over the wire, and the client's Component-Model handle-drop never reaches
+/// the host — so without this a client that keeps opening descriptors leaks them for the
+/// whole connection (the capacity cap is only a backstop). Framing the handle as a plain
+/// `list<u8>` (not `own<descriptor>`) keeps it a single uniform op over *any* shared
+/// handle and sidesteps the resource codec entirely.
+async fn serve_resource_drop<C, S>(
+    srv: &S,
+    store: Arc<Mutex<Store<FsState<C>>>>,
+    handlers: &mut JoinSet<()>,
+) -> anyhow::Result<()>
+where
+    C: Invoke + 'static,
+    C::Context: Clone,
+    S: Serve,
+{
+    // A flat `(list<u8>) -> bool` carries no async (stream) params, so no subscription
+    // paths. It returns whether a live handle was released, so a caller/test gets a
+    // definite acknowledgement (reading a released handle back gives no clean signal).
+    let paths: Arc<[Box<[Option<usize>]>]> = Arc::from(Vec::new());
+    let invocations = srv
+        .serve_values::<(Bytes,), (bool,)>(RESOURCES_INSTANCE, "drop", paths)
+        .await
+        .context("serve resources.drop")?;
+    handlers.spawn(async move {
+        let mut invocations = pin!(invocations);
+        while let Some(inv) = invocations.next().await {
+            let (_cx, (handle,), _deferred, reply) = match inv {
+                Ok(inv) => inv,
+                Err(err) => {
+                    tracing::warn!(?err, "failed to accept resource-drop invocation");
+                    continue;
+                }
+            };
+            let removed = match drop_shared_handle(&store, &handle).await {
+                Ok(removed) => removed,
+                Err(err) => {
+                    tracing::warn!(?err, "resource drop failed");
+                    false
+                }
+            };
+            // Always complete the invocation so the client's call resolves.
+            if let Err(err) = reply((removed,)).await {
+                tracing::warn!(?err, "failed to reply to resource-drop");
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Evict the shared resource the 16-byte UUID `handle` names and run its guest
+/// destructor. Returns whether a live handle was actually removed — a handle that
+/// isn't a valid UUID errors; one already gone (double-drop, or never ours) returns
+/// `Ok(false)`, so dropping is idempotent.
+async fn drop_shared_handle<C>(
+    store: &Arc<Mutex<Store<FsState<C>>>>,
+    handle: &[u8],
+) -> anyhow::Result<bool>
+where
+    C: Invoke + 'static,
+    C::Context: Clone,
+{
+    // Handles are minted little-endian on the wire (`codec.rs` `id.to_bytes_le()` /
+    // `Uuid::from_bytes_le`), so reconstruct the same way — a big-endian `from_slice`
+    // would yield a different UUID that never matches the table key (a silent no-op).
+    let bytes: [u8; 16] = handle.try_into().context("resource handle is not 16 bytes")?;
+    let id = Uuid::from_bytes_le(bytes);
+    let mut store = store.lock().await;
+    // Mirror the codec's access path to the shared table, then release the entry.
+    let removed = store.data_mut().wrpc().ctx.shared_resources().remove(&id);
+    match removed {
+        Some(resource) => {
+            // Runs the guest resource destructor (the fs-passthrough `Desc`/`DirStream`
+            // Drop), which drops the inner host descriptor and closes the fd.
+            resource
+                .resource_drop_async(&mut *store)
+                .await
+                .map_err(|e| anyhow::anyhow!("resource_drop_async failed: {e}"))?;
+            tracing::debug!(%id, "dropped shared resource");
+            Ok(true)
+        }
+        None => {
+            tracing::debug!(%id, "resource-drop: handle already released");
+            Ok(false)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -700,6 +814,89 @@ mod tests {
         assert!(after.is_err(), "after revoke, ops on the held descriptor must be denied, got {after:?}");
         // And a fresh mount is refused too.
         assert!(mount::open_root(&wrpc, (), &grant).await.unwrap().is_err(), "a revoked grant can't re-mount");
+
+        accept.abort();
+    }
+
+    /// Dropping a descriptor over the `resources` meta-op **releases** it: the handle
+    /// is evicted from the shared table and its guest destructor runs (closing the fd),
+    /// so the client's next op on that very handle fails at the host (the handle is no
+    /// longer known). This is the descriptor-drop that keeps a long-lived client from
+    /// leaking a handle per filesystem op.
+    #[tokio::test]
+    async fn dropping_a_descriptor_releases_the_handle() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use fs_client::icanhaz::fspass::mount;
+        use fs_client::wasi::filesystem::types::{Descriptor, DescriptorFlags, OpenFlags, PathFlags};
+        use wasmtime_wasi::{DirPerms, FilePerms};
+        use wrpc_transport::InvokeExt as _;
+
+        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"drop me\n").unwrap();
+        let mut builder = WasiCtxBuilder::new();
+        builder.preopened_dir(dir.path(), "/", DirPerms::all(), FilePerms::all()).unwrap();
+        let wasi = builder.build();
+
+        let grants = GrantStore::shared();
+        let grant = grants.lock().unwrap().issue(
+            CapabilityKind::Filesystem(FsRequest {
+                roots: vec![PathGrant { path: "/".to_string(), rights: FsRights::READ | FsRights::WRITE }],
+            }),
+            "filesystem (/)".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let _handlers = serve_filesystem(
+            srv.as_ref(),
+            &wasm,
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        let root = mount::open_root(&wrpc, (), &grant).await.unwrap().expect("mount with a valid grant");
+        let file = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "hello.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
+            .await
+            .unwrap()
+            .expect("open hello.txt");
+
+        // The handle works while it's live.
+        let before = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0).await.unwrap();
+        assert!(before.is_ok(), "read must succeed before drop, got {before:?}");
+
+        // Drop the descriptor handle over the resources meta-op (its raw 16-byte handle).
+        // The op reports back that it released a live handle.
+        let handle: Bytes = AsRef::<Bytes>::as_ref(&file).clone();
+        let no_paths: [&[Option<usize>]; 0] = [];
+        let ((removed,), _tx) = wrpc
+            .invoke_values::<_, (Bytes,), (bool,), _>((), RESOURCES_INSTANCE, "drop", (handle,), no_paths)
+            .await
+            .expect("drop invocation");
+        assert!(removed, "drop should report it released a live handle");
+
+        // The dropped handle no longer resolves: the host can't find it, so a read on
+        // the very same descriptor now fails (proving it was evicted, not just closed).
+        let after = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0).await;
+        assert!(after.is_err(), "read after drop must fail (handle released), got {after:?}");
 
         accept.abort();
     }
