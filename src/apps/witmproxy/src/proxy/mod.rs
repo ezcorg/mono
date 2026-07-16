@@ -8,7 +8,7 @@ use crate::http::utils::ContentTyped;
 use crate::plugins::cel::CelRequest;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
-use crate::tenant::TenantContext;
+use crate::proxy::tenant::TenantContext;
 use crate::wasm::bindgen::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
@@ -21,7 +21,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, StatusCode};
 use hyper::{Response, upgrade};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use wasmtime_wasi_http::p3::WasiHttpView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
@@ -36,6 +36,7 @@ use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
 
 pub mod netfilter;
+pub mod tenant;
 pub mod tenant_resolver;
 pub mod transparent;
 
@@ -73,7 +74,7 @@ fn plain_response(
 pub struct ProxyServer {
     listen_addr: Option<SocketAddr>,
     ca: Arc<CertificateAuthority>,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
     config: Arc<AppConfig>,
     upstream: UpstreamClient,
     shutdown_notify: Arc<Notify>,
@@ -87,7 +88,7 @@ pub struct ProxyServer {
 impl ProxyServer {
     pub fn new(
         ca: CertificateAuthority,
-        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        plugin_registry: Option<Arc<PluginRegistry>>,
         config: AppConfig,
     ) -> ProxyResult<Self> {
         let upstream = client(ca.clone())?;
@@ -159,7 +160,7 @@ impl ProxyServer {
                         _ = timer_shutdown.notified() => break,
                         _ = interval.tick() => {
                             let timer_event = TimerEvent::now();
-                            let registry = timer_registry.read().await;
+                            let registry = &timer_registry;
                             if registry.can_handle(&timer_event) {
                                 debug!("Timer tick: dispatching timer event to plugins");
                                 if let Err(e) = registry.handle_event(Box::new(timer_event)).await {
@@ -247,10 +248,7 @@ impl ProxyServer {
         };
 
         let connect_event: Box<dyn Event> = Box::new(Connect::new(host, port));
-        let has_matching_plugin = {
-            let registry = plugin_registry.read().await;
-            registry.can_handle(&*connect_event)
-        };
+        let has_matching_plugin = plugin_registry.can_handle(&*connect_event);
 
         if has_matching_plugin {
             debug!(
@@ -548,7 +546,7 @@ pub(crate) async fn run_tls_mitm<IO>(
     stream: IO,
     authority: String,
     ca: Arc<CertificateAuthority>,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
 ) -> ProxyResult<()>
 where
     IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -585,7 +583,6 @@ where
                 let mut request_ctx = CelRequest::from(&req);
 
                 let request_event_result = if let Some(registry) = &plugin_registry {
-                    let registry = registry.read().await;
                     let (parts, body) = req.into_parts();
                     let mapped_body = body.map_err(ErrorCode::from_hyper_request_error);
                     let req = Request::from_parts(parts, mapped_body);
@@ -696,7 +693,6 @@ where
 
                 let response_event_start = std::time::Instant::now();
                 let handled_response = if let Some(registry) = &plugin_registry {
-                    let registry = registry.read().await;
                     let (response, _io) = WasiResponse::from_http(initial_response);
                     let contextual_response = ContextualResponse {
                         request: request_ctx.into(),
@@ -736,7 +732,6 @@ where
                             ));
                         }
                     };
-                    let registry = registry.read().await;
                     let response = match store.data_mut().http().table.delete(response) {
                         Ok(r) => r,
                         Err(e) => {

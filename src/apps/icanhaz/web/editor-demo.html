@@ -4,28 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>icanhaz — markdown editor over wRPC</title>
-    <style>
-      :root { color-scheme: light dark; }
-      html, body { height: 100%; margin: 0; }
-      body { font: 14px/1.5 -apple-system, system-ui, sans-serif; display: flex; flex-direction: column; }
-      header { display: flex; gap: .6rem; align-items: center; padding: .5rem .8rem; border-bottom: 1px solid #8884; flex-wrap: wrap; }
-      header label { display: flex; gap: .3rem; align-items: center; }
-      header input { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid #8886; }
-      #file { min-width: 14rem; }
-      button { font: inherit; padding: .3rem .8rem; border-radius: 6px; border: 1px solid #8886; background: #8881; cursor: pointer; }
-      button:hover { background: #8883; }
-      #status { margin-left: auto; opacity: .7; font-size: .85rem; }
-      #editor { flex: 1; min-height: 0; overflow: auto; padding: 1rem 1.2rem; }
-    </style>
   </head>
   <body>
-    <header>
-      <label>ws <input id="ws" type="text" value="ws://127.0.0.1:7777" /></label>
-      <label>file <input id="file" type="text" value="editor-demo.md" /></label>
-      <button id="open">open</button>
-      <span id="status" class="dim">idle</span>
-    </header>
-    <div id="editor"></div>
+    <!-- The whole page (mac-window chrome + editor) is built in mac-demo.ts and
+         styled by mac-window.css (imported there). -->
+    <div id="root"></div>
     <script type="module" src="/src/editor-demo.ts"></script>
   </body>
 </html>

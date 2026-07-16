@@ -2,7 +2,7 @@ use crate::wasm::{Host, WitmProxyCtxView, bindgen::Plugin};
 use anyhow::Result;
 use wasmtime::{
     Config, Engine, Store, StoreLimitsBuilder,
-    component::{Component, Linker},
+    component::{Component, InstancePre, Linker},
 };
 use wasmtime_wasi::p3::bindings::LinkOptions;
 use wasmtime_wasi_http::p3::WasiHttpView;
@@ -132,6 +132,27 @@ impl Runtime {
     ) -> Result<(Plugin, Store<Host>)> {
         let mut store = self.new_store();
         let instance = self.linker.instantiate_async(&mut store, component).await?;
+        let plugin = Plugin::new(&mut store, &instance)?;
+        Ok((plugin, store))
+    }
+
+    /// Resolve and type-check a component's imports against the linker once,
+    /// producing a reusable [`InstancePre`]. This is the expensive part of
+    /// instantiation; callers should cache the result per component and reuse
+    /// it across events via [`Runtime::instantiate_from_pre`].
+    pub fn build_instance_pre(&self, component: &Component) -> Result<InstancePre<Host>> {
+        Ok(self.linker.instantiate_pre(component)?)
+    }
+
+    /// Instantiate a plugin from a pre-resolved [`InstancePre`] into a fresh
+    /// store. This skips import resolution (already done in `build_instance_pre`)
+    /// and only performs the per-event instantiation.
+    pub async fn instantiate_from_pre(
+        &self,
+        pre: &InstancePre<Host>,
+    ) -> Result<(Plugin, Store<Host>)> {
+        let mut store = self.new_store();
+        let instance = pre.instantiate_async(&mut store).await?;
         let plugin = Plugin::new(&mut store, &instance)?;
         Ok((plugin, store))
     }

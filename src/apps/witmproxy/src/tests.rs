@@ -14,11 +14,7 @@ async fn e2e_simple_json_test() -> Result<()> {
     let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await?;
     proxy.start().await.unwrap();
 
-    // Register test component, ensure write lock is dropped after use to prevent deadlock
-    {
-        let mut registry = registry.write().await;
-        register_test_component(&mut registry).await.unwrap();
-    }
+    register_test_component(&registry).await.unwrap();
 
     let target = create_json_echo_server("127.0.0.1", None, ca.clone(), Protocol::Http2).await;
     let client = create_client(
@@ -75,11 +71,7 @@ async fn e2e_simple_html_test() -> Result<()> {
     let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await?;
     proxy.start().await.unwrap();
 
-    // Register test component, ensure write lock is dropped after use to prevent deadlock
-    {
-        let mut registry = registry.write().await;
-        register_test_component(&mut registry).await.unwrap();
-    }
+    register_test_component(&registry).await.unwrap();
 
     let target = create_html_server("127.0.0.1", None, ca.clone(), Protocol::Http2).await;
     let client = create_client(
@@ -145,11 +137,8 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
     // Register both plugins:
     // - test component: has Connect scope "true" so MITM is triggered for 127.0.0.1
     // - noshorts: has InboundContent scope matching text/html, uses spawn for body streaming
-    {
-        let mut registry = registry.write().await;
-        register_test_component(&mut registry).await.unwrap();
-        register_noshorts_plugin(&mut registry).await.unwrap();
-    }
+    register_test_component(&registry).await.unwrap();
+    register_noshorts_plugin(&registry).await.unwrap();
 
     let target = create_html_server("127.0.0.1", None, ca.clone(), Protocol::Http2).await;
     let client = create_client(

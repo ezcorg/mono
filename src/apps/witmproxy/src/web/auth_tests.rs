@@ -6,7 +6,6 @@ use crate::web::WebServer;
 use crate::web::auth::{Claims, create_token};
 use std::sync::Arc;
 use tempfile::tempdir;
-use tokio::sync::RwLock;
 
 /// Helper to create a web server with auth enabled and a DB pool.
 async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, tempfile::TempDir) {
@@ -14,7 +13,7 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
 
     let (ca, mut config) = create_ca_and_config().await;
     config.auth.enabled = true;
-    config.auth.jwt_secret = Some("test-secret-key".to_string());
+    config.auth.jwt_secret = Some("test-secret-key".into());
     config.auth.jwt_issuer = Some("witmproxy".to_string());
 
     let temp_dir = tempdir().unwrap();
@@ -24,9 +23,9 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
     let pool = db.pool.clone();
 
     let runtime = Runtime::try_default().unwrap();
-    let plugin_registry = Arc::new(RwLock::new(
+    let plugin_registry = Arc::new(
         crate::plugins::registry::PluginRegistry::new(db, runtime).unwrap(),
-    ));
+    );
 
     let mut web_server = WebServer::new(ca, Some(plugin_registry), config);
     web_server = web_server.with_db_pool(pool.clone());

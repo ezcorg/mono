@@ -120,6 +120,8 @@ bipatch = "1.0.0"
 # Optional test helper dependencies
 tempfile = { version = "3.8", optional = true }
 service-manager = "0.11.0"
+zeroize = "1"
+rpassword = "7"
 
 [dev-dependencies]
 # Test dependencies

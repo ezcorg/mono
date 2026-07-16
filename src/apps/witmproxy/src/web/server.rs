@@ -25,7 +25,7 @@ use tracing::warn;
 pub struct WebServer {
     listen_addr: Option<SocketAddr>,
     ca: CertificateAuthority,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
     config: AppConfig,
     config_path: Option<std::path::PathBuf>,
     db_pool: Option<SqlitePool>,
@@ -40,7 +40,7 @@ struct Assets;
 impl WebServer {
     pub fn new(
         ca: CertificateAuthority,
-        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        plugin_registry: Option<Arc<PluginRegistry>>,
         config: AppConfig,
     ) -> Self {
         Self {
@@ -145,9 +145,15 @@ impl WebServer {
         // are needed by the JWT/ACL hoops, so inject them unconditionally. This
         // lets plugin management work even when the web server has no DB pool of
         // its own — the plugin registry carries its own database.
+        //
+        // The AppConfig is injected as a shared `Arc<RwLock<_>>` so the management
+        // API's GET/PUT operate on the *running* process's config: PUT updates it
+        // in place (and persists), and a subsequent GET reflects the change,
+        // rather than each request seeing a private startup snapshot.
+        let shared_config = Arc::new(RwLock::new(self.config.clone()));
         app = app
             .hoop(affix_state::inject(self.config.auth.clone()))
-            .hoop(affix_state::inject(self.config.clone()))
+            .hoop(affix_state::inject(shared_config))
             .hoop(affix_state::inject(management::ConfigPath(
                 self.config_path.clone().unwrap_or_default(),
             )));
@@ -357,9 +363,8 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
     };
 
     if let Some(registry) = registry {
-        let registry = registry.read().await;
-        let plugins: Vec<PluginSummary> = registry
-            .plugins()
+        let plugins = registry.plugins();
+        let plugins: Vec<PluginSummary> = plugins
             .values()
             .map(|p| PluginSummary {
                 namespace: p.namespace.clone(),
@@ -434,8 +439,6 @@ async fn upsert_plugin(
     };
 
     let plugin = match registry
-        .read()
-        .await
         .plugin_from_component_with_key(bytes, expected_key.as_deref())
         .await
     {
@@ -450,7 +453,6 @@ async fn upsert_plugin(
             return;
         }
     };
-    let mut registry = registry.write().await;
 
     let result = registry.register_plugin(plugin).await;
     match result {
@@ -495,7 +497,6 @@ async fn delete_plugin(
         return;
     };
 
-    let mut registry = registry.write().await;
     match registry
         .remove_plugin(&name.into_inner(), Some(&namespace.into_inner()))
         .await
@@ -548,16 +549,17 @@ async fn set_plugin_enabled(
     let plugin_name = name.into_inner();
     let enabled = body.into_inner().enabled;
 
-    let mut reg = registry.write().await;
-    let plugin_id = format!("{}/{}", ns, plugin_name);
-    if let Some(plugin) = reg.plugins_mut().get_mut(&plugin_id) {
-        plugin.enabled = enabled;
-        Ok(if enabled {
+    match registry.set_plugin_enabled(&ns, &plugin_name, enabled).await {
+        Ok(true) => Ok(if enabled {
             "Plugin enabled"
         } else {
             "Plugin disabled"
-        })
-    } else {
-        Err(salvo::http::StatusError::not_found().brief("Plugin not found"))
+        }),
+        Ok(false) => Err(salvo::http::StatusError::not_found().brief("Plugin not found")),
+        Err(e) => {
+            warn!("Failed to set plugin enabled state: {}", e);
+            Err(salvo::http::StatusError::internal_server_error()
+                .brief("Failed to update plugin enabled state"))
+        }
     }
 }

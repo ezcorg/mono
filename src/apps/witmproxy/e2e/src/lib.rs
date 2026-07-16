@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::RwLock;
 use tracing::warn;
 
 // Re-export witmproxy types that test authors need.
@@ -112,7 +111,7 @@ pub fn init_tracing() {
 /// ```
 pub struct TestEnv {
     proxy: WitmProxy,
-    registry: Arc<RwLock<PluginRegistry>>,
+    registry: Arc<PluginRegistry>,
     ca: CertificateAuthority,
     _temp_dir: tempfile::TempDir,
 }
@@ -158,8 +157,7 @@ impl TestEnv {
     /// A clone of the underlying `SqlitePool`, useful for direct DB operations
     /// (tenant creation, IP mappings, plugin overrides, …).
     pub async fn db_pool(&self) -> witmproxy::db::Db {
-        let reg = self.registry.read().await;
-        reg.db.clone()
+        self.registry.db.clone()
     }
 
     // -- HTTP client helpers ------------------------------------------------
@@ -192,9 +190,8 @@ impl TestEnv {
     /// Register a WASM plugin component from a file path.
     pub async fn register_plugin_from_path(&self, path: &str) -> Result<()> {
         let component_bytes = std::fs::read(path)?;
-        let mut reg = self.registry.write().await;
-        let plugin = reg.plugin_from_component(component_bytes).await?;
-        reg.register_plugin(plugin).await
+        let plugin = self.registry.plugin_from_component(component_bytes).await?;
+        self.registry.register_plugin(plugin).await
     }
 
     /// Register the built-in `wasm-test-component` plugin.
@@ -203,33 +200,28 @@ impl TestEnv {
     /// `witmproxy: res` header to responses, and prepends an HTML comment
     /// to `text/html` bodies.
     pub async fn register_test_component(&self) -> Result<()> {
-        let mut reg = self.registry.write().await;
-        witmproxy::test_utils::register_test_component(&mut reg).await
+        witmproxy::test_utils::register_test_component(&self.registry).await
     }
 
     /// Register the built-in `noop` plugin (passes all events through
     /// unchanged).
     pub async fn register_noop_plugin(&self) -> Result<()> {
-        let mut reg = self.registry.write().await;
-        witmproxy::test_utils::register_noop_plugin(&mut reg).await
+        witmproxy::test_utils::register_noop_plugin(&self.registry).await
     }
 
     /// Register the built-in `noshorts` plugin.
     pub async fn register_noshorts_plugin(&self) -> Result<()> {
-        let mut reg = self.registry.write().await;
-        witmproxy::test_utils::register_noshorts_plugin(&mut reg).await
+        witmproxy::test_utils::register_noshorts_plugin(&self.registry).await
     }
 
     /// Remove a plugin by name with optional namespace filter.
     pub async fn remove_plugin(&self, name: &str, namespace: Option<&str>) -> Result<Vec<String>> {
-        let mut reg = self.registry.write().await;
-        reg.remove_plugin(name, namespace).await
+        self.registry.remove_plugin(name, namespace).await
     }
 
     /// Get the set of currently-registered plugin IDs (`"namespace/name"`).
     pub async fn plugin_ids(&self) -> HashSet<String> {
-        let reg = self.registry.read().await;
-        reg.plugins().keys().cloned().collect()
+        self.registry.plugins().keys().cloned().collect()
     }
 
     // -- Tenant management --------------------------------------------------
@@ -286,8 +278,7 @@ impl TestEnv {
             .await?
             .ok_or_else(|| anyhow::anyhow!("tenant {tenant_id} not found"))?;
         let overrides = tenant.plugin_overrides(&db.pool).await?;
-        let reg = self.registry.read().await;
-        Ok(reg.effective_plugins_for_tenant(&overrides))
+        Ok(self.registry.effective_plugins_for_tenant(&overrides))
     }
 
     // -- Lifecycle ----------------------------------------------------------

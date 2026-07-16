@@ -6,6 +6,7 @@
 //! broker clamps it to a subset of the request regardless (see `broker::narrow`), so a
 //! bug (or a compromised webview) can only ever tighten a grant, never widen it.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -254,6 +255,89 @@ pub fn add_host(hosts: State<'_, Arc<Mutex<Hosts>>>, origin: String) {
 #[tauri::command]
 pub fn remove_host(hosts: State<'_, Arc<Mutex<Hosts>>>, origin: String) {
     hosts.lock().unwrap().remove(&origin);
+}
+
+// ---- in-app error surface --------------------------------------------------
+
+/// A small ring of recent operational errors, surfaced as a dismissible banner in the
+/// window (e.g. the daemon failing to bind a port). Managed as Tauri state; pushed to
+/// from the backend, read + dismissed by the UI — so failures aren't lost to stderr.
+#[derive(Clone)]
+pub struct AppErrors(Arc<Mutex<AppErrorsInner>>);
+
+struct AppErrorsInner {
+    next_id: u64,
+    entries: VecDeque<ErrorEntry>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ErrorEntry {
+    pub id: u64,
+    pub message: String,
+}
+
+impl AppErrors {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(AppErrorsInner { next_id: 1, entries: VecDeque::new() })))
+    }
+
+    /// Record an error (also logged); keeps the most recent ~20.
+    pub fn push(&self, message: impl Into<String>) {
+        let message = message.into();
+        eprintln!("icanhaz: {message}");
+        let mut inner = self.0.lock().unwrap();
+        let id = inner.next_id;
+        inner.next_id += 1;
+        inner.entries.push_back(ErrorEntry { id, message });
+        while inner.entries.len() > 20 {
+            inner.entries.pop_front();
+        }
+    }
+}
+
+#[tauri::command]
+pub fn list_errors(errors: State<'_, AppErrors>) -> Vec<ErrorEntry> {
+    errors.0.lock().unwrap().entries.iter().cloned().collect()
+}
+
+#[tauri::command]
+pub fn dismiss_error(errors: State<'_, AppErrors>, id: u64) {
+    errors.0.lock().unwrap().entries.retain(|e| e.id != id);
+}
+
+// ---- settings --------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct AppInfo {
+    pub version: String,
+    pub ws: String,
+    pub wt: String,
+    pub root: String,
+}
+
+/// Read-only info for the Settings tab (bind addresses + jail root + version).
+#[tauri::command]
+pub fn app_info() -> AppInfo {
+    let env_or = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        ws: env_or("ICANHAZ_WS_BIND", "127.0.0.1:7777"),
+        wt: env_or("ICANHAZ_WT_BIND", "127.0.0.1:7778"),
+        root: std::env::var("ICANHAZ_ROOT")
+            .unwrap_or_else(|_| std::env::temp_dir().join("icanhaz-demo-root").display().to_string()),
+    }
+}
+
+/// Forget every remembered site (durable pairings).
+#[tauri::command]
+pub fn clear_pairings(pairings: State<'_, Arc<Mutex<Pairings>>>) {
+    pairings.lock().unwrap().clear();
+}
+
+/// Remove every approved host.
+#[tauri::command]
+pub fn clear_hosts(hosts: State<'_, Arc<Mutex<Hosts>>>) {
+    hosts.lock().unwrap().clear();
 }
 
 /// Resolve a parked request. `allow=false` denies; otherwise approve with the optional

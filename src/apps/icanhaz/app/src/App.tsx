@@ -15,13 +15,21 @@ type GrantView = { id: string; holder: string; summary: string; icon: string; ex
 type CapabilityView = { id: string; icon: string; description: string };
 type SiteView = { origin: string; kinds: string[] };
 
-type Tab = "capabilities" | "grants" | "sites" | "hosts";
+type ErrorEntry = { id: number; message: string };
+type AppInfo = { version: string; ws: string; wt: string; root: string };
+
+type Tab = "capabilities" | "grants" | "sites" | "hosts" | "settings";
 const TABS: [Tab, string][] = [
   ["capabilities", "Capabilities"],
   ["grants", "Grants"],
   ["sites", "Sites"],
   ["hosts", "Hosts"],
+  ["settings", "Settings"],
 ];
+
+// A persisted default grant lifetime (Settings) used to seed the consent dropdown.
+const TTL_KEY = "icanhaz.defaultTtlSecs";
+const defaultTtl = () => Number(localStorage.getItem(TTL_KEY)) || 3600;
 
 type FsCap = Extract<Capability, { kind: "filesystem" }>;
 type ProcCap = Extract<Capability, { kind: "process" }>;
@@ -43,6 +51,9 @@ export function App() {
   const [sites, setSites] = createSignal<SiteView[]>([]);
   const [approvedHosts, setApprovedHosts] = createSignal<string[]>([]);
   const [unknownHosts, setUnknownHosts] = createSignal<SiteView[]>([]);
+  const [errors, setErrors] = createSignal<ErrorEntry[]>([]);
+  const [info, setInfo] = createSignal<AppInfo | null>(null);
+  const [ttl, setTtl] = createSignal(defaultTtl());
   const [tab, setTab] = createSignal<Tab>("grants");
   const [newHost, setNewHost] = createSignal("");
 
@@ -50,13 +61,14 @@ export function App() {
 
   const refresh = async () => {
     try {
-      const [p, g, c, s, ah, uh] = await Promise.all([
+      const [p, g, c, s, ah, uh, er] = await Promise.all([
         invoke<Pending[]>("list_pending"),
         invoke<GrantView[]>("list_grants"),
         invoke<CapabilityView[]>("list_capabilities", { lang: null }),
         invoke<SiteView[]>("list_pairings"),
         invoke<string[]>("list_hosts"),
         invoke<SiteView[]>("list_unknown_hosts"),
+        invoke<ErrorEntry[]>("list_errors"),
       ]);
       // Preserve object identity for pending ids so an in-progress card keeps its edits.
       setPending((prev) => {
@@ -68,9 +80,27 @@ export function App() {
       setSites(s);
       setApprovedHosts(ah);
       setUnknownHosts(uh);
+      setErrors(er);
     } catch {
       /* transient — the backend may still be starting */
     }
+  };
+
+  const dismissError = async (id: number) => {
+    await invoke("dismiss_error", { id });
+    refresh();
+  };
+  const clearPairings = async () => {
+    await invoke("clear_pairings");
+    refresh();
+  };
+  const clearHosts = async () => {
+    await invoke("clear_hosts");
+    refresh();
+  };
+  const setDefaultTtl = (secs: number) => {
+    setTtl(secs);
+    localStorage.setItem(TTL_KEY, String(secs));
   };
 
   const revoke = async (id: string) => {
@@ -101,6 +131,7 @@ export function App() {
 
   onMount(() => {
     refresh();
+    invoke<AppInfo>("app_info").then(setInfo).catch(() => {});
     const timer = setInterval(refresh, 1000);
     onCleanup(() => clearInterval(timer));
   });
@@ -109,6 +140,16 @@ export function App() {
     <main class="wrap">
       <style>{CSS}</style>
       <h1>icanhaz <span class="dim">— consent</span></h1>
+
+      {/* Backend errors (e.g. the daemon failing to bind a port) surface here. */}
+      <For each={errors()}>
+        {(e) => (
+          <div class="err">
+            <span class="grow">{e.message}</span>
+            <button class="err-x" onClick={() => dismissError(e.id)} title="dismiss">×</button>
+          </div>
+        )}
+      </For>
 
       {/* Pending requests stay pinned at the top when present — they're time-sensitive. */}
       <Show when={pending().length > 0}>
@@ -212,6 +253,38 @@ export function App() {
           )}
         </For>
       </Show>
+
+      <Show when={tab() === "settings"}>
+        <div class="section-label">default grant lifetime</div>
+        <div class="row">
+          <span class="grow dim">new approvals start at this expiry</span>
+          <select value={ttl()} onChange={(e) => setDefaultTtl(+e.currentTarget.value)}>
+            <For each={TTLS}>{([label, secs]) => <option value={secs} selected={secs === ttl()}>{label}</option>}</For>
+          </select>
+        </div>
+
+        <div class="section-label">stored trust</div>
+        <div class="row">
+          <span class="grow">Remembered sites</span>
+          <button class="mini danger" onClick={clearPairings}>forget all</button>
+        </div>
+        <div class="row">
+          <span class="grow">Approved hosts</span>
+          <button class="mini danger" onClick={clearHosts}>clear all</button>
+        </div>
+
+        <div class="section-label">about</div>
+        <Show when={info()}>
+          {(i) => (
+            <div class="about">
+              <div><span class="dim">version</span> {i().version}</div>
+              <div><span class="dim">websocket</span> <code>ws://{i().ws}</code></div>
+              <div><span class="dim">webtransport</span> <code>https://{i().wt}</code></div>
+              <div><span class="dim">jail root</span> <code>{i().root}</code></div>
+            </div>
+          )}
+        </Show>
+      </Show>
     </main>
   );
 }
@@ -226,7 +299,7 @@ function fmtDur(secs: number): string {
 function RequestCard(props: { req: Pending; onResolved: () => void }) {
   // An editable copy of the requested capability — the human narrows this in place.
   const [cap, setCap] = createSignal<Capability>(structuredClone(props.req.capability));
-  const [ttl, setTtl] = createSignal(3600);
+  const [ttl, setTtl] = createSignal(defaultTtl());
   const [remember, setRemember] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
 
@@ -414,6 +487,12 @@ button:disabled { opacity: .5; cursor: default; }
 .mini.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 .kinds { display: inline-flex; gap: .25rem; }
 .section-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .07em; opacity: .5; margin: 1rem 0 .3rem; font-weight: 700; }
+.err { display: flex; align-items: center; gap: .6rem; border: 1px solid var(--danger); border-radius: 8px; padding: .5rem .7rem; margin: .5rem 0; background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.err-x { font: inherit; background: none; border: none; color: inherit; cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0 .2rem; opacity: .7; }
+.err-x:hover { opacity: 1; }
+.about { font-size: .9em; }
+.about > div { padding: .12rem 0; overflow-wrap: anywhere; }
+.about .dim { display: inline-block; min-width: 6.5rem; }
 .add-host { display: flex; gap: .5rem; margin: .5rem 0; }
 .add-host input { flex: 1; min-width: 0; font: inherit; padding: .35rem .5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: inherit; }
 `;

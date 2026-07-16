@@ -1,13 +1,14 @@
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 
+use super::GlobalArgs;
 use crate::cli::api_client::ApiClient;
 
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum GroupCommands {
     /// List all groups
-    List,
+    List(GlobalArgs),
     /// Create a new group
     Create(GroupCreateArgs),
     /// Delete a group
@@ -25,6 +26,9 @@ pub enum GroupCommands {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct GroupCreateArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Group name
     #[arg(pos)]
     pub name: String,
@@ -33,6 +37,9 @@ pub struct GroupCreateArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct GroupIdArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Group ID
     #[arg(pos)]
     pub id: String,
@@ -41,6 +48,9 @@ pub struct GroupIdArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct GroupMemberArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Group ID
     #[arg(pos)]
     pub group_id: String,
@@ -52,6 +62,9 @@ pub struct GroupMemberArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct GroupAddPermArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Group ID
     #[arg(pos)]
     pub group_id: String,
@@ -66,12 +79,28 @@ pub struct GroupAddPermArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct GroupRemovePermArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Group ID
     #[arg(pos)]
     pub group_id: String,
     /// Permission ID
     #[arg(pos)]
     pub permission_id: String,
+}
+
+impl GroupCommands {
+    pub(crate) fn globals(&self) -> &GlobalArgs {
+        match self {
+            GroupCommands::List(g) => g,
+            GroupCommands::Create(a) => &a.globals,
+            GroupCommands::Delete(a) => &a.globals,
+            GroupCommands::AddMember(a) | GroupCommands::RemoveMember(a) => &a.globals,
+            GroupCommands::AddPermission(a) => &a.globals,
+            GroupCommands::RemovePermission(a) => &a.globals,
+        }
+    }
 }
 
 pub struct GroupHandler;
@@ -82,7 +111,7 @@ impl GroupHandler {
             .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run 'witm auth login' first."))?;
 
         match command {
-            GroupCommands::List => {
+            GroupCommands::List(_) => {
                 let resp = client.get("/api/manage/groups").await?;
                 println!("{}", resp.text().await?);
             }

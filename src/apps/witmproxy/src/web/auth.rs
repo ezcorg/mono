@@ -112,7 +112,7 @@ pub async fn jwt_auth(
     if let Some(ref secret) = auth_config.jwt_secret {
         match decode_token(
             &token,
-            secret,
+            secret.expose(),
             auth_config.jwt_issuer.as_deref(),
             auth_config.jwt_audience.as_deref(),
         ) {

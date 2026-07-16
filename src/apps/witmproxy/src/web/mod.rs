@@ -16,7 +16,6 @@ use salvo::{Depot, Request, Response, Scribe};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::cert::generator::DeviceInfo;
 use crate::cert::{CertificateAuthority, CertificateFormat, CertificateGenerator};
@@ -31,7 +30,7 @@ mod auth_tests;
 #[derive(Clone)]
 pub struct AppState {
     pub ca: CertificateAuthority,
-    pub plugin_registry: Option<Arc<RwLock<crate::plugins::registry::PluginRegistry>>>,
+    pub plugin_registry: Option<Arc<crate::plugins::registry::PluginRegistry>>,
 }
 
 #[derive(Debug, Serialize)]

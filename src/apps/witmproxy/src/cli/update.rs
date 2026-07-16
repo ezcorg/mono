@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, system_app_dir};
+use crate::config::{AppConfig, UpdateConfig, system_app_dir};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -408,12 +408,12 @@ async fn update_via_cargo_install(version: &semver::Version) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 pub struct UpdateHandler {
-    config: AppConfig,
+    update: UpdateConfig,
 }
 
 impl UpdateHandler {
-    pub fn new(config: AppConfig) -> Self {
-        Self { config }
+    pub fn new(update: UpdateConfig) -> Self {
+        Self { update }
     }
 
     pub async fn handle(&self, force: bool, from_source: bool) -> Result<()> {
@@ -450,7 +450,7 @@ impl UpdateHandler {
 
         let mut updated = false;
 
-        if !from_source && self.config.update.prefer_prebuilt {
+        if !from_source && self.update.prefer_prebuilt {
             // Try delta patch first (much smaller download)
             match try_delta_update(&current, &latest).await {
                 Ok(Some(binary)) => match replace_binary(&binary) {
@@ -512,6 +512,8 @@ impl UpdateHandler {
 // 4i. Daemon auto-update loop
 // ---------------------------------------------------------------------------
 
+/// The daemon auto-update loop takes the full [`AppConfig`]: after swapping
+/// the binary it re-runs `service install`, which persists the config file.
 pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
     // Wait 60s after startup to avoid startup churn
     tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;

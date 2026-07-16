@@ -574,10 +574,11 @@ impl RuntimeConfig {
 #[endpoint(security(("bearer" = [])), status_codes(200, 201, 400, 401, 403, 404, 500))]
 pub async fn get_config(depot: &mut Depot) -> Result<Json<RuntimeConfig>, StatusError> {
     let config = depot
-        .obtain::<crate::config::AppConfig>()
+        .obtain::<std::sync::Arc<tokio::sync::RwLock<crate::config::AppConfig>>>()
         .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
 
+    let config = config.read().await;
     Ok(Json(RuntimeConfig::from_app_config(&config)))
 }
 
@@ -587,8 +588,8 @@ pub async fn update_config(
     body: JsonBody<RuntimeConfig>,
     depot: &mut Depot,
 ) -> Result<Json<RuntimeConfig>, StatusError> {
-    let mut config = depot
-        .obtain::<crate::config::AppConfig>()
+    let shared = depot
+        .obtain::<std::sync::Arc<tokio::sync::RwLock<crate::config::AppConfig>>>()
         .cloned()
         .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
 
@@ -598,8 +599,10 @@ pub async fn update_config(
         .map_err(|_| StatusError::internal_server_error().brief("Config path not available"))?;
 
     let updates = body.into_inner();
-    updates.apply_to(&mut config);
 
+    // Update the running process's config in place, then persist it.
+    let mut config = shared.write().await;
+    updates.apply_to(&mut config);
     config.save(&config_path).map_err(|e| {
         warn!("Failed to save config: {}", e);
         StatusError::internal_server_error().brief(format!("Failed to save config: {}", e))

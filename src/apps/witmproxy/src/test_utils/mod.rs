@@ -12,7 +12,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use tracing::error;
@@ -69,7 +68,7 @@ pub async fn create_plugin_registry() -> Result<(PluginRegistry, tempfile::TempD
 ///
 /// In conjunction with our echo server, we can verify that the target server
 /// received the modified request, and that the client received the modified response.
-pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+pub async fn register_test_component(registry: &PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = test_component_path()?;
     let component_bytes = std::fs::read(&wasm_path)?;
 
@@ -78,7 +77,7 @@ pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<()
     registry.register_plugin(plugin).await
 }
 
-pub async fn register_noop_plugin(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+pub async fn register_noop_plugin(registry: &PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = noop_plugin_path()?;
     let component_bytes = std::fs::read(&wasm_path)?;
 
@@ -87,7 +86,7 @@ pub async fn register_noop_plugin(registry: &mut PluginRegistry) -> Result<(), a
     registry.register_plugin(plugin).await
 }
 
-pub async fn register_noshorts_plugin(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+pub async fn register_noshorts_plugin(registry: &PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = noshorts_plugin_path()?;
     let component_bytes = std::fs::read(&wasm_path)?;
 
@@ -106,14 +105,14 @@ pub async fn create_db() -> (Db, tempfile::TempDir) {
 
 pub async fn create_witmproxy() -> Result<(
     WitmProxy,
-    Arc<RwLock<PluginRegistry>>,
+    Arc<PluginRegistry>,
     CertificateAuthority,
     AppConfig,
     tempfile::TempDir,
 )> {
     let (ca, config) = create_ca_and_config().await;
     let (registry, temp_dir) = create_plugin_registry().await?;
-    let registry = Arc::new(RwLock::new(registry));
+    let registry = Arc::new(registry);
     let proxy = WitmProxy::new(ca.clone(), Some(registry.clone()), config.clone());
     Ok((proxy, registry, ca, config, temp_dir))
 }

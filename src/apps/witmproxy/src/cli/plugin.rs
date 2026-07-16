@@ -1,29 +1,65 @@
-use super::Services;
+use super::{GlobalArgs, Services};
 use crate::cert::ca::get_root_cert_path;
-use crate::{AppConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
+use crate::{config::PluginScopedConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
+/// Every leaf reads its config subset from the `[config]` file section: the
+/// variants are all `serde(rename = "config")` and `Cli::parse_args` mirrors
+/// the `[config]` table under this command's doc key (see
+/// `mirror_config_for_nested_commands`).
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum PluginCommands {
     /// List all installed plugins
-    List,
+    #[conf(serde(rename = "config"))]
+    List(PluginListArgs),
     /// Create a new plugin from a template
+    #[conf(serde(rename = "config"))]
     New(PluginNewArgs),
     /// Add a plugin from a local path or URL
+    #[conf(serde(rename = "config"))]
     Add(PluginAddArgs),
     /// Remove a plugin by name or namespace/name
+    #[conf(serde(rename = "config"))]
     Remove(PluginRemoveArgs),
     /// View or set configuration values for an installed plugin
+    #[conf(serde(rename = "config"))]
     Configure(PluginConfigureArgs),
 }
 
+impl PluginCommands {
+    /// The config scope + shared flags carried by whichever leaf was invoked.
+    pub(crate) fn scope(&self) -> (&PluginScopedConfig, &GlobalArgs) {
+        match self {
+            PluginCommands::List(a) => (&a.config, &a.globals),
+            PluginCommands::New(a) => (&a.config, &a.globals),
+            PluginCommands::Add(a) => (&a.config, &a.globals),
+            PluginCommands::Remove(a) => (&a.config, &a.globals),
+            PluginCommands::Configure(a) => (&a.config, &a.globals),
+        }
+    }
+}
+
 #[derive(Conf)]
-#[conf(serde)]
+#[conf(serde(allow_unknown_fields))]
+pub struct PluginListArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
 pub struct PluginNewArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
     /// Name of the plugin
     #[arg(pos)]
     pub plugin_name: String,
@@ -36,8 +72,13 @@ pub struct PluginNewArgs {
 }
 
 #[derive(Conf)]
-#[conf(serde)]
+#[conf(serde(allow_unknown_fields))]
 pub struct PluginAddArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
     /// Local .wasm file path or URL (https://...)
     #[arg(pos)]
     pub source: String,
@@ -48,16 +89,26 @@ pub struct PluginAddArgs {
 }
 
 #[derive(Conf)]
-#[conf(serde)]
+#[conf(serde(allow_unknown_fields))]
 pub struct PluginRemoveArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
     /// Plugin name or namespace/name to remove
     #[arg(pos)]
     pub plugin_name: String,
 }
 
 #[derive(Conf)]
-#[conf(serde)]
+#[conf(serde(allow_unknown_fields))]
 pub struct PluginConfigureArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
     /// Plugin name or namespace/name (e.g. "@ezco/noop")
     #[arg(pos)]
     pub plugin_name: String,
@@ -68,19 +119,19 @@ pub struct PluginConfigureArgs {
 
 /// Plugin command handler that contains the resolved configuration and verbose flag
 pub struct PluginHandler {
-    pub config: AppConfig,
+    pub config: PluginScopedConfig,
     #[cfg_attr(not(feature = "plugin-new"), allow(dead_code))]
     pub verbose: bool,
 }
 
 impl PluginHandler {
-    pub fn new(config: AppConfig, verbose: bool) -> Self {
+    pub fn new(config: PluginScopedConfig, verbose: bool) -> Self {
         Self { config, verbose }
     }
 
     pub async fn handle(&self, command: &PluginCommands) -> Result<()> {
         match command {
-            PluginCommands::List => self.list_plugins().await,
+            PluginCommands::List(_) => self.list_plugins().await,
             PluginCommands::New(a) => {
                 self.create_new_plugin(&a.plugin_name, &a.language, &a.dest).await
             }
@@ -209,7 +260,9 @@ impl PluginHandler {
     }
 
     async fn list_plugins(&self) -> Result<()> {
-        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         let rows = sqlx::query(
@@ -421,12 +474,14 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         // Create runtime and registry
         let runtime = Runtime::try_default()?;
-        let mut registry = PluginRegistry::new(db, runtime)?;
+        let registry = PluginRegistry::new(db, runtime)?;
 
         // Create plugin from component bytes (including signature verification)
         let mut plugin = registry
@@ -456,7 +511,9 @@ impl PluginHandler {
             None => (plugin_name.to_string(), "default".to_string()),
         };
 
-        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         if set_values.is_empty() {
@@ -528,11 +585,13 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db = Db::from_path(self.config.db.db_path.clone(), self.config.db.require_password()?).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         let runtime = Runtime::try_default()?;
-        let mut registry = PluginRegistry::new(db, runtime)?;
+        let registry = PluginRegistry::new(db, runtime)?;
 
         registry.remove_plugin(&name, namespace.as_deref()).await?;
         Ok(())

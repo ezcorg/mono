@@ -41,13 +41,13 @@ pub use web::WebServer;
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tracing::{info, warn};
 
 /// Main WitmProxy struct that holds everything necessary to run the proxy
 pub struct WitmProxy {
     ca: CertificateAuthority,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
     config: AppConfig,
     config_path: Option<std::path::PathBuf>,
     db_pool: Option<sqlx::SqlitePool>,
@@ -65,7 +65,7 @@ impl WitmProxy {
     /// * [`config`](AppConfig) - The application configuration
     pub fn new(
         ca: CertificateAuthority,
-        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        plugin_registry: Option<Arc<PluginRegistry>>,
         config: AppConfig,
     ) -> Self {
         Self {
@@ -91,7 +91,7 @@ impl WitmProxy {
     }
 
     /// Get the plugin registry
-    pub fn plugin_registry(&self) -> &Option<Arc<RwLock<PluginRegistry>>> {
+    pub fn plugin_registry(&self) -> &Option<Arc<PluginRegistry>> {
         &self.plugin_registry
     }
 

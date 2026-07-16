@@ -17,6 +17,8 @@ use conf::Conf;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub use crate::util::secret::Secret;
+
 /// Returns the system-level app directory on Linux (`/var/lib/witmproxy`).
 /// On other platforms, returns `~/.witmproxy`.
 pub fn system_app_dir() -> PathBuf {
@@ -116,9 +118,16 @@ pub struct AuthConfig {
     pub jwt_audience: Option<String>,
 
     /// JWT secret for local token signing. If unset while auth is enabled, a
-    /// random secret is generated and persisted to the config file on first startup.
-    #[arg(long = "auth-jwt-secret", env = "AUTH_JWT_SECRET")]
-    pub jwt_secret: Option<String>,
+    /// random secret is generated and persisted to the config file on first
+    /// startup. Passing a value on the command line exposes it to shell
+    /// history and process listings; pass the bare flag to be prompted
+    /// instead.
+    #[arg(
+        long = "auth-jwt-secret",
+        env = "AUTH_JWT_SECRET",
+        default_if_missing = ""
+    )]
+    pub jwt_secret: Option<Secret>,
 
     /// Default admin email (default: admin@localhost)
     #[arg(
@@ -128,9 +137,32 @@ pub struct AuthConfig {
     )]
     pub admin_email: String,
 
-    /// Default admin password (if unset, a random password is generated on first startup)
-    #[arg(long = "auth-admin-password", env = "AUTH_ADMIN_PASSWORD")]
-    pub admin_password: Option<String>,
+    /// Default admin password (if unset, a random password is generated on
+    /// first startup). Passing a value on the command line exposes it to
+    /// shell history and process listings; pass the bare flag to be prompted
+    /// instead.
+    #[arg(
+        long = "auth-admin-password",
+        env = "AUTH_ADMIN_PASSWORD",
+        default_if_missing = ""
+    )]
+    pub admin_password: Option<Secret>,
+}
+
+impl AuthConfig {
+    /// Whether no usable JWT signing secret is set — either absent or the empty
+    /// "prompt me" sentinel. Callers generate one in this case, so an empty
+    /// sentinel that slipped past [`AppConfig::resolve_secret_prompts`] (e.g.
+    /// the non-interactive daemon path) is regenerated rather than used to sign
+    /// tokens.
+    pub fn jwt_secret_missing(&self) -> bool {
+        self.jwt_secret.as_ref().is_none_or(Secret::is_empty)
+    }
+
+    /// Whether no usable admin password is set (absent or the empty sentinel).
+    pub fn admin_password_missing(&self) -> bool {
+        self.admin_password.as_ref().is_none_or(Secret::is_empty)
+    }
 }
 
 #[derive(Conf, Clone, Deserialize, Serialize, Default, Debug)]
@@ -184,25 +216,34 @@ pub struct DbConfig {
     )]
     pub db_path: PathBuf,
 
-    /// The database password used to encrypt the local SQLite database (SQLCipher).
-    /// Optional at parse time so that commands which never open the database
-    /// (e.g. `service uninstall`, `status`) don't demand it. Commands that DO
-    /// open the database validate its presence lazily via
-    /// [`DbConfig::require_password`], which produces an actionable error.
-    #[arg(long = "db-password", env = "DB_PASSWORD")]
-    pub db_password: Option<String>,
+    /// The database password used to encrypt the local SQLite database
+    /// (SQLCipher). Only required by commands that open the database; the
+    /// daemon generates and persists one on first startup if unset. Passing
+    /// a value on the command line exposes it to shell history and process
+    /// listings; pass the bare flag to be prompted instead.
+    //
+    // Optional at parse time so commands that open the database resolve it
+    // lazily via `DbConfig::resolve_password` (prompt for the bare-flag
+    // sentinel, actionable error when absent).
+    #[arg(long = "db-password", env = "DB_PASSWORD", default_if_missing = "")]
+    pub db_password: Option<Secret>,
 }
 
 impl DbConfig {
-    /// Return the database password, or an actionable error naming both the
-    /// environment variable and the CLI flag that can supply it.
-    pub fn require_password(&self) -> Result<&str> {
-        self.db_password.as_deref().filter(|p| !p.is_empty()).ok_or_else(|| {
-            anyhow::anyhow!(
+    /// Resolve the database password: an explicit non-empty value is used
+    /// as-is; the empty "prompt me" sentinel (a bare `--db-password`) prompts
+    /// — hidden on a TTY, one line from stdin otherwise; an absent value is
+    /// an actionable error naming every way to supply it.
+    pub fn resolve_password(&self) -> Result<Secret> {
+        match &self.db_password {
+            Some(secret) if !secret.is_empty() => Ok(secret.clone()),
+            Some(_) => crate::util::secret::prompt("Database password"),
+            None => Err(anyhow::anyhow!(
                 "a database password is required for this command.\n  \
-                 Set the DB_PASSWORD environment variable or pass --db-password <value>."
-            )
-        })
+                 Set the DB_PASSWORD environment variable, pass --db-password <value>,\n  \
+                 or pass a bare --db-password to be prompted."
+            )),
+        }
     }
 }
 
@@ -248,11 +289,11 @@ pub struct PluginConfig {
     )]
     pub enabled: bool,
 
-    /// Plugin execution timeout in milliseconds (default: 1000). Set to 0 for no timeout.
+    /// Plugin execution timeout in milliseconds (default: 10000). Set to 0 for no timeout.
     #[arg(
         long = "timeout-ms",
         env = "PLUGINS_TIMEOUT_MS",
-        default_value = "1000"
+        default_value = "10000"
     )]
     pub timeout_ms: u64,
 
@@ -265,11 +306,7 @@ pub struct PluginConfig {
     pub max_memory_mb: u64,
 
     /// WASM fuel limit per plugin execution (default: 1000000). Set to 0 for unlimited.
-    #[arg(
-        long = "max-fuel",
-        env = "PLUGINS_MAX_FUEL",
-        default_value = "1000000"
-    )]
+    #[arg(long = "max-fuel", env = "PLUGINS_MAX_FUEL", default_value = "1000000")]
     pub max_fuel: u64,
 }
 
@@ -293,7 +330,7 @@ pub struct WebConfig {
     pub web_tls_key_path: Option<PathBuf>,
 }
 
-#[derive(Conf, Clone, Deserialize, Serialize, Default, Debug)]
+#[derive(Conf, Clone, Deserialize, Serialize, Debug)]
 #[conf(serde)]
 pub struct UpdateConfig {
     /// Enable automatic updates in daemon mode (default: true)
@@ -332,7 +369,7 @@ pub struct UpdateConfig {
     pub prefer_prebuilt: bool,
 }
 
-#[derive(Conf, Clone, Deserialize, Serialize, Default, Debug)]
+#[derive(Conf, Clone, Deserialize, Serialize, Debug)]
 #[conf(serde)]
 pub struct LogConfig {
     /// Log level filter (default: info). Use "debug" or "trace" for more output.
@@ -417,6 +454,31 @@ pub struct TelemetryConfig {
         default_value = "15"
     )]
     pub resource_metrics_interval_secs: u64,
+}
+
+// Manual `Default`s matching the parse-time `default_value`s above, so
+// commands whose config scope omits these sections (and code building a
+// partial `AppConfig`) see the same defaults as a `conf` parse.
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            auto_update: true,
+            check_interval_seconds: 21600,
+            cli_update_warning: true,
+            prefer_prebuilt: true,
+        }
+    }
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            log_level: "info".to_string(),
+            log_dir: None,
+            rotation: "daily".to_string(),
+            max_files: 7,
+        }
+    }
 }
 
 impl TlsConfig {
@@ -506,24 +568,40 @@ pub struct AppConfig {
     pub telemetry: TelemetryConfig,
 }
 
+/// The on-disk shape of `config.toml`: everything nested under a single
+/// `[config]` table. This matches what the `conf` parse reads — every
+/// config-bearing subcommand variant is `#[conf(serde(rename = "config"))]`,
+/// so they all read the same `[config]` section (full or scoped).
+#[derive(Deserialize)]
+struct ConfigFile {
+    #[serde(default)]
+    config: AppConfig,
+}
+
+#[derive(Serialize)]
+struct ConfigFileRef<'a> {
+    config: &'a AppConfig,
+}
+
 impl AppConfig {
     /// Load configuration directly from a TOML file (no CLI/env layering).
     /// Best-effort helper for early startup reads; prefer the layered
     /// [`conf`] parse in [`crate::cli`] for the authoritative config.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: AppConfig = toml::from_str(&content)?;
-        Ok(config)
+        let file: ConfigFile = toml::from_str(&content)?;
+        Ok(file.config)
     }
 
-    /// Serialize the effective configuration to a TOML file.
+    /// Serialize the effective configuration to a TOML file (under `[config]`,
+    /// see [`ConfigFile`]).
     ///
     /// The file may contain secrets (`db_password`, `jwt_secret`,
     /// `admin_password`); callers are responsible for restricting its
     /// permissions (see [`crate::fs_secure`]).
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let content = toml::to_string_pretty(self)?;
-        crate::fs_secure::write_secret(path, content)?;
+        let content = toml::to_string_pretty(&ConfigFileRef { config: self })?;
+        crate::util::fs_secure::write_secret(path, content)?;
         Ok(())
     }
 
@@ -541,8 +619,185 @@ impl AppConfig {
         self.web.resolve_paths()?;
         Ok(self)
     }
+
+    /// Resolve any "prompt me" secret sentinels (a bare `--db-password`,
+    /// `--auth-jwt-secret`, or `--auth-admin-password`) by prompting, in that
+    /// fixed order. The full-config commands call this once, up front, so
+    /// prompted values flow into everything downstream — including
+    /// `service install`, which persists them to the config file.
+    pub fn resolve_secret_prompts(mut self) -> Result<Self> {
+        use crate::util::secret::prompt;
+        if self.db.db_password.as_ref().is_some_and(Secret::is_empty) {
+            self.db.db_password = Some(prompt("Database password")?);
+        }
+        if self.auth.jwt_secret.as_ref().is_some_and(Secret::is_empty) {
+            self.auth.jwt_secret = Some(prompt("JWT signing secret")?);
+        }
+        if self.auth.admin_password.as_ref().is_some_and(Secret::is_empty) {
+            self.auth.admin_password = Some(prompt("Admin password")?);
+        }
+        Ok(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scoped config subsets (per-subcommand)
+// ---------------------------------------------------------------------------
+//
+// Commands that don't run the proxy flatten one of these instead of the full
+// `AppConfig`, so their `--help` documents only the options they actually use.
+// They read the same `[config]` file section as the full config; the
+// `allow_unknown_fields` attribute lets them ignore the `[config.*]` tables
+// they don't declare.
+
+/// Config subset for commands that only need to locate the app/cert directory
+/// (`ca`, `proxy`, `openapi`).
+#[derive(Conf, Clone, Debug, Default)]
+#[conf(serde(allow_unknown_fields))]
+pub struct TlsScopedConfig {
+    #[arg(flatten)]
+    pub tls: TlsConfig,
+}
+
+impl TlsScopedConfig {
+    pub fn with_resolved_paths(mut self) -> Result<Self> {
+        self.tls.resolve_paths()?;
+        Ok(self)
+    }
+}
+
+/// Config subset for service-control commands that never open the database
+/// (`stop`, `status`, `logs`): the app dir (via tls) and the log dir.
+#[derive(Conf, Clone, Debug, Default)]
+#[conf(serde(allow_unknown_fields))]
+pub struct ServiceScopedConfig {
+    #[arg(flatten)]
+    pub tls: TlsConfig,
+
+    #[arg(flatten)]
+    pub log: LogConfig,
+}
+
+impl ServiceScopedConfig {
+    pub fn with_resolved_paths(mut self) -> Result<Self> {
+        self.tls.resolve_paths()?;
+        self.log.resolve_paths()?;
+        Ok(self)
+    }
+}
+
+/// Config subset for `plugin` commands: the plugin database plus the app/cert
+/// directory.
+#[derive(Conf, Clone, Debug, Default)]
+#[conf(serde(allow_unknown_fields))]
+pub struct PluginScopedConfig {
+    #[arg(flatten)]
+    pub db: DbConfig,
+
+    #[arg(flatten)]
+    pub tls: TlsConfig,
+}
+
+impl PluginScopedConfig {
+    pub fn with_resolved_paths(mut self) -> Result<Self> {
+        self.db.resolve_paths()?;
+        self.tls.resolve_paths()?;
+        Ok(self)
+    }
+}
+
+/// Config subset for the `update` command.
+#[derive(Conf, Clone, Debug, Default)]
+#[conf(serde(allow_unknown_fields))]
+pub struct UpdateScopedConfig {
+    #[arg(flatten)]
+    pub update: UpdateConfig,
 }
 
 // Handlers receive the individual section structs above (e.g. `TlsConfig`,
-// `DbConfig`, `UpdateConfig`) — the "appropriately scoped object" for each
-// command — rather than the whole `AppConfig`. See `crate::cli`.
+// `DbConfig`, `UpdateConfig`) or one of the scoped subsets — the
+// "appropriately scoped object" for each command — rather than the whole
+// `AppConfig`. See `crate::cli`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The empty "prompt me" sentinel (a bare secret flag) must count as
+    /// missing, so it's regenerated/prompted rather than used as a real
+    /// secret. Guards the daemon path where prompting isn't possible.
+    #[test]
+    fn empty_secret_sentinel_counts_as_missing() {
+        let mut auth = AuthConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(auth.jwt_secret_missing(), "absent → missing");
+        assert!(auth.admin_password_missing(), "absent → missing");
+
+        auth.jwt_secret = Some(Secret::from(""));
+        auth.admin_password = Some(Secret::from(""));
+        assert!(auth.jwt_secret_missing(), "empty sentinel → missing");
+        assert!(auth.admin_password_missing(), "empty sentinel → missing");
+
+        auth.jwt_secret = Some(Secret::from("real"));
+        auth.admin_password = Some(Secret::from("real"));
+        assert!(!auth.jwt_secret_missing(), "real value → present");
+        assert!(!auth.admin_password_missing(), "real value → present");
+    }
+
+    /// `resolve_secret_prompts` leaves absent and real values untouched (only
+    /// the empty sentinel prompts, which needs a TTY and isn't exercised here).
+    #[test]
+    fn resolve_secret_prompts_passes_through_non_sentinels() {
+        let config = AppConfig {
+            db: DbConfig {
+                db_password: Some(Secret::from("real-db")),
+                ..Default::default()
+            },
+            auth: AuthConfig {
+                jwt_secret: None,
+                admin_password: Some(Secret::from("real-admin")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let resolved = config.resolve_secret_prompts().unwrap();
+        assert_eq!(
+            resolved.db.db_password.as_ref().map(Secret::expose),
+            Some("real-db")
+        );
+        assert!(resolved.auth.jwt_secret.is_none());
+        assert_eq!(
+            resolved.auth.admin_password.as_ref().map(Secret::expose),
+            Some("real-admin")
+        );
+    }
+
+    /// `save` writes the config nested under `[config]` — the same section
+    /// every config-bearing subcommand reads via `conf` — and `load` unwraps
+    /// it back.
+    #[test]
+    fn config_file_round_trips_under_config_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut config = AppConfig::default();
+        config.db.db_password = Some(Secret::from("round-trip"));
+        config.tls.cert_dir = PathBuf::from("/tmp/rt/certs");
+        config.save(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("[config.db]"),
+            "expected [config.*] tables, got:\n{content}"
+        );
+
+        let loaded = AppConfig::load(&path).unwrap();
+        assert_eq!(
+            loaded.db.db_password.as_ref().map(Secret::expose),
+            Some("round-trip")
+        );
+        assert_eq!(loaded.tls.cert_dir, PathBuf::from("/tmp/rt/certs"));
+    }
+}

@@ -1,5 +1,5 @@
-use super::Services;
-use crate::config::AppConfig;
+use super::{GlobalArgs, Services};
+use crate::config::{TlsConfig, TlsScopedConfig};
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 use std::path::PathBuf;
@@ -12,35 +12,62 @@ use tracing::{info, warn};
 #[conf(serde)]
 pub enum ProxyCommands {
     /// Enable system HTTP proxy to route through witmproxy
+    #[conf(serde(rename = "config"))]
     Enable(ProxyDryRunArgs),
     /// Disable system HTTP proxy
+    #[conf(serde(rename = "config"))]
     Disable(ProxyDryRunArgs),
     /// Show current proxy status
-    Status,
+    #[conf(serde(rename = "config"))]
+    Status(ProxyStatusArgs),
+}
+
+impl ProxyCommands {
+    /// The config scope + shared flags carried by whichever leaf was invoked.
+    pub(crate) fn scope(&self) -> (&TlsScopedConfig, &GlobalArgs) {
+        match self {
+            ProxyCommands::Enable(a) | ProxyCommands::Disable(a) => (&a.config, &a.globals),
+            ProxyCommands::Status(a) => (&a.config, &a.globals),
+        }
+    }
 }
 
 #[derive(Conf)]
-#[conf(serde)]
+#[conf(serde(allow_unknown_fields))]
 pub struct ProxyDryRunArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: TlsScopedConfig,
+
     /// Show what would be done without actually doing it
     #[arg(short = 'n', long)]
     pub dry_run: bool,
 }
 
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct ProxyStatusArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: TlsScopedConfig,
+}
+
 pub struct ProxyHandler {
-    config: AppConfig,
+    tls: TlsConfig,
 }
 
 impl ProxyHandler {
-    pub fn new(config: AppConfig) -> Self {
-        Self { config }
+    pub fn new(tls: TlsConfig) -> Self {
+        Self { tls }
     }
 
     pub async fn handle(&self, command: &ProxyCommands) -> Result<()> {
         match command {
             ProxyCommands::Enable(a) => self.enable_proxy(a.dry_run).await,
             ProxyCommands::Disable(a) => self.disable_proxy(a.dry_run).await,
-            ProxyCommands::Status => self.show_proxy_status().await,
+            ProxyCommands::Status(_) => self.show_proxy_status().await,
         }
     }
 
@@ -132,7 +159,6 @@ impl ProxyHandler {
     async fn get_proxy_url(&self) -> Result<String> {
         // Get app directory from cert_dir parent
         let app_dir = self
-            .config
             .tls
             .cert_dir
             .parent()

@@ -17,22 +17,16 @@ mod e2e_tests {
         proxy.start().await.unwrap();
 
         // Verify we can register the noshorts plugin without errors
-        {
-            let mut registry = registry.write().await;
-            register_noshorts_plugin(&mut registry)
-                .await
-                .expect("Should be able to register noshorts plugin");
-        }
+        register_noshorts_plugin(&registry)
+            .await
+            .expect("Should be able to register noshorts plugin");
 
         // Verify the plugin is registered
-        {
-            let registry = registry.read().await;
-            let plugins = registry.plugins();
-            assert!(
-                plugins.values().any(|p| p.name == "noshorts"),
-                "noshorts plugin should be registered"
-            );
-        }
+        let plugins = registry.plugins();
+        assert!(
+            plugins.values().any(|p| p.name == "noshorts"),
+            "noshorts plugin should be registered"
+        );
 
         Ok(())
     }
@@ -49,10 +43,7 @@ mod e2e_tests {
         proxy.start().await.unwrap();
 
         // Register noshorts plugin
-        {
-            let mut registry = registry.write().await;
-            register_noshorts_plugin(&mut registry).await.unwrap();
-        }
+        register_noshorts_plugin(&registry).await.unwrap();
 
         let client = create_client(
             ca,

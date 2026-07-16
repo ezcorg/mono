@@ -85,7 +85,12 @@ pub fn run() {
             consent::list_hosts,
             consent::list_unknown_hosts,
             consent::add_host,
-            consent::remove_host
+            consent::remove_host,
+            consent::list_errors,
+            consent::dismiss_error,
+            consent::app_info,
+            consent::clear_pairings,
+            consent::clear_hosts
         ])
         .setup(|app| {
             // Tray: left-click summons the window; the menu offers Show + Quit.
@@ -137,9 +142,13 @@ pub fn run() {
             app.manage(hosts.clone()); // for the Hosts allowlist section + gating
             let consent = Consent::Surface(pending);
             let config = daemon_config();
+            // In-app error surface (banner in the window) — so a daemon failure (e.g. a
+            // port already in use) is visible instead of vanishing to stderr.
+            let errors = consent::AppErrors::new();
+            app.manage(errors.clone());
             tauri::async_runtime::spawn(async move {
                 if let Err(err) = icanhaz_host::daemon::run(config, grants, pairings, hosts, consent).await {
-                    eprintln!("icanhaz daemon exited with error: {err:?}");
+                    errors.push(format!("daemon stopped: {err}"));
                 }
             });
 

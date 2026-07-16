@@ -285,6 +285,14 @@ where
 /// the gate, so it refuses any token that isn't a live `filesystem` grant — an
 /// ungated peer never receives a descriptor. `wasi` carries the preopened root
 /// (the jail).
+/// Max live `wasi:filesystem` handles the fs component holds before refusing new ones
+/// — a backstop against a client that opens descriptors without dropping them (this
+/// wRPC build doesn't relay handle-drops). Exhaustion surfaces as an op error, not an
+/// OOM. Override with `ICANHAZ_MAX_FS_HANDLES` (0 = unbounded).
+fn max_fs_handles() -> usize {
+    std::env::var("ICANHAZ_MAX_FS_HANDLES").ok().and_then(|v| v.parse().ok()).unwrap_or(4096)
+}
+
 pub async fn serve_filesystem<C, S>(
     srv: &S,
     component_bytes: &[u8],
@@ -347,7 +355,7 @@ where
         FsState {
             table: ResourceTable::new(),
             wasi,
-            rpc: Rpc { client, cx, shared: SharedResourceTable::default() },
+            rpc: Rpc { client, cx, shared: SharedResourceTable::with_capacity(max_fs_handles()) },
             grants,
         },
     );

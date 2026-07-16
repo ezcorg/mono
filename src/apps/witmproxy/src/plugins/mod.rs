@@ -27,6 +27,9 @@ pub mod registry;
 #[cfg(test)]
 mod tenant_tests;
 
+#[cfg(test)]
+mod perf_tests;
+
 #[derive(Serialize, Deserialize)]
 pub struct WitmPlugin {
     pub namespace: String,

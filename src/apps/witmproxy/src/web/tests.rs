@@ -6,7 +6,6 @@ use crate::web::WebServer;
 use anyhow::Result;
 use std::sync::Arc;
 use tempfile::tempdir;
-use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_plugin_upsert() -> Result<()> {
@@ -25,7 +24,7 @@ async fn test_plugin_upsert() -> Result<()> {
     let runtime = Runtime::try_default().unwrap();
 
     // Create plugin registry
-    let plugin_registry = Arc::new(RwLock::new(PluginRegistry::new(db, runtime)?));
+    let plugin_registry = Arc::new(PluginRegistry::new(db, runtime)?);
 
     let mut web_server = WebServer::new(ca.clone(), Some(plugin_registry), config);
     web_server.start().await.unwrap();
@@ -65,6 +64,78 @@ async fn test_plugin_upsert() -> Result<()> {
             .text()
             .await
             .unwrap_or_else(|_| "Unable to read response body".to_string())
+    );
+    Ok(())
+}
+
+/// PUT /api/manage/config must update the *running* process's config, so a
+/// subsequent GET reflects the change (not just persist to disk while the
+/// running server keeps serving the startup snapshot).
+#[tokio::test]
+async fn config_update_is_reflected_in_running_process() -> Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let (ca, mut config) = create_ca_and_config().await;
+    config.auth.enabled = false; // reachable without a token for the test
+    config.plugins.timeout_ms = 1000;
+
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+    let db = Db::from_path(db_path, "test_password").await.unwrap();
+    db.migrate().await.unwrap();
+    let pool = db.pool.clone();
+
+    let runtime = Runtime::try_default().unwrap();
+    let plugin_registry = Arc::new(PluginRegistry::new(db, runtime).unwrap());
+
+    let cfg_path = temp_dir.path().join("config.toml");
+    let mut web_server = WebServer::new(ca, Some(plugin_registry), config)
+        .with_config_path(cfg_path.clone());
+    web_server = web_server.with_db_pool(pool);
+    web_server.start().await.unwrap();
+    let bind_addr = web_server.listen_addr().unwrap();
+    std::mem::forget(web_server);
+
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+    let base = format!("https://{}", bind_addr);
+
+    // Sanity: GET reports the startup value.
+    let got: serde_json::Value = client
+        .get(format!("{}/api/manage/config", base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(got["plugins_timeout_ms"], 1000);
+
+    // Change the value via PUT.
+    let mut updated = got.clone();
+    updated["plugins_timeout_ms"] = serde_json::json!(7777);
+    let put = client
+        .put(format!("{}/api/manage/config", base))
+        .json(&updated)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 200, "PUT /api/manage/config should succeed");
+
+    // GET again: the running process must reflect the new value.
+    let after: serde_json::Value = client
+        .get(format!("{}/api/manage/config", base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        after["plugins_timeout_ms"], 7777,
+        "running process config should reflect the PUT update"
     );
     Ok(())
 }

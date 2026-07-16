@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
 use crate::cert::CertificateAuthority;
@@ -12,7 +12,7 @@ use crate::events::connect::Connect;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::tenant_resolver::TenantResolver;
 use crate::proxy::{UpstreamClient, is_closed, parse_authority_host_port, run_tls_mitm};
-use crate::tenant::TenantContext;
+use crate::proxy::tenant::TenantContext;
 
 use super::netfilter::NetfilterManager;
 
@@ -20,7 +20,7 @@ use super::netfilter::NetfilterManager;
 pub struct TransparentProxy {
     listen_addr: Option<SocketAddr>,
     ca: Arc<CertificateAuthority>,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
     tenant_resolver: Arc<dyn TenantResolver>,
     upstream: UpstreamClient,
     config: TransparentProxyConfig,
@@ -31,7 +31,7 @@ pub struct TransparentProxy {
 impl TransparentProxy {
     pub fn new(
         ca: Arc<CertificateAuthority>,
-        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        plugin_registry: Option<Arc<PluginRegistry>>,
         tenant_resolver: Arc<dyn TenantResolver>,
         upstream: UpstreamClient,
         config: TransparentProxyConfig,
@@ -230,7 +230,7 @@ pub fn extract_sni_from_client_hello(buf: &[u8]) -> Option<String> {
 
 /// Check if any plugin wants to handle a connection to the given host.
 async fn should_intercept(
-    plugin_registry: &Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: &Option<Arc<PluginRegistry>>,
     hostname: &str,
 ) -> bool {
     let Some(registry) = plugin_registry else {
@@ -243,7 +243,6 @@ async fn should_intercept(
     };
 
     let connect_event: Box<dyn Event> = Box::new(Connect::new(host, port));
-    let registry = registry.read().await;
     registry.can_handle(&*connect_event)
 }
 
@@ -254,7 +253,7 @@ async fn handle_transparent_connection(
     mut stream: TcpStream,
     peer: SocketAddr,
     ca: Arc<CertificateAuthority>,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
     upstream: UpstreamClient,
     _tenant_ctx: TenantContext,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

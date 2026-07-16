@@ -1,6 +1,7 @@
 #[cfg(target_os = "linux")]
 use crate::config::TransparentProxyConfig;
-use crate::config::AppConfig;
+use super::{GlobalArgs, ServiceCtlArgs};
+use crate::config::{AppConfig, LogConfig, ServiceScopedConfig, TelemetryConfig};
 use anyhow::{Context, Result};
 use conf::{Conf, Subcommands};
 use service_manager::{
@@ -29,28 +30,112 @@ const SERVICE_FILE_NAME: &str = "ez-witmproxy.service";
 /// Log file name within the app directory
 const LOG_FILE_NAME: &str = "witmproxy.log";
 
+/// The reconciled service state we display, from the runtime manager plus the
+/// on-disk service file. See [`ServiceHandler::classify_status`].
+#[derive(Debug, PartialEq, Eq)]
+enum ServiceState {
+    /// No service file on disk and the manager doesn't know it.
+    NotInstalled,
+    /// Installed and reported running by the manager.
+    Running,
+    /// Installed and reported stopped by the manager (optional reason).
+    Stopped(Option<String>),
+    /// Service file on disk but the manager hasn't loaded it (e.g. freshly
+    /// installed on macOS, not yet `service start`ed).
+    NotStarted,
+}
+
+/// Every leaf reads its config subset from the `[config]` file section: the
+/// variants are all `serde(rename = "config")` and `Cli::parse_args` mirrors
+/// the `[config]` table under this command's doc key (see
+/// `mirror_config_for_nested_commands`).
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum ServiceCommands {
     /// Install the witmproxy service (does not start it)
+    #[conf(serde(rename = "config"))]
     Install(ServiceInstallArgs),
     /// Uninstall the witmproxy service
+    #[conf(serde(rename = "config"))]
     Uninstall(ServiceUninstallArgs),
     /// Start the witmproxy service
-    Start,
+    #[conf(serde(rename = "config"))]
+    Start(ServiceCtlArgs),
     /// Stop the witmproxy service
-    Stop,
+    #[conf(serde(rename = "config"))]
+    Stop(ServiceCtlArgs),
     /// Restart the witmproxy service
-    Restart,
+    #[conf(serde(rename = "config"))]
+    Restart(ServiceCtlArgs),
     /// Show the status of the witmproxy service
-    Status,
+    #[conf(serde(rename = "config"))]
+    Status(ServiceCtlArgs),
     /// Show the path to the daemon log file
+    #[conf(serde(rename = "config"))]
     Logs(ServiceLogsArgs),
+}
+
+impl ServiceCommands {
+    pub(crate) fn globals(&self) -> &GlobalArgs {
+        match self {
+            ServiceCommands::Install(a) => &a.globals,
+            ServiceCommands::Uninstall(a) => &a.globals,
+            ServiceCommands::Start(a)
+            | ServiceCommands::Stop(a)
+            | ServiceCommands::Restart(a)
+            | ServiceCommands::Status(a) => &a.globals,
+            ServiceCommands::Logs(a) => &a.globals,
+        }
+    }
+
+    /// The tls+log scope of whichever leaf was invoked (for `install`,
+    /// derived from its full config).
+    pub(crate) fn ctl_config(&self) -> ServiceScopedConfig {
+        match self {
+            ServiceCommands::Install(a) => ServiceScopedConfig {
+                tls: a.config.tls.clone(),
+                log: a.config.log.clone(),
+            },
+            ServiceCommands::Uninstall(a) => a.config.clone(),
+            ServiceCommands::Start(a)
+            | ServiceCommands::Stop(a)
+            | ServiceCommands::Restart(a)
+            | ServiceCommands::Status(a) => a.config.clone(),
+            ServiceCommands::Logs(a) => a.config.clone(),
+        }
+    }
+
+    /// Telemetry/log settings + `--verbose` as visible to this leaf.
+    pub(crate) fn telemetry_settings(&self) -> (TelemetryConfig, LogConfig, bool) {
+        match self {
+            ServiceCommands::Install(a) => (
+                a.config.telemetry.clone(),
+                a.config.log.clone(),
+                a.globals.verbose,
+            ),
+            other => {
+                let scoped = other.ctl_config();
+                (
+                    TelemetryConfig::default(),
+                    scoped.log,
+                    other.globals().verbose,
+                )
+            }
+        }
+    }
 }
 
 #[derive(Conf)]
 #[conf(serde)]
 pub struct ServiceInstallArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
+    /// Application configuration: `service install` persists the full,
+    /// effective config for the daemon.
+    #[conf(flatten, serde(flatten))]
+    pub config: AppConfig,
+
     /// Directory to load plugins from, watched for changes
     #[arg(long = "plugin-dir")]
     pub plugin_dir: Option<PathBuf>,
@@ -63,16 +148,26 @@ pub struct ServiceInstallArgs {
 }
 
 #[derive(Conf)]
-#[conf(serde)]
+#[conf(serde(allow_unknown_fields))]
 pub struct ServiceUninstallArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: ServiceScopedConfig,
+
     /// Skip confirmation prompts
     #[arg(long = "yes", short = 'y')]
     pub yes: bool,
 }
 
 #[derive(Conf)]
-#[conf(serde)]
+#[conf(serde(allow_unknown_fields))]
 pub struct ServiceLogsArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: ServiceScopedConfig,
+
     /// Follow the log output (like tail -f)
     #[arg(long = "follow", short = 'f')]
     pub follow: bool,
@@ -227,10 +322,10 @@ impl ServiceHandler {
                 unreachable!("Install is handled directly by Cli::run()")
             }
             ServiceCommands::Uninstall(a) => self.uninstall_service(a.yes).await,
-            ServiceCommands::Start => self.start_service().await,
-            ServiceCommands::Stop => self.stop_service().await,
-            ServiceCommands::Restart => self.restart_service().await,
-            ServiceCommands::Status => self.show_status().await,
+            ServiceCommands::Start(_) => self.start_service().await,
+            ServiceCommands::Stop(_) => self.stop_service().await,
+            ServiceCommands::Restart(_) => self.restart_service().await,
+            ServiceCommands::Status(_) => self.show_status().await,
             ServiceCommands::Logs(a) => self.show_logs(a.follow, a.lines).await,
         }
     }
@@ -320,9 +415,6 @@ impl ServiceHandler {
         // Ensure platform-specific service directories exist
         Self::ensure_service_directory_exists()?;
 
-        let manager = Self::get_manager()?;
-        let label = Self::service_label();
-
         // Build service arguments
         let exe_path = Self::get_executable_path()?;
         let config_path = self.get_config_path();
@@ -330,7 +422,7 @@ impl ServiceHandler {
         // Create app directory with restricted (0o700) permissions — it holds
         // the config, certs, db, and logs, which may contain secrets.
         let app_dir = self.get_app_dir();
-        crate::fs_secure::create_dir_secure(&app_dir)?;
+        crate::util::fs_secure::create_dir_secure(&app_dir)?;
 
         // Persist the fully-resolved configuration (CLI > env > file > defaults),
         // pinned to the daemon's standard paths. `AppConfig::save` writes the
@@ -343,21 +435,40 @@ impl ServiceHandler {
             .context("Failed to save configuration")?;
         info!("Configuration saved to {:?}", config_path);
 
-        // Build arguments for the 'serve' subcommand.
-        // Global args (--config-path, --verbose) go BEFORE the subcommand;
-        // subcommand args (--plugin-dir, --auto, --log-file) go AFTER it.
+        // Provision the database and default admin account NOW, while we're an
+        // interactive command with a real stdout — the daemon runs detached and
+        // could not show a generated admin password to anyone. This also
+        // generates + persists the db key and JWT secret up front, so the
+        // daemon just opens an already-provisioned database.
+        let provisioned = super::provision(&config_to_save, &config_path, true)
+            .await
+            .context("Failed to provision database and admin account")?;
+        if let Some(password) = &provisioned.generated_admin_password {
+            super::print_admin_credentials(&provisioned.effective_config.auth.admin_email, password);
+        }
+        // Close the provisioning database handle; the daemon opens its own.
+        drop(provisioned);
+
+        // The native service manager isn't `Send`; create it only after all
+        // `.await`s above so this method's future stays `Send` (the daemon
+        // auto-update loop spawns `install_service`).
+        let manager = Self::get_manager()?;
+        let label = Self::service_label();
+
+        // Build arguments for the 'serve' subcommand. ALL options — including
+        // the shared --config-path/--verbose — are declared on the subcommand
+        // itself, so everything goes AFTER the subcommand name.
         let mut args: Vec<OsString> = vec![];
 
-        // Global args (defined on Cli)
+        // Subcommand name
+        args.push("serve".into());
+
         args.push("--config-path".into());
         args.push(config_path.into());
 
         if self.verbose {
             args.push("--verbose".into());
         }
-
-        // Subcommand name
-        args.push("serve".into());
 
         // Subcommand args (defined on ProxyRunOptions / Serve)
         // Canonicalize plugin-dir to absolute path since the daemon's
@@ -556,24 +667,40 @@ impl ServiceHandler {
         false
     }
 
+    /// Reconcile the runtime manager's status with the on-disk service file
+    /// into the state we report. The on-disk file is the ground truth for
+    /// *installed*: on macOS `service install` writes the launchd plist without
+    /// loading it, so `launchctl` reports `NotInstalled` until `service start`
+    /// bootstraps it — trusting that alone made a freshly-installed service read
+    /// as "Not installed". The manager's report is only authoritative when it
+    /// actually knows the service (Running/Stopped).
+    fn classify_status(manager: Option<&ServiceStatus>, file_present: bool) -> ServiceState {
+        match manager {
+            Some(ServiceStatus::Running) => ServiceState::Running,
+            Some(ServiceStatus::Stopped(reason)) => ServiceState::Stopped(reason.clone()),
+            // Manager says not-installed, or couldn't report at all: the plist /
+            // unit file on disk decides. Present ⇒ installed but not loaded yet.
+            Some(ServiceStatus::NotInstalled) | None => {
+                if file_present {
+                    ServiceState::NotStarted
+                } else {
+                    ServiceState::NotInstalled
+                }
+            }
+        }
+    }
+
     /// Show service status.
     ///
     /// Reports three distinct things instead of guessing from a log file:
-    ///   1. Installed?  — via the native service manager (fallback: service file)
+    ///   1. Installed?  — the on-disk service file (manager confirms running state)
     ///   2. Running?    — the manager's real runtime state (launchd/systemd/SCM)
     ///   3. Healthy?    — an actual probe of the web server's `/api/health`
     pub async fn show_status(&self) -> Result<()> {
         let status = self.query_service_status();
+        let state = Self::classify_status(status.as_ref(), self.is_service_installed());
 
-        // Prefer the service manager's answer for "installed"; fall back to the
-        // platform service-file check if the manager couldn't report.
-        let installed = match status {
-            Some(ServiceStatus::NotInstalled) => false,
-            Some(_) => true,
-            None => self.is_service_installed(),
-        };
-
-        if !installed {
+        if state == ServiceState::NotInstalled {
             println!("Service status: Not installed");
             println!();
             println!("To install: witm service install");
@@ -581,14 +708,12 @@ impl ServiceHandler {
         }
 
         println!("Service status: Installed");
-        match &status {
-            Some(ServiceStatus::Running) => println!("Service:        Running"),
-            Some(ServiceStatus::Stopped(Some(reason))) => {
-                println!("Service:        Stopped ({reason})")
-            }
-            Some(ServiceStatus::Stopped(None)) => println!("Service:        Stopped"),
-            Some(ServiceStatus::NotInstalled) => {} // handled above
-            None => println!("Service:        Unknown (service manager did not report state)"),
+        match &state {
+            ServiceState::Running => println!("Service:        Running"),
+            ServiceState::Stopped(Some(reason)) => println!("Service:        Stopped ({reason})"),
+            ServiceState::Stopped(None) => println!("Service:        Stopped"),
+            ServiceState::NotStarted => println!("Service:        Stopped (not started)"),
+            ServiceState::NotInstalled => unreachable!("handled above"),
         }
 
         // Real application health: probe the endpoint the web server exposes.
@@ -777,6 +902,70 @@ pub fn is_daemon_running(app_dir: &Path) -> bool {
 }
 
 #[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn running_is_running_regardless_of_file() {
+        assert_eq!(
+            ServiceHandler::classify_status(Some(&ServiceStatus::Running), true),
+            ServiceState::Running
+        );
+        assert_eq!(
+            ServiceHandler::classify_status(Some(&ServiceStatus::Running), false),
+            ServiceState::Running
+        );
+    }
+
+    /// The reported bug: after `service install` on macOS the plist is on disk
+    /// but launchd reports `NotInstalled` until `service start` loads it. That
+    /// must read as installed-but-not-started, not "Not installed".
+    #[test]
+    fn plist_on_disk_but_manager_not_installed_is_not_started() {
+        assert_eq!(
+            ServiceHandler::classify_status(Some(&ServiceStatus::NotInstalled), true),
+            ServiceState::NotStarted
+        );
+    }
+
+    #[test]
+    fn truly_not_installed_when_no_file_and_manager_agrees() {
+        assert_eq!(
+            ServiceHandler::classify_status(Some(&ServiceStatus::NotInstalled), false),
+            ServiceState::NotInstalled
+        );
+        assert_eq!(
+            ServiceHandler::classify_status(None, false),
+            ServiceState::NotInstalled
+        );
+    }
+
+    /// Manager query failed but the file exists → installed, not yet loaded.
+    #[test]
+    fn query_error_with_file_present_is_not_started() {
+        assert_eq!(
+            ServiceHandler::classify_status(None, true),
+            ServiceState::NotStarted
+        );
+    }
+
+    #[test]
+    fn stopped_is_passed_through_with_reason() {
+        assert_eq!(
+            ServiceHandler::classify_status(Some(&ServiceStatus::Stopped(None)), true),
+            ServiceState::Stopped(None)
+        );
+        assert_eq!(
+            ServiceHandler::classify_status(
+                Some(&ServiceStatus::Stopped(Some("boom".into()))),
+                true
+            ),
+            ServiceState::Stopped(Some("boom".into()))
+        );
+    }
+}
+
+#[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
     use super::*;
@@ -796,9 +985,9 @@ mod tests {
         let unit = generate_systemd_unit(
             Path::new("/usr/bin/witm"),
             &[
+                "serve".into(),
                 "--config-path".into(),
                 "/etc/witm.toml".into(),
-                "serve".into(),
             ],
             Path::new("/var/lib/witmproxy"),
             &default_transparent_config(),
@@ -807,7 +996,7 @@ mod tests {
         assert!(unit.contains("[Unit]"));
         assert!(unit.contains("[Service]"));
         assert!(unit.contains("[Install]"));
-        assert!(unit.contains("ExecStart=/usr/bin/witm --config-path /etc/witm.toml serve"));
+        assert!(unit.contains("ExecStart=/usr/bin/witm serve --config-path /etc/witm.toml"));
         assert!(unit.contains("WorkingDirectory=/var/lib/witmproxy"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("WantedBy=multi-user.target"));

@@ -2,4 +2,5 @@
 //! telemetry / logging stack.
 
 pub mod fs_secure;
+pub mod secret;
 pub mod telemetry;

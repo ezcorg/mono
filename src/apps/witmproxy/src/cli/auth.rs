@@ -1,6 +1,8 @@
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 
+use super::GlobalArgs;
+
 use crate::cli::api_client::{ApiClient, AuthStore};
 
 #[derive(Subcommands)]
@@ -9,14 +11,17 @@ pub enum AuthCommands {
     /// Login to a remote witmproxy server
     Login(AuthLoginArgs),
     /// Logout (remove stored credentials)
-    Logout,
+    Logout(GlobalArgs),
     /// Show current auth status
-    Status,
+    Status(GlobalArgs),
 }
 
 #[derive(Conf)]
 #[conf(serde)]
 pub struct AuthLoginArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Server URL
     #[arg(long)]
     pub server: String,
@@ -25,14 +30,23 @@ pub struct AuthLoginArgs {
     pub email: Option<String>,
 }
 
+impl AuthCommands {
+    pub(crate) fn globals(&self) -> &GlobalArgs {
+        match self {
+            AuthCommands::Login(a) => &a.globals,
+            AuthCommands::Logout(g) | AuthCommands::Status(g) => g,
+        }
+    }
+}
+
 pub struct AuthHandler;
 
 impl AuthHandler {
     pub async fn handle(&self, command: &AuthCommands) -> Result<()> {
         match command {
             AuthCommands::Login(a) => self.login(&a.server, a.email.as_deref()).await,
-            AuthCommands::Logout => self.logout(),
-            AuthCommands::Status => self.status(),
+            AuthCommands::Logout(_) => self.logout(),
+            AuthCommands::Status(_) => self.status(),
         }
     }
 

@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use anyhow::Result;
 use cel_cxx::Env;
 use tracing::{debug, info, warn};
 use wasmtime::Store;
-use wasmtime::component::Resource;
+use wasmtime::component::{Component, InstancePre, Resource};
 use wasmtime_wasi_http::p3::{Request as WasiRequest, WasiHttpView};
 
 use crate::{
@@ -26,7 +27,12 @@ use crate::{
 };
 
 pub struct PluginRegistry {
-    plugins: HashMap<String, WitmPlugin>,
+    /// Copy-on-write plugin map: readers take an `Arc` snapshot and never hold
+    /// a lock across guest execution; mutators clone the map, apply the change,
+    /// and swap the `Arc` in. The lock is only held for the instant of the
+    /// snapshot/swap — NEVER across an `.await` — so a mutation can't stall
+    /// in-flight events and in-flight events can't stall mutations.
+    plugins: RwLock<Arc<HashMap<String, Arc<WitmPlugin>>>>,
     pub db: Db,
     pub runtime: Runtime,
     env: &'static Env<'static>,
@@ -34,6 +40,13 @@ pub struct PluginRegistry {
     /// across events (a fresh `Store` is created per event for isolation).
     /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
     local_storage: Mutex<HashMap<String, LocalStorageClient>>,
+    /// Cached, pre-resolved `InstancePre` per plugin id. Import resolution /
+    /// type-checking is the expensive part of instantiation; caching it means a
+    /// plugin's second and subsequent events don't re-pay that cost.
+    instance_pre_cache: Mutex<HashMap<String, InstancePre<Host>>>,
+    /// Count of import resolutions actually performed (cache misses). A plugin
+    /// invoked N times should resolve exactly once. Exposed for tests.
+    instance_pre_resolutions: AtomicUsize,
 }
 
 impl WasmEvent {
@@ -107,12 +120,40 @@ impl PluginRegistry {
         // TODO: fix this with proper lifetime management
         let env: &'static Env<'static> = Box::leak(Box::new(env));
         Ok(Self {
-            plugins: HashMap::new(),
+            plugins: RwLock::new(Arc::new(HashMap::new())),
             db,
             runtime,
             env,
             local_storage: Mutex::new(HashMap::new()),
+            instance_pre_cache: Mutex::new(HashMap::new()),
+            instance_pre_resolutions: AtomicUsize::new(0),
         })
+    }
+
+    /// Number of import resolutions performed so far (cache misses). Used by
+    /// tests to assert that instantiation cost is not re-paid per event.
+    pub fn instance_pre_resolutions(&self) -> usize {
+        self.instance_pre_resolutions.load(Ordering::Relaxed)
+    }
+
+    /// Get the cached `InstancePre` for a plugin, resolving+caching on first use.
+    /// Subsequent calls reuse the cached resolution (only the cheap per-event
+    /// instantiation is paid).
+    fn instance_pre_for(
+        &self,
+        plugin_id: &str,
+        component: &Component,
+    ) -> Result<InstancePre<Host>> {
+        if let Some(pre) = self.instance_pre_cache.lock().unwrap().get(plugin_id) {
+            return Ok(pre.clone());
+        }
+        let pre = self.runtime.build_instance_pre(component)?;
+        self.instance_pre_resolutions.fetch_add(1, Ordering::Relaxed);
+        self.instance_pre_cache
+            .lock()
+            .unwrap()
+            .insert(plugin_id.to_string(), pre.clone());
+        Ok(pre)
     }
 
     /// Set the per-plugin resource limits enforced during guest execution.
@@ -136,19 +177,31 @@ impl PluginRegistry {
             .clone()
     }
 
-    pub fn plugins(&self) -> &HashMap<String, WitmPlugin> {
-        &self.plugins
+    /// A point-in-time snapshot of the plugin map. Cheap (one `Arc` clone);
+    /// callers that need a consistent view across several operations should
+    /// take one snapshot and reuse it.
+    pub fn plugins(&self) -> Arc<HashMap<String, Arc<WitmPlugin>>> {
+        self.plugins.read().unwrap().clone()
     }
 
-    pub fn plugins_mut(&mut self) -> &mut HashMap<String, WitmPlugin> {
-        &mut self.plugins
+    /// Apply a mutation copy-on-write: clone the current map, mutate the
+    /// clone, swap it in. In-flight readers keep their snapshot.
+    fn mutate_plugins(&self, f: impl FnOnce(&mut HashMap<String, Arc<WitmPlugin>>)) {
+        let mut guard = self.plugins.write().unwrap();
+        let mut map = (**guard).clone();
+        f(&mut map);
+        *guard = Arc::new(map);
     }
 
-    pub async fn load_plugins(&mut self) -> Result<()> {
-        let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine, self.env).await?;
-        for plugin in plugins.into_iter() {
-            self.plugins.insert(plugin.id(), plugin);
-        }
+    pub async fn load_plugins(&self) -> Result<()> {
+        // `WitmPlugin::all` takes `&mut Db` but only needs the (Clone) pool.
+        let mut db = self.db.clone();
+        let plugins = WitmPlugin::all(&mut db, &self.runtime.engine, self.env).await?;
+        self.mutate_plugins(|map| {
+            for plugin in plugins.into_iter() {
+                map.insert(plugin.id(), Arc::new(plugin));
+            }
+        });
         Ok(())
     }
 
@@ -167,8 +220,15 @@ impl PluginRegistry {
         component_bytes: Vec<u8>,
         expected_public_key: Option<&[u8]>,
     ) -> Result<WitmPlugin> {
-        let component =
-            wasmtime::component::Component::from_binary(&self.runtime.engine, &component_bytes)?;
+        // Compiling a component is CPU-heavy (hundreds of ms); run it off the
+        // async executor so an upload doesn't stall request handling.
+        let engine = self.runtime.engine.clone();
+        let (component, component_bytes) = tokio::task::spawn_blocking(move || {
+            let component =
+                wasmtime::component::Component::from_binary(&engine, &component_bytes)?;
+            Ok::<_, anyhow::Error>((component, component_bytes))
+        })
+        .await??;
         let (plugin_instance, mut store) =
             self.runtime.instantiate_plugin_component(&component).await?;
         let guest_result = store
@@ -238,16 +298,55 @@ impl PluginRegistry {
         Ok(plugin)
     }
 
-    pub async fn register_plugin(&mut self, plugin: WitmPlugin) -> Result<()> {
-        // Upsert the given plugin into the database
-        plugin.insert(&mut self.db).await?;
+    pub async fn register_plugin(&self, plugin: WitmPlugin) -> Result<()> {
+        // Upsert the given plugin into the database (`Insert` takes `&mut Db`
+        // but only needs the Clone pool).
+        let mut db = self.db.clone();
+        plugin.insert(&mut db).await?;
         // Add it to the registry
-        self.plugins.insert(plugin.id(), plugin);
+        self.mutate_plugins(|map| {
+            map.insert(plugin.id(), Arc::new(plugin));
+        });
         Ok(())
     }
 
+    /// Toggle a plugin's enabled flag: persists to the DB, then swaps a
+    /// freshly loaded copy of the plugin into the in-memory map. Returns
+    /// `Ok(false)` if no such plugin exists.
+    pub async fn set_plugin_enabled(
+        &self,
+        namespace: &str,
+        name: &str,
+        enabled: bool,
+    ) -> Result<bool> {
+        let result =
+            sqlx::query("UPDATE plugins SET enabled = ? WHERE namespace = ? AND name = ?")
+                .bind(enabled)
+                .bind(namespace)
+                .bind(name)
+                .execute(&self.db.pool)
+                .await?;
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+        let row =
+            sqlx::query("SELECT component, enabled FROM plugins WHERE namespace = ? AND name = ?")
+                .bind(namespace)
+                .bind(name)
+                .fetch_one(&self.db.pool)
+                .await?;
+        let mut db = self.db.clone();
+        let plugin = WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env).await?;
+        // The cached InstancePre (if any) stays valid: it was resolved from a
+        // component compiled from the same bytes on the same engine.
+        self.mutate_plugins(|map| {
+            map.insert(plugin.id(), Arc::new(plugin));
+        });
+        Ok(true)
+    }
+
     pub async fn remove_plugin(
-        &mut self,
+        &self,
         name: &str,
         namespace: Option<&str>,
     ) -> Result<Vec<String>> {
@@ -271,10 +370,20 @@ impl PluginRegistry {
 
         // Build list of plugin IDs that were removed and remove from in-memory registry
         let mut removed_plugin_ids = Vec::new();
-        for (ns, n) in deleted_plugins {
-            let plugin_id = WitmPlugin::make_id(&ns, &n);
-            if self.plugins.remove(&plugin_id).is_some() {
-                removed_plugin_ids.push(plugin_id);
+        self.mutate_plugins(|map| {
+            for (ns, n) in &deleted_plugins {
+                let plugin_id = WitmPlugin::make_id(ns, n);
+                if map.remove(&plugin_id).is_some() {
+                    removed_plugin_ids.push(plugin_id);
+                }
+            }
+        });
+        // Drop the cached InstancePre so a reloaded component isn't
+        // instantiated from a stale resolution.
+        {
+            let mut cache = self.instance_pre_cache.lock().unwrap();
+            for plugin_id in &removed_plugin_ids {
+                cache.remove(plugin_id);
             }
         }
 
@@ -413,29 +522,25 @@ impl PluginRegistry {
         &self,
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
-    ) -> Option<&WitmPlugin> {
-        self.plugins
-            .values()
-            .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
+    ) -> Option<Arc<WitmPlugin>> {
+        Self::find_first_unexecuted_in(&self.plugins(), event, executed_plugins)
     }
 
-    /// Find first unexecuted plugin from a pre-filtered effective set.
-    fn find_first_unexecuted_in_set<'a>(
-        &'a self,
+    /// Snapshot-based lookup so a whole event chain sees one consistent view.
+    fn find_first_unexecuted_in(
+        plugins: &HashMap<String, Arc<WitmPlugin>>,
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
-        effective_set: &HashSet<String>,
-    ) -> Option<&'a WitmPlugin> {
-        self.plugins.values().find(|p| {
-            effective_set.contains(&p.id())
-                && !executed_plugins.contains(&p.id())
-                && p.can_handle(event)
-        })
+    ) -> Option<Arc<WitmPlugin>> {
+        plugins
+            .values()
+            .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
+            .cloned()
     }
 
     /// Check if any plugins can handle an event
     pub fn can_handle(&self, event: &dyn Event) -> bool {
-        self.plugins.values().any(|p| p.can_handle(event))
+        self.plugins().values().any(|p| p.can_handle(event))
     }
 
     /// Returns the set of plugin IDs that are effective for a given tenant.
@@ -445,7 +550,8 @@ impl PluginRegistry {
         overrides: &[crate::db::tenants::TenantPluginOverride],
     ) -> HashSet<String> {
         let mut effective = HashSet::new();
-        for (id, plugin) in &self.plugins {
+        let plugins = self.plugins();
+        for (id, plugin) in plugins.iter() {
             let mut enabled = plugin.enabled;
             // Check for tenant-specific override
             for ov in overrides {
@@ -504,7 +610,10 @@ impl PluginRegistry {
     /// Validates that the final [Event] matches the expected output type for its event kind, returning an error if not
     #[tracing::instrument(skip(self, event), fields(event_kind = ?event.kind()))]
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
-        let any_plugins = self.plugins.values().any(|p| p.can_handle(&*event));
+        // One snapshot for the whole event: a consistent view of the plugin
+        // set, with no lock held while guests execute.
+        let plugins = self.plugins();
+        let any_plugins = plugins.values().any(|p| p.can_handle(&*event));
         if !any_plugins {
             debug!(
                 "No plugins with matching capability and scope; skipping plugin processing for event of kind: {:?}",
@@ -525,7 +634,7 @@ impl PluginRegistry {
         let mut executed_plugins = HashSet::new();
 
         while let Some(plugin) =
-            { self.find_first_unexecuted_plugin(&*current_event, &executed_plugins) }
+            Self::find_first_unexecuted_in(&plugins, &*current_event, &executed_plugins)
         {
             tracing::info!(
                 plugin.id = %plugin.id(),
@@ -550,20 +659,25 @@ impl PluginRegistry {
                 continue;
             };
 
-            let (plugin_instance, component_store) =
-                match self.runtime.instantiate_plugin_component(component).await {
-                    Ok(pi) => pi,
-                    Err(e) => {
-                        warn!(
-                            target: "plugins",
-                            plugin_id = %plugin.id(),
-                            event_kind = kind.to_string(),
-                            error = %e,
-                            "Failed to instantiate plugin component; skipping"
-                        );
-                        continue;
-                    }
-                };
+            // Resolve+cache the component's imports once (InstancePre), then pay
+            // only the cheap per-event instantiation on this and future events.
+            let instantiated = match self.instance_pre_for(&plugin_id, component) {
+                Ok(pre) => self.runtime.instantiate_from_pre(&pre).await,
+                Err(e) => Err(e),
+            };
+            let (plugin_instance, component_store) = match instantiated {
+                Ok(pi) => pi,
+                Err(e) => {
+                    warn!(
+                        target: "plugins",
+                        plugin_id = %plugin.id(),
+                        event_kind = kind.to_string(),
+                        error = %e,
+                        "Failed to instantiate plugin component; skipping"
+                    );
+                    continue;
+                }
+            };
 
             store = component_store;
             let event_data = current_event.into_event_data(&mut store)?;
@@ -625,7 +739,7 @@ mod tests {
 
     /// Create a test plugin with the specific CEL expression for filtering
     async fn register_test_plugin_with_cel_filter(
-        registry: &mut PluginRegistry,
+        registry: &PluginRegistry,
         cel_expression: &str,
     ) -> Result<(), anyhow::Error> {
         let wasm_path = test_component_path()?;
@@ -692,11 +806,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_first_unexecuted_plugin_with_cel_filter() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin with the specific CEL expression
         let cel_expression = "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression).await?;
+        register_test_plugin_with_cel_filter(&registry, cel_expression).await?;
 
         let executed_plugins = HashSet::new();
 
@@ -820,7 +934,7 @@ mod tests {
     #[tokio::test]
     async fn test_find_first_unexecuted_plugin_no_request_capability() -> Result<(), anyhow::Error>
     {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin without Request capability
         let wasm_path = test_component_path()?;
@@ -893,11 +1007,11 @@ mod tests {
     #[tokio::test]
     async fn test_find_first_unexecuted_plugin_excludes_executed_plugins()
     -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register first plugin that matches all requests
         let cel_expression1 = "true";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression1).await?;
+        register_test_plugin_with_cel_filter(&registry, cel_expression1).await?;
 
         // Create another plugin with a different name to test multiple plugins
         let wasm_path = test_component_path()?;
@@ -972,20 +1086,18 @@ mod tests {
 
         // First call should return a plugin
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let first_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
-        assert!(
-            first_plugin.is_some(),
-            "Should find a plugin when none are executed"
-        );
+        let first_plugin = registry
+            .find_first_unexecuted_plugin(&*event, &executed_plugins)
+            .expect("Should find a plugin when none are executed");
 
         // Add the first plugin to executed set
-        executed_plugins.insert(first_plugin.unwrap().id());
+        executed_plugins.insert(first_plugin.id());
 
         // Second call should return a different plugin (if there are multiple)
         let second_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         if let Some(second_plugin) = second_plugin {
             assert_ne!(
-                first_plugin.unwrap().id(),
+                first_plugin.id(),
                 second_plugin.id(),
                 "Should return a different plugin"
             );
@@ -1005,11 +1117,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_plugin_with_namespace() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin
         let cel_expression = "true";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression).await?;
+        register_test_plugin_with_cel_filter(&registry, cel_expression).await?;
 
         // Verify plugin is registered
         assert_eq!(registry.plugins().len(), 1);
@@ -1033,7 +1145,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_plugin_without_namespace() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register multiple plugins with same name but different namespaces
         let wasm_path = test_component_path()?;
@@ -1108,7 +1220,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_nonexistent_plugin() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Try to remove a plugin that doesn't exist
         let removed = registry

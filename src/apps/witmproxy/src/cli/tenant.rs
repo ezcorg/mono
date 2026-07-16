@@ -1,13 +1,14 @@
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 
+use super::GlobalArgs;
 use crate::cli::api_client::ApiClient;
 
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum TenantCommands {
     /// List all tenants
-    List,
+    List(GlobalArgs),
     /// Create a new tenant
     Create(TenantCreateArgs),
     /// Enable a tenant
@@ -27,6 +28,9 @@ pub enum TenantCommands {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct TenantCreateArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Display name
     #[arg(pos)]
     pub display_name: String,
@@ -38,6 +42,9 @@ pub struct TenantCreateArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct TenantIdArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Tenant ID
     #[arg(pos)]
     pub id: String,
@@ -46,6 +53,9 @@ pub struct TenantIdArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct TenantMapIpArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Tenant ID
     #[arg(pos)]
     pub tenant_id: String,
@@ -57,6 +67,9 @@ pub struct TenantMapIpArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct TenantPluginArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Tenant ID
     #[arg(pos)]
     pub tenant_id: String,
@@ -68,6 +81,9 @@ pub struct TenantPluginArgs {
 #[derive(Conf)]
 #[conf(serde)]
 pub struct TenantSetConfigArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
     /// Tenant ID
     #[arg(pos)]
     pub tenant_id: String,
@@ -79,6 +95,19 @@ pub struct TenantSetConfigArgs {
     pub json: String,
 }
 
+impl TenantCommands {
+    pub(crate) fn globals(&self) -> &GlobalArgs {
+        match self {
+            TenantCommands::List(g) => g,
+            TenantCommands::Create(a) => &a.globals,
+            TenantCommands::Enable(a) | TenantCommands::Disable(a) => &a.globals,
+            TenantCommands::MapIp(a) => &a.globals,
+            TenantCommands::EnablePlugin(a) | TenantCommands::DisablePlugin(a) => &a.globals,
+            TenantCommands::SetPluginConfig(a) => &a.globals,
+        }
+    }
+}
+
 pub struct TenantHandler;
 
 impl TenantHandler {
@@ -87,7 +116,7 @@ impl TenantHandler {
             .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run 'witm auth login' first."))?;
 
         match command {
-            TenantCommands::List => {
+            TenantCommands::List(_) => {
                 let resp = client.get("/api/manage/tenants").await?;
                 let body = resp.text().await?;
                 println!("{}", body);

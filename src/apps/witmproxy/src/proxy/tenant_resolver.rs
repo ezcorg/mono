@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::db::tenants;
-use crate::tenant::TenantContext;
+use crate::proxy::tenant::TenantContext;
 
 /// Pluggable trait for determining tenant identity from a TCP peer address.
 /// No auth logic belongs here -- just identity resolution.

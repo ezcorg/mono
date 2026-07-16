@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tracing::warn;
 
-use crate::config::AuthConfig;
+use crate::config::{AuthConfig, Secret};
 use crate::db::tenants::Tenant;
 use crate::web::auth::{Claims, create_token, hash_password, verify_password};
 
@@ -129,7 +129,7 @@ pub async fn login(
             // Never fall back to a well-known signing key. If auth is enabled the
             // daemon generates and persists a secret at startup, so this is set;
             // refuse to mint a token rather than sign with a guessable default.
-            let secret = auth_config.jwt_secret.as_deref().ok_or_else(|| {
+            let secret = auth_config.jwt_secret.as_ref().map(Secret::expose).ok_or_else(|| {
                 warn!("Login attempted but no JWT signing secret is configured");
                 StatusError::internal_server_error()
                     .brief("Server authentication is not fully configured")

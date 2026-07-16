@@ -415,11 +415,7 @@ impl Pairings {
     fn save(&self) {
         let Some(path) = &self.path else { return };
         match serde_json::to_string_pretty(&self.by_secret) {
-            Ok(json) => {
-                if let Err(err) = std::fs::write(path, json) {
-                    tracing::warn!(?err, path = %path.display(), "failed to persist pairings");
-                }
-            }
+            Ok(json) => write_private(path, &json, "pairings"),
             Err(err) => tracing::warn!(?err, "failed to serialize pairings"),
         }
     }
@@ -456,6 +452,12 @@ impl Pairings {
         );
         self.save();
         Some(secret)
+    }
+
+    /// Forget ALL remembered sites (the Settings "forget all sites" action).
+    pub fn clear(&mut self) {
+        self.by_secret.clear();
+        self.save();
     }
 
     /// Revoke every pairing for an origin. Persists the change.
@@ -508,6 +510,47 @@ pub struct Hosts {
     path: Option<PathBuf>,
 }
 
+/// Persist `data` to `path` with **owner-only** perms (0600) — these files can hold
+/// bearer secrets (pairing tokens), so they must never be group/world readable.
+fn write_private(path: &std::path::Path, data: &str, what: &str) {
+    if let Err(err) = std::fs::write(path, data) {
+        tracing::warn!(?err, path = %path.display(), what, "failed to persist");
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+/// Resolve a program name to an **absolute** executable path (searching `PATH`), so a
+/// `process` grant pins the exact binary at consent time — a later `PATH` change can't
+/// swap it between consent and spawn. A name containing a slash is treated as a path.
+fn resolve_program(image: &str) -> Option<std::path::PathBuf> {
+    let candidate = std::path::Path::new(image);
+    if candidate.is_absolute() || image.contains('/') {
+        return is_executable(candidate).then(|| candidate.to_path_buf());
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        let full = dir.join(image);
+        is_executable(&full).then_some(full)
+    })
+}
+
+fn is_executable(p: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file()
+    }
+}
+
 impl Hosts {
     pub fn shared() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self { allowed: HashSet::new(), seen: HashMap::new(), strict: false, path: None }))
@@ -526,7 +569,7 @@ impl Hosts {
     fn save(&self) {
         if let Some(path) = &self.path {
             if let Ok(s) = serde_json::to_string_pretty(&self.allowed) {
-                let _ = std::fs::write(path, s);
+                write_private(path, &s, "hosts");
             }
         }
     }
@@ -570,6 +613,13 @@ impl Hosts {
 
     pub fn remove(&mut self, origin: &str) {
         self.allowed.remove(origin);
+        self.save();
+    }
+
+    /// Remove ALL approved hosts + the seen list (the Settings "clear hosts" action).
+    pub fn clear(&mut self) {
+        self.allowed.clear();
+        self.seen.clear();
         self.save();
     }
 }
@@ -713,10 +763,23 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
     async fn request(
         &self,
         cx: C,
-        want: CapabilityKind,
+        mut want: CapabilityKind,
         reason: String,
         pairing: Option<String>,
     ) -> anyhow::Result<Result<GrantReply, Denied>> {
+        // Pin `process` to an absolute program path at grant time, so a later `PATH`
+        // change can't swap the binary between consent and spawn. A program not found on
+        // `PATH` now is refused outright.
+        if let CapabilityKind::Process(p) = &mut want {
+            match resolve_program(&p.image) {
+                Some(abs) => p.image = abs.to_string_lossy().into_owned(),
+                None => {
+                    tracing::info!(image = %p.image, "process request refused — program not on PATH");
+                    return Ok(Err(Denied::Unsupported(format!("program not found: {}", p.image))));
+                }
+            }
+        }
+
         // The requesting principal comes from the transport, not the request body:
         // the browser-attested `Origin` (which page JS can't forge), never a value
         // the caller hands us. `None` ⇒ a non-browser / loopback peer.
@@ -990,6 +1053,18 @@ mod tests {
         assert!(hosts.lock().unwrap().list_unknown().is_empty(), "approving clears the unknown entry");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn resolve_program_pins_an_absolute_executable() {
+        // `sh` is on PATH on every unix → resolves to an absolute executable.
+        let sh = resolve_program("sh").expect("sh should resolve");
+        assert!(sh.is_absolute(), "resolved program must be absolute: {sh:?}");
+        assert!(sh.ends_with("sh"));
+        // A non-existent program resolves to nothing (the request will be refused).
+        assert!(resolve_program("definitely-not-a-real-program-xyz").is_none());
+        // A real file that isn't executable is not a valid program either.
+        assert!(resolve_program("/etc/hosts").is_none());
     }
 
     #[test]
