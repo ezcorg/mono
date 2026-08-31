@@ -379,6 +379,28 @@ pub struct PluginConfig {
         default_value = "134217728"
     )]
     pub max_response_body_bytes: u64,
+
+    /// Maximum host memory used to duplicate event data so a failed plugin can
+    /// be recovered from (default: 16777216 = 16 MiB). Set to 0 for unlimited.
+    /// Only consulted when recovery is `fail-open`.
+    #[arg(
+        long = "max-event-recovery-buffer-bytes",
+        env = "PLUGINS_MAX_EVENT_RECOVERY_BUFFER_BYTES",
+        default_value = "16777216"
+    )]
+    pub max_event_recovery_buffer_bytes: u64,
+
+    /// What to do when a plugin fails mid-event: `fail-closed` (default) ends
+    /// the event; `fail-open` continues the chain with the pre-failure event.
+    ///
+    /// `fail-open` is NOT YET IMPLEMENTED and currently degrades to
+    /// `fail-closed` with a warning; see `crate::plugins::limits`.
+    #[arg(
+        long = "plugin-recovery",
+        env = "PLUGINS_RECOVERY",
+        default_value = "fail-closed"
+    )]
+    pub recovery: String,
 }
 
 impl PluginConfig {
@@ -396,6 +418,13 @@ impl PluginConfig {
             max_log_bytes_per_event: self.max_log_bytes_per_event,
             max_log_messages_per_event: self.max_log_messages_per_event,
             max_response_body_bytes: self.max_response_body_bytes,
+            max_event_recovery_buffer_bytes: self.max_event_recovery_buffer_bytes,
+            // An unrecognised value must not silently widen the blast radius,
+            // so anything other than an explicit `fail-open` stays closed.
+            recovery: match self.recovery.as_str() {
+                "fail-open" => crate::plugins::limits::RecoveryPolicy::FailOpen,
+                _ => crate::plugins::limits::RecoveryPolicy::FailClosed,
+            },
         }
     }
 }

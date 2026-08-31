@@ -25,7 +25,7 @@ use hyper::{Method, Request};
 use wasmtime_wasi_http::p3::Request as WasiRequest;
 
 use crate::events::Event;
-use crate::plugins::limits::{BreachRecorder, LimitOverrides, ResolvedLimits};
+use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
 use crate::plugins::{WitmPlugin, capabilities::Capability};
 use crate::test_utils::{adversarial_component_path, create_plugin_registry};
 use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{ActualInput, UserInput};
@@ -336,9 +336,12 @@ async fn spinning_plugin_is_interrupted_and_the_host_survives() -> Result<()> {
         elapsed < Duration::from_secs(10),
         "a non-yielding guest must be interrupted, took {elapsed:?}"
     );
+    // Fail-closed: the event ends rather than proceeding with state the
+    // trapped guest may have consumed. The host surviving is demonstrated by
+    // this test returning at all, within the bound asserted above.
     assert!(
-        result.is_ok(),
-        "the chain must fail open rather than take the request down"
+        result.is_err(),
+        "a guest that trips a limit must fail the event closed, not continue it"
     );
     Ok(())
 }
@@ -399,12 +402,15 @@ async fn storage_bomb_is_contained() -> Result<()> {
     assert_plugin_will_run(&registry, &*event);
 
     let result = registry.handle_event(event).await;
-    assert!(result.is_ok(), "the chain must fail open");
+    assert!(
+        result.is_err(),
+        "exhausting the storage quota must not let the event proceed"
+    );
     Ok(())
 }
 
-/// Guest memory growth is bounded by the store limiter; the trap must surface
-/// as a skipped plugin, not a dead proxy.
+/// Guest memory growth is bounded by the store limiter; the trap must end the
+/// event rather than killing the proxy.
 #[tokio::test]
 async fn memory_bomb_is_contained() -> Result<()> {
     let (mut registry, _tmp) = create_plugin_registry().await?;
@@ -420,7 +426,10 @@ async fn memory_bomb_is_contained() -> Result<()> {
     assert_plugin_will_run(&registry, &*event);
 
     let result = registry.handle_event(event).await;
-    assert!(result.is_ok(), "the chain must fail open");
+    assert!(
+        result.is_err(),
+        "a memory-exhausting guest must fail the event closed"
+    );
     Ok(())
 }
 
@@ -441,7 +450,10 @@ async fn log_flood_is_contained() -> Result<()> {
         assert_plugin_will_run(&registry, &*event);
 
         let result = registry.handle_event(event).await;
-        assert!(result.is_ok(), "mode {mode}: the chain must fail open");
+        assert!(
+            result.is_err(),
+            "mode {mode}: exhausting the log budget must fail the event closed"
+        );
     }
     Ok(())
 }
@@ -531,8 +543,105 @@ async fn body_bomb_is_contained() -> Result<()> {
 
     let result = registry.handle_event(event).await;
     assert!(
-        result.is_ok(),
-        "an oversized replacement body must not take the event down"
+        result.is_err(),
+        "an oversized replacement body must fail the event closed rather than \
+         streaming an unbounded response"
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Recovery policy
+// ---------------------------------------------------------------------------
+
+/// `handle` returning `none` means "abandon further processing", not "pass the
+/// event through". The implementation previously did the latter, contradicting
+/// the WIT's own doc comment; a plugin that simply does not care about an event
+/// says so by returning the event unchanged.
+#[tokio::test]
+async fn returning_none_terminates_handling() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits::DEFAULTS);
+    register_adversarial(&registry, "terminate", LimitOverrides::default()).await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    let result = registry.handle_event(event).await;
+    assert!(
+        result.is_err(),
+        "`none` must end the event, not continue the chain with it"
+    );
+    Ok(())
+}
+
+/// A plugin that returns the event unchanged is saying "not for me" and must
+/// pass straight through. This is the case that would break if `none` and
+/// "unchanged" were ever conflated again.
+#[tokio::test]
+async fn returning_the_event_unchanged_passes_through() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits::DEFAULTS);
+    register_adversarial(&registry, "passthrough", LimitOverrides::default()).await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    assert!(
+        registry.handle_event(event).await.is_ok(),
+        "an unchanged event must continue the chain"
+    );
+    Ok(())
+}
+
+/// `fail-open` is configurable but unimplemented. Selecting it must be safe:
+/// the host degrades to fail-closed and says so, rather than attempting a
+/// recovery it has no machinery for.
+#[tokio::test]
+async fn fail_open_degrades_safely_until_implemented() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits {
+        max_fuel: 0,
+        timeout_ms: 300,
+        recovery: RecoveryPolicy::FailOpen,
+        ..ResolvedLimits::DEFAULTS
+    });
+    register_adversarial(&registry, "spin", LimitOverrides::default()).await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    let result = registry.handle_event(event).await;
+    assert!(
+        result.is_err(),
+        "fail-open has no implementation yet and must degrade to fail-closed"
+    );
+    Ok(())
+}
+
+/// The recovery policy is per-plugin overridable, like every other dimension.
+#[test]
+fn recovery_policy_is_per_plugin_overridable() {
+    let global = ResolvedLimits {
+        recovery: RecoveryPolicy::FailClosed,
+        ..ResolvedLimits::DEFAULTS
+    };
+    let overrides = LimitOverrides {
+        recovery: Some(RecoveryPolicy::FailOpen),
+        ..Default::default()
+    };
+    assert_eq!(overrides.resolve(&global).recovery, RecoveryPolicy::FailOpen);
+    // ...and the default still inherits.
+    assert_eq!(
+        LimitOverrides::default().resolve(&global).recovery,
+        RecoveryPolicy::FailClosed
+    );
+}
+
+/// Fail-closed must be what you get without asking, including from an
+/// unrecognised configuration value.
+#[test]
+fn recovery_defaults_to_fail_closed() {
+    assert_eq!(RecoveryPolicy::default(), RecoveryPolicy::FailClosed);
+    assert_eq!(ResolvedLimits::DEFAULTS.recovery, RecoveryPolicy::FailClosed);
 }

@@ -26,6 +26,35 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+/// What the host does when a plugin fails part-way through handling an event.
+///
+/// The event payload contains linear resources -- most importantly the body,
+/// which `wasi:http` models as a move precisely because a stream can be read
+/// exactly once. Once a guest has taken the body, the host cannot reconstruct
+/// the original event from what remains, so continuing the chain would forward
+/// something neither the client nor the upstream asked for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryPolicy {
+    /// End the event. The request fails with an error rather than proceeding
+    /// with state a failed guest may have consumed or half-modified.
+    ///
+    /// The default, deliberately: forwarding a possibly-corrupt event is the
+    /// worse failure mode, and it is silent.
+    #[default]
+    FailClosed,
+    /// Continue the chain with the event as it was before the failing plugin
+    /// ran, which requires the host to have duplicated anything the guest
+    /// could consume.
+    ///
+    /// NOT YET IMPLEMENTED. The duplication machinery (a lazily-teed body,
+    /// bounded by `max_event_recovery_buffer_bytes`) does not exist, so
+    /// selecting this currently degrades to [`Self::FailClosed`] with a
+    /// warning. The setting exists now so that configuration, storage and the
+    /// call site are in place ahead of the implementation.
+    FailOpen,
+}
+
 /// A fully resolved limit set for one plugin.
 ///
 /// A value of `0` in any field means "unbounded" for that dimension.
@@ -56,6 +85,14 @@ pub struct ResolvedLimits {
     /// Bytes a plugin may write into a replacement body. Bounds the
     /// amplification available from `content.set-body`.
     pub max_response_body_bytes: u64,
+    /// Ceiling on host memory used to duplicate event data so a failed guest
+    /// can be recovered from. Only consulted under [`RecoveryPolicy::FailOpen`].
+    ///
+    /// This is host memory with the same exhaustion shape as local storage: a
+    /// plugin that streams a large body forces the host to retain it.
+    pub max_event_recovery_buffer_bytes: u64,
+    /// What to do when a plugin fails mid-event.
+    pub recovery: RecoveryPolicy,
 }
 
 impl ResolvedLimits {
@@ -75,6 +112,8 @@ impl ResolvedLimits {
         max_log_bytes_per_event: 64 * 1024,
         max_log_messages_per_event: 256,
         max_response_body_bytes: 128 * 1024 * 1024,
+        max_event_recovery_buffer_bytes: 16 * 1024 * 1024,
+        recovery: RecoveryPolicy::FailClosed,
     };
 }
 
@@ -102,6 +141,8 @@ pub struct LimitOverrides {
     pub max_log_bytes_per_event: Option<u64>,
     pub max_log_messages_per_event: Option<u64>,
     pub max_response_body_bytes: Option<u64>,
+    pub max_event_recovery_buffer_bytes: Option<u64>,
+    pub recovery: Option<RecoveryPolicy>,
 }
 
 impl LimitOverrides {
@@ -136,6 +177,10 @@ impl LimitOverrides {
             max_response_body_bytes: self
                 .max_response_body_bytes
                 .unwrap_or(global.max_response_body_bytes),
+            max_event_recovery_buffer_bytes: self
+                .max_event_recovery_buffer_bytes
+                .unwrap_or(global.max_event_recovery_buffer_bytes),
+            recovery: self.recovery.unwrap_or(global.recovery),
         }
     }
 }
@@ -153,6 +198,7 @@ pub enum LimitKind {
     LogBytes,
     LogMessages,
     ResponseBodyBytes,
+    EventRecoveryBufferBytes,
 }
 
 impl LimitKind {
@@ -170,6 +216,7 @@ impl LimitKind {
             Self::LogBytes => "max_log_bytes_per_event",
             Self::LogMessages => "max_log_messages_per_event",
             Self::ResponseBodyBytes => "max_response_body_bytes",
+            Self::EventRecoveryBufferBytes => "max_event_recovery_buffer_bytes",
         }
     }
 }
@@ -305,6 +352,8 @@ mod tests {
             max_log_bytes_per_event: 1,
             max_log_messages_per_event: 1,
             max_response_body_bytes: 1,
+            max_event_recovery_buffer_bytes: 1,
+            recovery: RecoveryPolicy::FailClosed,
         };
         let all = LimitOverrides {
             max_fuel: Some(9),
@@ -317,6 +366,8 @@ mod tests {
             max_log_bytes_per_event: Some(9),
             max_log_messages_per_event: Some(9),
             max_response_body_bytes: Some(9),
+            max_event_recovery_buffer_bytes: Some(9),
+            recovery: Some(RecoveryPolicy::FailOpen),
         };
         let r = all.resolve(&global);
         // Every field must have taken the override value.
@@ -333,6 +384,8 @@ mod tests {
                 max_log_bytes_per_event: 9,
                 max_log_messages_per_event: 9,
                 max_response_body_bytes: 9,
+                max_event_recovery_buffer_bytes: 9,
+                recovery: RecoveryPolicy::FailOpen,
             }
         );
     }

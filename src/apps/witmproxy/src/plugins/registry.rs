@@ -11,7 +11,7 @@ use wasmtime::component::{Component, InstancePre, Resource};
 use wasmtime_wasi_http::WasiHttpView;
 use wasmtime_wasi_http::p3::Request as WasiRequest;
 
-use crate::plugins::limits::{BreachRecorder, LimitOverrides, ResolvedLimits};
+use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
 use crate::{
     db::{Db, Insert},
     events::{Event, connect::Connect, content::InboundContent, response::ContextualResponse},
@@ -69,52 +69,15 @@ impl WasmEvent {
 
 /// Signals how the plugin chain should proceed after one plugin runs.
 enum GuestStep {
-    /// Continue the chain with this event (guest-produced or recovered).
+    /// Continue the chain with the event the guest returned.
+    ///
+    /// Note this covers "not for me" as well: a plugin that does not care
+    /// about an event returns it unchanged, which is a normal `Next`.
     Next(Box<dyn Event>),
-    /// A timer plugin returned None (side-effect only); stop the chain.
-    StopTimer,
-}
-
-/// A lightweight snapshot of the in-flight event, captured BEFORE handing it to
-/// the guest, so the *unmodified* event can be rebuilt from the store if the
-/// guest fails (fail-open recovery). Holds only resource reps + non-resource
-/// aux data.
-enum EventRecovery {
-    Request(u32),
-    Response { rep: u32, request: RequestContext },
-    InboundContent(u32),
-    Timer(u64),
-}
-
-impl EventRecovery {
-    fn capture(ev: &WasmEvent) -> Self {
-        match ev {
-            WasmEvent::Request(r) => EventRecovery::Request(r.rep()),
-            WasmEvent::Response(r) => EventRecovery::Response {
-                rep: r.response.rep(),
-                request: r.request.clone(),
-            },
-            WasmEvent::InboundContent(c) => EventRecovery::InboundContent(c.rep()),
-            WasmEvent::Timer(ctx) => EventRecovery::Timer(ctx.timestamp),
-        }
-    }
-
-    fn rebuild(self, store: &mut Store<Host>) -> Result<Box<dyn Event>> {
-        let ev = match self {
-            EventRecovery::Request(rep) => WasmEvent::Request(Resource::new_own(rep)),
-            EventRecovery::Response { rep, request } => {
-                WasmEvent::Response(WasiContextualResponse {
-                    request,
-                    response: Resource::new_own(rep),
-                })
-            }
-            EventRecovery::InboundContent(rep) => {
-                WasmEvent::InboundContent(Resource::new_own(rep))
-            }
-            EventRecovery::Timer(ts) => WasmEvent::Timer(TimerContext { timestamp: ts }),
-        };
-        PluginRegistry::wasm_event_into_boxed(store, ev)
-    }
+    /// The guest returned `none`, which the WIT defines as "abandon any
+    /// further event processing". For a timer that is a legitimate
+    /// side-effect-only run; for anything else the event ends here.
+    Terminate,
 }
 
 impl PluginRegistry {
@@ -468,10 +431,6 @@ impl PluginRegistry {
         self.runtime.apply_call_limits(&mut store, limits)?;
         let timeout_ms = limits.timeout_ms;
 
-        // Snapshot enough to rebuild the *unmodified* event from the store if the
-        // guest fails, so the chain can continue (fail open).
-        let recovery = EventRecovery::capture(&event_data);
-
         let guest = store.run_concurrent(async move |store| {
             // Create the plugin resource with the user-supplied configuration.
             let plugin_resource = match plugin_instance
@@ -521,28 +480,53 @@ impl PluginRegistry {
                 let event = Self::wasm_event_into_boxed(&mut store, new_event_data)?;
                 Ok((GuestStep::Next(event), store))
             }
-            // Timer events may legitimately return None (side-effect only).
-            Ok(None) if kind == EventKind::Timer => Ok((GuestStep::StopTimer, store)),
+            // `none` means "abandon further processing" per the WIT contract.
+            // A plugin that simply does not care about an event returns the
+            // event unchanged instead, which lands in the `Ok(Some(..))` arm.
             Ok(None) => {
-                warn!(
-                    target: "plugins",
-                    plugin_id = %plugin_id,
-                    event_kind = kind.to_string(),
-                    "Plugin returned no event data; failing open and continuing with the unmodified event"
-                );
-                let event = recovery.rebuild(&mut store)?;
-                Ok((GuestStep::Next(event), store))
+                if kind == EventKind::Timer {
+                    debug!(
+                        target: "plugins",
+                        plugin_id = %plugin_id,
+                        "Timer plugin returned none (side-effect only); ending the chain"
+                    );
+                } else {
+                    debug!(
+                        target: "plugins",
+                        plugin_id = %plugin_id,
+                        event_kind = kind.to_string(),
+                        "Plugin returned none; terminating event handling as requested"
+                    );
+                }
+                Ok((GuestStep::Terminate, store))
             }
             Err(e) => {
+                // The event payload holds linear resources: once a guest has
+                // taken a body it cannot be handed back. Continuing the chain
+                // would forward something neither peer asked for, so the
+                // default is to end the event rather than guess.
+                match limits.recovery {
+                    RecoveryPolicy::FailClosed => {}
+                    RecoveryPolicy::FailOpen => {
+                        warn!(
+                            target: "plugins",
+                            plugin_id = %plugin_id,
+                            "fail-open recovery is configured but not implemented \
+                             (event duplication does not exist yet); falling back \
+                             to fail-closed for this event"
+                        );
+                    }
+                }
                 warn!(
                     target: "plugins",
                     plugin_id = %plugin_id,
                     event_kind = kind.to_string(),
                     error = %e,
-                    "Plugin execution failed (error/limit/timeout); failing open and continuing with the unmodified event"
+                    "Plugin execution failed (error/limit/timeout); failing closed"
                 );
-                let event = recovery.rebuild(&mut store)?;
-                Ok((GuestStep::Next(event), store))
+                Err(e.context(format!(
+                    "plugin {plugin_id} failed while handling a {kind} event"
+                )))
             }
         }
     }
@@ -777,11 +761,19 @@ impl PluginRegistry {
             store = next_store;
             match step {
                 GuestStep::Next(event) => current_event = event,
-                GuestStep::StopTimer => {
-                    debug!("Timer plugin returned None; stopping timer chain");
-                    let timer_event = crate::events::timer::TimerEvent::now();
-                    let event_data = Box::new(timer_event).into_event_data(&mut store)?;
-                    return Ok((event_data, store));
+                GuestStep::Terminate => {
+                    // The plugin asked for handling to stop. For a timer that
+                    // is a normal side-effect-only run, so hand back a fresh
+                    // timer event; for anything else the event does not
+                    // proceed, and the caller surfaces that as a failure.
+                    if kind == EventKind::Timer {
+                        let timer_event = crate::events::timer::TimerEvent::now();
+                        let event_data = Box::new(timer_event).into_event_data(&mut store)?;
+                        return Ok((event_data, store));
+                    }
+                    anyhow::bail!(
+                        "plugin {plugin_id} terminated handling of a {kind} event"
+                    );
                 }
             }
         }

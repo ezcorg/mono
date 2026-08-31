@@ -55,6 +55,10 @@ enum Mode {
     /// per-event budget is shared across capability handles rather than reset
     /// on each acquisition.
     LoggerRebind,
+    /// Return `none`, which the WIT defines as "abandon any further event
+    /// processing". Distinct from returning the event unchanged, which is how
+    /// a plugin says "not for me".
+    Terminate,
     /// Replace the body with an effectively endless stream. Exercises
     /// `max_response_body_bytes`: the stream length is guest-controlled and
     /// unrelated to the size of the request that triggered the event, so
@@ -72,6 +76,7 @@ impl Mode {
             "log-inject" => Self::LogInject,
             "logger-rebind" => Self::LoggerRebind,
             "body-bomb" => Self::BodyBomb,
+            "terminate" => Self::Terminate,
             _ => Self::Passthrough,
         }
     }
@@ -159,6 +164,10 @@ impl GuestPlugin for PluginInstance {
     async fn handle(&self, ev: Event, cap: CapabilityProvider) -> Option<Event> {
         // Handled first: this arm consumes the event rather than passing it
         // through unchanged.
+        if self.mode == Mode::Terminate {
+            return None;
+        }
+
         if self.mode == Mode::BodyBomb {
             return match ev {
                 Event::InboundContent(content) => {
@@ -185,7 +194,7 @@ impl GuestPlugin for PluginInstance {
         }
 
         match self.mode {
-            Mode::Passthrough | Mode::BodyBomb => {}
+            Mode::Passthrough | Mode::BodyBomb | Mode::Terminate => {}
 
             Mode::Spin => {
                 // A tight loop with no host calls and no allocation: nothing
