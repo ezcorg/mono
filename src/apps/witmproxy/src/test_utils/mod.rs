@@ -295,6 +295,32 @@ pub async fn create_html_server(
     ca: CertificateAuthority,
     proto: Protocol,
 ) -> ServerHandle {
+    create_html_server_with_body(host, port, ca, proto, DEFAULT_TEST_HTML.to_string()).await
+}
+
+/// The page `create_html_server` serves by default.
+pub const DEFAULT_TEST_HTML: &str = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+</head>
+<body>
+    <h1>Hello from test server</h1>
+</body>
+</html>"#;
+
+/// Like [`create_html_server`], but serves a caller-supplied page.
+///
+/// Exists so tests can serve a body large enough to span many stream chunks:
+/// the default fixture fits in a single read, which hides size-dependent
+/// behaviour in the content-rewriting pipeline.
+pub async fn create_html_server_with_body(
+    host: &str,
+    port: Option<u16>,
+    ca: CertificateAuthority,
+    proto: Protocol,
+    body: String,
+) -> ServerHandle {
     let port = port.unwrap_or(0); // Use OS-assigned port if None
 
     let cert = ca
@@ -339,28 +365,25 @@ pub async fn create_html_server(
                     };
 
                     let acceptor = acceptor.clone();
+                    let body = body.clone();
                     tokio::spawn(async move {
                         match acceptor.accept(stream).await {
                             Ok(tls) => {
                                 let io = hyper_util::rt::TokioIo::new(tls);
 
-                                let svc = hyper::service::service_fn(|_req| async {
-                                    let html = r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Test Page</title>
-</head>
-<body>
-    <h1>Hello from test server</h1>
-</body>
-</html>"#;
-
-                                    Ok::<_, hyper::Error>(
-                                        hyper::Response::builder()
-                                            .header("content-type", "text/html")
-                                            .body(http_body_util::Full::new(bytes::Bytes::from(html)))
-                                            .unwrap()
-                                    )
+                                let body = body.clone();
+                                let svc = hyper::service::service_fn(move |_req| {
+                                    let html = body.clone();
+                                    async move {
+                                        Ok::<_, hyper::Error>(
+                                            hyper::Response::builder()
+                                                .header("content-type", "text/html")
+                                                .body(http_body_util::Full::new(
+                                                    bytes::Bytes::from(html),
+                                                ))
+                                                .unwrap(),
+                                        )
+                                    }
                                 });
 
                                 match proto {

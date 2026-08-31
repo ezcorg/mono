@@ -194,3 +194,76 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
 
     Ok(())
 }
+
+
+/// Large HTML bodies are truncated when a plugin rewrites them.
+///
+/// KNOWN FAILURE, ignored so it does not mask other regressions. Run with
+/// `cargo test -p witmproxy --lib large_body -- --ignored --nocapture`.
+///
+/// A ~1 KB page rewrites correctly; at 100 KB and 400 KB the client receives a
+/// fraction of the body (observed 51, 108, 16435 and 65586 bytes across runs)
+/// and the injected CSS is missing. The truncation point varies run to run, so
+/// this is a race rather than a fixed limit -- and it is not fuel: it
+/// reproduces with `max_fuel: 0`. Without the plugin the same proxy streams
+/// 873 KB from a real site intact, so the transport is fine.
+///
+/// The mechanism is in `proxy::handle_content`: after `handle_event` returns,
+/// the plugin's `Store` is kept alive in a background `run_concurrent` gated on
+/// `body_done_rx`, which fires when the response body is fully consumed. The
+/// guest's spawned subtask needs that store to be driven in order to finish
+/// writing. If the gate resolves -- or its sender is dropped -- before the
+/// subtask has drained the body, the store dies and the body stops mid-stream.
+/// The existing comment at the top of `e2e_plugin_body_streaming_subtask`
+/// records an earlier encounter with the same class of problem, fixed only for
+/// bodies small enough to complete inside the window.
+#[tokio::test]
+#[ignore = "known bug: large rewritten bodies are truncated; see the doc comment"]
+async fn large_body_through_content_plugin_is_not_truncated() -> anyhow::Result<()> {
+    use crate::test_utils::*;
+
+    let (mut proxy, registry, ca, _config, _tmp) = create_witmproxy().await?;
+    proxy.start().await.unwrap();
+    // test_component supplies the Connect scope that triggers MITM for
+    // 127.0.0.1; noshorts alone only intercepts youtube.com.
+    register_test_component(&registry).await.unwrap();
+    register_noshorts_plugin(&registry).await.unwrap();
+
+    // Realistic markup rather than one huge comment or script, which would
+    // exercise lol_html's token buffer instead of the streaming path.
+    let padding = 400_000;
+    let body = format!(
+        "<!DOCTYPE html><html><head><title>Big</title></head><body><h1>Hello from test server</h1>{}</body></html>",
+        "<div class=\"row\"><span>cell</span></div>".repeat(padding / 40)
+    );
+    let expected_min = body.len();
+
+    let target =
+        create_html_server_with_body("127.0.0.1", None, ca.clone(), Protocol::Http2, body).await;
+    let client = create_client(
+        ca,
+        &format!("http://{}", proxy.proxy_listen_addr().unwrap()),
+        Protocol::Http2,
+    )
+    .await;
+    let text = client
+        .get(format!("https://127.0.0.1:{}/", target.listen_addr().port()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        text.len() >= expected_min,
+        "body truncated: received {} bytes, expected at least {}",
+        text.len(),
+        expected_min
+    );
+    assert!(
+        text.contains(r#"a[href*="shorts"]"#),
+        "noshorts CSS was not injected into a large page"
+    );
+    Ok(())
+}
