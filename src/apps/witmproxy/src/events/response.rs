@@ -1,6 +1,7 @@
 use anyhow::Result;
 use wasmtime::Store;
-use wasmtime_wasi_http::p3::{Response, WasiHttpView};
+use wasmtime_wasi_http::WasiHttpView;
+use wasmtime_wasi_http::p3::Response;
 
 use crate::events::Event;
 use crate::plugins::cel::{CelRequest, CelResponse, CelTime};

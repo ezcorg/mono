@@ -386,3 +386,16 @@ pub fn is_closed<E: std::fmt::Display>(e: &E) -> bool {
         || s.contains("unexpected eof")
         || s.contains("close_notify")
 }
+
+/// Map a `wasmtime_wasi_http::Error` onto the `ErrorCode` our event pipeline
+/// carries.
+///
+/// wasmtime 48 relaxed `Request::from_http`/`Response::into_http` to the
+/// embedder-facing `Error`, which is a superset of the guest-visible
+/// `ErrorCode` (it adds `Hyper`, `Connect` and `Tls` cases). No conversion is
+/// provided upstream. Body-stream failures on this path originate from hyper
+/// I/O rather than from connection establishment, so the structured cases
+/// cannot arise here and the detail is preserved as text instead.
+pub fn wasi_error_to_code(err: wasmtime_wasi_http::Error) -> ErrorCode {
+    ErrorCode::InternalError(Some(err.to_string()))
+}

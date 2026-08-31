@@ -42,10 +42,14 @@ x509-parser = "0.18.1"
 time = { version = "0.3", features = ["macros"] }
 
 # WASM runtime (component-model + async)
-wasmtime = { features = ["component-model-async"], version = "43.0.0" }
-wasmtime-wasi = { features = ["p3"], version = "43.0.0" }
-wasmtime-wasi-http = { features = ["p3"], version = "43.0.0" }
-wit-bindgen = { version = "0.54.0", features = ["default"] }
+# Pinned exactly: wasmtime's wasip3 modules are explicitly outside semver
+# ("not compliant with semver ... bug and security fixes limited to wasip3
+# will not be given patch releases"), so upgrades are deliberate and gated
+# on the adversarial suite rather than picked up by a caret range.
+wasmtime = { features = ["component-model-async"], version = "=48.0.1" }
+wasmtime-wasi = { features = ["p3"], version = "=48.0.1" }
+wasmtime-wasi-http = { features = ["p3"], version = "=48.0.1" }
+wit-bindgen = { version = "0.61.1", features = ["default"] }
 # WASM signature verification
 wasmsign2 = "0.2.6"
 

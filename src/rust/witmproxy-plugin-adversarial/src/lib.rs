@@ -23,7 +23,6 @@ use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Ev
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
-    async: true,
     generate_all
 });
 
@@ -165,7 +164,7 @@ impl GuestPlugin for PluginInstance {
                 Event::InboundContent(content) => {
                     let (mut body_tx, body_rx) = wit_stream::new();
 
-                    wit_bindgen::spawn(async move {
+                    wit_bindgen::spawn_local(async move {
                         // ~1 GiB in 64 KiB chunks: far past any sane cap, and
                         // written lazily so the host gets a chance to stop it
                         // rather than the guest allocating it all up front.

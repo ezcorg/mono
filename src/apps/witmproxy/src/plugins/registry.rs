@@ -8,7 +8,8 @@ use cel_cxx::Env;
 use tracing::{debug, info, warn};
 use wasmtime::Store;
 use wasmtime::component::{Component, InstancePre, Resource};
-use wasmtime_wasi_http::p3::{Request as WasiRequest, WasiHttpView};
+use wasmtime_wasi_http::WasiHttpView;
+use wasmtime_wasi_http::p3::Request as WasiRequest;
 
 use crate::plugins::limits::{BreachRecorder, LimitOverrides, ResolvedLimits};
 use crate::{
@@ -893,7 +894,7 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -909,7 +910,7 @@ mod tests {
             .header("skipthis", "false")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -925,7 +926,7 @@ mod tests {
             .header("skipthis", "true")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -940,7 +941,7 @@ mod tests {
             .header("host", "donotprocess.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -956,7 +957,7 @@ mod tests {
             .header("skipthis", "false")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -972,7 +973,7 @@ mod tests {
             .header("skipthis", "true")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -992,7 +993,7 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let executed_plugins = HashSet::new();
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
@@ -1065,7 +1066,7 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let executed_plugins = HashSet::new();
 
         let event: Box<dyn Event> = Box::new(wasi_req);
@@ -1154,7 +1155,7 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
 
         let mut executed_plugins = HashSet::new();
 

@@ -10,7 +10,7 @@ license = "{{license}}"
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "{{wit-bindgen-version}}"
+wit-bindgen = { version = "{{wit-bindgen-version}}", features = ["async-spawn"] }
 
 [package.metadata.component]
 package = "witmproxy:{{project-name}}"

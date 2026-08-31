@@ -9,7 +9,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = { version = "0.54.0", features = ["async-spawn"] }
+wit-bindgen = { version = "0.61.1", features = ["async-spawn"] }
 
 [package.metadata.component]
 package = "witmproxy:witmproxy-plugin-adversarial-plugin"

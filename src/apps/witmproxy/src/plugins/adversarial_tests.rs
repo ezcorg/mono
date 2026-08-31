@@ -296,7 +296,7 @@ fn sample_request() -> Box<dyn Event> {
         .header("host", "example.com")
         .body(Full::new(Bytes::from("body")))
         .expect("static request builds");
-    let (wasi_req, _io) = WasiRequest::from_http(req);
+    let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
     Box::new(wasi_req)
 }
 

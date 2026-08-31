@@ -20,7 +20,7 @@ wasmtime::component::bindgen!({
         "witmproxy:plugin/capabilities.logger": Logger,
         "witmproxy:plugin/capabilities.clock-client": ClockClient,
         "witmproxy:plugin/capabilities.content": InboundContent,
-        "wasi:http/types@0.3.0-rc-2026-03-15": wasmtime_wasi_http::p3::bindings::http::types,
+        "wasi:http/types@0.3.0": wasmtime_wasi_http::p3::bindings::http::types,
     },
 });
 

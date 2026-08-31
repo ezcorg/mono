@@ -8,7 +8,7 @@ use wasmtime::{
     component::{Component, InstancePre, Linker},
 };
 use wasmtime_wasi::p3::bindings::LinkOptions;
-use wasmtime_wasi_http::p3::WasiHttpView;
+use wasmtime_wasi_http::WasiHttpView;
 
 /// Epoch tick granularity. Wall-clock timeouts are rounded up to a multiple of
 /// this, so it bounds both timeout precision and the ticker's overhead.
@@ -134,7 +134,13 @@ impl Runtime {
     pub fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
         let mut linker: Linker<Host> = Linker::new(engine);
 
-        // Add WASI CLI support (needed by the component)
+        // WASI p2 support. This is NOT vestigial after the move to WASI 0.3:
+        // guest components built with wit-bindgen still import `wasi:io/poll`
+        // at version 0.2.x through the Rust runtime's shims, so removing this
+        // fails instantiation with "component imports instance
+        // `wasi:io/poll@0.2.6`, but a matching implementation was not found".
+        // Verified by removing it and running the suite. Revisit when the
+        // guest toolchain no longer emits p2 imports.
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
 
         // Add WASI p3 support (clocks, random, io, ...)
@@ -146,7 +152,7 @@ impl Runtime {
         // handler) so plugins cannot make outbound HTTP requests.
         wasmtime_wasi_http::p3::bindings::http::types::add_to_linker::<
             _,
-            wasmtime_wasi_http::p3::WasiHttp,
+            wasmtime_wasi_http::WasiHttp,
         >(&mut linker, <Host as WasiHttpView>::http)?;
 
         // Add our custom host capabilities using the wrapper pattern

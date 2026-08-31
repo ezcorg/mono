@@ -18,7 +18,7 @@ struct Component;
 impl Guest for Component {
     type Plugin = PluginInstance;
 
-    fn manifest() -> PluginManifest {
+    async fn manifest() -> PluginManifest {
         PluginManifest {
             name: "noop".to_string(),
             namespace: "witmproxy".to_string(),
@@ -57,11 +57,11 @@ impl Guest for Component {
 struct PluginInstance;
 
 impl GuestPlugin for PluginInstance {
-    fn create(_config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
+    async fn create(_config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
         Ok(PluginResource::new(PluginInstance))
     }
 
-    fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
+    async fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
         Some(ev)
     }
 }

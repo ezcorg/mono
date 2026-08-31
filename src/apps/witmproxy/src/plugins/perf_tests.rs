@@ -16,7 +16,7 @@ fn make_request_event() -> Box<dyn Event> {
         .header("host", "example.com")
         .body(Full::new(Bytes::from("test body")))
         .unwrap();
-    let (wasi_req, _io) = WasiRequest::from_http(req);
+    let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
     Box::new(wasi_req)
 }
 

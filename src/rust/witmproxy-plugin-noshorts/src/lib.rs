@@ -13,7 +13,6 @@ use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Ev
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
-    async: true,
     generate_all
 });
 
@@ -172,7 +171,7 @@ impl GuestPlugin for PluginInstance {
                     },
                 );
 
-                wit_bindgen::spawn(async move {
+                wit_bindgen::spawn_local(async move {
                     let mut body_tx = body_tx;
                     let mut chunk = Vec::with_capacity(65536);
                     let start_time = std::time::Instant::now();

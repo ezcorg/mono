@@ -11,7 +11,7 @@ use hyper::Request;
 use wasmtime::Store;
 use wasmtime::component::Resource;
 use wasmtime_wasi_http::p3::Request as WasiRequest;
-use wasmtime_wasi_http::p3::WasiHttpView;
+use wasmtime_wasi_http::WasiHttpView;
 
 impl Event for WasiRequest {
     fn capability(&self) -> CapabilityKind {

@@ -30,7 +30,7 @@ struct WitAssets;
 
 /// Keep in sync with the `wit-bindgen` dependency in this crate's Cargo.toml.
 /// `tests::wit_bindgen_version_matches_manifest` enforces that.
-const WIT_BINDGEN_VERSION: &str = "0.54.0";
+const WIT_BINDGEN_VERSION: &str = "0.61.1";
 
 /// Languages `witm plugin new` can scaffold.
 pub const SUPPORTED_LANGUAGES: &[&str] = &["rust"];

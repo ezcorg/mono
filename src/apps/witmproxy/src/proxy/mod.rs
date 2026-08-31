@@ -14,6 +14,8 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
+
+use crate::proxy::utils::wasi_error_to_code;
 use http_body_util::Full;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Incoming;
@@ -22,7 +24,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, StatusCode};
 use hyper::{Response, upgrade};
 use tokio::sync::Notify;
-use wasmtime_wasi_http::p3::WasiHttpView;
+use wasmtime_wasi_http::WasiHttpView;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
@@ -583,10 +585,10 @@ where
                 let mut request_ctx = CelRequest::from(&req);
 
                 let request_event_result = if let Some(registry) = &plugin_registry {
-                    let (parts, body) = req.into_parts();
-                    let mapped_body = body.map_err(ErrorCode::from_hyper_request_error);
-                    let req = Request::from_parts(parts, mapped_body);
-                    let (request, _io) = WasiRequest::from_http(req);
+                    let (request, _io) = WasiRequest::from_http(
+                        wasmtime_wasi_http::default_hooks(),
+                        req,
+                    );
                     let event: Box<dyn Event> = Box::new(request);
 
                     registry.handle_event(event).await
@@ -646,6 +648,7 @@ where
                                 }
                             };
 
+                            let rq = rq.map(|b| b.map_err(wasi_error_to_code).boxed_unsync());
                             let rq: Result<reqwest::Request, ProxyError> =
                                 convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
                             match rq {
@@ -668,7 +671,9 @@ where
                                 }
                             };
                             match response.into_http(store, async { Ok(()) }) {
-                                Ok(response) => response,
+                                Ok(response) => {
+                                    response.map(|b| b.map_err(wasi_error_to_code).boxed_unsync())
+                                }
                                 Err(e) => {
                                     error!("Failed to convert plugin response to http: {}", e);
                                     return Ok(plain_response(
@@ -693,7 +698,10 @@ where
 
                 let response_event_start = std::time::Instant::now();
                 let handled_response = if let Some(registry) = &plugin_registry {
-                    let (response, _io) = WasiResponse::from_http(initial_response);
+                    let (response, _io) = WasiResponse::from_http(
+                        wasmtime_wasi_http::default_hooks(),
+                        initial_response,
+                    );
                     let contextual_response = ContextualResponse {
                         request: request_ctx.into(),
                         response,
@@ -765,6 +773,7 @@ where
                         }
                     };
                     let (parts, body) = response.into_parts();
+                    let body = body.map_err(wasi_error_to_code).boxed_unsync();
                     let content = match InboundContent::new(parts, content_type.clone(), body) {
                         Ok(c) => c,
                         Err(e) => {

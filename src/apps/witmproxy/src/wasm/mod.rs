@@ -191,7 +191,7 @@ where
     D: 'static,
 {
     type Item = u8;
-    type Buffer = Cursor<Bytes>;
+    type Buffer = Bytes;
 
     fn poll_produce<'a>(
         mut self: Pin<&mut Self>,
@@ -235,7 +235,7 @@ where
                                 let cap_usize = cap.into();
                                 if n > cap_usize {
                                     // Data doesn't fit, buffer the rest
-                                    dst.set_buffer(Cursor::new(data_frame.split_off(cap_usize)));
+                                    dst.set_buffer(data_frame.split_off(cap_usize));
                                     let mut dst_direct = dst.as_direct(store, cap_usize);
                                     dst_direct.remaining().copy_from_slice(&data_frame);
                                     dst_direct.mark_written(cap_usize);
@@ -247,7 +247,7 @@ where
                                 }
                             } else {
                                 // No capacity info, just buffer it
-                                dst.set_buffer(Cursor::new(data_frame));
+                                dst.set_buffer(data_frame);
                             }
                             return Poll::Ready(Ok(StreamResult::Completed));
                         }
@@ -716,8 +716,8 @@ impl Default for Host {
     }
 }
 
-impl HostContentWithStore for WitmProxy {
-    async fn drop<T>(
+impl<T> HostContentWithStore<T> for WitmProxy {
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: wasmtime::component::Resource<InboundContent>,
     ) -> wasmtime::Result<()> {
@@ -728,7 +728,7 @@ impl HostContentWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn content_type<T>(
+    async fn content_type(
         accessor: &Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
     ) -> wasmtime::Result<String> {
@@ -740,7 +740,7 @@ impl HostContentWithStore for WitmProxy {
         Ok(content_type)
     }
 
-    async fn body<T>(
+    async fn body(
         accessor: &wasmtime::component::Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
     ) -> wasmtime::Result<wasmtime::component::StreamReader<u8>> {
@@ -769,7 +769,7 @@ impl HostContentWithStore for WitmProxy {
         Ok(reader)
     }
 
-    async fn set_body<T>(
+    async fn set_body(
         accessor: &wasmtime::component::Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
         content: wasmtime::component::StreamReader<u8>,
@@ -911,8 +911,8 @@ impl HostContentWithStore for WitmProxy {
 }
 
 // Implement the Host traits using the accessor pattern
-impl HostLocalStorageClientWithStore for WitmProxy {
-    async fn set<T>(
+impl<T> HostLocalStorageClientWithStore<T> for WitmProxy {
+    async fn set(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
@@ -929,7 +929,7 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn get<T>(
+    async fn get(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
@@ -944,7 +944,7 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         Ok(client.get(&key).await.map(|bytes| bytes.to_vec()))
     }
 
-    async fn delete<T>(
+    async fn delete(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
@@ -960,7 +960,7 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<LocalStorageClient>,
     ) -> wasmtime::Result<()> {
@@ -972,8 +972,8 @@ impl HostLocalStorageClientWithStore for WitmProxy {
     }
 }
 
-impl HostAnnotatorClientWithStore for WitmProxy {
-    async fn annotate<T>(
+impl<T> HostAnnotatorClientWithStore<T> for WitmProxy {
+    async fn annotate(
         accessor: &Accessor<T, Self>,
         self_: Resource<AnnotatorClient>,
         content: Resource<InboundContent>,
@@ -988,7 +988,7 @@ impl HostAnnotatorClientWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<AnnotatorClient>,
     ) -> wasmtime::Result<()> {
@@ -1000,8 +1000,8 @@ impl HostAnnotatorClientWithStore for WitmProxy {
     }
 }
 
-impl HostLoggerWithStore for WitmProxy {
-    async fn info<T>(
+impl<T> HostLoggerWithStore<T> for WitmProxy {
+    async fn info(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -1015,7 +1015,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn warn<T>(
+    async fn warn(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -1029,7 +1029,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn error<T>(
+    async fn error(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -1043,7 +1043,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn debug<T>(
+    async fn debug(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -1057,7 +1057,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn drop<T>(accessor: &Accessor<T, Self>, rep: Resource<Logger>) -> wasmtime::Result<()> {
+    async fn drop(accessor: &Accessor<T, Self>, rep: Resource<Logger>) -> wasmtime::Result<()> {
         accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             state.table.delete(rep)
@@ -1066,8 +1066,8 @@ impl HostLoggerWithStore for WitmProxy {
     }
 }
 
-impl HostClockClientWithStore for WitmProxy {
-    async fn now_seconds<T>(
+impl<T> HostClockClientWithStore<T> for WitmProxy {
+    async fn now_seconds(
         accessor: &Accessor<T, Self>,
         self_: Resource<ClockClient>,
     ) -> wasmtime::Result<u64> {
@@ -1079,7 +1079,7 @@ impl HostClockClientWithStore for WitmProxy {
         Ok(result)
     }
 
-    async fn now_millis<T>(
+    async fn now_millis(
         accessor: &Accessor<T, Self>,
         self_: Resource<ClockClient>,
     ) -> wasmtime::Result<u64> {
@@ -1091,7 +1091,7 @@ impl HostClockClientWithStore for WitmProxy {
         Ok(result)
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<ClockClient>,
     ) -> wasmtime::Result<()> {
@@ -1103,8 +1103,8 @@ impl HostClockClientWithStore for WitmProxy {
     }
 }
 
-impl HostCapabilityProviderWithStore for WitmProxy {
-    async fn logger<T>(
+impl<T> HostCapabilityProviderWithStore<T> for WitmProxy {
+    async fn logger(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<Logger>>> {
@@ -1124,7 +1124,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn local_storage<T>(
+    async fn local_storage(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<LocalStorageClient>>> {
@@ -1144,7 +1144,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn annotator<T>(
+    async fn annotator(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<AnnotatorClient>>> {
@@ -1164,7 +1164,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn clock<T>(
+    async fn clock(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<ClockClient>>> {
@@ -1183,7 +1183,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<()> {
@@ -1215,9 +1215,9 @@ impl WasiView for Host {
     }
 }
 
-impl wasmtime_wasi_http::p3::WasiHttpView for Host {
-    fn http(&mut self) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
-        wasmtime_wasi_http::p3::WasiHttpCtxView {
+impl wasmtime_wasi_http::WasiHttpView for Host {
+    fn http(&mut self) -> wasmtime_wasi_http::WasiHttpCtxView<'_> {
+        wasmtime_wasi_http::WasiHttpCtxView {
             table: &mut self.table,
             ctx: &mut self.http,
             hooks: Default::default(),

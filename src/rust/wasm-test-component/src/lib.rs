@@ -10,7 +10,6 @@ use crate::{
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
-    async: true,
     path: "../../apps/witmproxy/wit",
     generate_all
 });
@@ -76,41 +75,39 @@ impl GuestPlugin for PluginInstance {
     async fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
         match ev {
             Event::Request(req) => {
-                let authority = req.get_authority().await;
-                let path_with_query = req.get_path_with_query().await;
-                let scheme = req.get_scheme().await;
-                let old_headers = req.get_headers().await;
+                let authority = req.get_authority();
+                let path_with_query = req.get_path_with_query();
+                let scheme = req.get_scheme();
+                let old_headers = req.get_headers();
 
                 // Clone to get mutable headers
-                let headers = old_headers.clone().await;
+                let headers = old_headers.clone();
                 let val = "req".as_bytes().to_vec();
                 headers
-                    .set("witmproxy".to_string(), [val].to_vec())
-                    .await
+                    .set("witmproxy", &[val])
                     .unwrap();
 
                 let (_, result_rx) = wit_future::new(|| Ok(()));
-                let (body, trailers) = Request::consume_body(req, result_rx).await;
-                let (new_req, _) = Request::new(headers, Some(body), trailers, None).await;
-                let _ = new_req.set_authority(authority).await;
-                let _ = new_req.set_path_with_query(path_with_query).await;
-                let _ = new_req.set_scheme(scheme).await;
+                let (body, trailers) = Request::consume_body(req, result_rx);
+                let (new_req, _) = Request::new(headers, Some(body), trailers, None);
+                let _ = new_req.set_authority(authority.as_deref());
+                let _ = new_req.set_path_with_query(path_with_query.as_deref());
+                let _ = new_req.set_scheme(scheme.as_ref());
                 Some(Event::Request(new_req))
             }
             Event::Response(ContextualResponse { response, request }) => {
-                let old_headers = response.get_headers().await;
+                let old_headers = response.get_headers();
 
                 // Clone to get mutable headers
-                let headers = old_headers.clone().await;
+                let headers = old_headers.clone();
                 let val = "res".as_bytes().to_vec();
                 headers
-                    .set("witmproxy".to_string(), [val].to_vec())
-                    .await
+                    .set("witmproxy", &[val])
                     .unwrap();
 
                 let (_, result_rx) = wit_future::new(|| Ok(()));
-                let (body, trailers) = Response::consume_body(response, result_rx).await;
-                let (new_res, _) = Response::new(headers, Some(body), trailers).await;
+                let (body, trailers) = Response::consume_body(response, result_rx);
+                let (new_res, _) = Response::new(headers, Some(body), trailers);
                 Some(Event::Response(ContextualResponse {
                     response: new_res,
                     request,
@@ -122,7 +119,7 @@ impl GuestPlugin for PluginInstance {
 
                 // Spawn a task to prepend new_html to the original content
                 // Because writing to `tx` will block until `rx` is read
-                wit_bindgen::spawn(async move {
+                wit_bindgen::spawn_local(async move {
                     let new_html = "<!-- Processed by `wasm-test-component` plugin -->\n"
                         .as_bytes()
                         .to_vec();
