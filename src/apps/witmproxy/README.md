@@ -72,7 +72,7 @@ The witmproxy plugin WIT interface is automatically published to [GitHub Contain
 
 ```sh
 # Fetch the WIT interface for plugin development
-wkg get --format wit witmproxy:plugin@0.0.6 --output plugin.wit
+wkg get --format wit witmproxy:plugin@0.0.7 --output plugin.wit
 ```
 
 ###

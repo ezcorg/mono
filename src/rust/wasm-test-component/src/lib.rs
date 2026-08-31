@@ -1,10 +1,11 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
         Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin,
-        Plugin as PluginResource, PluginManifest, UserInput,
+        Plugin as PluginResource, PluginError, PluginManifest, UserInput,
     },
     witmproxy::plugin::capabilities::{
-        CapabilityKind, CapabilityScope, ContextualResponse, Event, EventKind, Request, Response,
+        CapabilityKind, CapabilityScope, Content, ContextualResponse, Event, EventKind, Request,
+        Response,
     },
 };
 
@@ -72,7 +73,11 @@ impl GuestPlugin for PluginInstance {
         Ok(PluginResource::new(PluginInstance { _config: config }))
     }
 
-    async fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
+    async fn handle(
+        &self,
+        ev: Event,
+        _cp: CapabilityProvider,
+    ) -> Result<Option<Event>, PluginError> {
         match ev {
             Event::Request(req) => {
                 let authority = req.get_authority();
@@ -93,7 +98,7 @@ impl GuestPlugin for PluginInstance {
                 let _ = new_req.set_authority(authority.as_deref());
                 let _ = new_req.set_path_with_query(path_with_query.as_deref());
                 let _ = new_req.set_scheme(scheme.as_ref());
-                Some(Event::Request(new_req))
+                Ok(Some(Event::Request(new_req)))
             }
             Event::Response(ContextualResponse { response, request }) => {
                 let old_headers = response.get_headers();
@@ -108,14 +113,17 @@ impl GuestPlugin for PluginInstance {
                 let (_, result_rx) = wit_future::new(|| Ok(()));
                 let (body, trailers) = Response::consume_body(response, result_rx);
                 let (new_res, _) = Response::new(headers, Some(body), trailers);
-                Some(Event::Response(ContextualResponse {
+                Ok(Some(Event::Response(ContextualResponse {
                     response: new_res,
                     request,
-                }))
+                })))
             }
             Event::InboundContent(content) => {
                 let (mut tx, rx) = wit_stream::new();
-                let data = content.body().await;
+                // Consumes `content` and hands back a body-less one; the old
+                // handle is gone, so a second take is a compile error rather
+                // than a silent empty read.
+                let (data, content) = Content::consume_body(content).await;
 
                 // Spawn a task to prepend new_html to the original content
                 // Because writing to `tx` will block until `rx` is read
@@ -130,9 +138,9 @@ impl GuestPlugin for PluginInstance {
 
                 // Return the modified stream
                 content.set_body(rx).await;
-                Some(Event::InboundContent(content))
+                Ok(Some(Event::InboundContent(content)))
             }
-            Event::Timer(ctx) => Some(Event::Timer(ctx)),
+            Event::Timer(ctx) => Ok(Some(Event::Timer(ctx))),
         }
     }
 }

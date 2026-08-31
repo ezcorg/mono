@@ -7,9 +7,11 @@ use wit_bindgen::StreamResult;
 
 use crate::exports::witmproxy::plugin::witm_plugin::{
     Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
-    Plugin as PluginResource, PluginManifest, UserInput,
+    Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
-use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
+use crate::witmproxy::plugin::capabilities::{
+    CapabilityKind, CapabilityScope, Content, EventKind,
+};
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
@@ -106,11 +108,19 @@ impl GuestPlugin for PluginInstance {
         Ok(PluginResource::new(PluginInstance { _config: config }))
     }
 
-    async fn handle(&self, ev: Event, cap: CapabilityProvider) -> Option<Event> {
+    async fn handle(
+        &self,
+        ev: Event,
+        cap: CapabilityProvider,
+    ) -> Result<Option<Event>, PluginError> {
         match ev {
             Event::InboundContent(content) => {
                 let (body_tx, body_rx) = wit_stream::new();
-                let logger = cap.logger().await.unwrap();
+                let Some(logger) = cap.logger().await else {
+                    // The capability can be declined or scoped away; say so
+                    // through the error channel instead of trapping.
+                    return Err(PluginError::CapabilityUnavailable(CapabilityKind::Logger));
+                };
 
                 // Extract charset from content-type header
                 let content_type = content.content_type().await;
@@ -123,7 +133,9 @@ impl GuestPlugin for PluginInstance {
                     ))
                     .await;
 
-                let mut body = content.body().await;
+                // Consumes `content`, yielding the stream and a body-less
+                // handle that keeps the response parts.
+                let (mut body, content) = Content::consume_body(content).await;
 
                 // Use a buffer to collect rewriter output without blocking
                 // The buffer is shared between the rewriter callback and the async task
@@ -398,9 +410,9 @@ impl GuestPlugin for PluginInstance {
                     .unwrap()
                     .info("[noshorts] 🔄 body_rx set, returning content".into())
                     .await;
-                Some(Event::InboundContent(content))
+                Ok(Some(Event::InboundContent(content)))
             }
-            _ => Some(ev),
+            _ => Ok(Some(ev)),
         }
     }
 }

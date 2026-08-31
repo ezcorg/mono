@@ -12,6 +12,8 @@ use wasmtime_wasi_http::WasiHttpView;
 use wasmtime_wasi_http::p3::Request as WasiRequest;
 
 use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
+use crate::wasm::Logger;
+use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::PluginError as GuestPluginError;
 use crate::{
     db::{Db, Insert},
     events::{Event, connect::Connect, content::InboundContent, response::ContextualResponse},
@@ -78,6 +80,34 @@ enum GuestStep {
     /// further event processing". For a timer that is a legitimate
     /// side-effect-only run; for anything else the event ends here.
     Terminate,
+}
+
+/// What the guest's `handle` returns: either an event decision, or a
+/// structured reason it could not handle the event.
+type GuestReturn = Result<Option<WasmEvent>, GuestPluginError>;
+
+/// Render a guest-reported error for the operator.
+///
+/// The message is guest-controlled, so it gets the same treatment as a log
+/// message: control characters escaped and length capped. It is reported to the
+/// operator only -- it is deliberately NOT reflected to the HTTP client, which
+/// would turn a plugin's internal detail into an information leak.
+fn describe_plugin_error(err: &GuestPluginError) -> String {
+    fn detail(msg: &Option<String>) -> String {
+        match msg {
+            Some(m) => format!(": {}", Logger::sanitize_for_report(m)),
+            None => String::new(),
+        }
+    }
+    match err {
+        GuestPluginError::InvalidConfiguration(m) => {
+            format!("invalid-configuration{}", detail(m))
+        }
+        GuestPluginError::CapabilityUnavailable(kind) => {
+            format!("capability-unavailable: {kind}")
+        }
+        GuestPluginError::InternalError(m) => format!("internal-error{}", detail(m)),
+    }
 }
 
 impl PluginRegistry {
@@ -456,11 +486,11 @@ impl PluginRegistry {
                 .plugin()
                 .call_handle(store, plugin_resource, event_data, cap_resource)
                 .await?;
-            Ok::<Option<WasmEvent>, anyhow::Error>(result)
+            Ok::<GuestReturn, anyhow::Error>(result)
         });
 
         // Enforce the wall-clock timeout (`0` == no timeout).
-        let outcome: Result<Option<WasmEvent>> = if timeout_ms > 0 {
+        let outcome: Result<GuestReturn> = if timeout_ms > 0 {
             match tokio::time::timeout(Duration::from_millis(timeout_ms), guest).await {
                 Ok(Ok(inner)) => inner,
                 Ok(Err(e)) => Err(e.into()),
@@ -476,14 +506,27 @@ impl PluginRegistry {
         };
 
         match outcome {
-            Ok(Some(new_event_data)) => {
+            Ok(Err(plugin_error)) => {
+                let described = describe_plugin_error(&plugin_error);
+                warn!(
+                    target: "plugins",
+                    plugin_id = %plugin_id,
+                    event_kind = kind.to_string(),
+                    plugin_error = %described,
+                    "Plugin reported it could not handle the event; failing closed"
+                );
+                return Err(anyhow::anyhow!(
+                    "plugin {plugin_id} could not handle a {kind} event ({described})"
+                ));
+            }
+            Ok(Ok(Some(new_event_data))) => {
                 let event = Self::wasm_event_into_boxed(&mut store, new_event_data)?;
                 Ok((GuestStep::Next(event), store))
             }
             // `none` means "abandon further processing" per the WIT contract.
             // A plugin that simply does not care about an event returns the
             // event unchanged instead, which lands in the `Ok(Some(..))` arm.
-            Ok(None) => {
+            Ok(Ok(None)) => {
                 if kind == EventKind::Timer {
                     debug!(
                         target: "plugins",

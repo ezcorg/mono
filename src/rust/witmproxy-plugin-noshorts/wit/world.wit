@@ -1,4 +1,4 @@
-package witmproxy:plugin@0.0.6;
+package witmproxy:plugin@0.0.7;
 
 interface capabilities {
     use wasi:http/types@0.3.0.{request, response};
@@ -157,17 +157,59 @@ interface capabilities {
     /// 
     /// Still requires handling content encodings (UTF-8, UTF-16, etc) manually.
     resource content {
-        /// Returns the content as a stream of bytes
-        body: async func() -> stream<u8>;
         /// Returns the content type of the content, ex: "text/html; charset=utf-8"
         content-type: async func() -> string;
-        /// Replace the content body with the provided stream of bytes
+
+        /// Take the body, consuming this `content` and yielding both the byte
+        /// stream and a fresh, body-less `content` that retains everything
+        /// else (status, headers, encoding).
+        ///
+        /// A stream is readable exactly once, so this MOVES the resource
+        /// rather than leaving a silently-empty one behind: the old handle is
+        /// gone, which makes a double-take unrepresentable instead of
+        /// returning `none` the second time. Mirrors `wasi:http`'s
+        /// `request.consume-body`, which made the same shift away from WASI
+        /// 0.2's dynamically-enforced "call at most once".
+        ///
+        /// Unlike `wasi:http`, the replacement handle comes from the host
+        /// rather than a guest-side constructor, because `content` carries
+        /// response parts the guest has no way to rebuild.
+        ///
+        /// Supply the new body with `set-body`.
+        consume-body: static async func(this: content) -> tuple<stream<u8>, content>;
+
+        /// Replace the body in place, leaving the content otherwise untouched.
+        /// Use this when you are supplying a body without reading the old one.
         set-body: async func(content: stream<u8>);
     }
 }
 
 interface witm-plugin {
-    use capabilities.{capability, capability-provider, event};
+    use capabilities.{capability, capability-kind, capability-provider, event};
+
+    /// Why a plugin could not handle an event.
+    ///
+    /// Reporting failure is deliberately NOT a capability: a plugin's only
+    /// channel used to be `logger`, which an operator can decline to grant, so
+    /// a plugin fell silent exactly when it was least trusted. This is data,
+    /// and cannot be withheld.
+    ///
+    /// Shaped as a variant rather than a string so the host can act on the
+    /// cases it can do something about. Following `wasi:http`'s `error-code`,
+    /// the catch-all carries unstructured text that is explicitly not part of
+    /// the contract: match on the variant, never on the message.
+    variant plugin-error {
+        /// The user-supplied configuration was unusable. The host can flag the
+        /// plugin as misconfigured and point the operator at its config form
+        /// rather than failing every request in the same way.
+        invalid-configuration(option<string>),
+        /// A capability the plugin needs was not granted, or was scoped away
+        /// from this event. The host can surface which one to grant.
+        capability-unavailable(capability-kind),
+        /// Anything else. The message is for a human reading logs; do not
+        /// depend on its content.
+        internal-error(option<string>),
+    }
 
     /// A tag representing a key-value pair of metadata
     record tag {
@@ -283,7 +325,7 @@ interface witm-plugin {
         /// * [Request] events must return either [Request] or [Response] events.
         /// * [Response] events must return [Response] events.
         /// * [InboundContent] events must return [InboundContent] events.
-        handle: async func(ev: event, cp: capability-provider) -> option<event>;
+        handle: async func(ev: event, cp: capability-provider) -> result<option<event>, plugin-error>;
     }
 }
 

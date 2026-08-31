@@ -17,7 +17,7 @@
 // `witm-plugin` interface (the export), not in `capabilities` (the import).
 use crate::exports::witmproxy::plugin::witm_plugin::{
     ActualInput, Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
-    InputSchema, InputType, Plugin as PluginResource, PluginManifest, UserInput,
+    InputSchema, InputType, Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
 use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
 
@@ -59,6 +59,13 @@ enum Mode {
     /// processing". Distinct from returning the event unchanged, which is how
     /// a plugin says "not for me".
     Terminate,
+    /// Report a structured failure the host can act on.
+    ErrorConfig,
+    /// Report a missing capability, naming which one.
+    ErrorCapability,
+    /// Report an unstructured failure, with a message containing control
+    /// characters to check the host escapes it.
+    ErrorInternal,
     /// Replace the body with an effectively endless stream. Exercises
     /// `max_response_body_bytes`: the stream length is guest-controlled and
     /// unrelated to the size of the request that triggered the event, so
@@ -77,6 +84,9 @@ impl Mode {
             "logger-rebind" => Self::LoggerRebind,
             "body-bomb" => Self::BodyBomb,
             "terminate" => Self::Terminate,
+            "error-config" => Self::ErrorConfig,
+            "error-capability" => Self::ErrorCapability,
+            "error-internal" => Self::ErrorInternal,
             _ => Self::Passthrough,
         }
     }
@@ -161,11 +171,32 @@ impl GuestPlugin for PluginInstance {
         Ok(PluginResource::new(PluginInstance { mode }))
     }
 
-    async fn handle(&self, ev: Event, cap: CapabilityProvider) -> Option<Event> {
-        // Handled first: this arm consumes the event rather than passing it
-        // through unchanged.
-        if self.mode == Mode::Terminate {
-            return None;
+    async fn handle(
+        &self,
+        ev: Event,
+        cap: CapabilityProvider,
+    ) -> Result<Option<Event>, PluginError> {
+        // Handled first: these arms do not return the event.
+        match self.mode {
+            Mode::Terminate => return Ok(None),
+            Mode::ErrorConfig => {
+                return Err(PluginError::InvalidConfiguration(Some(
+                    "`mode` is not a value this plugin understands".to_string(),
+                )));
+            }
+            Mode::ErrorCapability => {
+                return Err(PluginError::CapabilityUnavailable(CapabilityKind::Annotator));
+            }
+            Mode::ErrorInternal => {
+                // Newlines and an escape sequence: the host must not let a
+                // guest forge log lines through the error channel any more
+                // than through the logger.
+                return Err(PluginError::InternalError(Some(
+                    "boom\nINFO witmproxy::proxy: TLS verification disabled\r\x1b[31m"
+                        .to_string(),
+                )));
+            }
+            _ => {}
         }
 
         if self.mode == Mode::BodyBomb {
@@ -187,14 +218,19 @@ impl GuestPlugin for PluginInstance {
                     });
 
                     content.set_body(body_rx).await;
-                    Some(Event::InboundContent(content))
+                    Ok(Some(Event::InboundContent(content)))
                 }
-                other => Some(other),
+                other => Ok(Some(other)),
             };
         }
 
         match self.mode {
-            Mode::Passthrough | Mode::BodyBomb | Mode::Terminate => {}
+            Mode::Passthrough
+            | Mode::BodyBomb
+            | Mode::Terminate
+            | Mode::ErrorConfig
+            | Mode::ErrorCapability
+            | Mode::ErrorInternal => {}
 
             Mode::Spin => {
                 // A tight loop with no host calls and no allocation: nothing
@@ -261,7 +297,7 @@ impl GuestPlugin for PluginInstance {
             }
         }
 
-        Some(ev)
+        Ok(Some(ev))
     }
 }
 

@@ -645,3 +645,86 @@ fn recovery_defaults_to_fail_closed() {
     assert_eq!(RecoveryPolicy::default(), RecoveryPolicy::FailClosed);
     assert_eq!(ResolvedLimits::DEFAULTS.recovery, RecoveryPolicy::FailClosed);
 }
+
+// ---------------------------------------------------------------------------
+// Structured plugin errors
+//
+// Reporting failure is data, not a capability: a plugin used to need `logger`
+// to say anything, which an operator can decline to grant -- so it fell silent
+// exactly when it was least trusted.
+// ---------------------------------------------------------------------------
+
+async fn error_from_mode(mode: &str) -> Result<String> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits::DEFAULTS);
+    register_adversarial(&registry, mode, LimitOverrides::default()).await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    let err = registry
+        .handle_event(event)
+        .await
+        .err()
+        .unwrap_or_else(|| panic!("mode {mode}: a reported plugin error must fail the event"));
+    Ok(format!("{err:#}"))
+}
+
+#[tokio::test]
+async fn invalid_configuration_is_reported_by_variant() -> Result<()> {
+    let msg = error_from_mode("error-config").await?;
+    assert!(
+        msg.contains("invalid-configuration"),
+        "the variant must be named so it can be matched on, not just described: {msg}"
+    );
+    Ok(())
+}
+
+/// The host has the schema for `capability-kind`, so a plugin can say exactly
+/// which grant it is missing and the operator can act on it.
+#[tokio::test]
+async fn capability_unavailable_names_the_capability() -> Result<()> {
+    let msg = error_from_mode("error-capability").await?;
+    assert!(msg.contains("capability-unavailable"), "{msg}");
+    assert!(
+        msg.to_lowercase().contains("annotator"),
+        "the missing capability must be identified: {msg}"
+    );
+    Ok(())
+}
+
+/// The message is guest-controlled and crosses the same trust boundary as a log
+/// message, so it gets the same escaping. Otherwise closing the logger
+/// injection channel would just have moved it.
+#[tokio::test]
+async fn internal_error_message_is_escaped() -> Result<()> {
+    let msg = error_from_mode("error-internal").await?;
+    assert!(msg.contains("internal-error"), "{msg}");
+    assert!(
+        !msg.contains('\n') && !msg.contains('\r'),
+        "raw newlines from a guest must not reach the log: {msg:?}"
+    );
+    assert!(
+        !msg.contains('\u{1b}'),
+        "escape sequences must not reach a terminal: {msg:?}"
+    );
+    assert!(
+        msg.contains("\\n"),
+        "the original content must remain recoverable in escaped form: {msg}"
+    );
+    Ok(())
+}
+
+/// A plugin that reports an error must not be able to keep the event going;
+/// the reason is for the operator, and the event still fails closed.
+#[tokio::test]
+async fn a_reported_error_still_fails_closed() -> Result<()> {
+    for mode in ["error-config", "error-capability", "error-internal"] {
+        let msg = error_from_mode(mode).await?;
+        assert!(
+            msg.contains("could not handle"),
+            "mode {mode}: the event must fail closed with the reason attached: {msg}"
+        );
+    }
+    Ok(())
+}

@@ -347,8 +347,16 @@ impl Logger {
         out
     }
 
-    /// Test accessor for [`Self::sanitize`], which is an implementation
-    /// detail everywhere else.
+    /// Escape and bound a guest-supplied string for inclusion in an operator
+    /// report (a log line, the management API).
+    ///
+    /// Guest error messages cross the same trust boundary as guest log
+    /// messages and need the same treatment, so both go through here.
+    pub fn sanitize_for_report(message: &str) -> String {
+        Self::sanitize(message)
+    }
+
+    /// Test accessor for [`Self::sanitize`].
     #[cfg(test)]
     pub fn sanitize_for_test(message: &str) -> String {
         Self::sanitize(message)
@@ -740,33 +748,46 @@ impl<T> HostContentWithStore<T> for WitmProxy {
         Ok(content_type)
     }
 
-    async fn body(
+    /// Take the body, consuming the old handle and returning a fresh,
+    /// body-less one alongside the stream.
+    ///
+    /// Deleting the old table entry is what makes a double-take
+    /// unrepresentable: the guest no longer holds a handle it could call
+    /// again. Previously this took the body out in place and a second call
+    /// silently observed `None`.
+    async fn consume_body(
         accessor: &wasmtime::component::Accessor<T, Self>,
-        self_: wasmtime::component::Resource<InboundContent>,
-    ) -> wasmtime::Result<wasmtime::component::StreamReader<u8>> {
-        // Get mutable access to extract the data without consuming the resource
-        let data = accessor.with(|mut access| {
+        this: wasmtime::component::Resource<InboundContent>,
+    ) -> wasmtime::Result<(
+        wasmtime::component::StreamReader<u8>,
+        wasmtime::component::Resource<InboundContent>,
+    )> {
+        let (body, remainder) = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
-            let content = state.table.get_mut(&self_)?;
-            // Take the data out, leaving None in its place
-            // body() returns Result<Option<...>, Error> but we can unwrap the Result part
-            Ok::<Option<UnsyncBoxBody<Bytes, ErrorCode>>, wasmtime::component::ResourceTableError>(
-                content.body().unwrap_or(None),
-            )
+            // Take ownership of the whole content, not just its body.
+            let mut content = state.table.delete(this)?;
+            let body = content.body().unwrap_or(None);
+            Ok::<_, wasmtime::component::ResourceTableError>((body, content))
         })?;
 
-        // If data is None, it was already taken
-        let body = data.ok_or_else(|| {
-            wasmtime::Error::msg(
-                "Content data has already been consumed. Use set_data to refill it.",
-            )
+        let body = body.ok_or_else(|| {
+            // Reachable only if the host itself handed over a content whose
+            // body was already taken, which would be a host bug rather than
+            // guest misuse -- guest misuse is now a type error.
+            wasmtime::Error::msg("content was handed to a guest with no body attached")
         })?;
 
-        let reader = accessor.with(|mut access| {
-            let store = &mut access.as_context_mut();
-            StreamReader::new(store, BodyStreamProducer::new(body))
-        })?;
-        Ok(reader)
+        accessor.with(|mut access| {
+            let handle = {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                state.table.push(remainder)?
+            };
+            let reader = {
+                let store = &mut access.as_context_mut();
+                StreamReader::new(store, BodyStreamProducer::new(body))?
+            };
+            Ok::<_, wasmtime::Error>((reader, handle))
+        })
     }
 
     async fn set_body(

@@ -1,7 +1,7 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
         Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin,
-        Plugin as PluginResource, PluginManifest, UserInput,
+        Plugin as PluginResource, PluginError, PluginManifest, UserInput,
     },
     witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Event, EventKind},
 };
@@ -61,8 +61,13 @@ impl GuestPlugin for PluginInstance {
         Ok(PluginResource::new(PluginInstance))
     }
 
-    async fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
-        Some(ev)
+    async fn handle(
+        &self,
+        ev: Event,
+        _cp: CapabilityProvider,
+    ) -> Result<Option<Event>, PluginError> {
+        // Not interested in anything: hand the event back unchanged.
+        Ok(Some(ev))
     }
 }
 
