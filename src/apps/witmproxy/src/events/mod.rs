@@ -11,6 +11,7 @@ use crate::wasm::{
 };
 
 pub mod connect;
+pub mod recovery;
 pub mod content;
 pub mod request;
 pub mod response;
@@ -31,6 +32,22 @@ pub trait Event: Send {
 
     /// Converts into Event by consuming the event and storing it in the provided Store
     fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent>;
+
+    /// Like [`Self::into_event_data`], but installs a bounded tee on the
+    /// event's body so the event can be rebuilt if the guest fails.
+    ///
+    /// Only called under `RecoveryPolicy::FailOpen`; the default implementation
+    /// hands the event over unchanged and reports that recovery is
+    /// unavailable, which is the correct answer for an event type whose
+    /// payload the host cannot duplicate.
+    fn into_event_data_recoverable(
+        self: Box<Self>,
+        store: &mut Store<Host>,
+        _limit: u64,
+        _breaches: std::sync::Arc<crate::plugins::limits::BreachRecorder>,
+    ) -> Result<(WasmEvent, Option<crate::events::recovery::EventShadow>)> {
+        Ok((self.into_event_data(store)?, None))
+    }
 
     /// Register event-specific variables and functions with the CEL environment
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>

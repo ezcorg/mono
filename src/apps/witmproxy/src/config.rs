@@ -391,10 +391,12 @@ pub struct PluginConfig {
     pub max_event_recovery_buffer_bytes: u64,
 
     /// What to do when a plugin fails mid-event: `fail-closed` (default) ends
-    /// the event; `fail-open` continues the chain with the pre-failure event.
+    /// the event; `fail-open` rebuilds the event as the failing plugin
+    /// received it and continues the chain.
     ///
-    /// `fail-open` is NOT YET IMPLEMENTED and currently degrades to
-    /// `fail-closed` with a warning; see `crate::plugins::limits`.
+    /// `fail-open` costs host memory only for body bytes a guest actually
+    /// read, bounded by `--max-event-recovery-buffer-bytes`. It restores the
+    /// event payload, not side effects the plugin already performed.
     #[arg(
         long = "plugin-recovery",
         env = "PLUGINS_RECOVERY",

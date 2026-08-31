@@ -44,14 +44,17 @@ pub enum RecoveryPolicy {
     #[default]
     FailClosed,
     /// Continue the chain with the event as it was before the failing plugin
-    /// ran, which requires the host to have duplicated anything the guest
-    /// could consume.
+    /// ran.
     ///
-    /// NOT YET IMPLEMENTED. The duplication machinery (a lazily-teed body,
-    /// bounded by `max_event_recovery_buffer_bytes`) does not exist, so
-    /// selecting this currently degrades to [`Self::FailClosed`] with a
-    /// warning. The setting exists now so that configuration, storage and the
-    /// call site are in place ahead of the implementation.
+    /// The host installs a bounded tee on the event's body at handover, so
+    /// bytes are retained only as the guest actually reads them: a plugin that
+    /// inspects headers and returns costs nothing. Past
+    /// `max_event_recovery_buffer_bytes` the host gives up and fails closed
+    /// rather than rebuilding a truncated event.
+    ///
+    /// Recovery restores the event *payload*. It does not undo side effects --
+    /// a plugin that wrote to local storage or emitted logs before failing has
+    /// still done so.
     FailOpen,
 }
 

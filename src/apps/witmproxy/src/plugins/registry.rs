@@ -448,6 +448,7 @@ impl PluginRegistry {
         config: Vec<UserInput>,
         kind: EventKind,
         limits: &ResolvedLimits,
+        shadow: Option<crate::events::recovery::EventShadow>,
     ) -> Result<(GuestStep, Store<Host>)> {
         // Apply the per-call budgets (the memory/table caps are already
         // installed on the store). A `0` limit means unbounded.
@@ -548,16 +549,40 @@ impl PluginRegistry {
                 // taken a body it cannot be handed back. Continuing the chain
                 // would forward something neither peer asked for, so the
                 // default is to end the event rather than guess.
-                match limits.recovery {
-                    RecoveryPolicy::FailClosed => {}
-                    RecoveryPolicy::FailOpen => {
-                        warn!(
-                            target: "plugins",
-                            plugin_id = %plugin_id,
-                            "fail-open recovery is configured but not implemented \
-                             (event duplication does not exist yet); falling back \
-                             to fail-closed for this event"
-                        );
+                if limits.recovery == RecoveryPolicy::FailOpen {
+                    match shadow {
+                        Some(shadow) if shadow.is_recoverable() => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %plugin_id,
+                                event_kind = kind.to_string(),
+                                error = %e,
+                                "Plugin execution failed; recovering the event and \
+                                 continuing the chain. Side effects the plugin \
+                                 already performed are NOT undone."
+                            );
+                            let event = shadow.rebuild()?;
+                            return Ok((GuestStep::Next(event), store));
+                        }
+                        Some(_) => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %plugin_id,
+                                event_kind = kind.to_string(),
+                                "Plugin failed and the event is no longer recoverable \
+                                 (the body outgrew max_event_recovery_buffer_bytes); \
+                                 failing closed"
+                            );
+                        }
+                        None => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %plugin_id,
+                                event_kind = kind.to_string(),
+                                "Plugin failed and this event type cannot be \
+                                 duplicated; failing closed"
+                            );
+                        }
                     }
                 }
                 warn!(
@@ -771,7 +796,19 @@ impl PluginRegistry {
             };
 
             store = component_store;
-            let event_data = current_event.into_event_data(&mut store)?;
+            // Under fail-open, install a bounded tee on the event's body so it
+            // can be rebuilt if this plugin fails. Nothing is copied until the
+            // guest actually reads, so a plugin that only inspects headers
+            // pays nothing.
+            let (event_data, shadow) = if plugin_limits.recovery == RecoveryPolicy::FailOpen {
+                current_event.into_event_data_recoverable(
+                    &mut store,
+                    plugin_limits.max_event_recovery_buffer_bytes,
+                    self.breaches_for(&plugin_id),
+                )?
+            } else {
+                (current_event.into_event_data(&mut store)?, None)
+            };
 
             // Build the capability provider, handing the plugin its PERSISTENT
             // local-storage client so writes survive across events.
@@ -799,6 +836,7 @@ impl PluginRegistry {
                     config,
                     kind,
                     &plugin_limits,
+                    shadow,
                 )
                 .await?;
             store = next_store;

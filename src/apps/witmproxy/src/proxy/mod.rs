@@ -42,7 +42,7 @@ pub mod tenant;
 pub mod tenant_resolver;
 pub mod transparent;
 
-mod utils;
+pub(crate) mod utils;
 pub use utils::{
     ProxyError, ProxyResult, UpstreamClient, build_server_tls_for_host, client,
     convert_hyper_incoming_to_reqwest_request, convert_reqwest_to_hyper_response, is_closed,
@@ -621,7 +621,7 @@ where
                 let upstream_start = std::time::Instant::now();
                 let initial_response = match request_event_result {
                     Err(e) => plain_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
+                        StatusCode::BAD_GATEWAY,
                         format!("Plugin event handling error: {}", e),
                     ),
                     Ok((event_data, mut store)) => match event_data {
@@ -735,7 +735,7 @@ where
                         Err(e) => {
                             error!("Response event handling error: {}", e);
                             return Ok(plain_response(
-                                StatusCode::INTERNAL_SERVER_ERROR,
+                                StatusCode::BAD_GATEWAY,
                                 format!("Plugin response event handling error: {}", e),
                             ));
                         }
@@ -814,7 +814,7 @@ where
                             Err(e) => {
                                 error!("InboundContent event handling error: {}", e);
                                 return Ok(plain_response(
-                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    StatusCode::BAD_GATEWAY,
                                     format!("Plugin content event handling error: {}", e),
                                 ));
                             }

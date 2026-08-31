@@ -594,11 +594,11 @@ async fn returning_the_event_unchanged_passes_through() -> Result<()> {
     Ok(())
 }
 
-/// `fail-open` is configurable but unimplemented. Selecting it must be safe:
-/// the host degrades to fail-closed and says so, rather than attempting a
-/// recovery it has no machinery for.
+/// Fail-open recovers the event and continues the chain. `max_fuel: 0` removes
+/// the fuel backstop so the epoch deadline is what stops the guest, and the
+/// plugin is left having failed mid-event.
 #[tokio::test]
-async fn fail_open_degrades_safely_until_implemented() -> Result<()> {
+async fn fail_open_recovers_a_failed_plugin_and_continues() -> Result<()> {
     let (mut registry, _tmp) = create_plugin_registry().await?;
     registry.set_limits(ResolvedLimits {
         max_fuel: 0,
@@ -613,8 +613,162 @@ async fn fail_open_degrades_safely_until_implemented() -> Result<()> {
 
     let result = registry.handle_event(event).await;
     assert!(
-        result.is_err(),
-        "fail-open has no implementation yet and must degrade to fail-closed"
+        result.is_ok(),
+        "fail-open must rebuild the event and continue rather than ending it"
+    );
+    Ok(())
+}
+
+/// The same must hold for a panic, which is the failure mode that actually
+/// happens by accident.
+#[tokio::test]
+async fn fail_open_recovers_from_a_guest_panic() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits {
+        recovery: RecoveryPolicy::FailOpen,
+        ..ResolvedLimits::DEFAULTS
+    });
+    register_adversarial(&registry, "panic", LimitOverrides::default()).await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    assert!(
+        registry.handle_event(event).await.is_ok(),
+        "a panicking guest must be recoverable under fail-open"
+    );
+    Ok(())
+}
+
+/// A guest that took part of the body and then died is the case recovery
+/// exists for: the host must replay what was consumed and splice on the rest.
+#[tokio::test]
+async fn fail_open_recovers_after_partial_body_consumption() -> Result<()> {
+    use crate::events::content::InboundContent;
+    use http_body_util::BodyExt;
+
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits {
+        recovery: RecoveryPolicy::FailOpen,
+        max_event_recovery_buffer_bytes: 1024 * 1024,
+        ..ResolvedLimits::DEFAULTS
+    });
+    register_adversarial_for(
+        &registry,
+        "panic-mid-body",
+        LimitOverrides::default(),
+        EventKind::InboundContent,
+    )
+    .await?;
+
+    let (parts, _) = hyper::Response::new(()).into_parts();
+    let body = http_body_util::Full::new(Bytes::from_static(b"<html>original</html>"))
+        .map_err(|_| {
+            wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None)
+        })
+        .boxed_unsync();
+    let content = InboundContent::new(parts, "text/html".to_string(), body)?;
+
+    let event: Box<dyn Event> = Box::new(content);
+    assert_plugin_will_run(&registry, &*event);
+
+    assert!(
+        registry.handle_event(event).await.is_ok(),
+        "a guest that died holding the body must still be recoverable"
+    );
+    Ok(())
+}
+
+/// Recovery is bounded so it cannot itself become a memory-exhaustion vector.
+/// Past the budget the host gives up and fails closed rather than rebuilding a
+/// truncated event.
+#[tokio::test]
+async fn fail_open_gives_up_past_the_recovery_budget() -> Result<()> {
+    use crate::events::content::InboundContent;
+    use http_body_util::BodyExt;
+
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits {
+        recovery: RecoveryPolicy::FailOpen,
+        // Smaller than the body the guest will pull through the tee.
+        max_event_recovery_buffer_bytes: 64,
+        ..ResolvedLimits::DEFAULTS
+    });
+    register_adversarial_for(
+        &registry,
+        "panic-mid-body",
+        LimitOverrides::default(),
+        EventKind::InboundContent,
+    )
+    .await?;
+
+    let (parts, _) = hyper::Response::new(()).into_parts();
+    let body = http_body_util::Full::new(Bytes::from(vec![b'x'; 8192]))
+        .map_err(|_| {
+            wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None)
+        })
+        .boxed_unsync();
+    let content = InboundContent::new(parts, "text/html".to_string(), body)?;
+
+    let event: Box<dyn Event> = Box::new(content);
+    assert_plugin_will_run(&registry, &*event);
+
+    assert!(
+        registry.handle_event(event).await.is_err(),
+        "past the recovery budget the host must fail closed, not rebuild a \
+         truncated event"
+    );
+    Ok(())
+}
+
+/// Fail-closed remains the default, and must not pay for the tee.
+#[tokio::test]
+async fn fail_closed_still_ends_the_event() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits {
+        max_fuel: 0,
+        timeout_ms: 300,
+        recovery: RecoveryPolicy::FailClosed,
+        ..ResolvedLimits::DEFAULTS
+    });
+    register_adversarial(&registry, "spin", LimitOverrides::default()).await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    assert!(
+        registry.handle_event(event).await.is_err(),
+        "fail-closed must still end the event"
+    );
+    Ok(())
+}
+
+/// Recovery can be enabled for one plugin without enabling it globally.
+#[tokio::test]
+async fn recovery_can_be_enabled_per_plugin() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits {
+        max_fuel: 0,
+        timeout_ms: 300,
+        recovery: RecoveryPolicy::FailClosed,
+        ..ResolvedLimits::DEFAULTS
+    });
+    register_adversarial(
+        &registry,
+        "spin",
+        LimitOverrides {
+            recovery: Some(RecoveryPolicy::FailOpen),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    assert!(
+        registry.handle_event(event).await.is_ok(),
+        "a per-plugin fail-open override must win over a fail-closed global"
     );
     Ok(())
 }
@@ -726,5 +880,56 @@ async fn a_reported_error_still_fails_closed() -> Result<()> {
             "mode {mode}: the event must fail closed with the reason attached: {msg}"
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Guest panics
+//
+// These are not exotic: an unwrap on a `None`, an out-of-range index. A panic
+// in a wasm guest aborts the instance, so the host sees a trap rather than a
+// return value. The proxy must survive it and the event must not proceed.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn guest_panic_fails_closed_and_the_host_survives() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits::DEFAULTS);
+    register_adversarial(&registry, "panic", LimitOverrides::default()).await?;
+
+    let event = sample_request();
+    assert_plugin_will_run(&registry, &*event);
+
+    let result = registry.handle_event(event).await;
+    assert!(
+        result.is_err(),
+        "a panicking guest must fail the event closed"
+    );
+    Ok(())
+}
+
+/// The registry must still be usable afterwards: a panic in one event must not
+/// poison the plugin map, the instance cache, or the store machinery for the
+/// next request.
+#[tokio::test]
+async fn the_registry_survives_a_guest_panic_and_keeps_serving() -> Result<()> {
+    let (mut registry, _tmp) = create_plugin_registry().await?;
+    registry.set_limits(ResolvedLimits::DEFAULTS);
+    register_adversarial(&registry, "panic", LimitOverrides::default()).await?;
+
+    for i in 0..3 {
+        let result = registry.handle_event(sample_request()).await;
+        assert!(result.is_err(), "iteration {i}: expected a failed event");
+    }
+
+    // A second registry with a benign plugin still works, proving the panic
+    // did not corrupt shared engine state.
+    let (mut ok_registry, _tmp2) = create_plugin_registry().await?;
+    ok_registry.set_limits(ResolvedLimits::DEFAULTS);
+    register_adversarial(&ok_registry, "passthrough", LimitOverrides::default()).await?;
+    assert!(
+        ok_registry.handle_event(sample_request()).await.is_ok(),
+        "a benign plugin must still work after another plugin panicked"
+    );
     Ok(())
 }

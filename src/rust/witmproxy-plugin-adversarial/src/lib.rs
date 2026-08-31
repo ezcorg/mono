@@ -19,7 +19,11 @@ use crate::exports::witmproxy::plugin::witm_plugin::{
     ActualInput, Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
     InputSchema, InputType, Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
-use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
+use crate::witmproxy::plugin::capabilities::{
+    CapabilityKind, CapabilityScope, Content, EventKind,
+};
+
+use wit_bindgen::StreamResult;
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
@@ -59,6 +63,14 @@ enum Mode {
     /// processing". Distinct from returning the event unchanged, which is how
     /// a plugin says "not for me".
     Terminate,
+    /// Panic inside the guest. Not hostile so much as inevitable: an
+    /// unwrap on a None, an out-of-range index. A panic in a wasm guest
+    /// aborts the instance, so the host sees a trap rather than a return
+    /// value, and must treat it like any other failure.
+    Panic,
+    /// Panic while a body stream is mid-flight, so the host is left holding a
+    /// partially-consumed event rather than an untouched one.
+    PanicMidBody,
     /// Report a structured failure the host can act on.
     ErrorConfig,
     /// Report a missing capability, naming which one.
@@ -84,6 +96,8 @@ impl Mode {
             "logger-rebind" => Self::LoggerRebind,
             "body-bomb" => Self::BodyBomb,
             "terminate" => Self::Terminate,
+            "panic" => Self::Panic,
+            "panic-mid-body" => Self::PanicMidBody,
             "error-config" => Self::ErrorConfig,
             "error-capability" => Self::ErrorCapability,
             "error-internal" => Self::ErrorInternal,
@@ -179,6 +193,39 @@ impl GuestPlugin for PluginInstance {
         // Handled first: these arms do not return the event.
         match self.mode {
             Mode::Terminate => return Ok(None),
+            Mode::Panic => panic!("adversarial plugin panicking on purpose"),
+            Mode::PanicMidBody => {
+                if let Event::InboundContent(content) = ev {
+                    // Drain the body, then die holding it. Draining matters:
+                    // the host records what actually flows through the tee, so
+                    // a plugin that never reads costs the host nothing and is
+                    // trivially recoverable.
+                    let (mut body, _content) = Content::consume_body(content).await;
+                    let mut chunk = vec![0u8; 4096];
+                    let mut drained = 0usize;
+                    loop {
+                        let (status, buf) = body.read(chunk).await;
+                        chunk = buf;
+                        match status {
+                            StreamResult::Complete(n) => {
+                                if n == 0 {
+                                    chunk.clear();
+                                    continue;
+                                }
+                                drained += n;
+                                chunk.clear();
+                                chunk.resize(4096, 0);
+                            }
+                            _ => break,
+                        }
+                        if drained > 512 * 1024 {
+                            break;
+                        }
+                    }
+                    panic!("adversarial plugin panicking with {drained} body bytes read");
+                }
+                panic!("adversarial plugin panicking on purpose");
+            }
             Mode::ErrorConfig => {
                 return Err(PluginError::InvalidConfiguration(Some(
                     "`mode` is not a value this plugin understands".to_string(),
@@ -230,7 +277,9 @@ impl GuestPlugin for PluginInstance {
             | Mode::Terminate
             | Mode::ErrorConfig
             | Mode::ErrorCapability
-            | Mode::ErrorInternal => {}
+            | Mode::ErrorInternal
+            | Mode::Panic
+            | Mode::PanicMidBody => {}
 
             Mode::Spin => {
                 // A tight loop with no host calls and no allocation: nothing

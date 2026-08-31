@@ -44,6 +44,38 @@ impl Event for InboundContent {
         Ok(WasmEvent::InboundContent(handle))
     }
 
+    fn into_event_data_recoverable(
+        mut self: Box<Self>,
+        store: &mut Store<Host>,
+        limit: u64,
+        breaches: std::sync::Arc<crate::plugins::limits::BreachRecorder>,
+    ) -> Result<(WasmEvent, Option<crate::events::recovery::EventShadow>)> {
+        use crate::events::recovery::{EventShadow, TeeBody};
+
+        let Some(body) = self.body.take() else {
+            // No body to duplicate; hand it over with no recovery available
+            // rather than pretending otherwise.
+            return Ok((self.into_event_data(store)?, None));
+        };
+
+        let status = self.parts.status;
+        let version = self.parts.version;
+        let headers = self.parts.headers.clone();
+        let content_type = self.content_type.clone();
+
+        let (teed, recording) = TeeBody::wrap(body, limit, breaches);
+        self.body = Some(teed);
+
+        let shadow = EventShadow::InboundContent {
+            status,
+            version,
+            headers,
+            content_type,
+            recording,
+        };
+        Ok((self.into_event_data(store)?, Some(shadow)))
+    }
+
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
     where
         Self: Sized,
@@ -222,6 +254,28 @@ impl InboundContent {
                 Ok(decoded_body)
             }
         }
+    }
+
+    /// Rebuild content from parts whose body has ALREADY been decoded.
+    ///
+    /// `new` decompresses on the way in; a recovered body has been through
+    /// that once already, so this skips it. Only for recovery.
+    pub(crate) fn from_decoded(
+        parts: Parts,
+        content_type: String,
+        body: UnsyncBoxBody<Bytes, ErrorCode>,
+    ) -> Self {
+        Self {
+            parts,
+            content_type,
+            body: Some(body),
+            passthrough: false,
+        }
+    }
+
+    /// The response parts backing this content.
+    pub(crate) fn parts(&self) -> &Parts {
+        &self.parts
     }
 
     pub fn content_type(&self) -> String {
