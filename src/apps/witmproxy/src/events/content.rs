@@ -16,7 +16,7 @@ use crate::{
         Host,
         bindgen::{
             Event as WasmEvent,
-            witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
+            witmproxy::plugin::capabilities::EventKind,
         },
     },
 };
@@ -35,8 +35,8 @@ pub struct InboundContent {
 }
 
 impl Event for InboundContent {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::InboundContent)
+    fn kind(&self) -> EventKind {
+        EventKind::InboundContent
     }
 
     fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent> {
@@ -175,7 +175,11 @@ impl InboundContent {
                         ContentEncoding::Deflate => Box::new(DeflateEncoder::new(buf_reader)),
                         ContentEncoding::Br => Box::new(BrotliEncoder::new(buf_reader)),
                         ContentEncoding::Zstd => Box::new(ZstdEncoder::new(buf_reader)),
-                        _ => unreachable!(),
+                        // Identity and Unknown are filtered out before this
+                        // point; passing the reader through unchanged is the
+                        // correct behaviour for them regardless, and beats
+                        // aborting the process on a body-processing path.
+                        _ => Box::new(buf_reader),
                     };
 
                     // Convert AsyncRead back to a stream of Bytes
@@ -237,7 +241,11 @@ impl InboundContent {
                         ContentEncoding::Deflate => Box::new(DeflateDecoder::new(buf_reader)),
                         ContentEncoding::Br => Box::new(BrotliDecoder::new(buf_reader)),
                         ContentEncoding::Zstd => Box::new(ZstdDecoder::new(buf_reader)),
-                        _ => unreachable!(),
+                        // Identity and Unknown are filtered out before this
+                        // point; passing the reader through unchanged is the
+                        // correct behaviour for them regardless, and beats
+                        // aborting the process on a body-processing path.
+                        _ => Box::new(buf_reader),
                     };
 
                     // Convert AsyncRead back to a stream of Bytes
@@ -271,11 +279,6 @@ impl InboundContent {
             body: Some(body),
             passthrough: false,
         }
-    }
-
-    /// The response parts backing this content.
-    pub(crate) fn parts(&self) -> &Parts {
-        &self.parts
     }
 
     pub fn content_type(&self) -> String {

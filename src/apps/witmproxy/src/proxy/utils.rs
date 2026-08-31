@@ -15,13 +15,13 @@ use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 /// A body wrapper that sends a signal when the body is fully consumed or dropped.
 /// Used to keep the WASM store alive (via `run_concurrent`) while plugin subtasks
 /// stream body data through channels.
-pub struct BodyWithSignal {
+pub(crate) struct BodyWithSignal {
     inner: UnsyncBoxBody<Bytes, ErrorCode>,
     signal: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl BodyWithSignal {
-    pub fn new(
+    pub(crate) fn new(
         inner: UnsyncBoxBody<Bytes, ErrorCode>,
         signal: tokio::sync::oneshot::Sender<()>,
     ) -> Self {
@@ -140,7 +140,7 @@ pub type UpstreamClient = reqwest::Client;
 pub type ProxyResult<T> = Result<T, ProxyError>;
 
 /// Wrap a hyper Incoming body as a reqwest Body
-pub fn wrap_body(incoming: Incoming) -> reqwest::Body {
+pub(crate) fn wrap_body(incoming: Incoming) -> reqwest::Body {
     let stream = incoming.into_data_stream().map_err(|e| {
         let err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
         err
@@ -148,7 +148,7 @@ pub fn wrap_body(incoming: Incoming) -> reqwest::Body {
     reqwest::Body::wrap_stream(stream)
 }
 
-pub fn wrap_box_body(body: UnsyncBoxBody<Bytes, ErrorCode>) -> reqwest::Body {
+pub(crate) fn wrap_box_body(body: UnsyncBoxBody<Bytes, ErrorCode>) -> reqwest::Body {
     let stream = body.into_data_stream().map_err(|e| {
         let err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
         err
@@ -235,7 +235,7 @@ where
         .map_err(|e| ProxyError::Generic(format!("Failed to build reqwest request: {}", e)))
 }
 
-pub fn convert_hyper_boxed_body_to_reqwest_request(
+pub(crate) fn convert_hyper_boxed_body_to_reqwest_request(
     hyper_req: Request<UnsyncBoxBody<Bytes, ErrorCode>>,
     client: &reqwest::Client,
 ) -> ProxyResult<reqwest::Request> {
@@ -396,6 +396,6 @@ pub fn is_closed<E: std::fmt::Display>(e: &E) -> bool {
 /// provided upstream. Body-stream failures on this path originate from hyper
 /// I/O rather than from connection establishment, so the structured cases
 /// cannot arise here and the detail is preserved as text instead.
-pub fn wasi_error_to_code(err: wasmtime_wasi_http::Error) -> ErrorCode {
+pub(crate) fn wasi_error_to_code(err: wasmtime_wasi_http::Error) -> ErrorCode {
     ErrorCode::InternalError(Some(err.to_string()))
 }

@@ -19,8 +19,8 @@ async fn run_test(test: TestCase) {
     let (ca, mut config) = create_ca_and_config().await;
     let server_handle =
         create_hello_server("127.0.0.1", test.target_port, ca.clone(), test.server_proto).await;
-    let (mut registry, _temp_dir) = create_plugin_registry().await.unwrap();
-    register_noop_plugin(&mut registry).await.unwrap();
+    let (registry, _temp_dir) = create_plugin_registry().await.unwrap();
+    register_noop_plugin(&registry).await.unwrap();
 
     // Set the specific proxy port for testing
     config.proxy.proxy_bind_addr = Some(format!("127.0.0.1:{}", test.proxy_port));

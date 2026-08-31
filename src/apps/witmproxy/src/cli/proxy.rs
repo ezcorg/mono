@@ -1,3 +1,8 @@
+// The `Conf` / `Subcommands` derives generate public interfaces over these
+// types, so they must stay `pub` even though this module is private and
+// nothing outside the crate can name them. `pub(crate)` fails with E0446.
+#![allow(unreachable_pub)]
+
 use super::{GlobalArgs, Services};
 use crate::config::{TlsConfig, TlsScopedConfig};
 use anyhow::Result;
@@ -256,7 +261,9 @@ impl ProxyHandler {
                 use anyhow::anyhow;
                 let url_without_protocol = proxy_url.strip_prefix("http://").unwrap_or(proxy_url);
                 let parts: Vec<&str> = url_without_protocol.split(':').collect();
-                let host = parts[0];
+                // `split` always yields at least one element; use `first` so the
+                // compiler checks that rather than an index relying on it.
+                let host = *parts.first().ok_or_else(|| anyhow!("Empty proxy URL"))?;
                 let port = parts
                     .get(1)
                     .ok_or_else(|| anyhow!("Missing port in proxy URL"))?

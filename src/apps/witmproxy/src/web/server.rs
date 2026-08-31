@@ -81,7 +81,7 @@ impl WebServer {
                 .parse()
                 .map_err(|e| anyhow::anyhow!("Invalid web bind address: {}", e))?
         } else {
-            "127.0.0.1:0".parse().unwrap()
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0))
         };
 
         let state = AppState {
@@ -120,7 +120,8 @@ impl WebServer {
 
         let acceptor = TcpListener::new(bind_addr).rustls(rustls).bind().await;
         // Store the actual bound address
-        self.listen_addr = Some(acceptor.inner().local_addr()?);
+        let listen_addr = acceptor.inner().local_addr()?;
+        self.listen_addr = Some(listen_addr);
         let cors = Cors::new()
             .allow_origin(AllowOrigin::any())
             .allow_methods(AllowMethods::any())
@@ -128,7 +129,7 @@ impl WebServer {
             .into_handler();
 
         let mut app = Router::new()
-            .hoop(ForceHttps::new().https_port(self.listen_addr.unwrap().port()))
+            .hoop(ForceHttps::new().https_port(listen_addr.port()))
             .hoop(cors)
             .hoop(affix_state::inject(state))
             .push(Router::with_path("/").get(index_page))
@@ -537,9 +538,7 @@ async fn set_plugin_enabled(
     let registry = depot
         .obtain::<AppState>()
         .map(|s| s.plugin_registry.clone())
-        .map_err(|_| {
-            salvo::http::StatusError::internal_server_error().brief("Internal server error")
-        })?;
+        .map_err(|e| crate::web::internal_error("Internal server error", e))?;
 
     let registry = registry.ok_or_else(|| {
         salvo::http::StatusError::bad_request().brief("Plugin system is disabled")

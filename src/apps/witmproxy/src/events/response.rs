@@ -12,7 +12,7 @@ use crate::wasm::{
     Host,
     bindgen::{
         Event as WasmEvent,
-        witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
+        witmproxy::plugin::capabilities::EventKind,
     },
 };
 
@@ -22,8 +22,8 @@ pub struct ContextualResponse {
 }
 
 impl Event for ContextualResponse {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::Response)
+    fn kind(&self) -> EventKind {
+        EventKind::Response
     }
 
     fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent> {

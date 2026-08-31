@@ -14,7 +14,6 @@
 //! Every case asserts two things: the host survives, and the operator can tell
 //! it happened.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -472,7 +471,6 @@ async fn passthrough_plugin_still_works_under_limits() -> Result<()> {
     let result = registry.handle_event(event).await;
     assert!(result.is_ok(), "a benign plugin must not be impeded");
 
-    let _ = HashSet::<String>::new(); // keep the import honest if trimmed later
     Ok(())
 }
 

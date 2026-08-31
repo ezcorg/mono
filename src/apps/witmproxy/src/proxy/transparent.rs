@@ -63,11 +63,9 @@ impl TransparentProxy {
             .map_err(|e| anyhow::anyhow!("Invalid transparent proxy bind address: {}", e))?;
 
         let listener = TcpListener::bind(bind_addr).await?;
-        self.listen_addr = Some(listener.local_addr()?);
-        info!(
-            "Transparent proxy listening on {}",
-            self.listen_addr.unwrap()
-        );
+        let local_addr = listener.local_addr()?;
+        self.listen_addr = Some(local_addr);
+        info!("Transparent proxy listening on {}", local_addr);
 
         // Set up iptables rules if configured
         if self.config.auto_iptables {
@@ -76,7 +74,7 @@ impl TransparentProxy {
                 .interface
                 .clone()
                 .unwrap_or_else(|| "tailscale0".to_string());
-            let port = self.listen_addr.unwrap().port();
+            let port = local_addr.port();
             let mut nf = NetfilterManager::new(interface, port);
             if let Err(e) = nf.setup() {
                 warn!("Failed to set up iptables rules: {}", e);
@@ -129,100 +127,119 @@ impl TransparentProxy {
     }
 }
 
+/// A bounds-checked cursor over a byte slice.
+///
+/// The SNI parser below reads attacker-controlled bytes off the wire, where an
+/// out-of-range index is a remote crash. Every read returns `Option`, so
+/// safety is structural rather than argued: there is no way to express an
+/// unchecked access, and adding a field to the parser cannot silently
+/// invalidate a bounds check made twenty lines earlier.
+struct Reader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    fn remaining(&self) -> usize {
+        self.buf.len().saturating_sub(self.pos)
+    }
+
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let end = self.pos.checked_add(n)?;
+        let out = self.buf.get(self.pos..end)?;
+        self.pos = end;
+        Some(out)
+    }
+
+    fn skip(&mut self, n: usize) -> Option<()> {
+        self.take(n).map(|_| ())
+    }
+
+    fn u8(&mut self) -> Option<u8> {
+        match self.take(1) {
+            Some([b]) => Some(*b),
+            _ => None,
+        }
+    }
+
+    fn u16(&mut self) -> Option<u16> {
+        match self.take(2) {
+            Some([hi, lo]) => Some(u16::from_be_bytes([*hi, *lo])),
+            _ => None,
+        }
+    }
+
+    /// A sub-reader over the next `n` bytes, advancing this one past them.
+    fn sub(&mut self, n: usize) -> Option<Reader<'a>> {
+        self.take(n).map(Reader::new)
+    }
+}
+
 /// Extract SNI (Server Name Indication) from a TLS ClientHello by peeking at the stream.
 /// Returns the hostname if found, or None if SNI cannot be determined.
+///
+/// A truncated or malformed hello yields `None`; it never panics, and the
+/// caller treats `None` as "pass through rather than guess a destination".
 pub fn extract_sni_from_client_hello(buf: &[u8]) -> Option<String> {
-    // TLS record: type (1) + version (2) + length (2) + data
-    if buf.len() < 5 {
+    let mut r = Reader::new(buf);
+
+    // TLS record: type(1) + version(2) + length(2)
+    if r.u8()? != 22 {
+        // 22 = Handshake
         return None;
     }
-    // Record type 22 = Handshake
-    if buf[0] != 22 {
+    r.skip(2)?; // legacy record version
+    let record_len = r.u16()? as usize;
+
+    // A short read is fine: the SNI extension sits near the front of the
+    // hello, so parse whatever arrived rather than waiting for the whole
+    // record.
+    let mut handshake = r.sub(record_len.min(r.remaining()))?;
+
+    // Handshake: type(1) + length(3)
+    if handshake.u8()? != 1 {
+        // 1 = ClientHello
         return None;
     }
+    handshake.skip(3)?;
 
-    let record_len = ((buf[3] as usize) << 8) | (buf[4] as usize);
-    let handshake = &buf[5..];
-    if handshake.len() < record_len.min(handshake.len()) {
-        // Partial read is OK, we just need the SNI extension
-    }
+    // ClientHello: version(2) + random(32) + session_id(1+N)
+    //              + cipher_suites(2+N) + compression(1+N) + extensions(2+N)
+    let ch = &mut handshake;
+    ch.skip(2 + 32)?;
+    let sid_len = ch.u8()? as usize;
+    ch.skip(sid_len)?;
+    let cs_len = ch.u16()? as usize;
+    ch.skip(cs_len)?;
+    let cm_len = ch.u8()? as usize;
+    ch.skip(cm_len)?;
 
-    // Handshake: type (1) + length (3) + ...
-    if handshake.is_empty() || handshake[0] != 1 {
-        // Type 1 = ClientHello
-        return None;
-    }
-    if handshake.len() < 4 {
-        return None;
-    }
-    let ch = &handshake[4..];
+    let ext_total = ch.u16()? as usize;
+    let mut exts = ch.sub(ext_total.min(ch.remaining()))?;
 
-    // ClientHello: version (2) + random (32) + session_id (1+N) + cipher_suites (2+N) + compression (1+N) + extensions
-    if ch.len() < 34 {
-        return None;
-    }
-    let mut pos = 34; // skip version + random
-
-    // Session ID
-    if pos >= ch.len() {
-        return None;
-    }
-    let sid_len = ch[pos] as usize;
-    pos += 1 + sid_len;
-
-    // Cipher suites
-    if pos + 2 > ch.len() {
-        return None;
-    }
-    let cs_len = ((ch[pos] as usize) << 8) | (ch[pos + 1] as usize);
-    pos += 2 + cs_len;
-
-    // Compression methods
-    if pos >= ch.len() {
-        return None;
-    }
-    let cm_len = ch[pos] as usize;
-    pos += 1 + cm_len;
-
-    // Extensions
-    if pos + 2 > ch.len() {
-        return None;
-    }
-    let ext_len = ((ch[pos] as usize) << 8) | (ch[pos + 1] as usize);
-    pos += 2;
-
-    let ext_end = pos + ext_len.min(ch.len() - pos);
-    while pos + 4 <= ext_end {
-        let ext_type = ((ch[pos] as u16) << 8) | (ch[pos + 1] as u16);
-        let ext_data_len = ((ch[pos + 2] as usize) << 8) | (ch[pos + 3] as usize);
-        pos += 4;
-
-        if ext_type == 0 {
-            // SNI extension
-            if pos + ext_data_len > ext_end {
-                return None;
-            }
-            let sni_data = &ch[pos..pos + ext_data_len];
-            // SNI list: total_len (2) + entries
-            if sni_data.len() < 2 {
-                return None;
-            }
-            let mut sni_pos = 2; // skip total length
-            while sni_pos + 3 <= sni_data.len() {
-                let name_type = sni_data[sni_pos];
-                let name_len =
-                    ((sni_data[sni_pos + 1] as usize) << 8) | (sni_data[sni_pos + 2] as usize);
-                sni_pos += 3;
-                if name_type == 0 && sni_pos + name_len <= sni_data.len() {
-                    // Host name
-                    return String::from_utf8(sni_data[sni_pos..sni_pos + name_len].to_vec()).ok();
-                }
-                sni_pos += name_len;
-            }
-            return None;
+    while let (Some(ext_type), Some(ext_len)) = (exts.u16(), exts.u16()) {
+        let mut ext = exts.sub(ext_len as usize)?;
+        if ext_type != 0 {
+            continue;
         }
 
-        pos += ext_data_len;
+        // server_name extension: list_length(2) then entries of
+        // name_type(1) + name_length(2) + name.
+        let list_len = ext.u16()? as usize;
+        let mut list = ext.sub(list_len.min(ext.remaining()))?;
+        while let Some(name_type) = list.u8() {
+            let name_len = list.u16()? as usize;
+            let name = list.take(name_len)?;
+            if name_type == 0 {
+                // host_name
+                return String::from_utf8(name.to_vec()).ok();
+            }
+        }
+        return None;
     }
 
     None
@@ -275,7 +292,8 @@ async fn handle_transparent_connection(
         // guessing a destination.
         let mut hello_buf = vec![0u8; 16 * 1024];
         let n = stream.peek(&mut hello_buf).await?;
-        let hello_data = &hello_buf[..n];
+        hello_buf.truncate(n);
+        let hello_data = hello_buf.as_slice();
 
         let Some(hostname) = extract_sni_from_client_hello(hello_data) else {
             // Without SNI we have no reliable destination: this transparent proxy
@@ -319,7 +337,8 @@ async fn handle_transparent_connection(
         // Peek to extract Host header for upstream connection
         let mut buf = vec![0u8; 8192];
         let n = stream.peek(&mut buf).await?;
-        let request_data = std::str::from_utf8(&buf[..n]).unwrap_or("");
+        buf.truncate(n);
+        let request_data = std::str::from_utf8(&buf).unwrap_or("");
         let host_header = request_data
             .lines()
             .find(|l| l.to_lowercase().starts_with("host:"))
@@ -381,6 +400,68 @@ mod tests {
         assert!(sni.is_none());
     }
 
+    /// Every prefix of a valid hello must parse or decline -- never panic.
+    ///
+    /// A transparent proxy peeks at whatever bytes have arrived, so truncation
+    /// at an arbitrary offset is the normal case, not an edge case.
+    #[test]
+    fn sni_parser_survives_every_truncation() {
+        let hello = build_test_client_hello("example.com");
+        for len in 0..=hello.len() {
+            let prefix = &hello[..len];
+            // The assertion is that this returns at all.
+            let got = extract_sni_from_client_hello(prefix);
+            if len == hello.len() {
+                assert_eq!(got.as_deref(), Some("example.com"));
+            }
+        }
+    }
+
+    /// Bytes off the wire are attacker-controlled. Walk a deterministic
+    /// pseudo-random corpus, including inputs shaped like a handshake, and
+    /// assert only that nothing panics.
+    #[test]
+    fn sni_parser_survives_arbitrary_bytes() {
+        // xorshift: deterministic, no dev-dependency needed.
+        let mut state: u64 = 0x9E3779B97F4A7C15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        for case in 0..2_000 {
+            let len = (next() % 512) as usize;
+            let mut buf: Vec<u8> = (0..len).map(|_| (next() & 0xff) as u8).collect();
+            // Half the corpus is shaped like a handshake record so the parser
+            // gets past its first check and into the length arithmetic.
+            if case % 2 == 0 && buf.len() >= 6 {
+                buf[0] = 22;
+                buf[5] = 1;
+            }
+            let _ = extract_sni_from_client_hello(&buf);
+        }
+    }
+
+    /// A length field claiming more than the buffer holds must decline rather
+    /// than read past the end -- the classic parser bug this rewrite removes.
+    #[test]
+    fn sni_parser_rejects_oversized_length_fields() {
+        let mut hello = build_test_client_hello("example.com");
+        // Record length -> 0xFFFF, far past the actual buffer.
+        hello[3] = 0xff;
+        hello[4] = 0xff;
+        let _ = extract_sni_from_client_hello(&hello);
+
+        // Session-id length -> 0xFF, past the remaining ClientHello body.
+        let mut hello = build_test_client_hello("example.com");
+        if hello.len() > 43 {
+            hello[43] = 0xff;
+        }
+        let _ = extract_sni_from_client_hello(&hello);
+    }
+
     /// Build a minimal TLS ClientHello with SNI extension for testing.
     fn build_test_client_hello(hostname: &str) -> Vec<u8> {
         let hostname_bytes = hostname.as_bytes();
@@ -407,14 +488,20 @@ mod tests {
         buf.push(22); // handshake
         buf.push(3);
         buf.push(1); // TLS 1.0
-        buf.push((hs_len >> 8) as u8);
-        buf.push((hs_len & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(hs_len)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
 
         // Handshake header
         buf.push(1); // ClientHello
         buf.push(0);
-        buf.push((ch_body_len >> 8) as u8);
-        buf.push((ch_body_len & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(ch_body_len)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
 
         // ClientHello body
         buf.push(3);
@@ -432,22 +519,34 @@ mod tests {
         buf.push(0); // null compression
 
         // Extensions length
-        buf.push((ext_total >> 8) as u8);
-        buf.push((ext_total & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(ext_total)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
 
         // SNI extension
         buf.push(0);
         buf.push(0); // extension type = SNI
-        buf.push((sni_ext_data_len >> 8) as u8);
-        buf.push((sni_ext_data_len & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(sni_ext_data_len)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
 
         // SNI list
-        buf.push((sni_list_len >> 8) as u8);
-        buf.push((sni_list_len & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(sni_list_len)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
 
         buf.push(0); // host_name type
-        buf.push((sni_name_len >> 8) as u8);
-        buf.push((sni_name_len & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(sni_name_len)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
         buf.extend_from_slice(hostname_bytes);
 
         buf
@@ -463,13 +562,19 @@ mod tests {
         buf.push(22);
         buf.push(3);
         buf.push(1);
-        buf.push((hs_len >> 8) as u8);
-        buf.push((hs_len & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(hs_len)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
 
         buf.push(1);
         buf.push(0);
-        buf.push((ch_body_len >> 8) as u8);
-        buf.push((ch_body_len & 0xff) as u8);
+        buf.extend_from_slice(
+            &u16::try_from(ch_body_len)
+                .expect("test ClientHello lengths fit in u16")
+                .to_be_bytes(),
+        );
 
         buf.push(3);
         buf.push(3);

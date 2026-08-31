@@ -2,13 +2,17 @@ use crate::config::{AppConfig, UpdateConfig, system_app_dir};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 // ---------------------------------------------------------------------------
 // 4a. Current version
 // ---------------------------------------------------------------------------
 
 pub fn current_version() -> semver::Version {
+    #[allow(
+        clippy::expect_used,
+        reason = "our own crate version; cargo guarantees it is valid semver"
+    )]
     env!("CARGO_PKG_VERSION").parse().expect("valid semver")
 }
 
@@ -250,7 +254,9 @@ fn looks_like_executable(bytes: &[u8]) -> bool {
     if bytes.len() < 4 {
         return false;
     }
-    let magic = &bytes[..4];
+    let Some(magic) = bytes.get(..4) else {
+        return false;
+    };
     if cfg!(target_os = "macos") {
         // Mach-O (thin, either endianness/width) or fat binary (0xCAFEBABE).
         matches!(
@@ -364,19 +370,39 @@ fn replace_binary(new_binary: &[u8]) -> Result<()> {
 
     // Rename current → .old, temp → current
     if let Err(e) = std::fs::rename(&current_exe, &old_path) {
-        // Clean up temp
-        let _ = std::fs::remove_file(&temp_path);
+        if let Err(cleanup) = std::fs::remove_file(&temp_path) {
+            debug!("could not remove temp binary {}: {cleanup}", temp_path.display());
+        }
         return Err(e).context("failed to rename current binary to .old");
     }
 
     if let Err(e) = std::fs::rename(&temp_path, &current_exe) {
-        // Restore old binary
-        let _ = std::fs::rename(&old_path, &current_exe);
-        return Err(e).context("failed to rename new binary into place");
+        // The current binary has already been moved aside, so a failed restore
+        // leaves NO executable at `current_exe`. That is a broken install, and
+        // the error must say so and say where the old binary is -- reporting
+        // only the original failure would send the user looking in the wrong
+        // place while their `witm` is missing.
+        if let Err(restore) = std::fs::rename(&old_path, &current_exe) {
+            error!(
+                "update failed AND rollback failed: {} is missing; the previous \
+                 binary is at {}. Restore it manually.",
+                current_exe.display(),
+                old_path.display()
+            );
+            return Err(e).context(format!(
+                "failed to install the new binary, and rolling back also failed \
+                 ({restore}). {} is missing; the previous binary is at {}",
+                current_exe.display(),
+                old_path.display()
+            ));
+        }
+        return Err(e).context("failed to rename new binary into place (rolled back)");
     }
 
-    // Clean up .old
-    let _ = std::fs::remove_file(&old_path);
+    // Clean up .old. A leftover file is harmless, so this is best effort.
+    if let Err(e) = std::fs::remove_file(&old_path) {
+        debug!("could not remove {}: {e}", old_path.display());
+    }
 
     Ok(())
 }

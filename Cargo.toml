@@ -57,58 +57,68 @@ debug = false
 # a style problem, it is a denial-of-service vector, so the panic-adjacent lints
 # below are treated as a security control rather than a preference.
 #
-# `unwrap_used` / `expect_used` / `panic` start at `warn` while the existing
-# call sites are triaged; raise to `deny` once the backlog is clear.
-# Test code is exempted via the `allow-*-in-tests` keys in clippy.toml.
+# The backlog these started at `warn` for is cleared, so they are gates now.
+# Test code is exempted via the `allow-*-in-tests` keys in clippy.toml; the
+# handful of remaining call sites carry a site-level `allow` with a `reason`.
 # ---------------------------------------------------------------------------
 [workspace.lints.rust]
-unused_imports = "warn"
-unreachable_pub = "warn"
+unused_imports = "deny"
+unreachable_pub = "deny"
 
 [workspace.lints.clippy]
+# The `all` group stays at `warn` rather than `deny`: it grows with every
+# clippy release, so denying it means a toolchain bump can break local builds
+# for reasons unrelated to the change being made. CI runs clippy with
+# `-D warnings`, so the group is still a gate there -- just not one that fires
+# on a developer's machine the day nightly adds a new style lint.
 all = { level = "warn", priority = -1 }
 # Service/plugin stacks produce deep generic types; renaming them into aliases
 # purely to satisfy the lint makes the signatures harder to read, not easier.
 type_complexity = "allow"
 
 # Don't panic: a panic in a connection or plugin task takes down live traffic.
-unwrap_used = "warn"
-expect_used = "warn"
-panic = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 todo = "deny"
 unimplemented = "deny"
-# `unreachable` starts at `warn` alongside unwrap/expect/panic: there are 5
-# existing call sites to triage, and a hard failure would block the migration.
-unreachable = "warn"
+unreachable = "deny"
 get_unwrap = "deny"
-indexing_slicing = "warn"
+indexing_slicing = "deny"
 
 # Don't fail silently: dropped futures and swallowed errors hide plugin misbehaviour.
-let_underscore_future = "warn"
-let_underscore_must_use = "warn"
-unused_result_ok = "warn"
-map_err_ignore = "warn"
+let_underscore_future = "deny"
+unused_result_ok = "deny"
+map_err_ignore = "deny"
+# `let_underscore_must_use` was run across the tree once and found exactly one
+# real defect (a silently-ignored rollback `rename` in the binary updater,
+# which could leave no executable installed). The other ~35 sites are
+# deliberate discards where `let _ =` is the idiomatic expression of intent:
+# idempotent installers that error when already installed, channel sends whose
+# receiver may be gone, `OnceLock::set`. Denying it would mean suppressing
+# correct code 35 times, so it stays off; re-run it periodically instead.
+let_underscore_must_use = "allow"
 
 # Async footguns. `await_holding_lock` in particular encodes the invariant that
 # plugins/registry.rs currently documents in a comment: the plugin-map lock is
 # never held across an await.
-await_holding_lock = "warn"
-await_holding_refcell_ref = "warn"
-if_let_mutex = "warn"
-large_futures = "warn"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+if_let_mutex = "deny"
+large_futures = "deny"
 
 # Output discipline: this is a daemon, diagnostics belong in `tracing`.
-print_stdout = "warn"
-print_stderr = "warn"
+print_stdout = "deny"
+print_stderr = "deny"
 dbg_macro = "deny"
 
 # Memory / unsafe hygiene.
-mem_forget = "warn"
-undocumented_unsafe_blocks = "warn"
-multiple_unsafe_ops_per_block = "warn"
+mem_forget = "deny"
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
 
 # Numeric correctness: cert validity windows and fuel/quota arithmetic.
-float_cmp = "warn"
-lossy_float_literal = "warn"
-invalid_upcast_comparisons = "warn"
-cast_possible_truncation = "warn"
+float_cmp = "deny"
+lossy_float_literal = "deny"
+invalid_upcast_comparisons = "deny"
+cast_possible_truncation = "deny"

@@ -112,7 +112,7 @@ impl CertificateAuthority {
 
         // Extract DER from the saved PEM for get_root_certificate_der()
         let cert_der = CertificateDer::from_pem_slice(cert_pem.as_bytes())
-            .map_err(|_| CertError::InvalidFormat)?
+            .map_err(|e| CertError::InvalidFormat(e.to_string()))?
             .to_vec();
 
         Ok((cert_pem, cert_der, issuer))
@@ -170,19 +170,16 @@ impl CertificateAuthority {
             params.subject_alt_names.push(rcgen::SanType::IpAddress(ip));
         } else {
             params.subject_alt_names.push(rcgen::SanType::DnsName(
-                domain
-                    .to_string()
-                    .try_into()
-                    .map_err(|_| CertError::InvalidFormat)?,
+                rcgen::string::Ia5String::try_from(domain.to_string())
+                    .map_err(|e| CertError::InvalidFormat(e.to_string()))?,
             ));
         }
 
         // If it's a wildcard domain, add the base domain too
         if let Some(base_domain) = domain.strip_prefix("*.") {
             params.subject_alt_names.push(SanType::DnsName(
-                base_domain
-                    .try_into()
-                    .map_err(|_| CertError::InvalidFormat)?,
+                rcgen::string::Ia5String::try_from(base_domain)
+                    .map_err(|e| CertError::InvalidFormat(e.to_string()))?,
             ));
         }
 
@@ -216,7 +213,7 @@ impl CertificateAuthority {
 
         Ok(Certificate {
             cert_der: CertificateDer::from(cert_der.to_vec()),
-            key_der: PrivateKeyDer::try_from(key_der).map_err(|_| CertError::InvalidFormat)?,
+            key_der: PrivateKeyDer::try_from(key_der).map_err(|e| CertError::InvalidFormat(e.to_string()))?,
             pem_cert,
             pem_key,
         })

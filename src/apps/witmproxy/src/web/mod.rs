@@ -21,6 +21,24 @@ use crate::cert::generator::DeviceInfo;
 use crate::cert::{CertificateAuthority, CertificateFormat, CertificateGenerator};
 use crate::web::templates::{IndexTemplate, InstructionsTemplate};
 
+/// Log an internal failure server-side and produce the 500 the client sees.
+///
+/// These handlers were discarding the cause entirely, which made every 500
+/// undiagnosable. The detail deliberately stays in the log rather than the
+/// response: `brief` is sent to the client, so putting an internal error
+/// there would leak implementation detail to whoever triggered it.
+/// `Debug` rather than `Display` because not every failure here carries a
+/// cause: a `Depot::obtain` miss yields `Option<&Box<dyn Any>>`, where the
+/// information is simply that the state was never installed. `context` names
+/// which lookup failed, which is the part that matters.
+pub(crate) fn internal_error(
+    context: &'static str,
+    err: impl std::fmt::Debug,
+) -> salvo::http::StatusError {
+    tracing::error!(target: "web", "{context}: {err:?}");
+    salvo::http::StatusError::internal_server_error().brief(context)
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -67,7 +85,7 @@ pub async fn download_certificate(
 
     let state = depot
         .obtain::<AppState>()
-        .map_err(|_| salvo::http::StatusError::internal_server_error().brief("Internal error"))?;
+        .map_err(|e| internal_error("Internal error", e))?;
 
     // Determine format
     let format = if let Some(fmt) = req.query::<String>("format") {
@@ -82,32 +100,28 @@ pub async fn download_certificate(
         device_info.recommended_format()
     };
 
-    let cert_pem = state.ca.get_root_certificate_pem().map_err(|_| {
-        salvo::http::StatusError::internal_server_error().brief("Certificate error")
-    })?;
+    let cert_pem = state.ca.get_root_certificate_pem().map_err(|e| internal_error("Certificate error", e))?;
 
     let bundle = CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
-        .map_err(|_| salvo::http::StatusError::internal_server_error().brief("Bundle error"))?;
+        .map_err(|e| internal_error("Bundle error", e))?;
 
     // Return file download or instructions page
     if req.query::<bool>("download").unwrap_or(false) {
         res.status_code(salvo::http::StatusCode::OK)
             .add_header(salvo::http::header::CONTENT_TYPE, bundle.mime_type, true)
-            .unwrap()
+            .map_err(|e| internal_error("Failed to set content type", e))?
             .add_header(
                 salvo::http::header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"{}\"", bundle.filename),
                 true,
             )
-            .unwrap()
+            .map_err(|e| internal_error("Failed to set content disposition", e))?
             .body(bundle.data);
     } else {
-        let html = InstructionsTemplate::new(&bundle).render().map_err(|_| {
-            salvo::http::StatusError::internal_server_error().brief("Template error")
-        })?;
+        let html = InstructionsTemplate::new(&bundle).render().map_err(|e| internal_error("Template error", e))?;
         res.status_code(salvo::http::StatusCode::OK);
         res.add_header(salvo::http::header::CONTENT_TYPE, "text/html", true)
-            .unwrap();
+            .map_err(|e| internal_error("Failed to set content type", e))?;
         res.render(Text::Html(html));
     }
     Ok(())

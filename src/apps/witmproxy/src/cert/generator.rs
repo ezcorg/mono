@@ -113,7 +113,7 @@ impl CertificateGenerator {
 
         general_purpose::STANDARD
             .decode(base64_content)
-            .map_err(|_| CertError::InvalidFormat)
+            .map_err(|e| CertError::InvalidFormat(e.to_string()))
     }
 
     fn create_mobileconfig_xml(cert_base64: &str, _device_info: &DeviceInfo) -> String {

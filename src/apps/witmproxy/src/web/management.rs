@@ -16,7 +16,7 @@ fn db(depot: &mut Depot) -> Result<SqlitePool, StatusError> {
     depot
         .obtain::<SqlitePool>()
         .cloned()
-        .map_err(|_| StatusError::internal_server_error().brief("Database not available"))
+        .map_err(|e| crate::web::internal_error("Database not available", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -576,7 +576,7 @@ pub async fn get_config(depot: &mut Depot) -> Result<Json<RuntimeConfig>, Status
     let config = depot
         .obtain::<std::sync::Arc<tokio::sync::RwLock<crate::config::AppConfig>>>()
         .cloned()
-        .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
+        .map_err(|e| crate::web::internal_error("Config not available", e))?;
 
     let config = config.read().await;
     Ok(Json(RuntimeConfig::from_app_config(&config)))
@@ -591,12 +591,12 @@ pub async fn update_config(
     let shared = depot
         .obtain::<std::sync::Arc<tokio::sync::RwLock<crate::config::AppConfig>>>()
         .cloned()
-        .map_err(|_| StatusError::internal_server_error().brief("Config not available"))?;
+        .map_err(|e| crate::web::internal_error("Config not available", e))?;
 
     let config_path = depot
         .obtain::<ConfigPath>()
         .map(|p| p.0.clone())
-        .map_err(|_| StatusError::internal_server_error().brief("Config path not available"))?;
+        .map_err(|e| crate::web::internal_error("Config path not available", e))?;
 
     let updates = body.into_inner();
 

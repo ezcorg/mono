@@ -128,7 +128,10 @@ impl TenantHandler {
                     "display_name": display_name,
                 });
                 if let Some(email) = email {
-                    body["email"] = serde_json::json!(email);
+                    body
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("request body is not a JSON object"))?
+            .insert("email".to_string(), serde_json::json!(email));
                 }
                 let resp = client
                     .post_json(
@@ -217,9 +220,10 @@ impl TenantHandler {
 }
 
 fn parse_plugin_id(plugin: &str) -> Result<(&str, &str)> {
-    let parts: Vec<&str> = plugin.splitn(2, '/').collect();
-    if parts.len() != 2 {
-        anyhow::bail!("Plugin must be in 'namespace/name' format, got: {}", plugin);
+    // Match the shape rather than checking a length and then indexing: one
+    // statement the compiler verifies instead of two that have to agree.
+    match plugin.splitn(2, '/').collect::<Vec<_>>().as_slice() {
+        [namespace, name] => Ok((namespace, name)),
+        _ => anyhow::bail!("Plugin must be in 'namespace/name' format, got: {}", plugin),
     }
-    Ok((parts[0], parts[1]))
 }

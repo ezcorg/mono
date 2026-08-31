@@ -39,7 +39,7 @@ pub async fn register(
     let pool = depot
         .obtain::<SqlitePool>()
         .cloned()
-        .map_err(|_| StatusError::internal_server_error().brief("Database not available"))?;
+        .map_err(|e| crate::web::internal_error("Database not available", e))?;
 
     let body = body.into_inner();
 
@@ -95,12 +95,12 @@ pub async fn login(
     let pool = depot
         .obtain::<SqlitePool>()
         .cloned()
-        .map_err(|_| StatusError::internal_server_error().brief("Database not available"))?;
+        .map_err(|e| crate::web::internal_error("Database not available", e))?;
 
     let auth_config = depot
         .obtain::<AuthConfig>()
         .cloned()
-        .map_err(|_| StatusError::internal_server_error().brief("Auth config not available"))?;
+        .map_err(|e| crate::web::internal_error("Auth config not available", e))?;
 
     let body = body.into_inner();
 

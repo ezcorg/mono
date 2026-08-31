@@ -1,3 +1,8 @@
+// The `Conf` / `Subcommands` derives generate public interfaces over these
+// types, so they must stay `pub` even though this module is private and
+// nothing outside the crate can name them. `pub(crate)` fails with E0446.
+#![allow(unreachable_pub)]
+
 use super::{GlobalArgs, Services};
 use crate::cert::ca::get_root_cert_path;
 use crate::{config::PluginScopedConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
@@ -138,12 +143,11 @@ pub struct PluginConfigureArgs {
 /// Plugin command handler that contains the resolved configuration and verbose flag
 pub struct PluginHandler {
     pub config: PluginScopedConfig,
-    pub verbose: bool,
 }
 
 impl PluginHandler {
-    pub fn new(config: PluginScopedConfig, verbose: bool) -> Self {
-        Self { config, verbose }
+    pub fn new(config: PluginScopedConfig, _verbose: bool) -> Self {
+        Self { config }
     }
 
     pub async fn handle(&self, command: &PluginCommands) -> Result<()> {
@@ -413,7 +417,7 @@ impl PluginHandler {
             }
             let bytes = resp.bytes().await?.to_vec();
             // Sanity check: WASM files start with \0asm
-            if bytes.len() < 4 || bytes[..4] != [0x00, b'a', b's', b'm'] {
+            if !bytes.starts_with(&[0x00, b'a', b's', b'm']) {
                 anyhow::bail!("Downloaded file does not appear to be a valid WASM component");
             }
             eprintln!("Downloaded {} bytes.", bytes.len());

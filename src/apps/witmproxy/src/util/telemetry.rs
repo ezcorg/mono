@@ -20,6 +20,12 @@ pub fn build_file_writer(
         _ => tracing_appender::rolling::Rotation::DAILY,
     };
 
+    // A failure here means the process cannot set up logging at all, which is
+    // not something the caller can meaningfully handle: abort with the reason.
+    #[allow(
+        clippy::expect_used,
+        reason = "startup-time; there is no logging to report a failure through"
+    )]
     let appender = tracing_appender::rolling::Builder::new()
         .rotation(rotation)
         .filename_prefix("witmproxy")

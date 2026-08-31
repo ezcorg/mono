@@ -49,13 +49,12 @@ async fn e2e_simple_json_test() -> Result<()> {
     debug!("Response JSON: {:?}", json);
     // Expect the request header added by the WASM plugin
     assert!(json.headers.contains_key("witmproxy"));
-    assert!(json.headers.get("witmproxy").unwrap().contains("req"));
+    assert!(json.headers["witmproxy"].contains("req"));
     // Expect the response header added by the WASM plugin
     assert!(headers.contains_key("witmproxy"));
     assert!(
         headers
-            .get("witmproxy")
-            .unwrap()
+            ["witmproxy"]
             .to_str()
             .unwrap()
             .contains("res")

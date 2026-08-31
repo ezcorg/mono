@@ -39,7 +39,10 @@ impl EpochTicker {
         let stop = Arc::new(AtomicBool::new(false));
         let engine = engine.weak();
         let flag = Arc::clone(&stop);
-        std::thread::Builder::new()
+        // The handle is intentionally dropped: the ticker runs for the life of
+        // the engine and is stopped through the `stop` flag in `Drop`.
+        drop(
+            std::thread::Builder::new()
             .name("witm-epoch-ticker".into())
             .spawn(move || {
                 while !flag.load(Ordering::Relaxed) {
@@ -55,7 +58,7 @@ impl EpochTicker {
             // A failure to spawn would leave epoch deadlines permanently
             // unarmed, silently disabling the timeout. Surfacing it as a log at
             // error level is the best we can do without failing startup.
-            .map_err(|e| {
+            .inspect_err(|e| {
                 tracing::error!(
                     target: "plugins::limits",
                     error = %e,
@@ -63,7 +66,8 @@ impl EpochTicker {
                      will not be enforceable against a non-yielding guest"
                 );
             })
-            .ok();
+            .ok(),
+        );
         Self { stop }
     }
 }

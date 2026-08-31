@@ -606,11 +606,15 @@ pub(crate) async fn provision(
                     OsRng.fill_bytes(&mut bytes);
                     crate::config::Secret::from(hex::encode(bytes)[..24].to_string())
                 } else {
-                    effective_config
-                        .auth
-                        .admin_password
-                        .clone()
-                        .expect("present")
+                    match effective_config.auth.admin_password.clone() {
+                        Some(password) => password,
+                        // Unreachable while `admin_password_missing()` and this
+                        // field agree, but that is two calls having to stay in
+                        // step rather than one thing being true.
+                        None => anyhow::bail!(
+                            "admin password reported as present but is not set"
+                        ),
+                    }
                 };
 
                 let password_hash = hash_password(password.expose())
@@ -899,8 +903,8 @@ impl Cli {
                     let services_path = app_dir_for(&tls.cert_dir).join("services.json");
                     let services: Services = serde_json::from_str(
                         &std::fs::read_to_string(&services_path)
-                            .map_err(|_| anyhow::anyhow!(
-                                "No --server specified and no services.json found at {:?}. Is witmproxy running?",
+                            .map_err(|e| anyhow::anyhow!(
+                                "No --server specified and could not read services.json at {:?} ({e}). Is witmproxy running?",
                                 services_path
                             ))?,
                     )?;
@@ -1379,13 +1383,11 @@ fn setup_plugin_dir_watcher(
                 if path.is_file()
                     && path.extension().is_some_and(|ext| ext == "wasm")
                     && let Ok(component_bytes) = std::fs::read(&path)
-                {
-                    if let Ok(plugin) = registry_clone.plugin_from_component(component_bytes).await
+                    && let Ok(plugin) = registry_clone.plugin_from_component(component_bytes).await
                     {
                         let mut map = file_plugin_map_clone.write().await;
                         map.insert(path, plugin.id());
                     }
-                }
             }
         }
     });
@@ -1438,8 +1440,8 @@ async fn handle_plugin_file_event(
                     let map = file_plugin_map.read().await;
                     if let Some(old_plugin_id) = map.get(&path) {
                         let parts: Vec<&str> = old_plugin_id.split('/').collect();
-                        if parts.len() == 2 {
-                            match registry.remove_plugin(parts[1], Some(parts[0])).await {
+                        if let [namespace, name] = parts.as_slice() {
+                            match registry.remove_plugin(name, Some(namespace)).await {
                                 Ok(removed) => {
                                     if !removed.is_empty() {
                                         info!("Removed old plugin version: {}", old_plugin_id);
@@ -1475,8 +1477,8 @@ async fn handle_plugin_file_event(
 
                 if let Some(plugin_id) = plugin_id {
                     let parts: Vec<&str> = plugin_id.split('/').collect();
-                    if parts.len() == 2 {
-                        match registry.remove_plugin(parts[1], Some(parts[0])).await {
+                    if let [namespace, name] = parts.as_slice() {
+                        match registry.remove_plugin(name, Some(namespace)).await {
                             Ok(removed) => {
                                 if !removed.is_empty() {
                                     info!("Removed plugin: {}", plugin_id);

@@ -396,7 +396,7 @@ impl CelTime {
     ///
     /// Example CEL: `time.is_day_of_week(1)` (true on Mondays)
     pub fn is_day_of_week(&self, weekday: i64) -> bool {
-        (0..=6).contains(&weekday) && self.day_of_week == weekday as u32
+        u32::try_from(weekday).is_ok_and(|w| (0..=6).contains(&w) && self.day_of_week == w)
     }
 
     /// Returns whether the current hour is between `hour_start` and `hour_end` (inclusive).

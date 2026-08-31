@@ -1,7 +1,6 @@
 use crate::events::Event;
 use crate::plugins::cel::{CelRequest, CelTime};
 use crate::wasm::Host;
-use crate::wasm::bindgen::witmproxy::plugin::capabilities::CapabilityKind;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::EventKind;
 use anyhow::Result;
@@ -14,8 +13,8 @@ use wasmtime_wasi_http::p3::Request as WasiRequest;
 use wasmtime_wasi_http::WasiHttpView;
 
 impl Event for WasiRequest {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::Request)
+    fn kind(&self) -> EventKind {
+        EventKind::Request
     }
 
     fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent> {
@@ -96,8 +95,8 @@ impl<T> Event for Request<T>
 where
     T: Body<Data = bytes::Bytes> + Send + Sync + 'static,
 {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::Request)
+    fn kind(&self) -> EventKind {
+        EventKind::Request
     }
 
     fn into_event_data(

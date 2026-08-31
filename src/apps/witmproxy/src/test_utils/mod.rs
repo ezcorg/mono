@@ -1,3 +1,12 @@
+//! Test scaffolding shared by unit tests and the `e2e` integration crate.
+//!
+//! Exempt from the panic-adjacent lints the rest of the crate denies. These
+//! run only under test, and a helper that cannot build its fixture should
+//! abort the test at the point of failure rather than thread a `Result` that
+//! every call site would immediately unwrap anyway. The lints stay in force
+//! for the daemon and proxy paths, where a panic takes down live traffic.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Command;

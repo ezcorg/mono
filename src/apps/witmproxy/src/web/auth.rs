@@ -26,7 +26,7 @@ impl Claims {
     pub fn new(tenant_id: &str, email: Option<&str>, issuer: &str, duration_secs: u64) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         Self {
             sub: tenant_id.to_string(),

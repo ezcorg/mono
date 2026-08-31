@@ -1,3 +1,8 @@
+// The `Conf` and `Subcommands` derives generate public interfaces referencing
+// these types, so they must stay `pub` even though nothing outside this
+// `#[cfg(test)]` module can name them.
+#![allow(unreachable_pub)]
+
 //! Regression tests for the `conf` mechanics the scoped-subcommand-config
 //! design (see `Cli`/`Command`) depends on:
 //!  1. multiple subcommand variants can share `#[conf(serde(rename = "config"))]`

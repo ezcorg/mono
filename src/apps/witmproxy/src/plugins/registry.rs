@@ -23,8 +23,7 @@ use crate::{
         bindgen::{
             Plugin, UserInput,
             witmproxy::plugin::capabilities::{
-                ContextualResponse as WasiContextualResponse, Event as WasmEvent, EventKind,
-                RequestContext, TimerContext,
+                Event as WasmEvent, EventKind,
             },
         },
     },
@@ -143,14 +142,12 @@ impl PluginRegistry {
         plugin_id: &str,
         component: &Component,
     ) -> Result<InstancePre<Host>> {
-        if let Some(pre) = self.instance_pre_cache.lock().unwrap().get(plugin_id) {
+        if let Some(pre) = Self::lock_cache(&self.instance_pre_cache).get(plugin_id) {
             return Ok(pre.clone());
         }
         let pre = self.runtime.build_instance_pre(component)?;
         self.instance_pre_resolutions.fetch_add(1, Ordering::Relaxed);
-        self.instance_pre_cache
-            .lock()
-            .unwrap()
+        Self::lock_cache(&self.instance_pre_cache)
             .insert(plugin_id.to_string(), pre.clone());
         Ok(pre)
     }
@@ -165,6 +162,27 @@ impl PluginRegistry {
     }
 
     /// Get (or lazily create) the persistent local-storage client for a plugin.
+    /// Take a cache lock, recovering from poisoning.
+    ///
+    /// A poisoned lock means a panic happened elsewhere while holding it.
+    /// These maps are plain caches with no cross-entry invariant, so the data
+    /// cannot be half-updated in a way that matters, and propagating the panic
+    /// would take down a live connection task instead.
+    fn lock_cache<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        match m.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    /// Snapshot the plugin map, recovering from poisoning for the same reason.
+    fn read_plugins<T>(l: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+        match l.read() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     /// Per-plugin breach recorder, created on first use. Shared so the breach
     /// counter accumulates across events rather than resetting each request --
     /// a plugin that trips a limit on every single request is a different
@@ -197,13 +215,16 @@ impl PluginRegistry {
     /// callers that need a consistent view across several operations should
     /// take one snapshot and reuse it.
     pub fn plugins(&self) -> Arc<HashMap<String, Arc<WitmPlugin>>> {
-        self.plugins.read().unwrap().clone()
+        Self::read_plugins(&self.plugins).clone()
     }
 
     /// Apply a mutation copy-on-write: clone the current map, mutate the
     /// clone, swap it in. In-flight readers keep their snapshot.
     fn mutate_plugins(&self, f: impl FnOnce(&mut HashMap<String, Arc<WitmPlugin>>)) {
-        let mut guard = self.plugins.write().unwrap();
+        let mut guard = match self.plugins.write() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         let mut map = (**guard).clone();
         f(&mut map);
         *guard = Arc::new(map);
@@ -411,7 +432,7 @@ impl PluginRegistry {
         // Drop the cached InstancePre so a reloaded component isn't
         // instantiated from a stale resolution.
         {
-            let mut cache = self.instance_pre_cache.lock().unwrap();
+            let mut cache = Self::lock_cache(&self.instance_pre_cache);
             for plugin_id in &removed_plugin_ids {
                 cache.remove(plugin_id);
             }
@@ -516,9 +537,9 @@ impl PluginRegistry {
                     plugin_error = %described,
                     "Plugin reported it could not handle the event; failing closed"
                 );
-                return Err(anyhow::anyhow!(
+                Err(anyhow::anyhow!(
                     "plugin {plugin_id} could not handle a {kind} event ({described})"
-                ));
+                ))
             }
             Ok(Ok(Some(new_event_data))) => {
                 let event = Self::wasm_event_into_boxed(&mut store, new_event_data)?;

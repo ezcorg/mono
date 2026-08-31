@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Cursor;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -242,7 +241,9 @@ where
                                 } else {
                                     // Copy the whole frame
                                     let mut dst_direct = dst.as_direct(store, n);
-                                    dst_direct.remaining()[..n].copy_from_slice(&data_frame);
+                                    if let Some(dst_slice) = dst_direct.remaining().get_mut(..n) {
+                                        dst_slice.copy_from_slice(&data_frame);
+                                    }
                                     dst_direct.mark_written(n);
                                 }
                             } else {
@@ -590,7 +591,11 @@ impl ClockClient {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as u64
+            .as_millis()
+            // Saturates rather than wrapping; only reachable ~584 million
+            // years past the epoch.
+            .try_into()
+            .unwrap_or(u64::MAX)
     }
 }
 
@@ -687,11 +692,12 @@ impl Host {
     /// Build host state carrying the effective limits and breach recorder for
     /// the plugin this store belongs to.
     pub fn with_context(limits: ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
-        let mut host = Self::default();
-        host.witmproxy_ctx = WitmProxyCtxBuilder::new()
-            .with_limits(limits, breaches)
-            .build();
-        host
+        Self {
+            witmproxy_ctx: WitmProxyCtxBuilder::new()
+                .with_limits(limits, breaches)
+                .build(),
+            ..Self::default()
+        }
     }
 }
 

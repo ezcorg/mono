@@ -8,7 +8,7 @@ use crate::wasm::{
     Host,
     bindgen::{
         Event as WasmEvent,
-        witmproxy::plugin::capabilities::{CapabilityKind, EventKind, TimerContext},
+        witmproxy::plugin::capabilities::{EventKind, TimerContext},
     },
 };
 
@@ -28,8 +28,8 @@ impl TimerEvent {
 }
 
 impl Event for TimerEvent {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::Timer)
+    fn kind(&self) -> EventKind {
+        EventKind::Timer
     }
 
     fn into_event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<WasmEvent> {

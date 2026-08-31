@@ -64,7 +64,7 @@ impl AuthHandler {
         print!("Password: ");
         let password = rpassword_fallback()?;
 
-        let client = ApiClient::new(server, None);
+        let client = ApiClient::new(server, None)?;
         let result = client.login(&email, &password).await?;
 
         if let Some(token) = result.get("token").and_then(|t| t.as_str()) {

@@ -8,7 +8,7 @@ use crate::wasm::{
     Host,
     bindgen::{
         Event as WasmEvent,
-        witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
+        witmproxy::plugin::capabilities::EventKind,
     },
 };
 
@@ -35,13 +35,15 @@ impl From<&Connect> for CelConnect {
 }
 
 impl Event for Connect {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::Connect)
+    fn kind(&self) -> EventKind {
+        EventKind::Connect
     }
 
     fn into_event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<WasmEvent> {
-        // No Event conversion, as Connect events don't result in WASM handling
-        unreachable!()
+        // Connect events gate interception; they are never handed to a guest.
+        // That is a caller contract rather than a type-level guarantee, so
+        // report it instead of aborting the process.
+        anyhow::bail!("connect events are not passed to plugins and cannot be converted")
     }
 
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>

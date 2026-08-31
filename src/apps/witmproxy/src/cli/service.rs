@@ -49,6 +49,10 @@ enum ServiceState {
 /// variants are all `serde(rename = "config")` and `Cli::parse_args` mirrors
 /// the `[config]` table under this command's doc key (see
 /// `mirror_config_for_nested_commands`).
+// Boxing the large variant would mean the `Subcommands` derive generating
+// against a `Box<T>`, which it does not support. The enum is constructed once
+// per CLI invocation, so the size difference costs nothing here.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum ServiceCommands {
@@ -195,7 +199,11 @@ impl ServiceHandler {
 
     /// Get the service label
     fn service_label() -> ServiceLabel {
-        SERVICE_LABEL.parse().expect("valid service label")
+        #[allow(
+        clippy::expect_used,
+        reason = "SERVICE_LABEL is a compile-time constant known to parse"
+    )]
+    SERVICE_LABEL.parse().expect("valid service label")
     }
 
     /// Get the native service manager for the current platform
@@ -319,7 +327,7 @@ impl ServiceHandler {
     pub async fn handle(&self, command: &ServiceCommands) -> Result<()> {
         match command {
             ServiceCommands::Install(_) => {
-                unreachable!("Install is handled directly by Cli::run()")
+                anyhow::bail!("install is handled by Cli::run and must not reach the service handler")
             }
             ServiceCommands::Uninstall(a) => self.uninstall_service(a.yes).await,
             ServiceCommands::Start(_) => self.start_service().await,
@@ -713,7 +721,9 @@ impl ServiceHandler {
             ServiceState::Stopped(Some(reason)) => println!("Service:        Stopped ({reason})"),
             ServiceState::Stopped(None) => println!("Service:        Stopped"),
             ServiceState::NotStarted => println!("Service:        Stopped (not started)"),
-            ServiceState::NotInstalled => unreachable!("handled above"),
+            ServiceState::NotInstalled => {
+                    anyhow::bail!("service is not installed")
+                }
         }
 
         // Real application health: probe the endpoint the web server exposes.
@@ -794,7 +804,7 @@ impl ServiceHandler {
             } else {
                 0
             };
-            for line in &all_lines[start..] {
+            for line in all_lines.get(start..).unwrap_or(&all_lines) {
                 println!("{}", line);
             }
         }

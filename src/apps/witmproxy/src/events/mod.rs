@@ -19,15 +19,17 @@ pub mod timer;
 
 /// Trait representing an event that can be handled by the plugin system
 pub trait Event: Send {
-    /// Returns the [CapabilityKind] required to handle events of this type
-    fn capability(&self) -> CapabilityKind;
+    /// Returns the [EventKind] this event represents.
+    fn kind(&self) -> EventKind;
 
-    /// Returns the [EventKind] associated with this event type
-    fn kind(&self) -> EventKind {
-        match self.capability() {
-            CapabilityKind::HandleEvent(kind) => kind,
-            _ => panic!("Event capability must be of HandleEvent kind"),
-        }
+    /// Returns the [CapabilityKind] required to handle events of this type.
+    ///
+    /// Derived from [`Self::kind`] rather than declared separately: the two
+    /// were previously independent, so `kind()` had to panic on a capability
+    /// that was not a `HandleEvent`. Deriving it makes that state
+    /// unrepresentable.
+    fn capability(&self) -> CapabilityKind {
+        CapabilityKind::HandleEvent(self.kind())
     }
 
     /// Converts into Event by consuming the event and storing it in the provided Store

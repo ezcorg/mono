@@ -94,6 +94,9 @@ async fn config_update_is_reflected_in_running_process() -> Result<()> {
     web_server = web_server.with_db_pool(pool);
     web_server.start().await.unwrap();
     let bind_addr = web_server.listen_addr().unwrap();
+    // Keep the server alive for the rest of the test; the process
+    // exits at the end, so leaking it is the intent.
+    #[allow(clippy::mem_forget, reason = "test fixture outlives the test body")]
     std::mem::forget(web_server);
 
     let client = reqwest::Client::builder()

@@ -454,9 +454,12 @@ impl NetfilterManager {
                 "echo 1 > /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || true",
             ],
         ] {
-            match Command::new(flush_cmd[0]).args(&flush_cmd[1..]).status() {
+            let Some((program, args)) = flush_cmd.split_first() else {
+                continue;
+            };
+            match Command::new(program).args(args).status() {
                 Ok(s) if s.success() => {
-                    info!("Flushed conntrack table via {}", flush_cmd[0]);
+                    info!("Flushed conntrack table via {}", program);
                     break;
                 }
                 _ => {}

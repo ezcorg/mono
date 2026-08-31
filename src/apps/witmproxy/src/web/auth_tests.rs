@@ -40,6 +40,9 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
     let base_url = format!("https://{}", bind_addr);
 
     // Leak web_server so it stays alive for the test
+    // Keep the server alive for the rest of the test; the process
+    // exits at the end, so leaking it is the intent.
+    #[allow(clippy::mem_forget, reason = "test fixture outlives the test body")]
     std::mem::forget(web_server);
 
     (client, base_url, pool, temp_dir)

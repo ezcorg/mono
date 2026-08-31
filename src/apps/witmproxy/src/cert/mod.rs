@@ -80,8 +80,8 @@ pub enum CertError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Invalid certificate format")]
-    InvalidFormat,
+    #[error("Invalid certificate format: {0}")]
+    InvalidFormat(String),
 
     #[error("Certificate not found for domain: {0}")]
     NotFound(String),

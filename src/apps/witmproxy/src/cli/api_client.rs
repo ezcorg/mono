@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -59,18 +59,24 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    pub fn new(base_url: &str, token: Option<&str>) -> Self {
-        Self {
-            client: reqwest::Client::builder().build().unwrap(),
+    /// Build a client for the management API.
+    ///
+    /// Fallible because `reqwest` can fail to initialise its TLS backend;
+    /// unwrapping that would abort the CLI with a panic instead of a message.
+    pub fn new(base_url: &str, token: Option<&str>) -> Result<Self> {
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .build()
+                .context("failed to build the API HTTP client")?,
             base_url: base_url.trim_end_matches('/').to_string(),
             token: token.map(|t| t.to_string()),
-        }
+        })
     }
 
     /// Load from stored auth credentials.
     pub fn from_auth_store() -> Result<Option<Self>> {
         match AuthStore::load()? {
-            Some(store) => Ok(Some(Self::new(&store.server_url, Some(&store.token)))),
+            Some(store) => Ok(Some(Self::new(&store.server_url, Some(&store.token))?)),
             None => Ok(None),
         }
     }

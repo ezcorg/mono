@@ -62,6 +62,10 @@ fn plain_response(
     status: StatusCode,
     msg: impl Into<Bytes>,
 ) -> Response<UnsyncBoxBody<Bytes, ErrorCode>> {
+    #[allow(
+        clippy::expect_used,
+        reason = "static status and body; the builder cannot fail on these"
+    )]
     Response::builder()
         .status(status)
         .body(
@@ -140,7 +144,7 @@ impl ProxyServer {
                 ProxyError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
             })?
         } else {
-            "127.0.0.1:0".parse().unwrap()
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0))
         };
 
         let listener = TcpListener::bind(bind_addr).await?;
@@ -848,7 +852,11 @@ where
                         }
                     }
                 } else {
-                    unreachable!()
+                    // No plugin registry: nothing to hand the content to.
+                    return Ok(plain_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Content handling reached without a plugin registry",
+                    ));
                 };
 
                 let content_handling_elapsed = service_fn_start.elapsed()
