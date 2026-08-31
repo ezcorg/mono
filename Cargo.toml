@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "src/apps/witmproxy",
     "src/apps/witmproxy/e2e",
@@ -7,6 +7,7 @@ members = [
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
     "src/rust/witmproxy-plugin-noshorts",
+    "src/rust/witmproxy-plugin-adversarial",
     "src/rust/cicd",
     "src/apps/ezfilter/src-tauri",
     "src/apps/ezfilter/e2e",
@@ -45,3 +46,69 @@ incremental = true
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# ---------------------------------------------------------------------------
+# Workspace lints
+#
+# Opt a crate in with `[lints] workspace = true` in its Cargo.toml.
+#
+# Rationale: witmproxy terminates TLS for untrusted traffic and executes
+# untrusted WASM plugins. A panic on a per-connection or per-plugin task is not
+# a style problem, it is a denial-of-service vector, so the panic-adjacent lints
+# below are treated as a security control rather than a preference.
+#
+# `unwrap_used` / `expect_used` / `panic` start at `warn` while the existing
+# call sites are triaged; raise to `deny` once the backlog is clear.
+# Test code is exempted via the `allow-*-in-tests` keys in clippy.toml.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unused_imports = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Service/plugin stacks produce deep generic types; renaming them into aliases
+# purely to satisfy the lint makes the signatures harder to read, not easier.
+type_complexity = "allow"
+
+# Don't panic: a panic in a connection or plugin task takes down live traffic.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "deny"
+unimplemented = "deny"
+# `unreachable` starts at `warn` alongside unwrap/expect/panic: there are 5
+# existing call sites to triage, and a hard failure would block the migration.
+unreachable = "warn"
+get_unwrap = "deny"
+indexing_slicing = "warn"
+
+# Don't fail silently: dropped futures and swallowed errors hide plugin misbehaviour.
+let_underscore_future = "warn"
+let_underscore_must_use = "warn"
+unused_result_ok = "warn"
+map_err_ignore = "warn"
+
+# Async footguns. `await_holding_lock` in particular encodes the invariant that
+# plugins/registry.rs currently documents in a comment: the plugin-map lock is
+# never held across an await.
+await_holding_lock = "warn"
+await_holding_refcell_ref = "warn"
+if_let_mutex = "warn"
+large_futures = "warn"
+
+# Output discipline: this is a daemon, diagnostics belong in `tracing`.
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "deny"
+
+# Memory / unsafe hygiene.
+mem_forget = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+
+# Numeric correctness: cert validity windows and fuel/quota arithmetic.
+float_cmp = "warn"
+lossy_float_literal = "warn"
+invalid_upcast_comparisons = "warn"
+cast_possible_truncation = "warn"

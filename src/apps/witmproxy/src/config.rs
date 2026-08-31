@@ -308,6 +308,96 @@ pub struct PluginConfig {
     /// WASM fuel limit per plugin execution (default: 1000000). Set to 0 for unlimited.
     #[arg(long = "max-fuel", env = "PLUGINS_MAX_FUEL", default_value = "1000000")]
     pub max_fuel: u64,
+
+    /// Maximum table elements a plugin may allocate (default: 100000). Set to 0
+    /// for unlimited. Table growth is host allocation that `max_memory_mb`,
+    /// which caps guest linear memory, does not bound.
+    #[arg(
+        long = "max-table-elements",
+        env = "PLUGINS_MAX_TABLE_ELEMENTS",
+        default_value = "100000"
+    )]
+    pub max_table_elements: u64,
+
+    /// Maximum concurrent WASM instances per plugin store (default: 64). Set to
+    /// 0 for unlimited.
+    #[arg(
+        long = "max-instances",
+        env = "PLUGINS_MAX_INSTANCES",
+        default_value = "64"
+    )]
+    pub max_instances: u64,
+
+    /// Maximum bytes a plugin may retain in host-side local storage
+    /// (default: 8388608 = 8 MiB). Set to 0 for unlimited.
+    ///
+    /// This is HOST memory, not guest memory, so it is not covered by
+    /// `max_memory_mb`; without a cap a plugin can grow the daemon's resident
+    /// set without bound.
+    #[arg(
+        long = "max-local-storage-bytes",
+        env = "PLUGINS_MAX_LOCAL_STORAGE_BYTES",
+        default_value = "8388608"
+    )]
+    pub max_local_storage_bytes: u64,
+
+    /// Maximum distinct keys a plugin may retain in local storage
+    /// (default: 4096). Set to 0 for unlimited.
+    #[arg(
+        long = "max-local-storage-keys",
+        env = "PLUGINS_MAX_LOCAL_STORAGE_KEYS",
+        default_value = "4096"
+    )]
+    pub max_local_storage_keys: u64,
+
+    /// Maximum bytes a plugin may write to the log per event
+    /// (default: 65536 = 64 KiB). Set to 0 for unlimited.
+    #[arg(
+        long = "max-log-bytes-per-event",
+        env = "PLUGINS_MAX_LOG_BYTES_PER_EVENT",
+        default_value = "65536"
+    )]
+    pub max_log_bytes_per_event: u64,
+
+    /// Maximum log messages a plugin may emit per event (default: 256). Set to
+    /// 0 for unlimited.
+    #[arg(
+        long = "max-log-messages-per-event",
+        env = "PLUGINS_MAX_LOG_MESSAGES_PER_EVENT",
+        default_value = "256"
+    )]
+    pub max_log_messages_per_event: u64,
+
+    /// Maximum bytes a plugin may write into a replacement body
+    /// (default: 134217728 = 128 MiB). Set to 0 for unlimited.
+    ///
+    /// Bounds the amplification available from `content.set-body`: without it a
+    /// plugin can answer a small request with an unbounded response stream.
+    #[arg(
+        long = "max-response-body-bytes",
+        env = "PLUGINS_MAX_RESPONSE_BODY_BYTES",
+        default_value = "134217728"
+    )]
+    pub max_response_body_bytes: u64,
+}
+
+impl PluginConfig {
+    /// The global baseline limits. Per-plugin overrides stored in the database
+    /// are resolved against this; see `crate::plugins::limits`.
+    pub fn resolved_limits(&self) -> crate::plugins::limits::ResolvedLimits {
+        crate::plugins::limits::ResolvedLimits {
+            max_fuel: self.max_fuel,
+            max_memory_mb: self.max_memory_mb,
+            timeout_ms: self.timeout_ms,
+            max_table_elements: self.max_table_elements,
+            max_instances: self.max_instances,
+            max_local_storage_bytes: self.max_local_storage_bytes,
+            max_local_storage_keys: self.max_local_storage_keys,
+            max_log_bytes_per_event: self.max_log_bytes_per_event,
+            max_log_messages_per_event: self.max_log_messages_per_event,
+            max_response_body_bytes: self.max_response_body_bytes,
+        }
+    }
 }
 
 #[derive(Conf, Clone, Deserialize, Serialize, Default, Debug)]

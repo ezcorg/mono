@@ -1,0 +1,27 @@
+.PHONY: all clean wasmsign keys
+.DEFAULT_GOAL := all
+
+WASM := target/wasm32-wasip2/release/{{crate_name}}.wasm
+SIGNED := target/wasm32-wasip2/release/{{crate_name}}.signed.wasm
+
+wasmsign:
+	@command -v wasmsign2 >/dev/null 2>&1 || cargo install wasmsign2-cli
+
+key.secret: wasmsign
+	wasmsign2 keygen --public-key key.public --secret-key key.secret
+
+key.public: key.secret
+
+keys: key.secret key.public
+
+# The public key is compiled into the component (see src/lib.rs) and the host
+# verifies the signature against it before loading the plugin, so the keys must
+# exist before the build.
+all: keys
+	cargo build --release --target wasm32-wasip2
+	wasmsign2 sign -i $(WASM) -o $(SIGNED) -k key.secret
+	@echo "signed component: $(SIGNED)"
+	@echo "install with: witm plugin add $(SIGNED)"
+
+clean:
+	cargo clean

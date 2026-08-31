@@ -1,3 +1,9 @@
+// `witm` is a user-facing CLI: printing results to stdout is the whole point
+// here. The workspace-level `print_stdout`/`print_stderr` lints exist to keep
+// diagnostics out of the daemon and proxy paths, where they must go to
+// `tracing` instead, so the exemption is scoped to this module.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 use crate::{
     AppConfig, CertificateAuthority, WitmProxy,
     config::{
@@ -29,6 +35,7 @@ pub mod api_client;
 pub mod auth;
 pub mod group;
 mod plugin;
+pub mod template;
 mod proxy;
 pub mod service;
 mod tailscale;
@@ -37,7 +44,7 @@ mod trust;
 pub mod update;
 
 #[cfg(test)]
-mod scoping_verify;
+mod scoping_verify_tests;
 #[cfg(test)]
 mod tests;
 
@@ -1175,13 +1182,11 @@ impl ResolvedCli {
         let plugin_registry = if self.config.plugins.enabled {
             let runtime = Runtime::try_default()?;
             let mut registry = PluginRegistry::new(db, runtime)?;
-            // Activate the sandbox limits from config (fuel / memory / timeout).
-            // A value of 0 means "unlimited" for that dimension.
-            registry.set_limits(
-                self.config.plugins.max_fuel,
-                self.config.plugins.max_memory_mb,
-                self.config.plugins.timeout_ms,
-            );
+            // Activate the global baseline sandbox limits from config. A value
+            // of 0 means "unlimited" for that dimension. Individual plugins may
+            // carry overrides in the database, which are resolved against this
+            // baseline per event.
+            registry.set_limits(self.config.plugins.resolved_limits());
             registry.load_plugins().await?;
             info!("Number of plugins loaded: {}", registry.plugins().len());
             Some(Arc::new(registry))

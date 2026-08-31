@@ -90,8 +90,6 @@ url = "2.5"
 
 # Template engine
 askama = { version = "0.15.5", features = ["derive"] }
-# cargo-generate is huge (libgit2, libssh2, openssl) — only needed for `witm plugin new`
-cargo-generate = { version = "0.23.7", features = ["vendored-openssl"], optional = true }
 
 clap = { version = "4.5.47", features = ["derive"] }
 semver = "1"
@@ -132,8 +130,6 @@ tempfile = "3.8"
 default = ["otel"]
 # Feature to expose test utilities for integration tests in other crates
 test-helpers = ["dep:tempfile"]
-# Include cargo-generate for `witm plugin new` (large dependency tree)
-plugin-new = ["dep:cargo-generate"]
 # OpenTelemetry metrics, logs, and tracing
 otel = [
     "dep:opentelemetry",
@@ -143,3 +139,6 @@ otel = [
     "dep:tracing-opentelemetry",
     "dep:sysinfo",
 ]
+
+[lints]
+workspace = true

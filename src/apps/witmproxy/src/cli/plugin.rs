@@ -69,6 +69,24 @@ pub struct PluginNewArgs {
     /// Destination directory for the generated plugin
     #[arg(short, long)]
     pub dest: Option<PathBuf>,
+    /// Plugin namespace (used to scope the plugin's identity)
+    #[arg(long)]
+    pub namespace: Option<String>,
+    /// Plugin author; defaults to `git config user.name`
+    #[arg(long)]
+    pub author: Option<String>,
+    /// Short description of what the plugin does
+    #[arg(long)]
+    pub description: Option<String>,
+    /// SPDX license identifier for the generated project
+    #[arg(long)]
+    pub license: Option<String>,
+    /// Homepage URL for the plugin
+    #[arg(long)]
+    pub url: Option<String>,
+    /// Overwrite files that already exist in the destination
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Conf)]
@@ -120,7 +138,6 @@ pub struct PluginConfigureArgs {
 /// Plugin command handler that contains the resolved configuration and verbose flag
 pub struct PluginHandler {
     pub config: PluginScopedConfig,
-    #[cfg_attr(not(feature = "plugin-new"), allow(dead_code))]
     pub verbose: bool,
 }
 
@@ -132,9 +149,7 @@ impl PluginHandler {
     pub async fn handle(&self, command: &PluginCommands) -> Result<()> {
         match command {
             PluginCommands::List(_) => self.list_plugins().await,
-            PluginCommands::New(a) => {
-                self.create_new_plugin(&a.plugin_name, &a.language, &a.dest).await
-            }
+            PluginCommands::New(a) => self.create_new_plugin(a).await,
             PluginCommands::Add(a) => self.add_plugin(&a.source, a.public_key.as_deref()).await,
             PluginCommands::Remove(a) => self.remove_plugin(&a.plugin_name).await,
             PluginCommands::Configure(a) => {
@@ -332,89 +347,56 @@ impl PluginHandler {
         Ok(())
     }
 
-    #[cfg(feature = "plugin-new")]
-    async fn create_new_plugin(
-        &self,
-        plugin_name: &str,
-        language: &str,
-        dest: &Option<PathBuf>,
-    ) -> Result<()> {
-        use cargo_generate::{GenerateArgs, TemplatePath, generate};
+    /// Scaffold a new plugin project from the templates embedded in this binary.
+    ///
+    /// Previously this shelled out to `cargo-generate` to clone a template repo
+    /// over git. That pulled libgit2, libssh2 and a second vendored OpenSSL into
+    /// the dependency tree (behind the `plugin-new` feature) to do work that is,
+    /// in substance, variable substitution over a handful of files. It also let
+    /// the template drift from the host: the generated project got whatever WIT
+    /// was on the template repo's `main`, which is not necessarily the WIT world
+    /// this binary implements. The embedded templates vendor `wit/` from this
+    /// build, so a scaffolded plugin always matches its host.
+    async fn create_new_plugin(&self, args: &PluginNewArgs) -> Result<()> {
+        use crate::cli::template::{ScaffoldOptions, scaffold};
 
-        let template_path = match language {
-            "rust" => TemplatePath {
-                auto_path: None,
-                subfolder: None,
-                test: false,
-                git: Some("https://github.com/ezcorg/witmproxy-plugin-template-rust".to_string()),
-                branch: Some("main".to_string()),
-                tag: None,
-                revision: None,
-                path: None,
-                favorite: None,
-            },
-            _ => {
-                anyhow::bail!(
-                    "Unsupported language: {}. Currently supported: rust",
-                    language
-                );
-            }
-        };
-        // Resolve destination path
-        let destination = match dest {
+        let destination = match &args.dest {
             Some(path) => std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
             None => std::env::current_dir()?,
         };
-        std::fs::create_dir_all(destination.as_path())?;
 
-        info!(
-            "Creating new plugin '{}' using {} template at destination: {:?}",
-            plugin_name, language, destination
-        );
-
-        let args = GenerateArgs {
-            template_path,
-            list_favorites: false,
-            name: Some(plugin_name.to_string()),
-            force: false,
-            verbose: self.verbose,
-            quiet: false,
-            continue_on_error: false,
-            template_values_file: None,
-            silent: false,
-            config: None,
-            vcs: None,
-            lib: true,
-            bin: false,
-            ssh_identity: None,
-            gitconfig: None,
-            define: vec![format!("plugin-name={}", plugin_name)],
-            init: false,
-            destination: Some(destination),
-            force_git_init: false,
-            allow_commands: false,
-            overwrite: false,
-            skip_submodules: false,
-            other_args: None,
-            no_workspace: false,
+        let opts = ScaffoldOptions {
+            plugin_name: args.plugin_name.clone(),
+            language: args.language.clone(),
+            destination,
+            namespace: args.namespace.clone(),
+            author: args.author.clone(),
+            description: args.description.clone(),
+            license: args.license.clone(),
+            url: args.url.clone(),
+            force: args.force,
         };
 
-        generate(args)?;
+        let root = scaffold(&opts)?;
+
+        info!(
+            plugin_name = %args.plugin_name,
+            language = %args.language,
+            path = %root.display(),
+            "created new plugin project"
+        );
+
+        println!("Created plugin `{}` at {}", args.plugin_name, root.display());
+        println!();
+        println!("Next steps:");
+        println!("  cd {}", root.display());
+        println!("  make                 # generate signing keys, build, and sign");
+        println!(
+            "  witm plugin add target/wasm32-wasip2/release/{}.signed.wasm",
+            args.plugin_name.replace('-', "_")
+        );
 
         Ok(())
-    }
-
-    #[cfg(not(feature = "plugin-new"))]
-    async fn create_new_plugin(
-        &self,
-        _plugin_name: &str,
-        _language: &str,
-        _dest: &Option<PathBuf>,
-    ) -> Result<()> {
-        anyhow::bail!(
-            "The `plugin new` command requires the `plugin-new` feature.\n\
-             Reinstall with: cargo install witmproxy --features plugin-new"
-        );
     }
 
     /// Fetch WASM bytes from a URL or local file path.

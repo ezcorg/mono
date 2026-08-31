@@ -522,6 +522,45 @@ pub async fn create_client(
         .unwrap()
 }
 
+/// Path to the deliberately hostile test component, building it on demand.
+///
+/// Unsigned on purpose: the fixture declares an empty public key so the host
+/// skips signature verification, which keeps `wasmsign2` out of the test path.
+pub fn adversarial_component_path() -> Result<String> {
+    let path = format!(
+        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_adversarial.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    if !Path::new(&path).exists() {
+        let root = format!("{}/../../..", env!("CARGO_MANIFEST_DIR"));
+        let status = Command::new("cargo")
+            .current_dir(&root)
+            .args([
+                "build",
+                "--release",
+                "--target",
+                "wasm32-wasip2",
+                "-p",
+                "witmproxy-plugin-adversarial",
+            ])
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to build the adversarial component: {e}"))?;
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "building witmproxy-plugin-adversarial failed with status {status}"
+            ));
+        }
+        if !Path::new(&path).exists() {
+            return Err(anyhow::anyhow!(
+                "build succeeded but {path} is missing"
+            ));
+        }
+    }
+
+    Ok(path)
+}
+
 pub fn test_component_path() -> Result<String> {
     let path = format!(
         "{}/../../../target/wasm32-wasip2/release/wasm_test_component.signed.wasm",

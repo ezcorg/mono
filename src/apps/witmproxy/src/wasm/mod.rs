@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 
 use anyhow::Result;
@@ -25,13 +26,14 @@ mod runtime;
 
 use crate::events::content::InboundContent;
 use crate::plugins::capabilities::Capability;
+use crate::plugins::limits::{BreachRecorder, LimitKind, ResolvedLimits};
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     CapabilityKind, HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
     HostCapabilityProviderWithStore, HostClockClient, HostClockClientWithStore, HostContent,
     HostContentWithStore, HostLocalStorageClient, HostLocalStorageClientWithStore, HostLogger,
     HostLoggerWithStore,
 };
-pub use runtime::{PluginLimits, Runtime};
+pub use runtime::Runtime;
 
 pub mod bindgen;
 
@@ -104,7 +106,12 @@ impl CapabilityProvider {
     /// plugin, owned by the registry). A clone is handed to the provider so
     /// that writes survive across events for the same plugin. `None` disables
     /// the local-storage capability even if granted.
-    pub fn build(capabilities: &[Capability], local_storage: Option<LocalStorageClient>) -> Self {
+    pub fn build(
+        capabilities: &[Capability],
+        local_storage: Option<LocalStorageClient>,
+        limits: &ResolvedLimits,
+        breaches: Arc<BreachRecorder>,
+    ) -> Self {
         let mut provider = CapabilityProvider::new();
         for cap in capabilities {
             if !cap.granted {
@@ -112,7 +119,10 @@ impl CapabilityProvider {
             }
             match &cap.inner.kind {
                 CapabilityKind::Logger => {
-                    provider = provider.with_logger(Logger::new());
+                    // A fresh logger per provider, i.e. per event: the budget is
+                    // a per-event budget by construction.
+                    provider =
+                        provider.with_logger(Logger::with_limits(limits, Arc::clone(&breaches)));
                 }
                 CapabilityKind::Annotator => {
                     provider = provider.with_annotator(AnnotatorClient::new());
@@ -139,7 +149,12 @@ impl From<&Vec<Capability>> for CapabilityProvider {
         // Fresh (non-persistent) local storage. Callers that need storage to
         // survive across events should use `CapabilityProvider::build` with a
         // persistent client instead.
-        Self::build(capabilities, Some(LocalStorageClient::new()))
+        Self::build(
+            capabilities,
+            Some(LocalStorageClient::new()),
+            &ResolvedLimits::DEFAULTS,
+            BreachRecorder::new("<anonymous>"),
+        )
     }
 }
 
@@ -255,28 +270,150 @@ where
     }
 }
 
+/// Shared budget state. Held behind an `Arc` so every clone of a `Logger`
+/// charges the SAME budget: `CapabilityProvider::logger()` hands out a clone on
+/// every call, so a per-clone budget would be trivially bypassed by a guest
+/// re-acquiring the capability in a loop.
+#[derive(Debug)]
+struct LogBudget {
+    bytes_used: AtomicU64,
+    messages_used: AtomicU64,
+    /// `0` means unbounded.
+    max_bytes: u64,
+    /// `0` means unbounded.
+    max_messages: u64,
+    breaches: Arc<BreachRecorder>,
+}
+
+/// Per-event logging budget for one plugin.
+///
+/// Two problems are addressed here.
+///
+/// **Volume.** The log sink is backed by `tracing-appender` writing to disk, so
+/// an unthrottled plugin can fill the operator's disk from inside the sandbox.
+/// A plugin holding the `logger` capability is trusted to describe what it is
+/// doing, not to decide how much of the host's disk it may consume, so the
+/// budget is per event and is reset for every event.
+///
+/// **Injection.** The message is guest-controlled and was previously passed to
+/// `tracing` verbatim. A message containing newlines can forge additional log
+/// lines -- including lines that look like they came from the host -- which
+/// corrupts exactly the audit trail an operator would use to investigate the
+/// plugin. Control characters are escaped rather than dropped so the original
+/// content is still recoverable.
 #[derive(Clone)]
-pub struct Logger {}
+pub struct Logger {
+    budget: Arc<LogBudget>,
+}
+
+/// Longest single message admitted after escaping. Bounds one pathological
+/// message independently of the per-event byte budget.
+const MAX_LOG_MESSAGE_LEN: usize = 8 * 1024;
 
 impl Logger {
     pub fn new() -> Self {
-        Self {}
+        Self::with_limits(&ResolvedLimits::DEFAULTS, BreachRecorder::new("<unknown>"))
+    }
+
+    pub fn with_limits(limits: &ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
+        Self {
+            budget: Arc::new(LogBudget {
+                bytes_used: AtomicU64::new(0),
+                messages_used: AtomicU64::new(0),
+                max_bytes: limits.max_log_bytes_per_event,
+                max_messages: limits.max_log_messages_per_event,
+                breaches,
+            }),
+        }
+    }
+
+    /// Escape control characters so a guest cannot forge log lines, and bound
+    /// the length of any single message.
+    fn sanitize(message: &str) -> String {
+        let mut out = String::with_capacity(message.len().min(MAX_LOG_MESSAGE_LEN));
+        for ch in message.chars() {
+            if out.len() >= MAX_LOG_MESSAGE_LEN {
+                out.push_str("...[truncated]");
+                break;
+            }
+            match ch {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if c.is_control() => out.push_str(&format!("\\u{{{:04x}}}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    /// Test accessor for [`Self::sanitize`], which is an implementation
+    /// detail everywhere else.
+    #[cfg(test)]
+    pub fn sanitize_for_test(message: &str) -> String {
+        Self::sanitize(message)
+    }
+
+    /// Charge a message against the per-event budget.
+    ///
+    /// Returns the sanitized message when it may be emitted, or `None` when the
+    /// budget is exhausted (recorded and reported to the operator).
+    fn admit(&self, message: &str) -> Option<String> {
+        let msg = Self::sanitize(message);
+
+        let b = &*self.budget;
+        if b.max_messages > 0 {
+            let used = b.messages_used.fetch_add(1, Ordering::Relaxed) + 1;
+            if used > b.max_messages {
+                // Report only on the transition, so the breach report itself
+                // cannot become the flood.
+                if used == b.max_messages + 1 {
+                    b.breaches
+                        .record(LimitKind::LogMessages, used, b.max_messages);
+                }
+                return None;
+            }
+        }
+
+        if b.max_bytes > 0 {
+            let used = b
+                .bytes_used
+                .fetch_add(msg.len() as u64, Ordering::Relaxed)
+                + msg.len() as u64;
+            if used > b.max_bytes {
+                if used.saturating_sub(msg.len() as u64) <= b.max_bytes {
+                    b.breaches
+                        .record(LimitKind::LogBytes, used, b.max_bytes);
+                }
+                return None;
+            }
+        }
+
+        Some(msg)
     }
 
     pub fn info(&self, message: String) {
-        tracing::info!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::info!(target: "plugins::guest", "{}", m);
+        }
     }
 
     pub fn warn(&self, message: String) {
-        tracing::warn!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::warn!(target: "plugins::guest", "{}", m);
+        }
     }
 
     pub fn error(&self, message: String) {
-        tracing::error!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::error!(target: "plugins::guest", "{}", m);
+        }
     }
 
     pub fn debug(&self, message: String) {
-        tracing::debug!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::debug!(target: "plugins::guest", "{}", m);
+        }
     }
 }
 
@@ -289,9 +426,28 @@ impl Default for Logger {
 /// A local storage client with shared mutable state via Arc<RwLock<>>.
 /// Clone is cheap (just Arc clone) and all clones share the same storage.
 /// Uses Bytes internally for efficient storage and cheap cloning.
+///
+/// # Quotas
+///
+/// This map lives in HOST memory and persists for the lifetime of the plugin,
+/// so it is not bounded by the store's `max_memory_mb` limit (which caps guest
+/// linear memory only). Without an explicit quota a plugin could grow the
+/// daemon's resident set without bound -- one `set()` per request is enough --
+/// while staying entirely inside its guest memory cap.
+///
+/// The caps are held in atomics rather than captured at construction because
+/// the client is persistent across events while the operator's configuration
+/// can change; the registry refreshes them per event.
 #[derive(Clone)]
 pub struct LocalStorageClient {
     store: Arc<RwLock<HashMap<String, Bytes>>>,
+    /// Current total accounted size, in bytes (keys plus values).
+    bytes_used: Arc<AtomicU64>,
+    /// `0` means unbounded.
+    max_bytes: Arc<AtomicU64>,
+    /// `0` means unbounded.
+    max_keys: Arc<AtomicU64>,
+    breaches: Arc<BreachRecorder>,
 }
 
 impl Default for LocalStorageClient {
@@ -302,14 +458,76 @@ impl Default for LocalStorageClient {
 
 impl LocalStorageClient {
     pub fn new() -> Self {
+        Self::with_limits(&ResolvedLimits::DEFAULTS, BreachRecorder::new("<unknown>"))
+    }
+
+    pub fn with_limits(limits: &ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
         Self {
             store: Arc::new(RwLock::new(HashMap::new())),
+            bytes_used: Arc::new(AtomicU64::new(0)),
+            max_bytes: Arc::new(AtomicU64::new(limits.max_local_storage_bytes)),
+            max_keys: Arc::new(AtomicU64::new(limits.max_local_storage_keys)),
+            breaches,
         }
     }
 
-    /// Set a key-value pair in the store (async)
-    pub async fn set(&self, key: String, value: Vec<u8>) {
-        self.store.write().await.insert(key, Bytes::from(value));
+    /// Refresh the quotas from the plugin's currently-effective limits.
+    /// Called per event so a configuration change takes effect without a
+    /// restart and without discarding the plugin's stored data.
+    pub fn update_limits(&self, limits: &ResolvedLimits) {
+        self.max_bytes
+            .store(limits.max_local_storage_bytes, Ordering::Relaxed);
+        self.max_keys
+            .store(limits.max_local_storage_keys, Ordering::Relaxed);
+    }
+
+    /// Bytes currently accounted against the quota.
+    pub fn bytes_used(&self) -> u64 {
+        self.bytes_used.load(Ordering::Relaxed)
+    }
+
+    /// Set a key-value pair in the store (async).
+    ///
+    /// Returns `false` when the write was refused for exceeding a quota. The
+    /// WIT signature returns nothing, so a refusal is invisible to the guest by
+    /// design -- a plugin must not be able to probe the host's remaining
+    /// headroom -- but it is recorded and logged for the operator.
+    pub async fn set(&self, key: String, value: Vec<u8>) -> bool {
+        let max_bytes = self.max_bytes.load(Ordering::Relaxed);
+        let max_keys = self.max_keys.load(Ordering::Relaxed);
+
+        // Account for the key as well as the value: many small keys are just as
+        // effective at exhausting memory as one large value.
+        let incoming = (key.len() as u64).saturating_add(value.len() as u64);
+
+        let mut guard = self.store.write().await;
+        let previous = guard.get(&key).map(|v| (key.len() as u64).saturating_add(v.len() as u64));
+        let is_new_key = previous.is_none();
+
+        if max_keys > 0 && is_new_key && guard.len() as u64 >= max_keys {
+            let attempted = (guard.len() as u64).saturating_add(1);
+            drop(guard);
+            self.breaches
+                .record(LimitKind::LocalStorageKeys, attempted, max_keys);
+            return false;
+        }
+
+        let projected = self
+            .bytes_used
+            .load(Ordering::Relaxed)
+            .saturating_sub(previous.unwrap_or(0))
+            .saturating_add(incoming);
+
+        if max_bytes > 0 && projected > max_bytes {
+            drop(guard);
+            self.breaches
+                .record(LimitKind::LocalStorageBytes, projected, max_bytes);
+            return false;
+        }
+
+        guard.insert(key, Bytes::from(value));
+        self.bytes_used.store(projected, Ordering::Relaxed);
+        true
     }
 
     /// Get a value by key (async). Returns cloned Bytes which is cheap.
@@ -319,8 +537,27 @@ impl LocalStorageClient {
 
     /// Delete a key from the store (async)
     pub async fn delete(&self, key: &str) {
-        self.store.write().await.remove(key);
+        if let Some(removed) = self.store.write().await.remove(key) {
+            let freed = (key.len() as u64).saturating_add(removed.len() as u64);
+            let _ = self
+                .bytes_used
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                    Some(cur.saturating_sub(freed))
+                });
+        }
     }
+}
+
+
+/// Decide whether a `set-body` chunk fits within the configured cap.
+///
+/// Split out of the stream consumer (a local struct inside `set_body`) purely
+/// so the arithmetic is reachable from tests. `0` means unbounded.
+pub(crate) fn body_chunk_admitted(written: u64, chunk_len: u64, max_bytes: u64) -> bool {
+    if max_bytes == 0 {
+        return true;
+    }
+    written.saturating_add(chunk_len) <= max_bytes
 }
 
 /// A clock client providing access to the current system time.
@@ -358,7 +595,8 @@ impl Default for ClockClient {
 /// Builder-style structure used to create a [`WitmProxyCtx`].
 #[derive(Default)]
 pub struct WitmProxyCtxBuilder {
-    // Add any initial configuration here
+    limits: Option<ResolvedLimits>,
+    breaches: Option<Arc<BreachRecorder>>,
 }
 
 impl WitmProxyCtxBuilder {
@@ -368,16 +606,31 @@ impl WitmProxyCtxBuilder {
     }
 
     /// Uses the configured context so far to construct the final [`WitmProxyCtx`].
+    /// Attach the effective per-plugin limits and breach recorder.
+    pub fn with_limits(mut self, limits: ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
+        self.limits = Some(limits);
+        self.breaches = Some(breaches);
+        self
+    }
+
     pub fn build(self) -> WitmProxyCtx {
         WitmProxyCtx {
-            // Initialize context state
+            limits: self.limits.unwrap_or(ResolvedLimits::DEFAULTS),
+            breaches: self
+                .breaches
+                .unwrap_or_else(|| BreachRecorder::new("<unknown>")),
         }
     }
 }
 
 /// Capture the state necessary for use in the `witmproxy:plugin` API implementation.
 pub struct WitmProxyCtx {
-    // Add context state here
+    /// Effective limits for the plugin this store belongs to. Host capability
+    /// implementations (which only see the store, not the registry) read these
+    /// to enforce quotas on guest-driven work such as `content.set-body`.
+    pub limits: ResolvedLimits,
+    /// Breach recorder for the same plugin.
+    pub breaches: Arc<BreachRecorder>,
 }
 
 impl WitmProxyCtx {
@@ -389,14 +642,24 @@ impl WitmProxyCtx {
 
 /// A wrapper capturing the needed internal `witmproxy:plugin` state.
 pub struct WitmProxyCtxView<'a> {
-    _ctx: &'a WitmProxyCtx,
+    ctx: &'a WitmProxyCtx,
     pub table: &'a mut ResourceTable,
 }
 
 impl<'a> WitmProxyCtxView<'a> {
     /// Create a new view into the `witmproxy:plugin` state.
     pub fn new(ctx: &'a WitmProxyCtx, table: &'a mut ResourceTable) -> Self {
-        Self { _ctx: ctx, table }
+        Self { ctx, table }
+    }
+
+    /// Effective limits for the plugin owning this store.
+    pub fn limits(&self) -> &ResolvedLimits {
+        &self.ctx.limits
+    }
+
+    /// Breach recorder for the plugin owning this store.
+    pub fn breaches(&self) -> Arc<BreachRecorder> {
+        Arc::clone(&self.ctx.breaches)
     }
 }
 
@@ -412,11 +675,40 @@ pub struct Host {
     pub limits: wasmtime::StoreLimits,
 }
 
+impl Host {
+    /// Build host state carrying the effective limits and breach recorder for
+    /// the plugin this store belongs to.
+    pub fn with_context(limits: ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
+        let mut host = Self::default();
+        host.witmproxy_ctx = WitmProxyCtxBuilder::new()
+            .with_limits(limits, breaches)
+            .build();
+        host
+    }
+}
+
 impl Default for Host {
     fn default() -> Self {
         Self {
             table: ResourceTable::new(),
-            wasi: WasiCtxBuilder::new().build(),
+            wasi: {
+                // Defence in depth. The linker registers the whole WASI p2/p3
+                // surface, including `wasi:sockets`. A default `WasiCtx` denies
+                // every address through its socket-address check, so a plugin
+                // cannot actually connect -- but `allow_tcp` / `allow_udp`
+                // default to true, which leaves the socket *machinery* reachable
+                // and one future default change away from being useful. The
+                // proxy grants plugins no outbound network capability by
+                // design (note the deliberately omitted `wasi:http/client` in
+                // `Runtime::build_linker`), so state that here explicitly
+                // rather than relying on a default.
+                let mut builder = WasiCtxBuilder::new();
+                builder
+                    .allow_tcp(false)
+                    .allow_udp(false)
+                    .allow_ip_name_lookup(false);
+                builder.build()
+            },
             http: WasiHttpCtx::new(),
             witmproxy_ctx: WitmProxyCtxBuilder::new().build(),
             limits: wasmtime::StoreLimits::default(),
@@ -500,9 +792,22 @@ impl HostContentWithStore for WitmProxy {
             Ok::<(), wasmtime::component::ResourceTableError>(())
         })?;
 
-        // Create a StreamConsumer that forwards data to the channel
+        // Create a StreamConsumer that forwards data to the channel.
+        //
+        // The guest supplies this stream, so its length is guest-controlled and
+        // unrelated to the size of the request that triggered the event: without
+        // a cap, a plugin can answer a small request with an unbounded response
+        // and turn the proxy into an amplifier.
         struct ChannelStreamConsumer {
             tx: PollSender<Result<Frame<Bytes>, ErrorCode>>,
+            /// Bytes forwarded so far.
+            written: u64,
+            /// `0` means unbounded.
+            max_bytes: u64,
+            breaches: Arc<BreachRecorder>,
+            /// Set once the cap trips, so the breach is reported exactly once
+            /// even if the consumer is polled again.
+            tripped: bool,
         }
 
         impl<D> wasmtime::component::StreamConsumer<D> for ChannelStreamConsumer {
@@ -525,10 +830,37 @@ impl HostContentWithStore for WitmProxy {
 
                         // Only send frame if there's data
                         if n > 0 {
+                            let max = self.max_bytes;
+                            let projected = self.written.saturating_add(n as u64);
+
+                            if !body_chunk_admitted(self.written, n as u64, max) {
+                                // Fail the body rather than truncating it. A
+                                // silently short body is worse than a failed
+                                // one: truncated JSON or HTML can parse as
+                                // valid-but-wrong downstream, whereas an error
+                                // frame surfaces as a failed response.
+                                if !self.tripped {
+                                    self.tripped = true;
+                                    self.breaches.record(
+                                        LimitKind::ResponseBodyBytes,
+                                        projected,
+                                        max,
+                                    );
+                                }
+                                let _ = self.tx.send_item(Err(ErrorCode::InternalError(Some(
+                                    format!(
+                                        "plugin response body exceeded the configured \
+                                         limit of {max} bytes"
+                                    ),
+                                ))));
+                                return Poll::Ready(Ok(StreamResult::Dropped));
+                            }
+
                             let buf = Bytes::copy_from_slice(buf);
                             match self.tx.send_item(Ok(Frame::data(buf))) {
                                 Ok(()) => {
                                     src.mark_read(n);
+                                    self.written = projected;
                                     Poll::Ready(Ok(StreamResult::Completed))
                                 }
                                 Err(..) => {
@@ -554,10 +886,24 @@ impl HostContentWithStore for WitmProxy {
             }
         }
 
-        // Pipe the stream reader to the channel consumer
+        // Pipe the stream reader to the channel consumer, carrying this
+        // plugin's effective body cap.
         let poll_sender = PollSender::new(tx);
         accessor.with(|mut access| {
-            let _ = content.pipe(&mut access, ChannelStreamConsumer { tx: poll_sender });
+            let (max_bytes, breaches) = {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                (state.limits().max_response_body_bytes, state.breaches())
+            };
+            let _ = content.pipe(
+                &mut access,
+                ChannelStreamConsumer {
+                    tx: poll_sender,
+                    written: 0,
+                    max_bytes,
+                    breaches,
+                    tripped: false,
+                },
+            );
         });
 
         Ok(())

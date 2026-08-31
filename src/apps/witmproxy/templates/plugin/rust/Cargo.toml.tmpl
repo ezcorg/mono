@@ -1,0 +1,28 @@
+[package]
+name = "{{project-name}}"
+version = "0.1.0"
+edition = "2024"
+authors = ["{{author}}"]
+description = "{{description}}"
+license = "{{license}}"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "{{wit-bindgen-version}}"
+
+[package.metadata.component]
+package = "witmproxy:{{project-name}}"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]
+
+[profile.release]
+# Plugins are instantiated per event; a smaller module is a faster instantiation
+# and a smaller memory footprint under the host's per-plugin memory cap.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

@@ -4,9 +4,11 @@ on:
   pull_request:
     paths:
       - 'src/apps/witmproxy/**'
-      - 'src/apps/cargo-generate/**'
-      - 'src/rust/confique/**'
+      - 'src/rust/conf-rs/**'
       - 'src/rust/witmproxy-plugin-noop/**'
+      - 'src/rust/witmproxy-plugin-adversarial/**'
+      - 'clippy.toml'
+      - 'deny.toml'
       - 'Cargo.toml'
       - '.github/workflows/witmproxy-test.yml'
       - '.github/workflows/witmproxy-publish.yml'
@@ -15,12 +17,17 @@ on:
       - main
     paths:
       - 'src/apps/witmproxy/**'
-      - 'src/apps/cargo-generate/**'
-      - 'src/rust/confique/**'
+      - 'src/rust/conf-rs/**'
       - 'src/rust/witmproxy-plugin-noop/**'
+      - 'src/rust/witmproxy-plugin-adversarial/**'
+      - 'clippy.toml'
+      - 'deny.toml'
       - 'Cargo.toml'
       - '.github/workflows/witmproxy-test.yml'
       - '.github/workflows/witmproxy-publish.yml'
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -38,18 +45,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: nightly
           components: rustfmt, clippy
           targets: wasm32-wasip2, wasm32-unknown-unknown
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -82,8 +90,25 @@ jobs:
           make -C src/rust/wasm-test-component
           make -C src/rust/witmproxy-plugin-noshorts
 
+      # The adversarial fixture is built explicitly rather than on demand so a
+      # build failure here is reported as a build failure, not as a confusing
+      # test failure inside the suite.
+      - name: Build adversarial plugin fixture
+        run: cargo build --release --target wasm32-wasip2 -p witmproxy-plugin-adversarial
+
       - name: Run library tests
         run: cargo test --package witmproxy --lib
+
+      # `otel` is on by default; nothing else exercises the feature being off.
+      - name: Check --no-default-features
+        if: runner.os == 'Linux'
+        run: cargo check --package witmproxy --no-default-features
+
+      - name: Check documentation
+        if: runner.os == 'Linux'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --package witmproxy --no-deps
 
       - name: Build witmproxy binary
         run: cargo build --package witmproxy --bin witm
@@ -111,17 +136,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: nightly
           targets: ${{ matrix.target }}
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -138,7 +164,7 @@ jobs:
         run: cargo build --package witmproxy --bin witm --release --target ${{ matrix.target }}
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}
           path: |

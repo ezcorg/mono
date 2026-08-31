@@ -10,12 +10,13 @@ use wasmtime::Store;
 use wasmtime::component::{Component, InstancePre, Resource};
 use wasmtime_wasi_http::p3::{Request as WasiRequest, WasiHttpView};
 
+use crate::plugins::limits::{BreachRecorder, LimitOverrides, ResolvedLimits};
 use crate::{
     db::{Db, Insert},
     events::{Event, connect::Connect, content::InboundContent, response::ContextualResponse},
     plugins::WitmPlugin,
     wasm::{
-        CapabilityProvider, Host, LocalStorageClient, PluginLimits, Runtime,
+        CapabilityProvider, Host, LocalStorageClient, Runtime,
         bindgen::{
             Plugin, UserInput,
             witmproxy::plugin::capabilities::{
@@ -47,6 +48,9 @@ pub struct PluginRegistry {
     /// Count of import resolutions actually performed (cache misses). A plugin
     /// invoked N times should resolve exactly once. Exposed for tests.
     instance_pre_resolutions: AtomicUsize,
+    /// One breach recorder per plugin id, so limit-breach counts accumulate
+    /// across events rather than resetting per request.
+    breaches: Mutex<HashMap<String, Arc<BreachRecorder>>>,
 }
 
 impl WasmEvent {
@@ -127,6 +131,7 @@ impl PluginRegistry {
             local_storage: Mutex::new(HashMap::new()),
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),
+            breaches: Mutex::new(HashMap::new()),
         })
     }
 
@@ -158,20 +163,37 @@ impl PluginRegistry {
 
     /// Set the per-plugin resource limits enforced during guest execution.
     /// A value of `0` for any limit disables that dimension (unlimited).
-    pub fn set_limits(&mut self, max_fuel: u64, max_memory_mb: u64, timeout_ms: u64) {
-        self.runtime.limits = PluginLimits {
-            max_fuel,
-            max_memory_mb,
-            timeout_ms,
-        };
+    /// Set the *global* baseline limits. Per-plugin overrides are resolved
+    /// against these at execution time, so tightening a global default never
+    /// removes an operator's ability to loosen it for one plugin.
+    pub fn set_limits(&mut self, limits: ResolvedLimits) {
+        self.runtime.limits = limits;
     }
 
     /// Get (or lazily create) the persistent local-storage client for a plugin.
+    /// Per-plugin breach recorder, created on first use. Shared so the breach
+    /// counter accumulates across events rather than resetting each request --
+    /// a plugin that trips a limit on every single request is a different
+    /// signal from one that tripped it once.
+    fn breaches_for(&self, plugin_id: &str) -> Arc<BreachRecorder> {
+        let mut map = match self.breaches.lock() {
+            Ok(map) => map,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Arc::clone(
+            map.entry(plugin_id.to_string())
+                .or_insert_with(|| BreachRecorder::new(plugin_id)),
+        )
+    }
+
     fn local_storage_for(&self, plugin_id: &str) -> LocalStorageClient {
-        let mut map = self
-            .local_storage
-            .lock()
-            .expect("local_storage mutex poisoned");
+        let mut map = match self.local_storage.lock() {
+            Ok(map) => map,
+            // This map is a plain cache with no cross-entry invariant, so a
+            // panic elsewhere cannot have left it inconsistent. Recovering
+            // beats propagating a panic onto a live connection task.
+            Err(poisoned) => poisoned.into_inner(),
+        };
         map.entry(plugin_id.to_string())
             .or_insert_with(LocalStorageClient::new)
             .clone()
@@ -298,6 +320,20 @@ impl PluginRegistry {
         Ok(plugin)
     }
 
+    /// Register a directly-constructed plugin, compiling its capability scope
+    /// expressions the way the real load path does.
+    ///
+    /// Test-only. Production always arrives through `plugin_from_component`,
+    /// which compiles the scopes as part of loading. Without that compilation
+    /// `can_handle` finds no CEL program for any capability and silently
+    /// returns false, so a test that skips it never executes the plugin it
+    /// thinks it is testing.
+    #[cfg(test)]
+    pub(crate) async fn register_plugin_for_test(&self, plugin: WitmPlugin) -> Result<()> {
+        let plugin = plugin.compile_capability_scope_expressions(self.env)?;
+        self.register_plugin(plugin).await
+    }
+
     pub async fn register_plugin(&self, plugin: WitmPlugin) -> Result<()> {
         // Upsert the given plugin into the database (`Insert` takes `&mut Db`
         // but only needs the Clone pool).
@@ -390,8 +426,17 @@ impl PluginRegistry {
         Ok(removed_plugin_ids)
     }
 
-    fn new_store(&self) -> Store<Host> {
-        self.runtime.new_store()
+    /// A store for host-side event data, carrying the *global* limits: this
+    /// store holds the in-flight event, not any one plugin's guest state.
+    fn new_store(&self) -> Result<Store<Host>> {
+        self.runtime
+            .new_store(&self.runtime.limits, BreachRecorder::new("<event>"))
+    }
+
+    /// Resolve the effective limits for one plugin: its overrides applied over
+    /// the global baseline.
+    fn limits_for(&self, overrides: &LimitOverrides) -> ResolvedLimits {
+        overrides.resolve(&self.runtime.limits)
     }
 
     /// Run one plugin's `create` + `handle` against `store`, enforcing the
@@ -408,11 +453,19 @@ impl PluginRegistry {
         cap_resource: Resource<CapabilityProvider>,
         config: Vec<UserInput>,
         kind: EventKind,
+        limits: &ResolvedLimits,
     ) -> Result<(GuestStep, Store<Host>)> {
-        // Apply the per-call fuel budget (the memory cap, if any, is already
+        // Apply the per-call budgets (the memory/table caps are already
         // installed on the store). A `0` limit means unbounded.
-        self.runtime.apply_call_limits(&mut store);
-        let timeout_ms = self.runtime.limits.timeout_ms;
+        //
+        // `apply_call_limits` arms an epoch deadline as well as fuel. That is
+        // what makes the wall-clock bound below meaningful: `tokio::time::timeout`
+        // can only cancel a future, and cancelling the future that drives a
+        // guest does not stop a guest that never yields back to the executor.
+        // The epoch deadline preempts it from outside; the timeout remains as a
+        // second bound covering time spent in host calls.
+        self.runtime.apply_call_limits(&mut store, limits)?;
+        let timeout_ms = limits.timeout_ms;
 
         // Snapshot enough to rebuild the *unmodified* event from the store if the
         // guest fails, so the chain can continue (fail open).
@@ -619,7 +672,7 @@ impl PluginRegistry {
                 "No plugins with matching capability and scope; skipping plugin processing for event of kind: {:?}",
                 event.kind()
             );
-            let mut store = self.new_store();
+            let mut store = self.new_store()?;
             let event_data = event.into_event_data(&mut store)?;
             return Ok((event_data, store));
         }
@@ -630,7 +683,7 @@ impl PluginRegistry {
         );
 
         let mut current_event = event;
-        let mut store = self.new_store();
+        let mut store = self.new_store()?;
         let mut executed_plugins = HashSet::new();
 
         while let Some(plugin) =
@@ -647,6 +700,12 @@ impl PluginRegistry {
             let plugin_id = plugin.id();
             executed_plugins.insert(plugin_id.clone());
             let kind = current_event.kind();
+
+            // Effective limits for THIS plugin: its overrides applied over the
+            // global baseline. Resolved per event rather than cached so an
+            // operator's change takes effect on the next request without a
+            // restart.
+            let plugin_limits = self.limits_for(&plugin.limits);
             let component = if let Some(c) = &plugin.component {
                 c
             } else {
@@ -662,7 +721,11 @@ impl PluginRegistry {
             // Resolve+cache the component's imports once (InstancePre), then pay
             // only the cheap per-event instantiation on this and future events.
             let instantiated = match self.instance_pre_for(&plugin_id, component) {
-                Ok(pre) => self.runtime.instantiate_from_pre(&pre).await,
+                Ok(pre) => {
+                    self.runtime
+                        .instantiate_from_pre(&pre, &plugin_limits, self.breaches_for(&plugin_id))
+                        .await
+                }
                 Err(e) => Err(e),
             };
             let (plugin_instance, component_store) = match instantiated {
@@ -684,9 +747,16 @@ impl PluginRegistry {
 
             // Build the capability provider, handing the plugin its PERSISTENT
             // local-storage client so writes survive across events.
+            let storage = self.local_storage_for(&plugin_id);
+            // Refresh the persistent client's quotas from this plugin's
+            // currently-effective limits, so a configuration change applies on
+            // the next event without discarding stored data.
+            storage.update_limits(&plugin_limits);
             let provider = CapabilityProvider::build(
                 &plugin.capabilities,
-                Some(self.local_storage_for(&plugin_id)),
+                Some(storage),
+                &plugin_limits,
+                self.breaches_for(&plugin_id),
             );
             let cap_resource = store.data_mut().table.push(provider)?;
             let config = plugin.configuration.clone();
@@ -700,6 +770,7 @@ impl PluginRegistry {
                     cap_resource,
                     config,
                     kind,
+                    &plugin_limits,
                 )
                 .await?;
             store = next_store;
@@ -785,6 +856,7 @@ mod tests {
         ];
 
         let plugin = WitmPlugin {
+            limits: Default::default(),
             name: "test_plugin_with_filter".into(),
             component_bytes,
             namespace: "test".into(),
@@ -969,6 +1041,7 @@ mod tests {
         ];
 
         let plugin = WitmPlugin {
+            limits: Default::default(),
             name: "response_only_plugin".into(),
             component_bytes,
             namespace: "test".into(),
@@ -1055,6 +1128,7 @@ mod tests {
         ];
 
         let plugin2 = WitmPlugin {
+            limits: Default::default(),
             name: "second_test_plugin".into(),
             component_bytes,
             namespace: "test".into(),
@@ -1184,6 +1258,7 @@ mod tests {
             ];
 
             let plugin = WitmPlugin {
+                limits: Default::default(),
                 name: name.to_string(),
                 component_bytes: component_bytes.clone(),
                 namespace: namespace.to_string(),

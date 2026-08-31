@@ -1,0 +1,112 @@
+use crate::exports::witmproxy::plugin::witm_plugin::{
+    Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
+    Plugin as PluginResource, PluginManifest, UserInput,
+};
+use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
+
+wit_bindgen::generate!({
+    world: "witmproxy:plugin/plugin",
+    async: true,
+    generate_all
+});
+
+/// The host verifies the component's signature against this key before loading
+/// it. `make` generates the keypair; `key.secret` must never be committed.
+const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
+
+struct Component;
+
+impl Guest for Component {
+    type Plugin = PluginInstance;
+
+    async fn manifest() -> PluginManifest {
+        PluginManifest {
+            name: "{{plugin-name}}".to_string(),
+            namespace: "{{namespace}}".to_string(),
+            author: "{{author}}".to_string(),
+            version: "0.1.0".to_string(),
+            description: "{{description}}".to_string(),
+            license: "{{license}}".to_string(),
+            url: "{{url}}".to_string(),
+            publickey: PUBLIC_KEY_BYTES.to_vec(),
+            metadata: vec![],
+
+            // Capabilities you request. The user decides what is actually
+            // granted, and may narrow any scope below -- so always handle the
+            // case where a capability comes back as `None`.
+            //
+            // `scope.expression` is a CEL expression evaluated by the host
+            // BEFORE this component is instantiated. Keep it as narrow as you
+            // can: a tight scope means the host can skip instantiating the
+            // plugin entirely for events you do not care about, which is the
+            // single biggest thing you can do for proxy throughput.
+            capabilities: vec![
+                Capability {
+                    kind: CapabilityKind::Logger,
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
+                },
+                Capability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Request),
+                    // Replace `"true"` with something specific, e.g.
+                    //   "request.host() == 'example.com'"
+                    //   "request.path().startsWith('/api/')"
+                    scope: CapabilityScope {
+                        expression: "true".into(),
+                    },
+                },
+            ],
+
+            // User-facing configuration, rendered as a form in the web UI and
+            // passed back to `create()` as `Vec<UserInput>`.
+            configuration: vec![],
+        }
+    }
+}
+
+struct PluginInstance {
+    _config: Vec<UserInput>,
+}
+
+impl GuestPlugin for PluginInstance {
+    /// Called once per event, before `handle`, with the user's configuration.
+    /// Return `Err(ConfigureError::InvalidInputs(..))` to reject bad config.
+    async fn create(config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
+        Ok(PluginResource::new(PluginInstance { _config: config }))
+    }
+
+    /// Handle one event.
+    ///
+    /// Return the (possibly modified) event to continue the chain, or `None` to
+    /// abandon processing. Note the host's output contract:
+    ///
+    /// * `Request`        -> must return `Request` or `Response`
+    ///                       (returning a `Response` short-circuits the upstream call)
+    /// * `Response`       -> must return `Response`
+    /// * `InboundContent` -> must return `InboundContent`
+    /// * `Timer`          -> may return `None` (side-effect only)
+    ///
+    /// The event carries lazy handles. If you do not read a body, nothing is
+    /// read off the wire on your account -- so match narrowly and return early.
+    async fn handle(&self, ev: Event, cap: CapabilityProvider) -> Option<Event> {
+        match ev {
+            Event::Request(request) => {
+                // Capabilities are optional: the user may not have granted it,
+                // or may have scoped it away from this particular event.
+                if let Some(logger) = cap.logger().await {
+                    logger
+                        .info("[{{plugin-name}}] saw a request".to_string())
+                        .await;
+                }
+
+                Some(Event::Request(request))
+            }
+
+            // Pass every other event through untouched.
+            other => Some(other),
+        }
+    }
+}
+
+export!(Component);
