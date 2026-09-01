@@ -222,6 +222,10 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
 async fn large_body_through_content_plugin_is_not_truncated() -> anyhow::Result<()> {
     use crate::test_utils::*;
 
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
     let (mut proxy, registry, ca, _config, _tmp) = create_witmproxy().await?;
     proxy.start().await.unwrap();
     // test_component supplies the Connect scope that triggers MITM for

@@ -177,11 +177,47 @@ impl Default for AnnotatorClient {
 /// Custom StreamProducer for body streaming
 pub struct BodyStreamProducer {
     body: UnsyncBoxBody<Bytes, ErrorCode>,
+    /// Remainder of a frame larger than the guest's read capacity.
+    ///
+    /// Held here rather than in wasmtime's host buffer. The previous code
+    /// stored it with `Destination::set_buffer` and then called
+    /// `as_direct(capacity)`, which in wasmtime 43 only resized the buffer when
+    /// it was empty. In 48 `as_direct` resizes unconditionally, discarding it:
+    ///
+    ///     *buffer.marked_written = 0;
+    ///     buffer.dst.resize(capacity, 0);
+    ///
+    /// Every body larger than one guest read was therefore truncated after the
+    /// first chunk. Owning the remainder keeps this correct regardless of how
+    /// the host buffer behaves.
+    pending: Option<Bytes>,
 }
 
 impl BodyStreamProducer {
     pub fn new(body: UnsyncBoxBody<Bytes, ErrorCode>) -> Self {
-        Self { body }
+        Self {
+            body,
+            pending: None,
+        }
+    }
+
+    /// Write up to `cap` bytes of `data` to `dst`, retaining any remainder.
+    fn emit<D>(
+        &mut self,
+        store: StoreContextMut<'_, D>,
+        dst: Destination<'_, u8, Bytes>,
+        mut data: Bytes,
+        cap: usize,
+    ) {
+        let n = data.len().min(cap);
+        if data.len() > n {
+            self.pending = Some(data.split_off(n));
+        }
+        let mut direct = dst.as_direct(store, n);
+        if let Some(slice) = direct.remaining().get_mut(..n) {
+            slice.copy_from_slice(&data);
+        }
+        direct.mark_written(n);
     }
 }
 
@@ -215,6 +251,22 @@ where
             None => None,
         };
 
+        // Serve a retained remainder before pulling another frame, so a frame
+        // larger than the guest's read capacity is delivered across as many
+        // polls as it takes.
+        if let Some(pending) = self.pending.take() {
+            match cap {
+                Some(cap) => {
+                    self.emit(store, dst, pending, cap.into());
+                    return Poll::Ready(Ok(StreamResult::Completed));
+                }
+                None => {
+                    dst.set_buffer(pending);
+                    return Poll::Ready(Ok(StreamResult::Completed));
+                }
+            }
+        }
+
         // Loop to skip empty data frames from the HTTP body.
         // HTTP/2 can produce zero-length DATA frames which would cause
         // wasmtime to error with "Completed without producing any items"
@@ -224,28 +276,13 @@ where
                 Poll::Ready(Some(Ok(frame))) => {
                     // Try to extract data from the frame
                     match frame.into_data().map_err(http_body::Frame::into_trailers) {
-                        Ok(mut data_frame) => {
+                        Ok(data_frame) => {
                             // Skip empty data frames and poll again
                             if data_frame.is_empty() {
                                 continue;
                             }
                             if let Some(cap) = cap {
-                                let n = data_frame.len();
-                                let cap_usize = cap.into();
-                                if n > cap_usize {
-                                    // Data doesn't fit, buffer the rest
-                                    dst.set_buffer(data_frame.split_off(cap_usize));
-                                    let mut dst_direct = dst.as_direct(store, cap_usize);
-                                    dst_direct.remaining().copy_from_slice(&data_frame);
-                                    dst_direct.mark_written(cap_usize);
-                                } else {
-                                    // Copy the whole frame
-                                    let mut dst_direct = dst.as_direct(store, n);
-                                    if let Some(dst_slice) = dst_direct.remaining().get_mut(..n) {
-                                        dst_slice.copy_from_slice(&data_frame);
-                                    }
-                                    dst_direct.mark_written(n);
-                                }
+                                self.emit(store, dst, data_frame, cap.into());
                             } else {
                                 // No capacity info, just buffer it
                                 dst.set_buffer(data_frame);
