@@ -196,29 +196,21 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
 }
 
 
-/// Large HTML bodies are truncated when a plugin rewrites them.
+/// A large HTML body survives a content-rewriting plugin intact.
 ///
-/// KNOWN FAILURE, ignored so it does not mask other regressions. Run with
-/// `cargo test -p witmproxy --lib large_body -- --ignored --nocapture`.
+/// Regression test for three separate causes of body truncation, all of which
+/// only showed up above a few KB -- the pre-existing fixture is a single chunk,
+/// which is why this went unnoticed:
 ///
-/// A ~1 KB page rewrites correctly; at 100 KB and 400 KB the client receives a
-/// fraction of the body (observed 51, 108, 16435 and 65586 bytes across runs)
-/// and the injected CSS is missing. The truncation point varies run to run, so
-/// this is a race rather than a fixed limit -- and it is not fuel: it
-/// reproduces with `max_fuel: 0`. Without the plugin the same proxy streams
-/// 873 KB from a real site intact, so the transport is fine.
-///
-/// The mechanism is in `proxy::handle_content`: after `handle_event` returns,
-/// the plugin's `Store` is kept alive in a background `run_concurrent` gated on
-/// `body_done_rx`, which fires when the response body is fully consumed. The
-/// guest's spawned subtask needs that store to be driven in order to finish
-/// writing. If the gate resolves -- or its sender is dropped -- before the
-/// subtask has drained the body, the store dies and the body stops mid-stream.
-/// The existing comment at the top of `e2e_plugin_body_streaming_subtask`
-/// records an earlier encounter with the same class of problem, fixed only for
-/// bodies small enough to complete inside the window.
+///  1. `BodyStreamProducer` paired `Destination::set_buffer` with
+///     `as_direct`, which discards the buffer in wasmtime 48 (43 only resized
+///     an empty one), losing everything past the first chunk of a frame.
+///  2. The guest's spawned body-streaming task was torn down when the
+///     `run_concurrent` driving `handle` returned. Wasmtime 48 requires the
+///     host to keep the event loop alive via `poll_no_interesting_tasks`.
+///  3. The default fuel budget of 1,000,000 could not parse a 400 KB page, so
+///     the guest trapped mid-parse.
 #[tokio::test]
-#[ignore = "known bug: large rewritten bodies are truncated; see the doc comment"]
 async fn large_body_through_content_plugin_is_not_truncated() -> anyhow::Result<()> {
     use crate::test_utils::*;
 

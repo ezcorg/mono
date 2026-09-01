@@ -449,9 +449,15 @@ async fn log_flood_is_contained() -> Result<()> {
         assert_plugin_will_run(&registry, &*event);
 
         let result = registry.handle_event(event).await;
+        // The log budget drops messages past the cap; it does not kill the
+        // plugin. So the event completes normally -- containment is the
+        // absence of 100,000 log lines, not a failed request. This previously
+        // asserted `is_err()`, which passed only because the guest ran out of
+        // fuel mid-flood; the exact per-message and per-byte accounting is
+        // covered by the unit tests above.
         assert!(
-            result.is_err(),
-            "mode {mode}: exhausting the log budget must fail the event closed"
+            result.is_ok(),
+            "mode {mode}: a log flood must be contained, not fail the event"
         );
     }
     Ok(())

@@ -105,7 +105,16 @@ impl ResolvedLimits {
     /// out-of-the-box configuration is the vulnerable one, and most operators
     /// never revisit defaults.
     pub const DEFAULTS: Self = Self {
-        max_fuel: 1_000_000,
+        // Unbounded by default. `timeout_ms` is the DoS control here: it is
+        // enforced by epoch interruption, which preempts even a guest that
+        // never yields, and it bounds the thing an operator actually cares
+        // about -- wall clock. Fuel bounds an abstract instruction count that
+        // nobody can size correctly: the previous default of 1,000,000 could
+        // not parse a 400 KB HTML page, so it broke every content-rewriting
+        // plugin on a real-world page while adding nothing the timeout did not
+        // already cover. Still available for operators who want a
+        // deterministic compute bound.
+        max_fuel: 0,
         max_memory_mb: 1024,
         timeout_ms: 10_000,
         max_table_elements: 100_000,

@@ -305,8 +305,14 @@ pub struct PluginConfig {
     )]
     pub max_memory_mb: u64,
 
-    /// WASM fuel limit per plugin execution (default: 1000000). Set to 0 for unlimited.
-    #[arg(long = "max-fuel", env = "PLUGINS_MAX_FUEL", default_value = "1000000")]
+    /// WASM fuel limit per plugin execution (default: 0 = unlimited).
+    ///
+    /// `--timeout-ms` is the DoS control: it is enforced by epoch interruption,
+    /// which preempts even a guest that never yields. Fuel bounds an abstract
+    /// instruction count instead of wall clock; the previous default of
+    /// 1,000,000 could not parse a 400 KB HTML page, so it broke content
+    /// rewriting on real pages while adding nothing the timeout did not cover.
+    #[arg(long = "max-fuel", env = "PLUGINS_MAX_FUEL", default_value = "0")]
     pub max_fuel: u64,
 
     /// Maximum table elements a plugin may allocate (default: 100000). Set to 0

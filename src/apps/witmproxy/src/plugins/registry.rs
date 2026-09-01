@@ -13,6 +13,7 @@ use wasmtime_wasi_http::p3::Request as WasiRequest;
 
 use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
 use crate::wasm::Logger;
+use std::future;
 use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::PluginError as GuestPluginError;
 use crate::{
     db::{Db, Insert},
@@ -508,6 +509,23 @@ impl PluginRegistry {
                 .plugin()
                 .call_handle(store, plugin_resource, event_data, cap_resource)
                 .await?;
+
+            // A plugin may leave background work running after `handle`
+            // returns -- the canonical case is spawning a task that streams a
+            // rewritten body. Returning here ends the `run_concurrent` event
+            // loop, which tears those tasks down along with any streams they
+            // hold, truncating the body after a single chunk.
+            //
+            // wasmtime documents `poll_no_interesting_tasks` for exactly this:
+            // "Hosts can use this as a signal that the guest wants to stay
+            // alive a little longer, even after a task has returned." Its own
+            // `wasi:http` worker loop stays inside `run_concurrent` on the
+            // same signal.
+            //
+            // Wasmtime 43 kept these tasks alive across the boundary without
+            // being asked; 48 does not.
+            future::poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
+
             Ok::<GuestReturn, anyhow::Error>(result)
         });
 
