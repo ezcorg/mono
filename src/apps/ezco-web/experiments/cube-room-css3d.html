@@ -1,0 +1,885 @@
+<!doctype html>
+<!--
+  ez co — "the room": a single-file reimagining of joinez.co as a 3D space.
+
+  Concept
+    · The logo's two squares are two faces of a cube. The cube is the building.
+    · "ez" is the front door. Click it (or scroll / ↵) and it swings open; the
+      camera walks in. The inside of the cube is the collective's room.
+    · The furniture is the navigation, and the pages render ON the furniture:
+        workbench monitor  → our work (the list appears on the screen)
+        notebook on table  → blog (it's picked up, opened to the first post)
+        kanban board       → start a project (a new post-it with the form)
+        framed portraits   → about (portraits + a framed manifesto)
+        window             → the neighborhood (rooftop signs are the links)
+        "we're hiring" sign→ join us (the sign flips; the form is on the back)
+        pendant lamp       → lights (moon sets, sun rises in the window)
+    · Camera: the room is a dollhouse. Focusing an object turns the room so the
+      object's surface faces you and fits the viewport (computed per screen
+      size, so phones get the same treatment). Drag / arrow keys look around,
+      tab glances toward the focused object, Esc steps back.
+    · Routes live in the hash (#/about, #/blog/<slug>, #/newproject?service=…).
+
+  No frameworks, no Tailwind, no fetched fonts. Everything is CSS 3D driven by
+  registered custom properties (the camera tweens in CSS) plus a small scene
+  builder. Tokens, fonts and hover behaviour mirror the live site.
+
+  Debug query params (screenshots): ?enter plays the entrance on load;
+  ?pose=rx,ry,tzn,door[,tyn] freezes an entrance frame; ?hot shows the logo
+  hover; ?lit starts with the lights on.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ez co — the room</title>
+<meta name="description" content="A single-file experiment: the ez co website reimagined as a cube you walk into. The logo is the building; the objects in the room are the pages.">
+<style>
+/* ------------------------------------------------------------------ tokens */
+:root{
+  --bg:#000; --fg:#F5F5F5; --dim:#333;
+  --line:rgba(245,245,245,.6); --line-soft:rgba(245,245,245,.22); --fill:rgba(245,245,245,.07);
+  --grid:rgba(245,245,245,.07); --vig:rgba(0,0,0,.5); --glow:rgba(255,255,255,.35);
+  --serif:Times,'Times New Roman',serif;
+  --sans:Inter,Helvetica,system-ui,sans-serif;
+  --mono:ui-monospace,Menlo,Consolas,monospace;
+  --S:360px;
+  --ease:cubic-bezier(.65,0,.25,1);
+}
+html.lit{
+  --bg:#F5F5F5; --fg:#000; --dim:#cfcfcf;
+  --line:rgba(0,0,0,.6); --line-soft:rgba(0,0,0,.2); --fill:rgba(0,0,0,.05);
+  --grid:rgba(0,0,0,.07); --vig:rgba(0,0,0,.08); --glow:rgba(255,200,90,.6);
+}
+@property --rx{syntax:'<angle>';inherits:true;initial-value:0deg}
+@property --ry{syntax:'<angle>';inherits:true;initial-value:0deg}
+@property --prx{syntax:'<angle>';inherits:true;initial-value:0deg}
+@property --pry{syntax:'<angle>';inherits:true;initial-value:0deg}
+@property --lrx{syntax:'<angle>';inherits:true;initial-value:0deg}
+@property --lry{syntax:'<angle>';inherits:true;initial-value:0deg}
+@property --door{syntax:'<angle>';inherits:false;initial-value:0deg}
+@property --open{syntax:'<angle>';inherits:false;initial-value:0deg}
+@property --txn{syntax:'<number>';inherits:true;initial-value:0}
+@property --tyn{syntax:'<number>';inherits:true;initial-value:0}
+@property --tzn{syntax:'<number>';inherits:true;initial-value:0}
+@property --pn{syntax:'<number>';inherits:true;initial-value:2.2}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden;transition:background .5s,color .5s}
+a{color:inherit}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+body.preload *{transition:none!important;animation-duration:0s!important}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01s!important;transition-delay:0s!important;animation-duration:.01s!important}}
+
+/* ------------------------------------------------------------------ camera */
+.stage{position:fixed;inset:0;overflow:hidden;background:var(--bg);transition:background .5s;touch-action:none;user-select:none;-webkit-user-select:none}
+body[data-state=room] .stage{cursor:grab}
+body.dragging .stage{cursor:grabbing}
+.viewport{position:absolute;inset:0;--pn:2.2;perspective:calc(var(--S)*var(--pn));perspective-origin:50% 50%;transition:--pn 1.1s var(--ease)}
+.world{
+  position:absolute;left:50%;top:50%;width:0;height:0;transform-style:preserve-3d;will-change:transform;
+  --rx:-12deg;--ry:-40deg;--txn:0;--tyn:-.22;--tzn:0;--prx:0deg;--pry:0deg;--lrx:0deg;--lry:0deg;
+  /* head-turn about the camera (look-around) · dolly · dollhouse rotation about the room centre */
+  transform:
+    translate3d(0,0,calc(var(--S)*var(--pn))) rotateX(var(--lrx)) rotateY(var(--lry)) translate3d(0,0,calc(var(--S)*var(--pn)*-1))
+    translate3d(calc(var(--S)*var(--txn)),calc(var(--S)*var(--tyn)),calc(var(--S)*var(--tzn)))
+    rotateX(calc(var(--rx) + var(--prx))) rotateY(calc(var(--ry) + var(--pry)));
+  transition:--rx 1.1s var(--ease),--ry 1.1s var(--ease),--txn 1.1s var(--ease),--tyn 1.1s var(--ease),--tzn 1.1s var(--ease);
+}
+body[data-state=room] .world,body[data-state=page] .world{--rx:-6deg;--ry:0deg;--tzn:1.12;--tyn:-.06}
+body.entering .world{transition:--rx 1s ease-in-out,--ry 1s ease-in-out,--txn 1s var(--ease),--tyn 1.6s var(--ease) 1.05s,--tzn 1.7s cubic-bezier(.75,0,.2,1) 1.05s}
+body.leaving .world{transition:--rx 1s ease-in-out 1.2s,--ry 1s ease-in-out 1.2s,--txn 1s var(--ease),--tyn 1.2s var(--ease),--tzn 1.2s cubic-bezier(.7,0,.3,1)}
+@media (max-aspect-ratio:.9){
+  .world{--tzn:-.9;--tyn:-.2}
+  body[data-state=room] .world,body[data-state=page] .world{--tzn:1.0;--tyn:-.04}
+}
+.world>*{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d}
+
+/* ------------------------------------------------------------------ faces */
+.face{position:absolute;left:0;top:0;backface-visibility:hidden;background:var(--bg);border:2px solid var(--line);transition:background .25s,border-color .25s,color .25s,opacity .3s}
+.thin{border-width:1px}
+.disc{border-radius:50%}
+.deco{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d}
+.deco .face{pointer-events:none}
+
+/* exterior = the logo ("ez" is the door, "co" the right face) */
+.ext{border:2px solid var(--fg);overflow:hidden;isolation:isolate}
+.ext .glyph{position:absolute;inset:0;display:grid;place-items:center;font:500 calc(var(--S)*.38)/1 var(--sans);color:#fff;mix-blend-mode:difference;letter-spacing:-.02em;user-select:none}
+.ext .slider{position:absolute;inset:0;background:var(--fg);transition:transform .45s cubic-bezier(.4,0,.2,1)}
+.ext-front .slider{transform:translateX(100%)}
+.ext-right .slider{transform:translateX(0)}
+.hot .ext-front .slider{transform:translateX(0)}
+.hot .ext-right .slider{transform:translateX(-100%)}
+.door{--door:0deg;transform-origin:left center;transition:--door .9s cubic-bezier(.55,0,.3,1) .6s,opacity .35s linear 1.8s}
+body[data-state=room] .door,body[data-state=page] .door{--door:-125deg;opacity:0;pointer-events:none}
+body.leaving .door{transition:--door .9s cubic-bezier(.55,0,.3,1) 1s,opacity .2s linear .9s}
+.cube{cursor:pointer}
+body:not([data-state=logo]) .cube{pointer-events:none}
+body[data-state=page] .ext,body[data-state=room]:not(.entering):not(.leaving) .ext{visibility:hidden}
+.mirror{pointer-events:none}
+.mirror .face{opacity:.16;filter:blur(.6px);border-color:var(--fg);-webkit-mask-image:linear-gradient(to top,#000 0%,transparent 85%);mask-image:linear-gradient(to top,#000 0%,transparent 85%);transition:opacity .6s}
+body:not([data-state=logo]) .mirror .face{opacity:0}
+.ground{border:0;background-color:transparent;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:calc(var(--S)/8) calc(var(--S)/8);background-position:center;-webkit-mask-image:radial-gradient(closest-side,#000 10%,transparent 100%);mask-image:radial-gradient(closest-side,#000 10%,transparent 100%);pointer-events:none;transition:opacity .6s}
+body:not([data-state=logo]) .ground{opacity:0}
+
+/* interior */
+.wall{border:2px solid var(--line-soft)}
+.wall-floor{background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:calc(var(--S)/10) calc(var(--S)/10);background-position:center}
+.wall-back{background-image:radial-gradient(ellipse at 50% 45%,transparent 35%,var(--vig) 100%)}
+.wall-left{background-image:linear-gradient(to right,transparent,var(--vig))}
+.wall-right{background-image:linear-gradient(to left,transparent,var(--vig))}
+.wall-ceil{background-image:radial-gradient(ellipse at 50% 50%,transparent 30%,var(--vig) 100%)}
+.wx{visibility:hidden}
+body[data-state=page] .wx,body[data-state=room]:not(.entering):not(.leaving) .wx{visibility:visible}
+
+/* ------------------------------------------------------------------ objects */
+.obj{display:block;position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;outline:0;cursor:pointer}
+.obj:hover .face:not(.surface):not(.keep),.obj.hl .face:not(.surface):not(.keep),.obj:focus-visible .face:not(.surface):not(.keep){background:var(--fg);border-color:var(--bg);color:var(--bg)}
+.obj:hover .surface,.obj:focus-visible .surface{box-shadow:0 0 calc(var(--S)*.05) var(--glow)}
+.obj.active{cursor:default}
+.obj.active .surface{box-shadow:none}
+.obj .label{position:absolute;left:0;top:0;white-space:nowrap;font:500 calc(var(--S)*.034)/1 var(--sans);letter-spacing:.06em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.45em .8em;opacity:0;translate:0 .4em;transition:opacity .25s,translate .25s;pointer-events:none;backface-visibility:hidden}
+.obj .label::after{content:' →'}
+.obj[data-action] .label::after{content:''}
+.obj:hover .label,.obj.hl .label,.obj:focus-visible .label{opacity:1;translate:0 0}
+.obj.active .label{opacity:0!important}
+
+/* content surfaces: the "pages". `--sfs` is set by JS so text is ~15px on screen at focus */
+.surface{--hair:calc(var(--sfs,15px)/15);font-family:var(--serif);font-size:var(--sfs,calc(var(--S)*.0055));line-height:1.45;color:var(--fg);overflow:hidden;cursor:auto;touch-action:auto}
+.surface a{color:inherit}
+.surface h2{font:300 1.7em/1.15 var(--serif);letter-spacing:-.02em;margin:0 0 .5em}
+.surface h3{font:300 1.3em/1.2 var(--serif);letter-spacing:-.02em;margin:1em 0 .4em}
+.surface p{margin:0 0 .7em}
+.surface .lede{opacity:.75;margin-bottom:1em}
+.surface ul{list-style:none;margin:0;padding:0}
+.surface li{position:relative;padding-left:1.1em;margin-bottom:.5em}
+.surface li::before{content:'*';position:absolute;left:0;top:0;opacity:.6;font-weight:700}
+.surface .link{text-decoration:underline;text-decoration-color:rgba(128,128,128,.7);text-underline-offset:.15em}
+.surface .link:hover{text-decoration-color:currentColor}
+.hidden-when-idle{opacity:0;transition:opacity .4s}
+.obj.active .hidden-when-idle{opacity:1;transition-delay:.5s}
+.hidden-when-active{opacity:1;transition:opacity .3s}
+.obj.active .hidden-when-active{opacity:0}
+
+/* forms on surfaces (newproject.astro / join.astro, condensed) */
+.form{display:flex;flex-direction:column;gap:.55em;font-family:var(--sans);font-size:.92em}
+.form label{display:block;font-size:.8em;opacity:.75;margin-bottom:.15em}
+.form input,.form select,.form textarea{width:100%;font:inherit;line-height:1.3;color:var(--fg);background:transparent;border:var(--hair) solid var(--line-soft);padding:.45em .55em;border-radius:0;-webkit-appearance:none;appearance:none;transition:border-color .2s}
+.form select{background-image:linear-gradient(45deg,transparent 50%,var(--fg) 50%),linear-gradient(135deg,var(--fg) 50%,transparent 50%);background-position:calc(100% - .9em) 50%,calc(100% - .55em) 50%;background-size:.35em .35em;background-repeat:no-repeat}
+.form select option{background:var(--bg);color:var(--fg)}
+.form input:focus,.form select:focus,.form textarea:focus{outline:0;border-color:var(--fg)}
+.form textarea{resize:none;min-height:3.6em}
+.form .row{display:grid;grid-template-columns:1fr 1fr;gap:.5em}
+.form .money{position:relative}
+.form .money span{position:absolute;left:.5em;top:50%;translate:0 -50%;opacity:.6}
+.form .money input{padding-left:1.4em}
+.form .submit{align-self:flex-start;background:var(--fg);color:var(--bg);padding:.5em 1em;border:var(--hair) solid var(--fg);font:inherit;margin-top:.2em}
+.form .thanks{display:none;font-family:var(--serif);font-size:1.1em;border:var(--hair) solid var(--fg);padding:.8em}
+.form.sent>*{display:none}.form.sent .thanks{display:block}
+.form input[type=file]{padding:.25em}
+</style>
+<style>
+/* ------------------------------------------------------------------ the TV (hero heading + hint ticker) */
+.tv.f-front{padding:calc(var(--S)*.014);border-width:2px}
+.tvs{position:absolute;inset:calc(var(--S)*.014);border:1px solid var(--line-soft);overflow:hidden;background:var(--bg);font-family:var(--serif);color:var(--fg)}
+.tvs .sign{position:absolute;left:7%;right:7%;top:14%}
+.tvs h1{margin:0;font-weight:300;font-size:calc(var(--S)*.062);line-height:1.15;letter-spacing:-.02em}
+.tvs .tw{display:inline-block;font-weight:700;padding-right:.05em;transition:background .15s,color .15s}
+.tvs .tw.sel{background:var(--fg);color:var(--bg)}
+.tvs .cur{display:inline-block;width:.04em;height:1em;background:var(--fg);vertical-align:-.12em;margin-left:.04em;animation:blink 1s step-start infinite}
+.tvs .tw.sel .cur{visibility:hidden}
+.tvs .sign p{margin:.35em 0 0;font-size:calc(var(--S)*.026);opacity:.85}
+.tvs .ticker{position:absolute;left:0;right:0;bottom:0;height:12%;border-top:1px solid var(--line-soft);display:flex;align-items:center;overflow:hidden;font:400 calc(var(--S)*.016)/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;opacity:.7;white-space:nowrap}
+.tvs .ticker span{display:inline-block;padding-left:100%;animation:ticker 26s linear infinite}
+@keyframes ticker{to{transform:translateX(-100%)}}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+html.lit .tvs{background:#fff}
+
+/* ------------------------------------------------------------------ workbench + monitor (our work) */
+.monitor.f-front{padding:calc(var(--S)*.006)}
+.scr{position:absolute;inset:calc(var(--S)*.006);background:var(--bg);border:1px solid var(--line-soft);overflow:hidden}
+.scr .doc{position:absolute;inset:6%;font:calc(var(--S)*.011)/1.55 var(--mono);white-space:nowrap;opacity:.9}
+.scr .doc .h{font-weight:700}
+.scr .doc .cur{display:inline-block;width:1px;height:1em;background:currentColor;vertical-align:-.15em;animation:blink 1s step-start infinite}
+.scr .work{position:absolute;inset:0;padding:6% 7%;overflow:auto;scrollbar-width:thin;font-family:var(--sans);display:none}
+.obj.active .scr .work{display:block}
+.obj.active .scr .doc{display:none}
+.scr .work h2{font-family:var(--serif)}
+.cards{display:flex;flex-direction:column;gap:.5em}
+.card{display:block;text-decoration:none;border:var(--hair) solid var(--dim);padding:.6em .8em;transition:background .25s,color .25s,border-color .25s}
+.card:hover,.card:focus-visible{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.card.dashed{border-style:dashed;border-color:#777}
+.card b{display:block;font-weight:700;font-size:1.05em;margin-bottom:.15em}
+.card span{display:block;font-family:var(--serif);opacity:.85;font-size:.95em}
+.card em{display:block;font-style:normal;font-size:.72em;opacity:.65;margin-top:.35em;letter-spacing:.02em}
+.kbd.f-top{background-image:repeating-linear-gradient(90deg,currentColor 0 1px,transparent 1px calc(var(--S)*.011));opacity:.9}
+
+/* ------------------------------------------------------------------ notebook (blog) */
+.nb{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;transform:translate3d(0,0,0) rotateY(15deg) rotateX(90deg);transition:transform 1s var(--ease) .35s}
+.obj.active .nb{transform:translate3d(calc(var(--S)*-.07),calc(var(--S)*-.3),calc(var(--S)*.28)) rotateY(0deg) rotateX(0deg)}
+.obj.active .nb{transition-delay:0s}
+.nbc{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;transform-origin:left center;--open:0deg;transform:rotateY(var(--open));transition:--open .9s var(--ease) 0s}
+.obj.active .nbc{--open:-180deg;transition-delay:.55s}
+.nb .face{border-width:1px}
+.cover{background:var(--bg);border:1.5px solid var(--fg);box-shadow:inset 0 0 0 calc(var(--S)*.004) var(--bg),inset 0 0 0 calc(var(--S)*.006) var(--line-soft);display:grid;place-items:center;font:300 calc(var(--S)*.02)/1.2 var(--serif);letter-spacing:.06em;text-align:center}
+.cover::before{content:'';position:absolute;left:0;top:0;bottom:0;width:calc(var(--S)*.012);background:repeating-linear-gradient(var(--line-soft) 0 1px,transparent 1px calc(var(--S)*.008))}
+.page{background:var(--bg);border:1px solid var(--line);background-image:repeating-linear-gradient(transparent 0 calc(1.45em - var(--hair)),var(--line-soft) calc(1.45em - var(--hair)) 1.45em);padding:.7em .8em .7em 1em}
+.page.l{border-right:0}
+.page.r{border-left:0}
+.page .inner{position:absolute;inset:.25em .3em .25em .25em;padding:.4em .5em .4em .8em;overflow:auto;scrollbar-width:thin}
+.page h1{font:300 1.55em/1.15 var(--serif);letter-spacing:-.02em;margin:0 0 .3em}
+.page .meta{font:400 .72em/1.2 var(--sans);opacity:.6;margin-bottom:1.1em}
+.page p{margin:0 0 .75em}
+.page h2{font-size:1.25em;margin:.9em 0 .35em}
+.page code{font-family:var(--mono);font-size:.9em;background:var(--fill);padding:0 .3em}
+.page .posts a{display:block;text-decoration:none;border:var(--hair) solid var(--line-soft);padding:.5em .6em;margin-top:.5em;transition:background .2s,color .2s}
+.page .posts a.on,.page .posts a:hover{background:var(--fg);color:var(--bg)}
+.page .posts b{display:block;font-weight:400;font-size:1.05em}
+.page .posts small{display:block;font:400 .72em/1.3 var(--sans);opacity:.65;margin-top:.2em}
+.tags{display:flex;flex-wrap:wrap;gap:.3em;margin-top:.5em}
+.tag{font:400 .68em/1 var(--sans);border:1px solid var(--line-soft);border-radius:999px;padding:.3em .6em;opacity:.75}
+
+/* ------------------------------------------------------------------ kanban (start a project) */
+.board{padding:calc(var(--S)*.008);background-image:radial-gradient(var(--line-soft) 12%,transparent 13%);background-size:calc(var(--S)*.02) calc(var(--S)*.02);font-family:var(--sans)}
+.kb{position:absolute;inset:calc(var(--S)*.014);display:grid;grid-template-columns:repeat(3,1fr);gap:calc(var(--S)*.012)}
+.col{display:flex;flex-direction:column;gap:calc(var(--S)*.008);min-height:0}
+.col h4{margin:0 0 calc(var(--S)*.004);font:500 calc(var(--S)*.011)/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;text-align:center;opacity:.7;border-bottom:1px solid var(--line-soft);padding-bottom:calc(var(--S)*.006)}
+.note{position:relative;background:var(--fill);border:1px solid var(--line);padding:calc(var(--S)*.01) calc(var(--S)*.009) calc(var(--S)*.008);font:400 calc(var(--S)*.0075)/1.25 var(--serif);color:var(--fg);rotate:-1.5deg;box-shadow:calc(var(--S)*.002) calc(var(--S)*.003) 0 var(--line-soft);transition:background .25s,color .25s,scale .6s var(--ease),opacity .4s}
+.note:nth-child(odd){rotate:1.2deg}
+.note::before{content:'';position:absolute;left:50%;top:calc(var(--S)*-.004);width:calc(var(--S)*.008);height:calc(var(--S)*.008);border-radius:50%;background:var(--fg);translate:-50% 0}
+.note.dashed{border-style:dashed;background:transparent;text-align:center;opacity:.8}
+.note small{display:block;font:400 .8em/1.2 var(--sans);opacity:.6;margin-top:.3em}
+.note.new{position:absolute;left:3%;top:15%;width:40%;height:74%;rotate:-1deg;background:var(--bg);border:1.5px solid var(--fg);padding:1em .9em;scale:0;opacity:0;transform-origin:20% 0;font-family:var(--sans);font-size:var(--sfs,calc(var(--S)*.0055));box-shadow:calc(var(--S)*.006) calc(var(--S)*.008) 0 var(--line-soft);z-index:2;overflow:auto;scrollbar-width:thin}
+.note.new::before{background:var(--fg)}
+.note.new b{display:block;font:300 1.35em/1.1 var(--serif);margin-bottom:.35em;letter-spacing:-.01em}
+.obj.active .note.new{scale:1;opacity:1;transition-delay:.55s}
+.note.new.stuck{width:29%;height:auto;left:3%;top:15%;padding:calc(var(--S)*.01) calc(var(--S)*.009);font:400 calc(var(--S)*.0075)/1.25 var(--serif);background:var(--fill);border:1px solid var(--line);scale:1}
+.note.new.stuck .form{display:none}
+.note.new .stuckText{display:none}
+.note.new.stuck .stuckText{display:block}
+
+/* ------------------------------------------------------------------ frames + manifesto (about) */
+.frame{padding:calc(var(--S)*.006);border-width:2px;background:var(--bg)}
+.frame .sil{position:absolute;inset:calc(var(--S)*.006);background:var(--fill);background-image:radial-gradient(circle at 50% 38%,var(--fg) 0 17%,transparent 18%),radial-gradient(ellipse at 50% 108%,var(--fg) 0 40%,transparent 41%);transition:background .25s}
+.frame .sil.two{background-image:radial-gradient(circle at 34% 40%,var(--fg) 0 14%,transparent 15%),radial-gradient(circle at 66% 36%,var(--fg) 0 14%,transparent 15%),radial-gradient(ellipse at 34% 108%,var(--fg) 0 32%,transparent 33%),radial-gradient(ellipse at 66% 108%,var(--fg) 0 32%,transparent 33%)}
+.obj:hover .frame .sil{background-color:var(--dim)}
+.plaque{display:grid;place-items:center;white-space:nowrap;font:500 calc(var(--S)*.011)/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;border-width:1px;background:var(--fill)}
+.manifesto{padding:.8em 1em;border-width:2px;background:var(--bg);box-shadow:inset 0 0 0 calc(var(--S)*.005) var(--bg),inset 0 0 0 calc(var(--S)*.006) var(--line-soft)}
+.manifesto .inner{position:absolute;inset:.3em;padding:.6em .7em;overflow:auto;scrollbar-width:thin}
+.manifesto h3:first-child{margin-top:0}
+.manifesto .mission{border:var(--hair) solid var(--line-soft);padding:.6em .7em;background:var(--fill);transition:background .3s,color .3s,border-color .3s}
+.manifesto .mission:hover{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.manifesto .mission:hover .link{color:#0066cc}
+
+/* ------------------------------------------------------------------ window (the neighborhood) + sky wheel + hiring sign (join) */
+.win{overflow:hidden;background:var(--bg);background-image:linear-gradient(var(--line),var(--line)),linear-gradient(var(--line),var(--line));background-size:2px 100%,100% 2px;background-position:center,center;background-repeat:no-repeat}
+.win,.obj:hover .win,.obj.hl .win,.obj:focus-visible .win{color:var(--fg)}
+.obj:hover .win,.obj:focus-visible .win{border-color:var(--fg)}
+.win .stars{position:absolute;inset:0;background-image:
+  radial-gradient(circle at 22% 28%,var(--fg) 0 1px,transparent 1.5px),radial-gradient(circle at 68% 18%,var(--fg) 0 1px,transparent 1.5px),
+  radial-gradient(circle at 80% 44%,var(--fg) 0 .8px,transparent 1.3px),radial-gradient(circle at 40% 52%,var(--fg) 0 .8px,transparent 1.3px),
+  radial-gradient(circle at 12% 62%,var(--fg) 0 1px,transparent 1.5px),radial-gradient(circle at 56% 36%,var(--fg) 0 .7px,transparent 1.2px);transition:opacity .8s}
+html.lit .win .stars{opacity:0}
+.win .sky{position:absolute;left:50%;top:78%;width:110%;aspect-ratio:1;translate:-50% -50%;rotate:0deg;transition:rotate 1.4s var(--ease)}
+html.lit .win .sky{rotate:180deg}
+.win .moon,.win .sun{position:absolute;left:50%;width:15%;aspect-ratio:1;border-radius:50%;translate:-50% -50%}
+.win .moon{top:12%;background:var(--fg);box-shadow:inset calc(var(--S)*-.012) calc(var(--S)*-.004) 0 0 var(--bg)}
+.win .sun{top:88%;background:var(--fg);box-shadow:0 0 0 calc(var(--S)*.006) var(--bg),0 0 0 calc(var(--S)*.008) var(--fg);rotate:180deg}
+.win .roofs{position:absolute;left:0;right:0;bottom:0;height:34%;background:linear-gradient(to top,var(--fg) 0,var(--fg) 1px,transparent 1px)}
+.win .roofs::before{content:'';position:absolute;inset:0;background:
+  linear-gradient(to top,var(--line-soft) 0 40%,transparent 40%) 0 0/16% 100% no-repeat,
+  linear-gradient(to top,var(--line-soft) 0 70%,transparent 70%) 18% 0/16% 100% no-repeat,
+  linear-gradient(to top,var(--line-soft) 0 52%,transparent 52%) 38% 0/22% 100% no-repeat,
+  linear-gradient(to top,var(--line-soft) 0 86%,transparent 86%) 64% 0/14% 100% no-repeat,
+  linear-gradient(to top,var(--line-soft) 0 48%,transparent 48%) 82% 0/18% 100% no-repeat}
+.win .rs{position:absolute;bottom:0;font:500 .72em/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;text-decoration:none;border:1px solid var(--fg);background:var(--bg);padding:.35em .5em;white-space:nowrap;transition:background .2s,color .2s}
+.win .rs:hover{background:var(--fg);color:var(--bg)}
+.win .rs::after{content:'';position:absolute;left:50%;top:100%;width:1px;height:.5em;background:var(--fg)}
+.sg{position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;transition:transform 1s var(--ease)}
+.obj.active .sg{transform:translate3d(calc(var(--S)*-.06),0,0) rotateY(180deg)}
+.hsign{display:grid;place-items:center;text-align:center;font:500 calc(var(--S)*.014)/1.2 var(--sans);letter-spacing:.14em;text-transform:uppercase;border-width:1.5px}
+.hsign em{display:block;font:300 .8em/1.4 var(--serif);text-transform:none;letter-spacing:.02em;opacity:.7}
+.signback{padding:1em 1.1em;font-family:var(--sans)}
+.signback h2{font-size:1.4em;margin-bottom:.15em}
+.strings{border:0;background:linear-gradient(var(--line),var(--line)) 22% 0/1px 100% no-repeat,linear-gradient(var(--line),var(--line)) 78% 0/1px 100% no-repeat;background-color:transparent;transition:opacity .3s}
+.obj.active .strings{opacity:0}
+
+/* ------------------------------------------------------------------ lamp + decor */
+.shade.f-bottom{background:var(--bg)}
+.bulb{border-color:transparent;background:var(--dim);transition:background .3s,box-shadow .3s}
+html.lit .bulb{background:#fff;box-shadow:0 0 calc(var(--S)*.12) calc(var(--S)*.03) var(--glow)}
+.obj:hover .bulb,.obj.hl .bulb{background:var(--fg)}
+.rug{background:var(--bg);border:2px solid var(--line-soft);box-shadow:inset 0 0 0 calc(var(--S)*.014) var(--bg),inset 0 0 0 calc(var(--S)*.018) var(--line-soft)}
+.leaf{border-radius:50%;backface-visibility:visible;border-width:1px;background:var(--bg)}
+.leaf::after{content:'';position:absolute;left:50%;top:6%;bottom:6%;width:1px;background:var(--line-soft)}
+.poster{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(var(--S)*.008);padding:calc(var(--S)*.01);border-color:var(--line-soft);font-family:var(--serif);text-align:center}
+.poster .lg{display:flex;width:52%}
+.poster .lg span{flex:1;aspect-ratio:1;border:1.5px solid var(--fg);display:grid;place-items:center;font:500 calc(var(--S)*.022)/1 var(--sans)}
+.poster .lg span+span{background:var(--fg);color:var(--bg);border-left:0}
+.poster p{margin:0;font-size:calc(var(--S)*.011);line-height:1.3;opacity:.85}
+.poster small{font:400 calc(var(--S)*.007)/1 var(--sans);opacity:.5;letter-spacing:.06em}
+
+/* ------------------------------------------------------------------ 2D chrome */
+.topbar{position:fixed;left:clamp(1rem,3vw,2rem);top:clamp(1rem,3vw,2rem);z-index:30;display:flex;align-items:center;gap:1rem}
+.logo{--ls:48px;display:flex;text-decoration:none;opacity:0;pointer-events:none;transition:opacity .3s}
+body:not([data-state=logo]) .logo{opacity:1;pointer-events:auto}
+.logo .lw{position:relative;width:calc(var(--ls)*2);height:var(--ls);overflow:hidden;isolation:isolate;background:var(--bg)}
+.logo .lw::before,.logo .lw::after{content:'';position:absolute;top:0;width:var(--ls);height:var(--ls);border:2px solid var(--fg);z-index:3;pointer-events:none}
+.logo .lw::before{left:0}.logo .lw::after{left:var(--ls)}
+.logo .lt{position:absolute;inset:0;display:flex;font:500 calc(var(--ls)*.4)/1 var(--sans);color:#fff;mix-blend-mode:difference;z-index:2}
+.logo .lt span{width:var(--ls);height:var(--ls);display:grid;place-items:center}
+.logo .ls{position:absolute;top:0;left:var(--ls);width:var(--ls);height:var(--ls);background:var(--fg);transition:transform .4s cubic-bezier(.4,0,.2,1),box-shadow .4s;z-index:1}
+.logo:hover .ls,.logo:focus-visible .ls{transform:translateX(-100%);box-shadow:0 0 20px rgba(255,255,255,.3)}
+.back{font:400 .9rem/1 var(--sans);letter-spacing:.02em;padding:.55rem .7rem;border:1px solid transparent;opacity:0;pointer-events:none;transition:opacity .3s,border-color .2s}
+body[data-state=page] .back{opacity:.8;pointer-events:auto}
+.back:hover,.back:focus-visible{border-color:var(--fg);opacity:1}
+.crumb{font:400 1rem/1 var(--serif);opacity:0;transition:opacity .3s .2s}
+body[data-state=page] .crumb{opacity:.7}
+.hero-copy{position:fixed;left:0;right:0;bottom:clamp(1.25rem,4vh,2.5rem);z-index:10;display:flex;flex-direction:column;align-items:center;gap:1rem;text-align:center;padding:0 1rem;pointer-events:none;transition:opacity .5s,translate .5s}
+body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
+.hero-copy p{margin:0;font:300 clamp(1.15rem,2.4vw,1.75rem)/1.3 var(--serif);letter-spacing:-.01em}
+.hero-copy .enter{pointer-events:auto;font:400 1rem/1 var(--sans);border:1px solid var(--fg);padding:.9rem 1.6rem;transition:background .3s,color .3s;letter-spacing:.02em}
+.hero-copy .enter:hover,.hero-copy .enter:focus-visible{background:var(--fg);color:var(--bg)}
+.hero-copy small{font:400 .8rem/1 var(--sans);opacity:.5;letter-spacing:.08em;text-transform:uppercase}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body class="preload" data-state="logo">
+
+<div class="stage" id="stage">
+  <div class="viewport" id="viewport">
+    <div class="world" id="world">
+      <div id="ground"></div>
+      <div class="mirror" id="mirror"></div>
+      <div class="cube" id="cube" role="button" tabindex="0" aria-label="ez co — come in"></div>
+      <div class="room" id="room"></div>
+    </div>
+  </div>
+</div>
+
+<header class="topbar">
+  <a class="logo" href="#/" id="logo" aria-label="ez co — home">
+    <span class="lw"><span class="ls"></span><span class="lt"><span>ez</span><span>co</span></span></span>
+  </a>
+  <button class="back" id="back" type="button">← back</button>
+  <span class="crumb" id="crumb"></span>
+</header>
+
+<div class="hero-copy" id="hero">
+  <p>your friendly neighborhood tech collective</p>
+  <button class="enter" id="enter">come in</button>
+  <small>click the building · scroll · ↵</small>
+</div>
+
+<!-- ---------------------------------------------------------------- page content, rendered onto the furniture -->
+<template id="t-tv">
+  <div class="tvs">
+    <div class="sign"><h1>build <span class="tw" id="tw"><span id="tw-text"></span><span class="cur"></span></span></h1><p>Simple, honest, user-friendly solutions.</p></div>
+    <div class="ticker"><span>the room is the site · click on things to open them · drag to look around · tab through the furniture · esc steps back · </span></div>
+  </div>
+</template>
+
+<template id="t-screen">
+  <div class="doc"><div class="h"># hello, world</div><div>## Usage</div><div>### Install</div><div>pnpm add @joinezco/markdown-editor</div><div>* [x] Task 1 (Done)</div><div>* [ ] Task 2<span class="cur"></span></div></div>
+  <div class="work">
+    <h2>our work</h2>
+    <p class="lede">A showcase of projects we've built.</p>
+    <div class="cards">
+      <a class="card dashed" href="#/newproject"><b>&lt; your project here &gt;</b><span>Want to see an idea come to life? See how we can help.</span></a>
+      <a class="card" href="https://github.com/join-ezco/mono/tree/main/src/typescript/markdown-editor" target="_blank" rel="noopener"><b>📝 markdown-editor</b><span>An intuitive, minimal, extensible markdown editor component</span><em>TipTap · ProseMirror · TypeScript · GitHub ↗</em></a>
+      <a class="card" href="https://github.com/join-ezco/mono/tree/main/src/typescript/codeblock" target="_blank" rel="noopener"><b>💻 codeblock</b><span>A codeblock component with language server and virtual filesystem support</span><em>CodeMirror · TypeScript · GitHub ↗</em></a>
+      <a class="card" href="https://crates.io/crates/witmproxy" target="_blank" rel="noopener"><b>🌐 witmproxy</b><span>A WASM-in-the-middle proxy</span><em>Rust · Plugins · WASM · mitmproxy · crates.io ↗</em></a>
+    </div>
+  </div>
+</template>
+
+<template id="t-cover">notes<br><small style="font-size:.6em;letter-spacing:.2em;opacity:.6">ez co · blog</small></template>
+
+<template id="t-index">
+  <div class="inner">
+    <h1>blog</h1>
+    <div class="meta">notes from the collective</div>
+    <div class="posts">
+      <a class="on" href="#/blog/starting-a-tech-company-that-doesnt-ruin-the-world"><b>Trying to build a company that doesn't ruin the world</b><small>28 June 2025 · tbrockman — A little bit of background about why we exist, and what we're trying to do.</small></a>
+    </div>
+    <div class="tags"><span class="tag">ez co</span><span class="tag">hello-world</span><span class="tag">introduction</span><span class="tag">tech</span></div>
+  </div>
+</template>
+
+<template id="t-post">
+  <div class="inner" data-scroll>
+    <h1>Trying to build a company that doesn't ruin the world</h1>
+    <div class="meta">28 June 2025 · tbrockman</div>
+    <p>If you're someone who has worked in the tech industry (or any industry, really), you've probably borne witness to the many ways in which the products you've built can be harmful.</p>
+    <p>Worse still, you've probably seen that harm be <em>intentional</em>, often driven by decisions to prioritize profit over people.</p>
+    <p>I'm not going to list <em>all</em> the reasons behind why I think this occurs, but I believe that it's enabled the most by one thing we can change:</p>
+    <h2>Corporate hierarchy</h2>
+    <p>In the current corporate meta where big company executives and majority share holders rule with little accountability, it's difficult for employees to do much to meaningfully influence an organizations direction beyond resigning (<em>something which is generally regarded as a bad idea in the current job market</em>). Some occasionally triumph and manage to steer the ship, but many others are forced to watch helplessly as their C-suite drown Leonardo DiCaprio in the North Atlantic.</p>
+    <p>Network effects, walled-gardens, and lack of competition (due to ineffective and oft unenforced US antitrust law) make it difficult for consumers to vote with their wallets.</p>
+    <p>Over-representation of psychopathic traits in leadership roles means that the people who are in charge of making decisions are the least empathetic, and more likely to assign a low cost to suffering of others.</p>
+    <p>Conveniently, excessive layers of middle-management provide a way for non-decision makers to absolve themselves of any responsibility they might feel for their involvement, placing the blame at the feet of their masters instead.</p>
+    <p>Even with the best of intentions, the pressure to perform, meet targets, or satisfy fiduciary duties can lead to decisions that prioritize local profits over global well-being.</p>
+    <p>Maximizing growth above all has led to a pretty large tab for humanity to pay, with the ones who ordered fancy cocktails and multiple entrees conveniently sitting it out in the restroom.</p>
+    <h2>The solution</h2>
+    <p>Abolish the hierarchy.</p>
+    <p>Or, at least, the unnatural kind that exists in most companies today.</p>
+    <p>Create flat (<em>or other interestingly-shaped</em>) organizations to add checks and balances on power. Build communities where every member has a voice, and where decisions are made collaboratively rather than top-down. Incentivize participation, punish apathy and exploitation. Make fair rules and update them in response to change.</p>
+    <p>Let experts in their fields make decisions they're best equipped to make, and defer to others for those they're not.</p>
+    <p>Be transparent. Be accountable.</p>
+    <p>Don't be evil.</p>
+    <p>Stay tuned,<br>- <code>ez co</code></p>
+  </div>
+</template>
+
+<template id="t-kanban">
+  <div class="kb">
+    <div class="col"><h4>ideas</h4>
+      <div class="note dashed">&lt; your project here &gt;<small>start a project</small></div>
+    </div>
+    <div class="col"><h4>doing</h4>
+      <div class="note">A man-in-the-middle proxy to filter addictive and low-effort content</div>
+      <div class="note">A browser-based Markdown (and code) editor</div>
+      <div class="note">An aesthetically pleasing wireless charging device</div>
+      <div class="note">A platform to power democratic organizations</div>
+    </div>
+    <div class="col"><h4>done</h4>
+      <div class="note">markdown-editor<small>TipTap · ProseMirror</small></div>
+      <div class="note">codeblock<small>CodeMirror · LSP</small></div>
+      <div class="note">witmproxy<small>Rust · WASM</small></div>
+    </div>
+    <form class="note new form" id="np-form">
+      <b>new project</b>
+      <div class="stuckText"></div>
+      <div><label for="np-name">Name *</label><input id="np-name" name="name" placeholder="Who are you?" required></div>
+      <div><label for="np-email">Email *</label><input id="np-email" name="email" type="email" placeholder="Where can we reach you?" required></div>
+      <div><label for="np-service">Service *</label>
+        <select id="np-service" name="service" required>
+          <option value="" disabled selected>What can we help you with?</option>
+          <option value="open-source">Open source</option>
+          <option value="software-development">Software development</option>
+          <option value="consulting">Consulting</option>
+          <option value="other">Other</option>
+        </select></div>
+      <div><label>Budget (USD) *</label><div class="row">
+        <div class="money"><span>$</span><input type="number" name="minBudget" min="1000" step="500" value="1000" aria-label="Minimum budget" required></div>
+        <div class="money"><span>$</span><input type="number" name="maxBudget" min="1000" step="500" value="10000" aria-label="Maximum budget" required></div></div></div>
+      <div><label for="np-msg">Message *</label><textarea id="np-msg" name="message" placeholder="Give us a brief overview of your project." required></textarea></div>
+      <button class="submit" type="submit">stick it on the board</button>
+      <div class="thanks">It's on the board. We'll write back soon.</div>
+    </form>
+  </div>
+</template>
+
+<template id="t-manifesto">
+  <div class="inner" data-scroll>
+    <h3>who we are</h3>
+    <div class="mission"><ul>
+      <li>We are a democratic collective of passionate technologists who want to build without compromising our values.</li>
+      <li>We want to help others and share the things we build along the way.</li>
+      <li>We do not chase short-term profits at the expense of long term prosperity.</li>
+      <li>We will never be evil.</li>
+    </ul></div>
+    <h3>who you are</h3>
+    <div class="mission"><ul>
+      <li>Someone who shares our aspirations and has something they want to build.</li>
+      <li>Someone who wants to <a class="link" href="#/join">join</a> or <a class="link" href="#/newproject">work with</a> our collective.</li>
+    </ul></div>
+    <h3>what we're working on lately</h3>
+    <p class="lede">It's on the <a class="link" href="#/newproject">board</a> across the room.</p>
+  </div>
+</template>
+
+<template id="t-window">
+  <div class="stars"></div>
+  <div class="sky"><div class="moon"></div><div class="sun"></div></div>
+  <div class="roofs">
+    <a class="rs" href="https://github.com/join-ezco" target="_blank" rel="noopener" style="left:17%;bottom:72%">GitHub</a>
+    <a class="rs" href="https://linkedin.com/company/eeezco/" target="_blank" rel="noopener" style="left:40%;bottom:54%">LinkedIn</a>
+    <a class="rs" href="https://crates.io/crates/witmproxy" target="_blank" rel="noopener" style="left:63%;bottom:88%">crates.io</a>
+  </div>
+</template>
+
+<template id="t-signback">
+  <h2>join us</h2>
+  <p class="lede">Pull up a chair — every member has a voice.</p>
+  <form class="form" id="join-form">
+    <div><label for="j-name">Name *</label><input id="j-name" name="name" required></div>
+    <div><label for="j-email">Email *</label><input id="j-email" name="email" type="email" required></div>
+    <div><label for="j-cv">Resume/CV * <small style="opacity:.6">(PDF, DOC, DOCX)</small></label><input id="j-cv" name="resume" type="file" accept=".pdf,.doc,.docx" required></div>
+    <div><label for="j-why">Why do you want to join? *</label><textarea id="j-why" name="motivation" required></textarea></div>
+    <button class="submit" type="submit">pull up a chair</button>
+    <div class="thanks">We saved you a seat. We'll be in touch.</div>
+  </form>
+</template>
+
+<template id="t-poster">
+  <div class="lg"><span>ez</span><span>co</span></div>
+  <p>your friendly neighborhood<br>tech collective</p>
+  <small>© 2025 – 2026 ez dev inc.</small>
+</template>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const body = document.body, world = $('#world'), viewport = $('#viewport'), cube = $('#cube'), room = $('#room'), mirror = $('#mirror'), ground = $('#ground');
+const tpl = id => $('#t-' + id).innerHTML;
+const D2R = Math.PI / 180;
+let curS = 360;
+
+/* ------------------------------------------------------------------
+   scene builder. Units are fractions of the cube edge `--S`; origin is
+   the cube centre, x right, y DOWN (CSS), z toward you. Objects sit on
+   the floor (y = .5) so their parts use negative y = height.
+------------------------------------------------------------------ */
+const fmt = n => { const s = (+n).toFixed(4).replace(/\.?0+$/, ''); return s === '' || s === '-' || s === '-0' ? '0' : s; };
+const U = n => `calc(var(--S)*${fmt(n)})`;
+const t3 = (x, y, z) => `translate3d(${U(x)},${U(y)},${U(z)})`;
+const face = (w, h, tf, cls = '', inner = '') =>
+  `<div class="face ${cls}" style="width:${U(w)};height:${U(h)};transform:translate(-50%,-50%) ${tf}">${inner}</div>`;
+function box({ x = 0, y = 0, z = 0, w, h, d, rot = '', cls = '', inner = {}, fcls = {} }) {
+  const b = `${t3(x, y, z)} ${rot}`;
+  const F = (n, fw, fh, tf) => face(fw, fh, `${b} ${tf}`, `${cls} f-${n} ${fcls[n] || ''}`, inner[n] || '');
+  return F('front', w, h, t3(0, 0, d / 2)) + F('back', w, h, `${t3(0, 0, -d / 2)} rotateY(180deg)`)
+    + F('right', d, h, `${t3(w / 2, 0, 0)} rotateY(90deg)`) + F('left', d, h, `${t3(-w / 2, 0, 0)} rotateY(-90deg)`)
+    + F('top', w, d, `${t3(0, -h / 2, 0)} rotateX(90deg)`) + F('bottom', w, d, `${t3(0, h / 2, 0)} rotateX(-90deg)`);
+}
+const plane = ({ x = 0, y = 0, z = 0, w, h, rot = '', cls = '', inner = '' }) => face(w, h, `${t3(x, y, z)} ${rot}`, cls, inner);
+const disc = o => plane({ ...o, w: o.d, h: o.d, rot: o.rot || 'rotateX(90deg)', cls: 'disc ' + (o.cls || '') });
+const polar = (cx, cz, r, deg) => [cx + r * Math.cos(deg * D2R), cz + r * Math.sin(deg * D2R)];
+const group = (x, z, parts, extra = '') => `<div class="deco" style="transform:${t3(x, .5, z)}${extra}">${parts}</div>`;
+const L = 'rotateY(90deg)', R = 'rotateY(-90deg)'; // planes on the left wall face +x, on the right wall −x
+
+/* the building: exterior faces ARE the logo ("ez" is the front door) */
+cube.innerHTML =
+  plane({ z: .5, w: 1, h: 1, rot: 'rotateY(var(--door))', cls: 'ext ext-front door', inner: '<div class="slider"></div><div class="glyph">ez</div>' })
+  + plane({ x: .5, w: 1, h: 1, rot: L, cls: 'ext ext-right', inner: '<div class="slider"></div><div class="glyph">co</div>' })
+  + plane({ y: -.5, w: 1, h: 1, rot: 'rotateX(90deg)', cls: 'ext ext-top' })
+  + plane({ x: -.5, w: 1, h: 1, rot: R, cls: 'ext ext-left' })
+  + plane({ z: -.5, w: 1, h: 1, rot: 'rotateY(180deg)', cls: 'ext ext-back' });
+mirror.innerHTML = cube.innerHTML;
+mirror.style.transform = `${t3(0, 1, 0)} scaleY(-1)`;
+ground.innerHTML = plane({ y: .503, w: 4, h: 4, rot: 'rotateX(90deg)', cls: 'ground' });
+
+/* furniture */
+const T = { x: .17, z: -.02 };                       // round table
+const stool = (cx, cz, rot) => box({ x: cx, y: -.085, z: cz, w: .08, h: .17, d: .08, rot: `rotateY(${fmt(rot)}deg)`, cls: 'thin' });
+const [chairX, chairZ] = polar(T.x, T.z, .27, 150);
+
+const OBJECTS = [
+  { id: 'work', label: 'our work', x: -.2, z: -.27, ly: -.6, parts:
+      box({ y: -.28, w: .36, h: .02, d: .17 })
+      + [[-.165, -.07], [.165, -.07], [-.165, .07], [.165, .07]].map(([lx, lz]) => box({ x: lx, y: -.135, z: lz, w: .018, h: .27, d: .018, cls: 'thin' })).join('')
+      + box({ x: -.04, y: -.3, z: -.03, w: .05, h: .02, d: .03, cls: 'thin' })
+      + box({ x: -.04, y: -.395, z: -.03, w: .26, h: .17, d: .012, cls: 'monitor', inner: { front: `<div class="scr surface">${tpl('screen')}</div>` } })
+      + box({ x: 0, y: -.294, z: .05, w: .14, h: .008, d: .045, cls: 'thin kbd' })
+      + box({ x: .13, y: -.31, z: .03, w: .035, h: .04, d: .035, cls: 'thin' }),
+    focus: { ry: 0, rx: 0, cx: -.24, cy: .105, cz: -.294, w: .26, h: .17, max: 900 } },
+
+  { id: 'blog', label: 'blog', x: T.x, z: T.z, ly: -.5, parts:
+      `<div class="nbpos" style="position:absolute;transform-style:preserve-3d;transform:${t3(-.03, -.3, .02)}"><div class="nb">`
+      + box({ x: .065, w: .13, h: .16, d: .01, cls: 'thin', fcls: { front: 'page r surface' }, inner: { front: tpl('post') } })
+      + `<div class="nbc">`
+      + plane({ x: .065, z: .0065, w: .13, h: .16, cls: 'cover keep', inner: tpl('cover') })
+      + plane({ x: .065, z: .0055, w: .13, h: .16, rot: 'rotateY(180deg)', cls: 'page l surface', inner: tpl('index') })
+      + `</div></div></div>`
+      + box({ x: .09, y: -.303, z: .05, w: .1, h: .006, d: .006, rot: 'rotateY(-25deg)', cls: 'thin' }),
+    focus: p => p ? { ry: 0, cx: .135, cy: -.1, cz: .3, w: .13, h: .16, max: 440 } : { ry: 0, cx: .07, cy: -.1, cz: .3, w: .26, h: .16, max: 900 } },
+
+  { id: 'newproject', label: 'start a project', x: -.485, z: -.02, ly: -.84, lx: .2, parts:
+      plane({ y: -.6, w: .5, h: .36, rot: L, cls: 'board surface', inner: tpl('kanban') }),
+    focus: p => p ? { ry: -90, cx: -.485, cy: -.093, cz: .11, w: .2, h: .245, max: 420 } : { ry: -90, cx: -.485, cy: -.1, cz: -.02, w: .5, h: .36, max: 1000 } },
+
+  { id: 'about', label: 'about us', x: .485, z: 0, ly: -.9, lx: -.22, lz: -.18, parts:
+      plane({ y: -.7, z: -.36, w: .13, h: .1, rot: R, cls: 'frame', inner: '<div class="sil two"></div>' })
+      + plane({ y: -.72, z: -.24, w: .09, h: .11, rot: R, cls: 'frame', inner: '<div class="sil"></div>' })
+      + plane({ y: -.58, z: -.31, w: .1, h: .08, rot: R, cls: 'frame', inner: '<div class="sil"></div>' })
+      + plane({ y: -.49, z: -.3, w: .17, h: .03, rot: R, cls: 'plaque', inner: 'ez co · est. 2025' })
+      + plane({ y: -.62, z: -.03, w: .24, h: .32, rot: R, cls: 'manifesto surface', inner: tpl('manifesto') }),
+    focus: p => p ? { ry: 90, cx: .485, cy: -.12, cz: -.03, w: .24, h: .32, max: 440 } : { ry: 90, cx: .485, cy: -.14, cz: -.17, w: .54, h: .38, max: 1000 } },
+
+  { id: 'connect', label: 'the neighborhood', x: .49, z: .28, ly: -.86, lx: -.26, lz: -.16, parts:
+      plane({ y: -.6, w: .3, h: .38, rot: R, cls: 'win surface', inner: tpl('window') }),
+    focus: { ry: 90, cx: .49, cy: -.1, cz: .28, w: .3, h: .38, max: 700 } },
+
+  { id: 'join', label: 'join us', x: .48, z: .21, ly: -.58, lx: -.14, parts:
+      plane({ y: -.765, w: .11, h: .05, rot: R, cls: 'strings' })
+      + `<div class="sgpos" style="position:absolute;transform-style:preserve-3d;transform:${t3(0, -.7, 0)}"><div class="sg">`
+      + plane({ w: .11, h: .085, rot: R, cls: 'hsign keep', inner: "we're hiring<em>inquire within</em>" })
+      + plane({ x: .002, y: .1, w: .27, h: .3, rot: L, cls: 'signback surface', inner: tpl('signback') })
+      + `</div></div>`,
+    focus: { ry: 90, cx: .42, cy: -.1, cz: .21, w: .27, h: .3, max: 560 } },
+
+  { id: 'lights', action: 'lights', label: 'turn the lights on', x: T.x, z: T.z + .04, ly: -.72, parts:
+      box({ y: -.94, w: .005, h: .12, d: .005, cls: 'thin' })
+      + box({ y: -.845, w: .14, h: .07, d: .14, cls: 'shade' })
+      + disc({ y: -.804, d: .06, rot: 'rotateX(-90deg)', cls: 'bulb' }) },
+];
+
+const DECOR =
+  group(0, 0, box({ y: -.66, z: -.465, w: .5, h: .3, d: .03, fcls: { front: 'tv' }, inner: { front: tpl('tv') } }))
+  + group(T.x, T.z, disc({ y: -.29, d: .3 }) + box({ y: -.145, w: .035, h: .28, d: .035, cls: 'thin' }) + disc({ y: -.004, d: .13, cls: 'thin' })
+      + [210, 330, 90].map(a => { const [sx, sz] = polar(0, 0, .19, a); return stool(sx, sz, 90 - a); }).join(''))
+  + group(chairX, chairZ, box({ y: -.085, w: .075, h: .17, d: .075, cls: 'thin' }) + box({ y: -.245, z: .034, w: .075, h: .15, d: .012, cls: 'thin' }), ` rotateY(${fmt(90 - 150)}deg)`)
+  + group(.14, -.03, plane({ y: -.003, w: .64, h: .46, rot: 'rotateX(90deg)', cls: 'rug' }))
+  + group(.37, -.37, box({ y: -.045, w: .09, h: .09, d: .09, cls: 'thin' })
+      + [0, 60, 120].map((a, i) => plane({ y: -.2, w: .055, h: .22, rot: `rotateY(${a}deg) rotateZ(${i % 2 ? 14 : -10}deg)`, cls: 'leaf' })).join(''))
+  + group(-.49, -.37, plane({ y: -.85, w: .2, h: .15, rot: L, cls: 'poster keep', inner: tpl('poster') }));
+
+const objHTML = o => {
+  const rot = o.rot ? ` rotateY(${fmt(o.rot)}deg)` : '', unrot = o.rot ? ` rotateY(${fmt(-o.rot)}deg)` : '';
+  const href = o.action ? '' : `#/${o.id}`;
+  return `<div class="obj" id="obj-${o.id}" role="${o.action ? 'button' : 'link'}" tabindex="0" data-page="${o.id}"${o.action ? ` data-action="${o.action}"` : ` data-href="${href}"`} aria-label="${o.label}" style="transform:${t3(o.x, .5, o.z)}${rot}">${o.parts}<span class="label" style="transform:translate(-50%,-50%) ${t3(o.lx || 0, o.ly, o.lz || 0)}${unrot}">${o.label}</span></div>`;
+};
+room.innerHTML =
+  plane({ z: -.499, w: 1, h: 1, cls: 'wall wall-back' })
+  + plane({ x: -.499, w: 1, h: 1, rot: L, cls: 'wall wall-left' })
+  + plane({ x: .499, w: 1, h: 1, rot: R, cls: 'wall wall-right' })
+  + plane({ y: .499, w: 1, h: 1, rot: 'rotateX(90deg)', cls: 'wall wall-floor' })
+  + plane({ y: -.499, w: 1, h: 1, rot: 'rotateX(-90deg)', cls: 'wall wall-ceil' })
+  + plane({ x: -.499, z: .75, w: .5, h: 1, rot: L, cls: 'wall wall-left wx' })
+  + plane({ x: .499, z: .75, w: .5, h: 1, rot: R, cls: 'wall wall-right wx' })
+  + plane({ y: .499, z: .75, w: 1, h: .5, rot: 'rotateX(90deg)', cls: 'wall wall-floor wx' })
+  + plane({ y: -.499, z: .75, w: 1, h: .5, rot: 'rotateX(-90deg)', cls: 'wall wall-ceil wx' })
+  + DECOR + OBJECTS.map(objHTML).join('');
+const byId = Object.fromEntries(OBJECTS.map(o => [o.id, o]));
+
+/* ------------------------------------------------------------------
+   camera: to "open" an object we turn the dollhouse so the object's
+   surface faces the viewer, then dolly so it fills the viewport. The
+   perspective distance grows with the zoom so nothing in the room ever
+   crosses the camera plane. Everything is computed from the viewport,
+   so a phone and a desktop both get a legible page.
+------------------------------------------------------------------ */
+const isPortrait = () => innerWidth < innerHeight;
+function poseFor(o) {
+  const f = typeof o.focus === 'function' ? o.focus(isPortrait()) : o.focus;
+  const ry = (f.ry || 0) * D2R, rx = (f.rx || 0) * D2R;
+  const x1 = f.cx * Math.cos(ry) + f.cz * Math.sin(ry), z1 = -f.cx * Math.sin(ry) + f.cz * Math.cos(ry);
+  const y2 = f.cy * Math.cos(rx) - z1 * Math.sin(rx), z2 = f.cy * Math.sin(rx) + z1 * Math.cos(rx);
+  const fit = .86;
+  const s = Math.min(Math.min(innerWidth * fit, f.max) / (f.w * curS), innerHeight * fit / (f.h * curS));
+  const pn = Math.max(2.2, s + 2.5);
+  return { rx: f.rx || 0, ry: f.ry || 0, pn, tzn: pn * (1 - 1 / s) - z2, txn: -x1, tyn: -y2, s };
+}
+function applyPose(o) {
+  const p = poseFor(o);
+  world.style.setProperty('--rx', p.rx + 'deg'); world.style.setProperty('--ry', p.ry + 'deg');
+  world.style.setProperty('--txn', fmt(p.txn)); world.style.setProperty('--tyn', fmt(p.tyn)); world.style.setProperty('--tzn', fmt(p.tzn));
+  viewport.style.setProperty('--pn', fmt(p.pn));
+  $('#obj-' + o.id).style.setProperty('--sfs', (15 / (p.s * (o.sfsScale || 1))).toFixed(3) + 'px');
+}
+function clearPose() {
+  ['--rx', '--ry', '--txn', '--tyn', '--tzn'].forEach(v => world.style.removeProperty(v));
+  viewport.style.removeProperty('--pn');
+}
+
+/* ------------------------------------------------------------------
+   state machine: logo → room → page, driven by the hash
+------------------------------------------------------------------ */
+const reduced = matchMedia('(prefers-reduced-motion:reduce)').matches;
+const DUR = reduced ? { enter: 30, leave: 30 } : { enter: 2900, leave: 2400 };
+let state = 'logo', page = null, timer = null, instant = true;
+const setState = s => { body.dataset.state = s; state = s; };
+
+function enter(then) {
+  if (state !== 'logo') { then && then(); return; }
+  clearTimeout(timer);
+  body.classList.remove('leaving'); body.classList.add('entering');
+  setState('room');
+  timer = setTimeout(() => { body.classList.remove('entering'); then && then(); }, instant ? 0 : DUR.enter);
+}
+function leave() {
+  if (state === 'logo') return;
+  clearTimeout(timer);
+  closePage(true);
+  body.classList.remove('entering'); body.classList.add('leaving');
+  setState('logo');
+  timer = setTimeout(() => body.classList.remove('leaving'), instant ? 0 : DUR.leave);
+}
+function openPage(id, sub) {
+  const o = byId[id]; if (!o || o.action) return;
+  if (state === 'logo') { enter(() => openPage(id, sub)); return; }
+  $$('.obj.active').forEach(x => x.classList.remove('active'));
+  const el = $('#obj-' + id); el.classList.add('active');
+  applyPose(o);
+  drag.rx = drag.ry = 0; glance.rx = glance.ry = 0;
+  $('#crumb').textContent = o.label;
+  if (id === 'newproject' && sub) { const sel = $('#np-service'); if ([...sel.options].some(x => x.value === sub)) sel.value = sub; }
+  setState('page'); page = id;
+}
+function closePage(silent) {
+  if (state !== 'page') return;
+  clearPose();
+  $$('.obj.active').forEach(x => x.classList.remove('active'));
+  page = null; $('#crumb').textContent = '';
+  if (!silent) setState('room');
+}
+function route() {
+  const raw = location.hash.replace(/^#\/?/, '');
+  const [path, q] = raw.split('?');
+  const [id, sub] = path.split('/').filter(Boolean);
+  const params = new URLSearchParams(q || '');
+  if (!id) { leave(); return; }
+  if (id === 'room') { state === 'page' ? closePage() : enter(); return; }
+  if (byId[id]) openPage(id, sub || params.get('service') || undefined);
+}
+addEventListener('hashchange', route);
+const go = h => { if (location.hash !== h) location.hash = h; else route(); };
+
+/* ------------------------------------------------------------------
+   looking around: mouse parallax + drag + keyboard + tab "glance",
+   all folded into one smoothed head-turn about the camera
+------------------------------------------------------------------ */
+const drag = { rx: 0, ry: 0 }, glance = { rx: 0, ry: 0 };
+let par = { x: 0, y: 0 }, parT = { x: 0, y: 0 }, look = { rx: 0, ry: 0 };
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const limits = () => state === 'page' ? { ry: 7, rxLo: -5, rxHi: 5 } : { ry: 55, rxLo: -22, rxHi: 14 };
+addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
+  parT = { x: (e.clientX / innerWidth) * 2 - 1, y: (e.clientY / innerHeight) * 2 - 1 };
+}, { passive: true });
+(function tick() {
+  par.x += (parT.x - par.x) * .06; par.y += (parT.y - par.y) * .06;
+  const k = state === 'logo' ? [9, 6] : state === 'room' ? [4, 2.5] : [1.2, .8];
+  // outside: spin the building a little. inside: turn your head.
+  world.style.setProperty('--pry', (state === 'logo' ? par.x * k[0] : 0).toFixed(3) + 'deg');
+  world.style.setProperty('--prx', (state === 'logo' ? -par.y * k[1] : 0).toFixed(3) + 'deg');
+  const lim = limits();
+  const tRy = state === 'logo' ? 0 : clamp(drag.ry, -lim.ry, lim.ry) + glance.ry + par.x * k[0];
+  const tRx = state === 'logo' ? 0 : clamp(drag.rx, lim.rxLo, lim.rxHi) + glance.rx - par.y * k[1];
+  look.ry += (tRy - look.ry) * .1; look.rx += (tRx - look.rx) * .1;
+  world.style.setProperty('--lry', look.ry.toFixed(3) + 'deg');
+  world.style.setProperty('--lrx', look.rx.toFixed(3) + 'deg');
+  requestAnimationFrame(tick);
+})();
+
+/* drag to look (mouse or touch), but never from inside an open page's surface */
+const stage = $('#stage');
+let dragging = null, dragMoved = false;
+stage.addEventListener('pointerdown', e => {
+  if (state === 'logo' || e.button > 0) return;
+  if (e.target.closest('.obj.active .surface, a, button, input, select, textarea')) return;
+  dragging = { x: e.clientX, y: e.clientY, ry: drag.ry, rx: drag.rx, id: e.pointerId };
+  dragMoved = false;
+});
+addEventListener('pointermove', e => {
+  if (!dragging || e.pointerId !== dragging.id) return;
+  const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
+  if (!dragMoved && Math.hypot(dx, dy) > 6) { dragMoved = true; body.classList.add('dragging'); try { stage.setPointerCapture(e.pointerId); } catch {} }
+  if (dragMoved) { drag.ry = dragging.ry + dx * .22; drag.rx = dragging.rx - dy * .16; }
+});
+const endDrag = () => { dragging = null; body.classList.remove('dragging'); };
+addEventListener('pointerup', endDrag); addEventListener('pointercancel', endDrag);
+stage.addEventListener('click', e => { if (dragMoved) { e.stopPropagation(); e.preventDefault(); dragMoved = false; } }, true);
+
+/* objects: click / Enter opens; tab-focus glances toward them */
+$$('.obj').forEach(o => {
+  const id = o.dataset.page, def = byId[id];
+  const open = () => def.action === 'lights' ? toggleLights() : go(o.dataset.href);
+  o.addEventListener('click', e => {
+    if (o.classList.contains('active')) return;
+    if (e.target.closest('a, button, input, select, textarea, label')) return;
+    open();
+  });
+  o.addEventListener('keydown', e => { if (e.target === o && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } });
+  o.addEventListener('focusin', () => {
+    if (state !== 'room' || !o.matches(':focus-visible')) return;
+    const zCam = 2.2 - 1.12;                      // camera z in room units at the default pose
+    const dz = zCam - def.z, dx = def.x, dy = (def.ly || -.5) + .5;
+    glance.ry = clamp(Math.atan2(dx, dz) / D2R * .75, -32, 32);
+    glance.rx = clamp(Math.atan2(-dy, dz) / D2R * .6, -14, 14);
+  });
+  o.addEventListener('focusout', () => { glance.rx = glance.ry = 0; });
+});
+
+/* the rest of the chrome */
+cube.addEventListener('pointerenter', () => { cube.classList.add('hot'); mirror.classList.add('hot'); });
+cube.addEventListener('pointerleave', () => { cube.classList.remove('hot'); mirror.classList.remove('hot'); });
+cube.addEventListener('click', () => { if (state === 'logo') go('#/room'); });
+cube.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cube.click(); } });
+$('#enter').addEventListener('click', () => go('#/room'));
+$('#back').addEventListener('click', () => go('#/room'));
+addEventListener('keydown', e => {
+  if (e.target.matches('input,textarea,select')) return;
+  if (e.key === 'Escape') { if (state === 'page') go('#/room'); else if (state === 'room') go('#/'); return; }
+  if (state === 'logo' && (e.key === 'Enter' || e.key === 'ArrowDown')) { go('#/room'); return; }
+  if (state === 'room') {
+    if (e.key === 'ArrowLeft') drag.ry -= 12; if (e.key === 'ArrowRight') drag.ry += 12;
+    if (e.key === 'ArrowUp') drag.rx += 8; if (e.key === 'ArrowDown') drag.rx -= 8;
+  }
+});
+addEventListener('wheel', e => { if (state === 'logo' && e.deltaY > 20) go('#/room'); }, { passive: true });
+
+const lampLabel = () => {
+  const lit = document.documentElement.classList.contains('lit');
+  const el = $('#obj-lights'), t = lit ? 'turn the lights off' : 'turn the lights on';
+  el.setAttribute('aria-label', t); $('.label', el).textContent = t;
+};
+const toggleLights = () => {
+  const lit = document.documentElement.classList.toggle('lit');
+  try { localStorage.setItem('ezco-lit', lit ? '1' : '0'); } catch {}
+  lampLabel();
+};
+try { if (localStorage.getItem('ezco-lit') === '1') document.documentElement.classList.add('lit'); } catch {}
+lampLabel();
+
+/* forms: the project note gets stuck to the board; the sign says thanks */
+$('#np-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target, name = f.name.value.trim() || 'someone', msg = f.message.value.trim();
+  $('.stuckText', f).innerHTML = `${msg.length > 70 ? msg.slice(0, 70) + '…' : msg}<small>${name} · ${f.service.value.replace('-', ' ')}</small>`;
+  f.classList.add('stuck');
+});
+$('#join-form').addEventListener('submit', e => { e.preventDefault(); e.target.classList.add('sent'); });
+
+/* the hero's typewriter, now on the TV */
+const words = ['easier', 'smarter', 'simple', 'open', 'the future', 'scalable', 'secure', 'humane'];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => {
+  const tw = $('#tw'), t = $('#tw-text'); let i = 0;
+  await sleep(1000);
+  for (;;) {
+    const w = words[i]; t.textContent = '';
+    for (const ch of w) { await sleep(10 + Math.random() * 100); t.textContent += ch; }
+    await sleep(2000 + Math.random() * 1000);
+    tw.classList.add('sel'); await sleep(300 + Math.random() * 100);
+    t.textContent = ''; tw.classList.remove('sel'); await sleep(200);
+    i = (i + 1) % words.length;
+  }
+})();
+
+/* sizing: the cube edge is a fraction of the viewport; re-fit an open page on resize */
+function size() {
+  curS = Math.round(Math.min(innerHeight * .42, innerWidth * .55));
+  document.documentElement.style.setProperty('--S', curS + 'px');
+  if (state === 'page' && page) applyPose(byId[page]);
+}
+addEventListener('resize', size);
+size();
+route();
+const dbg = new URLSearchParams(location.search);
+if (dbg.has('enter')) setTimeout(() => go('#/room'), 80);
+if (dbg.has('hot')) { cube.classList.add('hot'); mirror.classList.add('hot'); }
+if (dbg.has('lit')) document.documentElement.classList.add('lit'), lampLabel();
+if (dbg.has('css')) { const st = document.createElement('style'); st.textContent = dbg.get('css'); document.head.appendChild(st); }
+if (dbg.has('look')) { const [ry, rx = 0] = dbg.get('look').split(',').map(Number); drag.ry = ry; drag.rx = rx; look.ry = ry; look.rx = rx; }
+if (dbg.has('measure')) setTimeout(() => {
+  const out = {};
+  dbg.get('measure').split('|').forEach(sel => { const els = $$(sel); const r = els[0] && els[0].getBoundingClientRect(); out[sel] = { n: els.length, rect: r && [r.left, r.top, r.width, r.height].map(Math.round), sl: els[0] && els[0].scrollLeft, st: els[0] && els[0].scrollTop }; });
+  out.world = getComputedStyle(world).transform; out.persp = getComputedStyle(viewport).perspective; out.S = curS; out.pn = getComputedStyle(viewport).getPropertyValue('--pn');
+  document.title = JSON.stringify(out);
+}, 5500);
+if (dbg.has('pose')) {
+  const [rx, ry, tzn, door, tyn = -.06, txn = 0, pn = 2.2] = dbg.get('pose').split(',').map(Number);
+  setState('room'); body.classList.add('entering');
+  world.style.cssText += `;--rx:${rx}deg;--ry:${ry}deg;--tzn:${tzn};--tyn:${tyn};--txn:${txn}`;
+  viewport.style.setProperty('--pn', pn);
+  $$('.door').forEach(d => { d.style.cssText += `;--door:${door}deg;opacity:1`; });
+}
+requestAnimationFrame(() => requestAnimationFrame(() => { body.classList.remove('preload'); instant = false; }));
+})();
+</script>
+</body>
+</html>
