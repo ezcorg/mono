@@ -45,7 +45,11 @@ pub fn registry() -> &'static [Capability] {
 
 /// The emoji for a capability id (grant `kind` tag), or a key fallback.
 pub fn icon_for(id: &str) -> &'static str {
-    DEFAULTS.iter().find(|c| c.id == id).map(|c| c.icon).unwrap_or("🔑")
+    DEFAULTS
+        .iter()
+        .find(|c| c.id == id)
+        .map(|c| c.icon)
+        .unwrap_or("🔑")
 }
 
 static DEFAULTS: &[Capability] = &[
@@ -78,7 +82,10 @@ static DEFAULTS: &[Capability] = &[
 
 /// The primary language subtag: `"en-US"` / `"en_US.UTF-8"` -> `"en"`.
 fn primary_subtag(tag: &str) -> String {
-    tag.split(['-', '_', '.']).next().unwrap_or(tag).to_ascii_lowercase()
+    tag.split(['-', '_', '.'])
+        .next()
+        .unwrap_or(tag)
+        .to_ascii_lowercase()
 }
 
 /// The host's locale from the environment (`LANG` / `LC_ALL`), as a primary subtag.
@@ -106,7 +113,11 @@ mod tests {
     #[test]
     fn every_capability_has_english_and_an_emoji() {
         for c in registry() {
-            assert!(c.descriptions.iter().any(|(l, _)| *l == "en"), "{} lacks en", c.id);
+            assert!(
+                c.descriptions.iter().any(|(l, _)| *l == "en"),
+                "{} lacks en",
+                c.id
+            );
             assert!(!c.icon.is_empty(), "{} lacks an icon", c.id);
         }
     }

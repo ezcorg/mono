@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 
 use crate::broker::{BrokerProvider, Consent, GrantStore, Hosts, Pairings};
 use crate::process::ProcessProvider;
-use crate::serve::{serve_webtransport_all, serve_websocket_all, FsServe};
+use crate::serve::{serve_websocket_all, serve_webtransport_all, FsServe};
 use crate::terminal::TerminalProvider;
 use crate::watch::WatchProvider;
 use crate::workspace::WorkspaceProvider;
@@ -53,7 +53,8 @@ fn seed_jail(root: &Path) -> anyhow::Result<()> {
     )?;
     std::fs::write(
         root.join("jail/src/main.rs"),
-        "fn main() {\n    println!(\"edit me over wRPC — rust-analyzer runs on the host\");\n}\n".as_bytes(),
+        "fn main() {\n    println!(\"edit me over wRPC — rust-analyzer runs on the host\");\n}\n"
+            .as_bytes(),
     )?;
     std::fs::write(root.join("secret.txt"), b"this file is OUTSIDE the jail\n")?;
     Ok(())

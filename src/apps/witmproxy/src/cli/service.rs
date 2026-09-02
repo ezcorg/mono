@@ -1,6 +1,6 @@
+use super::{GlobalArgs, ServiceCtlArgs};
 #[cfg(target_os = "linux")]
 use crate::config::TransparentProxyConfig;
-use super::{GlobalArgs, ServiceCtlArgs};
 use crate::config::{AppConfig, LogConfig, ServiceScopedConfig, TelemetryConfig};
 use anyhow::{Context, Result};
 use conf::{Conf, Subcommands};
@@ -200,10 +200,10 @@ impl ServiceHandler {
     /// Get the service label
     fn service_label() -> ServiceLabel {
         #[allow(
-        clippy::expect_used,
-        reason = "SERVICE_LABEL is a compile-time constant known to parse"
-    )]
-    SERVICE_LABEL.parse().expect("valid service label")
+            clippy::expect_used,
+            reason = "SERVICE_LABEL is a compile-time constant known to parse"
+        )]
+        SERVICE_LABEL.parse().expect("valid service label")
     }
 
     /// Get the native service manager for the current platform
@@ -327,7 +327,9 @@ impl ServiceHandler {
     pub async fn handle(&self, command: &ServiceCommands) -> Result<()> {
         match command {
             ServiceCommands::Install(_) => {
-                anyhow::bail!("install is handled by Cli::run and must not reach the service handler")
+                anyhow::bail!(
+                    "install is handled by Cli::run and must not reach the service handler"
+                )
             }
             ServiceCommands::Uninstall(a) => self.uninstall_service(a.yes).await,
             ServiceCommands::Start(_) => self.start_service().await,
@@ -452,7 +454,10 @@ impl ServiceHandler {
             .await
             .context("Failed to provision database and admin account")?;
         if let Some(password) = &provisioned.generated_admin_password {
-            super::print_admin_credentials(&provisioned.effective_config.auth.admin_email, password);
+            super::print_admin_credentials(
+                &provisioned.effective_config.auth.admin_email,
+                password,
+            );
         }
         // Close the provisioning database handle; the daemon opens its own.
         drop(provisioned);
@@ -722,8 +727,8 @@ impl ServiceHandler {
             ServiceState::Stopped(None) => println!("Service:        Stopped"),
             ServiceState::NotStarted => println!("Service:        Stopped (not started)"),
             ServiceState::NotInstalled => {
-                    anyhow::bail!("service is not installed")
-                }
+                anyhow::bail!("service is not installed")
+            }
         }
 
         // Real application health: probe the endpoint the web server exposes.

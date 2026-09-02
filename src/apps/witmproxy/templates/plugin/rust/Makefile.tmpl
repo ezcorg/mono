@@ -1,5 +1,6 @@
 .PHONY: all clean wasmsign keys
 .DEFAULT_GOAL := all
+.DELETE_ON_ERROR:
 
 WASM := target/wasm32-wasip2/release/{{crate_name}}.wasm
 SIGNED := target/wasm32-wasip2/release/{{crate_name}}.signed.wasm
@@ -7,10 +8,15 @@ SIGNED := target/wasm32-wasip2/release/{{crate_name}}.signed.wasm
 wasmsign:
 	@command -v wasmsign2 >/dev/null 2>&1 || cargo install wasmsign2-cli
 
-key.secret: wasmsign
+# Grouped target (&:): one keygen writes both files, so losing either regenerates
+# the pair. As separate rules a deleted key.public is never rebuilt while
+# key.secret survives, and the build then fails on include_bytes!.
+#
+# Order-only (|) so the tool check never marks the keys stale. As a plain
+# prerequisite it regenerates the keypair on every build, and since the public
+# key is compiled into the component, that changes the plugin's identity.
+key.secret key.public &: | wasmsign
 	wasmsign2 keygen --public-key key.public --secret-key key.secret
-
-key.public: key.secret
 
 keys: key.secret key.public
 

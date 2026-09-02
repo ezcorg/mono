@@ -140,7 +140,12 @@ fn spawn_pty(shell: &str, cols: u16, rows: u16) -> anyhow::Result<PtyIo> {
         drop(master);
     });
 
-    Ok(PtyIo { stdin, output, resize, killer })
+    Ok(PtyIo {
+        stdin,
+        output,
+        resize,
+        killer,
+    })
 }
 
 /// Teardown for a terminal session: kills the shell (via the independent killer) and
@@ -192,7 +197,12 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Hand
             Ok(p) => p,
             Err(e) => return Ok(Err(format!("failed to spawn `{shell}`: {e}"))),
         };
-        let PtyIo { stdin: pty_stdin, output, resize, killer } = pty;
+        let PtyIo {
+            stdin: pty_stdin,
+            output,
+            resize,
+            killer,
+        } = pty;
 
         // Forward the wRPC stdin stream → the PTY until the client closes it.
         let stdin_h = tokio::spawn(async move {
@@ -230,7 +240,10 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Hand
         Ok(Ok(crate::session::grant_scoped(
             Box::pin(out),
             revocation,
-            PtyGuard { killer, handles: vec![stdin_h, control_h] },
+            PtyGuard {
+                killer,
+                handles: vec![stdin_h, control_h],
+            },
         )))
     }
 }
@@ -290,7 +303,10 @@ mod tests {
 
     fn terminal_grant(store: &Arc<Mutex<GrantStore>>) -> String {
         store.lock().unwrap().issue(
-            CapabilityKind::Terminal(TerminalRequest { shell: None, jailed: false }),
+            CapabilityKind::Terminal(TerminalRequest {
+                shell: None,
+                jailed: false,
+            }),
             "terminal".to_string(),
             Duration::from_secs(60),
             crate::broker::anonymous_principal(),
@@ -316,7 +332,8 @@ mod tests {
             Bytes::from_static(b"exit\n"),
         ]));
 
-        let control: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::iter(Vec::<Bytes>::new()));
+        let control: Pin<Box<dyn Stream<Item = Bytes> + Send>> =
+            Box::pin(stream::iter(Vec::<Bytes>::new()));
         let (result, io) = client::open(&wrpc, (), &grant, stdin, control, 80, 24)
             .await
             .expect("invoke terminal.open");
@@ -347,7 +364,10 @@ mod tests {
         .expect("terminal I/O failed");
 
         let text = String::from_utf8_lossy(&collected);
-        assert!(text.contains("wrpc-terminal-works"), "shell output missing marker:\n{text}");
+        assert!(
+            text.contains("wrpc-terminal-works"),
+            "shell output missing marker:\n{text}"
+        );
 
         server.abort();
     }

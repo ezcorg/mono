@@ -1,4 +1,3 @@
-#![feature(impl_trait_in_bindings)]
 // The `conf` Subcommands derive emits private helper structs for named-field
 // variants, which surface through the generated impls on our `pub` command
 // enums. This is benign (the helpers are an implementation detail), so allow it.

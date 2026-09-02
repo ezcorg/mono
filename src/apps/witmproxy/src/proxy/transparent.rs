@@ -10,9 +10,9 @@ use crate::config::TransparentProxyConfig;
 use crate::events::Event;
 use crate::events::connect::Connect;
 use crate::plugins::registry::PluginRegistry;
+use crate::proxy::tenant::TenantContext;
 use crate::proxy::tenant_resolver::TenantResolver;
 use crate::proxy::{UpstreamClient, is_closed, parse_authority_host_port, run_tls_mitm};
-use crate::proxy::tenant::TenantContext;
 
 use super::netfilter::NetfilterManager;
 
@@ -246,10 +246,7 @@ pub fn extract_sni_from_client_hello(buf: &[u8]) -> Option<String> {
 }
 
 /// Check if any plugin wants to handle a connection to the given host.
-async fn should_intercept(
-    plugin_registry: &Option<Arc<PluginRegistry>>,
-    hostname: &str,
-) -> bool {
+async fn should_intercept(plugin_registry: &Option<Arc<PluginRegistry>>, hostname: &str) -> bool {
     let Some(registry) = plugin_registry else {
         return false;
     };

@@ -36,15 +36,21 @@ fn show_window(app: &tauri::AppHandle) {
 }
 
 fn pairings_path() -> PathBuf {
-    std::env::var("ICANHAZ_PAIRINGS").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".icanhaz-pairings.json")
-    })
+    std::env::var("ICANHAZ_PAIRINGS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                .join(".icanhaz-pairings.json")
+        })
 }
 
 fn hosts_path() -> PathBuf {
-    std::env::var("ICANHAZ_HOSTS").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".icanhaz-hosts.json")
-    })
+    std::env::var("ICANHAZ_HOSTS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                .join(".icanhaz-hosts.json")
+        })
 }
 
 /// Read the same `ICANHAZ_*` env the headless binary does, with sensible defaults.
@@ -61,7 +67,9 @@ fn daemon_config() -> DaemonConfig {
     });
     DaemonConfig {
         ws_bind: env_or("ICANHAZ_WS_BIND", "127.0.0.1:7777"),
-        wt_bind: env_or("ICANHAZ_WT_BIND", "127.0.0.1:7778").parse().expect("invalid ICANHAZ_WT_BIND"),
+        wt_bind: env_or("ICANHAZ_WT_BIND", "127.0.0.1:7778")
+            .parse()
+            .expect("invalid ICANHAZ_WT_BIND"),
         root,
         fs_component: PathBuf::from(fs_component),
         cert: std::env::var("ICANHAZ_CERT").ok(),
@@ -99,7 +107,11 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
             let _tray = TrayIconBuilder::with_id("icanhaz")
                 .tooltip("icanhaz — consent")
-                .icon(app.default_window_icon().cloned().expect("bundled default icon"))
+                .icon(
+                    app.default_window_icon()
+                        .cloned()
+                        .expect("bundled default icon"),
+                )
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -147,7 +159,9 @@ pub fn run() {
             let errors = consent::AppErrors::new();
             app.manage(errors.clone());
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = icanhaz_host::daemon::run(config, grants, pairings, hosts, consent).await {
+                if let Err(err) =
+                    icanhaz_host::daemon::run(config, grants, pairings, hosts, consent).await
+                {
                     errors.push(format!("daemon stopped: {err}"));
                 }
             });

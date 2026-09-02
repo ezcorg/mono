@@ -213,7 +213,8 @@ impl CertificateAuthority {
 
         Ok(Certificate {
             cert_der: CertificateDer::from(cert_der.to_vec()),
-            key_der: PrivateKeyDer::try_from(key_der).map_err(|e| CertError::InvalidFormat(e.to_string()))?,
+            key_der: PrivateKeyDer::try_from(key_der)
+                .map_err(|e| CertError::InvalidFormat(e.to_string()))?,
             pem_cert,
             pem_key,
         })

@@ -128,10 +128,9 @@ impl TenantHandler {
                     "display_name": display_name,
                 });
                 if let Some(email) = email {
-                    body
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("request body is not a JSON object"))?
-            .insert("email".to_string(), serde_json::json!(email));
+                    body.as_object_mut()
+                        .ok_or_else(|| anyhow::anyhow!("request body is not a JSON object"))?
+                        .insert("email".to_string(), serde_json::json!(email));
                 }
                 let resp = client
                     .post_json(

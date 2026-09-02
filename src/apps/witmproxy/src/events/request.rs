@@ -9,8 +9,8 @@ use http_body::Body;
 use hyper::Request;
 use wasmtime::Store;
 use wasmtime::component::Resource;
-use wasmtime_wasi_http::p3::Request as WasiRequest;
 use wasmtime_wasi_http::WasiHttpView;
+use wasmtime_wasi_http::p3::Request as WasiRequest;
 
 impl Event for WasiRequest {
     fn kind(&self) -> EventKind {
@@ -55,8 +55,7 @@ impl Event for WasiRequest {
         *rebuilt.version_mut() = parts.version;
         *rebuilt.headers_mut() = parts.headers;
 
-        let (wasi, _io) =
-            WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), rebuilt);
+        let (wasi, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), rebuilt);
         let handle: Resource<WasiRequest> = store.data_mut().http().table.push(wasi)?;
 
         Ok((

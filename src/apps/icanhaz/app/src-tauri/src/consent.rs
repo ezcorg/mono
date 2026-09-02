@@ -26,7 +26,11 @@ pub fn set_tray_badge(app: &AppHandle, pending_count: usize) {
         let _ = tray.set_tooltip(Some(format!("icanhaz — {pending_count} pending")));
         // `Some("")` force-clears the badge at zero — `set_title(None)` doesn't always
         // clear a previously-set title on macOS (the source of the stale count).
-        let title = if pending_count > 0 { pending_count.to_string() } else { String::new() };
+        let title = if pending_count > 0 {
+            pending_count.to_string()
+        } else {
+            String::new()
+        };
         let _ = tray.set_title(Some(title));
     }
 }
@@ -35,10 +39,22 @@ pub fn set_tray_badge(app: &AppHandle, pending_count: usize) {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum CapabilityDto {
-    Filesystem { roots: Vec<PathGrantDto> },
-    Process { image: String, args: Vec<String>, guest_chooses_argv: bool },
-    Terminal { shell: Option<String>, jailed: bool },
-    Sockets { endpoints: Vec<String>, may_listen: bool },
+    Filesystem {
+        roots: Vec<PathGrantDto>,
+    },
+    Process {
+        image: String,
+        args: Vec<String>,
+        guest_chooses_argv: bool,
+    },
+    Terminal {
+        shell: Option<String>,
+        jailed: bool,
+    },
+    Sockets {
+        endpoints: Vec<String>,
+        may_listen: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -121,13 +137,22 @@ impl CapabilityDto {
                         if r.rights.watch {
                             rights |= FsRights::WATCH;
                         }
-                        PathGrant { path: r.path, rights }
+                        PathGrant {
+                            path: r.path,
+                            rights,
+                        }
                     })
                     .collect(),
             })),
-            CapabilityDto::Process { image, args, guest_chooses_argv } => {
-                Some(CapabilityKind::Process(ProcessRequest { image, args, guest_chooses_argv }))
-            }
+            CapabilityDto::Process {
+                image,
+                args,
+                guest_chooses_argv,
+            } => Some(CapabilityKind::Process(ProcessRequest {
+                image,
+                args,
+                guest_chooses_argv,
+            })),
             CapabilityDto::Terminal { shell, jailed } => {
                 Some(CapabilityKind::Terminal(TerminalRequest { shell, jailed }))
             }
@@ -278,7 +303,10 @@ pub struct ErrorEntry {
 
 impl AppErrors {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(AppErrorsInner { next_id: 1, entries: VecDeque::new() })))
+        Self(Arc::new(Mutex::new(AppErrorsInner {
+            next_id: 1,
+            entries: VecDeque::new(),
+        })))
     }
 
     /// Record an error (also logged); keeps the most recent ~20.
@@ -323,8 +351,12 @@ pub fn app_info() -> AppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         ws: env_or("ICANHAZ_WS_BIND", "127.0.0.1:7777"),
         wt: env_or("ICANHAZ_WT_BIND", "127.0.0.1:7778"),
-        root: std::env::var("ICANHAZ_ROOT")
-            .unwrap_or_else(|_| std::env::temp_dir().join("icanhaz-demo-root").display().to_string()),
+        root: std::env::var("ICANHAZ_ROOT").unwrap_or_else(|_| {
+            std::env::temp_dir()
+                .join("icanhaz-demo-root")
+                .display()
+                .to_string()
+        }),
     }
 }
 
@@ -353,7 +385,11 @@ pub fn decide(
     ttl_secs: u64,
 ) -> bool {
     let decision = if allow {
-        Some(Approval { grant: grant.and_then(CapabilityDto::into_capability), remember, ttl_secs })
+        Some(Approval {
+            grant: grant.and_then(CapabilityDto::into_capability),
+            remember,
+            ttl_secs,
+        })
     } else {
         None
     };
@@ -367,7 +403,10 @@ mod tests {
     #[test]
     fn fs_dto_round_trips_rights_and_paths() {
         let orig = CapabilityKind::Filesystem(FsRequest {
-            roots: vec![PathGrant { path: "/proj".into(), rights: FsRights::READ | FsRights::WRITE }],
+            roots: vec![PathGrant {
+                path: "/proj".into(),
+                rights: FsRights::READ | FsRights::WRITE,
+            }],
         });
         let dto: CapabilityDto = (&orig).into();
         match &dto {
@@ -403,7 +442,10 @@ mod tests {
             }
             _ => panic!(),
         }
-        let t = CapabilityKind::Terminal(TerminalRequest { shell: Some("/bin/zsh".into()), jailed: true });
+        let t = CapabilityKind::Terminal(TerminalRequest {
+            shell: Some("/bin/zsh".into()),
+            jailed: true,
+        });
         match CapabilityDto::from(&t).into_capability().unwrap() {
             CapabilityKind::Terminal(got) => {
                 assert_eq!(got.shell.as_deref(), Some("/bin/zsh"));
@@ -416,7 +458,10 @@ mod tests {
     #[test]
     fn sockets_defer_to_the_original() {
         // No editing UI for sockets ⇒ decide should approve as-requested (None).
-        let dto = CapabilityDto::Sockets { endpoints: vec![], may_listen: false };
+        let dto = CapabilityDto::Sockets {
+            endpoints: vec![],
+            may_listen: false,
+        };
         assert!(dto.into_capability().is_none());
     }
 }

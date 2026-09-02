@@ -9,8 +9,10 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::Result;
 use http_body_util::BodyExt;
@@ -553,150 +555,146 @@ pub async fn create_client(
         .build()
         .unwrap()
 }
-
 /// Path to the deliberately hostile test component, building it on demand.
 ///
 /// Unsigned on purpose: the fixture declares an empty public key so the host
 /// skips signature verification, which keeps `wasmsign2` out of the test path.
 pub fn adversarial_component_path() -> Result<String> {
-    let path = format!(
-        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_adversarial.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
-
-    if !Path::new(&path).exists() {
-        let root = format!("{}/../../..", env!("CARGO_MANIFEST_DIR"));
-        let status = Command::new("cargo")
-            .current_dir(&root)
-            .args([
-                "build",
-                "--release",
-                "--target",
-                "wasm32-wasip2",
-                "-p",
-                "witmproxy-plugin-adversarial",
-            ])
-            .status()
-            .map_err(|e| anyhow::anyhow!("failed to build the adversarial component: {e}"))?;
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "building witmproxy-plugin-adversarial failed with status {status}"
-            ));
-        }
-        if !Path::new(&path).exists() {
-            return Err(anyhow::anyhow!(
-                "build succeeded but {path} is missing"
-            ));
-        }
-    }
-
-    Ok(path)
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        let component = build_component(
+            "witmproxy-plugin-adversarial",
+            "witmproxy_plugin_adversarial",
+        )?;
+        Ok(component.to_string_lossy().into_owned())
+    })
 }
 
 pub fn test_component_path() -> Result<String> {
-    let path = format!(
-        "{}/../../../target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
-
-    if !Path::new(&path).exists() {
-        // Build the component
-        let component_dir = format!(
-            "{}/../../../src/rust/wasm-test-component",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let status = Command::new("make")
-            .current_dir(&component_dir)
-            .status()
-            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", component_dir, e))?;
-
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to build wasm-test-component: make exited with status {}",
-                status
-            ));
-        }
-
-        // Verify the file was created
-        if !Path::new(&path).exists() {
-            return Err(anyhow::anyhow!(
-                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
-                path
-            ));
-        }
-    }
-
-    Ok(path)
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        signed_component(
+            "wasm-test-component",
+            "wasm_test_component",
+            "src/rust/wasm-test-component",
+        )
+    })
 }
 
 pub fn noshorts_plugin_path() -> Result<String> {
-    let path = format!(
-        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noshorts.signed.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
-
-    if !Path::new(&path).exists() {
-        // Build the component
-        let plugin_dir = format!(
-            "{}/../../../src/rust/witmproxy-plugin-noshorts",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let status = Command::new("make")
-            .current_dir(&plugin_dir)
-            .status()
-            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", plugin_dir, e))?;
-
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to build witmproxy-plugin-noshorts: make exited with status {}",
-                status
-            ));
-        }
-
-        // Verify the file was created
-        if !Path::new(&path).exists() {
-            return Err(anyhow::anyhow!(
-                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
-                path
-            ));
-        }
-    }
-
-    Ok(path)
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        signed_component(
+            "witmproxy-plugin-noshorts",
+            "witmproxy_plugin_noshorts",
+            "src/rust/witmproxy-plugin-noshorts",
+        )
+    })
 }
 
 pub fn noop_plugin_path() -> Result<String> {
-    let path = format!(
-        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noop.signed.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        signed_component(
+            "witmproxy-plugin-noop",
+            "witmproxy_plugin_noop",
+            "src/rust/witmproxy-plugin-noop",
+        )
+    })
+}
 
-    if !Path::new(&path).exists() {
-        // Build the component
-        let plugin_dir = format!(
-            "{}/../../../src/rust/witmproxy-plugin-noop",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let status = Command::new("make")
-            .current_dir(&plugin_dir)
-            .status()
-            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", plugin_dir, e))?;
+/// Workspace root, reached from this crate's manifest directory.
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
 
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to build witmproxy-plugin-noop: make exited with status {}",
-                status
-            ));
-        }
+/// Builds `package` for `wasm32-wasip2` and returns the component cargo produced.
+///
+/// Cargo owns the staleness decision, so an untouched crate costs a no-op build
+/// and a source edit rebuilds. These helpers used to build only when the
+/// artifact was *missing*, which silently kept pre-wasmtime-48 fixtures across
+/// the upgrade until every plugin test failed parsing a component the new host
+/// no longer accepted.
+fn build_component(package: &str, artifact: &str) -> Result<PathBuf> {
+    let root = workspace_root();
+    // Reuse the cargo running the tests, so the pinned toolchain carries over.
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let output = Command::new(cargo)
+        .current_dir(&root)
+        .args([
+            "build",
+            "--release",
+            "--target",
+            "wasm32-wasip2",
+            "-p",
+            package,
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run cargo for {package}: {e}"))?;
 
-        // Verify the file was created
-        if !Path::new(&path).exists() {
-            return Err(anyhow::anyhow!(
-                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
-                path
-            ));
-        }
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "building {package} failed with status {}:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        ));
     }
 
-    Ok(path)
+    let component = root.join(format!("target/wasm32-wasip2/release/{artifact}.wasm"));
+    if !component.exists() {
+        return Err(anyhow::anyhow!(
+            "building {package} succeeded but {} is missing",
+            component.display()
+        ));
+    }
+
+    Ok(component)
+}
+
+/// Builds `package` and returns the path to its signed component.
+///
+/// `wasmsign2` has no staleness logic of its own, so the signature is redone
+/// whenever cargo produced a component newer than it. The keypair in `key_dir`
+/// is generated when absent: the host checks a component against the public key
+/// the plugin itself declares, never against one specific key.
+fn signed_component(package: &str, artifact: &str, key_dir: &str) -> Result<String> {
+    let component = build_component(package, artifact)?;
+    let signed = component.with_file_name(format!("{artifact}.signed.wasm"));
+
+    if !signature_is_current(&signed, &component)? {
+        let key_dir = workspace_root().join(key_dir);
+        let secret_key = key_dir.join("key.secret");
+        if !secret_key.exists() {
+            let keypair = wasmsign2::KeyPair::generate();
+            keypair.pk.to_file(key_dir.join("key.public"))?;
+            keypair.sk.to_file(&secret_key)?;
+        }
+
+        let module = wasmsign2::Module::deserialize_from_file(&component)?;
+        wasmsign2::SecretKey::from_file(&secret_key)?
+            .sign(module, None)?
+            .serialize_to_file(&signed)?;
+    }
+
+    Ok(signed.to_string_lossy().into_owned())
+}
+
+/// Whether `signed` exists and is no older than the component it was made from.
+fn signature_is_current(signed: &Path, component: &Path) -> Result<bool> {
+    let Ok(signed) = std::fs::metadata(signed) else {
+        return Ok(false);
+    };
+
+    Ok(signed.modified()? >= std::fs::metadata(component)?.modified()?)
+}
+
+/// Runs `build` once per process, so a fixture shared by tests running in
+/// parallel costs a single cargo invocation rather than one per test.
+fn memoized(
+    cell: &'static OnceLock<Result<String, String>>,
+    build: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    cell.get_or_init(|| build().map_err(|e| format!("{e:#}")))
+        .clone()
+        .map_err(|e| anyhow::anyhow!(e))
 }

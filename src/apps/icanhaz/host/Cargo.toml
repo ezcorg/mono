@@ -17,11 +17,12 @@ notify = "6"
 tracing = "0.1"
 futures = "0.3"
 
-# wasmtime MUST resolve to the exact version `wrpc-wasmtime` uses (crates.io
-# 46.0.0) — a version/source mismatch across the path-dep boundary yields two
-# incompatible `wasmtime` crates and the component-model types won't unify.
-wasmtime = { version = "46", features = ["async", "component-model", "cranelift", "runtime"] }
-wasmtime-wasi = { version = "46", features = ["p2"] }
+# wasmtime MUST resolve to the exact version `wrpc-wasmtime` uses (pinned to 48
+# in the vendored wrpc workspace) — a version/source mismatch across the
+# path-dep boundary yields two incompatible `wasmtime` crates and the
+# component-model types won't unify.
+wasmtime = { version = "48", features = ["async", "component-model", "cranelift", "runtime"] }
+wasmtime-wasi = { version = "48", features = ["p2"] }
 
 # Vendored wrpc (submodule at src/rust/wrpc), referenced by path. Its own
 # [workspace] governs these crates; the mono workspace excludes that subtree.
@@ -44,3 +45,12 @@ uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 # For the WebTransport roundtrip test's insecure (self-signed) client verifier.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+# This crate does not inherit [workspace.lints]: that set denies
+# unwrap/expect/panic, which the daemon uses throughout. These two are the
+# lints its wRPC/wasmtime bridge trips, allowed for the same reason the
+# workspace root gives for type_complexity -- the deep generic types read worse
+# as aliases, and the bridge entry points genuinely carry their arguments.
+[lints.clippy]
+type_complexity = "allow"
+too_many_arguments = "allow"

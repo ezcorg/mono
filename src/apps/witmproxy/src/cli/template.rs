@@ -89,15 +89,16 @@ fn validate_plugin_name(name: &str) -> Result<()> {
         bail!("plugin name must not be empty");
     }
     if name.len() > 64 {
-        bail!("plugin name must be 64 characters or fewer (got {})", name.len());
+        bail!(
+            "plugin name must be 64 characters or fewer (got {})",
+            name.len()
+        );
     }
     if !name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        bail!(
-            "plugin name `{name}` must contain only ASCII letters, digits, `-` and `_`"
-        );
+        bail!("plugin name `{name}` must contain only ASCII letters, digits, `-` and `_`");
     }
     if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
         bail!("plugin name `{name}` must start with an ASCII letter");
@@ -128,7 +129,9 @@ fn build_vars(opts: &ScaffoldOptions) -> BTreeMap<&'static str, String> {
     vars.insert("plugin-name", opts.plugin_name.clone());
     vars.insert(
         "namespace",
-        opts.namespace.clone().unwrap_or_else(|| "local".to_string()),
+        opts.namespace
+            .clone()
+            .unwrap_or_else(|| "local".to_string()),
     );
     vars.insert(
         "author",
@@ -217,8 +220,7 @@ pub fn scaffold(opts: &ScaffoldOptions) -> Result<PathBuf> {
             .unwrap_or(&rendered_path)
             .to_string();
 
-        let rendered = render(text, &vars)
-            .with_context(|| format!("rendering template {name}"))?;
+        let rendered = render(text, &vars).with_context(|| format!("rendering template {name}"))?;
         write_file(&root.join(&rel), rendered.as_bytes(), opts.force)?;
         written += 1;
     }
@@ -228,7 +230,11 @@ pub fn scaffold(opts: &ScaffoldOptions) -> Result<PathBuf> {
     for name in WitAssets::iter() {
         let file = WitAssets::get(name.as_ref())
             .with_context(|| format!("embedded wit file missing: {name}"))?;
-        write_file(&root.join("wit").join(name.as_ref()), &file.data, opts.force)?;
+        write_file(
+            &root.join("wit").join(name.as_ref()),
+            &file.data,
+            opts.force,
+        )?;
         written += 1;
     }
 
@@ -309,10 +315,19 @@ mod tests {
         let o = opts("my-plugin", tmp.path().to_path_buf());
         let root = scaffold(&o).unwrap();
 
-        for expected in ["Cargo.toml", "Makefile", "README.md", ".gitignore", "src/lib.rs"] {
+        for expected in [
+            "Cargo.toml",
+            "Makefile",
+            "README.md",
+            ".gitignore",
+            "src/lib.rs",
+        ] {
             assert!(root.join(expected).exists(), "missing {expected}");
         }
-        assert!(root.join("wit/world.wit").exists(), "wit world not vendored");
+        assert!(
+            root.join("wit/world.wit").exists(),
+            "wit world not vendored"
+        );
 
         let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("name = \"my-plugin\""), "{cargo_toml}");

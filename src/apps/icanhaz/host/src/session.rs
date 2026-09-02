@@ -39,7 +39,10 @@ pub fn grant_scoped<G: Send + Unpin + 'static>(
         // guard's Drop still releases the resource; nothing extra to wait on.
         None => Box::pin(core::future::pending()),
     };
-    Box::pin(Guarded { stream: inner.take_until(until), _guard: guard })
+    Box::pin(Guarded {
+        stream: inner.take_until(until),
+        _guard: guard,
+    })
 }
 
 /// The output stream plus a teardown `guard` dropped with it.

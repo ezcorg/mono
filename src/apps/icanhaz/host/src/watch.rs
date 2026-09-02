@@ -49,7 +49,6 @@ impl WatchProvider {
     }
 }
 
-
 /// Map a `notify` event kind to our wire kind: `0` = rename (create/remove/move),
 /// `1` = change (content/metadata); `None` skips (e.g. access-only events).
 fn wire_kind(kind: EventKind) -> Option<u8> {
@@ -73,7 +72,9 @@ fn frame_event(kind: u8, rel: &str) -> Bytes {
     Bytes::from(buf)
 }
 
-impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::watch::Handler<C> for WatchProvider {
+impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::watch::Handler<C>
+    for WatchProvider
+{
     async fn open(
         &self,
         _cx: C,
@@ -83,7 +84,13 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::watch::Handler
     ) -> anyhow::Result<Result<Pin<Box<dyn Stream<Item = Bytes> + Send>>, String>> {
         // Consent gate: a live filesystem grant, whose jail we confine the watch to.
         let scope = match self.grants.lock().unwrap().validate_filesystem(&grant) {
-            Ok(paths) => self.root.join(paths.into_iter().next().unwrap_or_default().trim_matches('/')),
+            Ok(paths) => self.root.join(
+                paths
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches('/'),
+            ),
             Err(denied) => return Ok(Err(format!("watch denied: {denied:?}"))),
         };
         // Canonicalise the jail + target; the target must stay under the jail (a
@@ -102,22 +109,27 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::watch::Handler
         // reported relative to the jail (the client's grant-relative coordinate space).
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
         let strip = scope.clone();
-        let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                if let Some(kind) = wire_kind(event.kind) {
-                    for p in event.paths {
-                        let rel = p.strip_prefix(&strip).unwrap_or(&p).to_string_lossy();
-                        if tx.send(frame_event(kind, &rel)).is_err() {
-                            break;
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    if let Some(kind) = wire_kind(event.kind) {
+                        for p in event.paths {
+                            let rel = p.strip_prefix(&strip).unwrap_or(&p).to_string_lossy();
+                            if tx.send(frame_event(kind, &rel)).is_err() {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        }) {
-            Ok(w) => w,
-            Err(e) => return Ok(Err(format!("watch: {e}"))),
+            }) {
+                Ok(w) => w,
+                Err(e) => return Ok(Err(format!("watch: {e}"))),
+            };
+        let mode = if recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
         };
-        let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
         if let Err(e) = watcher.watch(&target, mode) {
             return Ok(Err(format!("watch: {e}")));
         }
@@ -126,7 +138,11 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::watch::Handler
         // guard) is dropped, so watching stops. Also stops on client disconnect.
         let revocation = self.grants.lock().unwrap().revocation(&grant);
         let out = UnboundedReceiverStream::new(rx);
-        Ok(Ok(crate::session::grant_scoped(Box::pin(out), revocation, watcher)))
+        Ok(Ok(crate::session::grant_scoped(
+            Box::pin(out),
+            revocation,
+            watcher,
+        )))
     }
 }
 
@@ -193,7 +209,10 @@ mod tests {
         let store = GrantStore::shared();
         let grant = store.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
-                roots: vec![PathGrant { path: format!("/{jail}/"), rights: FsRights::empty() }],
+                roots: vec![PathGrant {
+                    path: format!("/{jail}/"),
+                    rights: FsRights::empty(),
+                }],
             }),
             "filesystem".to_string(),
             Duration::from_secs(60),
@@ -206,10 +225,14 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let (result, io) = client::open(&wrpc, (), &grant, "", true).await.expect("invoke watch.open");
+        let (result, io) = client::open(&wrpc, (), &grant, "", true)
+            .await
+            .expect("invoke watch.open");
         let mut output = result.expect("watch open");
         if let Some(io) = io {
-            tokio::spawn(async move { let _ = io.await; });
+            tokio::spawn(async move {
+                let _ = io.await;
+            });
         }
 
         // Give the watcher a moment to arm, then create a file under the jail.
@@ -238,11 +261,16 @@ mod tests {
         let store = GrantStore::shared();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let server = tokio::spawn(serve_tcp(listener, WatchProvider::new(PathBuf::from("/tmp"), store)));
+        let server = tokio::spawn(serve_tcp(
+            listener,
+            WatchProvider::new(PathBuf::from("/tmp"), store),
+        ));
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let (result, _io) = client::open(&wrpc, (), "bogus-token", "", true).await.expect("invoke watch.open");
+        let (result, _io) = client::open(&wrpc, (), "bogus-token", "", true)
+            .await
+            .expect("invoke watch.open");
         match result {
             Err(msg) => assert!(msg.contains("denied"), "unexpected message: {msg}"),
             Ok(_) => panic!("an ungranted watch must be refused"),

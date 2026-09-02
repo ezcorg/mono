@@ -43,30 +43,30 @@ impl EpochTicker {
         // the engine and is stopped through the `stop` flag in `Drop`.
         drop(
             std::thread::Builder::new()
-            .name("witm-epoch-ticker".into())
-            .spawn(move || {
-                while !flag.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(EPOCH_TICK_MS));
-                    // A weak handle means this thread does not keep the engine
-                    // alive; once the engine is dropped the ticker winds down.
-                    match engine.upgrade() {
-                        Some(engine) => engine.increment_epoch(),
-                        None => break,
+                .name("witm-epoch-ticker".into())
+                .spawn(move || {
+                    while !flag.load(Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_millis(EPOCH_TICK_MS));
+                        // A weak handle means this thread does not keep the engine
+                        // alive; once the engine is dropped the ticker winds down.
+                        match engine.upgrade() {
+                            Some(engine) => engine.increment_epoch(),
+                            None => break,
+                        }
                     }
-                }
-            })
-            // A failure to spawn would leave epoch deadlines permanently
-            // unarmed, silently disabling the timeout. Surfacing it as a log at
-            // error level is the best we can do without failing startup.
-            .inspect_err(|e| {
-                tracing::error!(
-                    target: "plugins::limits",
-                    error = %e,
-                    "failed to spawn the epoch ticker; plugin wall-clock timeouts \
-                     will not be enforceable against a non-yielding guest"
-                );
-            })
-            .ok(),
+                })
+                // A failure to spawn would leave epoch deadlines permanently
+                // unarmed, silently disabling the timeout. Surfacing it as a log at
+                // error level is the best we can do without failing startup.
+                .inspect_err(|e| {
+                    tracing::error!(
+                        target: "plugins::limits",
+                        error = %e,
+                        "failed to spawn the epoch ticker; plugin wall-clock timeouts \
+                         will not be enforceable against a non-yielding guest"
+                    );
+                })
+                .ok(),
         );
         Self { stop }
     }
@@ -208,11 +208,12 @@ impl Runtime {
             builder = builder.memory_size(bytes);
         }
         if limits.max_table_elements > 0 {
-            builder =
-                builder.table_elements(usize::try_from(limits.max_table_elements).unwrap_or(usize::MAX));
+            builder = builder
+                .table_elements(usize::try_from(limits.max_table_elements).unwrap_or(usize::MAX));
         }
         if limits.max_instances > 0 {
-            builder = builder.instances(usize::try_from(limits.max_instances).unwrap_or(usize::MAX));
+            builder =
+                builder.instances(usize::try_from(limits.max_instances).unwrap_or(usize::MAX));
         }
         store.data_mut().limits = builder.build();
         store.limiter(|host| &mut host.limits);
@@ -224,7 +225,11 @@ impl Runtime {
     /// function: fuel for compute, an epoch deadline for wall clock.
     ///
     /// `0` means unbounded for either dimension.
-    pub fn apply_call_limits(&self, store: &mut Store<Host>, limits: &ResolvedLimits) -> Result<()> {
+    pub fn apply_call_limits(
+        &self,
+        store: &mut Store<Host>,
+        limits: &ResolvedLimits,
+    ) -> Result<()> {
         let fuel = if limits.max_fuel == 0 {
             u64::MAX
         } else {

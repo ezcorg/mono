@@ -19,14 +19,14 @@ use tokio::task::JoinSet;
 
 use std::path::PathBuf;
 
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
+use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::broker::{bindings as broker, BrokerProvider, GrantStore};
 use crate::component_serve::serve_filesystem;
-use crate::terminal::{bindings as term, TerminalProvider};
 use crate::process::{bindings as proc, ProcessProvider};
-use crate::workspace::{bindings as ws, WorkspaceProvider};
+use crate::terminal::{bindings as term, TerminalProvider};
 use crate::watch::{bindings as watch, WatchProvider};
+use crate::workspace::{bindings as ws, WorkspaceProvider};
 use crate::{AsOrigin, ReqCtx};
 
 use core::pin::Pin;
@@ -66,19 +66,33 @@ where
     C: AsOrigin + Send + Sync + 'static,
     S: wrpc_transport::Serve<Context = C>,
 {
-    let broker_invs = broker::serve(srv, broker_p).await.context("failed to serve broker")?;
-    let term_invs = term::serve(srv, term_p).await.context("failed to serve terminal")?;
-    let proc_invs = proc::serve(srv, proc_p).await.context("failed to serve process")?;
-    let ws_invs = ws::serve(srv, ws_p).await.context("failed to serve workspace")?;
-    let watch_invs = watch::serve(srv, watch_p).await.context("failed to serve watch")?;
+    let broker_invs = broker::serve(srv, broker_p)
+        .await
+        .context("failed to serve broker")?;
+    let term_invs = term::serve(srv, term_p)
+        .await
+        .context("failed to serve terminal")?;
+    let proc_invs = proc::serve(srv, proc_p)
+        .await
+        .context("failed to serve process")?;
+    let ws_invs = ws::serve(srv, ws_p)
+        .await
+        .context("failed to serve workspace")?;
+    let watch_invs = watch::serve(srv, watch_p)
+        .await
+        .context("failed to serve watch")?;
     // Real wasi:filesystem (the gated passthrough) on the SAME server, via ServeExt.
     // Its descriptor invocations drain on the returned JoinSet (held for the
     // server's lifetime); the placeholder client is never invoked (no polyfill).
-    let fs_wasm = std::fs::read(&fs_serve.component_path)
-        .with_context(|| format!("read fs-passthrough component {}", fs_serve.component_path.display()))?;
+    let fs_wasm = std::fs::read(&fs_serve.component_path).with_context(|| {
+        format!(
+            "read fs-passthrough component {}",
+            fs_serve.component_path.display()
+        )
+    })?;
     let mut wasi_builder = WasiCtxBuilder::new();
     wasi_builder
-        .preopened_dir(&fs_serve.root, "/", DirPerms::all(), FilePerms::all())
+        .preopened_dir(&fs_serve.root, "/", FsPerms::ReadWrite)
         .map_err(anyhow::Error::from)
         .context("preopen wasi:filesystem root")?;
     let _wasi_fs = serve_filesystem(
@@ -91,11 +105,31 @@ where
     )
     .await
     .context("failed to serve wasi:filesystem")?;
-    let mut broker_i = select_all(broker_invs.into_iter().map(|(i, n, s)| s.map(move |r| (i, n, r))));
-    let mut term_i = select_all(term_invs.into_iter().map(|(i, n, s)| s.map(move |r| (i, n, r))));
-    let mut proc_i = select_all(proc_invs.into_iter().map(|(i, n, s)| s.map(move |r| (i, n, r))));
-    let mut ws_i = select_all(ws_invs.into_iter().map(|(i, n, s)| s.map(move |r| (i, n, r))));
-    let mut watch_i = select_all(watch_invs.into_iter().map(|(i, n, s)| s.map(move |r| (i, n, r))));
+    let mut broker_i = select_all(
+        broker_invs
+            .into_iter()
+            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
+    );
+    let mut term_i = select_all(
+        term_invs
+            .into_iter()
+            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
+    );
+    let mut proc_i = select_all(
+        proc_invs
+            .into_iter()
+            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
+    );
+    let mut ws_i = select_all(
+        ws_invs
+            .into_iter()
+            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
+    );
+    let mut watch_i = select_all(
+        watch_invs
+            .into_iter()
+            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
+    );
     let mut tasks = JoinSet::new();
     loop {
         select! {
@@ -166,11 +200,18 @@ impl MuxTx {
 }
 
 impl AsyncWrite for MuxTx {
-    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         let msg = this.frame(MUX_DATA, buf);
         if this.sink.send(msg).is_err() {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, "websocket closed")));
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "websocket closed",
+            )));
         }
         Poll::Ready(Ok(buf.len()))
     }
@@ -238,9 +279,15 @@ async fn serve_ws_mux(
                     let _ = feed.send(Ok(body));
                     feeders.insert(id, feed);
                     let rx: MuxRx = StreamReader::new(UnboundedReceiverStream::new(feed_rx));
-                    let tx = MuxTx { id, sink: out_tx.clone(), ended: false };
+                    let tx = MuxTx {
+                        id,
+                        sink: out_tx.clone(),
+                        ended: false,
+                    };
                     let srv = Arc::clone(&srv);
-                    let cx = ReqCtx { origin: origin.clone() };
+                    let cx = ReqCtx {
+                        origin: origin.clone(),
+                    };
                     tokio::spawn(async move {
                         if let Err(err) = srv.accept(cx, tx, rx).await {
                             tracing::error!(?err, id, "WS mux invocation failed");
@@ -298,7 +345,16 @@ pub async fn serve_websocket_all(
             }
         }
     });
-    let res = drive(srv.as_ref(), broker_p, term_p, proc_p, ws_p, watch_p, fs_serve).await;
+    let res = drive(
+        srv.as_ref(),
+        broker_p,
+        term_p,
+        proc_p,
+        ws_p,
+        watch_p,
+        fs_serve,
+    )
+    .await;
     accept.abort();
     res
 }
@@ -350,9 +406,15 @@ pub async fn serve_webtransport_all(
                         let conn = req.accept().await.context("establish WT session")?;
                         loop {
                             let (tx, rx) = conn.accept_bi().await.context("accept bidi stream")?;
-                            srv.accept(ReqCtx { origin: origin.clone() }, tx, rx)
-                                .await
-                                .context("serve wRPC stream")?;
+                            srv.accept(
+                                ReqCtx {
+                                    origin: origin.clone(),
+                                },
+                                tx,
+                                rx,
+                            )
+                            .await
+                            .context("serve wRPC stream")?;
                         }
                         #[allow(unreachable_code)]
                         anyhow::Ok(())
@@ -365,7 +427,16 @@ pub async fn serve_webtransport_all(
             }
         }
     });
-    let res = drive(srv.as_ref(), broker_p, term_p, proc_p, ws_p, watch_p, fs_serve).await;
+    let res = drive(
+        srv.as_ref(),
+        broker_p,
+        term_p,
+        proc_p,
+        ws_p,
+        watch_p,
+        fs_serve,
+    )
+    .await;
     accept.abort();
     res
 }

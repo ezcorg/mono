@@ -100,7 +100,10 @@ pub async fn download_certificate(
         device_info.recommended_format()
     };
 
-    let cert_pem = state.ca.get_root_certificate_pem().map_err(|e| internal_error("Certificate error", e))?;
+    let cert_pem = state
+        .ca
+        .get_root_certificate_pem()
+        .map_err(|e| internal_error("Certificate error", e))?;
 
     let bundle = CertificateGenerator::generate_bundle(&cert_pem, format, &device_info)
         .map_err(|e| internal_error("Bundle error", e))?;
@@ -118,7 +121,9 @@ pub async fn download_certificate(
             .map_err(|e| internal_error("Failed to set content disposition", e))?
             .body(bundle.data);
     } else {
-        let html = InstructionsTemplate::new(&bundle).render().map_err(|e| internal_error("Template error", e))?;
+        let html = InstructionsTemplate::new(&bundle)
+            .render()
+            .map_err(|e| internal_error("Template error", e))?;
         res.status_code(salvo::http::StatusCode::OK);
         res.add_header(salvo::http::header::CONTENT_TYPE, "text/html", true)
             .map_err(|e| internal_error("Failed to set content type", e))?;

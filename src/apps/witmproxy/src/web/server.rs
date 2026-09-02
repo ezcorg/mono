@@ -548,7 +548,10 @@ async fn set_plugin_enabled(
     let plugin_name = name.into_inner();
     let enabled = body.into_inner().enabled;
 
-    match registry.set_plugin_enabled(&ns, &plugin_name, enabled).await {
+    match registry
+        .set_plugin_enabled(&ns, &plugin_name, enabled)
+        .await
+    {
         Ok(true) => Ok(if enabled {
             "Plugin enabled"
         } else {

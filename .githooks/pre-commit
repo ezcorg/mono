@@ -11,8 +11,10 @@
 
 set -e
 
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
 # Check if any Rust files are staged
-if ! git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$\|Cargo\.toml$\|Cargo\.lock$'; then
+if ! grep -q '\.rs$\|Cargo\.toml$\|Cargo\.lock$' <<<"$staged"; then
     exit 0
 fi
 
@@ -23,8 +25,66 @@ if ! cargo fmt --all --check; then
     exit 1
 fi
 
-echo "pre-commit: running clippy..."
-if ! cargo clippy --workspace --all-targets -- -D warnings; then
+# Lint only the packages the staged files belong to. Linting the whole
+# workspace makes every commit depend on every crate's system libraries -- the
+# Tauri apps need GTK/webkit/glib -dev packages -- so a witmproxy-only change
+# could not be committed on a machine without a desktop toolchain. Touch a Tauri
+# crate and it is linted then, which is when you need those libraries anyway.
+#
+# A dependency or workspace change can affect any crate, so those still lint
+# everything.
+scope=()
+if grep -qE '^(Cargo\.lock|Cargo\.toml)$' <<<"$staged" || ! command -v python3 >/dev/null 2>&1; then
+    scope=(--workspace)
+else
+    while IFS= read -r pkg; do
+        [ -n "$pkg" ] && scope+=(-p "$pkg")
+    done < <(STAGED="$staged" python3 - "$(git rev-parse --show-toplevel)" <<'PY'
+import json, os, subprocess, sys
+
+root = sys.argv[1]
+staged = [line.strip() for line in os.environ["STAGED"].splitlines() if line.strip()]
+
+meta = json.loads(
+    subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout
+)
+
+# Longest directory prefix wins, so a nested crate (src/apps/witmproxy/e2e)
+# is preferred over the parent it sits inside.
+members = sorted(
+    (
+        (os.path.relpath(os.path.dirname(p["manifest_path"]), root), p["name"])
+        for p in meta["packages"]
+    ),
+    key=lambda m: len(m[0]),
+    reverse=True,
+)
+
+selected = []
+for path in staged:
+    for directory, name in members:
+        if path == directory or path.startswith(directory + "/"):
+            if name not in selected:
+                selected.append(name)
+            break
+
+print("\n".join(selected))
+PY
+    )
+fi
+
+# Staged Rust files can all live outside this workspace (crates listed under
+# `exclude`, which carry their own toolchains), leaving nothing here to lint.
+if [ ${#scope[@]} -eq 0 ]; then
+    echo "pre-commit: no workspace packages affected, skipping clippy."
+    exit 0
+fi
+
+echo "pre-commit: running clippy (${scope[*]})..."
+if ! cargo clippy "${scope[@]}" --all-targets -- -D warnings; then
     echo ""
     echo "  Fix clippy warnings before committing."
     exit 1

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-
 use crate::ProxyServer;
 use crate::test_utils::{
     Protocol, create_ca_and_config, create_client, create_hello_server, create_plugin_registry,
@@ -25,8 +24,7 @@ async fn run_test(test: TestCase) {
     // Set the specific proxy port for testing
     config.proxy.proxy_bind_addr = Some(format!("127.0.0.1:{}", test.proxy_port));
 
-    let mut proxy =
-        ProxyServer::new(ca.clone(), Some(Arc::new(registry)), config).unwrap();
+    let mut proxy = ProxyServer::new(ca.clone(), Some(Arc::new(registry)), config).unwrap();
     proxy.start().await.unwrap();
     let actual_proxy_addr = proxy.listen_addr().unwrap();
     let client = create_client(

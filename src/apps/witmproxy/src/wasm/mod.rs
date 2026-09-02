@@ -184,8 +184,10 @@ pub struct BodyStreamProducer {
     /// `as_direct(capacity)`, which in wasmtime 43 only resized the buffer when
     /// it was empty. In 48 `as_direct` resizes unconditionally, discarding it:
     ///
-    ///     *buffer.marked_written = 0;
-    ///     buffer.dst.resize(capacity, 0);
+    /// ```text
+    /// *buffer.marked_written = 0;
+    /// buffer.dst.resize(capacity, 0);
+    /// ```
     ///
     /// Every body larger than one guest read was therefore truncated after the
     /// first chunk. Owning the remainder keeps this correct regardless of how
@@ -422,14 +424,11 @@ impl Logger {
         }
 
         if b.max_bytes > 0 {
-            let used = b
-                .bytes_used
-                .fetch_add(msg.len() as u64, Ordering::Relaxed)
-                + msg.len() as u64;
+            let used =
+                b.bytes_used.fetch_add(msg.len() as u64, Ordering::Relaxed) + msg.len() as u64;
             if used > b.max_bytes {
                 if used.saturating_sub(msg.len() as u64) <= b.max_bytes {
-                    b.breaches
-                        .record(LimitKind::LogBytes, used, b.max_bytes);
+                    b.breaches.record(LimitKind::LogBytes, used, b.max_bytes);
                 }
                 return None;
             }
@@ -547,7 +546,9 @@ impl LocalStorageClient {
         let incoming = (key.len() as u64).saturating_add(value.len() as u64);
 
         let mut guard = self.store.write().await;
-        let previous = guard.get(&key).map(|v| (key.len() as u64).saturating_add(v.len() as u64));
+        let previous = guard
+            .get(&key)
+            .map(|v| (key.len() as u64).saturating_add(v.len() as u64));
         let is_new_key = previous.is_none();
 
         if max_keys > 0 && is_new_key && guard.len() as u64 >= max_keys {
@@ -593,7 +594,6 @@ impl LocalStorageClient {
         }
     }
 }
-
 
 /// Decide whether a `set-body` chunk fits within the configured cap.
 ///

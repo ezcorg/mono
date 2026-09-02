@@ -1,0 +1,17 @@
+# Pinned to stable for the whole workspace. Nothing here needs nightly features,
+# and pinning insulates the wasmtime 48 dependency tree from nightly trait-solver
+# churn: rustc 1.100.0-nightly (0dfb098f3 2026-08-31) fails to compile
+# wasmtime-wasi-http 48.0.1's `bindgen!` expansion with E0283 "type annotations
+# needed". Targets mirror what the previously-active nightly had installed, so
+# the wasm32-wasip2 plugin builds and ezfilter's Tauri Android builds keep working.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rust-src", "rustfmt"]
+targets = [
+    "wasm32-wasip2",
+    "wasm32-unknown-unknown",
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+    "i686-linux-android",
+    "x86_64-linux-android",
+]

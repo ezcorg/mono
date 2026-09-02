@@ -31,10 +31,10 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 // The `http` crate is not a direct dependency; it reaches us through hyper.
-use hyper::http;
 use http_body::{Body, Frame};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, StreamBody};
+use hyper::http;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
 use crate::plugins::limits::{BreachRecorder, LimitKind};
@@ -275,11 +275,10 @@ impl EventShadow {
                 *req.uri_mut() = uri;
                 *req.version_mut() = version;
                 *req.headers_mut() = headers;
-                let (wasi, _io) =
-                    wasmtime_wasi_http::p3::Request::from_http(
-                        wasmtime_wasi_http::default_hooks(),
-                        req,
-                    );
+                let (wasi, _io) = wasmtime_wasi_http::p3::Request::from_http(
+                    wasmtime_wasi_http::default_hooks(),
+                    req,
+                );
                 Ok(Box::new(wasi))
             }
             Self::Response {
@@ -320,11 +319,9 @@ impl EventShadow {
                 *res.version_mut() = version;
                 *res.headers_mut() = headers;
                 let (parts, ()) = res.into_parts();
-                Ok(Box::new(crate::events::content::InboundContent::from_decoded(
-                    parts,
-                    content_type,
-                    body,
-                )))
+                Ok(Box::new(
+                    crate::events::content::InboundContent::from_decoded(parts, content_type, body),
+                ))
             }
         }
     }
@@ -342,7 +339,10 @@ mod tests {
     }
 
     async fn drain(b: EventBody) -> Vec<u8> {
-        b.collect().await.map(|c| c.to_bytes().to_vec()).unwrap_or_default()
+        b.collect()
+            .await
+            .map(|c| c.to_bytes().to_vec())
+            .unwrap_or_default()
     }
 
     #[tokio::test]

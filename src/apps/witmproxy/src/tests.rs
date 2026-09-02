@@ -52,13 +52,7 @@ async fn e2e_simple_json_test() -> Result<()> {
     assert!(json.headers["witmproxy"].contains("req"));
     // Expect the response header added by the WASM plugin
     assert!(headers.contains_key("witmproxy"));
-    assert!(
-        headers
-            ["witmproxy"]
-            .to_str()
-            .unwrap()
-            .contains("res")
-    );
+    assert!(headers["witmproxy"].to_str().unwrap().contains("res"));
     Ok(())
 }
 
@@ -195,7 +189,6 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
     Ok(())
 }
 
-
 /// A large HTML body survives a content-rewriting plugin intact.
 ///
 /// Regression test for three separate causes of body truncation, all of which
@@ -243,7 +236,10 @@ async fn large_body_through_content_plugin_is_not_truncated() -> anyhow::Result<
     )
     .await;
     let text = client
-        .get(format!("https://127.0.0.1:{}/", target.listen_addr().port()))
+        .get(format!(
+            "https://127.0.0.1:{}/",
+            target.listen_addr().port()
+        ))
         .send()
         .await
         .unwrap()

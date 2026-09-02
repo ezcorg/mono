@@ -59,7 +59,11 @@ pub enum Decision {
     /// subset of what was requested; the auto/CLI paths approve as-requested) — valid
     /// for `ttl`. `remember` ⇒ pair the origin (durable consent — skip the prompt next
     /// time); else a one-time grant.
-    Approve { grant: CapabilityKind, ttl: Duration, remember: bool },
+    Approve {
+        grant: CapabilityKind,
+        ttl: Duration,
+        remember: bool,
+    },
     /// Refuse it, with the reason the requestor sees.
     Deny(Denied),
 }
@@ -97,9 +101,11 @@ impl Consent {
 
     pub async fn decide(&self, want: &CapabilityKind, reason: &str, requester: &str) -> Decision {
         match self {
-            Consent::AutoApprove => {
-                Decision::Approve { grant: want.clone(), ttl: GRANT_TTL, remember: true }
-            }
+            Consent::AutoApprove => Decision::Approve {
+                grant: want.clone(),
+                ttl: GRANT_TTL,
+                remember: true,
+            },
             Consent::AutoDeny => Decision::Deny(Denied::UserRejected),
             Consent::CliPrompt(lock) => cli_decide(lock, want, reason, requester).await,
             Consent::Surface(pending) => surface_decide(pending, want, reason, requester).await,
@@ -111,7 +117,11 @@ impl Consent {
 /// `y`/`yes` approves; everything else (incl. empty / EOF) denies.
 fn decision_from_reply(reply: &str, want: &CapabilityKind) -> Decision {
     match reply.trim().to_ascii_lowercase().as_str() {
-        "y" | "yes" => Decision::Approve { grant: want.clone(), ttl: GRANT_TTL, remember: true },
+        "y" | "yes" => Decision::Approve {
+            grant: want.clone(),
+            ttl: GRANT_TTL,
+            remember: true,
+        },
         _ => Decision::Deny(Denied::UserRejected),
     }
 }
@@ -178,7 +188,11 @@ async fn surface_decide(
                 Some(g) => narrow(want, &g),
                 None => want.clone(),
             };
-            Decision::Approve { grant, ttl: Duration::from_secs(approval.ttl_secs), remember: approval.remember }
+            Decision::Approve {
+                grant,
+                ttl: Duration::from_secs(approval.ttl_secs),
+                remember: approval.remember,
+            }
         }
         // Timed out, denied, or the surface dropped the sender ⇒ fail closed.
         _ => {
@@ -258,7 +272,13 @@ impl GrantStore {
         let token = mint_token();
         self.grants.insert(
             token.clone(),
-            Grant { kind, summary, expires: Instant::now() + ttl, principal, cancel: CancellationToken::new() },
+            Grant {
+                kind,
+                summary,
+                expires: Instant::now() + ttl,
+                principal,
+                cancel: CancellationToken::new(),
+            },
         );
         token
     }
@@ -290,7 +310,9 @@ impl GrantStore {
             return Err(Denied::Revoked);
         }
         match &grant.kind {
-            CapabilityKind::Filesystem(req) => Ok(req.roots.iter().map(|r| r.path.clone()).collect()),
+            CapabilityKind::Filesystem(req) => {
+                Ok(req.roots.iter().map(|r| r.path.clone()).collect())
+            }
             _ => Err(Denied::NotAuthorized),
         }
     }
@@ -342,7 +364,10 @@ impl GrantStore {
     /// The revocation signal for a live grant — a streaming capability awaits it at
     /// session start to end its stream + release its resource on revoke/expiry.
     pub fn revocation(&self, token: &str) -> Option<Revocation> {
-        self.grants.get(token).map(|g| Revocation { cancel: g.cancel.clone(), expires: g.expires })
+        self.grants.get(token).map(|g| Revocation {
+            cancel: g.cancel.clone(),
+            expires: g.expires,
+        })
     }
 
     /// The `(origin, kind)` a live grant is bound to — so revoking it can also forget
@@ -398,7 +423,10 @@ struct Pairing {
 impl Pairings {
     /// In-memory only (tests, or a daemon told not to persist).
     pub fn shared() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self { by_secret: HashMap::new(), path: None }))
+        Arc::new(Mutex::new(Self {
+            by_secret: HashMap::new(),
+            path: None,
+        }))
     }
 
     /// Load pairings from `path` (empty if absent/unreadable) and persist every later
@@ -408,7 +436,10 @@ impl Pairings {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Arc::new(Mutex::new(Self { by_secret, path: Some(path) }))
+        Arc::new(Mutex::new(Self {
+            by_secret,
+            path: Some(path),
+        }))
     }
 
     /// Best-effort persist to `path` (if any). Called after every mutation.
@@ -430,7 +461,12 @@ impl Pairings {
     /// Record that `origin` is trusted for `kind`. If they presented a secret we
     /// already issued for this origin, extend it (return `None`); otherwise mint a
     /// fresh secret for the client to store. Persists the change.
-    fn remember(&mut self, presented: Option<&str>, origin: &str, kind: &'static str) -> Option<String> {
+    fn remember(
+        &mut self,
+        presented: Option<&str>,
+        origin: &str,
+        kind: &'static str,
+    ) -> Option<String> {
         if let Some(s) = presented {
             let extended = self.by_secret.get_mut(s).is_some_and(|p| {
                 if p.origin == origin {
@@ -448,7 +484,10 @@ impl Pairings {
         let secret = mint_token();
         self.by_secret.insert(
             secret.clone(),
-            Pairing { origin: origin.to_string(), kinds: HashSet::from([kind.to_string()]) },
+            Pairing {
+                origin: origin.to_string(),
+                kinds: HashSet::from([kind.to_string()]),
+            },
         );
         self.save();
         Some(secret)
@@ -492,7 +531,10 @@ impl Pairings {
                 kinds.insert(k.clone());
             }
         }
-        by_origin.into_iter().map(|(o, ks)| (o, ks.into_iter().collect())).collect()
+        by_origin
+            .into_iter()
+            .map(|(o, ks)| (o, ks.into_iter().collect()))
+            .collect()
     }
 }
 
@@ -543,7 +585,9 @@ fn is_executable(p: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+        std::fs::metadata(p)
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
     }
     #[cfg(not(unix))]
     {
@@ -553,7 +597,12 @@ fn is_executable(p: &std::path::Path) -> bool {
 
 impl Hosts {
     pub fn shared() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self { allowed: HashSet::new(), seen: HashMap::new(), strict: false, path: None }))
+        Arc::new(Mutex::new(Self {
+            allowed: HashSet::new(),
+            seen: HashMap::new(),
+            strict: false,
+            path: None,
+        }))
     }
 
     /// Load the allowlist. `strict` ⇒ only approved origins may prompt (the app);
@@ -563,7 +612,12 @@ impl Hosts {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Arc::new(Mutex::new(Self { allowed, seen: HashMap::new(), strict, path: Some(path) }))
+        Arc::new(Mutex::new(Self {
+            allowed,
+            seen: HashMap::new(),
+            strict,
+            path: Some(path),
+        }))
     }
 
     fn save(&self) {
@@ -587,7 +641,10 @@ impl Hosts {
     /// Record an origin that requested while unapproved — for the app's review list. No
     /// notification is posted (the broker refuses it before reaching the consent surface).
     pub fn record_seen(&mut self, origin: &str, kind: &str) {
-        self.seen.entry(origin.to_string()).or_default().insert(kind.to_string());
+        self.seen
+            .entry(origin.to_string())
+            .or_default()
+            .insert(kind.to_string());
     }
 
     /// Origins seen requesting but not (yet) approved, with the kinds they asked for.
@@ -651,7 +708,12 @@ impl BrokerProvider {
         pairings: Arc<Mutex<Pairings>>,
     ) -> Self {
         // Empty host allowlist ⇒ permissive (any origin may prompt) until `with_hosts`.
-        Self { store, consent, pairings, hosts: Hosts::shared() }
+        Self {
+            store,
+            consent,
+            pairings,
+            hosts: Hosts::shared(),
+        }
     }
 
     /// Gate which origins may initiate requests at all (see [`Hosts`]).
@@ -695,7 +757,10 @@ fn narrow(original: &CapabilityKind, requested: &CapabilityKind) -> CapabilityKi
                     orig.roots
                         .iter()
                         .find(|o| o.path == r.path)
-                        .map(|o| PathGrant { path: r.path.clone(), rights: r.rights & o.rights })
+                        .map(|o| PathGrant {
+                            path: r.path.clone(),
+                            rights: r.rights & o.rights,
+                        })
                 })
                 .filter(|r| !r.rights.is_empty())
                 .collect();
@@ -775,7 +840,10 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                 Some(abs) => p.image = abs.to_string_lossy().into_owned(),
                 None => {
                     tracing::info!(image = %p.image, "process request refused — program not on PATH");
-                    return Ok(Err(Denied::Unsupported(format!("program not found: {}", p.image))));
+                    return Ok(Err(Denied::Unsupported(format!(
+                        "program not found: {}",
+                        p.image
+                    ))));
                 }
             }
         }
@@ -805,8 +873,15 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         if let (Some(o), Some(s)) = (origin, pairing.as_deref()) {
             if self.pairings.lock().unwrap().check(s, o, kind) {
                 tracing::info!(origin = %o, kind, "paired — consent skipped");
-                let token = self.store.lock().unwrap().issue(want, summary, GRANT_TTL, principal);
-                return Ok(Ok(GrantReply { token, pairing: None }));
+                let token = self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .issue(want, summary, GRANT_TTL, principal);
+                return Ok(Ok(GrantReply {
+                    token,
+                    pairing: None,
+                }));
             }
         }
 
@@ -816,12 +891,21 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                 tracing::info!(%requester, %summary, %reason, "consent denied");
                 Ok(Err(denied))
             }
-            Decision::Approve { grant, ttl, remember } => {
+            Decision::Approve {
+                grant,
+                ttl,
+                remember,
+            } => {
                 // Pair the origin (if it has one AND the human chose to remember)
                 // so future requests of this kind skip consent; hand back a fresh
                 // secret only on the first pairing.
                 let new_secret = if remember {
-                    origin.and_then(|o| self.pairings.lock().unwrap().remember(pairing.as_deref(), o, kind))
+                    origin.and_then(|o| {
+                        self.pairings
+                            .lock()
+                            .unwrap()
+                            .remember(pairing.as_deref(), o, kind)
+                    })
                 } else {
                     None
                 };
@@ -829,8 +913,15 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                 // its summary, not the original request's, is what the audit view shows.
                 let granted_summary = summarize(&grant);
                 tracing::info!(%requester, summary = %granted_summary, %reason, remember, paired = new_secret.is_some(), "consent granted");
-                let token = self.store.lock().unwrap().issue(grant, granted_summary, ttl, principal);
-                Ok(Ok(GrantReply { token, pairing: new_secret }))
+                let token =
+                    self.store
+                        .lock()
+                        .unwrap()
+                        .issue(grant, granted_summary, ttl, principal);
+                Ok(Ok(GrantReply {
+                    token,
+                    pairing: new_secret,
+                }))
             }
         }
     }
@@ -907,7 +998,10 @@ mod tests {
     use super::*;
 
     fn terminal_want() -> CapabilityKind {
-        CapabilityKind::Terminal(TerminalRequest { shell: None, jailed: false })
+        CapabilityKind::Terminal(TerminalRequest {
+            shell: None,
+            jailed: false,
+        })
     }
 
     #[tokio::test]
@@ -917,7 +1011,9 @@ mod tests {
         let provider = BrokerProvider::new(store, Consent::AutoApprove, Pairings::shared());
 
         // A request arriving with a browser-attested origin → a web-origin grant.
-        let ctx = crate::ReqCtx { origin: Some("https://notes.example.com".to_string()) };
+        let ctx = crate::ReqCtx {
+            origin: Some("https://notes.example.com".to_string()),
+        };
         provider
             .request(ctx, terminal_want(), "open a shell".to_string(), None)
             .await
@@ -925,16 +1021,25 @@ mod tests {
             .expect("granted");
         // A request with no origin (loopback / non-browser) → an anonymous peer.
         provider
-            .request(crate::ReqCtx::default(), terminal_want(), "open a shell".to_string(), None)
+            .request(
+                crate::ReqCtx::default(),
+                terminal_want(),
+                "open a shell".to_string(),
+                None,
+            )
             .await
             .unwrap()
             .expect("granted");
 
         let granted = provider.granted(crate::ReqCtx::default()).await.unwrap();
         assert_eq!(granted.len(), 2);
-        assert!(granted.iter().any(|g| matches!(g.holder.kind, PrincipalKind::WebOrigin)
-            && g.holder.id == "https://notes.example.com"));
-        assert!(granted.iter().any(|g| matches!(g.holder.kind, PrincipalKind::Peer)));
+        assert!(granted
+            .iter()
+            .any(|g| matches!(g.holder.kind, PrincipalKind::WebOrigin)
+                && g.holder.id == "https://notes.example.com"));
+        assert!(granted
+            .iter()
+            .any(|g| matches!(g.holder.kind, PrincipalKind::Peer)));
     }
 
     #[tokio::test]
@@ -942,7 +1047,9 @@ mod tests {
         use super::bindings::exports::icanhaz::nocap::broker::Handler as _;
         let store = GrantStore::shared();
         let pairings = Pairings::shared();
-        let origin = crate::ReqCtx { origin: Some("https://notes.example.com".to_string()) };
+        let origin = crate::ReqCtx {
+            origin: Some("https://notes.example.com".to_string()),
+        };
 
         // Approve once to pair the origin for `terminal`; a fresh secret comes back.
         let approver = BrokerProvider::new(store.clone(), Consent::AutoApprove, pairings.clone());
@@ -958,7 +1065,12 @@ mod tests {
         // still gets a grant (consent skipped), proving the secret carries trust.
         let denier = BrokerProvider::new(store, Consent::AutoDeny, pairings);
         let g = denier
-            .request(origin.clone(), terminal_want(), "second".to_string(), Some(secret.clone()))
+            .request(
+                origin.clone(),
+                terminal_want(),
+                "second".to_string(),
+                Some(secret.clone()),
+            )
             .await
             .unwrap()
             .expect("a paired request must skip the (denying) consent");
@@ -978,7 +1090,9 @@ mod tests {
             .unwrap()
             .is_err());
         // Wrong origin with the secret: pairing is origin-bound ⇒ denied.
-        let other = crate::ReqCtx { origin: Some("https://evil.example.com".to_string()) };
+        let other = crate::ReqCtx {
+            origin: Some("https://evil.example.com".to_string()),
+        };
         assert!(denier
             .request(other, terminal_want(), "n".to_string(), Some(secret))
             .await
@@ -989,19 +1103,30 @@ mod tests {
     #[test]
     fn pairings_persist_across_reload() {
         // Persist to a throwaway file, then confirm a fresh Pairings loads the trust.
-        let path = std::env::temp_dir().join(format!("icanhaz-pairings-{}.json", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("icanhaz-pairings-{}.json", uuid::Uuid::new_v4()));
         let secret = {
             let pairings = Pairings::load(path.clone());
             let mut p = pairings.lock().unwrap();
-            p.remember(None, "https://notes.example.com", "filesystem").expect("a fresh secret")
+            p.remember(None, "https://notes.example.com", "filesystem")
+                .expect("a fresh secret")
         };
 
         // A brand-new Pairings reading the same file sees the origin-bound, kind-scoped trust.
         let reloaded = Pairings::load(path.clone());
         let p = reloaded.lock().unwrap();
-        assert!(p.check(&secret, "https://notes.example.com", "filesystem"), "reloaded pairing lost");
-        assert!(!p.check(&secret, "https://evil.example.com", "filesystem"), "pairing must stay origin-bound");
-        assert!(!p.check(&secret, "https://notes.example.com", "terminal"), "pairing must stay kind-scoped");
+        assert!(
+            p.check(&secret, "https://notes.example.com", "filesystem"),
+            "reloaded pairing lost"
+        );
+        assert!(
+            !p.check(&secret, "https://evil.example.com", "filesystem"),
+            "pairing must stay origin-bound"
+        );
+        assert!(
+            !p.check(&secret, "https://notes.example.com", "terminal"),
+            "pairing must stay kind-scoped"
+        );
         drop(p);
 
         let _ = std::fs::remove_file(&path);
@@ -1015,16 +1140,41 @@ mod tests {
         let grants = GrantStore::shared();
         let pairings = Pairings::shared();
         let origin = "https://site.example";
-        let secret = pairings.lock().unwrap().remember(None, origin, "filesystem").expect("a fresh secret");
+        let secret = pairings
+            .lock()
+            .unwrap()
+            .remember(None, origin, "filesystem")
+            .expect("a fresh secret");
 
-        let principal = Principal { kind: PrincipalKind::WebOrigin, id: origin.to_string(), display_name: None };
+        let principal = Principal {
+            kind: PrincipalKind::WebOrigin,
+            id: origin.to_string(),
+            display_name: None,
+        };
         let fs = CapabilityKind::Filesystem(FsRequest { roots: vec![] });
-        let token = grants.lock().unwrap().issue(fs, "filesystem".to_string(), Duration::from_secs(60), principal);
+        let token = grants.lock().unwrap().issue(
+            fs,
+            "filesystem".to_string(),
+            Duration::from_secs(60),
+            principal,
+        );
 
-        assert!(pairings.lock().unwrap().check(&secret, origin, "filesystem"), "pairing should be live pre-revoke");
-        assert!(revoke_and_unpair(&grants, &pairings, &token), "grant should have been live");
         assert!(
-            !pairings.lock().unwrap().check(&secret, origin, "filesystem"),
+            pairings
+                .lock()
+                .unwrap()
+                .check(&secret, origin, "filesystem"),
+            "pairing should be live pre-revoke"
+        );
+        assert!(
+            revoke_and_unpair(&grants, &pairings, &token),
+            "grant should have been live"
+        );
+        assert!(
+            !pairings
+                .lock()
+                .unwrap()
+                .check(&secret, origin, "filesystem"),
             "revoke must forget the pairing so the site re-consents"
         );
     }
@@ -1035,22 +1185,42 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ic-hosts-{}.json", uuid::Uuid::new_v4()));
         let hosts = Hosts::load(path.clone(), true); // strict + empty ⇒ everything unapproved
         let store = GrantStore::shared();
-        let provider = BrokerProvider::new(store, Consent::AutoApprove, Pairings::shared()).with_hosts(hosts.clone());
-        let ctx = crate::ReqCtx { origin: Some("https://site.example".to_string()) };
+        let provider = BrokerProvider::new(store, Consent::AutoApprove, Pairings::shared())
+            .with_hosts(hosts.clone());
+        let ctx = crate::ReqCtx {
+            origin: Some("https://site.example".to_string()),
+        };
 
         // Unapproved: refused *before* consent (even AutoApprove can't grant), and recorded.
-        let denied = provider.request(ctx.clone(), terminal_want(), "hi".to_string(), None).await.unwrap();
-        assert!(denied.is_err(), "an unapproved host must be refused before consent runs");
+        let denied = provider
+            .request(ctx.clone(), terminal_want(), "hi".to_string(), None)
+            .await
+            .unwrap();
         assert!(
-            hosts.lock().unwrap().list_unknown().iter().any(|(o, _)| o == "https://site.example"),
+            denied.is_err(),
+            "an unapproved host must be refused before consent runs"
+        );
+        assert!(
+            hosts
+                .lock()
+                .unwrap()
+                .list_unknown()
+                .iter()
+                .any(|(o, _)| o == "https://site.example"),
             "the unapproved host must be recorded for review"
         );
 
         // Approve it → the request now proceeds (AutoApprove grants), and it's no longer unknown.
         hosts.lock().unwrap().add("https://site.example");
-        let granted = provider.request(ctx, terminal_want(), "hi".to_string(), None).await.unwrap();
+        let granted = provider
+            .request(ctx, terminal_want(), "hi".to_string(), None)
+            .await
+            .unwrap();
         assert!(granted.is_ok(), "an approved host may request");
-        assert!(hosts.lock().unwrap().list_unknown().is_empty(), "approving clears the unknown entry");
+        assert!(
+            hosts.lock().unwrap().list_unknown().is_empty(),
+            "approving clears the unknown entry"
+        );
 
         let _ = std::fs::remove_file(&path);
     }
@@ -1059,7 +1229,10 @@ mod tests {
     fn resolve_program_pins_an_absolute_executable() {
         // `sh` is on PATH on every unix → resolves to an absolute executable.
         let sh = resolve_program("sh").expect("sh should resolve");
-        assert!(sh.is_absolute(), "resolved program must be absolute: {sh:?}");
+        assert!(
+            sh.is_absolute(),
+            "resolved program must be absolute: {sh:?}"
+        );
         assert!(sh.ends_with("sh"));
         // A non-existent program resolves to nothing (the request will be refused).
         assert!(resolve_program("definitely-not-a-real-program-xyz").is_none());
@@ -1071,15 +1244,26 @@ mod tests {
     fn cli_reply_is_fail_closed() {
         let want = terminal_want();
         for yes in ["y", "yes", "  Y \n", "YES"] {
-            assert!(matches!(decision_from_reply(yes, &want), Decision::Approve { .. }), "{yes:?} should approve");
+            assert!(
+                matches!(decision_from_reply(yes, &want), Decision::Approve { .. }),
+                "{yes:?} should approve"
+            );
         }
         for no in ["n", "no", "", "\n", "nope", "yeah", "1", "sure"] {
-            assert!(matches!(decision_from_reply(no, &want), Decision::Deny(_)), "{no:?} must deny");
+            assert!(
+                matches!(decision_from_reply(no, &want), Decision::Deny(_)),
+                "{no:?} must deny"
+            );
         }
     }
 
     fn fs_want(path: &str, rights: FsRights) -> CapabilityKind {
-        CapabilityKind::Filesystem(FsRequest { roots: vec![PathGrant { path: path.to_string(), rights }] })
+        CapabilityKind::Filesystem(FsRequest {
+            roots: vec![PathGrant {
+                path: path.to_string(),
+                rights,
+            }],
+        })
     }
 
     #[test]
@@ -1087,13 +1271,17 @@ mod tests {
         let original = fs_want("/proj", FsRights::READ | FsRights::WRITE);
         // The surface tries to *widen* to include delete — clamped back to read+write.
         let widened = fs_want("/proj", FsRights::READ | FsRights::WRITE | FsRights::DELETE);
-        let CapabilityKind::Filesystem(got) = narrow(&original, &widened) else { panic!("kind changed") };
+        let CapabilityKind::Filesystem(got) = narrow(&original, &widened) else {
+            panic!("kind changed")
+        };
         assert_eq!(got.roots.len(), 1);
         assert_eq!(got.roots[0].rights, FsRights::READ | FsRights::WRITE);
 
         // Narrowing to read-only is honoured.
         let readonly = fs_want("/proj", FsRights::READ);
-        let CapabilityKind::Filesystem(got) = narrow(&original, &readonly) else { panic!() };
+        let CapabilityKind::Filesystem(got) = narrow(&original, &readonly) else {
+            panic!()
+        };
         assert_eq!(got.roots[0].rights, FsRights::READ);
     }
 
@@ -1102,43 +1290,83 @@ mod tests {
         let original = fs_want("/proj", FsRights::READ | FsRights::WRITE);
         // A path never offered can't be smuggled in.
         let smuggled = fs_want("/etc", FsRights::READ);
-        let CapabilityKind::Filesystem(got) = narrow(&original, &smuggled) else { panic!() };
+        let CapabilityKind::Filesystem(got) = narrow(&original, &smuggled) else {
+            panic!()
+        };
         assert!(got.roots.is_empty(), "unoffered path must be dropped");
 
         // A root the human cleared of all rights is dropped.
         let empty = fs_want("/proj", FsRights::empty());
-        let CapabilityKind::Filesystem(got) = narrow(&original, &empty) else { panic!() };
-        assert!(got.roots.is_empty(), "a root with no rights must be dropped");
+        let CapabilityKind::Filesystem(got) = narrow(&original, &empty) else {
+            panic!()
+        };
+        assert!(
+            got.roots.is_empty(),
+            "a root with no rights must be dropped"
+        );
     }
 
     #[test]
     fn narrow_cannot_widen_process_or_change_image() {
-        let original = CapabilityKind::Process(ProcessRequest { image: "rust-analyzer".into(), args: vec!["--stdio".into()], guest_chooses_argv: false });
+        let original = CapabilityKind::Process(ProcessRequest {
+            image: "rust-analyzer".into(),
+            args: vec!["--stdio".into()],
+            guest_chooses_argv: false,
+        });
         // Try to swap the image and enable argv — both refused.
-        let hostile = CapabilityKind::Process(ProcessRequest { image: "rm".into(), args: vec!["-rf".into()], guest_chooses_argv: true });
-        let CapabilityKind::Process(got) = narrow(&original, &hostile) else { panic!() };
+        let hostile = CapabilityKind::Process(ProcessRequest {
+            image: "rm".into(),
+            args: vec!["-rf".into()],
+            guest_chooses_argv: true,
+        });
+        let CapabilityKind::Process(got) = narrow(&original, &hostile) else {
+            panic!()
+        };
         assert_eq!(got.image, "rust-analyzer", "image is pinned, never swapped");
-        assert_eq!(got.args, vec!["--stdio".to_string()], "args are pinned from the request, not the hostile edit");
+        assert_eq!(
+            got.args,
+            vec!["--stdio".to_string()],
+            "args are pinned from the request, not the hostile edit"
+        );
         assert!(!got.guest_chooses_argv, "argv can't be widened on");
     }
 
     #[test]
     fn narrow_only_strengthens_terminal_sandbox_and_rejects_kind_change() {
-        let original = CapabilityKind::Terminal(TerminalRequest { shell: None, jailed: false });
+        let original = CapabilityKind::Terminal(TerminalRequest {
+            shell: None,
+            jailed: false,
+        });
         // The human forces the sandbox on.
-        let jailed = CapabilityKind::Terminal(TerminalRequest { shell: None, jailed: true });
-        let CapabilityKind::Terminal(got) = narrow(&original, &jailed) else { panic!() };
+        let jailed = CapabilityKind::Terminal(TerminalRequest {
+            shell: None,
+            jailed: true,
+        });
+        let CapabilityKind::Terminal(got) = narrow(&original, &jailed) else {
+            panic!()
+        };
         assert!(got.jailed, "jailed can be turned on");
 
         // A jailed original can't be un-jailed.
-        let unjail = CapabilityKind::Terminal(TerminalRequest { shell: None, jailed: false });
-        let orig_jailed = CapabilityKind::Terminal(TerminalRequest { shell: None, jailed: true });
-        let CapabilityKind::Terminal(got) = narrow(&orig_jailed, &unjail) else { panic!() };
+        let unjail = CapabilityKind::Terminal(TerminalRequest {
+            shell: None,
+            jailed: false,
+        });
+        let orig_jailed = CapabilityKind::Terminal(TerminalRequest {
+            shell: None,
+            jailed: true,
+        });
+        let CapabilityKind::Terminal(got) = narrow(&orig_jailed, &unjail) else {
+            panic!()
+        };
         assert!(got.jailed, "jailed can't be relaxed");
 
         // Trying to change the category is ignored (original kind kept).
         let cross = fs_want("/proj", FsRights::READ);
-        assert!(matches!(narrow(&original, &cross), CapabilityKind::Terminal(_)));
+        assert!(matches!(
+            narrow(&original, &cross),
+            CapabilityKind::Terminal(_)
+        ));
     }
 
     #[tokio::test]
@@ -1169,7 +1397,9 @@ mod tests {
         // The grant gates by kind, and an unknown token is refused.
         {
             let store = store.lock().unwrap();
-            assert!(store.validate(&token, |k| matches!(k, CapabilityKind::Terminal(_))).is_ok());
+            assert!(store
+                .validate(&token, |k| matches!(k, CapabilityKind::Terminal(_)))
+                .is_ok());
             assert!(matches!(
                 store.validate(&token, |k| matches!(k, CapabilityKind::Filesystem(_))),
                 Err(Denied::NotAuthorized)
@@ -1181,7 +1411,9 @@ mod tests {
         }
 
         // Revoke → gone from both the audit view and the gate.
-        client::revoke(&wrpc, (), &token).await.expect("invoke revoke");
+        client::revoke(&wrpc, (), &token)
+            .await
+            .expect("invoke revoke");
         assert_eq!(client::granted(&wrpc, ()).await.unwrap().len(), 0);
         assert!(store.lock().unwrap().validate(&token, |_| true).is_err());
 

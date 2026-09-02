@@ -97,7 +97,8 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handl
             req.args.clone()
         } else {
             return Ok(Err(
-                "process denied: this grant pins its arguments; the requested argv isn't permitted".to_string(),
+                "process denied: this grant pins its arguments; the requested argv isn't permitted"
+                    .to_string(),
             ));
         };
 
@@ -183,7 +184,9 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handl
         Ok(Ok(crate::session::grant_scoped(
             Box::pin(out),
             revocation,
-            ProcGuard { handles: vec![stdin_h, stderr_h, stdout_h] },
+            ProcGuard {
+                handles: vec![stdin_h, stderr_h, stdout_h],
+            },
         )))
     }
 }
@@ -242,9 +245,17 @@ mod tests {
     use futures::stream;
 
     /// Mint a `process` grant pinning `image` (optionally allowing caller argv).
-    fn process_grant(store: &Arc<Mutex<GrantStore>>, image: &str, guest_chooses_argv: bool) -> String {
+    fn process_grant(
+        store: &Arc<Mutex<GrantStore>>,
+        image: &str,
+        guest_chooses_argv: bool,
+    ) -> String {
         store.lock().unwrap().issue(
-            CapabilityKind::Process(ProcessRequest { image: image.to_string(), args: vec![], guest_chooses_argv }),
+            CapabilityKind::Process(ProcessRequest {
+                image: image.to_string(),
+                args: vec![],
+                guest_chooses_argv,
+            }),
             format!("process: {image}"),
             Duration::from_secs(60),
             anonymous_principal(),
@@ -305,7 +316,10 @@ mod tests {
         let output = result.expect("spawn cat");
 
         let text = collect_output!(io, output);
-        assert!(text.contains("hello over wrpc"), "process output missing echo:\n{text}");
+        assert!(
+            text.contains("hello over wrpc"),
+            "process output missing echo:\n{text}"
+        );
 
         server.abort();
     }
@@ -326,7 +340,9 @@ mod tests {
 
         // stdin never ends ⇒ `cat` never sees EOF ⇒ it only stops when killed.
         let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::pending());
-        let (result, io) = client::spawn(&wrpc, (), &grant, &[], stdin).await.expect("invoke process.spawn");
+        let (result, io) = client::spawn(&wrpc, (), &grant, &[], stdin)
+            .await
+            .expect("invoke process.spawn");
         let mut output = result.expect("spawn cat");
 
         // Drive the client I/O so the stream can advance + close.
@@ -338,13 +354,19 @@ mod tests {
 
         // Revoke — the running `cat` must be torn down and its output stream ended.
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(store.lock().unwrap().revoke(&grant), "grant should have been live");
+        assert!(
+            store.lock().unwrap().revoke(&grant),
+            "grant should have been live"
+        );
 
         let drained = tokio::time::timeout(Duration::from_secs(5), async {
             while output.next().await.is_some() {}
         })
         .await;
-        assert!(drained.is_ok(), "revoke must end the process's output stream (session torn down)");
+        assert!(
+            drained.is_ok(),
+            "revoke must end the process's output stream (session torn down)"
+        );
 
         io_task.abort();
         server.abort();
@@ -363,7 +385,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::iter(Vec::<Bytes>::new()));
+        let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> =
+            Box::pin(stream::iter(Vec::<Bytes>::new()));
         let args = ["hello-args"];
         let (result, io) = client::spawn(&wrpc, (), &grant, &args, stdin)
             .await
@@ -371,7 +394,10 @@ mod tests {
         let output = result.expect("spawn echo");
 
         let text = collect_output!(io, output);
-        assert!(text.contains("hello-args"), "echo output missing argv:\n{text}");
+        assert!(
+            text.contains("hello-args"),
+            "echo output missing argv:\n{text}"
+        );
 
         server.abort();
     }
@@ -390,13 +416,17 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::iter(Vec::<Bytes>::new()));
+        let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> =
+            Box::pin(stream::iter(Vec::<Bytes>::new()));
         let args = ["should-be-rejected"];
         let (result, _io) = client::spawn(&wrpc, (), &grant, &args, stdin)
             .await
             .expect("invoke process.spawn");
         match result {
-            Err(msg) => assert!(msg.contains("arguments"), "unexpected refusal message: {msg}"),
+            Err(msg) => assert!(
+                msg.contains("arguments"),
+                "unexpected refusal message: {msg}"
+            ),
             Ok(_) => panic!("argv on a grant that didn't permit it must be refused"),
         }
 
@@ -413,7 +443,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> = Box::pin(stream::iter(Vec::<Bytes>::new()));
+        let stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>> =
+            Box::pin(stream::iter(Vec::<Bytes>::new()));
         let (result, _io) = client::spawn(&wrpc, (), "bogus-token", &[], stdin)
             .await
             .expect("invoke process.spawn");

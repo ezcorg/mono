@@ -760,7 +760,12 @@ impl AppConfig {
         if self.auth.jwt_secret.as_ref().is_some_and(Secret::is_empty) {
             self.auth.jwt_secret = Some(prompt("JWT signing secret")?);
         }
-        if self.auth.admin_password.as_ref().is_some_and(Secret::is_empty) {
+        if self
+            .auth
+            .admin_password
+            .as_ref()
+            .is_some_and(Secret::is_empty)
+        {
             self.auth.admin_password = Some(prompt("Admin password")?);
         }
         Ok(self)

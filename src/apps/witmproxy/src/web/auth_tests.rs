@@ -23,9 +23,8 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
     let pool = db.pool.clone();
 
     let runtime = Runtime::try_default().unwrap();
-    let plugin_registry = Arc::new(
-        crate::plugins::registry::PluginRegistry::new(db, runtime).unwrap(),
-    );
+    let plugin_registry =
+        Arc::new(crate::plugins::registry::PluginRegistry::new(db, runtime).unwrap());
 
     let mut web_server = WebServer::new(ca, Some(plugin_registry), config);
     web_server = web_server.with_db_pool(pool.clone());
@@ -91,7 +90,10 @@ async fn register_creates_pending_tenant() {
         "Register should return 202 Accepted (pending admin approval)"
     );
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["token"], "", "No token should be issued until approval");
+    assert_eq!(
+        body["token"], "",
+        "No token should be issued until approval"
+    );
     assert!(
         body["tenant_id"].is_string(),
         "Response should contain tenant_id"
@@ -111,7 +113,9 @@ async fn register_creates_pending_tenant() {
 /// Approve a pending self-registration by enabling the tenant.
 async fn approve_tenant(pool: &sqlx::SqlitePool, email: &str) {
     let tenant = Tenant::by_email(pool, email).await.unwrap().unwrap();
-    Tenant::update_enabled(pool, &tenant.id, true).await.unwrap();
+    Tenant::update_enabled(pool, &tenant.id, true)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

@@ -6,10 +6,7 @@ use crate::events::Event;
 use crate::plugins::cel::{CelConnect, CelTime};
 use crate::wasm::{
     Host,
-    bindgen::{
-        Event as WasmEvent,
-        witmproxy::plugin::capabilities::EventKind,
-    },
+    bindgen::{Event as WasmEvent, witmproxy::plugin::capabilities::EventKind},
 };
 
 /// Connect event represents a connection attempt to a host:port

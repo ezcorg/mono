@@ -170,9 +170,7 @@ impl LimitOverrides {
             max_fuel: self.max_fuel.unwrap_or(global.max_fuel),
             max_memory_mb: self.max_memory_mb.unwrap_or(global.max_memory_mb),
             timeout_ms: self.timeout_ms.unwrap_or(global.timeout_ms),
-            max_table_elements: self
-                .max_table_elements
-                .unwrap_or(global.max_table_elements),
+            max_table_elements: self.max_table_elements.unwrap_or(global.max_table_elements),
             max_instances: self.max_instances.unwrap_or(global.max_instances),
             max_local_storage_bytes: self
                 .max_local_storage_bytes

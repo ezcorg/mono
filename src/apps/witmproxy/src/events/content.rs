@@ -14,10 +14,7 @@ use crate::{
     plugins::cel::{CelContent, CelTime},
     wasm::{
         Host,
-        bindgen::{
-            Event as WasmEvent,
-            witmproxy::plugin::capabilities::EventKind,
-        },
+        bindgen::{Event as WasmEvent, witmproxy::plugin::capabilities::EventKind},
     },
 };
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;

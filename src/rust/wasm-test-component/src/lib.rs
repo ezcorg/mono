@@ -88,9 +88,7 @@ impl GuestPlugin for PluginInstance {
                 // Clone to get mutable headers
                 let headers = old_headers.clone();
                 let val = "req".as_bytes().to_vec();
-                headers
-                    .set("witmproxy", &[val])
-                    .unwrap();
+                headers.set("witmproxy", &[val]).unwrap();
 
                 let (_, result_rx) = wit_future::new(|| Ok(()));
                 let (body, trailers) = Request::consume_body(req, result_rx);
@@ -106,9 +104,7 @@ impl GuestPlugin for PluginInstance {
                 // Clone to get mutable headers
                 let headers = old_headers.clone();
                 let val = "res".as_bytes().to_vec();
-                headers
-                    .set("witmproxy", &[val])
-                    .unwrap();
+                headers.set("witmproxy", &[val]).unwrap();
 
                 let (_, result_rx) = wit_future::new(|| Ok(()));
                 let (body, trailers) = Response::consume_body(response, result_rx);

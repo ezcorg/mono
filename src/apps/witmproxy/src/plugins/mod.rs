@@ -12,11 +12,9 @@ use crate::{
     Runtime,
     db::{Db, Insert},
     plugins::capabilities::Capability,
-    wasm::{
-        bindgen::{
-            PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
-            witmproxy::plugin::capabilities::Capability as WitCapability,
-        },
+    wasm::bindgen::{
+        PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
+        witmproxy::plugin::capabilities::Capability as WitCapability,
     },
 };
 
@@ -103,8 +101,7 @@ impl WitmPlugin {
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
         let enabled: bool = plugin_row.try_get("enabled")?;
         let component = Component::from_binary(&runtime.engine, &component_bytes)?;
-        let (plugin_instance, mut store) =
-            runtime.instantiate_plugin_component(&component).await?;
+        let (plugin_instance, mut store) = runtime.instantiate_plugin_component(&component).await?;
         let guest_result = store
             .run_concurrent(async move |store| {
                 let manifest = match plugin_instance
@@ -131,7 +128,9 @@ impl WitmPlugin {
         // "unbounded" either: defaulting inherits the global limits, which is
         // the safe direction, and the operator is told their override is being
         // ignored.
-        let limits_json: String = plugin_row.try_get("limits").unwrap_or_else(|_| "{}".to_string());
+        let limits_json: String = plugin_row
+            .try_get("limits")
+            .unwrap_or_else(|_| "{}".to_string());
         plugin.limits = match serde_json::from_str(&limits_json) {
             Ok(limits) => limits,
             Err(e) => {

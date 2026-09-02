@@ -2,11 +2,11 @@
 
 use crate::events::Event;
 use crate::test_utils::{create_plugin_registry, test_component_path};
-use wasmtime_wasi_http::p3::Request as WasiRequest;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Method, Request};
 use std::time::{Duration, Instant};
+use wasmtime_wasi_http::p3::Request as WasiRequest;
 
 /// Build a fresh Request event each call (events are consumed by handle_event).
 fn make_request_event() -> Box<dyn Event> {

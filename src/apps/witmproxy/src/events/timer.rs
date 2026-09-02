@@ -43,10 +43,7 @@ impl Event for TimerEvent {
         store: &mut Store<Host>,
         _limit: u64,
         _breaches: std::sync::Arc<crate::plugins::limits::BreachRecorder>,
-    ) -> Result<(
-        WasmEvent,
-        Option<crate::events::recovery::EventShadow>,
-    )> {
+    ) -> Result<(WasmEvent, Option<crate::events::recovery::EventShadow>)> {
         // A timer carries no stream and no resource, so it is always
         // recoverable at zero cost.
         let timestamp = self.timestamp;

@@ -2,8 +2,8 @@ use crate::cert::{CertError, CertificateAuthority};
 
 use bytes::Bytes;
 use futures::TryStreamExt;
-use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::BodyExt;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::{Body, Incoming};
 use hyper::{Method, Request, Response, header};
 use reqwest::Certificate;

@@ -371,7 +371,10 @@ fn replace_binary(new_binary: &[u8]) -> Result<()> {
     // Rename current → .old, temp → current
     if let Err(e) = std::fs::rename(&current_exe, &old_path) {
         if let Err(cleanup) = std::fs::remove_file(&temp_path) {
-            debug!("could not remove temp binary {}: {cleanup}", temp_path.display());
+            debug!(
+                "could not remove temp binary {}: {cleanup}",
+                temp_path.display()
+            );
         }
         return Err(e).context("failed to rename current binary to .old");
     }

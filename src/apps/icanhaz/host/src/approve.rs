@@ -112,7 +112,12 @@ impl PendingConsent {
 
     /// The requests currently awaiting a decision — what a surface renders.
     pub fn list(&self) -> Vec<PendingRequest> {
-        self.inner.lock().unwrap().values().map(|w| w.info.clone()).collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .values()
+            .map(|w| w.info.clone())
+            .collect()
     }
 
     /// Deliver a decision to a parked request. Returns whether one matched.
@@ -132,7 +137,10 @@ impl PendingConsent {
 /// real notification via `osascript`; everywhere it's logged (so a foregrounded
 /// daemon still surfaces it).
 pub fn notify(req: &PendingRequest, approve_url: &str) {
-    let body = format!("{} wants {} — approve at {}", req.requester, req.summary, approve_url);
+    let body = format!(
+        "{} wants {} — approve at {}",
+        req.requester, req.summary, approve_url
+    );
     tracing::info!(requester = %req.requester, summary = %req.summary, %approve_url, "consent requested (surface)");
     #[cfg(target_os = "macos")]
     {
@@ -140,7 +148,10 @@ pub fn notify(req: &PendingRequest, approve_url: &str) {
         let safe = body.replace('"', "'").replace(['\n', '\r'], " ");
         let script =
             format!("display notification \"{safe}\" with title \"icanhaz — consent requested\"");
-        let _ = std::process::Command::new("osascript").arg("-e").arg(script).spawn();
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn();
     }
     #[cfg(not(target_os = "macos"))]
     let _ = body;
@@ -184,7 +195,11 @@ pub async fn serve_approval(
     }
 }
 
-async fn handle(mut stream: TcpStream, pending: &PendingConsent, nonce: &str) -> anyhow::Result<()> {
+async fn handle(
+    mut stream: TcpStream,
+    pending: &PendingConsent,
+    nonce: &str,
+) -> anyhow::Result<()> {
     let (rd, mut wr) = stream.split();
     let mut rd = BufReader::new(rd);
 
@@ -212,7 +227,10 @@ async fn handle(mut stream: TcpStream, pending: &PendingConsent, nonce: &str) ->
     }
 
     // Body (by Content-Length).
-    let len: usize = headers.get("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let len: usize = headers
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut body = vec![0u8; len];
     if len > 0 {
         rd.read_exact(&mut body).await?;
@@ -233,9 +251,10 @@ fn route(
     nonce: &str,
 ) -> Vec<u8> {
     match (method, path) {
-        ("GET", "/") | ("GET", "/approve") => {
-            http_ok("text/html; charset=utf-8", PAGE.replace("__NONCE__", nonce).into_bytes())
-        }
+        ("GET", "/") | ("GET", "/approve") => http_ok(
+            "text/html; charset=utf-8",
+            PAGE.replace("__NONCE__", nonce).into_bytes(),
+        ),
         ("GET", "/pending") => http_ok("application/json", pending_json(pending).into_bytes()),
         ("POST", "/decide") => decide(headers, body, pending, nonce),
         _ => http_status(404, "Not Found"),
@@ -280,7 +299,15 @@ fn decide(
     // Clamp the client-supplied lifetime into range (the broker honours this value).
     let ttl_secs = ttl_secs.clamp(MIN_TTL_SECS, MAX_TTL_SECS);
     // The loopback page approves as-requested (no attenuation UI) ⇒ `grant: None`.
-    let decision = if allow { Some(Approval { grant: None, remember, ttl_secs }) } else { None };
+    let decision = if allow {
+        Some(Approval {
+            grant: None,
+            remember,
+            ttl_secs,
+        })
+    } else {
+        None
+    };
     if pending.resolve(id, decision) {
         http_ok("application/json", b"{\"ok\":true}".to_vec())
     } else {
@@ -424,7 +451,9 @@ mod tests {
     ) -> String {
         let mut s = TcpStream::connect(addr).await.unwrap();
         let csrf = csrf.map(|n| format!("X-Csrf: {n}\r\n")).unwrap_or_default();
-        let origin = origin.map(|o| format!("Origin: {o}\r\n")).unwrap_or_default();
+        let origin = origin
+            .map(|o| format!("Origin: {o}\r\n"))
+            .unwrap_or_default();
         let req = format!(
             "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n{csrf}{origin}Connection: close\r\n\r\n{body}",
             body.len(),
@@ -461,22 +490,48 @@ mod tests {
         let listing = http_get(addr, "/pending").await;
         assert!(listing.contains("req-1"), "missing id:\n{listing}");
         assert!(listing.contains("https://notes.example.com"));
-        assert!(listing.contains(r#"open a \"shell\""#), "reason not escaped:\n{listing}");
+        assert!(
+            listing.contains(r#"open a \"shell\""#),
+            "reason not escaped:\n{listing}"
+        );
 
         // CSRF: a decide with no nonce is refused (the cross-origin attacker case).
         let r = http_post(addr, "/decide", "id=req-1&allow=true", None, None).await;
-        assert!(r.starts_with("HTTP/1.1 403"), "no-nonce decide should 403:\n{r}");
+        assert!(
+            r.starts_with("HTTP/1.1 403"),
+            "no-nonce decide should 403:\n{r}"
+        );
         // CSRF: nonce but a foreign Origin is refused (defence in depth).
-        let r = http_post(addr, "/decide", "id=req-1&allow=true", Some(&nonce), Some("https://evil.com")).await;
-        assert!(r.starts_with("HTTP/1.1 403"), "foreign-origin decide should 403:\n{r}");
+        let r = http_post(
+            addr,
+            "/decide",
+            "id=req-1&allow=true",
+            Some(&nonce),
+            Some("https://evil.com"),
+        )
+        .await;
+        assert!(
+            r.starts_with("HTTP/1.1 403"),
+            "foreign-origin decide should 403:\n{r}"
+        );
 
         // The request is still pending after the rejected attempts.
         assert!(http_get(addr, "/pending").await.contains("req-1"));
 
         // A legitimate decide (page nonce, same-origin) approves it, and the
         // broker's parked future resolves.
-        let r = http_post(addr, "/decide", "id=req-1&allow=true&remember=1&ttl=28800", Some(&nonce), None).await;
-        assert!(r.starts_with("HTTP/1.1 200"), "valid decide should 200:\n{r}");
+        let r = http_post(
+            addr,
+            "/decide",
+            "id=req-1&allow=true&remember=1&ttl=28800",
+            Some(&nonce),
+            None,
+        )
+        .await;
+        assert!(
+            r.starts_with("HTTP/1.1 200"),
+            "valid decide should 200:\n{r}"
+        );
         let approval = rx.await.unwrap().expect("approved");
         assert!(approval.grant.is_none(), "loopback approves as-requested");
         assert!(approval.remember);

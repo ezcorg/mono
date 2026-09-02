@@ -112,7 +112,10 @@ mod tests {
     fn filesystem_grant(store: &Arc<Mutex<GrantStore>>, path: &str) -> String {
         store.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
-                roots: vec![PathGrant { path: path.to_string(), rights: FsRights::empty() }],
+                roots: vec![PathGrant {
+                    path: path.to_string(),
+                    rights: FsRights::empty(),
+                }],
             }),
             format!("filesystem: {path}"),
             Duration::from_secs(60),
@@ -132,7 +135,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let result = client::root_path(&wrpc, (), &grant).await.expect("invoke root-path");
+        let result = client::root_path(&wrpc, (), &grant)
+            .await
+            .expect("invoke root-path");
         assert_eq!(result.expect("path"), "/demo/root/jail");
 
         server.abort();
@@ -148,7 +153,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let result = client::root_path(&wrpc, (), "bogus-token").await.expect("invoke root-path");
+        let result = client::root_path(&wrpc, (), "bogus-token")
+            .await
+            .expect("invoke root-path");
         match result {
             Err(msg) => assert!(msg.contains("denied"), "unexpected message: {msg}"),
             Ok(_) => panic!("an ungranted root-path must be refused"),

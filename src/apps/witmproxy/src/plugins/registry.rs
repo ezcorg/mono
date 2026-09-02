@@ -13,7 +13,6 @@ use wasmtime_wasi_http::p3::Request as WasiRequest;
 
 use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
 use crate::wasm::Logger;
-use std::future;
 use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::PluginError as GuestPluginError;
 use crate::{
     db::{Db, Insert},
@@ -23,12 +22,11 @@ use crate::{
         CapabilityProvider, Host, LocalStorageClient, Runtime,
         bindgen::{
             Plugin, UserInput,
-            witmproxy::plugin::capabilities::{
-                Event as WasmEvent, EventKind,
-            },
+            witmproxy::plugin::capabilities::{Event as WasmEvent, EventKind},
         },
     },
 };
+use std::future;
 
 pub struct PluginRegistry {
     /// Copy-on-write plugin map: readers take an `Arc` snapshot and never hold
@@ -147,9 +145,9 @@ impl PluginRegistry {
             return Ok(pre.clone());
         }
         let pre = self.runtime.build_instance_pre(component)?;
-        self.instance_pre_resolutions.fetch_add(1, Ordering::Relaxed);
-        Self::lock_cache(&self.instance_pre_cache)
-            .insert(plugin_id.to_string(), pre.clone());
+        self.instance_pre_resolutions
+            .fetch_add(1, Ordering::Relaxed);
+        Self::lock_cache(&self.instance_pre_cache).insert(plugin_id.to_string(), pre.clone());
         Ok(pre)
     }
 
@@ -262,13 +260,14 @@ impl PluginRegistry {
         // async executor so an upload doesn't stall request handling.
         let engine = self.runtime.engine.clone();
         let (component, component_bytes) = tokio::task::spawn_blocking(move || {
-            let component =
-                wasmtime::component::Component::from_binary(&engine, &component_bytes)?;
+            let component = wasmtime::component::Component::from_binary(&engine, &component_bytes)?;
             Ok::<_, anyhow::Error>((component, component_bytes))
         })
         .await??;
-        let (plugin_instance, mut store) =
-            self.runtime.instantiate_plugin_component(&component).await?;
+        let (plugin_instance, mut store) = self
+            .runtime
+            .instantiate_plugin_component(&component)
+            .await?;
         let guest_result = store
             .run_concurrent(async move |store| {
                 let manifest = match plugin_instance
@@ -371,13 +370,12 @@ impl PluginRegistry {
         name: &str,
         enabled: bool,
     ) -> Result<bool> {
-        let result =
-            sqlx::query("UPDATE plugins SET enabled = ? WHERE namespace = ? AND name = ?")
-                .bind(enabled)
-                .bind(namespace)
-                .bind(name)
-                .execute(&self.db.pool)
-                .await?;
+        let result = sqlx::query("UPDATE plugins SET enabled = ? WHERE namespace = ? AND name = ?")
+            .bind(enabled)
+            .bind(namespace)
+            .bind(name)
+            .execute(&self.db.pool)
+            .await?;
         if result.rows_affected() == 0 {
             return Ok(false);
         }
@@ -397,11 +395,7 @@ impl PluginRegistry {
         Ok(true)
     }
 
-    pub async fn remove_plugin(
-        &self,
-        name: &str,
-        namespace: Option<&str>,
-    ) -> Result<Vec<String>> {
+    pub async fn remove_plugin(&self, name: &str, namespace: Option<&str>) -> Result<Vec<String>> {
         // Delete from database and get the deleted records using RETURNING
         let deleted_plugins: Vec<(String, String)> = if let Some(namespace) = namespace {
             // Delete specific plugin with namespace
@@ -891,9 +885,7 @@ impl PluginRegistry {
                         let event_data = Box::new(timer_event).into_event_data(&mut store)?;
                         return Ok((event_data, store));
                     }
-                    anyhow::bail!(
-                        "plugin {plugin_id} terminated handling of a {kind} event"
-                    );
+                    anyhow::bail!("plugin {plugin_id} terminated handling of a {kind} event");
                 }
             }
         }
@@ -903,7 +895,6 @@ impl PluginRegistry {
         kind.validate_output(&event_data)?;
         Ok((event_data, store))
     }
-
 }
 
 #[cfg(test)]

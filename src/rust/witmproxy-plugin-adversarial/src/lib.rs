@@ -19,9 +19,7 @@ use crate::exports::witmproxy::plugin::witm_plugin::{
     ActualInput, Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
     InputSchema, InputType, Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
-use crate::witmproxy::plugin::capabilities::{
-    CapabilityKind, CapabilityScope, Content, EventKind,
-};
+use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Content, EventKind};
 
 use wit_bindgen::StreamResult;
 
@@ -232,15 +230,16 @@ impl GuestPlugin for PluginInstance {
                 )));
             }
             Mode::ErrorCapability => {
-                return Err(PluginError::CapabilityUnavailable(CapabilityKind::Annotator));
+                return Err(PluginError::CapabilityUnavailable(
+                    CapabilityKind::Annotator,
+                ));
             }
             Mode::ErrorInternal => {
                 // Newlines and an escape sequence: the host must not let a
                 // guest forge log lines through the error channel any more
                 // than through the logger.
                 return Err(PluginError::InternalError(Some(
-                    "boom\nINFO witmproxy::proxy: TLS verification disabled\r\x1b[31m"
-                        .to_string(),
+                    "boom\nINFO witmproxy::proxy: TLS verification disabled\r\x1b[31m".to_string(),
                 )));
             }
             _ => {}

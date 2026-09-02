@@ -390,7 +390,11 @@ impl PluginHandler {
             "created new plugin project"
         );
 
-        println!("Created plugin `{}` at {}", args.plugin_name, root.display());
+        println!(
+            "Created plugin `{}` at {}",
+            args.plugin_name,
+            root.display()
+        );
         println!();
         println!("Next steps:");
         println!("  cd {}", root.display());

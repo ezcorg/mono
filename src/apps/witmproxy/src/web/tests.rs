@@ -89,8 +89,8 @@ async fn config_update_is_reflected_in_running_process() -> Result<()> {
     let plugin_registry = Arc::new(PluginRegistry::new(db, runtime).unwrap());
 
     let cfg_path = temp_dir.path().join("config.toml");
-    let mut web_server = WebServer::new(ca, Some(plugin_registry), config)
-        .with_config_path(cfg_path.clone());
+    let mut web_server =
+        WebServer::new(ca, Some(plugin_registry), config).with_config_path(cfg_path.clone());
     web_server = web_server.with_db_pool(pool);
     web_server.start().await.unwrap();
     let bind_addr = web_server.listen_addr().unwrap();

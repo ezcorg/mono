@@ -10,10 +10,7 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
 };
 use crate::wasm::{
     Host,
-    bindgen::{
-        Event as WasmEvent,
-        witmproxy::plugin::capabilities::EventKind,
-    },
+    bindgen::{Event as WasmEvent, witmproxy::plugin::capabilities::EventKind},
 };
 
 pub struct ContextualResponse {
@@ -67,8 +64,7 @@ impl Event for ContextualResponse {
         *rebuilt.version_mut() = parts.version;
         *rebuilt.headers_mut() = parts.headers;
 
-        let (wasi, _io) =
-            Response::from_http(wasmtime_wasi_http::default_hooks(), rebuilt);
+        let (wasi, _io) = Response::from_http(wasmtime_wasi_http::default_hooks(), rebuilt);
         let handle = store.data_mut().http().table.push(wasi)?;
 
         Ok((

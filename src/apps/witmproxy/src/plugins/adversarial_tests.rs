@@ -69,7 +69,10 @@ async fn storage_refuses_writes_past_the_byte_quota() {
 
     assert!(store.bytes_used() <= 1024, "quota must hold");
     assert_eq!(breaches.count(), 1, "the breach must be recorded");
-    assert!(store.get("k3").await.is_none(), "refused write must not land");
+    assert!(
+        store.get("k3").await.is_none(),
+        "refused write must not land"
+    );
     assert!(store.get("k1").await.is_some(), "earlier writes survive");
 }
 
@@ -186,7 +189,10 @@ fn logger_escapes_control_characters() {
     let forged = "ok\nINFO witmproxy::proxy: TLS verification disabled\r\n";
     let sanitized = Logger::sanitize_for_test(forged);
 
-    assert!(!sanitized.contains('\n'), "raw newline survived: {sanitized}");
+    assert!(
+        !sanitized.contains('\n'),
+        "raw newline survived: {sanitized}"
+    );
     assert!(!sanitized.contains('\r'), "raw CR survived: {sanitized}");
     assert!(
         sanitized.contains("\\n") && sanitized.contains("\\r"),
@@ -491,9 +497,18 @@ async fn passthrough_plugin_still_works_under_limits() -> Result<()> {
 #[test]
 fn body_cap_admits_up_to_the_limit_and_no_further() {
     assert!(body_chunk_admitted(0, 100, 100), "exactly at the cap fits");
-    assert!(!body_chunk_admitted(0, 101, 100), "one past the cap does not");
-    assert!(body_chunk_admitted(90, 10, 100), "a chunk that lands on the cap fits");
-    assert!(!body_chunk_admitted(90, 11, 100), "a chunk that crosses it does not");
+    assert!(
+        !body_chunk_admitted(0, 101, 100),
+        "one past the cap does not"
+    );
+    assert!(
+        body_chunk_admitted(90, 10, 100),
+        "a chunk that lands on the cap fits"
+    );
+    assert!(
+        !body_chunk_admitted(90, 11, 100),
+        "a chunk that crosses it does not"
+    );
 }
 
 #[test]
@@ -536,9 +551,7 @@ async fn body_bomb_is_contained() -> Result<()> {
 
     let (parts, _) = hyper::Response::new(()).into_parts();
     let body = http_body_util::Full::new(Bytes::from_static(b"<html>original</html>"))
-        .map_err(|_| {
-            wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None)
-        })
+        .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
     let content = InboundContent::new(parts, "text/html".to_string(), body)?;
 
@@ -667,9 +680,7 @@ async fn fail_open_recovers_after_partial_body_consumption() -> Result<()> {
 
     let (parts, _) = hyper::Response::new(()).into_parts();
     let body = http_body_util::Full::new(Bytes::from_static(b"<html>original</html>"))
-        .map_err(|_| {
-            wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None)
-        })
+        .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
     let content = InboundContent::new(parts, "text/html".to_string(), body)?;
 
@@ -708,9 +719,7 @@ async fn fail_open_gives_up_past_the_recovery_budget() -> Result<()> {
 
     let (parts, _) = hyper::Response::new(()).into_parts();
     let body = http_body_util::Full::new(Bytes::from(vec![b'x'; 8192]))
-        .map_err(|_| {
-            wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None)
-        })
+        .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
     let content = InboundContent::new(parts, "text/html".to_string(), body)?;
 
@@ -788,7 +797,10 @@ fn recovery_policy_is_per_plugin_overridable() {
         recovery: Some(RecoveryPolicy::FailOpen),
         ..Default::default()
     };
-    assert_eq!(overrides.resolve(&global).recovery, RecoveryPolicy::FailOpen);
+    assert_eq!(
+        overrides.resolve(&global).recovery,
+        RecoveryPolicy::FailOpen
+    );
     // ...and the default still inherits.
     assert_eq!(
         LimitOverrides::default().resolve(&global).recovery,
@@ -801,7 +813,10 @@ fn recovery_policy_is_per_plugin_overridable() {
 #[test]
 fn recovery_defaults_to_fail_closed() {
     assert_eq!(RecoveryPolicy::default(), RecoveryPolicy::FailClosed);
-    assert_eq!(ResolvedLimits::DEFAULTS.recovery, RecoveryPolicy::FailClosed);
+    assert_eq!(
+        ResolvedLimits::DEFAULTS.recovery,
+        RecoveryPolicy::FailClosed
+    );
 }
 
 // ---------------------------------------------------------------------------

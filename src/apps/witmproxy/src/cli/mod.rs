@@ -35,10 +35,10 @@ pub mod api_client;
 pub mod auth;
 pub mod group;
 mod plugin;
-pub mod template;
 mod proxy;
 pub mod service;
 mod tailscale;
+pub mod template;
 pub mod tenant;
 mod trust;
 pub mod update;
@@ -611,9 +611,7 @@ pub(crate) async fn provision(
                         // Unreachable while `admin_password_missing()` and this
                         // field agree, but that is two calls having to stay in
                         // step rather than one thing being true.
-                        None => anyhow::bail!(
-                            "admin password reported as present but is not set"
-                        ),
+                        None => anyhow::bail!("admin password reported as present but is not set"),
                     }
                 };
 
@@ -1384,10 +1382,10 @@ fn setup_plugin_dir_watcher(
                     && path.extension().is_some_and(|ext| ext == "wasm")
                     && let Ok(component_bytes) = std::fs::read(&path)
                     && let Ok(plugin) = registry_clone.plugin_from_component(component_bytes).await
-                    {
-                        let mut map = file_plugin_map_clone.write().await;
-                        map.insert(path, plugin.id());
-                    }
+                {
+                    let mut map = file_plugin_map_clone.write().await;
+                    map.insert(path, plugin.id());
+                }
             }
         }
     });

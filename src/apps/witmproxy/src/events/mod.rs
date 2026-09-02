@@ -11,8 +11,8 @@ use crate::wasm::{
 };
 
 pub mod connect;
-pub mod recovery;
 pub mod content;
+pub mod recovery;
 pub mod request;
 pub mod response;
 pub mod timer;

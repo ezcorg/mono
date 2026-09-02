@@ -9,9 +9,7 @@ use crate::exports::witmproxy::plugin::witm_plugin::{
     Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
     Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
-use crate::witmproxy::plugin::capabilities::{
-    CapabilityKind, CapabilityScope, Content, EventKind,
-};
+use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Content, EventKind};
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",

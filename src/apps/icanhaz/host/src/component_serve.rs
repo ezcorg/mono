@@ -25,7 +25,7 @@ use futures::StreamExt as _;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use uuid::Uuid;
-use wasmtime::component::{Component, Instance, Linker, ResourceTable, ResourceType, types};
+use wasmtime::component::{types, Component, Instance, Linker, ResourceTable, ResourceType};
 use wasmtime::{Engine, Store};
 
 use crate::broker::GrantStore;
@@ -33,8 +33,8 @@ use wasmtime_wasi::p2::bindings::io;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 use wrpc_transport::{Invoke, Serve, ServeExt as _}; // ServeExt: serve_values (the drop meta-op)
 use wrpc_wasmtime::{
-    RemoteResource, ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
-    collect_component_resource_exports, collect_component_resource_imports,
+    collect_component_resource_exports, collect_component_resource_imports, RemoteResource,
+    ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
 }; // ServeExt: serve_function_shared (component exports)
 
 /// Per-invocation wRPC state. `client` satisfies *polyfilled* imports (imports a
@@ -73,7 +73,10 @@ pub struct CompState<C: Invoke> {
 
 impl<C: Invoke> WasiView for CompState<C> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -83,7 +86,10 @@ where
 {
     type Invoke = C;
     fn wrpc(&mut self) -> WrpcCtxView<'_, C> {
-        WrpcCtxView { ctx: &mut self.rpc, table: &mut self.table }
+        WrpcCtxView {
+            ctx: &mut self.rpc,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -109,8 +115,18 @@ fn map_host_resources(
 ) -> Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>> {
     let io_err = io_resources(&imports, "wasi:io/error@0.2", "wasi:io/error@0.3", "error");
     let io_pollable = io_resources(&imports, "wasi:io/poll@0.2", "wasi:io/poll@0.3", "pollable");
-    let io_in = io_resources(&imports, "wasi:io/streams@0.2", "wasi:io/streams@0.3", "input-stream");
-    let io_out = io_resources(&imports, "wasi:io/streams@0.2", "wasi:io/streams@0.3", "output-stream");
+    let io_in = io_resources(
+        &imports,
+        "wasi:io/streams@0.2",
+        "wasi:io/streams@0.3",
+        "input-stream",
+    );
+    let io_out = io_resources(
+        &imports,
+        "wasi:io/streams@0.2",
+        "wasi:io/streams@0.3",
+        "output-stream",
+    );
     let mapped = imports
         .into_iter()
         .map(|(name, inst)| {
@@ -187,7 +203,11 @@ where
         CompState {
             table: ResourceTable::new(),
             wasi,
-            rpc: Rpc { client, cx, shared: SharedResourceTable::default() },
+            rpc: Rpc {
+                client,
+                cx,
+                shared: SharedResourceTable::default(),
+            },
         },
     );
     let instance = pre
@@ -198,7 +218,17 @@ where
     let io_streams: Arc<[ResourceType]> =
         wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &component.component_type()).into();
     let store = Arc::new(Mutex::new(store));
-    drive_exports(srv, store, instance, &component.component_type(), &engine, guest_resources, host_resources, io_streams).await
+    drive_exports(
+        srv,
+        store,
+        instance,
+        &component.component_type(),
+        &engine,
+        guest_resources,
+        host_resources,
+        io_streams,
+    )
+    .await
 }
 
 /// Register every exported function of `instance` on `srv` (spawning a drain task
@@ -221,9 +251,13 @@ where
     let mut handlers = JoinSet::new();
     // Each exported interface is a `ComponentInstance`; serve each of its functions.
     for (instance_name, types::ComponentExtern { ty: item, .. }) in component_ty.exports(engine) {
-        let types::ComponentItem::ComponentInstance(inst_ty) = item else { continue };
+        let types::ComponentItem::ComponentInstance(inst_ty) = item else {
+            continue;
+        };
         for (name, types::ComponentExtern { ty: fitem, .. }) in inst_ty.exports(engine) {
-            let types::ComponentItem::ComponentFunc(func_ty) = fitem else { continue };
+            let types::ComponentItem::ComponentFunc(func_ty) = fitem else {
+                continue;
+            };
             let invocations = srv
                 .serve_function_shared(
                     Arc::clone(&store),
@@ -243,7 +277,8 @@ where
                     match inv {
                         Ok((_cx, fut)) => {
                             if let Err(err) = fut.await {
-                                let chain: Vec<String> = err.chain().map(|e| e.to_string()).collect();
+                                let chain: Vec<String> =
+                                    err.chain().map(|e| e.to_string()).collect();
                                 tracing::warn!("invocation failed: {}", chain.join(" <- "));
                             }
                         }
@@ -267,7 +302,10 @@ pub struct FsState<C: Invoke> {
 
 impl<C: Invoke> WasiView for FsState<C> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -277,7 +315,10 @@ where
 {
     type Invoke = C;
     fn wrpc(&mut self) -> WrpcCtxView<'_, C> {
-        WrpcCtxView { ctx: &mut self.rpc, table: &mut self.table }
+        WrpcCtxView {
+            ctx: &mut self.rpc,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -292,7 +333,10 @@ where
 /// wRPC build doesn't relay handle-drops). Exhaustion surfaces as an op error, not an
 /// OOM. Override with `ICANHAZ_MAX_FS_HANDLES` (0 = unbounded).
 fn max_fs_handles() -> usize {
-    std::env::var("ICANHAZ_MAX_FS_HANDLES").ok().and_then(|v| v.parse().ok()).unwrap_or(4096)
+    std::env::var("ICANHAZ_MAX_FS_HANDLES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096)
 }
 
 pub async fn serve_filesystem<C, S>(
@@ -357,7 +401,11 @@ where
         FsState {
             table: ResourceTable::new(),
             wasi,
-            rpc: Rpc { client, cx, shared: SharedResourceTable::with_capacity(max_fs_handles()) },
+            rpc: Rpc {
+                client,
+                cx,
+                shared: SharedResourceTable::with_capacity(max_fs_handles()),
+            },
             grants,
         },
     );
@@ -461,7 +509,9 @@ where
     // Handles are minted little-endian on the wire (`codec.rs` `id.to_bytes_le()` /
     // `Uuid::from_bytes_le`), so reconstruct the same way — a big-endian `from_slice`
     // would yield a different UUID that never matches the table key (a silent no-op).
-    let bytes: [u8; 16] = handle.try_into().context("resource handle is not 16 bytes")?;
+    let bytes: [u8; 16] = handle
+        .try_into()
+        .context("resource handle is not 16 bytes")?;
     let id = Uuid::from_bytes_le(bytes);
     let mut store = store.lock().await;
     // Mirror the codec's access path to the shared table, then release the entry.
@@ -582,8 +632,10 @@ mod tests {
     async fn serves_grant_gated_wasi_filesystem_over_wrpc() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
         use fs_client::icanhaz::fspass::mount;
-        use fs_client::wasi::filesystem::types::{Descriptor, DescriptorFlags, OpenFlags, PathFlags};
-        use wasmtime_wasi::{DirPerms, FilePerms};
+        use fs_client::wasi::filesystem::types::{
+            Descriptor, DescriptorFlags, OpenFlags, PathFlags,
+        };
+        use wasmtime_wasi::FsPerms;
 
         let wasm = std::fs::read(fs_passthrough_wasm()).expect(
             "build fs-passthrough first: cargo build --target wasm32-wasip2 \
@@ -595,7 +647,7 @@ mod tests {
         std::fs::write(dir.path().join("hello.txt"), b"hello from real wasi-fs\n").unwrap();
         let mut builder = WasiCtxBuilder::new();
         builder
-            .preopened_dir(dir.path(), "/", DirPerms::all(), FilePerms::all())
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
             .unwrap();
         let wasi = builder.build();
 
@@ -603,7 +655,10 @@ mod tests {
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
-                roots: vec![PathGrant { path: "/".to_string(), rights: FsRights::READ | FsRights::WRITE }],
+                roots: vec![PathGrant {
+                    path: "/".to_string(),
+                    rights: FsRights::READ | FsRights::WRITE,
+                }],
             }),
             "filesystem (/)".to_string(),
             Duration::from_secs(60),
@@ -639,7 +694,10 @@ mod tests {
 
         // The gate: a bogus token yields no descriptor.
         let denied = mount::open_root(&wrpc, (), "bogus-token").await.unwrap();
-        assert!(denied.is_err(), "ungated mount must be refused, got {denied:?}");
+        assert!(
+            denied.is_err(),
+            "ungated mount must be refused, got {denied:?}"
+        );
 
         // A valid grant exchanges for the root descriptor; then it's native wasi:filesystem.
         let root = mount::open_root(&wrpc, (), &grant)
@@ -675,8 +733,10 @@ mod tests {
     async fn mount_scopes_the_descriptor_to_the_grant_subtree() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
         use fs_client::icanhaz::fspass::mount;
-        use fs_client::wasi::filesystem::types::{Descriptor, DescriptorFlags, OpenFlags, PathFlags};
-        use wasmtime_wasi::{DirPerms, FilePerms};
+        use fs_client::wasi::filesystem::types::{
+            Descriptor, DescriptorFlags, OpenFlags, PathFlags,
+        };
+        use wasmtime_wasi::FsPerms;
 
         let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
         let dir = tempfile::tempdir().unwrap();
@@ -684,14 +744,19 @@ mod tests {
         std::fs::write(dir.path().join("notes/ok.txt"), b"inside the grant\n").unwrap();
         std::fs::write(dir.path().join("secret.txt"), b"OUTSIDE the grant\n").unwrap();
         let mut builder = WasiCtxBuilder::new();
-        builder.preopened_dir(dir.path(), "/", DirPerms::all(), FilePerms::all()).unwrap();
+        builder
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
+            .unwrap();
         let wasi = builder.build();
 
         // A grant scoped to /notes/ — NOT the whole preopen.
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
-                roots: vec![PathGrant { path: "/notes/".to_string(), rights: FsRights::READ | FsRights::WRITE }],
+                roots: vec![PathGrant {
+                    path: "/notes/".to_string(),
+                    rights: FsRights::READ | FsRights::WRITE,
+                }],
             }),
             "filesystem (/notes/)".to_string(),
             Duration::from_secs(60),
@@ -730,16 +795,38 @@ mod tests {
             .expect("mount with the scoped grant");
 
         // In scope: notes/ok.txt opens.
-        let in_scope = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "ok.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
-            .await
-            .unwrap();
-        assert!(in_scope.is_ok(), "in-scope open must succeed, got {in_scope:?}");
+        let in_scope = Descriptor::open_at(
+            &wrpc,
+            (),
+            &root.as_borrow(),
+            &PathFlags::empty(),
+            "ok.txt",
+            &OpenFlags::empty(),
+            &DescriptorFlags::READ,
+        )
+        .await
+        .unwrap();
+        assert!(
+            in_scope.is_ok(),
+            "in-scope open must succeed, got {in_scope:?}"
+        );
 
         // Out of scope: ../secret.txt escapes the granted subtree → denied by the sandbox.
-        let escape = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "../secret.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
-            .await
-            .unwrap();
-        assert!(escape.is_err(), "escaping the granted subtree must be denied, got {escape:?}");
+        let escape = Descriptor::open_at(
+            &wrpc,
+            (),
+            &root.as_borrow(),
+            &PathFlags::empty(),
+            "../secret.txt",
+            &OpenFlags::empty(),
+            &DescriptorFlags::READ,
+        )
+        .await
+        .unwrap();
+        assert!(
+            escape.is_err(),
+            "escaping the granted subtree must be denied, got {escape:?}"
+        );
 
         accept.abort();
     }
@@ -752,20 +839,27 @@ mod tests {
     async fn revoking_a_grant_denies_further_filesystem_ops() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
         use fs_client::icanhaz::fspass::mount;
-        use fs_client::wasi::filesystem::types::{Descriptor, DescriptorFlags, OpenFlags, PathFlags};
-        use wasmtime_wasi::{DirPerms, FilePerms};
+        use fs_client::wasi::filesystem::types::{
+            Descriptor, DescriptorFlags, OpenFlags, PathFlags,
+        };
+        use wasmtime_wasi::FsPerms;
 
         let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"live\n").unwrap();
         let mut builder = WasiCtxBuilder::new();
-        builder.preopened_dir(dir.path(), "/", DirPerms::all(), FilePerms::all()).unwrap();
+        builder
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
+            .unwrap();
         let wasi = builder.build();
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
-                roots: vec![PathGrant { path: "/".to_string(), rights: FsRights::READ | FsRights::WRITE }],
+                roots: vec![PathGrant {
+                    path: "/".to_string(),
+                    rights: FsRights::READ | FsRights::WRITE,
+                }],
             }),
             "filesystem (/)".to_string(),
             Duration::from_secs(60),
@@ -798,22 +892,53 @@ mod tests {
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
         // Mount, and confirm the held descriptor works while the grant is live.
-        let root = mount::open_root(&wrpc, (), &grant).await.unwrap().expect("mount with a valid grant");
-        let before = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "hello.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
+        let root = mount::open_root(&wrpc, (), &grant)
             .await
-            .unwrap();
-        assert!(before.is_ok(), "open must succeed while the grant is live, got {before:?}");
+            .unwrap()
+            .expect("mount with a valid grant");
+        let before = Descriptor::open_at(
+            &wrpc,
+            (),
+            &root.as_borrow(),
+            &PathFlags::empty(),
+            "hello.txt",
+            &OpenFlags::empty(),
+            &DescriptorFlags::READ,
+        )
+        .await
+        .unwrap();
+        assert!(
+            before.is_ok(),
+            "open must succeed while the grant is live, got {before:?}"
+        );
 
         // Revoke — the client still holds the very same root descriptor handle.
-        assert!(grants.lock().unwrap().revoke(&grant), "grant should have been live");
+        assert!(
+            grants.lock().unwrap().revoke(&grant),
+            "grant should have been live"
+        );
 
         // The next op on that descriptor is refused: revocation reaches the live handle.
-        let after = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "hello.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
-            .await
-            .unwrap();
-        assert!(after.is_err(), "after revoke, ops on the held descriptor must be denied, got {after:?}");
+        let after = Descriptor::open_at(
+            &wrpc,
+            (),
+            &root.as_borrow(),
+            &PathFlags::empty(),
+            "hello.txt",
+            &OpenFlags::empty(),
+            &DescriptorFlags::READ,
+        )
+        .await
+        .unwrap();
+        assert!(
+            after.is_err(),
+            "after revoke, ops on the held descriptor must be denied, got {after:?}"
+        );
         // And a fresh mount is refused too.
-        assert!(mount::open_root(&wrpc, (), &grant).await.unwrap().is_err(), "a revoked grant can't re-mount");
+        assert!(
+            mount::open_root(&wrpc, (), &grant).await.unwrap().is_err(),
+            "a revoked grant can't re-mount"
+        );
 
         accept.abort();
     }
@@ -827,21 +952,28 @@ mod tests {
     async fn dropping_a_descriptor_releases_the_handle() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
         use fs_client::icanhaz::fspass::mount;
-        use fs_client::wasi::filesystem::types::{Descriptor, DescriptorFlags, OpenFlags, PathFlags};
-        use wasmtime_wasi::{DirPerms, FilePerms};
+        use fs_client::wasi::filesystem::types::{
+            Descriptor, DescriptorFlags, OpenFlags, PathFlags,
+        };
+        use wasmtime_wasi::FsPerms;
         use wrpc_transport::InvokeExt as _;
 
         let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"drop me\n").unwrap();
         let mut builder = WasiCtxBuilder::new();
-        builder.preopened_dir(dir.path(), "/", DirPerms::all(), FilePerms::all()).unwrap();
+        builder
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
+            .unwrap();
         let wasi = builder.build();
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
-                roots: vec![PathGrant { path: "/".to_string(), rights: FsRights::READ | FsRights::WRITE }],
+                roots: vec![PathGrant {
+                    path: "/".to_string(),
+                    rights: FsRights::READ | FsRights::WRITE,
+                }],
             }),
             "filesystem (/)".to_string(),
             Duration::from_secs(60),
@@ -873,22 +1005,44 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let root = mount::open_root(&wrpc, (), &grant).await.unwrap().expect("mount with a valid grant");
-        let file = Descriptor::open_at(&wrpc, (), &root.as_borrow(), &PathFlags::empty(), "hello.txt", &OpenFlags::empty(), &DescriptorFlags::READ)
+        let root = mount::open_root(&wrpc, (), &grant)
             .await
             .unwrap()
-            .expect("open hello.txt");
+            .expect("mount with a valid grant");
+        let file = Descriptor::open_at(
+            &wrpc,
+            (),
+            &root.as_borrow(),
+            &PathFlags::empty(),
+            "hello.txt",
+            &OpenFlags::empty(),
+            &DescriptorFlags::READ,
+        )
+        .await
+        .unwrap()
+        .expect("open hello.txt");
 
         // The handle works while it's live.
-        let before = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0).await.unwrap();
-        assert!(before.is_ok(), "read must succeed before drop, got {before:?}");
+        let before = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0)
+            .await
+            .unwrap();
+        assert!(
+            before.is_ok(),
+            "read must succeed before drop, got {before:?}"
+        );
 
         // Drop the descriptor handle over the resources meta-op (its raw 16-byte handle).
         // The op reports back that it released a live handle.
         let handle: Bytes = AsRef::<Bytes>::as_ref(&file).clone();
         let no_paths: [&[Option<usize>]; 0] = [];
         let ((removed,), _tx) = wrpc
-            .invoke_values::<_, (Bytes,), (bool,), _>((), RESOURCES_INSTANCE, "drop", (handle,), no_paths)
+            .invoke_values::<_, (Bytes,), (bool,), _>(
+                (),
+                RESOURCES_INSTANCE,
+                "drop",
+                (handle,),
+                no_paths,
+            )
             .await
             .expect("drop invocation");
         assert!(removed, "drop should report it released a live handle");
@@ -896,7 +1050,10 @@ mod tests {
         // The dropped handle no longer resolves: the host can't find it, so a read on
         // the very same descriptor now fails (proving it was evicted, not just closed).
         let after = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0).await;
-        assert!(after.is_err(), "read after drop must fail (handle released), got {after:?}");
+        assert!(
+            after.is_err(),
+            "read after drop must fail (handle released), got {after:?}"
+        );
 
         accept.abort();
     }

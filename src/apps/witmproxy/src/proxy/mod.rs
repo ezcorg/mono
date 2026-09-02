@@ -7,8 +7,8 @@ use crate::events::response::ContextualResponse;
 use crate::http::utils::ContentTyped;
 use crate::plugins::cel::CelRequest;
 use crate::plugins::registry::PluginRegistry;
-use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 use crate::proxy::tenant::TenantContext;
+use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 use crate::wasm::bindgen::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
 
@@ -589,10 +589,8 @@ where
                 let mut request_ctx = CelRequest::from(&req);
 
                 let request_event_result = if let Some(registry) = &plugin_registry {
-                    let (request, _io) = WasiRequest::from_http(
-                        wasmtime_wasi_http::default_hooks(),
-                        req,
-                    );
+                    let (request, _io) =
+                        WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
                     let event: Box<dyn Event> = Box::new(request);
 
                     registry.handle_event(event).await
