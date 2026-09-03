@@ -1,12 +1,8 @@
 import { defineConfig, envField } from 'astro/config';
-import tailwindcss from "@tailwindcss/vite";
 
 // https://astro.build/config
 export default defineConfig({
     vite: {
-        plugins: [
-            tailwindcss()
-        ],
         worker: {
             format: 'es',
         },
@@ -33,11 +29,6 @@ export default defineConfig({
                 '@codemirror/lang-java',
                 '@codemirror/lang-cpp',
                 '@codemirror/lang-yaml',
-                // Force a fresh pre-bundle of flatpickr — without it
-                // Vite has been serving the cached `.vite/deps/flatpickr.js`
-                // with an empty Content-Type that the browser rejects
-                // as `NS_ERROR_CORRUPTED_CONTENT`.
-                'flatpickr',
             ],
             // Skip pre-bundling for our workspace packages. Vite caches
             // pre-bundles by content hash, and that cache wasn't

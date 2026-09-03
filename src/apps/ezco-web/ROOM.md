@@ -1,18 +1,20 @@
 # The room
 
-joinez.co's landing page is a room you walk into. The logo is the building (two faces of a cube); the
-furniture is the navigation, and the pages render on the furniture.
+joinez.co is a room you walk into. The logo is the building (two faces of a cube); the furniture is the
+navigation, and the pages render on the furniture. There are no other pages: everything reachable is in the room.
 
 | thing | page |
 | --- | --- |
-| laptop on the corner desk | our work — a tiny desktop OS; each project is a program (codeblock and markdown-editor mount the real components in windows, witmproxy opens crates.io); "+ new project" opens the form as a dialog |
+| laptop on the corner desk | our work — a lock screen until you hover, then a tiny desktop OS; each project is a program (codeblock and markdown-editor run for real in windows, witmproxy opens crates.io); "+ new project" opens the form as a dialog |
 | tablet on the coffee table | blog — every post from `src/content/blog`, newest first; `#/blog/<slug>` picks one |
 | kanban on the left wall | start a project — the "ideas" note is the form; "doing" and "done" come from `src/data` |
 | gallery wall | about — the employee of the month (`public/employee.jpg`, greyscaled; a dog silhouette until it exists) and the framed manifesto |
 | drive and rolodex on the shelf | GitHub, LinkedIn |
 | whiteboard on the right wall | draw on it (strokes live in localStorage) |
-| clipboard in your hands | come work with us — rises when you look down or tab to it |
-| light switch by the door | day / night; each lamp switches on its own and remembers overrides until you put it back to the default |
+| clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
+| dial by the door | lights: auto (follows the system colour scheme) · day · night; every lamp switches on its own and remembers overrides until you put it back to the default |
+
+Keys: `↵` or scroll to come in · click · drag or arrows to look · `?` labels · `l` lights · `esc` back.
 
 ## Where things live
 
@@ -20,14 +22,14 @@ furniture is the navigation, and the pages render on the furniture.
   chrome, the accessible page list (`.sr-nav`, object-level tab stops), the no-WebGL fallback, and the `<template>`s the
   furniture renders — filled at build time from `src/data/work.ts`, `src/data/about.ts` and `src/content/blog/*.md`.
 - `src/room/room.js` is the scene: three.js WebGL for the room (geometry, edges, lights, shadows) and `CSS3DRenderer` for the
-  content surfaces, sharing one camera. It exports `boot({ mount, turnstileSiteKey, photo })` and returns a `dispose()`;
-  `Room.astro` boots on load and on `astro:page-load`, and disposes on `astro:before-swap`, so view transitions to the flat
-  pages and back work.
-- `src/room/forms.js` posts the project form to the contact-form worker (`src/apps/contact-form-worker`) with a Turnstile
-  token. `src/room/demos.js` mounts the demo programs with the same demo filesystem the `/work/*` pages use.
-- `src/styles/room.css` is the room's CSS. `experiments/cube-room.html` is the single-file experiment the room was ported
-  from and stays as a reference (debug params `?lit ?look=yaw,pitch ?hover=<id> ?labels ?up ?win=<app> ?photo=<url> ?debug`
-  work there, and in the site in dev mode).
+  content surfaces, sharing one camera. `boot({ mount, turnstileSiteKey, photo })` returns a `dispose()`.
+- `src/room/forms.js` posts the project form to the contact-form worker (`src/apps/contact-form-worker`, schema in
+  `@joinezco/shared`) with a Turnstile token. `src/room/demos.js` mounts the demo programs with the same demo filesystem
+  (`src/scripts/demo-fs.ts`, files in `src/data/demo-files.js`).
+- `src/styles/room.css` is the room's CSS; `src/styles/global.css` only carries the demo fonts.
+- `experiments/cube-room.html` is the single-file experiment the room was ported from. It is frozen at the port; changes
+  go to `src/room` now. In dev mode the site accepts the same debug params before the route:
+  `?lit ?dark ?look=yaw,pitch ?hover=<id> ?labels ?up ?win=<app> ?photo=<url> ?debug` (`?debug` exposes `window.room`).
 
 ## Rendering notes worth knowing
 
@@ -39,9 +41,20 @@ furniture is the navigation, and the pages render on the furniture.
 - The transformed surface element must not clip: `overflow:hidden` on a 3D-transformed element breaks Chrome's pointer
   hit-testing (clicks fall through to the canvas). Content roots (`.scroller`, `.os`, `.kb`) clip instead. Native scroll
   containers inside CSS3D planes break depth sorting too, so surfaces scroll by hand.
-- Day/night, lamp overrides, and whiteboard strokes are remembered in localStorage (`ezco-lit`, `ezco-lamps`, `ezco-board`).
+- Editors measure themselves with `getBoundingClientRect`, which a perspective transform confuses (CodeMirror's measure
+  loop). A demo window is therefore lifted out of the 3D plane into a fixed `.overlay`, sized every frame from a hidden
+  placeholder that stays in the OS, and the camera holds still (`focusLock`) while one is open.
+- Camera tweens start from what you actually see: `absorbLook()` bakes the drag/parallax offset into the camera target
+  before a pose tween, so opening or closing a page never snaps back to the "ideal" angle first.
+- Remembered in localStorage: `ezco-lights` (auto/day/night), `ezco-lamps` (per-lamp overrides), `ezco-board` (strokes).
 
-## Still to do before it replaces the whole site
+## Verifying
 
-See the plan in the session notes: real URLs for the room's routes, the join form's backend, Safari/Firefox/mobile passes,
-code-splitting three.js behind the loading screen, flat pages reading from `src/data`, an OG image, and browser tests in CI.
+Headless Chrome screenshots and puppeteer scripts against `astro dev` (`?debug` gives `window.room` for assertions). The
+console should stay clean apart from the missing `/employee.jpg` and Turnstile's 110200 on localhost (prod site key).
+
+## Still to do
+
+Real join-form infrastructure; a Safari pass; code-splitting three.js behind the loading screen (≈550 KB chunk); an OG image;
+browser tests in `ezco-web-build.yml`; publish `@joinezco/shared` 0.0.6 and redeploy the worker before the room's
+budget-less submissions succeed.

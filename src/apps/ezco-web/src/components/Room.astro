@@ -18,10 +18,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 <div class="room" id="room">
 	<div class="loading" id="loading">loading the room…</div>
 	<div class="labels" id="labels"></div>
-	<div class="hero-copy" id="hero">
-		<p>your friendly neighborhood tech collective</p>
-		<button class="enter" id="enter">come in</button>
-	</div>
+	<div class="hero-copy" id="hero"><p>your friendly neighborhood tech collective</p></div>
 	<div class="prompts" id="prompts"></div>
 	<nav class="sr-nav" id="srnav" aria-label="Pages">
 		<a href="#/work" data-thing="work">our work</a>
@@ -38,21 +35,18 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 		<button type="button" data-thing="pendant">pendant</button>
 	</nav>
 
-	<!-- no WebGL (or no JS): the site as a list of doors -->
+	<!-- no WebGL: the room needs a graphics card -->
 	<div class="room-fallback">
 		<div>
 			<h1>ez co</h1>
 			<p>your friendly neighborhood tech collective</p>
-			<nav aria-label="Pages">
-				<a href="/about/">about us</a><a href="/work/">our work</a><a href="/blog/">blog</a><a href="/newproject/">start a project</a><a href="/join/">come work with us</a>
-			</nav>
+			<p>The room needs WebGL, which this browser doesn't have. Find us on <a href={links.github}>GitHub</a> or <a href={links.linkedin}>LinkedIn</a> instead.</p>
 		</div>
 	</div>
-	<noscript><style>.room .room-fallback{display:grid}.room>:not(.room-fallback){display:none}</style></noscript>
 
 	<!-- laptop → our work: a tiny desktop OS -->
 	<template id="t-screen">
-		<div class="doc"><div class="h"># hello, world</div><div>## Usage</div><div>### Install</div><div>pnpm add @joinezco/markdown-editor</div><div>* [x] Task 1 (Done)</div><div>* [ ] Task 2<span class="cur"></span></div></div>
+		<div class="saver"><div class="sx"><div class="sy mlogo"><span class="lw" aria-label="ez co"><span class="ls"></span><span class="lt"><span>ez</span><span>co</span></span></span><time data-clock>--:--</time></div></div></div>
 		<div class="os">
 			<div class="bar"><span><b>ez os</b> · our work</span><span data-clock>--:--</span></div>
 			<div class="desk">
@@ -122,7 +116,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 		<div class="kb">
 			<div class="col"><h4>ideas</h4>
 				<form class="note new form np" id="np-form">
-					<b>&lt; your project here &gt;</b>
+					<b>Want us to make something?</b>
 					<div class="stuckText"></div>
 					<div><label for="np-name">Name *</label><input id="np-name" name="name" placeholder="Who are you?" required maxlength="100"></div>
 					<div><label for="np-email">Email *</label><input id="np-email" name="email" type="email" placeholder="Where can we reach you?" required></div>
@@ -174,7 +168,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 				<div><label for="j-cv">Resume/CV * <small style="opacity:.6">(PDF, DOC, DOCX)</small></label><input id="j-cv" name="resume" type="file" accept=".pdf,.doc,.docx" required></div>
 				<div><label for="j-why">Why do you want to join? *</label><textarea id="j-why" name="motivation" required></textarea></div>
 				<button class="submit" type="submit">submit</button>
-				<div class="thanks">You're on the sheet. We'll be in touch.</div>
+				<div class="thanks">Thanks! We're not ready for new members just yet, but feel free to find another way to get in touch if you're determined.</div>
 			</form>
 		</div>
 	</template>
@@ -183,14 +177,5 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 <script>
 	import { boot } from '../room/room.js';
 	const SITE_KEY = import.meta.env.DEV ? '1x00000000000000000000AA' : '0x4AAAAAABjl6CJ20hxOvkB9';
-	let dispose: (() => void) | null = null;
-	function tryBoot() {
-		const mount = document.getElementById('room');
-		if (!mount || mount.dataset.booted) return;
-		mount.dataset.booted = '1';
-		dispose = boot({ mount, turnstileSiteKey: SITE_KEY, photo: '/employee.jpg' });
-	}
-	tryBoot();
-	document.addEventListener('astro:page-load', tryBoot);
-	document.addEventListener('astro:before-swap', () => { dispose?.(); dispose = null; });
+	boot({ mount: document.getElementById('room'), turnstileSiteKey: SITE_KEY, photo: '/employee.jpg' });
 </script>

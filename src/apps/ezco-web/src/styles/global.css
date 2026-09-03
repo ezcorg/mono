@@ -1,15 +1,6 @@
-@import "tailwindcss";
-
-@layer base {}
-@theme {
-    --breakpoint-xs: 360px;
-}
-
 /* Nerd font for codeblock icons. Mirrors the @font-face the codeblock
    library injects dynamically; declaring it statically here keeps the
-   font available across Astro view-transition document swaps, where the
-   library's dynamically-inserted <style> tag would otherwise be removed
-   while its idempotency flag prevents re-injection. */
+   font available regardless of when the library's own <style> lands. */
 @font-face {
     font-family: 'UbuntuMono NF';
     src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
@@ -18,141 +9,28 @@
     font-display: swap;
 }
 
-/* Register `--logo-size` as a typed length so it's *animatable*. Without
-   this, CSS treats custom properties as opaque tokens and any change to
-   the variable (e.g. via a media query) reaches dependents as a discrete
-   jump — even though the dependent property (`width`, `height`, etc.) is
-   itself animatable. Registering with `<length>` lets the browser
-   interpolate the variable, so `calc(var(--logo-size) * 2)` and friends
-   transition smoothly along with `transition: --logo-size …` on the
-   element. */
-@property --logo-size {
-    syntax: '<length>';
-    inherits: true;
-    initial-value: 60px;
+/* The markdown-editor's prose face. */
+@font-face {
+    font-family: 'Source Serif 4';
+    src: url('/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf') format('truetype-variations');
+    font-weight: 200 900;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Source Serif 4';
+    src: url('/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf') format('truetype-variations');
+    font-weight: 200 900;
+    font-style: italic;
+    font-display: swap;
 }
 
 html {
     font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
-    scroll-behavior: smooth;
-    /* Anchor the dark page background here (rather than only on the inner
-       `bg-black` div) so it's also visible behind the view-transition root
-       pseudo-elements when they translate off-axis during the L-shape page
-       slide — otherwise the default white shows through the offset gap. */
     background: #000;
 }
-
 body {
     margin: 0;
     padding: 0;
     min-height: 100vh;
-}
-
-.work-item-card {
-    .ezco-mde {
-        --ezco-mde-bg: var(--ezco-mde-bg-dark);
-        --ezco-mde-code-bg: var(--ezco-mde-code-bg-dark);
-    }
-}
-
-.work-item-card:hover {
-    .ezco-mde {
-        --ezco-mde-code-bg: var(--ezco-mde-code-bg-light);
-        --ezco-mde-bg: var(--ezco-mde-bg-light);
-    }
-}
-
-@keyframes blink {
-
-    0%,
-    49% {
-        opacity: 1;
-    }
-
-    50%,
-    100% {
-        opacity: 0;
-    }
-}
-
-.page-content>section {
-    width: 100%;
-    max-width: min(80ch, 100vw);
-    margin-left: auto;
-    margin-right: auto;
-
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    padding: 2rem 1rem 0;
-}
-
-@media (width >= 640px) {
-    .page-content > section {
-        padding-left: 1.5rem;
-        padding-right: 1.5rem;
-    }
-}
-
-@media (width >= 768px) {
-    .page-content > section {
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }
-}
-
-.page-content > section > div {
-    width: 100%;
-    display: flex;
-    align-items: center;
-}
-
-.animate-blink {
-    animation: blink 1s step-start infinite;
-}
-
-.ProseMirror {
-    flex: 1;
-    margin-top: -4px;
-    max-width: 100%;
-    font-optical-sizing: auto;
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-
-    &:focus-visible {
-        outline: none;
-    }
-
-    h1:first-of-type {
-        margin-top: 0;
-        margin-bottom: 0;
-    }
-
-    & a:hover {
-        cursor: pointer;
-    }
-
-    /* `li > p` margins are owned by the markdown-editor package now —
-       it uses `margin-top` on subsequent items (rather than
-       `margin-bottom` on every item) so lists hug their last line.
-       Leaving the previous `margin-bottom: 1rem` rule here was
-       winning the cascade against the package's `margin: 0` and
-       reintroducing the trailing gap.
-
-       List MARKERS are likewise owned by the package: it sets
-       `list-style: none` and draws its own bullet/number/dash via `::before`
-       (and task checkboxes via a `<label>`). A `list-style: revert` here
-       re-introduced the browser's native marker *on top of* the package's,
-       doubling every list decoration — so it's intentionally not set. */
-
-    .cm-editor[data-theme='dark'] {
-        --cm-line-highlight: #ffffff1a;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .cm-editor {
-            --cm-line-highlight: #ffffff1a;
-        }
-    }
 }

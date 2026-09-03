@@ -1,5 +1,5 @@
 import { CodeblockFS, SearchIndex, type VfsInterface } from "@joinezco/codeblock";
-import { files } from "../pages/data/work.js";
+import { files } from "../data/demo-files.js";
 
 // `SearchIndex.get` doesn't cache — each caller builds and saves a new
 // instance. Multiple consumers on the same page (our two demo codeblocks
