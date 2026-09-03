@@ -1,4 +1,4 @@
-import { validateContactForm, getValidationErrorMessage, type ContactFormData } from '@joinezco/shared';
+import { validateContactForm, getValidationErrorMessage, type ContactFormData, describeBudget } from '@joinezco/shared';
 import { WorkerMailer } from 'worker-mailer';
 
 interface Env {
@@ -209,7 +209,7 @@ async function sendEmail(data: ContactFormData, env: Env) {
 <h2>Project details:</h2>
 <ul>
     <li><strong>Timeline:</strong> ${formatDateRange(data.dateRange)}</li>
-    <li><strong>Budget:</strong> ${data.currency} ${data.minBudget} - ${data.maxBudget}</li>
+    <li><strong>Budget:</strong> ${describeBudget(data)}</li>
 </ul>
 
 <h2>Message:</h2>

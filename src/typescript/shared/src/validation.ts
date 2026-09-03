@@ -40,18 +40,25 @@ export const ContactFormSchema = z.object({
         })
         .optional(),
 
-    minBudget: z.number().positive('Minimum budget must be positive'),
+    /* A single, optional budget in USD (the room's forms). */
+    budget: z
+        .number()
+        .positive('Budget must be positive')
+        .optional(),
 
-    maxBudget: z.number().positive('Maximum budget must be positive'),
+    /* Legacy range fields (the flat /newproject form); still accepted. */
+    minBudget: z.number().positive('Minimum budget must be positive').optional(),
 
-    currency: z
+    maxBudget: z.number().positive('Maximum budget must be positive').optional(),
+
+    currency: (z
         .string()
         .min(3, 'Currency code must be 3 characters')
         .max(3, 'Currency code must be 3 characters')
         .toUpperCase()
         .refine(isSupportedCurrency, {
             message: 'Unsupported currency code'
-        }) as z.ZodType<CurrencyCode>,
+        }) as z.ZodType<CurrencyCode>).optional(),
 
     message: z
         .string()
@@ -64,8 +71,17 @@ export const ContactFormSchema = z.object({
         .optional()
 }).refine(
     (data: any) => {
+        // A range needs both ends
+        return (data.minBudget === undefined) === (data.maxBudget === undefined);
+    },
+    {
+        message: 'Provide both a minimum and a maximum budget',
+        path: ['maxBudget']
+    }
+).refine(
+    (data: any) => {
         // Ensure maxBudget >= minBudget
-        return data.maxBudget >= data.minBudget;
+        return data.maxBudget === undefined || data.minBudget === undefined || data.maxBudget >= data.minBudget;
     },
     {
         message: 'Maximum budget must be greater than or equal to minimum budget',
@@ -73,9 +89,10 @@ export const ContactFormSchema = z.object({
     }
 ).refine(
     (data: any) => {
-        // Ensure minimum budget is at least $1000 USD equivalent
+        // Ensure a minimum budget, when given, is at least $1000 USD equivalent
+        if (data.minBudget === undefined) return true;
         try {
-            const minBudgetUSD = convertBudgetToUSD(data.minBudget, data.currency);
+            const minBudgetUSD = convertBudgetToUSD(data.minBudget, data.currency ?? 'USD');
             return minBudgetUSD >= MIN_USD_VALUE;
         } catch {
             return false;
@@ -88,6 +105,13 @@ export const ContactFormSchema = z.object({
 );
 
 export type ContactFormData = z.infer<typeof ContactFormSchema>;
+
+/** A one-line description of the budget for humans: the single figure, the legacy range, or nothing. */
+export function describeBudget(data: Pick<ContactFormData, 'budget' | 'minBudget' | 'maxBudget' | 'currency'>): string {
+    if (data.budget !== undefined) return `$${data.budget.toLocaleString()} USD`;
+    if (data.minBudget !== undefined && data.maxBudget !== undefined) return `${data.currency ?? 'USD'} ${data.minBudget.toLocaleString()} - ${data.maxBudget.toLocaleString()}`;
+    return 'Not specified';
+}
 
 // Validation result types
 export type ValidationSuccess<T> = {
