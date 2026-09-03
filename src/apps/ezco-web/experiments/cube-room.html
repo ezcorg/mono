@@ -351,7 +351,8 @@ const easeInOut = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 let THREE, CSS3DRenderer, CSS3DObject;
-try { THREE = await import('three'); ({ CSS3DRenderer, CSS3DObject } = await import('three/addons/renderers/CSS3DRenderer.js')); }
+let RectAreaLightUniformsLib;
+try { THREE = await import('three'); ({ CSS3DRenderer, CSS3DObject } = await import('three/addons/renderers/CSS3DRenderer.js')); ({ RectAreaLightUniformsLib } = await import('three/addons/lights/RectAreaLightUniformsLib.js')); RectAreaLightUniformsLib.init(); }
 catch (e) { $('#loading').textContent = "couldn't load three.js from the CDN — are you online?"; throw e; }
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const Y = V3(0, 1, 0);
@@ -369,7 +370,7 @@ const camera = new THREE.PerspectiveCamera(55, 1, .02 * K, 60 * K);
 
 /* ------------------------------------------------------------------ theme: colourless light, night / day */
 const THEMES = {
-  night: { bg: '#000000', wall: '#0c0c0c', floor: '#080808', rug: '#161616', obj: '#000000', bezel: '#2b2b2b', edge: '#f5f5f5', edgeA: .5, hemi: .18, ground: '#050505', sun: 0, moon: .3, lampA: 1.2, lampB: .7, accent: .2, glass: '#9fb4cc', plant: '#1e1e1e', grid: .16, glow: .8 },
+  night: { bg: '#000000', wall: '#0c0c0c', floor: '#080808', rug: '#161616', obj: '#000000', bezel: '#2b2b2b', edge: '#f5f5f5', edgeA: .5, hemi: .18, ground: '#050505', sun: 0, moon: .3, lampA: 1.2, lampB: .7, accent: 3, glass: '#9fb4cc', plant: '#1e1e1e', grid: .16, glow: .8 },
   day:   { bg: '#f5f5f5', wall: '#f0f0f0', floor: '#e6e6e6', rug: '#d9d9d9', obj: '#f5f5f5', bezel: '#cfcfcf', edge: '#000000', edgeA: .65, hemi: 1.1, ground: '#b8b8b8', sun: 2.4, moon: 0, lampA: 0, lampB: 0, accent: 0, glass: '#ffffff', plant: '#d6d6d6', grid: .22, glow: 0 },
 };
 let themeT = 0, themeTarget = 0;
@@ -411,9 +412,16 @@ const moon = new THREE.DirectionalLight(0xffffff, THEMES.night.moon); moon.posit
 Object.assign(moon.shadow.camera, { left: -1.2 * K, right: 1.2 * K, top: 1.2 * K, bottom: -1.2 * K, near: .5 * K, far: 9 * K }); moon.shadow.bias = -.002; moon.shadow.normalBias = .01 * K;
 scene.add(moon, moon.target);
 const pointLight = (x, y, z, shadows) => { const l = new THREE.PointLight(0xffffff, 1, 2.6 * K, 2); l.position.set(x, y, z); if (shadows) { l.castShadow = true; l.shadow.mapSize.set(1024, 1024); l.shadow.bias = -.004; l.shadow.normalBias = .01 * K; l.shadow.camera.near = .03 * K; l.shadow.camera.far = 8 * K; } scene.add(l); return l; };
-const lampA = pointLight(.23, -.08, .375, true), lampB = pointLight(-.42, -.43, .14, false);
-const accents = [], accentMat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 1, roughness: .5 });
-const accentLight = (x, y, z) => { const l = new THREE.SpotLight(0xffffff, 1, 1.1 * K, 1.15, .7, 2); l.position.set(x, y, z); l.target.position.set(x, y - 1, z); scene.add(l, l.target); accents.push(l); return l; };
+const lampA = pointLight(.4, -.19, .445, true), lampB = pointLight(-.42, -.43, .14, false);
+const accents = [], diffMat = new THREE.MeshStandardMaterial({ color: '#bfbfbf', emissive: '#ffffff', emissiveIntensity: .3, roughness: .9, transparent: true, opacity: .55, depthWrite: false });
+const ledMat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 2.5, roughness: .3 });
+function ledStrip(x, y, z, len, axis) {
+  const g = new THREE.Group(); g.position.set(x, y, z); if (axis === 'x') g.rotation.y = Math.PI / 2; scene.add(g);
+  const shell = new THREE.Mesh(new THREE.BoxGeometry(.012, .008, len), diffMat); g.add(shell);
+  const n = Math.round(len / .028), ledGeo = new THREE.BoxGeometry(.004, .003, .004);
+  for (let i = 0; i < n; i++) { const d = new THREE.Mesh(ledGeo, ledMat); d.position.set(0, 0, -len / 2 + (i + .5) * len / n); g.add(d); }
+  const l = new THREE.RectAreaLight(0xffffff, 1, len, .01); l.position.set(0, -.006, 0); l.lookAt(0, -1, 0); g.add(l); accents.push(l);
+}
 scene.background = C(THEMES.night.bg); scene.fog = new THREE.Fog(THEMES.night.bg, 2.6 * K, 7 * K);
 
 /* ------------------------------------------------------------------ the building (exterior = the logo) */
@@ -528,9 +536,9 @@ surface(decor, { cls: 'tvs', html: tpl('tv'), w: .6, h: .34, x: -.474, y: .1, z:
   for (const [label, href, w, h] of BOOKS) { t.group.add(t.bez(w, h, .05, { x: x + w / 2, y: top + h / 2, z: -.445 })); html += `<a class="book" href="${href}" target="_blank" rel="noopener" data-label="${label} ↗" style="left:${((x - sx0) / sw * 100).toFixed(2)}%;width:${(w / sw * 100).toFixed(2)}%;height:${(h / sh * 100).toFixed(2)}%">${label}</a>`; x += w + .005; }
   t.surface = surface(t, { cls: 'shelf', html: `<div class="books">${html}</div>`, w: sw, h: sh, x: sx0 + sw / 2, y: top + sh / 2, z: -.4195 });
   t.fit = () => ({ c: V3(sx0 + sw / 2, top + sh / 2, -.4195), n: V3(0, 0, 1), w: sw, h: sh, max: 560 });
-  t.group.add(cyl(.02, .04, { x: -.135, y: .086, z: -.45, r2: .016, ...dm }), along(box(.004, .004, .22, dm), V3(-.13, .07, -.46), V3(-.07, -.14, -.455)));
-  t.group.add(box(.27, .004, .008, { x: -.27, y: .052, z: -.447, mat: accentMat, shadow: false })); accentLight(-.27, .046, -.44);
-  for (let i = 0; i < 5; i++) { const leaf = mesh(new THREE.CircleGeometry(.015, 16), { mat: plantMat, edge: decor.edge, threshold: 80 }); leaf.scale.set(.8, 1, 1); leaf.position.set(-.125 + i * .013 + (i % 2 ? .016 : -.012), .05 - i * .04, -.452); leaf.rotation.set(.2, i % 2 ? .35 : -.35, .25); t.group.add(leaf); }
+  t.group.add(cyl(.02, .04, { x: -.135, y: .086, z: -.45, r2: .016, ...dm }), box(.004, .22, .004, { x: -.12, y: -.05, z: -.44, ...dm }));
+  ledStrip(-.27, .05, -.445, .27, 'x');
+  for (let i = 0; i < 5; i++) { const leaf = mesh(new THREE.CircleGeometry(.015, 16), { mat: plantMat, edge: decor.edge, threshold: 80 }); leaf.scale.set(.8, 1, 1); leaf.position.set(-.12 + (i % 2 ? .017 : -.017), .045 - i * .04, -.438); leaf.rotation.set(.2, i % 2 ? .35 : -.35, .25); t.group.add(leaf); }
 }
 
 /* kanban on the right wall → start a project */
@@ -563,8 +571,7 @@ surface(decor, { cls: 'tvs', html: tpl('tv'), w: .6, h: .34, x: -.474, y: .1, z:
   for (const z of [-.3, -.05, .2]) g.add(box(.18, .05, .23, { x: .38, y: -.355, z, ...dm }));
   g.add(box(.26, .07, .2, { x: .16, y: -.415, z: -.35, ...dm }), box(.24, .05, .18, { x: .16, y: -.355, z: -.35, ...dm }));
   for (const [x, z] of [[.31, -.43], [.31, .33], [.05, -.43], [.05, -.27]]) g.add(cyl(.008, .04, { x, y: -.47, z, r2: .005, ...dm }));
-  g.add(box(.006, .004, .8, { x: .29, y: -.452, z: -.05, mat: accentMat, shadow: false }), box(.26, .004, .006, { x: .16, y: -.452, z: -.25, mat: accentMat, shadow: false }), box(.006, .004, .2, { x: .03, y: -.452, z: -.35, mat: accentMat, shadow: false }));
-  accentLight(.285, -.455, -.25); accentLight(.285, -.455, .2); accentLight(.12, -.455, -.255);
+  ledStrip(.292, -.454, -.05, .8, 'z'); ledStrip(.16, -.454, -.248, .26, 'x'); ledStrip(.028, -.454, -.35, .2, 'z');
   const table = new THREE.Group(); table.position.set(.02, -.5, .1); g.add(table);
   table.add(cyl(.13, .015, { y: .135, ...dm }));
   for (let i = 0; i < 3; i++) { const a = i * 120 * D2R, from = V3(Math.cos(a) * .11, 0, Math.sin(a) * .11), to = V3(Math.cos(a) * .07, .13, Math.sin(a) * .07); table.add(along(cyl(.007, from.distanceTo(to), { r2: .005, ...dm }), from, to, V3(0, 1, 0))); }
@@ -581,10 +588,10 @@ surface(decor, { cls: 'tvs', html: tpl('tv'), w: .6, h: .34, x: -.474, y: .1, z:
 
 /* lamps: the tripod lamp in the front corner is the switch; a paper lantern glows by the desk */
 {
-  const t = thing({ id: 'lights', label: 'switch to day', action: 'lights', anchor: V3(.23, -.03, .375) });
-  decor.group.add(box(.12, .015, .14, { x: .23, y: -.255, z: .375, ...dm }));
-  for (const [x, z] of [[.18, .315], [.28, .315], [.18, .435], [.28, .435]]) decor.group.add(cyl(.006, .238, { x, y: -.381, z, r2: .004, ...dm }));
-  const tri = new THREE.Group(); tri.position.set(.23, -.2475, .375); t.group.add(tri);
+  const t = thing({ id: 'lights', label: 'switch to day', action: 'lights', anchor: V3(.4, -.13, .445) });
+  decor.group.add(box(.16, .015, .08, { x: .4, y: -.3675, z: .445, ...dm }));
+  for (const [x, z] of [[.335, .415], [.465, .415], [.335, .475], [.465, .475]]) decor.group.add(cyl(.006, .125, { x, y: -.4375, z, r2: .004, ...dm }));
+  const tri = new THREE.Group(); tri.position.set(.4, -.36, .445); t.group.add(tri);
   tri.add(t.cyl(.042, .008, { y: .004 }));
   for (let i = 0; i < 3; i++) { const a = i * 120 * D2R + .5; tri.add(along(t.box(.006, .006, .19), V3(Math.cos(a) * .036, .008, Math.sin(a) * .036), V3(0, .175, 0))); }
   const drum = cyl(.04, .05, { y: .175, r2: .04, open: true, mat: t.mat, edge: t.edge }); drum.material = stdMat(THEMES.night.obj, { side: THREE.DoubleSide, transparent: true, opacity: .55, depthWrite: false }); reg.things.push({ mat: drum.material, bezel: drum.material, edge: t.edge, hover: 0 }); tri.add(t.pick(drum));
@@ -730,7 +737,7 @@ function applyTheme(t) {
   reg.edge.forEach(m => { m.color.copy(edgeC); m.opacity = num('edgeA'); });
   for (const th of reg.things) { th.mat.color.copy(th.isBezel ? bezC : objC).lerp(edgeC, th.hover); th.bezel.color.copy(bezC).lerp(edgeC, th.hover); th.edge.color.copy(edgeC).lerp(objC, th.hover); }
   hemi.intensity = num('hemi'); hemi.groundColor.copy(col('ground')); sun.intensity = num('sun'); moon.intensity = num('moon');
-  lampA.intensity = num('lampA') * K * K; lampB.intensity = num('lampB') * K * K; accents.forEach(l => l.intensity = num('accent') * K * K); accentMat.emissiveIntensity = 1 - t; accentMat.color.copy(lerpC(C('#ffffff'), C('#c8c8c8'), t));
+  lampA.intensity = num('lampA') * K * K; lampB.intensity = num('lampB') * K * K; accents.forEach(l => l.intensity = num('accent')); diffMat.emissiveIntensity = .3 * (1 - t); ledMat.emissiveIntensity = 2.5 * (1 - t); ledMat.color.copy(lerpC(C('#ffffff'), C('#9a9a9a'), t));
   scene.background.copy(col('bg')); scene.fog.color.copy(col('bg')); glassMat.color.copy(col('glass')); glassMat.opacity = .1 - .04 * t; frameMat.color.copy(bezC); frameEdge.color.copy(edgeC); plantMat.color.copy(col('plant')); lanternMat.emissiveIntensity = .7 * (1 - t); lanternMat.color.copy(lerpC(C('#2a2a2a'), C('#f0f0f0'), t));
   grid.material.opacity = num('grid'); grid.material.color.copy(edgeC); ground.material.color.copy(edgeC);
   bulbMat.emissiveIntensity = 1.6 * (1 - t); bulbMat.opacity = .35 + .45 * (1 - t); glows.forEach(g => g.material.opacity = num('glow'));
