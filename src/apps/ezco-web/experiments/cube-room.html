@@ -412,15 +412,15 @@ const moon = new THREE.DirectionalLight(0xffffff, THEMES.night.moon); moon.posit
 Object.assign(moon.shadow.camera, { left: -1.2 * K, right: 1.2 * K, top: 1.2 * K, bottom: -1.2 * K, near: .5 * K, far: 9 * K }); moon.shadow.bias = -.002; moon.shadow.normalBias = .01 * K;
 scene.add(moon, moon.target);
 const pointLight = (x, y, z, shadows) => { const l = new THREE.PointLight(0xffffff, 1, 2.6 * K, 2); l.position.set(x, y, z); if (shadows) { l.castShadow = true; l.shadow.mapSize.set(1024, 1024); l.shadow.bias = -.004; l.shadow.normalBias = .01 * K; l.shadow.camera.near = .03 * K; l.shadow.camera.far = 8 * K; } scene.add(l); return l; };
-const lampA = pointLight(.4, -.19, .445, true), lampB = pointLight(-.42, -.43, .14, false);
-const accents = [], diffMat = new THREE.MeshStandardMaterial({ color: '#bfbfbf', emissive: '#ffffff', emissiveIntensity: .3, roughness: .9, transparent: true, opacity: .55, depthWrite: false });
-const ledMat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 2.5, roughness: .3 });
-function ledStrip(x, y, z, len, axis) {
+const lampA = pointLight(.4, -.175, .445, true), lampB = pointLight(-.42, -.43, .14, false);
+const accents = [], diffMat = new THREE.MeshStandardMaterial({ color: '#e6e6e6', emissive: '#ffffff', emissiveIntensity: .9, roughness: .95, transparent: true, opacity: .85, depthWrite: false });
+const ledMat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 1.6, roughness: .3 });
+function ledStrip(x, y, z, len, axis, dir = 'down') {
   const g = new THREE.Group(); g.position.set(x, y, z); if (axis === 'x') g.rotation.y = Math.PI / 2; scene.add(g);
   const shell = new THREE.Mesh(new THREE.BoxGeometry(.012, .008, len), diffMat); g.add(shell);
   const n = Math.round(len / .028), ledGeo = new THREE.BoxGeometry(.004, .003, .004);
   for (let i = 0; i < n; i++) { const d = new THREE.Mesh(ledGeo, ledMat); d.position.set(0, 0, -len / 2 + (i + .5) * len / n); g.add(d); }
-  const l = new THREE.RectAreaLight(0xffffff, 1, len, .01); l.position.set(0, -.006, 0); l.lookAt(0, -1, 0); g.add(l); accents.push(l);
+  const up = dir === 'up', l = new THREE.RectAreaLight(0xffffff, 1, len, .01); l.position.set(0, up ? .006 : -.006, 0); l.lookAt(0, up ? 1 : -1, 0); g.add(l); accents.push(l);
 }
 scene.background = C(THEMES.night.bg); scene.fog = new THREE.Fog(THEMES.night.bg, 2.6 * K, 7 * K);
 
@@ -497,13 +497,14 @@ const leafGeo = (w, h) => { const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.qu
 const along = (m, from, to, axis = V3(0, 0, 1)) => { const d = to.clone().sub(from); m.position.copy(from).addScaledVector(d, .5); m.quaternion.setFromUnitVectors(axis, d.normalize()); return m; };
 const alongZ = (m, from, to) => along(m, from, to, V3(0, 0, 1));
 const bulbMat = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0, roughness: .15, transparent: true, opacity: .35, depthWrite: false });
+const shadeMat = new THREE.MeshStandardMaterial({ color: '#1a1a1a', emissive: '#ffffff', emissiveIntensity: .3, roughness: .95, side: THREE.DoubleSide, transparent: true, opacity: .6, depthWrite: false });
 const glowTex = canvasTex(128, 128, (ctx, W) => { const gr = ctx.createRadialGradient(W / 2, W / 2, 0, W / 2, W / 2, W / 2); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.35, 'rgba(255,255,255,.3)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = gr; ctx.fillRect(0, 0, W, W); });
 const glows = [];
 const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 })); sp.position.set(x, y, z); sp.scale.setScalar(s); glows.push(sp); return sp; };
 
 /* TV on the left wall */
-decor.group.add(box(.03, .37, .64, { x: -.492, y: .1, z: -.04, ...dz }));
-surface(decor, { cls: 'tvs', html: tpl('tv'), w: .6, h: .34, x: -.474, y: .1, z: -.04, ry: Math.PI / 2, fixedW: 1000 });
+decor.group.add(box(.03, .37, .64, { x: -.484, y: .1, z: -.04, ...dz }));
+surface(decor, { cls: 'tvs', html: tpl('tv'), w: .6, h: .34, x: -.468, y: .1, z: -.04, ry: Math.PI / 2, fixedW: 1000 });
 
 /* corner desk + stool + laptop + a desk plant → our work */
 {
@@ -567,11 +568,11 @@ surface(decor, { cls: 'tvs', html: tpl('tv'), w: .6, h: .34, x: -.474, y: .1, z:
 /* L-couch in the back-right corner, coffee table, tablet → blog */
 {
   const g = decor.group;
-  g.add(box(.2, .07, .8, { x: .39, y: -.415, z: -.05, ...dm }), box(.06, .2, .8, { x: .47, y: -.28, z: -.05, ...dm }), box(.2, .14, .05, { x: .39, y: -.38, z: .375, ...dm }), box(.2, .14, .05, { x: .39, y: -.38, z: -.475, ...dm }));
+  g.add(box(.2, .07, .8, { x: .39, y: -.415, z: -.05, ...dm }), box(.06, .2, .8, { x: .455, y: -.28, z: -.05, ...dm }), box(.2, .14, .05, { x: .39, y: -.38, z: .375, ...dm }), box(.2, .14, .05, { x: .39, y: -.38, z: -.475, ...dm }));
   for (const z of [-.3, -.05, .2]) g.add(box(.18, .05, .23, { x: .38, y: -.355, z, ...dm }));
   g.add(box(.26, .07, .2, { x: .16, y: -.415, z: -.35, ...dm }), box(.24, .05, .18, { x: .16, y: -.355, z: -.35, ...dm }));
   for (const [x, z] of [[.31, -.43], [.31, .33], [.05, -.43], [.05, -.27]]) g.add(cyl(.008, .04, { x, y: -.47, z, r2: .005, ...dm }));
-  ledStrip(.292, -.454, -.05, .8, 'z'); ledStrip(.16, -.454, -.248, .26, 'x'); ledStrip(.028, -.454, -.35, .2, 'z');
+  ledStrip(.491, -.176, -.05, .78, 'z', 'up');
   const table = new THREE.Group(); table.position.set(.02, -.5, .1); g.add(table);
   table.add(cyl(.13, .015, { y: .135, ...dm }));
   for (let i = 0; i < 3; i++) { const a = i * 120 * D2R, from = V3(Math.cos(a) * .11, 0, Math.sin(a) * .11), to = V3(Math.cos(a) * .07, .13, Math.sin(a) * .07); table.add(along(cyl(.007, from.distanceTo(to), { r2: .005, ...dm }), from, to, V3(0, 1, 0))); }
@@ -593,9 +594,10 @@ surface(decor, { cls: 'tvs', html: tpl('tv'), w: .6, h: .34, x: -.474, y: .1, z:
   for (const [x, z] of [[.335, .415], [.465, .415], [.335, .475], [.465, .475]]) decor.group.add(cyl(.006, .125, { x, y: -.4375, z, r2: .004, ...dm }));
   const tri = new THREE.Group(); tri.position.set(.4, -.36, .445); t.group.add(tri);
   tri.add(t.cyl(.042, .008, { y: .004 }));
-  for (let i = 0; i < 3; i++) { const a = i * 120 * D2R + .5; tri.add(along(t.box(.006, .006, .19), V3(Math.cos(a) * .036, .008, Math.sin(a) * .036), V3(0, .175, 0))); }
-  const drum = cyl(.04, .05, { y: .175, r2: .04, open: true, mat: t.mat, edge: t.edge }); drum.material = stdMat(THEMES.night.obj, { side: THREE.DoubleSide, transparent: true, opacity: .55, depthWrite: false }); reg.things.push({ mat: drum.material, bezel: drum.material, edge: t.edge, hover: 0 }); tri.add(t.pick(drum));
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.012, 20, 12), bulbMat); bulb.position.set(0, .175, 0); tri.add(t.pick(bulb)); tri.add(glow(0, .175, 0, .16));
+  for (let i = 0; i < 3; i++) { const a = i * 120 * D2R + .5; tri.add(along(t.box(.006, .006, .16), V3(Math.cos(a) * .036, .008, Math.sin(a) * .036), V3(0, .155, 0))); }
+  tri.add(t.cyl(.005, .022, { y: .163 }));
+  const drum = cyl(.04, .05, { y: .19, r2: .04, open: true, mat: t.mat, edge: t.edge }); drum.material = shadeMat; drum.renderOrder = 1; tri.add(t.pick(drum));
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.012, 20, 12), bulbMat); bulb.position.set(0, .186, 0); bulb.renderOrder = 2; tri.add(t.pick(bulb)); const gl2 = glow(0, .186, 0, .16); gl2.renderOrder = 3; tri.add(gl2);
   const lantern = mesh(new THREE.SphereGeometry(.075, 20, 9), { mat: lanternMat, edge: decor.edge, threshold: 12, x: -.42, y: -.43, z: .14 }); lantern.scale.set(1, .85, 1); decor.group.add(lantern);
   decor.group.add(cyl(.03, .008, { x: -.42, y: -.496, z: .14, ...dm }));
 }
@@ -665,7 +667,7 @@ let state = 'logo', active = null, busy = false, showLabels = false;
 const setState = s => { state = s; body.dataset.state = s; prompts(); };
 const doorTo = (a, dur) => tween({ from: doorGroup.rotation.y, to: a, dur, update: v => { doorGroup.rotation.y = v; doorGroupM.rotation.y = v; } });
 async function enterRoom() {
-  if (state !== 'logo' || busy) return; busy = true; setState('entering');
+  if (state !== 'logo' || busy) return; busy = true; setState('entering'); drag.yaw = drag.pitch = 0;
   await poseTo(POSE.front(), 1000);
   doorTo(-125 * D2R, 900); await delay(reduced ? 0 : 450);
   await poseTo(POSE.room(), 1700);
@@ -674,6 +676,7 @@ async function enterRoom() {
 }
 async function leaveRoom() {
   if (state === 'logo' || busy) return; busy = true;
+  drag.yaw = drag.pitch = glance.yaw = glance.pitch = 0;
   if (active) await closePage(true);
   setState('leaving'); mirror.visible = true;
   const p = poseTo(POSE.front(), 1200); await delay(reduced ? 0 : 500); doorTo(0, 900); await p;
@@ -737,10 +740,10 @@ function applyTheme(t) {
   reg.edge.forEach(m => { m.color.copy(edgeC); m.opacity = num('edgeA'); });
   for (const th of reg.things) { th.mat.color.copy(th.isBezel ? bezC : objC).lerp(edgeC, th.hover); th.bezel.color.copy(bezC).lerp(edgeC, th.hover); th.edge.color.copy(edgeC).lerp(objC, th.hover); }
   hemi.intensity = num('hemi'); hemi.groundColor.copy(col('ground')); sun.intensity = num('sun'); moon.intensity = num('moon');
-  lampA.intensity = num('lampA') * K * K; lampB.intensity = num('lampB') * K * K; accents.forEach(l => l.intensity = num('accent')); diffMat.emissiveIntensity = .3 * (1 - t); ledMat.emissiveIntensity = 2.5 * (1 - t); ledMat.color.copy(lerpC(C('#ffffff'), C('#9a9a9a'), t));
+  lampA.intensity = num('lampA') * K * K; lampB.intensity = num('lampB') * K * K; accents.forEach(l => l.intensity = num('accent')); diffMat.emissiveIntensity = .9 * (1 - t); diffMat.opacity = .85 - .35 * t; ledMat.emissiveIntensity = 1.6 * (1 - t); ledMat.color.copy(lerpC(C('#ffffff'), C('#9a9a9a'), t));
   scene.background.copy(col('bg')); scene.fog.color.copy(col('bg')); glassMat.color.copy(col('glass')); glassMat.opacity = .1 - .04 * t; frameMat.color.copy(bezC); frameEdge.color.copy(edgeC); plantMat.color.copy(col('plant')); lanternMat.emissiveIntensity = .7 * (1 - t); lanternMat.color.copy(lerpC(C('#2a2a2a'), C('#f0f0f0'), t));
   grid.material.opacity = num('grid'); grid.material.color.copy(edgeC); ground.material.color.copy(edgeC);
-  bulbMat.emissiveIntensity = 1.6 * (1 - t); bulbMat.opacity = .35 + .45 * (1 - t); glows.forEach(g => g.material.opacity = num('glow'));
+  bulbMat.emissiveIntensity = 1.6 * (1 - t); bulbMat.opacity = .35 + .45 * (1 - t); shadeMat.emissiveIntensity = .3 * (1 - t); shadeMat.color.copy(lerpC(C('#1a1a1a'), C('#e4e4e4'), t)); glows.forEach(g => g.material.opacity = num('glow'));
   extMat.color.copy(col('bg'));
   const bucket = t < .5 ? 0 : 1;
   if (bucket !== themeDrawn) { themeDrawn = bucket; for (const th of things) th.textures?.forEach(x => x.redraw()); logoTex.ez.redraw(); logoTex.co.redraw(); }
@@ -828,11 +831,12 @@ function frame(now) {
   runTweens(now);
   if (camTween) { const k = clamp((now - camTween.start) / camTween.dur, 0, 1), e = easeInOut(k); cam.pos.lerpVectors(camTween.p0, camTween.p1, e); cam.target.lerpVectors(camTween.t0, camTween.t1, e); if (k >= 1) { const r = camTween.res; camTween = null; r(); } }
   par.x += (parT.x - par.x) * .06; par.y += (parT.y - par.y) * .06;
-  if (state === 'logo' && !camTween) cam.pos.copy(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos);
+  if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos, .08);
   logoT += ((logoHot ? 1 : 0) - logoT) * .12;
   if (Math.abs(logoT - logoDrawn) > .01) { logoDrawn = logoT; logoTex.ez.redraw(); logoTex.co.redraw(); }
   const lim = limits(), k = state === 'room' ? [4, 2.5] : state === 'page' ? [1.2, .8] : [0, 0];
-  const tYaw = clamp(drag.yaw, -lim.yaw, lim.yaw) + glance.yaw - par.x * k[0], tPitch = clamp(drag.pitch, lim.lo, lim.hi) + glance.pitch - par.y * k[1];
+  const inside = state === 'room' || state === 'page';
+  const tYaw = inside ? clamp(drag.yaw, -lim.yaw, lim.yaw) + glance.yaw - par.x * k[0] : 0, tPitch = inside ? clamp(drag.pitch, lim.lo, lim.hi) + glance.pitch - par.y * k[1] : 0;
   look.yaw += (tYaw - look.yaw) * .1; look.pitch += (tPitch - look.pitch) * .1;
   camera.position.copy(cam.pos).multiplyScalar(K); camera.lookAt(tmp.copy(cam.target).multiplyScalar(K));
   camera.rotateOnWorldAxis(Y, look.yaw * D2R); camera.rotateX(look.pitch * D2R); camera.updateMatrixWorld();
