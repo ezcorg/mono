@@ -1,0 +1,196 @@
+---
+/* The room: the chrome, the accessible page list, and the content templates the furniture renders.
+   Content comes from the same sources as the flat pages (src/data/*, src/content/blog). The scene itself is src/room/room.js. */
+import type { MarkdownInstance } from 'astro';
+import { projects } from '../data/work';
+import { sections, lately, links, statementHtml } from '../data/about';
+
+interface Frontmatter { title: string; description?: string; date: string; author?: string; tags?: string[]; draft?: boolean }
+const postModules = import.meta.glob<MarkdownInstance<Frontmatter>>('../content/blog/*.md', { eager: true });
+const posts = Object.entries(postModules)
+	.map(([file, m]) => ({ slug: file.split('/').pop()!.replace(/\.md$/, ''), fm: m.frontmatter, Content: m.Content }))
+	.filter((p) => !p.fm.draft)
+	.sort((a, b) => new Date(b.fm.date).getTime() - new Date(a.fm.date).getTime());
+const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); // frontmatter dates are calendar dates
+const roomHref = (href: string) => '#' + href; // flat-page paths become room routes
+---
+
+<div class="room" id="room">
+	<div class="loading" id="loading">loading the room…</div>
+	<div class="labels" id="labels"></div>
+	<div class="hero-copy" id="hero">
+		<p>your friendly neighborhood tech collective</p>
+		<button class="enter" id="enter">come in</button>
+	</div>
+	<div class="prompts" id="prompts"></div>
+	<nav class="sr-nav" id="srnav" aria-label="Pages">
+		<a href="#/work" data-thing="work">our work</a>
+		<a href="#/blog" data-thing="blog">blog</a>
+		<a href="#/newproject" data-thing="newproject">start a project</a>
+		<a href="#/about" data-thing="about">about us</a>
+		<a href="#/whiteboard" data-thing="whiteboard">whiteboard</a>
+		<a href={links.github} target="_blank" rel="noopener" data-thing="github">GitHub ↗</a>
+		<a href={links.linkedin} target="_blank" rel="noopener" data-thing="linkedin">LinkedIn ↗</a>
+		<a href="#/join" data-thing="join">come work with us</a>
+		<button type="button" data-thing="lights" id="srlights">switch to day</button>
+		<button type="button" data-thing="tripod">table lamp</button>
+		<button type="button" data-thing="lantern">paper lantern</button>
+		<button type="button" data-thing="pendant">pendant</button>
+	</nav>
+
+	<!-- no WebGL (or no JS): the site as a list of doors -->
+	<div class="room-fallback">
+		<div>
+			<h1>ez co</h1>
+			<p>your friendly neighborhood tech collective</p>
+			<nav aria-label="Pages">
+				<a href="/about/">about us</a><a href="/work/">our work</a><a href="/blog/">blog</a><a href="/newproject/">start a project</a><a href="/join/">come work with us</a>
+			</nav>
+		</div>
+	</div>
+	<noscript><style>.room .room-fallback{display:grid}.room>:not(.room-fallback){display:none}</style></noscript>
+
+	<!-- laptop → our work: a tiny desktop OS -->
+	<template id="t-screen">
+		<div class="doc"><div class="h"># hello, world</div><div>## Usage</div><div>### Install</div><div>pnpm add @joinezco/markdown-editor</div><div>* [x] Task 1 (Done)</div><div>* [ ] Task 2<span class="cur"></span></div></div>
+		<div class="os">
+			<div class="bar"><span><b>ez os</b> · our work</span><span data-clock>--:--</span></div>
+			<div class="desk">
+				{projects.map((p) => (
+					<button class="app" data-app={p.id} data-href={p.href}>
+						<span class="ico">{p.icon}</span><span class="nm">{p.title}</span>
+						<span class="tip"><b>{p.title}</b>{p.description}<small>{p.tags.join(' · ')}{p.href ? ' · opens ' + new URL(p.href).hostname + ' ↗' : ''}</small></span>
+					</button>
+				))}
+				<button class="app" data-app="newproject"><span class="ico plus">+</span><span class="nm">new project</span><span class="tip"><b>new project</b>Want to see an idea come to life? Tell us about it.<small>opens a dialog</small></span></button>
+			</div>
+			<div class="win" data-win="newproject" hidden>
+				<div class="tb"><span>new project</span><button type="button" data-close aria-label="close">×</button></div>
+				<div class="body"><div class="scroller">
+					<form class="form np" id="os-np-form">
+						<div><label for="os-name">Name *</label><input id="os-name" name="name" placeholder="Who are you?" required maxlength="100"></div>
+						<div><label for="os-email">Email *</label><input id="os-email" name="email" type="email" placeholder="Where can we reach you?" required></div>
+						<div><label for="os-service">Service *</label>
+							<select id="os-service" name="service" required>
+								<option value="" disabled selected>What can we help you with?</option>
+								<option value="open-source">Open source</option>
+								<option value="software-development">Software development</option>
+								<option value="consulting">Consulting</option>
+								<option value="other">Other</option>
+							</select></div>
+						<div><label for="os-budget">Budget (USD)</label><div class="money"><span>$</span><input id="os-budget" type="number" name="budget" min="0" step="500" placeholder="optional"></div></div>
+						<div><label for="os-msg">Message * <small style="opacity:.6">(at least 50 characters)</small></label><textarea id="os-msg" name="message" placeholder="Give us a brief overview of your project." required minlength="50" maxlength="2000"></textarea></div>
+						<div class="cf-turnstile"></div>
+						<div class="err" role="alert"></div>
+						<button class="submit" type="submit">submit</button>
+						<div class="thanks">Got it. It's on the board across the room, and we'll write back soon.</div>
+					</form>
+				</div></div>
+			</div>
+			{projects.filter((p) => p.demo).map((p) => (
+				<div class="win wide" data-win={p.id} data-demo={p.demo} hidden>
+					<div class="tb"><span>{p.title}</span><span><a class="link" href={p.github} target="_blank" rel="noopener">source ↗</a> &nbsp; <button type="button" data-close aria-label="close">×</button></span></div>
+					<div class="body"><div class="demo"></div></div>
+				</div>
+			))}
+		</div>
+	</template>
+
+	<!-- tablet → blog -->
+	<template id="t-reader">
+		<div class="bar"><span>ez co · blog</span><span>{posts.length} post{posts.length === 1 ? '' : 's'}</span></div>
+		<div class="scroller">
+			<div class="posts">
+				{posts.map((p) => (
+					<a href={`#/blog/${p.slug}`} data-slug={p.slug}><b>{p.fm.title}</b><small>{fmtDate(p.fm.date)}{p.fm.author ? ' · ' + p.fm.author : ''}</small></a>
+				))}
+			</div>
+			{posts.map(({ slug, fm, Content }) => (
+				<article data-slug={slug} hidden>
+					<h1>{fm.title}</h1>
+					<div class="meta">{fmtDate(fm.date)}{fm.author ? ' · ' + fm.author : ''}</div>
+					<Content />
+					{fm.tags?.length ? <div class="tags">{fm.tags.map((t) => <span class="tag">{t}</span>)}</div> : null}
+				</article>
+			))}
+		</div>
+		<div class="idle">blog<br><span style="opacity:.6;font-size:.85em">tap to read</span></div>
+	</template>
+
+	<!-- kanban → start a project -->
+	<template id="t-kanban">
+		<div class="kb">
+			<div class="col"><h4>ideas</h4>
+				<form class="note new form np" id="np-form">
+					<b>&lt; your project here &gt;</b>
+					<div class="stuckText"></div>
+					<div><label for="np-name">Name *</label><input id="np-name" name="name" placeholder="Who are you?" required maxlength="100"></div>
+					<div><label for="np-email">Email *</label><input id="np-email" name="email" type="email" placeholder="Where can we reach you?" required></div>
+					<div><label for="np-service">Service *</label>
+						<select id="np-service" name="service" required>
+							<option value="" disabled selected>What can we help you with?</option>
+							<option value="open-source">Open source</option>
+							<option value="software-development">Software development</option>
+							<option value="consulting">Consulting</option>
+							<option value="other">Other</option>
+						</select></div>
+					<div><label for="np-budget">Budget (USD)</label><div class="money"><span>$</span><input id="np-budget" type="number" name="budget" min="0" step="500" placeholder="optional"></div></div>
+					<div><label for="np-msg">Message * <small style="opacity:.6">(at least 50 characters)</small></label><textarea id="np-msg" name="message" placeholder="Give us a brief overview of your project." required minlength="50" maxlength="2000"></textarea></div>
+					<div class="cf-turnstile"></div>
+					<div class="err" role="alert"></div>
+					<button class="submit" type="submit">submit</button>
+					<div class="thanks">It's on the board. We'll write back soon.</div>
+				</form>
+			</div>
+			<div class="col"><h4>doing</h4>
+				{lately.map((t) => <div class="note">{t}</div>)}
+			</div>
+			<div class="col"><h4>done</h4>
+				{projects.map((p) => <div class="note">{p.title}<small>{p.tags.slice(0, 2).join(' · ')}</small></div>)}
+			</div>
+		</div>
+	</template>
+
+	<!-- framed manifesto → about -->
+	<template id="t-manifesto">
+		<div class="scroller">
+			{sections.map((s) => (
+				<>
+					<h3>{s.heading}</h3>
+					<div class="mission"><ul>{s.statements.map((st) => <li set:html={statementHtml(st, roomHref)} />)}</ul></div>
+				</>
+			))}
+		</div>
+	</template>
+
+	<!-- clipboard → come work with us -->
+	<template id="t-sheet">
+		<div class="scroller">
+			<h2>come work with us</h2>
+			<p class="lede">A sign-up sheet. We're a democratic collective, not an employer — every member has a voice, and a share.</p>
+			<form class="form" id="join-form">
+				<div><label for="j-name">Name *</label><input id="j-name" name="name" required></div>
+				<div><label for="j-email">Email *</label><input id="j-email" name="email" type="email" required></div>
+				<div><label for="j-cv">Resume/CV * <small style="opacity:.6">(PDF, DOC, DOCX)</small></label><input id="j-cv" name="resume" type="file" accept=".pdf,.doc,.docx" required></div>
+				<div><label for="j-why">Why do you want to join? *</label><textarea id="j-why" name="motivation" required></textarea></div>
+				<button class="submit" type="submit">submit</button>
+				<div class="thanks">You're on the sheet. We'll be in touch.</div>
+			</form>
+		</div>
+	</template>
+</div>
+
+<script>
+	import { boot } from '../room/room.js';
+	const SITE_KEY = import.meta.env.DEV ? '1x00000000000000000000AA' : '0x4AAAAAABjl6CJ20hxOvkB9';
+	let dispose: (() => void) | null = null;
+	function tryBoot() {
+		const mount = document.getElementById('room');
+		if (!mount || mount.dataset.booted) return;
+		mount.dataset.booted = '1';
+		dispose = boot({ mount, turnstileSiteKey: SITE_KEY, photo: '/employee.jpg' });
+	}
+	tryBoot();
+	document.addEventListener('astro:page-load', tryBoot);
+	document.addEventListener('astro:before-swap', () => { dispose?.(); dispose = null; });
+</script>

@@ -20,11 +20,13 @@
     "imagesloaded": "^5.0.0",
     "lucide-astro": "^0.548.0",
     "packery": "^3.0.0",
-    "tailwindcss": "^4.1.16"
+    "tailwindcss": "^4.1.16",
+    "three": "0.170.0"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.5",
     "@types/packery": "^1.4.37",
+    "@types/three": "0.170.0",
     "typescript": "^5.0.0"
   }
 }
