@@ -176,9 +176,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'invalid-email',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements for the message field.'
             };
 
@@ -260,9 +258,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 100, // Too low
-                maxBudget: 50, // Less than min
-                currency: 'USD',
+                budget: -5, // Not positive
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
             };
 
@@ -282,8 +278,7 @@ describe('Contact Form Worker', () => {
                 fieldErrors: Record<string, string[]>;
             };
             expect(responseData.success).toBe(false);
-            expect(responseData.fieldErrors.minBudget).toBeDefined();
-            expect(responseData.fieldErrors.maxBudget).toBeDefined();
+            expect(responseData.fieldErrors.budget).toBeDefined();
         });
     });
 
@@ -293,9 +288,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 turnstileToken: 'test-token',
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
             };
@@ -332,9 +325,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'invalid-token'
             };
@@ -369,9 +360,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
                 // Missing turnstileToken
             };
@@ -401,9 +390,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token'
             };
@@ -441,9 +428,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token',
             };
@@ -501,9 +486,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token',
             };
@@ -540,9 +523,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token',
             };

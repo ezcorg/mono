@@ -9,8 +9,7 @@
     "scripts": {
         "build": "tsc",
         "dev": "tsc --watch",
-        "typecheck": "tsc --noEmit",
-        "fetch-rates": "node scripts/fetch-rates.js"
+        "typecheck": "tsc --noEmit"
     },
     "devDependencies": {
         "@types/node": "^24.3.1",

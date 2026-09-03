@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { CurrencyCode, convertBudgetToUSD, MIN_USD_VALUE, isSupportedCurrency } from './currency';
 
 // Valid service types
 export const VALID_SERVICES = [
@@ -11,7 +10,7 @@ export const VALID_SERVICES = [
 
 export type ServiceType = typeof VALID_SERVICES[number];
 
-// Contact form validation schema
+// Contact form validation schema: what the room's "new project" forms send
 export const ContactFormSchema = z.object({
     name: z
         .string()
@@ -32,33 +31,13 @@ export const ContactFormSchema = z.object({
         .enum(VALID_SERVICES, {
             errorMap: () => ({ message: 'Please select a valid service type' })
         }),
-    dateRange: z
-        .tuple([z.date(), z.date()])
-        .refine(([start, end]) => start <= end, {
-            message: 'Start date must be before or equal to end date',
-            path: ['dateRange']
-        })
-        .optional(),
 
-    /* A single, optional budget in USD (the room's forms). */
+    /* A single, optional budget in USD. */
     budget: z
         .number()
         .positive('Budget must be positive')
+        .max(1e9, 'Budget must be less than $1,000,000,000')
         .optional(),
-
-    /* Legacy range fields (the flat /newproject form); still accepted. */
-    minBudget: z.number().positive('Minimum budget must be positive').optional(),
-
-    maxBudget: z.number().positive('Maximum budget must be positive').optional(),
-
-    currency: (z
-        .string()
-        .min(3, 'Currency code must be 3 characters')
-        .max(3, 'Currency code must be 3 characters')
-        .toUpperCase()
-        .refine(isSupportedCurrency, {
-            message: 'Unsupported currency code'
-        }) as z.ZodType<CurrencyCode>).optional(),
 
     message: z
         .string()
@@ -69,48 +48,13 @@ export const ContactFormSchema = z.object({
     turnstileToken: z
         .string()
         .optional()
-}).refine(
-    (data: any) => {
-        // A range needs both ends
-        return (data.minBudget === undefined) === (data.maxBudget === undefined);
-    },
-    {
-        message: 'Provide both a minimum and a maximum budget',
-        path: ['maxBudget']
-    }
-).refine(
-    (data: any) => {
-        // Ensure maxBudget >= minBudget
-        return data.maxBudget === undefined || data.minBudget === undefined || data.maxBudget >= data.minBudget;
-    },
-    {
-        message: 'Maximum budget must be greater than or equal to minimum budget',
-        path: ['maxBudget']
-    }
-).refine(
-    (data: any) => {
-        // Ensure a minimum budget, when given, is at least $1000 USD equivalent
-        if (data.minBudget === undefined) return true;
-        try {
-            const minBudgetUSD = convertBudgetToUSD(data.minBudget, data.currency ?? 'USD');
-            return minBudgetUSD >= MIN_USD_VALUE;
-        } catch {
-            return false;
-        }
-    },
-    {
-        message: `Minimum budget must be at least $${MIN_USD_VALUE.toLocaleString()} USD equivalent`,
-        path: ['minBudget']
-    }
-);
+});
 
 export type ContactFormData = z.infer<typeof ContactFormSchema>;
 
-/** A one-line description of the budget for humans: the single figure, the legacy range, or nothing. */
-export function describeBudget(data: Pick<ContactFormData, 'budget' | 'minBudget' | 'maxBudget' | 'currency'>): string {
-    if (data.budget !== undefined) return `$${data.budget.toLocaleString()} USD`;
-    if (data.minBudget !== undefined && data.maxBudget !== undefined) return `${data.currency ?? 'USD'} ${data.minBudget.toLocaleString()} - ${data.maxBudget.toLocaleString()}`;
-    return 'Not specified';
+/** The budget for humans: "$2,500 USD" or "Not specified". */
+export function describeBudget(data: Pick<ContactFormData, 'budget'>): string {
+    return data.budget === undefined ? 'Not specified' : `$${data.budget.toLocaleString('en-US')} USD`;
 }
 
 // Validation result types
@@ -158,13 +102,13 @@ export function validateContactForm(data: Record<string, any>): ValidationResult
 
         return {
             success: false,
-            error: 'Unknown validation error'
+            error: 'An unexpected validation error occurred'
         };
     }
 }
 
 /**
- * Get user-friendly error message from validation result
+ * Get a user-friendly error message from validation errors
  */
 export function getValidationErrorMessage(result: ValidationError): string {
     if (result.fieldErrors) {

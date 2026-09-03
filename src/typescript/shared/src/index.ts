@@ -1,5 +1,2 @@
-// Export all currency utilities
-export * from './currency';
-
-// Export all validation utilities
+// Contact form schema + helpers (the room's "new project" forms, the contact-form worker)
 export * from './validation';

@@ -1,3 +1,3 @@
-# `TODO`
+# `@joinezco/shared`
 
-For extracting out shared Typescript code and types from monorepo packages.
+The contact-form schema (`ContactFormSchema`, `validateContactForm`, `describeBudget`) shared by the room's "new project" forms in `ezco-web` and the `contact-form-worker`.
