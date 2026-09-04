@@ -227,7 +227,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
   const g = decor.group, top = .066;
   g.add(box(.3, .012, .06, { x: -.27, y: .06, z: -.47, ...dz }), box(.012, .04, .05, { x: -.4, y: .034, z: -.475, ...dm }), box(.012, .04, .05, { x: -.14, y: .034, z: -.475, ...dm }));
   { const t = thing({ id: 'radio', label: '♫ play some Nujabes', action: 'radio', anchor: V3(-.36, .135, -.46) });
-    const r = new THREE.Group(); r.position.set(-.36, top, -.46); t.group.add(r); t.body = r; t.rest = top; t.groove = 0;
+    const r = new THREE.Group(); r.position.set(-.36, top, -.46); t.group.add(r);
     r.add(t.bez(.07, .04, .036, { y: .02 }));
     for (let i = 0; i < 7; i++) r.add(t.box(.0018, .026, .002, { x: -.027 + i * .005, y: .02, z: .0185 }));   // speaker grille
     r.add(t.pick(cyl(.007, .004, { x: .022, y: .025, z: .019, rx: Math.PI / 2, mat: t.mat, edge: t.edge })), t.box(.002, .006, .001, { x: .022, y: .028, z: .0215 }));   // tuning knob + pointer
@@ -609,8 +609,8 @@ const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML
 ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
 let ctlHover = false, ctlFocus = false, ctlSeen = -1e9;
 ctl.addEventListener('pointerenter', () => { ctlHover = true; }); ctl.addEventListener('pointerleave', () => { ctlHover = false; });
-ctl.addEventListener('focusin', () => { ctlFocus = true; if (state === 'room') { glanceAt(byId.radio); setHover(byId.radio); } });
-ctl.addEventListener('focusout', e => { if (ctl.contains(e.relatedTarget)) return; ctlFocus = false; glance.yaw = glance.pitch = 0; setHover(null); });
+ctl.addEventListener('focusin', () => { ctlFocus = true; });   // keeps the bar up while a button has focus; the camera stays put
+ctl.addEventListener('focusout', e => { if (!ctl.contains(e.relatedTarget)) ctlFocus = false; });
 radio.on(st => {
   const title = radio.title() || 'Nujabes', b = $('#srnav [data-thing=radio]'), tip = st === 'loading' ? 'tuning…' : '♪ ' + title;
   for (const x of $$('button', ctl)) { x.title = tip; x.tabIndex = st === 'off' ? -1 : 0; }
@@ -682,7 +682,6 @@ function frame(now) {
   byId.linkedin.wheel.rotation.x -= .07 * byId.linkedin.hover;
   byId.work.surface.el.classList.toggle('awake', hovered === byId.work);
   byId.radio.led.material.emissiveIntensity += ((radio.playing ? 1.2 : 0) - byId.radio.led.material.emissiveIntensity) * .1;
-  { const r = byId.radio; r.groove += ((radio.playing ? 1 : 0) - r.groove) * .04; const tt = now / 1000; r.body.rotation.z = .045 * Math.sin(tt * Math.PI * 1.6) * r.groove; r.body.position.y = r.rest + .0035 * Math.abs(Math.sin(tt * Math.PI * 1.6)) * r.groove; r.body.scale.y = 1 + .025 * Math.abs(Math.sin(tt * Math.PI * 1.6 + .4)) * r.groove; }
   applyTheme(themeT);
   camera.getWorldDirection(fwd);
   for (const s of surfaces) {
