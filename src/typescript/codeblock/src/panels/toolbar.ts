@@ -303,6 +303,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     } satisfies ToolbarHost);
 
     const dom = core.dom;
+    if (view.state.facet(CodeblockFacet).toolbarLayout === 'compact') dom.classList.add('cm-toolbar-compact');   // icon column hugs the text (see CodeblockConfig.toolbarLayout)
 
     // --- LSP log button ---
     const lspLogBtn = document.createElement("button");

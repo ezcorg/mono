@@ -92,6 +92,10 @@ export type CodeblockConfig = {
     filepath?: string;
     content?: string;
     toolbar?: boolean;
+    /** How the toolbar lays out its icon column. `gutter` (default) sizes the search glyph and the result icons to the
+     *  editor's line-number gutter so they line up with the code (the look inside the markdown-editor); `compact` keeps
+     *  them tight to the text, for a toolbar hosted away from the editor — a window's title bar, say. */
+    toolbarLayout?: 'gutter' | 'compact';
     index?: SearchIndex;
     language?: ExtensionOrLanguage;
     dark?: boolean;
@@ -206,7 +210,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, settings, typescript, jswasi, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, index, dark, settings, typescript, jswasi, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -219,7 +223,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript, jswasi })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         languageSupportCompartment.of([]),
@@ -723,10 +727,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark, settings, typescript, jswasi }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, index, dark, settings, typescript, jswasi }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript, jswasi })]
     });
     const view = new EditorView({ state, parent });
     return view;

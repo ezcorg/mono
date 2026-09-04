@@ -269,9 +269,12 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         toolbarSlot = make('ezco-mde-toolbar-slot')
         const content = make('ezco-mde-content')
         navHost = make('ezco-mde-nav')
-        gutter = make('ezco-mde-gutter')
+        // The gutter exists only to hold the block-action indicator: with block
+        // actions off there is nothing to hold, so the column isn't built at all
+        // (a built one keeps its 48px even when empty).
+        if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
         bodyHost = make('ezco-mde-body-host')
-        content.append(navHost, gutter, bodyHost)
+        content.append(...[navHost, gutter, bodyHost].filter((el): el is HTMLElement => !!el))
         wrapper.append(toolbarSlot, content)
         userEl.appendChild(wrapper)
     }

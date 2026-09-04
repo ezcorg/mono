@@ -102,6 +102,17 @@ export const codeblockTheme = EditorView.theme({
         minWidth: 'var(--cm-icon-col-width, 2ch)',
         transition: 'opacity 0.15s ease',
     },
+    // The compact layout (CodeblockConfig.toolbarLayout) inside the editor too, for a toolbar that stays in its panel.
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon-container, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container': {
+        width: 'auto',
+        minWidth: '0',
+    },
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
+        width: 'auto',
+        minWidth: '0',
+        paddingRight: '1ch',
+        textAlign: 'left',
+    },
     '&': {
         fontSize: FS,
     },

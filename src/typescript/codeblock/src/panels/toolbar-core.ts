@@ -315,6 +315,18 @@ const toolbarStyleModule = new StyleModule({
         minWidth: 'var(--cm-icon-col-width, 2em)',
         transition: 'opacity 0.15s ease',
     },
+    // `cm-toolbar-compact` (CodeblockConfig.toolbarLayout: 'compact'): the icon column hugs the text instead of
+    // matching the editor's gutter — for a toolbar hosted away from the editor.
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon-container, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container': {
+        width: 'auto',
+        minWidth: '0',
+    },
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
+        width: 'auto',
+        minWidth: '0',
+        paddingRight: '1ch',
+        textAlign: 'left',
+    },
     '.cm-search-results': {
         position: 'absolute',
         top: '100%',
