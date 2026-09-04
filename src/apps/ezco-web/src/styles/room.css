@@ -40,6 +40,7 @@ body.preload .room *{transition:none!important}
 .prompts{position:fixed;left:0;right:0;bottom:clamp(1rem,3vh,1.75rem);z-index:3;display:flex;justify-content:center;gap:.4rem 1.4rem;flex-wrap:wrap;padding:0 1rem;pointer-events:none;font:400 13px/1 var(--sans);letter-spacing:.03em;color:var(--fg);text-shadow:0 0 10px var(--bg),0 0 3px var(--bg)}
 .prompts span{display:inline-flex;align-items:center;gap:.5em;white-space:nowrap}
 .prompts i{font-style:normal;opacity:.5;margin:0 .15em}
+.prompts .ic{width:1.15em;height:1.15em;vertical-align:-.25em}
 .prompts kbd{font:500 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--fg);background:var(--bg);border:1px solid var(--fg);padding:.35em .5em;border-radius:2px;min-width:1.7em;text-align:center;text-shadow:none}
 .prompts .btn{pointer-events:auto;cursor:pointer}
 .prompts .btn:hover kbd,.prompts .btn.on kbd{background:var(--fg);color:var(--bg)}

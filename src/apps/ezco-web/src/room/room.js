@@ -177,7 +177,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* light switch on the left wall, by the door → day / night */
 {
-  const t = thing({ id: 'lights', label: '◐', action: 'lights', anchor: V3(-.487, .078, .36) });
+  const t = thing({ id: 'lights', label: 'lights: auto', action: 'lights', anchor: V3(-.487, .078, .36) });
   t.group.add(t.bez(.008, .06, .06, { x: -.492, y: .02, z: .36 }));
   for (const a of [.95, 0, -.95]) t.group.add(t.box(.002, .007, .002, { x: -.4875, y: .02 + Math.cos(a) * .025, z: .36 + Math.sin(a) * .025, rx: -a }));   // night · auto · day
   t.knob = new THREE.Group(); t.knob.position.set(-.487, .02, .36); t.group.add(t.knob);
@@ -490,12 +490,19 @@ function toggleLabels() { showLabels = !showLabels; prompts(); }
 const prefersDark = matchMedia('(prefers-color-scheme: dark)');
 const lights = { mode: 'auto' };
 try { localStorage.removeItem('ezco-lit'); const m = localStorage.getItem('ezco-lights'); if (['auto', 'day', 'night'].includes(m)) lights.mode = m; } catch {}
-const DIAL = { night: .95, auto: 0, day: -.95 }, LIGHT_ICON = { auto: '◐', day: '☀\uFE0E', night: '☾' };   // knob angle: night at eleven, auto at noon, day at one
+const DIAL = { night: .95, auto: 0, day: -.95 };
+/* the three settings as inline SVG (a text sun renders as a star in Safari's fallback font) */
+const svg = inner => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
+const LIGHT_ICON = {
+  day: svg('<circle cx="12" cy="12" r="4" fill="currentColor"/>' + [0, 45, 90, 135, 180, 225, 270, 315].map(a => { const r = a * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r); return `<line x1="${(12 + 6.8 * c).toFixed(2)}" y1="${(12 + 6.8 * sn).toFixed(2)}" x2="${(12 + 9.6 * c).toFixed(2)}" y2="${(12 + 9.6 * sn).toFixed(2)}" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`; }).join('')),
+  night: svg('<path d="M14.8 3.2a8.8 8.8 0 1 0 6 15.6 7.4 7.4 0 0 1-6-15.6z" fill="currentColor"/>'),
+  auto: svg('<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.6a8.4 8.4 0 0 0 0 16.8z" fill="currentColor"/>'),
+};   // knob angle: night at eleven, auto at noon, day at one
 function setLights(mode, instant) {
   lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}
   const on = mode === 'auto' ? !prefersDark.matches : mode === 'day';
   document.documentElement.classList.toggle('lit', on); themeTarget = on ? 1 : 0;
-  const t = byId.lights; t.label = LIGHT_ICON[mode]; if (t.lbl) { t.lbl.textContent = t.label; t.lbl.title = `lights: ${mode}`; } $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
+  const t = byId.lights; t.label = `lights: ${mode}`; if (t.lbl) { t.lbl.innerHTML = LIGHT_ICON[mode]; t.lbl.title = t.label; } $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
   if (instant) t.knob.rotation.x = DIAL[mode]; else tween({ from: t.knob.rotation.x, to: DIAL[mode], dur: 220, update: v => { t.knob.rotation.x = v; } });
   refreshLamps(); prompts();
 }
