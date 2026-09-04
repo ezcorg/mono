@@ -612,7 +612,8 @@ for (const t of things) if (t.id) setInteractive(t, false);
 /* the radio: audio only, from a hidden player behind the wall */
 /* once the radio has been touched, a ⏮ ⏸ ⏭ bar stands where its label was and stays as long as the radio is on;
    the track name lives in the buttons' tooltips and the screen-reader text */
-const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track">⏮\uFE0E</button><button data-act="toggle" aria-label="pause">⏸\uFE0E</button><button data-act="next" aria-label="next track">⏭\uFE0E</button>'; labelsEl.appendChild(ctl);
+const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track" tabindex="-1">⏮\uFE0E</button><button data-act="toggle" aria-label="pause" tabindex="-1">⏸\uFE0E</button><button data-act="next" aria-label="next track" tabindex="-1">⏭\uFE0E</button>';
+root.appendChild(ctl);   // after the accessible page list, so once the radio is on, Tab reaches ⏮ ⏸ ⏭ right after "play the radio"; until then they're out of the tab order
 ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
 let ctlHover = false, ctlFocus = false, ctlSeen = -1e9;
 ctl.addEventListener('pointerenter', () => { ctlHover = true; }); ctl.addEventListener('pointerleave', () => { ctlHover = false; });

@@ -33,7 +33,7 @@ body.preload .room *{transition:none!important}
 .lbl.ext::after{content:' ↗'}
 .lbl:hover{background:var(--fg);color:var(--bg)}
 .lbl .ic{width:1.15em;height:1.15em;vertical-align:-.22em}
-.ctl{position:absolute;left:0;top:0;translate:-50% -100%;margin-top:.4em;display:flex;gap:.3em;opacity:0;pointer-events:none;transition:opacity .2s,margin .2s}
+.ctl{position:fixed;left:0;top:0;z-index:2;translate:-50% -100%;margin-top:.4em;display:flex;gap:.3em;opacity:0;pointer-events:none;transition:opacity .2s,margin .2s}
 .ctl.on{opacity:1;pointer-events:auto;margin-top:0}
 .ctl button{font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.55em .7em;border-radius:0;cursor:pointer}
 .ctl button:hover,.ctl button:focus-visible{background:var(--fg);color:var(--bg);outline:0}
