@@ -266,7 +266,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
   const t = thing({ id: 'newproject', label: 'start a project', anchor: V3(-.46, .34, -.04) });
   t.group.add(t.bez(.014, .4, .52, { x: -.492, y: .12, z: -.04 }));
   t.surface = surface(t, { cls: 'board', html: tpl('kanban'), w: .5, h: .38, x: -.484, y: .12, z: -.04, ry: Math.PI / 2 });
-  t.fit = p => p ? { c: V3(-.484, .12, .1), n: V3(1, 0, 0), w: .19, h: .33, max: 440 } : { c: V3(-.484, .12, -.04), n: V3(1, 0, 0), w: .5, h: .38, max: 1100 };
+  t.fit = p => p ? { c: V3(-.484, .12, .1), n: V3(1, 0, 0), w: .19, h: .33, max: 440, maxD: .93 } : { c: V3(-.484, .12, -.04), n: V3(1, 0, 0), w: .5, h: .38, max: 1100, maxD: .93 };
 }
 
 /* whiteboard on the right wall → draw on it (strokes live in localStorage; it's a chalkboard by night) */
@@ -285,7 +285,7 @@ function drawBoard(ctx, W, H) {
   t.group.add(cyl(.006, .1, { x: .478, y: -.092, z: .13, rx: Math.PI / 2, ...dz }), box(.04, .022, .06, { x: .478, y: -.088, z: .02, ...dm }));
   t.tex = canvasTex(wb.W, wb.H, drawBoard); t.textures = [t.tex];
   t.plane = new THREE.Mesh(new THREE.PlaneGeometry(.52, .4), new THREE.MeshBasicMaterial({ map: t.tex })); t.plane.position.set(.484, .12, .1); t.plane.rotation.y = -Math.PI / 2; t.group.add(t.pick(t.plane));
-  t.fit = () => ({ c: V3(.484, .12, .1), n: V3(-1, 0, 0), w: .52, h: .4, max: 1000 });
+  t.fit = () => ({ c: V3(.484, .12, .1), n: V3(-1, 0, 0), w: .52, h: .4, max: 1000, maxD: .93 });
   t.clear = () => { wb.strokes = []; t.tex.redraw(); wb.save(); };
 }
 
@@ -395,12 +395,14 @@ const heldTilt = new THREE.Quaternion().setFromAxisAngle(V3(1, 0, 0), -.62);
   t.group.add(t.bez(.21, .3, .012), t.box(.06, .025, .02, { y: .14, z: .006 })); t.group.traverse(m => { m.castShadow = false; });   // it rides in front of the camera; a shadow from it would keep the shadow maps busy every frame
   t.surface = surface(t, { cls: 'sheet', html: tpl('sheet'), w: .17, h: .24, x: 0, y: -.012, z: .0065 });
   t.fit = () => ({ c: V3(0, -.012, .0065).applyQuaternion(t.group.quaternion).add(t.group.position), n: V3(0, 0, 1).applyQuaternion(t.group.quaternion), w: .17, h: .24, max: 560 });
-  t.present = on => { t.forceUp = on; t.frozen = on; };
+  /* opened, the clipboard is placed where looking down from the room's pose puts it, then held still while the camera comes to it —
+     opened from a link it used to freeze wherever it was, under the floor or behind the wall */
+  t.present = on => { t.forceUp = on; t.frozen = false; if (on) { const p = POSE.room(), keep = cam.pos.clone(); camera.position.copy(p.pos).multiplyScalar(K); camera.lookAt(tmp.copy(p.target).multiplyScalar(K)); camera.rotateX(-22 * D2R); camera.updateMatrixWorld(); cam.pos.copy(p.pos); t.up = 1; updateHeld(); cam.pos.copy(keep); } t.frozen = on; };
 }
 function updateHeld() {
   const t = byId.join; if (t.frozen) return;
   const target = t.forceUp ? 1 : (state === 'room' ? clamp((-look.pitch - 11) / 8, 0, 1) : 0);
-  t.up += (target - t.up) * .12;
+  t.up += (target - t.up) * lerpK(.12);
   t.group.position.set(0, -.6 + .35 * t.up, -.46).applyQuaternion(camera.quaternion).add(cam.pos);
   t.group.quaternion.copy(camera.quaternion).multiply(heldTilt);
   t.anchor.copy(t.group.position).addScaledVector(V3(0, 1, 0).applyQuaternion(t.group.quaternion), .17);
@@ -425,14 +427,24 @@ const POSE = {
 function fitPose(spec) {
   const W = innerWidth, H = innerHeight, aspect = W / H, tanV = Math.tan(camera.fov * D2R / 2), fit = .86;
   const wantPx = Math.min(W * fit, spec.max || 1e9);
-  const d = Math.max(spec.w * W / (2 * tanV * aspect * wantPx), spec.h / (2 * tanV * fit));
+  let d = Math.max(spec.w * W / (2 * tanV * aspect * wantPx), spec.h / (2 * tanV * fit));
+  if (spec.maxD) d = Math.min(d, spec.maxD);   // never behind the far wall: fitting a wide board into a portrait viewport would put the camera outside the room
   const px = spec.w * W / (2 * d * tanV * aspect);
   return { pos: spec.c.clone().addScaledVector(spec.n, d), target: spec.c.clone(), d, px };
 }
 function layoutSurfaces() { for (const t of things) if (t.fit && t.surface) { const spec = t.fit(isPortrait()), f = fitPose(spec); t.surface.setW(f.px * t.surface.w / spec.w); } }
 const look = { yaw: 0, pitch: 0 }, drag = { yaw: 0, pitch: 0 }, glance = { yaw: 0, pitch: 0 }, par = { x: 0, y: 0 };
 let parT = { x: 0, y: 0 };
-const limits = () => state === 'page' ? { yaw: 6, lo: -4, hi: 4 } : { yaw: 50, lo: -22, hi: 14 };
+let pageLim = { yaw: 6, lo: -4, hi: 4 };
+const limits = () => state === 'page' ? pageLim : { yaw: 50, lo: -22, hi: 14 };
+/* how far you may look around in a page: enough to bring every edge of the thing's whole area (its landscape fit) to the centre, so a
+   portrait crop can still be panned to the rest of a board or the other frame on the wall — and never less than a little */
+function limitsFor(t) {
+  const P = fitPose(t.fit(isPortrait())).pos, full = t.fit(false), n = full.n.clone().normalize(), u = Y.clone().cross(n).normalize(), back = n.clone().negate();
+  let yaw = 6, pitch = 4;
+  for (const [sx, sy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) { const E = full.c.clone().addScaledVector(u, sx * full.w / 2).addScaledVector(Y, sy * full.h / 2).sub(P), ahead = E.dot(back); if (sx) yaw = Math.max(yaw, Math.abs(Math.atan2(E.dot(u), ahead)) / D2R + 2); else pitch = Math.max(pitch, Math.abs(Math.atan2(E.dot(Y), ahead)) / D2R + 2); }
+  return { yaw: Math.min(yaw, 60), lo: -Math.min(pitch, 40), hi: Math.min(pitch, 40) };
+}
 /* bake the current look offset into the camera pose, so the look can reset to 0 without a jump and tweens start from what you actually see */
 function absorbLook() { const d = cam.target.distanceTo(cam.pos); camera.getWorldDirection(fwd); cam.target.copy(cam.pos).addScaledVector(fwd, d); look.yaw = look.pitch = 0; drag.yaw = drag.pitch = glance.yaw = glance.pitch = 0; }
 
@@ -457,7 +469,7 @@ async function leaveRoom() {
   await poseTo(POSE.logo(), 1000);
   busy = false; setState('logo');
 }
-function present(t, on, instant) { t.active = on; t.surface?.el.classList.toggle('active', on); setInteractive(t, on); t.present?.(on, instant); if (!on) t.onClose?.(); if (on && t.id === 'newproject') armForms(); }
+function present(t, on, instant) { t.active = on; t.surface?.el.classList.toggle('active', on); setInteractive(t, on); t.present?.(on, instant); if (!on) t.onClose?.(); if (on) { pageLim = limitsFor(t); t.scrollEls?.forEach(more); } if (on && t.id === 'newproject') armForms(); }
 async function openPage(t, sub) {
   if (!t || t.action || t.href) return;
   if (state === 'logo' || state === 'entering') { await enterRoom(); if (state !== 'room') return; }
@@ -605,7 +617,7 @@ addEventListener('keydown', e => {
   if ((e.key === 'l' || e.key === 'L') && state !== 'logo') { cycleLights(); return; }
   if (['?', '/', 'i', 'I'].includes(e.key) && state === 'room') { toggleLabels(); return; }
   if ((e.key === 'c' || e.key === 'C') && state === 'page' && active?.id === 'whiteboard') { byId.whiteboard.clear(); return; }
-  if (state === 'room') { if (e.key === 'ArrowLeft') drag.yaw += 12; if (e.key === 'ArrowRight') drag.yaw -= 12; if (e.key === 'ArrowUp') drag.pitch += 8; if (e.key === 'ArrowDown') drag.pitch -= 8; }
+  if (state === 'room' || state === 'page') { if (e.key === 'ArrowLeft') drag.yaw += 12; if (e.key === 'ArrowRight') drag.yaw -= 12; if (e.key === 'ArrowUp') drag.pitch += 8; if (e.key === 'ArrowDown') drag.pitch -= 8; }
 });
 addEventListener('wheel', e => { if (state === 'logo' && e.deltaY > 20) go('#/room'); }, { passive: true });
 $$('#srnav [data-thing]').forEach(a => {
@@ -615,14 +627,18 @@ $$('#srnav [data-thing]').forEach(a => {
   if (a.tagName === 'BUTTON') a.addEventListener('click', () => activate(t));
 });
 function glanceAt(t) { const d = t.anchor.clone().sub(cam.pos); glance.yaw = clamp(-Math.atan2(d.x, -d.z) / D2R * .7, -32, 32); glance.pitch = clamp(Math.atan2(d.y, Math.hypot(d.x, d.z)) / D2R * .6, -14, 14); }
-/* hand-rolled scrolling for the clipped page surfaces */
-for (const el of surfaces.flatMap(s => $$('.scroller', s.el))) {
+/* hand-rolled scrolling for the clipped page surfaces (`.scroller` fills its root, `.scroll` is an in-flow column); `.more` fades the bottom while there's more below */
+const more = el => el.classList.toggle('more', el.scrollHeight - el.clientHeight - el.scrollTop > 4);
+for (const s of surfaces) s.thing.scrollEls = $$('.scroller, .scroll', s.el);
+for (const el of surfaces.flatMap(s => s.thing.scrollEls)) {
   el.tabIndex = 0;
-  const by = d => { el.scrollTop = clamp(el.scrollTop + d, 0, el.scrollHeight - el.clientHeight); };
+  const by = d => { el.scrollTop = clamp(el.scrollTop + d, 0, el.scrollHeight - el.clientHeight); more(el); };
   el.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); by(e.deltaY); }, { passive: false });
-  let ty = null; el.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') ty = e.clientY; });
-  el.addEventListener('pointermove', e => { if (ty !== null && e.pointerType === 'touch') { by(ty - e.clientY); ty = e.clientY; e.stopPropagation(); } });
-  el.addEventListener('pointerup', () => { ty = null; }); el.addEventListener('pointercancel', () => { ty = null; });
+  /* a finger drag scrolls: touch events, not pointer events — a drag that starts on a textarea gets its pointer events cancelled once the
+     browser claims the gesture for the textarea's own scrolling, while touchmove keeps arriving */
+  let ty = null; el.addEventListener('touchstart', e => { ty = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener('touchmove', e => { if (ty === null) return; by(ty - e.touches[0].clientY); ty = e.touches[0].clientY; e.preventDefault(); e.stopPropagation(); }, { passive: false });
+  el.addEventListener('touchend', () => { ty = null; }); el.addEventListener('touchcancel', () => { ty = null; });
   el.addEventListener('keydown', e => { if (e.target.matches('input,textarea,select')) return; const h = el.clientHeight, d = { ArrowDown: 40, ArrowUp: -40, PageDown: h * .9, PageUp: -h * .9, ' ': h * .9, End: 1e6, Home: -1e6 }[e.key]; if (d !== undefined) { e.preventDefault(); e.stopPropagation(); by(d); } });
 }
 for (const t of things) if (t.id) setInteractive(t, false);
@@ -700,36 +716,41 @@ q('#join-form').addEventListener('submit', e => { e.preventDefault(); e.target.c
 
 /* ------------------------------------------------------------------ frame loop */
 const fwd = V3(), tmp = V3(), nrm = V3(), toCam = V3(), wp = V3(), qt = new THREE.Quaternion(), occluders = [shell, door];
-let firstFrame = true, frames = 0;
+let firstFrame = true, frames = 0, frameF = 1, lastFrame = 0;
+/* the follow-lerps below were tuned frame by frame in a 120 Hz browser; Safari (and any 60 Hz screen) gets half the frames, so each
+   step covers the time that actually passed — the room feels the same at every refresh rate instead of twice as slow at 60 */
+const lerpK = r => 1 - Math.pow(1 - r, frameF);
 function frame(now) {
   if (disposed) return;
   requestAnimationFrame(frame); const tFrame = performance.now();
+  frameF = lastFrame ? Math.min(now - lastFrame, 50) / 8.33 : 1; lastFrame = now;
   if (firstFrame) { firstFrame = false; $('#loading').classList.add('off'); setTimeout(() => body.classList.remove('preload'), 400); }
   runTweens(now);
   interior.visible = !(state === 'logo' && doorGroup.rotation.y > -.01);
   gl.shadowMap.needsUpdate = frames++ < 3 || tweens.length > 0 || byId.linkedin.hover > .002;   // the door, the tablet, the dial and the rolodex are the only casters that move
   if (camTween) { const k = clamp((now - camTween.start) / camTween.dur, 0, 1), e = easeInOut(k); cam.pos.lerpVectors(camTween.p0, camTween.p1, e); cam.target.lerpVectors(camTween.t0, camTween.t1, e); if (k >= 1) { const r = camTween.res; camTween = null; r(); } }
   if (benchPan) parT = { x: Math.cos(now / 600), y: Math.sin(now / 600) * .6 };   // the bench pans for you
-  par.x += (parT.x - par.x) * .06; par.y += (parT.y - par.y) * .06;
-  if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos, .08);
-  logoT += ((logoHot ? 1 : 0) - logoT) * .12; if (logoT < .002) logoT = 0;
+  par.x += (parT.x - par.x) * lerpK(.06); par.y += (parT.y - par.y) * lerpK(.06);
+  if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos, lerpK(.08));
+  logoT += ((logoHot ? 1 : 0) - logoT) * lerpK(.12); if (logoT < .002) logoT = 0;
   { const u = 1 - logoT; slide.ez.constant = -(-.488 + u * .976) * K; slide.co.constant = (.5 - u) * K; ezInv.visible = coInv.visible = ezInvM.visible = coInvM.visible = logoT > 0; }
   const lim = limits(), k = state === 'room' ? [4, 2.5] : state === 'page' && !focusLock ? [1.2, .8] : [0, 0];
   const inside = state === 'room' || state === 'page';
   const tYaw = inside ? clamp(drag.yaw, -lim.yaw, lim.yaw) + glance.yaw - par.x * k[0] : 0, tPitch = inside ? clamp(drag.pitch, lim.lo, lim.hi) + glance.pitch - par.y * k[1] : 0;
-  look.yaw += (tYaw - look.yaw) * .1; look.pitch += (tPitch - look.pitch) * .1;
+  look.yaw += (tYaw - look.yaw) * lerpK(.1); look.pitch += (tPitch - look.pitch) * lerpK(.1);
   camera.position.copy(cam.pos).multiplyScalar(K); camera.lookAt(tmp.copy(cam.target).multiplyScalar(K));
   camera.rotateOnWorldAxis(Y, look.yaw * D2R); camera.rotateX(look.pitch * D2R); camera.updateMatrixWorld();
   updateHeld(); byId.join.group.updateMatrixWorld();
   /* the lerps below settle exactly (snapping once close), so applyTheme — a pass over every material — runs only while a transition is on */
   let restyle = frames < 4;
-  const settle = (o, k, goal, rate) => { if (Math.abs(goal - o[k]) < .003) { if (o[k] !== goal) { o[k] = goal; restyle = true; } } else { o[k] += (goal - o[k]) * rate; restyle = true; } };
+  const settle = (o, k, goal, rate) => { if (Math.abs(goal - o[k]) < .003) { if (o[k] !== goal) { o[k] = goal; restyle = true; } } else { o[k] += (goal - o[k]) * lerpK(rate); restyle = true; } };
   { const th = { t: themeT }; settle(th, 't', themeTarget, .08); themeT = th.t; }
   for (const t of things) if (t.id) settle(t, 'hover', (hovered === t && !t.active) ? 1 : 0, .18);
   for (const l of lamps) settle(l, 'lit', lampOn(l) ? 1 : 0, .1);
-  byId.linkedin.wheel.rotation.x -= .07 * byId.linkedin.hover;
+  byId.linkedin.wheel.rotation.x -= .07 * byId.linkedin.hover * frameF;
   byId.work.surface.el.classList.toggle('awake', hovered === byId.work);
-  byId.radio.led.material.emissiveIntensity += ((radio.playing ? 1.2 : 0) - byId.radio.led.material.emissiveIntensity) * .1;
+  byId.radio.led.material.emissiveIntensity += ((radio.playing ? 1.2 : 0) - byId.radio.led.material.emissiveIntensity) * lerpK(.1);
+  if (active && frames % 30 === 0) active.scrollEls?.forEach(more);   // content settles late (the captcha, images): keep the fade honest
   if (restyle) applyTheme(themeT);
   camera.getWorldDirection(fwd);
   for (const s of surfaces) {
@@ -777,7 +798,7 @@ if (BENCH_STEP >= 0 && BENCH_STEP < BENCH.length) (async () => {
 /* ------------------------------------------------------------------ sizing, boot */
 function resize() {
   const W = innerWidth, H = innerHeight; camera.aspect = W / H; camera.updateProjectionMatrix(); gl.setSize(W, H); css.setSize(W, H); layoutSurfaces();
-  if (active) setPose(fitPose(active.fit(isPortrait()))); else if (state === 'room') setPose(POSE.room()); else if (state === 'logo') setPose(POSE.logo());
+  if (active) { setPose(fitPose(active.fit(isPortrait()))); pageLim = limitsFor(active); } else if (state === 'room') setPose(POSE.room()); else if (state === 'logo') setPose(POSE.logo());
 }
 addEventListener('resize', resize);
 if (dbg.has('lit')) lights.mode = 'day'; if (dbg.has('dark')) lights.mode = 'night';

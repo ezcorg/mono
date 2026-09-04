@@ -16,8 +16,11 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
 | dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own (its label is a bulb, filled when lit) and remembers overrides until you put it back to the default |
 
-Keys: `↵` or scroll to come in · click · drag or arrows to look · `?` labels · `l` lights · `esc` back. In the OS, a bar
-chip brings a window up or minimises it; every control carries an explicit `tabindex` (Safari's Tab needs one).
+Keys: `↵` or scroll to come in · click · drag or arrows to look (in a page too) · `?` labels · `l` lights · `esc` back. In the
+OS, a bar chip brings a window up or minimises it; every control carries an explicit `tabindex` (Safari's Tab needs one).
+In a page you can look as far as the thing's whole area (`limitsFor`): a phone's portrait crop of the kanban or the gallery
+wall can be panned to the other columns or the other frame. Scroll areas (`.scroller`, in-flow `.scroll`) fade their bottom
+edge while there's more below; a finger drag scrolls them (`touch-action: none`, or the browser cancels the pointer events).
 
 ## Where things live
 
@@ -61,7 +64,16 @@ chip brings a window up or minimises it; every control carries an explicit `tabi
   placeholder that stays in the OS, and the camera holds still (`focusLock`) while one is open. Desktop icons only work
   once the laptop page is open; from afar a click on one just opens the laptop.
 - Camera tweens start from what you actually see: `absorbLook()` bakes the drag/parallax offset into the camera target
-  before a pose tween, so opening or closing a page never snaps back to the "ideal" angle first.
+  before a pose tween, so opening or closing a page never snaps back to the "ideal" angle first. A fit never puts the
+  camera behind the far wall (`maxD` on the whiteboard and kanban fits — a portrait viewport would otherwise stand outside
+  the room to fit a wide board). The clipboard, opened from a link, is first placed where looking down in the room puts
+  it, then held still while the camera comes to it.
+- Motion is in wall-clock terms: every follow-lerp goes through `lerpK(rate)`, which scales the per-frame rate to the
+  time that actually passed (reference 120 Hz, where the feel was tuned). Safari caps pages at 60 fps by default
+  ("Prefer Page Rendering Updates near 60fps" in Develop → Feature Flags) — before this, the room followed the pointer
+  half as fast there.
+- The laptop's lock-screen logo and the desktop's programs are sized to the screen (container units), so a phone gets
+  the same picture as a desk.
 - Remembered in localStorage: `ezco-lights` (auto/day/night), `ezco-lamps` (per-lamp overrides), `ezco-board` (strokes).
 - three.js loads behind the loading label (its own chunk); the label and the lock-screen logo animate with a clipped
   inverted copy rather than `mix-blend-mode`, which Safari rasterises badly inside 3D transforms. No web fonts are loaded
