@@ -21,19 +21,19 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 	<div class="hero-copy" id="hero"><p>your friendly neighborhood tech collective</p></div>
 	<div class="prompts" id="prompts"></div>
 	<nav class="sr-nav" id="srnav" aria-label="Pages">
-		<a href="#/work" data-thing="work">our work</a>
-		<a href="#/blog" data-thing="blog">blog</a>
-		<a href="#/newproject" data-thing="newproject">start a project</a>
-		<a href="#/about" data-thing="about">about us</a>
-		<a href="#/whiteboard" data-thing="whiteboard">whiteboard</a>
-		<a href={links.github} target="_blank" rel="noopener" data-thing="github">GitHub ↗</a>
-		<a href={links.linkedin} target="_blank" rel="noopener" data-thing="linkedin">LinkedIn ↗</a>
-		<a href="#/join" data-thing="join">come work with us</a>
-		<button type="button" data-thing="lights" id="srlights">switch to day</button>
-		<button type="button" data-thing="tripod">table lamp</button>
-		<button type="button" data-thing="lantern">paper lantern</button>
-		<button type="button" data-thing="pendant">pendant</button>
-		<button type="button" data-thing="radio">play the radio</button>
+		<a tabindex="0" href="#/work" data-thing="work">our work</a>
+		<a tabindex="0" href="#/blog" data-thing="blog">blog</a>
+		<a tabindex="0" href="#/newproject" data-thing="newproject">start a project</a>
+		<a tabindex="0" href="#/about" data-thing="about">about us</a>
+		<a tabindex="0" href="#/whiteboard" data-thing="whiteboard">whiteboard</a>
+		<a tabindex="0" href={links.github} target="_blank" rel="noopener" data-thing="github">GitHub ↗</a>
+		<a tabindex="0" href={links.linkedin} target="_blank" rel="noopener" data-thing="linkedin">LinkedIn ↗</a>
+		<a tabindex="0" href="#/join" data-thing="join">come work with us</a>
+		<button tabindex="0" type="button" data-thing="lights" id="srlights">switch to day</button>
+		<button tabindex="0" type="button" data-thing="tripod">table lamp</button>
+		<button tabindex="0" type="button" data-thing="lantern">paper lantern</button>
+		<button tabindex="0" type="button" data-thing="pendant">pendant</button>
+		<button tabindex="0" type="button" data-thing="radio">play the radio</button>
 	</nav>
 
 	<!-- no WebGL: the room needs a graphics card -->

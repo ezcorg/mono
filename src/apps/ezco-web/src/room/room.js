@@ -164,7 +164,8 @@ function surface(t, o) {
   }
   return s;
 }
-function setInteractive(t, on) { for (const s of surfaces.filter(s => s.thing === t)) for (const el of $$('a,button,input,select,textarea,[tabindex]', s.el)) { if (on) { if (el.dataset.ti !== undefined) { el.dataset.ti === '' ? el.removeAttribute('tabindex') : el.setAttribute('tabindex', el.dataset.ti); delete el.dataset.ti; } } else if (el.dataset.ti === undefined) { el.dataset.ti = el.getAttribute('tabindex') ?? ''; el.setAttribute('tabindex', '-1'); } } }
+/* page controls get an explicit tabindex="0" when enabled, not just the attribute removed: Safari's plain Tab skips links and buttons without one */
+function setInteractive(t, on) { for (const s of surfaces.filter(s => s.thing === t)) for (const el of $$('a,button,input,select,textarea,[tabindex]', s.el)) { if (on) { if (el.dataset.ti !== undefined) { el.setAttribute('tabindex', el.dataset.ti === '' ? '0' : el.dataset.ti); delete el.dataset.ti; } } else if (el.dataset.ti === undefined) { el.dataset.ti = el.getAttribute('tabindex') ?? ''; el.setAttribute('tabindex', '-1'); } } }
 const decor = thing({ id: '', label: '' });
 const dm = { mat: decor.mat, edge: decor.edge }, dz = { mat: decor.bezel, edge: decor.edge };
 const leafGeo = (w, h) => { const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.quadraticCurveTo(w, h * .45, 0, h); sh.quadraticCurveTo(-w, h * .45, 0, 0); return new THREE.ShapeGeometry(sh, 10); };
@@ -613,7 +614,7 @@ for (const t of things) if (t.id) setInteractive(t, false);
 /* once the radio has been touched, a ⏮ ⏸ ⏭ bar stands where its label was and stays as long as the radio is on;
    the track name lives in the buttons' tooltips and the screen-reader text */
 const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track" tabindex="-1">⏮\uFE0E</button><button data-act="toggle" aria-label="pause" tabindex="-1">⏸\uFE0E</button><button data-act="next" aria-label="next track" tabindex="-1">⏭\uFE0E</button>';
-root.appendChild(ctl);   // after the accessible page list, so once the radio is on, Tab reaches ⏮ ⏸ ⏭ right after "play the radio"; until then they're out of the tab order
+root.appendChild(ctl);   // after the accessible page list (every control in the room carries an explicit tabindex: Safari's plain Tab only visits form fields and elements that have one), so once the radio is on, Tab reaches ⏮ ⏸ ⏭ right after "play the radio"; until then they're out of the tab order
 ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
 let ctlHover = false, ctlFocus = false, ctlSeen = -1e9;
 ctl.addEventListener('pointerenter', () => { ctlHover = true; }); ctl.addEventListener('pointerleave', () => { ctlHover = false; });
