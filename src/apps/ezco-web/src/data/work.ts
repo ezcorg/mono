@@ -17,7 +17,7 @@ export const projects: Project[] = [
 		id: 'markdown-editor',
 		title: 'markdown-editor',
 		icon: '📝',
-		description: 'A Markdown editor component that feels minimal but has all the features you need.',
+		description: 'A minimal Markdown editor component that still has all the features you need.',
 		tags: ['TipTap', 'ProseMirror', 'TypeScript'],
 		demo: 'markdown-editor',
 		github: 'https://github.com/join-ezco/mono/tree/main/src/typescript/markdown-editor',

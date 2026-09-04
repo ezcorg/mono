@@ -75,7 +75,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 								<option value="other">Other</option>
 							</select></div>
 						<div><label for="os-budget">Budget <small style="opacity:.6">(optional)</small></label><div class="money"><span>$</span><input id="os-budget" type="number" name="budget" min={MIN_BUDGET} max="1000000000" step="1" placeholder={`${MIN_BUDGET} or more`}><i>USD</i></div></div>
-						<div><label for="os-msg">Message * <small style="opacity:.6">(a couple of sentences, at least 50 characters)</small></label><textarea id="os-msg" name="message" placeholder="What are you hoping to make? A couple of sentences is plenty." required minlength="50" maxlength="2000"></textarea></div>
+						<div><label for="os-msg">Message * <small style="opacity:.6">(at least 50 characters)</small></label><textarea id="os-msg" name="message" placeholder="In a few sentences, what are you hoping to build?" required minlength="50" maxlength="2000"></textarea></div>
 						<div class="cf-turnstile"></div>
 						<div class="err" role="alert"></div>
 						<button class="submit" type="submit">submit</button>
@@ -125,7 +125,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 							<option value="other">Other</option>
 						</select></div>
 					<div><label for="np-budget">Budget <small style="opacity:.6">(optional)</small></label><div class="money"><span>$</span><input id="np-budget" type="number" name="budget" min={MIN_BUDGET} max="1000000000" step="1" placeholder={`${MIN_BUDGET} or more`}><i>USD</i></div></div>
-					<div><label for="np-msg">Message * <small style="opacity:.6">(a couple of sentences, at least 50 characters)</small></label><textarea id="np-msg" name="message" placeholder="What are you hoping to make? A couple of sentences is plenty." required minlength="50" maxlength="2000"></textarea></div>
+					<div><label for="np-msg">Message * <small style="opacity:.6">(at least 50 characters)</small></label><textarea id="np-msg" name="message" placeholder="In a few sentences, what are you hoping to build?" required minlength="50" maxlength="2000"></textarea></div>
 					<div class="cf-turnstile"></div>
 					<div class="err" role="alert"></div>
 					<button class="submit" type="submit">submit</button>
