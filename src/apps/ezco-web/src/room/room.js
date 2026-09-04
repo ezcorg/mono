@@ -18,7 +18,7 @@ const D2R = Math.PI / 180, body = document.body;
 const reduced = matchMedia('(prefers-reduced-motion:reduce)').matches;
 const dbg = new URLSearchParams(import.meta.env.DEV ? location.search : '');
 const isPortrait = () => innerWidth < innerHeight;
-const EMPLOYEE_PHOTO = dbg.get('photo') || opts.photo || '/employee.jpg';   // grayscale'd onto the frame when it loads; a dog silhouette until then
+const EMPLOYEE_PHOTO = dbg.get('photo') || opts.photo || '/employee.jpg', FACE = .4;   // FACE: where along the photo's height the crop centres (0 top … 1 bottom)   // grayscale'd onto the frame when it loads; a dog silhouette until then
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const easeInOut = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -176,7 +176,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* light switch on the left wall, by the door → day / night */
 {
-  const t = thing({ id: 'lights', label: '◐', action: 'lights', anchor: V3(-.47, .085, .36) });
+  const t = thing({ id: 'lights', label: '◐ auto', action: 'lights', anchor: V3(-.47, .085, .36) });
   t.group.add(t.bez(.008, .06, .06, { x: -.492, y: .02, z: .36 }));
   for (const a of [.95, 0, -.95]) t.group.add(t.box(.002, .007, .002, { x: -.4875, y: .02 + Math.cos(a) * .025, z: .36 + Math.sin(a) * .025, rx: -a }));   // night · auto · day
   t.knob = new THREE.Group(); t.knob.position.set(-.487, .02, .36); t.group.add(t.knob);
@@ -210,10 +210,13 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 {
   const t = thing({ id: 'github', label: 'GitHub', href: $('#srnav [data-thing=github]').href, ext: true, anchor: V3(-.39, -.13, -.05) });
   const f = new THREE.Group(); f.position.set(-.41, -.21, -.07); f.rotation.y = .25; t.group.add(f);
-  f.add(t.box(.09, .003, .09, { y: .0015 }), t.bez(.028, .001, .036, { y: .0035, z: -.024 }), t.bez(.064, .0008, .034, { y: .0034, z: .022 }));   // disk, shutter, label
+  const diskGeo = (() => { const q = .045, c = .015, sh = new THREE.Shape(); sh.moveTo(-q, -q); sh.lineTo(q, -q); sh.lineTo(q, q - c); sh.lineTo(q - c, q); sh.lineTo(-q, q); sh.closePath(); return new THREE.ExtrudeGeometry(sh, { depth: .003, bevelEnabled: false }); })();
+  f.add(t.pick(mesh(diskGeo, { mat: t.mat, edge: t.edge, rx: -Math.PI / 2 })));                                                   // the disk, one corner cut like the save icon
+  f.add(t.bez(.048, .0012, .024, { y: .0036, z: -.03 }), t.box(.006, .0015, .014, { x: .013, y: .0037, z: -.032 }));            // metal shutter with its slot
+  f.add(t.bez(.064, .0008, .03, { y: .0034, z: .024 }), t.box(.026, .001, .0022, { x: .009, y: .004, z: .019 }), t.box(.032, .001, .0022, { x: .012, y: .004, z: .027 }));   // label with two lines of "writing"
   const GH = 'M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z';
   const mark = canvasTex(128, 128, (ctx, W) => { ctx.clearRect(0, 0, W, W); ctx.fillStyle = themeColors().fg; ctx.save(); ctx.scale(W / 24, W / 24); ctx.fill(new Path2D(GH)); ctx.restore(); }); t.textures = [mark];
-  const badge = new THREE.Mesh(new THREE.PlaneGeometry(.02, .02), new THREE.MeshBasicMaterial({ map: mark, transparent: true })); badge.rotation.x = -Math.PI / 2; badge.position.set(-.017, .0042, .022); f.add(badge);
+  const badge = new THREE.Mesh(new THREE.PlaneGeometry(.02, .02), new THREE.MeshBasicMaterial({ map: mark, transparent: true })); badge.rotation.x = -Math.PI / 2; badge.position.set(-.02, .0042, .024); f.add(badge);
   const u = new THREE.Group(); u.position.set(-.34, -.21, -.02); u.rotation.y = -.7; t.group.add(u);
   u.add(t.bez(.014, .006, .03, { y: .003 }), t.box(.011, .004, .012, { y: .003, z: .02 }));   // stick + connector
 }
@@ -222,7 +225,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 {
   const g = decor.group, top = .066;
   g.add(box(.3, .012, .06, { x: -.27, y: .06, z: -.47, ...dz }), box(.012, .04, .05, { x: -.4, y: .034, z: -.475, ...dm }), box(.012, .04, .05, { x: -.14, y: .034, z: -.475, ...dm }));
-  { const t = thing({ id: 'radio', label: 'play some Nujabes', action: 'radio', anchor: V3(-.37, .15, -.46) });
+  { const t = thing({ id: 'radio', label: '♫ play some Nujabes', action: 'radio', anchor: V3(-.37, .15, -.46) });
     const r = new THREE.Group(); r.position.set(-.36, top, -.46); t.group.add(r);
     r.add(t.bez(.07, .04, .036, { y: .02 }));
     for (let i = 0; i < 7; i++) r.add(t.box(.0018, .026, .002, { x: -.027 + i * .005, y: .02, z: .0185 }));   // speaker grille
@@ -273,16 +276,18 @@ function drawBoard(ctx, W, H) {
 {
   const t = thing({ id: 'about', label: 'about us', anchor: V3(.2, .42, -.48) });
   const g = t.group;
-  const photo = {};
+  const photo = { img: null, failed: false };
   const eotm = canvasTex(520, 640, (ctx, W, H) => {
     const { bg, fg } = themeColors(); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-    const px = 48, py = 44, pw = W - 2 * px, ph = H - 196;
+    const px = 48, py = 44, pw = W - 2 * px, ph = H - 224;
     ctx.strokeStyle = fg; ctx.lineWidth = 3; ctx.strokeRect(px - 7, py - 7, pw + 14, ph + 14);
-    if (photo.img) { const r = Math.max(pw / photo.img.width, ph / photo.img.height), sw = pw / r, sh = ph / r; ctx.drawImage(photo.img, (photo.img.width - sw) / 2, (photo.img.height - sh) / 2, sw, sh, px, py, pw, ph); }
-    else { ctx.fillStyle = fg; ctx.globalAlpha = .07; ctx.fillRect(px, py, pw, ph); ctx.globalAlpha = 1; drawDog(ctx, px + pw / 2, py + ph * .58, pw * .3, fg); }
-    const plY = py + ph + 46; ctx.fillStyle = fg; ctx.fillRect(px + 16, plY, pw - 32, 70); ctx.fillStyle = bg; ctx.font = '500 19px Inter, Helvetica, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.letterSpacing = '3px'; ctx.fillText('EMPLOYEE OF THE MONTH', W / 2 + 1, plY + 36);
+    if (photo.img) { const r = Math.max(pw / photo.img.width, ph / photo.img.height), sw = pw / r, sh = ph / r; ctx.drawImage(photo.img, (photo.img.width - sw) / 2, (photo.img.height - sh) * FACE, sw, sh, px, py, pw, ph); }
+    else { ctx.fillStyle = fg; ctx.globalAlpha = .07; ctx.fillRect(px, py, pw, ph); ctx.globalAlpha = 1; if (photo.failed) drawDog(ctx, px + pw / 2, py + ph * .58, pw * .3, fg); }   // blank while the photo loads: no flash
+    const plY = py + ph + 30; ctx.fillStyle = fg; ctx.fillRect(px + 16, plY, pw - 32, 100); ctx.fillStyle = bg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '700 36px Inter, Helvetica, sans-serif'; ctx.letterSpacing = '8px'; ctx.fillText('LADY', W / 2 + 4, plY + 38);
+    ctx.font = '500 15px Inter, Helvetica, sans-serif'; ctx.letterSpacing = '3px'; ctx.fillText('EMPLOYEE OF THE MONTH', W / 2 + 1, plY + 76);
   });
-  { const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const x = c.getContext('2d'); x.drawImage(im, 0, 0); const d = x.getImageData(0, 0, c.width, c.height), q = d.data; for (let i = 0; i < q.length; i += 4) q[i] = q[i + 1] = q[i + 2] = q[i] * .299 + q[i + 1] * .587 + q[i + 2] * .114; x.putImageData(d, 0, 0); photo.img = c; eotm.redraw(); }; im.src = EMPLOYEE_PHOTO; }
+  { const im = new Image(); im.onerror = () => { photo.failed = true; eotm.redraw(); }; im.onload = () => { const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const x = c.getContext('2d'); x.drawImage(im, 0, 0); const d = x.getImageData(0, 0, c.width, c.height), q = d.data; for (let i = 0; i < q.length; i += 4) q[i] = q[i + 1] = q[i + 2] = q[i] * .299 + q[i + 1] * .587 + q[i + 2] * .114; x.putImageData(d, 0, 0); photo.img = c; eotm.redraw(); }; im.src = EMPLOYEE_PHOTO; }
   g.add(t.bez(.2, .246, .015, { x: .11, y: .25, z: -.49 }));
   const ph = new THREE.Mesh(new THREE.PlaneGeometry(.18, .222), new THREE.MeshBasicMaterial({ map: eotm })); ph.position.set(.11, .25, -.481); g.add(t.pick(ph));
   t.textures = [eotm];
@@ -467,15 +472,17 @@ const activate = t => { if (!t) return; if (t.action === 'lights') cycleLights()
 const q = sel => document.querySelector(sel) || surfaces.map(s => s.el.querySelector(sel)).find(Boolean) || null;
 
 /* ------------------------------------------------------------------ prompts (the option bar) */
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const chip = (k, txt, act, on) => `<span${act ? ` class="btn${on ? ' on' : ''}" data-act="${act}"` : ''}>${[].concat(k).map(x => `<kbd>${x}</kbd>`).join('<i>/</i>')} ${txt}</span>`;
 function prompts() {
   const el = $('#prompts');
-  if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
-  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
-  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', 'close', '#/room');
+  const music = radio.state === 'off' ? '' : `<span class="np"><span class="title">♪ ${esc((radio.title() || 'Nujabes').slice(0, 40))}</span>${chip('⏮\uFE0E', '', 'radio:prev')}${chip(radio.playing ? '⏸\uFE0E' : '▶\uFE0E', '', 'radio:toggle')}${chip('⏭\uFE0E', '', 'radio:next')}</span>`;
+  if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room') + music;
+  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', lightsText(lights.mode), 'lights') + chip('esc', 'step outside', '#/') + music;
+  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', 'close', '#/room') + music;
   else el.innerHTML = '';
 }
-$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else go(a); });
+$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else if (a.startsWith('radio:')) radio[a.slice(6)](); else go(a); });
 function toggleLabels() { showLabels = !showLabels; prompts(); }
 
 /* ------------------------------------------------------------------ day / night */
@@ -483,12 +490,13 @@ function toggleLabels() { showLabels = !showLabels; prompts(); }
 const prefersDark = matchMedia('(prefers-color-scheme: dark)');
 const lights = { mode: 'auto' };
 try { localStorage.removeItem('ezco-lit'); const m = localStorage.getItem('ezco-lights'); if (['auto', 'day', 'night'].includes(m)) lights.mode = m; } catch {}
-const DIAL = { night: .95, auto: 0, day: -.95 }, LIGHT_ICON = { auto: '◐', day: '☀\uFE0E', night: '☾' };   // knob angle: night at eleven, auto at noon, day at one
+const DIAL = { night: .95, auto: 0, day: -.95 }, LIGHT_ICON = { auto: '◐', day: '☀\uFE0E', night: '☾' };
+const lightsText = mode => `${LIGHT_ICON[mode]} ${mode}`;   // knob angle: night at eleven, auto at noon, day at one
 function setLights(mode, instant) {
   lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}
   const on = mode === 'auto' ? !prefersDark.matches : mode === 'day';
   document.documentElement.classList.toggle('lit', on); themeTarget = on ? 1 : 0;
-  const t = byId.lights; t.label = LIGHT_ICON[mode]; if (t.lbl) { t.lbl.textContent = t.label; t.lbl.title = `lights: ${mode}`; } $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
+  const t = byId.lights; t.label = lightsText(mode); if (t.lbl) t.lbl.textContent = t.label; $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
   if (instant) t.knob.rotation.x = DIAL[mode]; else tween({ from: t.knob.rotation.x, to: DIAL[mode], dur: 220, update: v => { t.knob.rotation.x = v; } });
   refreshLamps(); prompts();
 }
@@ -500,7 +508,8 @@ function toggleLamp(l) {
   lampState[l.id] = l.override; try { localStorage.setItem('ezco-lamps', JSON.stringify(lampState)); } catch {}
   refreshLamps();
 }
-function refreshLamps() { for (const l of lamps) { l.label = (lampOn(l) ? 'turn off the ' : 'turn on the ') + l.name; if (l.lbl) l.lbl.textContent = l.label; const b = $(`#srnav [data-thing="${l.id}"]`); if (b) b.textContent = l.label; } }
+const BULB = on => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 21h5M10 18h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1.1 1.9V16h4.8v-.2c.1-.8.5-1.5 1.1-1.9A6 6 0 0 0 12 3z" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+function refreshLamps() { for (const l of lamps) { const on = lampOn(l); l.label = (on ? 'turn off the ' : 'turn on the ') + l.name; if (l.lbl) l.lbl.innerHTML = BULB(on) + l.label; const b = $(`#srnav [data-thing="${l.id}"]`); if (b) b.textContent = l.label; } }
 let themeDrawn = -1;
 function applyTheme(t) {
   const N = THEMES.night, D = THEMES.day, col = k => lerpC(C(N[k]), C(D[k]), t), num = k => N[k] + (D[k] - N[k]) * t;
@@ -594,7 +603,7 @@ for (const el of surfaces.flatMap(s => $$('.scroller', s.el))) {
 }
 for (const t of things) if (t.id) setInteractive(t, false);
 /* the radio: audio only, from a hidden player behind the wall */
-radio.on(st => { const t = byId.radio; t.label = st === 'playing' ? '♪ ' + (radio.title() || 'Nujabes') : st === 'loading' ? 'tuning…' : 'play some Nujabes'; if (t.lbl) t.lbl.textContent = t.label; const b = $('#srnav [data-thing=radio]'); if (b) b.textContent = st === 'playing' ? 'stop the radio' : 'play the radio'; });
+radio.on(st => { const t = byId.radio; t.label = st === 'playing' ? '♪ ' + ((radio.title() || 'Nujabes').replace(/^Nujabes\s*[-–]\s*/, '').slice(0, 34) + ((radio.title() || '').length > 34 ? '…' : '')) : st === 'loading' ? '♫ tuning…' : '♫ play some Nujabes'; if (t.lbl) t.lbl.textContent = t.label; const b = $('#srnav [data-thing=radio]'); if (b) b.textContent = st === 'playing' ? 'pause the radio' : 'play the radio'; prompts(); });
 /* the laptop's little OS: programs on a desktop, windows for the demos and the new-project dialog */
 let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = () => {};
 {

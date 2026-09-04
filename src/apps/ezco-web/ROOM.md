@@ -8,10 +8,10 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | laptop on the corner desk | our work — a lock screen (the logo bounces like the DVD one and lands in a corner every 104 s) until you hover, then a tiny desktop OS; each project is a program (codeblock and markdown-editor run for real, each in its own document framed in a window; witmproxy opens crates.io); "+ new project" opens the form as a dialog |
 | tablet on the coffee table | blog — every post from `src/content/blog`, newest first; `#/blog/<slug>` picks one |
 | kanban on the left wall | start a project — the "ideas" note is the form; "doing" and "done" come from `src/data` |
-| gallery wall | about — the employee of the month (`public/employee.jpg`, greyscaled; a dog silhouette until it exists) and the framed manifesto |
+| gallery wall | about — the employee of the month, Lady (`public/employee.jpg`, greyscaled; blank while it loads, a dog silhouette only if it fails) and the framed manifesto |
 | floppy + thumb drive on the desk | GitHub |
 | rolodex on the shelf | LinkedIn |
-| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; nothing loads until you switch it on) |
+| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; nothing loads until you switch it on); while it plays, the prompt bar shows the track with ⏮ ⏸ ⏭ |
 | whiteboard on the right wall | draw on it (strokes live in localStorage) |
 | clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
 | dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own and remembers overrides until you put it back to the default |

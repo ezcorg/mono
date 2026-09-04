@@ -7,6 +7,9 @@ let player = null, state = 'off', onChange = () => {};
 export const radio = {
 	on(fn) { onChange = fn; },
 	get playing() { return state === 'playing'; },
+	get state() { return state; },
+	next() { try { player?.nextVideo(); } catch {} },
+	prev() { try { player?.previousVideo(); } catch {} },
 	async toggle() {
 		if (state === 'loading') return;
 		if (!player) {
