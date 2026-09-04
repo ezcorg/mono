@@ -11,7 +11,7 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | gallery wall | about — the employee of the month, Lady (`public/employee.jpg`, greyscaled; blank while it loads, a dog silhouette only if it fails) and the framed manifesto |
 | floppy + thumb drive on the desk | GitHub |
 | rolodex on the shelf | LinkedIn |
-| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; nothing loads until you switch it on); once touched, its hover label is the ⏮ ⏸ ⏭ bar (the track name is in the buttons' tooltips) |
+| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; nothing loads until you switch it on); once touched, a ⏮ ⏸ ⏭ bar stands above it for as long as it's on (the track name is in the buttons' tooltips) |
 | whiteboard on the right wall | draw on it (strokes live in localStorage) |
 | clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
 | dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own (its label is a bulb, filled when lit) and remembers overrides until you put it back to the default |
