@@ -176,7 +176,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* light switch on the left wall, by the door → day / night */
 {
-  const t = thing({ id: 'lights', label: '◐ auto', action: 'lights', anchor: V3(-.47, .085, .36) });
+  const t = thing({ id: 'lights', label: '◐', action: 'lights', anchor: V3(-.47, .085, .36) });
   t.group.add(t.bez(.008, .06, .06, { x: -.492, y: .02, z: .36 }));
   for (const a of [.95, 0, -.95]) t.group.add(t.box(.002, .007, .002, { x: -.4875, y: .02 + Math.cos(a) * .025, z: .36 + Math.sin(a) * .025, rx: -a }));   // night · auto · day
   t.knob = new THREE.Group(); t.knob.position.set(-.487, .02, .36); t.group.add(t.knob);
@@ -188,8 +188,8 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 {
   const t = thing({ id: 'work', label: 'our work', anchor: V3(-.27, -.02, -.4) });
   const g = t.group;
-  g.add(t.box(.42, .02, .2, { x: -.29, y: -.22, z: -.4 }), t.box(.2, .02, .34, { x: -.4, y: -.22, z: -.13 }));
-  for (const [x, z] of [[-.11, -.31], [-.11, -.49], [-.31, .03], [-.48, .03], [-.48, -.49]]) g.add(t.box(.018, .27, .018, { x, y: -.365, z }));
+  decor.group.add(box(.42, .02, .2, { x: -.29, y: -.22, z: -.4, ...dm }), box(.2, .02, .34, { x: -.4, y: -.22, z: -.13, ...dm }));
+  for (const [x, z] of [[-.11, -.31], [-.11, -.49], [-.31, .03], [-.48, .03], [-.48, -.49]]) decor.group.add(box(.018, .27, .018, { x, y: -.365, z, ...dm }));
   const lap = new THREE.Group(); lap.position.set(-.27, -.21, -.39); g.add(lap);
   lap.add(t.bez(.2, .012, .14, { y: .006 }));
   const scr = new THREE.Group(); scr.position.set(0, .012, -.07); scr.rotation.x = -.2; lap.add(scr);
@@ -476,13 +476,12 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const chip = (k, txt, act, on) => `<span${act ? ` class="btn${on ? ' on' : ''}" data-act="${act}"` : ''}>${[].concat(k).map(x => `<kbd>${x}</kbd>`).join('<i>/</i>')} ${txt}</span>`;
 function prompts() {
   const el = $('#prompts');
-  const music = radio.state === 'off' ? '' : `<span class="np"><span class="title">♪ ${esc((radio.title() || 'Nujabes').slice(0, 40))}</span>${chip('⏮\uFE0E', '', 'radio:prev')}${chip(radio.playing ? '⏸\uFE0E' : '▶\uFE0E', '', 'radio:toggle')}${chip('⏭\uFE0E', '', 'radio:next')}</span>`;
-  if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room') + music;
-  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', lightsText(lights.mode), 'lights') + chip('esc', 'step outside', '#/') + music;
-  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', 'close', '#/room') + music;
+  if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
+  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', lightsText(lights.mode), 'lights') + chip('esc', 'step outside', '#/');
+  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', 'close', '#/room');
   else el.innerHTML = '';
 }
-$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else if (a.startsWith('radio:')) radio[a.slice(6)](); else go(a); });
+$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else go(a); });
 function toggleLabels() { showLabels = !showLabels; prompts(); }
 
 /* ------------------------------------------------------------------ day / night */
@@ -496,7 +495,7 @@ function setLights(mode, instant) {
   lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}
   const on = mode === 'auto' ? !prefersDark.matches : mode === 'day';
   document.documentElement.classList.toggle('lit', on); themeTarget = on ? 1 : 0;
-  const t = byId.lights; t.label = lightsText(mode); if (t.lbl) t.lbl.textContent = t.label; $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
+  const t = byId.lights; t.label = LIGHT_ICON[mode]; if (t.lbl) { t.lbl.textContent = t.label; t.lbl.title = `lights: ${mode}`; } $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
   if (instant) t.knob.rotation.x = DIAL[mode]; else tween({ from: t.knob.rotation.x, to: DIAL[mode], dur: 220, update: v => { t.knob.rotation.x = v; } });
   refreshLamps(); prompts();
 }
@@ -509,7 +508,7 @@ function toggleLamp(l) {
   refreshLamps();
 }
 const BULB = on => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 21h5M10 18h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1.1 1.9V16h4.8v-.2c.1-.8.5-1.5 1.1-1.9A6 6 0 0 0 12 3z" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
-function refreshLamps() { for (const l of lamps) { const on = lampOn(l); l.label = (on ? 'turn off the ' : 'turn on the ') + l.name; if (l.lbl) l.lbl.innerHTML = BULB(on) + l.label; const b = $(`#srnav [data-thing="${l.id}"]`); if (b) b.textContent = l.label; } }
+function refreshLamps() { for (const l of lamps) { const on = lampOn(l); l.label = (on ? 'turn off the ' : 'turn on the ') + l.name; if (l.lbl) { l.lbl.innerHTML = BULB(on); l.lbl.title = l.label; } const b = $(`#srnav [data-thing="${l.id}"]`); if (b) b.textContent = l.label; } }
 let themeDrawn = -1;
 function applyTheme(t) {
   const N = THEMES.night, D = THEMES.day, col = k => lerpC(C(N[k]), C(D[k]), t), num = k => N[k] + (D[k] - N[k]) * t;
@@ -532,6 +531,10 @@ for (const t of things) if (t.id) {
   const l = document.createElement('span'); l.className = 'lbl' + (t.action ? ' action' : '') + (t.ext ? ' ext' : ''); l.textContent = t.label; labelsEl.appendChild(l); t.lbl = l;
   l.addEventListener('click', () => { if (state === 'room') activate(t); }); l.addEventListener('pointerenter', () => setHover(t)); l.addEventListener('pointerleave', () => setHover(null));
 }
+const RADIO_CTL = V3(-.36, .052, -.44);
+const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track">⏮\uFE0E</button><button data-act="toggle" aria-label="pause">⏸\uFE0E</button><button data-act="next" aria-label="next track">⏭\uFE0E</button>'; labelsEl.appendChild(ctl);
+ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
+ctl.addEventListener('pointerenter', () => setHover(byId.radio)); ctl.addEventListener('pointerleave', () => setHover(null));
 let hovered = null;
 function setHover(t) { if (hovered === t) return; hovered = t; body.classList.toggle('hover', !!t && state === 'room'); }
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -555,7 +558,7 @@ addEventListener('pointermove', e => {
 }, { passive: true });
 /* drag to look from anywhere that isn't an open page's controls */
 addEventListener('pointerdown', e => {
-  if (state === 'logo' || focusLock || e.button > 0 || e.target.closest('.surface.active, a, button, input, select, textarea, label, .prompts, .sr-nav, .lbl')) return;
+  if (state === 'logo' || focusLock || e.button > 0 || e.target.closest('.surface.active, a, button, input, select, textarea, label, .prompts, .sr-nav, .lbl, .ctl')) return;
   if (state === 'page' && active?.id === 'whiteboard' && e.target === gl.domElement) { const uv = wbHit(e); if (uv) { wbDraw = { id: e.pointerId, stroke: [] }; wb.strokes.push(wbDraw.stroke); if (wb.strokes.length === 1) byId.whiteboard.tex.redraw(); wbAdd(uv); } return; }
   dragging = { x: e.clientX, y: e.clientY, yaw: drag.yaw, pitch: drag.pitch, id: e.pointerId }; dragMoved = false;
 });
@@ -603,7 +606,7 @@ for (const el of surfaces.flatMap(s => $$('.scroller', s.el))) {
 }
 for (const t of things) if (t.id) setInteractive(t, false);
 /* the radio: audio only, from a hidden player behind the wall */
-radio.on(st => { const t = byId.radio; t.label = st === 'playing' ? '♪ ' + ((radio.title() || 'Nujabes').replace(/^Nujabes\s*[-–]\s*/, '').slice(0, 34) + ((radio.title() || '').length > 34 ? '…' : '')) : st === 'loading' ? '♫ tuning…' : '♫ play some Nujabes'; if (t.lbl) t.lbl.textContent = t.label; const b = $('#srnav [data-thing=radio]'); if (b) b.textContent = st === 'playing' ? 'pause the radio' : 'play the radio'; prompts(); });
+radio.on(st => { const t = byId.radio; t.label = st === 'playing' ? '♪ ' + ((radio.title() || 'Nujabes').replace(/^Nujabes\s*[-–]\s*/, '').slice(0, 34) + ((radio.title() || '').length > 34 ? '…' : '')) : st === 'loading' ? '♫ tuning…' : '♫ play some Nujabes'; if (t.lbl) t.lbl.textContent = t.label; const b = $('#srnav [data-thing=radio]'); if (b) b.textContent = st === 'playing' ? 'pause the radio' : 'play the radio'; const tg = $('[data-act=toggle]', ctl); tg.textContent = radio.playing ? '⏸\uFE0E' : '▶\uFE0E'; tg.setAttribute('aria-label', radio.playing ? 'pause' : 'play'); });
 /* the laptop's little OS: programs on a desktop, windows for the demos and the new-project dialog */
 let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = () => {};
 {
@@ -678,6 +681,7 @@ function frame(now) {
     s.obj.visible = vis;
   }
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
+  { const on = state === 'room' && radio.state !== 'off'; if (on) { tmp.copy(RADIO_CTL).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on'); }
   gl.render(scene, camera); css.render(scene, camera); placeFloating(); bounce(now);
 }
 

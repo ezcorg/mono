@@ -11,10 +11,10 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | gallery wall | about — the employee of the month, Lady (`public/employee.jpg`, greyscaled; blank while it loads, a dog silhouette only if it fails) and the framed manifesto |
 | floppy + thumb drive on the desk | GitHub |
 | rolodex on the shelf | LinkedIn |
-| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; nothing loads until you switch it on); while it plays, the prompt bar shows the track with ⏮ ⏸ ⏭ |
+| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; nothing loads until you switch it on); while it plays, ⏮ ⏸ ⏭ float just under it, and hovering shows the track |
 | whiteboard on the right wall | draw on it (strokes live in localStorage) |
 | clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
-| dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own and remembers overrides until you put it back to the default |
+| dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own (its label is a bulb, filled when lit) and remembers overrides until you put it back to the default |
 
 Keys: `↵` or scroll to come in · click · drag or arrows to look · `?` labels · `l` lights · `esc` back.
 
