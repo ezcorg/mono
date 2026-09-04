@@ -2,10 +2,10 @@
 :root{
   --bg:#000; --fg:#F5F5F5; --dim:#333;
   --line:rgba(245,245,245,.6); --line-soft:rgba(245,245,245,.22); --fill:rgba(245,245,245,.07); --bld:#2c2c2c;
-  --glow:rgba(255,255,255,.35); --bezel:#2b2b2b;
+  --glow:rgba(255,255,255,.35); --bezel:#2b2b2b; --sel:rgba(245,245,245,.14);
   --serif:Times,'Times New Roman',serif; --sans:Helvetica,Arial,system-ui,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
 }
-html.lit{--bg:#F5F5F5; --fg:#000; --dim:#cfcfcf; --line:rgba(0,0,0,.6); --line-soft:rgba(0,0,0,.2); --fill:rgba(0,0,0,.05); --bld:#c9c9c9; --glow:rgba(255,220,120,.6); --bezel:#cfcfcf}
+html.lit{--bg:#F5F5F5; --fg:#000; --dim:#cfcfcf; --line:rgba(0,0,0,.6); --line-soft:rgba(0,0,0,.2); --fill:rgba(0,0,0,.05); --bld:#c9c9c9; --glow:rgba(255,220,120,.6); --bezel:#cfcfcf; --sel:rgba(0,0,0,.08)}
 *,*::before,*::after{box-sizing:border-box}
 html:has(body[data-state]),body[data-state]{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden;transition:background .6s,color .6s}
 .room{color:var(--fg)}
@@ -56,6 +56,7 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 .loading .ls{position:absolute;inset:0;padding:.55em .85em;background:var(--fg);color:var(--bg);animation:loadslide 1.5s ease-in-out infinite}
 @keyframes loadslide{0%{clip-path:polygon(-45% 0,0 0,0 100%,-45% 100%)}100%{clip-path:polygon(100% 0,145% 0,145% 100%,100% 100%)}}
 .loading.off{opacity:0;pointer-events:none;visibility:hidden}
+.perf{position:fixed;left:.6rem;top:.6rem;z-index:9;font:500 11px/1 var(--mono);letter-spacing:.04em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.5em .7em;white-space:nowrap;pointer-events:none}
 
 /* ---------------------------------------------------------------- content surfaces */
 /* the transformed element itself must not clip: overflow:hidden on a 3D-transformed element breaks Chrome's hit-testing, so each content root clips instead */
@@ -124,12 +125,12 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 .os .bar .task{display:inline-flex;align-items:center;gap:.4em;max-width:16em;padding:.15em .6em .15em .4em;font:inherit;letter-spacing:.04em;color:inherit;border:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
 .os .bar .task .ico{font-size:1.05em;line-height:1;display:inline-grid;place-items:center}
 .os .bar .task .ico svg{width:1em;height:1em}
-.os .bar .task.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.os .bar .task.on{background:var(--sel);border-color:var(--fg)}
 .os .bar .task.min{opacity:.75}
 .os .bar .task:hover,.os .bar .task:focus-visible{border-color:var(--fg);opacity:1;outline:0}
 .os .desk{position:absolute;left:0;right:0;top:2.2em;bottom:0;padding:3% 2.5%;display:flex;flex-wrap:wrap;align-content:flex-start;gap:.6em 0}
-.app{position:relative;width:104px;display:flex;flex-direction:column;align-items:center;gap:.45em;padding:.7em .3em .5em;font:inherit;color:inherit;text-align:center;border-radius:4px}
-.app .ico{width:54px;height:54px;display:grid;place-items:center;font-size:26px;line-height:1;border:1px solid var(--line);border-radius:7px;background:var(--bg);transition:background .2s,color .2s}
+.app{position:relative;width:104px;display:flex;flex-direction:column;align-items:center;gap:.45em;padding:.7em .3em .5em;font:inherit;color:inherit;text-align:center}
+.app .ico{width:54px;height:54px;display:grid;place-items:center;font-size:26px;line-height:1;border:1px solid var(--line);background:var(--bg);transition:background .2s,color .2s}   /* square, like every other edge in the OS */
 .app .ico.plus svg{width:28px;height:28px;display:block}
 .app .nm{font-size:11.5px;white-space:nowrap}
 .app:hover .ico,.app:focus-visible .ico{background:var(--fg);color:var(--bg)}
@@ -151,8 +152,8 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 .win .tb button:hover,.win .tb button:focus-visible{background:var(--fg);color:var(--bg)}
 .win .body{flex:1;min-height:0;position:relative}
 .win .body .scroller{padding:1em 1.1em 1.2em}
-.win .demo{position:absolute;inset:0;overflow:hidden;background:#1e1e1e;color:#f5f5f5}
-.win .demo iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#1e1e1e}
+.win .demo{position:absolute;inset:0;overflow:hidden;background:var(--bg);color:var(--fg)}
+.win .demo iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--bg)}
 .radio-player{position:fixed;left:-9999px;top:0;width:200px;height:200px;opacity:.01;pointer-events:none}
 .win .form{font-family:var(--mono);font-size:1em}
 .win .form input,.win .form select,.win .form textarea{font-family:var(--mono)}

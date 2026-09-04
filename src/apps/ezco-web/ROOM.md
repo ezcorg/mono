@@ -30,14 +30,19 @@ chip brings a window up or minimises it; every control carries an explicit `tabi
   `@joinezco/shared`) with a Turnstile token. `src/room/demos.js` frames the demo programs: they run as their own documents,
   `src/pages/apps/*.astro` (not pages people visit), on the shared demo filesystem (`src/scripts/demo-fs.ts`, files in
   `src/data/demo-files.js`), so tooltips and popovers can't spill past the window. Each of those documents draws its own
-  title bar (`src/scripts/ezos-frame.ts`, `src/styles/ezos-frame.css`): the program's file-search toolbar (the markdown-editor
-  mounts it there; the codeblock's is a CodeMirror panel that gets moved up), a GitHub mark, – and ×, which ask the room by
-  `postMessage`; the room passes its theme as `?lit` and then by message. `src/room/radio.js` is the hidden player.
+  title bar (`src/scripts/ezos-frame.ts`, `src/styles/ezos-frame.css`): the program's icon, its file-search toolbar as a
+  centred search field (the markdown-editor mounts it there; the codeblock's is a CodeMirror panel that gets moved up, laid
+  out with the library's `toolbarLayout: 'compact'`), a GitHub mark, – and ×, which ask the room by `postMessage`; the room
+  passes its theme as `?lit` and then by message, and the editors follow it — paper, ink, rules and highlights in the room's
+  palette (`ezos-frame.css`), syntax colours their own. The markdown-editor runs with `blockActions: false` (the library
+  builds no gutter then). `src/room/radio.js` is the hidden player.
 - `src/styles/room.css` is the room's CSS; `src/styles/global.css` only carries the demo fonts.
 - `experiments/cube-room.html` is the single-file experiment the room was ported from. It is frozen at the port; changes
   go to `src/room` now. In dev mode the site accepts the same debug params before the route:
   `?lit ?dark ?look=yaw,pitch ?hover=<id> ?labels ?up ?win=<app> ?photo=<url> ?debug` (`?debug` exposes `window.room`).
-  `?nodom` and `?nogl` hide the DOM or WebGL layer in any build, for bisecting renderer artifacts.
+  In any build: `?perf` shows a readout (rAF interval, the frame function's JS time, gl.render, css.render, draw calls);
+  `?nogl` / `?nodom` skip a renderer, `?noaa` drops antialiasing, `?noshadow` the shadow maps, `?dpr=1` the pixel ratio —
+  one at a time, to find which layer a browser is slow in.
 
 ## Rendering notes worth knowing
 
@@ -66,7 +71,10 @@ chip brings a window up or minimises it; every control carries an explicit `tabi
   rolodex spins — 138 casters × 8 passes otherwise, every frame; the clipboard casts nothing, it rides with the camera);
   the renderer asks for the high-performance GPU. Chrome at 2× with vsync off: the room went from 3.1 to 2.3 ms/frame,
   the logo view from 2.2 to 1.3. Safari's WebGL runs in a separate GPU process, so its per-draw-call cost is higher and
-  these matter more there; `?nodom` / `?nogl` tell whether the DOM layer or WebGL is the slow one on a given machine.
+  these matter more there; `?perf` with `?nogl` / `?nodom` / `?noaa` / `?noshadow` / `?dpr=1` tells which layer is the slow
+  one on a given machine. The logo's hover slide is an inverted copy of each face behind a moving clipping plane (a uniform),
+  not a per-frame canvas redraw (that was two 1024² texture uploads a frame for half a second); the material pass
+  (`applyTheme`) runs only while a transition is in flight — the lerps snap once they're within .003.
 - Astro scopes a component's `<style>` to elements it rendered, so rules for elements a script creates later (editor DOM,
   the toolbar) need `<style is:global>` — the app documents use it.
 

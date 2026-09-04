@@ -3,7 +3,7 @@
 import '../../styles/global.css';
 import '../../styles/ezos-frame.css';
 import { projects } from '../../data/work';
-const github = projects.find((p) => p.id === 'markdown-editor')!.github;
+const { github, icon } = projects.find((p) => p.id === 'markdown-editor')!;
 ---
 
 <!doctype html>
@@ -23,13 +23,13 @@ const github = projects.find((p) => p.id === 'markdown-editor')!.github;
 	</head>
 	<body>
 		<div id="mount"><div class="loading">loading…</div></div>
-		<script is:inline define:vars={{ github }}>
-			window.__ezosGithub = github;
+		<script is:inline define:vars={{ github, icon }}>
+			window.__ezos = { github, icon };
 		</script>
 		<script>
 			import { getDemoFs } from '../../scripts/demo-fs';
 			import { frame } from '../../scripts/ezos-frame';
-			const { tool } = frame({ github: (window as unknown as { __ezosGithub: string }).__ezosGithub });
+			const { tool, dark } = frame((window as unknown as { __ezos: { github: string; icon: string } }).__ezos);
 			const el = document.getElementById('mount')!;
 			(async () => {
 				const fs = await getDemoFs();
@@ -38,7 +38,10 @@ const github = projects.find((p) => p.id === 'markdown-editor')!.github;
 				el.innerHTML = '';
 				/* the file-search toolbar mounts in the title bar; the block-action gutter stays out of the way */
 				const editor = createEditor({ element: el, autofocus: false, fs: { fs, filepath: 'hello.md', autoSave: true }, toolbar: { fs, index, filepath: 'hello.md', mount: tool, autoHide: false, className: 'ezos-search' }, blockActions: false });
-				(editor.view.dom.closest('.ezco-mde') ?? editor.view.dom).setAttribute('data-theme', 'dark');
+				/* the lights in the room switch the editor's theme (and its embedded codeblocks') too */
+				const wrap = editor.view.dom.closest('.ezco-mde') ?? editor.view.dom;
+				const theme = (d: boolean) => { wrap.setAttribute('data-theme', d ? 'dark' : 'light'); editor.commands.setCodeblockTheme({ dark: d }); };
+				theme(dark()); addEventListener('ezos-theme', (e) => theme((e as CustomEvent<{ dark: boolean }>).detail.dark));
 			})().catch((e) => { console.error(e); el.innerHTML = '<div class="loading">couldn\'t start markdown-editor</div>'; });
 		</script>
 	</body>

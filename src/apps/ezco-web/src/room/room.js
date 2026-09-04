@@ -30,12 +30,14 @@ const Y = V3(0, 1, 0);
    Authored in cube units (edge = 1), rendered at ×K: CSS3DRenderer maps world units to CSS px, so K puts
    the focused DOM planes near scale 1 (crisp, 1px borders stay 1px) and far apart for Chrome's 3D sorter. */
 const K = 2500;
-const gl = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-gl.setPixelRatio(Math.min(devicePixelRatio, 2)); gl.shadowMap.enabled = true; gl.shadowMap.type = THREE.PCFSoftShadowMap;
+/* bisecting flags, honoured in any build: ?nogl / ?nodom skip a renderer (not just hide it), ?noaa, ?noshadow, ?dpr=1; ?perf shows where a frame goes */
+const flags = new URLSearchParams(location.search), NOGL = flags.has('nogl'), NODOM = flags.has('nodom'), NOAA = flags.has('noaa'), NOSHADOW = flags.has('noshadow'), DPR = +flags.get('dpr') || 0, PERF = flags.has('perf');
+const gl = new THREE.WebGLRenderer({ antialias: !NOAA, powerPreference: 'high-performance' });
+gl.setPixelRatio(DPR || Math.min(devicePixelRatio, 2)); gl.shadowMap.enabled = !NOSHADOW; gl.shadowMap.type = THREE.PCFSoftShadowMap; gl.localClippingEnabled = true;
 gl.shadowMap.autoUpdate = false;   // the casters hardly ever move: the maps are re-rendered only while something does (see frame()), not eight passes every frame
 gl.domElement.id = 'gl'; root.prepend(gl.domElement);
 const css = new CSS3DRenderer(); css.domElement.id = 'css'; gl.domElement.after(css.domElement);
-{ const q = new URLSearchParams(location.search); if (q.has('nodom')) css.domElement.style.display = 'none'; if (q.has('nogl')) gl.domElement.style.visibility = 'hidden'; }   // bisecting renderer artifacts in any build: ?nodom hides the DOM layer, ?nogl the WebGL one
+if (NODOM) css.domElement.style.display = 'none'; if (NOGL) gl.domElement.style.visibility = 'hidden';
 const scene = new THREE.Scene(); scene.scale.setScalar(K);
 const camera = new THREE.PerspectiveCamera(55, 1, .02 * K, 60 * K);
 
@@ -107,21 +109,29 @@ function drawLogo(ctx, W, txt, slide) {
   ctx.globalCompositeOperation = 'difference'; ctx.fillStyle = '#fff'; ctx.font = `500 ${W * .38}px Helvetica, Arial, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, W / 2, W / 2 + W * .02);
   ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = fg; ctx.lineWidth = W * .012; ctx.strokeRect(ctx.lineWidth / 2, ctx.lineWidth / 2, W - ctx.lineWidth, W - ctx.lineWidth);
 }
-let logoT = 0, logoHot = false, logoDrawn = -1;
-logoTex.ez = canvasTex(1024, 1024, (ctx, W) => drawLogo(ctx, W, 'ez', 1 - logoT));
-logoTex.co = canvasTex(1024, 1024, (ctx, W) => drawLogo(ctx, W, 'co', -logoT));
+let logoT = 0, logoHot = false;
+/* each face is drawn once at rest and once inverted; the hover slide shows the inverted copy through a moving clipping plane
+   (a uniform), so hovering never re-uploads a 1024² canvas — that was two uploads a frame for half a second */
+logoTex.ez = canvasTex(1024, 1024, (ctx, W) => drawLogo(ctx, W, 'ez', 1)); logoTex.ezInv = canvasTex(1024, 1024, (ctx, W) => drawLogo(ctx, W, 'ez', 0));
+logoTex.co = canvasTex(1024, 1024, (ctx, W) => drawLogo(ctx, W, 'co', 0)); logoTex.coInv = canvasTex(1024, 1024, (ctx, W) => drawLogo(ctx, W, 'co', -1));
+const slide = { ez: new THREE.Plane(V3(1, 0, 0), 0), co: new THREE.Plane(V3(0, 0, -1), 0) };   // keep the inverted copy where u > 1 - logoT: x beyond the line on the door, z before it on the side
+const invMat = (map, plane) => new THREE.MeshBasicMaterial({ map, clippingPlanes: [plane] });
 const extMat = new THREE.MeshStandardMaterial({ color: '#000', roughness: .95 }), none = new THREE.MeshBasicMaterial({ visible: false });
 const shellMats = [new THREE.MeshBasicMaterial({ map: logoTex.co }), extMat, extMat, extMat, none, extMat];
 const shell = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), shellMats); scene.add(shell);
+const coInv = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), invMat(logoTex.coInv, slide.co)); coInv.rotation.y = Math.PI / 2; coInv.position.x = .5003; coInv.visible = false; shell.add(coInv);
 const doorGroup = new THREE.Group(); doorGroup.position.set(-.5, 0, .502); scene.add(doorGroup);
 const doorMats = [extMat, extMat, extMat, extMat, new THREE.MeshBasicMaterial({ map: logoTex.ez }), extMat];
 /* the door fills the opening inside the frame bars (they show .012 around it) and sits flush with their front, so the face's painted border stays inside the frame instead of lying over it */
 const door = new THREE.Mesh(new THREE.BoxGeometry(.976, .976, .02), doorMats); door.position.set(.5, 0, 0); doorGroup.add(door);
-const ghost = m => { const c = m.clone(); c.transparent = true; c.opacity = m === none ? 0 : .14; c.depthWrite = false; return c; };
+const ezInv = new THREE.Mesh(new THREE.PlaneGeometry(.976, .976), invMat(logoTex.ezInv, slide.ez)); ezInv.position.z = .0103; ezInv.visible = false; door.add(ezInv);
+const ghost = m => { const c = m.clone(); c.transparent = true; c.opacity = m === none ? 0 : .14; c.depthWrite = false; c.clippingPlanes = m.clippingPlanes; return c; };   // clone() would copy the planes; the ghost must share them
 const mirror = new THREE.Group(); mirror.scale.y = -1; mirror.position.y = -1.004; scene.add(mirror);   // a hair below the floor, or the ghost's underside z-fights it during the walk in
-mirror.add(new THREE.Mesh(shell.geometry, shellMats.map(ghost)));
+const shellM = new THREE.Mesh(shell.geometry, shellMats.map(ghost)); mirror.add(shellM);
+const coInvM = new THREE.Mesh(coInv.geometry, ghost(coInv.material)); coInvM.rotation.copy(coInv.rotation); coInvM.position.copy(coInv.position); coInvM.visible = false; shellM.add(coInvM);
 const doorGroupM = new THREE.Group(); doorGroupM.position.copy(doorGroup.position); mirror.add(doorGroupM);
 const doorM = new THREE.Mesh(door.geometry, doorMats.map(ghost)); doorM.position.copy(door.position); doorGroupM.add(doorM);
+const ezInvM = new THREE.Mesh(ezInv.geometry, ghost(ezInv.material)); ezInvM.position.copy(ezInv.position); ezInvM.visible = false; doorM.add(ezInvM);
 const ground = new THREE.GridHelper(12, 96, THEMES.night.edge, THEMES.night.edge); ground.position.y = -.502; ground.material.transparent = true; ground.material.opacity = .09; scene.add(ground);
 
 /* ------------------------------------------------------------------ the room: a glass box on a solid frame */
@@ -536,7 +546,7 @@ function applyTheme(t) {
   grid.material.opacity = num('grid'); grid.material.color.copy(edgeC); ground.material.color.copy(edgeC);
   extMat.color.copy(col('bg'));
   const bucket = t < .5 ? 0 : 1;
-  if (bucket !== themeDrawn) { themeDrawn = bucket; for (const th of things) th.textures?.forEach(x => x.redraw()); logoTex.ez.redraw(); logoTex.co.redraw(); }
+  if (bucket !== themeDrawn) { themeDrawn = bucket; for (const th of things) th.textures?.forEach(x => x.redraw()); for (const k in logoTex) logoTex[k].redraw(); }
 }
 
 /* ------------------------------------------------------------------ hover, labels, picking */
@@ -693,7 +703,7 @@ const fwd = V3(), tmp = V3(), nrm = V3(), toCam = V3(), wp = V3(), qt = new THRE
 let firstFrame = true, frames = 0;
 function frame(now) {
   if (disposed) return;
-  requestAnimationFrame(frame);
+  requestAnimationFrame(frame); const tFrame = performance.now();
   if (firstFrame) { firstFrame = false; $('#loading').classList.add('off'); setTimeout(() => body.classList.remove('preload'), 400); }
   runTweens(now);
   interior.visible = !(state === 'logo' && doorGroup.rotation.y > -.01);
@@ -701,8 +711,8 @@ function frame(now) {
   if (camTween) { const k = clamp((now - camTween.start) / camTween.dur, 0, 1), e = easeInOut(k); cam.pos.lerpVectors(camTween.p0, camTween.p1, e); cam.target.lerpVectors(camTween.t0, camTween.t1, e); if (k >= 1) { const r = camTween.res; camTween = null; r(); } }
   par.x += (parT.x - par.x) * .06; par.y += (parT.y - par.y) * .06;
   if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos, .08);
-  logoT += ((logoHot ? 1 : 0) - logoT) * .12;
-  if (Math.abs(logoT - logoDrawn) > .01) { logoDrawn = logoT; logoTex.ez.redraw(); logoTex.co.redraw(); }
+  logoT += ((logoHot ? 1 : 0) - logoT) * .12; if (logoT < .002) logoT = 0;
+  { const u = 1 - logoT; slide.ez.constant = -(-.488 + u * .976) * K; slide.co.constant = (.5 - u) * K; ezInv.visible = coInv.visible = ezInvM.visible = coInvM.visible = logoT > 0; }
   const lim = limits(), k = state === 'room' ? [4, 2.5] : state === 'page' && !focusLock ? [1.2, .8] : [0, 0];
   const inside = state === 'room' || state === 'page';
   const tYaw = inside ? clamp(drag.yaw, -lim.yaw, lim.yaw) + glance.yaw - par.x * k[0] : 0, tPitch = inside ? clamp(drag.pitch, lim.lo, lim.hi) + glance.pitch - par.y * k[1] : 0;
@@ -710,13 +720,16 @@ function frame(now) {
   camera.position.copy(cam.pos).multiplyScalar(K); camera.lookAt(tmp.copy(cam.target).multiplyScalar(K));
   camera.rotateOnWorldAxis(Y, look.yaw * D2R); camera.rotateX(look.pitch * D2R); camera.updateMatrixWorld();
   updateHeld(); byId.join.group.updateMatrixWorld();
-  themeT += (themeTarget - themeT) * .08;
-  for (const t of things) if (t.id) { const goal = (hovered === t && !t.active) ? 1 : 0; t.hover += (goal - t.hover) * .18; }
-  for (const l of lamps) l.lit += ((lampOn(l) ? 1 : 0) - l.lit) * .1;
+  /* the lerps below settle exactly (snapping once close), so applyTheme — a pass over every material — runs only while a transition is on */
+  let restyle = frames < 4;
+  const settle = (o, k, goal, rate) => { if (Math.abs(goal - o[k]) < .003) { if (o[k] !== goal) { o[k] = goal; restyle = true; } } else { o[k] += (goal - o[k]) * rate; restyle = true; } };
+  { const th = { t: themeT }; settle(th, 't', themeTarget, .08); themeT = th.t; }
+  for (const t of things) if (t.id) settle(t, 'hover', (hovered === t && !t.active) ? 1 : 0, .18);
+  for (const l of lamps) settle(l, 'lit', lampOn(l) ? 1 : 0, .1);
   byId.linkedin.wheel.rotation.x -= .07 * byId.linkedin.hover;
   byId.work.surface.el.classList.toggle('awake', hovered === byId.work);
   byId.radio.led.material.emissiveIntensity += ((radio.playing ? 1.2 : 0) - byId.radio.led.material.emissiveIntensity) * .1;
-  applyTheme(themeT);
+  if (restyle) applyTheme(themeT);
   camera.getWorldDirection(fwd);
   for (const s of surfaces) {
     s.obj.getWorldPosition(wp); nrm.set(0, 0, 1).applyQuaternion(s.obj.getWorldQuaternion(qt)); toCam.copy(camera.position).sub(wp);
@@ -727,8 +740,18 @@ function frame(now) {
   const ctlOn = state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels);   // no grace: it fades exactly like a label (the radio's hit box reaches up to it)
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5) && !(t.id === 'radio' && ctlOn); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
   if (ctlOn) { tmp.copy(byId.radio.anchor).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on');
-  gl.render(scene, camera); css.render(scene, camera); placeFloating(); bounce(now);
+  const tGl = performance.now(); if (!NOGL) gl.render(scene, camera); const tCss = performance.now(); if (!NODOM) css.render(scene, camera); placeFloating(); bounce(now);
+  if (perf) perf.tick(now, tFrame, tGl, tCss, performance.now());
 }
+/* ?perf: the rAF interval, this frame function's JS time, gl.render and css.render, draw calls — averaged over half a second — to see
+   which layer a browser is slow in (with ?nogl / ?nodom / ?noaa / ?noshadow / ?dpr=1 to take one away at a time) */
+const perf = PERF ? (() => {
+  const el = document.createElement('div'); el.className = 'perf'; root.appendChild(el); let last = 0, n = 0, shown = 0, acc = { raf: 0, js: 0, gl: 0, css: 0 };
+  return { tick(now, t0, t1, t2, t3) {
+    if (last) { acc.raf += now - last; acc.js += t3 - t0; acc.gl += t2 - t1; acc.css += t3 - t2; n++; } last = now;
+    if (now - shown > 500 && n) { const f = k => (acc[k] / n).toFixed(1); el.textContent = `${f('raf')} ms/frame · ${(1000 * n / acc.raf).toFixed(0)} fps · js ${f('js')} (gl ${f('gl')} css ${f('css')}) · ${gl.info.render.calls} calls · ${gl.getPixelRatio()}×${NOAA ? ' no-aa' : ''}${NOSHADOW ? ' no-shadow' : ''}${NOGL ? ' no-gl' : ''}${NODOM ? ' no-dom' : ''}`; acc = { raf: 0, js: 0, gl: 0, css: 0 }; n = 0; shown = now; }
+  } };
+})() : null;
 
 /* ------------------------------------------------------------------ sizing, boot */
 function resize() {
