@@ -3,7 +3,7 @@
   --bg:#000; --fg:#F5F5F5; --dim:#333;
   --line:rgba(245,245,245,.6); --line-soft:rgba(245,245,245,.22); --fill:rgba(245,245,245,.07); --bld:#2c2c2c;
   --glow:rgba(255,255,255,.35); --bezel:#2b2b2b;
-  --serif:Times,'Times New Roman',serif; --sans:Inter,Helvetica,system-ui,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+  --serif:Times,'Times New Roman',serif; --sans:Helvetica,Arial,system-ui,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
 }
 html.lit{--bg:#F5F5F5; --fg:#000; --dim:#cfcfcf; --line:rgba(0,0,0,.6); --line-soft:rgba(0,0,0,.2); --fill:rgba(0,0,0,.05); --bld:#c9c9c9; --glow:rgba(255,220,120,.6); --bezel:#cfcfcf}
 *,*::before,*::after{box-sizing:border-box}
@@ -33,10 +33,10 @@ body.preload .room *{transition:none!important}
 .lbl.ext::after{content:' ↗'}
 .lbl:hover{background:var(--fg);color:var(--bg)}
 .lbl .ic{width:1.15em;height:1.15em;vertical-align:-.22em}
-.ctl{position:absolute;left:0;top:0;translate:-50% -100%;margin-top:-.2em;display:flex;gap:.3em;opacity:0;pointer-events:none;transition:opacity .2s}
-.ctl.on{opacity:1;pointer-events:auto}
-.ctl button{font:500 12px/1 var(--sans);color:var(--fg);background:var(--bg);border:1px solid var(--fg);padding:.45em .55em;border-radius:2px;cursor:pointer}
-.ctl button:hover,.ctl button:focus-visible{background:var(--fg);color:var(--bg)}
+.ctl{position:absolute;left:0;top:0;translate:-50% -100%;margin-top:.4em;display:flex;gap:.3em;opacity:0;pointer-events:none;transition:opacity .2s,margin .2s}
+.ctl.on{opacity:1;pointer-events:auto;margin-top:0}
+.ctl button{font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.55em .7em;border-radius:0;cursor:pointer}
+.ctl button:hover,.ctl button:focus-visible{background:var(--fg);color:var(--bg);outline:0}
 .prompts{position:fixed;left:0;right:0;bottom:clamp(1rem,3vh,1.75rem);z-index:3;display:flex;justify-content:center;gap:.4rem 1.4rem;flex-wrap:wrap;padding:0 1rem;pointer-events:none;font:400 13px/1 var(--sans);letter-spacing:.03em;color:var(--fg);text-shadow:0 0 10px var(--bg),0 0 3px var(--bg)}
 .prompts span{display:inline-flex;align-items:center;gap:.5em;white-space:nowrap}
 .prompts i{font-style:normal;opacity:.5;margin:0 .15em}
@@ -49,7 +49,11 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 .sr-nav{position:fixed;left:50%;bottom:clamp(3.5rem,8vh,5rem);z-index:4;translate:-50% 0;display:flex;gap:.5rem}
 .sr-nav a,.sr-nav button{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .sr-nav a:focus-visible,.sr-nav button:focus-visible{position:static;width:auto;height:auto;clip:auto;font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--bg);background:var(--fg);padding:.6em .9em;outline:0;text-decoration:none}
-.loading{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:var(--bg);font:300 1.1rem/1 var(--serif);letter-spacing:.1em;transition:opacity .5s,visibility 0s .5s}
+/* the loading screen is a label with the logo's sliding block running through it */
+.loading{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:var(--bg);transition:opacity .5s,visibility 0s .5s}
+.loading .lw{position:relative;display:block;font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.55em .85em}
+.loading .ls{position:absolute;inset:0;padding:.55em .85em;background:var(--fg);color:var(--bg);animation:loadslide 1.5s ease-in-out infinite}
+@keyframes loadslide{0%{clip-path:polygon(-45% 0,0 0,0 100%,-45% 100%)}100%{clip-path:polygon(100% 0,145% 0,145% 100%,100% 100%)}}
 .loading.off{opacity:0;pointer-events:none;visibility:hidden}
 
 /* ---------------------------------------------------------------- content surfaces */
@@ -95,12 +99,15 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 /* lock screen: a monospace logo drifting about, the time beneath; wakes on hover, gone when open */
 .scr .saver{position:absolute;inset:0;overflow:hidden;background:var(--bg);transition:opacity .5s;z-index:5}
 .scr .saver .mlogo{--ls:120px;position:absolute;left:0;top:0;width:calc(var(--ls)*2);height:var(--ls);will-change:transform}
-.scr .saver .lw{display:block;position:relative;width:calc(var(--ls)*2);height:var(--ls);overflow:hidden;isolation:isolate;background:var(--bg)}
+.scr .saver .lw{display:block;position:relative;width:calc(var(--ls)*2);height:var(--ls);overflow:hidden;background:var(--bg)}
 .scr .saver .lw::before,.scr .saver .lw::after{content:'';position:absolute;top:0;width:var(--ls);height:var(--ls);border:2px solid var(--fg);z-index:3}
 .scr .saver .lw::before{left:0}.scr .saver .lw::after{left:var(--ls)}
-.scr .saver .lt{position:absolute;inset:0;display:flex;font:700 calc(var(--ls)*.36)/1 var(--mono);color:#fff;mix-blend-mode:difference;z-index:2}
+/* the sliding block carries an inverted copy of the letters that counter-slides, so no blend modes are needed (Safari draws those badly inside 3D transforms) */
+.scr .saver .lt{position:absolute;inset:0;display:flex;font:700 calc(var(--ls)*.36)/1 var(--mono);color:var(--fg);z-index:1}
 .scr .saver .lt span{width:var(--ls);height:var(--ls);display:grid;place-items:center}
-.scr .saver .ls{position:absolute;top:0;left:var(--ls);width:var(--ls);height:var(--ls);background:var(--fg);z-index:1;animation:logoslide 9s ease-in-out infinite}
+.scr .saver .ls{position:absolute;top:0;left:var(--ls);width:var(--ls);height:var(--ls);overflow:hidden;background:var(--fg);z-index:2;animation:logoslide 9s ease-in-out infinite}
+.scr .saver .ls .lt{left:calc(-1 * var(--ls));width:calc(var(--ls)*2);color:var(--bg);animation:logoslide-back 9s ease-in-out infinite}
+@keyframes logoslide-back{0%,40%{transform:translateX(0)}50%,90%{transform:translateX(var(--ls))}100%{transform:translateX(0)}}
 @keyframes logoslide{0%,40%{transform:translateX(0)}50%,90%{transform:translateX(-100%)}100%{transform:translateX(0)}}
 .scr.awake .saver,.scr.active .saver{opacity:0;pointer-events:none}
 .scr.awake .os{display:block}

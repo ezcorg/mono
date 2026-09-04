@@ -16,7 +16,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 ---
 
 <div class="room" id="room">
-	<div class="loading" id="loading">loading the room…</div>
+	<div class="loading" id="loading" aria-live="polite"><span class="lw"><span class="lt">loading</span><span class="ls" aria-hidden="true">loading</span></span></div>
 	<div class="labels" id="labels"></div>
 	<div class="hero-copy" id="hero"><p>your friendly neighborhood tech collective</p></div>
 	<div class="prompts" id="prompts"></div>
@@ -47,7 +47,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 
 	<!-- laptop → our work: a tiny desktop OS -->
 	<template id="t-screen">
-		<div class="saver"><div class="mlogo" aria-label="ez co"><span class="lw"><span class="ls"></span><span class="lt"><span>ez</span><span>co</span></span></span></div></div>
+		<div class="saver"><div class="mlogo" aria-label="ez co"><span class="lw"><span class="lt"><span>ez</span><span>co</span></span><span class="ls" aria-hidden="true"><span class="lt"><span>ez</span><span>co</span></span></span></span></div></div>
 		<div class="os">
 			<div class="bar"><span><b>ez os</b> · our work</span><span data-clock>--:--</span></div>
 			<div class="desk">

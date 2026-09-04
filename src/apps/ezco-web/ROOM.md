@@ -11,7 +11,7 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | gallery wall | about — the employee of the month, Lady (`public/employee.jpg`, greyscaled; blank while it loads, a dog silhouette only if it fails) and the framed manifesto |
 | floppy + thumb drive on the desk | GitHub |
 | rolodex on the shelf | LinkedIn |
-| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; nothing loads until you switch it on); once touched, a ⏮ ⏸ ⏭ bar stands above it for as long as it's on (the track name is in the buttons' tooltips) |
+| radio on the shelf | plays a Nujabes playlist through a hidden YouTube player (audio only; hovering warms the player so the click can play synchronously, which Safari requires); it sways while playing; once touched, a ⏮ ⏸ ⏭ bar appears above it while the radio or the bar is hovered or focused (the track name is in the buttons' tooltips) |
 | whiteboard on the right wall | draw on it (strokes live in localStorage) |
 | clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
 | dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own (its label is a bulb, filled when lit) and remembers overrides until you put it back to the default |
@@ -33,6 +33,7 @@ Keys: `↵` or scroll to come in · click · drag or arrows to look · `?` label
 - `experiments/cube-room.html` is the single-file experiment the room was ported from. It is frozen at the port; changes
   go to `src/room` now. In dev mode the site accepts the same debug params before the route:
   `?lit ?dark ?look=yaw,pitch ?hover=<id> ?labels ?up ?win=<app> ?photo=<url> ?debug` (`?debug` exposes `window.room`).
+  `?nodom` and `?nogl` hide the DOM or WebGL layer in any build, for bisecting renderer artifacts.
 
 ## Rendering notes worth knowing
 
@@ -51,6 +52,9 @@ Keys: `↵` or scroll to come in · click · drag or arrows to look · `?` label
 - Camera tweens start from what you actually see: `absorbLook()` bakes the drag/parallax offset into the camera target
   before a pose tween, so opening or closing a page never snaps back to the "ideal" angle first.
 - Remembered in localStorage: `ezco-lights` (auto/day/night), `ezco-lamps` (per-lamp overrides), `ezco-board` (strokes).
+- three.js loads behind the loading label (its own chunk); the label and the lock-screen logo animate with a clipped
+  inverted copy rather than `mix-blend-mode`, which Safari rasterises badly inside 3D transforms. No web fonts are loaded
+  for the room itself (Helvetica/Arial/system); the demo fonts live in `global.css`.
 
 ## Verifying
 
@@ -59,6 +63,5 @@ console should stay clean apart from the missing `/employee.jpg` and Turnstile's
 
 ## Still to do
 
-Real join-form infrastructure; a Safari pass; code-splitting three.js behind the loading screen (≈550 KB chunk); an OG image;
-browser tests in `ezco-web-build.yml`; publish `@joinezco/shared` 0.0.6 and redeploy the worker before the room's
-budget-less submissions succeed.
+Real join-form infrastructure; browser tests in CI; redeploy the worker before (or with) the site so the room's budget-less
+submissions validate.

@@ -1,14 +1,14 @@
 /* the room — ported from experiments/cube-room.html (the experiment stays as the reference copy) */
-import * as THREE from 'three';
-import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
+let THREE, CSS3DRenderer, CSS3DObject;   // loaded behind the loading label, see boot()
 import { submitProject, turnstile } from './forms.js';
 import { mountDemo, destroyDemos } from './demos.js';
 import { radio } from './radio.js';
 
 /* Boots the room into `opts.mount` (the element holding the chrome + templates). Returns a dispose(). */
-export function boot(opts = {}) {
+export async function boot(opts = {}) {
 const root = opts.mount || document.body;
 { const probe = document.createElement('canvas'); if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) { root.classList.add('no-webgl'); return () => {}; } }
+[THREE, { CSS3DRenderer, CSS3DObject }] = await Promise.all([import('three'), import('three/addons/renderers/CSS3DRenderer.js')]);
 const ac = new AbortController(), { signal } = ac; let disposed = false;
 const addEventListener = (type, fn, o) => window.addEventListener(type, fn, { ...(typeof o === 'object' ? o : {}), signal });
 document.body.dataset.state = 'logo'; document.body.classList.add('preload');
@@ -34,6 +34,7 @@ const gl = new THREE.WebGLRenderer({ antialias: true });
 gl.setPixelRatio(Math.min(devicePixelRatio, 2)); gl.shadowMap.enabled = true; gl.shadowMap.type = THREE.PCFSoftShadowMap;
 gl.domElement.id = 'gl'; root.prepend(gl.domElement);
 const css = new CSS3DRenderer(); css.domElement.id = 'css'; gl.domElement.after(css.domElement);
+{ const q = new URLSearchParams(location.search); if (q.has('nodom')) css.domElement.style.display = 'none'; if (q.has('nogl')) gl.domElement.style.visibility = 'hidden'; }   // bisecting renderer artifacts in any build: ?nodom hides the DOM layer, ?nogl the WebGL one
 const scene = new THREE.Scene(); scene.scale.setScalar(K);
 const camera = new THREE.PerspectiveCamera(55, 1, .02 * K, 60 * K);
 
@@ -102,7 +103,7 @@ const logoTex = {};
 function drawLogo(ctx, W, txt, slide) {
   const { bg, fg } = themeColors();
   ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, W); ctx.fillStyle = fg; ctx.fillRect(slide * W, 0, W, W);
-  ctx.globalCompositeOperation = 'difference'; ctx.fillStyle = '#fff'; ctx.font = `500 ${W * .38}px Inter, Helvetica, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, W / 2, W / 2 + W * .02);
+  ctx.globalCompositeOperation = 'difference'; ctx.fillStyle = '#fff'; ctx.font = `500 ${W * .38}px Helvetica, Arial, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, W / 2, W / 2 + W * .02);
   ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = fg; ctx.lineWidth = W * .012; ctx.strokeRect(ctx.lineWidth / 2, ctx.lineWidth / 2, W - ctx.lineWidth, W - ctx.lineWidth);
 }
 let logoT = 0, logoHot = false, logoDrawn = -1;
@@ -115,7 +116,7 @@ const doorGroup = new THREE.Group(); doorGroup.position.set(-.5, 0, .512); scene
 const doorMats = [extMat, extMat, extMat, extMat, new THREE.MeshBasicMaterial({ map: logoTex.ez }), extMat];
 const door = new THREE.Mesh(new THREE.BoxGeometry(1, 1, .02), doorMats); door.position.set(.5, 0, 0); doorGroup.add(door);
 const ghost = m => { const c = m.clone(); c.transparent = true; c.opacity = m === none ? 0 : .14; c.depthWrite = false; return c; };
-const mirror = new THREE.Group(); mirror.scale.y = -1; mirror.position.y = -1; scene.add(mirror);
+const mirror = new THREE.Group(); mirror.scale.y = -1; mirror.position.y = -1.004; scene.add(mirror);   // a hair below the floor, or the ghost's underside z-fights it during the walk in
 mirror.add(new THREE.Mesh(shell.geometry, shellMats.map(ghost)));
 const doorGroupM = new THREE.Group(); doorGroupM.position.copy(doorGroup.position); mirror.add(doorGroupM);
 const doorM = new THREE.Mesh(door.geometry, doorMats.map(ghost)); doorM.position.copy(door.position); doorGroupM.add(doorM);
@@ -176,7 +177,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* light switch on the left wall, by the door → day / night */
 {
-  const t = thing({ id: 'lights', label: '◐', action: 'lights', anchor: V3(-.47, .085, .36) });
+  const t = thing({ id: 'lights', label: '◐', action: 'lights', anchor: V3(-.487, .078, .36) });
   t.group.add(t.bez(.008, .06, .06, { x: -.492, y: .02, z: .36 }));
   for (const a of [.95, 0, -.95]) t.group.add(t.box(.002, .007, .002, { x: -.4875, y: .02 + Math.cos(a) * .025, z: .36 + Math.sin(a) * .025, rx: -a }));   // night · auto · day
   t.knob = new THREE.Group(); t.knob.position.set(-.487, .02, .36); t.group.add(t.knob);
@@ -225,8 +226,8 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 {
   const g = decor.group, top = .066;
   g.add(box(.3, .012, .06, { x: -.27, y: .06, z: -.47, ...dz }), box(.012, .04, .05, { x: -.4, y: .034, z: -.475, ...dm }), box(.012, .04, .05, { x: -.14, y: .034, z: -.475, ...dm }));
-  { const t = thing({ id: 'radio', label: '♫ play some Nujabes', action: 'radio', anchor: V3(-.37, .15, -.46) });
-    const r = new THREE.Group(); r.position.set(-.36, top, -.46); t.group.add(r);
+  { const t = thing({ id: 'radio', label: '♫ play some Nujabes', action: 'radio', anchor: V3(-.36, .135, -.46) });
+    const r = new THREE.Group(); r.position.set(-.36, top, -.46); t.group.add(r); t.body = r; t.rest = top; t.groove = 0;
     r.add(t.bez(.07, .04, .036, { y: .02 }));
     for (let i = 0; i < 7; i++) r.add(t.box(.0018, .026, .002, { x: -.027 + i * .005, y: .02, z: .0185 }));   // speaker grille
     r.add(t.pick(cyl(.007, .004, { x: .022, y: .025, z: .019, rx: Math.PI / 2, mat: t.mat, edge: t.edge })), t.box(.002, .006, .001, { x: .022, y: .028, z: .0215 }));   // tuning knob + pointer
@@ -284,14 +285,14 @@ function drawBoard(ctx, W, H) {
     if (photo.img) { const r = Math.max(pw / photo.img.width, ph / photo.img.height), sw = pw / r, sh = ph / r; ctx.drawImage(photo.img, (photo.img.width - sw) / 2, (photo.img.height - sh) * FACE, sw, sh, px, py, pw, ph); }
     else { ctx.fillStyle = fg; ctx.globalAlpha = .07; ctx.fillRect(px, py, pw, ph); ctx.globalAlpha = 1; if (photo.failed) drawDog(ctx, px + pw / 2, py + ph * .58, pw * .3, fg); }   // blank while the photo loads: no flash
     const plY = py + ph + 30; ctx.fillStyle = fg; ctx.fillRect(px + 16, plY, pw - 32, 100); ctx.fillStyle = bg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '700 36px Inter, Helvetica, sans-serif'; ctx.letterSpacing = '8px'; ctx.fillText('LADY', W / 2 + 4, plY + 38);
-    ctx.font = '500 15px Inter, Helvetica, sans-serif'; ctx.letterSpacing = '3px'; ctx.fillText('EMPLOYEE OF THE MONTH', W / 2 + 1, plY + 76);
+    ctx.font = '700 36px Helvetica, Arial, sans-serif'; ctx.letterSpacing = '8px'; ctx.fillText('LADY', W / 2 + 4, plY + 38);
+    ctx.font = '500 15px Helvetica, Arial, sans-serif'; ctx.letterSpacing = '3px'; ctx.fillText('EMPLOYEE OF THE MONTH', W / 2 + 1, plY + 76);
   });
   { const im = new Image(); im.onerror = () => { photo.failed = true; eotm.redraw(); }; im.onload = () => { const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const x = c.getContext('2d'); x.drawImage(im, 0, 0); const d = x.getImageData(0, 0, c.width, c.height), q = d.data; for (let i = 0; i < q.length; i += 4) q[i] = q[i + 1] = q[i + 2] = q[i] * .299 + q[i + 1] * .587 + q[i + 2] * .114; x.putImageData(d, 0, 0); photo.img = c; eotm.redraw(); }; im.src = EMPLOYEE_PHOTO; }
   g.add(t.bez(.2, .246, .015, { x: .11, y: .25, z: -.49 }));
   const ph = new THREE.Mesh(new THREE.PlaneGeometry(.18, .222), new THREE.MeshBasicMaterial({ map: eotm })); ph.position.set(.11, .25, -.481); g.add(t.pick(ph));
   t.textures = [eotm];
-  const plaque = canvasTex(680, 120, (ctx, W, H) => { const { bg, fg } = themeColors(); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); ctx.strokeStyle = fg; ctx.lineWidth = 4; ctx.strokeRect(2, 2, W - 4, H - 4); ctx.fillStyle = fg; ctx.font = '500 40px Inter, Helvetica, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.letterSpacing = '8px'; ctx.fillText('EZ CO · EST. 2025', W / 2, H / 2 + 2); });
+  const plaque = canvasTex(680, 120, (ctx, W, H) => { const { bg, fg } = themeColors(); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); ctx.strokeStyle = fg; ctx.lineWidth = 4; ctx.strokeRect(2, 2, W - 4, H - 4); ctx.fillStyle = fg; ctx.font = '500 40px Helvetica, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.letterSpacing = '8px'; ctx.fillText('EZ CO · EST. 2025', W / 2, H / 2 + 2); });
   const pl = new THREE.Mesh(new THREE.PlaneGeometry(.15, .027), new THREE.MeshBasicMaterial({ map: plaque })); pl.position.set(.11, .09, -.481); g.add(t.pick(pl)); t.textures.push(plaque);
   g.add(t.bez(.24, .32, .015, { x: .35, y: .18, z: -.49 }));
   t.surface = surface(t, { cls: 'manifesto', html: tpl('manifesto'), w: .22, h: .3, x: .35, y: .18, z: -.481 });
@@ -420,7 +421,7 @@ function absorbLook() { const d = cam.target.distanceTo(cam.pos); camera.getWorl
 
 /* ------------------------------------------------------------------ state machine */
 let state = 'logo', active = null, busy = false, showLabels = false;
-const setState = s => { state = s; body.dataset.state = s; prompts(); document.title = state === 'page' && active ? `${active.label} · ez co` : 'ez co · the room'; };
+const setState = s => { state = s; body.dataset.state = s; prompts(); document.title = state === 'page' && active ? `${active.label} · ez co` : 'ez co'; };
 const doorTo = (a, dur) => tween({ from: doorGroup.rotation.y, to: a, dur, update: v => { doorGroup.rotation.y = v; doorGroupM.rotation.y = v; } });
 async function enterRoom() {
   if (state !== 'logo' || busy) return; busy = true; setState('entering'); drag.yaw = drag.pitch = 0;
@@ -531,7 +532,7 @@ for (const t of things) if (t.id) {
   l.addEventListener('click', () => { if (state === 'room') activate(t); }); l.addEventListener('pointerenter', () => setHover(t)); l.addEventListener('pointerleave', () => setHover(null));
 }
 let hovered = null;
-function setHover(t) { if (hovered === t) return; hovered = t; body.classList.toggle('hover', !!t && state === 'room'); }
+function setHover(t) { if (hovered === t) return; hovered = t; body.classList.toggle('hover', !!t && state === 'room'); if (t?.id === 'radio') radio.warm(); }   // warming the player on hover keeps the eventual click synchronous, which Safari's autoplay rules want
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 function pick(e) {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
@@ -585,10 +586,11 @@ addEventListener('keydown', e => {
 addEventListener('wheel', e => { if (state === 'logo' && e.deltaY > 20) go('#/room'); }, { passive: true });
 $$('#srnav [data-thing]').forEach(a => {
   const t = byId[a.dataset.thing];
-  a.addEventListener('focus', () => { if (state !== 'room' || !t) return; if (t.held) { t.forceUp = true; glance.yaw = 0; glance.pitch = -22; } else { const d = t.anchor.clone().sub(cam.pos); glance.yaw = clamp(-Math.atan2(d.x, -d.z) / D2R * .7, -32, 32); glance.pitch = clamp(Math.atan2(d.y, Math.hypot(d.x, d.z)) / D2R * .6, -14, 14); } setHover(t); });
+  a.addEventListener('focus', () => { if (state !== 'room' || !t) return; if (t.held) { t.forceUp = true; glance.yaw = 0; glance.pitch = -22; } else glanceAt(t); setHover(t); });
   a.addEventListener('blur', () => { glance.yaw = glance.pitch = 0; setHover(null); if (t?.held && !t.active) t.forceUp = false; });
   if (a.tagName === 'BUTTON') a.addEventListener('click', () => activate(t));
 });
+function glanceAt(t) { const d = t.anchor.clone().sub(cam.pos); glance.yaw = clamp(-Math.atan2(d.x, -d.z) / D2R * .7, -32, 32); glance.pitch = clamp(Math.atan2(d.y, Math.hypot(d.x, d.z)) / D2R * .6, -14, 14); }
 /* hand-rolled scrolling for the clipped page surfaces */
 for (const el of surfaces.flatMap(s => $$('.scroller', s.el))) {
   el.tabIndex = 0;
@@ -605,9 +607,13 @@ for (const t of things) if (t.id) setInteractive(t, false);
    the track name lives in the buttons' tooltips and the screen-reader text */
 const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track">⏮\uFE0E</button><button data-act="toggle" aria-label="pause">⏸\uFE0E</button><button data-act="next" aria-label="next track">⏭\uFE0E</button>'; labelsEl.appendChild(ctl);
 ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
+let ctlHover = false, ctlFocus = false, ctlSeen = -1e9;
+ctl.addEventListener('pointerenter', () => { ctlHover = true; }); ctl.addEventListener('pointerleave', () => { ctlHover = false; });
+ctl.addEventListener('focusin', () => { ctlFocus = true; if (state === 'room') { glanceAt(byId.radio); setHover(byId.radio); } });
+ctl.addEventListener('focusout', e => { if (ctl.contains(e.relatedTarget)) return; ctlFocus = false; glance.yaw = glance.pitch = 0; setHover(null); });
 radio.on(st => {
   const title = radio.title() || 'Nujabes', b = $('#srnav [data-thing=radio]'), tip = st === 'loading' ? 'tuning…' : '♪ ' + title;
-  for (const x of $$('button', ctl)) x.title = tip;
+  for (const x of $$('button', ctl)) { x.title = tip; x.tabIndex = st === 'off' ? -1 : 0; }
   const tg = $('[data-act=toggle]', ctl); tg.textContent = radio.playing ? '⏸\uFE0E' : '▶\uFE0E'; tg.setAttribute('aria-label', radio.playing ? 'pause' : 'play');
   if (b) b.textContent = st === 'off' ? 'play the radio' : (radio.playing ? 'pause the radio · ' : 'play the radio · ') + title;
 });
@@ -676,6 +682,7 @@ function frame(now) {
   byId.linkedin.wheel.rotation.x -= .07 * byId.linkedin.hover;
   byId.work.surface.el.classList.toggle('awake', hovered === byId.work);
   byId.radio.led.material.emissiveIntensity += ((radio.playing ? 1.2 : 0) - byId.radio.led.material.emissiveIntensity) * .1;
+  { const r = byId.radio; r.groove += ((radio.playing ? 1 : 0) - r.groove) * .04; const tt = now / 1000; r.body.rotation.z = .045 * Math.sin(tt * Math.PI * 1.6) * r.groove; r.body.position.y = r.rest + .0035 * Math.abs(Math.sin(tt * Math.PI * 1.6)) * r.groove; r.body.scale.y = 1 + .025 * Math.abs(Math.sin(tt * Math.PI * 1.6 + .4)) * r.groove; }
   applyTheme(themeT);
   camera.getWorldDirection(fwd);
   for (const s of surfaces) {
@@ -684,7 +691,8 @@ function frame(now) {
     if (vis) { const dist = toCam.length(); ray.set(camera.position, tmp.copy(wp).sub(camera.position).normalize()); ray.far = dist; vis = !ray.intersectObjects(occluders, false).some(h => !(h.object === shell && h.face.materialIndex === 4)); ray.far = Infinity; }
     s.obj.visible = vis;
   }
-  const ctlOn = state === 'room' && radio.state !== 'off';
+  if (state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels)) ctlSeen = now;
+  const ctlOn = state === 'room' && radio.state !== 'off' && now - ctlSeen < 350;   // a short grace so the pointer can travel from the radio to the bar
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5) && !(t.id === 'radio' && ctlOn); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
   if (ctlOn) { tmp.copy(byId.radio.anchor).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on');
   gl.render(scene, camera); css.render(scene, camera); placeFloating(); bounce(now);

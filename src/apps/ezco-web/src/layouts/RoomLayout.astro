@@ -9,9 +9,10 @@ export interface Props {
 }
 
 const {
-	title = 'ez co · the room',
-	description = 'joinez.co is a room you walk into. The logo is the building; the furniture is the site.',
+	title = 'ez co',
+	description = 'your friendly neighborhood tech collective',
 } = Astro.props;
+const site = 'https://joinez.co';
 ---
 
 <!doctype html>
@@ -22,6 +23,19 @@ const {
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<title>{title}</title>
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="ez co" />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:url" content={site + '/'} />
+		<meta property="og:image" content={site + '/og.png'} />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta property="og:image:alt" content="ez co" />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f5" />
+		<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
+		<script is:inline>try{const m=localStorage.getItem('ezco-lights')||'auto';if(m==='day'||(m==='auto'&&!matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('lit')}catch{}</script>
 	</head>
 	<body>
 		<slot />
