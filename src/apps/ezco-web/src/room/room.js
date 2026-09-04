@@ -186,7 +186,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* corner desk + stool + laptop + a desk plant → our work */
 {
-  const t = thing({ id: 'work', label: 'our work', side: true, anchor: V3(-.16, -.14, -.39) });   // beside the screen, clear of the radio's controls and the pothos
+  const t = thing({ id: 'work', label: 'our work', anchor: V3(-.27, -.02, -.4), side: V3(-.16, -.14, -.39) });   // label on top, or beside the screen while the radio's controls hang above it
   const g = t.group;
   decor.group.add(box(.42, .02, .2, { x: -.29, y: -.22, z: -.4, ...dm }), box(.2, .02, .34, { x: -.4, y: -.22, z: -.13, ...dm }));
   for (const [x, z] of [[-.11, -.31], [-.11, -.49], [-.31, .03], [-.48, .03], [-.48, -.49]]) decor.group.add(box(.018, .27, .018, { x, y: -.365, z, ...dm }));
@@ -527,7 +527,7 @@ function applyTheme(t) {
 /* ------------------------------------------------------------------ hover, labels, picking */
 const labelsEl = $('#labels');
 for (const t of things) if (t.id) {
-  const l = document.createElement('span'); l.className = 'lbl' + (t.action ? ' action' : '') + (t.ext ? ' ext' : '') + (t.side ? ' side' : ''); l.textContent = t.label; labelsEl.appendChild(l); t.lbl = l;
+  const l = document.createElement('span'); l.className = 'lbl' + (t.action ? ' action' : '') + (t.ext ? ' ext' : ''); l.textContent = t.label; labelsEl.appendChild(l); t.lbl = l;
   l.addEventListener('click', () => { if (state === 'room') activate(t); }); l.addEventListener('pointerenter', () => setHover(t)); l.addEventListener('pointerleave', () => setHover(null));
 }
 const RADIO_CTL = V3(-.36, .052, -.44);
@@ -679,8 +679,9 @@ function frame(now) {
     if (vis) { const dist = toCam.length(); ray.set(camera.position, tmp.copy(wp).sub(camera.position).normalize()); ray.far = dist; vis = !ray.intersectObjects(occluders, false).some(h => !(h.object === shell && h.face.materialIndex === 4)); ray.far = Infinity; }
     s.obj.visible = vis;
   }
-  for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
-  { const on = state === 'room' && radio.state !== 'off'; if (on) { tmp.copy(RADIO_CTL).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on'); }
+  const ctlOn = state === 'room' && radio.state !== 'off';
+  for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5); if (on) { const aside = !!t.side && ctlOn; t.lbl.classList.toggle('side', aside); tmp.copy(aside ? t.side : t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
+  { if (ctlOn) { tmp.copy(RADIO_CTL).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on'); }
   gl.render(scene, camera); css.render(scene, camera); placeFloating(); bounce(now);
 }
 
