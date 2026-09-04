@@ -6,16 +6,17 @@
 :root.lit{--bg:#f5f5f5;--fg:#000;--line:rgba(0,0,0,.6);--line-soft:rgba(0,0,0,.2);--fill:rgba(0,0,0,.05);--sel:rgba(0,0,0,.08)}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--fg)}
 body{display:flex;flex-direction:column;overflow:hidden}
-.tb{flex:none;position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:.7em;height:28px;padding:0 .5em 0 .6em;background:var(--bg);color:var(--fg);border-bottom:1px solid var(--fg);font:11.5px/1.4 var(--mono);letter-spacing:.06em}
+/* inside the bordered window nothing else is boxed: the buttons sit bare and take a tint when pointed at; the search field alone has a soft, rounded edge */
+.tb{flex:none;position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:.7em;height:28px;padding:0 .5em 0 .6em;background:var(--bg);color:var(--fg);border-bottom:1px solid var(--line-soft);font:11.5px/1.4 var(--mono);letter-spacing:.06em}
 .tb .ai{flex:none;font-size:14px;line-height:1}
 .tb .ai:empty{display:none}
 /* the search field: centred in the bar with a ceiling on its width; its results drop from its own edges */
-.tb .tool{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;box-sizing:border-box;width:min(360px,calc(100% - 200px));height:20px;display:flex;align-items:center;padding:0 .5em;background:var(--fill);border:1px solid var(--line-soft)}
-.tb .tool:focus-within{border-color:var(--fg)}
+.tb .tool{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;box-sizing:border-box;width:min(360px,calc(100% - 200px));height:20px;display:flex;align-items:center;padding:0 .5em;background:var(--fill);border:1px solid var(--line-soft);border-radius:4px}
+.tb .tool:focus-within{border-color:var(--line)}
 .tb .wc{flex:none;display:flex;gap:.3em}
-.tb .wc a,.tb .wc button{display:inline-grid;place-items:center;box-sizing:border-box;height:1.75em;min-width:1.75em;padding:0 .45em;font:inherit;line-height:1;color:inherit;background:none;border:1px solid var(--line);border-radius:0;cursor:pointer;text-decoration:none}
+.tb .wc a,.tb .wc button{display:inline-grid;place-items:center;box-sizing:border-box;height:1.75em;min-width:1.75em;padding:0 .45em;font:inherit;line-height:1;color:inherit;background:none;border:0;border-radius:3px;cursor:pointer;text-decoration:none}
 .tb .wc a svg{width:1.15em;height:1.15em;fill:currentColor;display:block}
-.tb .wc a:hover,.tb .wc button:hover,.tb .wc a:focus-visible,.tb .wc button:focus-visible{background:var(--fg);color:var(--bg);outline:0}
+.tb .wc a:hover,.tb .wc button:hover,.tb .wc a:focus-visible,.tb .wc button:focus-visible{background:var(--sel);outline:0}
 #mount{flex:1;min-height:0;position:relative}
 .loading{padding:1em;opacity:.6;font:12px var(--mono)}
 
@@ -27,7 +28,7 @@ body{display:flex;flex-direction:column;overflow:hidden}
 .tb .tool .cm-toolbar-input{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;color:var(--fg);padding:0}
 .tb .tool .cm-toolbar-input::placeholder{color:var(--line)}
 .tb .tool .cm-toolbar-state-icon{color:var(--line)}
-.tb .tool .cm-search-results{left:-1px;right:-1px;width:auto;min-width:0;max-width:none;margin:2px 0 0;padding:0;border:1px solid var(--fg);border-radius:0;box-shadow:4px 4px 0 var(--line-soft);background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:11.5px;letter-spacing:.04em}
+.tb .tool .cm-search-results{left:-1px;right:-1px;width:auto;min-width:0;max-width:none;margin:3px 0 0;padding:0;border:1px solid var(--line-soft);border-radius:4px;box-shadow:4px 4px 0 var(--line-soft);background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:11.5px;letter-spacing:.04em}
 .tb .tool .cm-search-result{border-radius:0;padding:.3em .55em;color:var(--fg)}
 .tb .tool .cm-search-result.selected{background:var(--sel)}
 .tb .tool .cm-search-result.selected>.cm-search-result-label,.tb .tool .cm-search-result.selected>.cm-search-result-icon-container>.cm-search-result-icon,.tb .tool .cm-search-result.selected div{color:var(--fg)}
@@ -36,3 +37,11 @@ body{display:flex;flex-direction:column;overflow:hidden}
 /* the editors in the room's palette: paper, ink, rules and highlights follow the lights */
 #mount .cm-editor{--cm-background:var(--bg);--cm-gutter-background:var(--bg);--cm-gutter-foreground:var(--line);--cm-gutter-active-foreground:var(--fg);--cm-caret:var(--fg);--cm-line-highlight:var(--fill);--cm-selection:var(--sel);--cm-selection-match:var(--sel);--cm-tooltip-background:var(--bg);--cm-tooltip-color:var(--fg);--cm-tooltip-border:var(--line-soft);--cm-toolbar-background:var(--bg);--cm-toolbar-color:var(--fg);--cm-search-result-select-bg:var(--sel);--cm-search-result-color-selected:var(--fg);--cm-search-result-bg-hover:var(--sel)}
 #mount .ezco-mde,html[data-theme]:root{--ezco-mde-bg:var(--bg);--ezco-mde-fg:var(--fg);--ezco-mde-code-bg:var(--fill);--ezco-mde-divider:var(--line-soft);--ezco-mde-table-bg:var(--fill);--ezco-mde-accent:var(--sel);--ezco-mde-accent-fg:var(--fg);--ezco-mde-link-color:var(--fg);--ezco-mde-link-color-hover:var(--fg);--ezco-mde-context-menu-bg:var(--bg);--ezco-mde-context-menu-bg-hover:var(--sel);--ezco-mde-context-menu-color:var(--fg);--ezco-mde-context-menu-border:var(--fg);--ezco-mde-context-menu-item-bg-hover:var(--sel);--ezco-mde-context-menu-item-color-muted:var(--line)}
+
+/* everything the editors float — LSP hovers, diagnostics, autocomplete, the embedded codeblocks' search results — in the same idiom: the
+   editor's own paper, a soft rounded edge, the OS's hard shadow; the embedded codeblocks' toolbar rows sit on the paper too */
+#mount .cm-tooltip,#mount .ezco-mde .cm-tooltip{background:var(--bg);color:var(--fg);border:1px solid var(--line-soft);border-radius:4px;box-shadow:4px 4px 0 var(--line-soft);--cm-tooltip-border:var(--line-soft);--cm-tooltip-background:var(--bg)}
+#mount .cm-editor .cm-panels,#mount .cm-editor .cm-panels-top,#mount .cm-editor .cm-toolbar-panel{background:var(--bg);border-color:var(--line-soft)}
+#mount .cm-editor .cm-search-results{background:var(--bg);color:var(--fg);border:1px solid var(--line-soft);border-radius:4px;box-shadow:4px 4px 0 var(--line-soft)}
+/* the document keeps a margin from the window's edge */
+#mount .ProseMirror{padding:1em 1.6em 1.6em}

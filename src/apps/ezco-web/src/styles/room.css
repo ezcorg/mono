@@ -57,6 +57,9 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 @keyframes loadslide{0%{clip-path:polygon(-45% 0,0 0,0 100%,-45% 100%)}100%{clip-path:polygon(100% 0,145% 0,145% 100%,100% 100%)}}
 .loading.off{opacity:0;pointer-events:none;visibility:hidden}
 .perf{position:fixed;left:.6rem;top:.6rem;z-index:9;font:500 11px/1 var(--mono);letter-spacing:.04em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.5em .7em;white-space:nowrap;pointer-events:none}
+.bench{position:fixed;left:50%;top:50%;translate:-50% -50%;z-index:9;width:min(760px,92vw);display:flex;flex-direction:column;gap:.6em;background:var(--bg);color:var(--fg);border:1px solid var(--line);padding:1em;font:12px/1.5 var(--mono)}
+.bench textarea{width:100%;font:inherit;color:inherit;background:transparent;border:1px solid var(--line-soft);padding:.5em .6em;resize:none;white-space:pre;overflow:auto}
+.bench button{align-self:flex-start;font:inherit;color:var(--bg);background:var(--fg);border:0;padding:.4em 1em;cursor:pointer}
 
 /* ---------------------------------------------------------------- content surfaces */
 /* the transformed element itself must not clip: overflow:hidden on a 3D-transformed element breaks Chrome's hit-testing, so each content root clips instead */
@@ -122,34 +125,35 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 .os .bar b{font-weight:700}
 /* the open windows, as the bar's tasks: the one in front is inverted, minimised ones outlined */
 .os .bar .tasks{flex:1;min-width:0;display:flex;align-items:center;gap:.4em;overflow:hidden}
-.os .bar .task{display:inline-flex;align-items:center;gap:.4em;max-width:16em;padding:.15em .6em .15em .4em;font:inherit;letter-spacing:.04em;color:inherit;border:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.os .bar .task{display:inline-flex;align-items:center;gap:.4em;max-width:16em;padding:.2em .6em .2em .45em;font:inherit;letter-spacing:.04em;color:inherit;border:0;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:background .15s,opacity .15s}
 .os .bar .task .ico{font-size:1.05em;line-height:1;display:inline-grid;place-items:center}
 .os .bar .task .ico svg{width:1em;height:1em}
-.os .bar .task.on{background:var(--sel);border-color:var(--fg)}
-.os .bar .task.min{opacity:.75}
-.os .bar .task:hover,.os .bar .task:focus-visible{border-color:var(--fg);opacity:1;outline:0}
+.os .bar .task.on{background:var(--sel)}
+.os .bar .task.min{opacity:.6}
+.os .bar .task:hover,.os .bar .task:focus-visible{background:var(--sel);opacity:1;outline:0}
 .os .desk{position:absolute;left:0;right:0;top:2.2em;bottom:0;padding:3% 2.5%;display:flex;flex-wrap:wrap;align-content:flex-start;gap:.6em 0}
-.app{position:relative;width:104px;display:flex;flex-direction:column;align-items:center;gap:.45em;padding:.7em .3em .5em;font:inherit;color:inherit;text-align:center}
-.app .ico{width:54px;height:54px;display:grid;place-items:center;font-size:26px;line-height:1;border:1px solid var(--line);background:var(--bg);transition:background .2s,color .2s}   /* square, like every other edge in the OS */
-.app .ico.plus svg{width:28px;height:28px;display:block}
+/* inside a bordered window nothing else is boxed: icons, chips and buttons sit bare and take a tint when pointed at */
+.app{position:relative;width:104px;display:flex;flex-direction:column;align-items:center;gap:.4em;padding:.7em .3em .5em;font:inherit;color:inherit;text-align:center}
+.app .ico{width:54px;height:54px;display:grid;place-items:center;font-size:30px;line-height:1;border-radius:6px;transition:background .2s}
+.app .ico.plus svg{width:30px;height:30px;display:block}
 .app .nm{font-size:11.5px;white-space:nowrap}
-.app:hover .ico,.app:focus-visible .ico{background:var(--fg);color:var(--bg)}
+.app:hover .ico,.app:focus-visible .ico{background:var(--sel)}
 .app:focus-visible{outline:1px dashed var(--line);outline-offset:-1px}
-.app .tip{display:none;position:absolute;top:100%;left:50%;translate:-50% 0;width:224px;margin-top:.2em;text-align:left;background:var(--bg);border:1px solid var(--fg);padding:.6em .75em;z-index:3;font-size:11.5px;line-height:1.45;box-shadow:4px 4px 0 var(--line-soft);pointer-events:none}
+.app .tip{display:none;position:absolute;top:100%;left:50%;translate:-50% 0;width:224px;margin-top:.2em;text-align:left;background:var(--bg);border:1px solid var(--line-soft);border-radius:4px;padding:.6em .75em;z-index:3;font-size:11.5px;line-height:1.45;box-shadow:4px 4px 0 var(--line-soft);pointer-events:none}
 .app:first-child .tip{left:0;translate:0}
 .app:hover .tip,.app:focus-visible .tip{display:block}
 .app .tip b{display:block;font-weight:700;margin-bottom:.15em}
 .app .tip small{display:block;opacity:.65;margin-top:.35em}
-.win{position:absolute;left:5%;right:5%;top:9%;bottom:3%;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--fg);box-shadow:8px 8px 0 var(--line-soft);z-index:4}
+.win{position:absolute;left:5%;right:5%;top:9%;bottom:3%;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);box-shadow:8px 8px 0 var(--line-soft);z-index:4}
 .win[hidden]{display:none}
 .win.wide{left:3%;right:3%;top:9%;bottom:3%}
 .win.ph{visibility:hidden}
 .overlay{position:fixed;inset:0;z-index:2;pointer-events:none}
 .overlay .win{position:fixed;right:auto;bottom:auto;pointer-events:auto;font:12.5px/1.4 var(--mono);color:var(--fg)}
-.win .tb{display:flex;align-items:center;justify-content:space-between;gap:1em;padding:.45em .7em;border-bottom:1px solid var(--fg);font-size:11.5px;letter-spacing:.06em}
+.win .tb{display:flex;align-items:center;justify-content:space-between;gap:1em;padding:.45em .7em;border-bottom:1px solid var(--line-soft);font-size:11.5px;letter-spacing:.06em}
 .win .tb .wc{display:flex;gap:.3em}
-.win .tb button{font:inherit;line-height:1;min-width:1.7em;padding:.2em .45em;border:1px solid var(--line);cursor:pointer}
-.win .tb button:hover,.win .tb button:focus-visible{background:var(--fg);color:var(--bg)}
+.win .tb button{font:inherit;line-height:1;min-width:1.7em;padding:.25em .45em;border:0;border-radius:3px;cursor:pointer}
+.win .tb button:hover,.win .tb button:focus-visible{background:var(--sel);outline:0}
 .win .body{flex:1;min-height:0;position:relative}
 .win .body .scroller{padding:1em 1.1em 1.2em}
 .win .demo{position:absolute;inset:0;overflow:hidden;background:var(--bg);color:var(--fg)}

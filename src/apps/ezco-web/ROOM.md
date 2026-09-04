@@ -42,7 +42,8 @@ chip brings a window up or minimises it; every control carries an explicit `tabi
   `?lit ?dark ?look=yaw,pitch ?hover=<id> ?labels ?up ?win=<app> ?photo=<url> ?debug` (`?debug` exposes `window.room`).
   In any build: `?perf` shows a readout (rAF interval, the frame function's JS time, gl.render, css.render, draw calls);
   `?nogl` / `?nodom` skip a renderer, `?noaa` drops antialiasing, `?noshadow` the shadow maps, `?dpr=1` the pixel ratio —
-  one at a time, to find which layer a browser is slow in.
+  one at a time, to find which layer a browser is slow in. `?bench` runs all of them for you (one reload each, panning,
+  three seconds apiece, outside and then inside) and ends with a box of results and a copy button.
 
 ## Rendering notes worth knowing
 
@@ -77,6 +78,9 @@ chip brings a window up or minimises it; every control carries an explicit `tabi
   (`applyTheme`) runs only while a transition is in flight — the lerps snap once they're within .003.
 - Astro scopes a component's `<style>` to elements it rendered, so rules for elements a script creates later (editor DOM,
   the toolbar) need `<style is:global>` — the app documents use it.
+- The OS's idiom: a window has one soft border (`--line`) and a hard offset shadow; inside it nothing else is boxed —
+  icons, task chips and window buttons sit bare and take the selection tint (`--sel`) when pointed at; the search field,
+  dropdowns and the editors' tooltips get a soft rounded edge (`--line-soft`, 4px) and the same hard shadow.
 
 ## Verifying
 

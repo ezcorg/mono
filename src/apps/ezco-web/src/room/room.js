@@ -31,7 +31,7 @@ const Y = V3(0, 1, 0);
    the focused DOM planes near scale 1 (crisp, 1px borders stay 1px) and far apart for Chrome's 3D sorter. */
 const K = 2500;
 /* bisecting flags, honoured in any build: ?nogl / ?nodom skip a renderer (not just hide it), ?noaa, ?noshadow, ?dpr=1; ?perf shows where a frame goes */
-const flags = new URLSearchParams(location.search), NOGL = flags.has('nogl'), NODOM = flags.has('nodom'), NOAA = flags.has('noaa'), NOSHADOW = flags.has('noshadow'), DPR = +flags.get('dpr') || 0, PERF = flags.has('perf');
+const flags = new URLSearchParams(location.search), NOGL = flags.has('nogl'), NODOM = flags.has('nodom'), NOAA = flags.has('noaa'), NOSHADOW = flags.has('noshadow'), DPR = +flags.get('dpr') || 0, PERF = flags.has('perf'), BENCH_STEP = flags.has('bench') ? +(flags.get('bench') || 0) : -1;
 const gl = new THREE.WebGLRenderer({ antialias: !NOAA, powerPreference: 'high-performance' });
 gl.setPixelRatio(DPR || Math.min(devicePixelRatio, 2)); gl.shadowMap.enabled = !NOSHADOW; gl.shadowMap.type = THREE.PCFSoftShadowMap; gl.localClippingEnabled = true;
 gl.shadowMap.autoUpdate = false;   // the casters hardly ever move: the maps are re-rendered only while something does (see frame()), not eight passes every frame
@@ -709,6 +709,7 @@ function frame(now) {
   interior.visible = !(state === 'logo' && doorGroup.rotation.y > -.01);
   gl.shadowMap.needsUpdate = frames++ < 3 || tweens.length > 0 || byId.linkedin.hover > .002;   // the door, the tablet, the dial and the rolodex are the only casters that move
   if (camTween) { const k = clamp((now - camTween.start) / camTween.dur, 0, 1), e = easeInOut(k); cam.pos.lerpVectors(camTween.p0, camTween.p1, e); cam.target.lerpVectors(camTween.t0, camTween.t1, e); if (k >= 1) { const r = camTween.res; camTween = null; r(); } }
+  if (benchPan) parT = { x: Math.cos(now / 600), y: Math.sin(now / 600) * .6 };   // the bench pans for you
   par.x += (parT.x - par.x) * .06; par.y += (parT.y - par.y) * .06;
   if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos, .08);
   logoT += ((logoHot ? 1 : 0) - logoT) * .12; if (logoT < .002) logoT = 0;
@@ -745,13 +746,33 @@ function frame(now) {
 }
 /* ?perf: the rAF interval, this frame function's JS time, gl.render and css.render, draw calls — averaged over half a second — to see
    which layer a browser is slow in (with ?nogl / ?nodom / ?noaa / ?noshadow / ?dpr=1 to take one away at a time) */
-const perf = PERF ? (() => {
-  const el = document.createElement('div'); el.className = 'perf'; root.appendChild(el); let last = 0, n = 0, shown = 0, acc = { raf: 0, js: 0, gl: 0, css: 0 };
-  return { tick(now, t0, t1, t2, t3) {
-    if (last) { acc.raf += now - last; acc.js += t3 - t0; acc.gl += t2 - t1; acc.css += t3 - t2; n++; } last = now;
-    if (now - shown > 500 && n) { const f = k => (acc[k] / n).toFixed(1); el.textContent = `${f('raf')} ms/frame · ${(1000 * n / acc.raf).toFixed(0)} fps · js ${f('js')} (gl ${f('gl')} css ${f('css')}) · ${gl.info.render.calls} calls · ${gl.getPixelRatio()}×${NOAA ? ' no-aa' : ''}${NOSHADOW ? ' no-shadow' : ''}${NOGL ? ' no-gl' : ''}${NODOM ? ' no-dom' : ''}`; acc = { raf: 0, js: 0, gl: 0, css: 0 }; n = 0; shown = now; }
-  } };
+const perf = (PERF || BENCH_STEP >= 0) ? (() => {
+  const el = PERF ? root.appendChild(Object.assign(document.createElement('div'), { className: 'perf' })) : null;
+  let last = 0, n = 0, shown = 0, acc = { raf: 0, js: 0, gl: 0, css: 0 };
+  const line = () => { const f = k => (acc[k] / n).toFixed(1); return `${f('raf')} ms/frame · ${(1000 * n / acc.raf).toFixed(0)} fps · js ${f('js')} (gl ${f('gl')} css ${f('css')}) · ${gl.info.render.calls} calls · ${gl.getPixelRatio()}×${NOAA ? ' no-aa' : ''}${NOSHADOW ? ' no-shadow' : ''}${NOGL ? ' no-gl' : ''}${NODOM ? ' no-dom' : ''}`; };
+  const reset = () => { acc = { raf: 0, js: 0, gl: 0, css: 0 }; n = 0; };
+  return {
+    tick(now, t0, t1, t2, t3) { if (last) { acc.raf += now - last; acc.js += t3 - t0; acc.gl += t2 - t1; acc.css += t3 - t2; n++; } last = now; if (el && now - shown > 500 && n) { el.textContent = line(); reset(); shown = now; } },
+    take() { const s = n ? line() : 'no frames'; reset(); return s; },
+  };
 })() : null;
+/* ?bench: the same numbers for every configuration in one go — one reload per configuration, panning for you, three seconds each —
+   then a box with all of them and a copy button. Works in any build: joinez.co/?bench */
+const BENCH = [['outside', ''], ['no gl', 'nogl'], ['no dom', 'nodom'], ['no gl, no dom', 'nogl&nodom'], ['no aa', 'noaa'], ['dpr 1', 'dpr=1'], ['no shadow', 'noshadow'], ['inside', '', '#/room']];
+let benchPan = false;
+if (BENCH_STEP >= 0 && BENCH_STEP < BENCH.length) (async () => {
+  const key = 'ezco-bench'; let log = null; try { log = JSON.parse(sessionStorage.getItem(key) || 'null'); } catch {}
+  if (BENCH_STEP === 0 || !log) log = { lines: [navigator.userAgent, `${screen.width}×${screen.height} screen · ${innerWidth}×${innerHeight} viewport · dpr ${devicePixelRatio} · ${new Date().toISOString()}`] };
+  await new Promise(r => { const wait = () => firstFrame ? requestAnimationFrame(wait) : r(); wait(); }); await delay(1500);
+  perf.take(); benchPan = true; await delay(3000); benchPan = false;
+  log.lines.push(`${BENCH[BENCH_STEP][0].padEnd(14)} ${perf.take()}`);
+  if (BENCH_STEP + 1 < BENCH.length) { sessionStorage.setItem(key, JSON.stringify(log)); const [, q, hash = ''] = BENCH[BENCH_STEP + 1]; location.replace(`${location.pathname}?bench=${BENCH_STEP + 1}${q ? '&' + q : ''}${hash}`); return; }
+  sessionStorage.removeItem(key);
+  const text = log.lines.join('\n'), box = document.createElement('div'); box.className = 'bench';
+  box.innerHTML = `<textarea readonly rows="${log.lines.length + 1}" aria-label="bench results"></textarea><button type="button">copy</button>`;
+  $('textarea', box).value = text; $('button', box).addEventListener('click', () => navigator.clipboard.writeText(text).then(() => { $('button', box).textContent = 'copied'; }, () => { $('textarea', box).select(); }));
+  root.appendChild(box);
+})();
 
 /* ------------------------------------------------------------------ sizing, boot */
 function resize() {
