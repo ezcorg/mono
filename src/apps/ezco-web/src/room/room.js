@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
 import { submitProject, turnstile } from './forms.js';
 import { mountDemo, destroyDemos } from './demos.js';
+import { radio } from './radio.js';
 
 /* Boots the room into `opts.mount` (the element holding the chrome + templates). Returns a dispose(). */
 export function boot(opts = {}) {
@@ -175,7 +176,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* light switch on the left wall, by the door → day / night */
 {
-  const t = thing({ id: 'lights', label: 'lights: auto', action: 'lights', anchor: V3(-.47, .085, .36) });
+  const t = thing({ id: 'lights', label: '◐', action: 'lights', anchor: V3(-.47, .085, .36) });
   t.group.add(t.bez(.008, .06, .06, { x: -.492, y: .02, z: .36 }));
   for (const a of [.95, 0, -.95]) t.group.add(t.box(.002, .007, .002, { x: -.4875, y: .02 + Math.cos(a) * .025, z: .36 + Math.sin(a) * .025, rx: -a }));   // night · auto · day
   t.knob = new THREE.Group(); t.knob.position.set(-.487, .02, .36); t.group.add(t.knob);
@@ -205,18 +206,29 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
   for (let i = 0; i < 8; i++) { const leaf = new THREE.Mesh(lg, plantMat); leaf.castShadow = true; leaf.add(edges(lg, decor.edge, 80)); leaf.position.set(0, .048, 0); leaf.rotation.order = 'YXZ'; leaf.rotation.set(-(.5 + (i % 3) * .28), i * 45 * D2R + .2, 0); pl.add(leaf); }
 }
 
-/* bookshelf above the desk: an external drive → GitHub, a rolodex → LinkedIn, and a pothos */
+/* a floppy and a thumb drive on the near end of the desk → GitHub */
+{
+  const t = thing({ id: 'github', label: 'GitHub', href: $('#srnav [data-thing=github]').href, ext: true, anchor: V3(-.39, -.13, -.05) });
+  const f = new THREE.Group(); f.position.set(-.41, -.21, -.07); f.rotation.y = .25; t.group.add(f);
+  f.add(t.box(.09, .003, .09, { y: .0015 }), t.bez(.028, .001, .036, { y: .0035, z: -.024 }), t.bez(.064, .0008, .034, { y: .0034, z: .022 }));   // disk, shutter, label
+  const GH = 'M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z';
+  const mark = canvasTex(128, 128, (ctx, W) => { ctx.clearRect(0, 0, W, W); ctx.fillStyle = themeColors().fg; ctx.save(); ctx.scale(W / 24, W / 24); ctx.fill(new Path2D(GH)); ctx.restore(); }); t.textures = [mark];
+  const badge = new THREE.Mesh(new THREE.PlaneGeometry(.02, .02), new THREE.MeshBasicMaterial({ map: mark, transparent: true })); badge.rotation.x = -Math.PI / 2; badge.position.set(-.017, .0042, .022); f.add(badge);
+  const u = new THREE.Group(); u.position.set(-.34, -.21, -.02); u.rotation.y = -.7; t.group.add(u);
+  u.add(t.bez(.014, .006, .03, { y: .003 }), t.box(.011, .004, .012, { y: .003, z: .02 }));   // stick + connector
+}
+
+/* bookshelf above the desk: a radio, a rolodex → LinkedIn, and a pothos */
 {
   const g = decor.group, top = .066;
   g.add(box(.3, .012, .06, { x: -.27, y: .06, z: -.47, ...dz }), box(.012, .04, .05, { x: -.4, y: .034, z: -.475, ...dm }), box(.012, .04, .05, { x: -.14, y: .034, z: -.475, ...dm }));
-  { const t = thing({ id: 'github', label: 'GitHub', href: $('#srnav [data-thing=github]').href, ext: true, anchor: V3(-.36, .12, -.46) });
-    const d = new THREE.Group(); d.position.set(-.36, top, -.462); t.group.add(d);
-    d.add(t.bez(.05, .018, .072, { y: .009 }), t.box(.052, .0015, .074, { y: .0115 }));   // a flat drive; the seam between lid and base
-    t.led = new THREE.Mesh(new THREE.BoxGeometry(.004, .002, .002), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 1, roughness: .4 })); t.led.position.set(-.019, .006, .0365); d.add(t.led);
-    const GH = 'M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z';
-    const mark = canvasTex(128, 128, (ctx, W) => { ctx.clearRect(0, 0, W, W); ctx.fillStyle = themeColors().fg; ctx.save(); ctx.scale(W / 24, W / 24); ctx.fill(new Path2D(GH)); ctx.restore(); }); t.textures = [mark];
-    const badge = new THREE.Mesh(new THREE.PlaneGeometry(.011, .011), new THREE.MeshBasicMaterial({ map: mark, transparent: true })); badge.position.set(.008, .009, .0362); d.add(badge);
-    d.add(cyl(.0025, .03, { y: .006, z: -.05, rx: Math.PI / 2, ...dm })); }
+  { const t = thing({ id: 'radio', label: 'play some Nujabes', action: 'radio', anchor: V3(-.37, .15, -.46) });
+    const r = new THREE.Group(); r.position.set(-.36, top, -.46); t.group.add(r);
+    r.add(t.bez(.07, .04, .036, { y: .02 }));
+    for (let i = 0; i < 7; i++) r.add(t.box(.0018, .026, .002, { x: -.027 + i * .005, y: .02, z: .0185 }));   // speaker grille
+    r.add(t.pick(cyl(.007, .004, { x: .022, y: .025, z: .019, rx: Math.PI / 2, mat: t.mat, edge: t.edge })), t.box(.002, .006, .001, { x: .022, y: .028, z: .0215 }));   // tuning knob + pointer
+    r.add(along(t.cyl(.0012, .066), V3(.03, .04, -.01), V3(.052, .1, -.022), V3(0, 1, 0)));   // antenna
+    t.led = new THREE.Mesh(new THREE.BoxGeometry(.003, .003, .002), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0, roughness: .4 })); t.led.position.set(.022, .01, .0185); r.add(t.led); }
   { const t = thing({ id: 'linkedin', label: 'LinkedIn', href: 'https://linkedin.com/company/eeezco/', ext: true, anchor: V3(-.21, .2, -.455) });
     const r = new THREE.Group(); r.position.set(-.21, top, -.455); t.group.add(r);
     for (const x of [-.032, .032]) r.add(t.bez(.005, .052, .034, { x, y: .026 }));
@@ -451,7 +463,7 @@ function route() {
 addEventListener('hashchange', route);
 const go = h => { if (location.hash !== h) location.hash = h; else route(); };
 const isLit = () => document.documentElement.classList.contains('lit');
-const activate = t => { if (!t) return; if (t.action === 'lights') cycleLights(); else if (t.action === 'lamp') toggleLamp(t); else if (t.href) open(t.href, '_blank', 'noopener'); else go('#/' + t.id); };
+const activate = t => { if (!t) return; if (t.action === 'lights') cycleLights(); else if (t.action === 'lamp') toggleLamp(t); else if (t.action === 'radio') radio.toggle(); else if (t.href) open(t.href, '_blank', 'noopener'); else go('#/' + t.id); };
 const q = sel => document.querySelector(sel) || surfaces.map(s => s.el.querySelector(sel)).find(Boolean) || null;
 
 /* ------------------------------------------------------------------ prompts (the option bar) */
@@ -459,7 +471,7 @@ const chip = (k, txt, act, on) => `<span${act ? ` class="btn${on ? ' on' : ''}" 
 function prompts() {
   const el = $('#prompts');
   if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
-  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', 'lights: ' + lights.mode, 'lights') + chip('esc', 'step outside', '#/');
+  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
   else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', 'close', '#/room');
   else el.innerHTML = '';
 }
@@ -471,12 +483,12 @@ function toggleLabels() { showLabels = !showLabels; prompts(); }
 const prefersDark = matchMedia('(prefers-color-scheme: dark)');
 const lights = { mode: 'auto' };
 try { localStorage.removeItem('ezco-lit'); const m = localStorage.getItem('ezco-lights'); if (['auto', 'day', 'night'].includes(m)) lights.mode = m; } catch {}
-const DIAL = { night: .95, auto: 0, day: -.95 };   // knob angle: night at eleven, auto at noon, day at one
+const DIAL = { night: .95, auto: 0, day: -.95 }, LIGHT_ICON = { auto: '◐', day: '☀\uFE0E', night: '☾' };   // knob angle: night at eleven, auto at noon, day at one
 function setLights(mode, instant) {
   lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}
   const on = mode === 'auto' ? !prefersDark.matches : mode === 'day';
   document.documentElement.classList.toggle('lit', on); themeTarget = on ? 1 : 0;
-  const t = byId.lights; t.label = `lights: ${mode}` + (mode === 'auto' ? ` · ${on ? 'day' : 'night'}` : ''); if (t.lbl) t.lbl.textContent = t.label; $('#srlights').textContent = t.label;
+  const t = byId.lights; t.label = LIGHT_ICON[mode]; if (t.lbl) { t.lbl.textContent = t.label; t.lbl.title = `lights: ${mode}`; } $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
   if (instant) t.knob.rotation.x = DIAL[mode]; else tween({ from: t.knob.rotation.x, to: DIAL[mode], dur: 220, update: v => { t.knob.rotation.x = v; } });
   refreshLamps(); prompts();
 }
@@ -581,8 +593,10 @@ for (const el of surfaces.flatMap(s => $$('.scroller', s.el))) {
   el.addEventListener('keydown', e => { if (e.target.matches('input,textarea,select')) return; const h = el.clientHeight, d = { ArrowDown: 40, ArrowUp: -40, PageDown: h * .9, PageUp: -h * .9, ' ': h * .9, End: 1e6, Home: -1e6 }[e.key]; if (d !== undefined) { e.preventDefault(); e.stopPropagation(); by(d); } });
 }
 for (const t of things) if (t.id) setInteractive(t, false);
+/* the radio: audio only, from a hidden player behind the wall */
+radio.on(st => { const t = byId.radio; t.label = st === 'playing' ? '♪ ' + (radio.title() || 'Nujabes') : st === 'loading' ? 'tuning…' : 'play some Nujabes'; if (t.lbl) t.lbl.textContent = t.label; const b = $('#srnav [data-thing=radio]'); if (b) b.textContent = st === 'playing' ? 'stop the radio' : 'play the radio'; });
 /* the laptop's little OS: programs on a desktop, windows for the demos and the new-project dialog */
-let openWin, clockTimer, focusLock = false, placeFloating = () => {};
+let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = () => {};
 {
   const scr = byId.work.surface.el, wins = $$('.win', scr);
   /* editors measure themselves with getBoundingClientRect, which a perspective transform confuses; so a demo window is lifted out of the
@@ -591,12 +605,16 @@ let openWin, clockTimer, focusLock = false, placeFloating = () => {};
   const ph = document.createElement('div'); ph.className = 'win wide ph'; ph.hidden = true; os.appendChild(ph);
   let floating = null;
   const closeWins = () => { if (floating) { os.appendChild(floating); floating.style.cssText = ''; floating = null; } ph.hidden = true; focusLock = false; wins.forEach(w => { w.hidden = true; }); destroyDemos(); };
-  openWin = id => { closeWins(); const w = wins.find(w => w.dataset.win === id); if (!w) return; w.hidden = false;
+  openWin = id => { closeWins(); const w = wins.find(w => w.dataset.win === id); if (!w || !byId.work.active) return; w.hidden = false;
     if (w.dataset.demo) { floating = w; overlay.appendChild(w); ph.hidden = false; focusLock = true; placeFloating(); mountDemo(w.dataset.demo, $('.demo', w)); }
     else { armForms(); $('input, button', w)?.focus(); } };
   placeFloating = () => { if (!floating) return; const r = ph.getBoundingClientRect(); floating.style.cssText = `left:${r.left.toFixed(1)}px;top:${r.top.toFixed(1)}px;width:${r.width.toFixed(1)}px;height:${r.height.toFixed(1)}px`; };
-  for (const b of $$('.app', scr)) b.addEventListener('click', () => { if (b.dataset.href) open(b.dataset.href, '_blank', 'noopener'); else openWin(b.dataset.app); });
+  for (const b of $$('.app', scr)) b.addEventListener('click', () => { if (!byId.work.active) { activate(byId.work); return; } if (b.dataset.href) open(b.dataset.href, '_blank', 'noopener'); else openWin(b.dataset.app); });
   for (const b of $$('[data-close]', scr)) b.addEventListener('click', closeWins);
+  /* the lock screen logo bounces like the DVD one: linear, exact reflections, and — with 13 s per width and 8 s per height —
+     it lands exactly in a corner every 104 s (first time ~74 s in) */
+  const saver = $('.saver', scr), mlogo = $('.mlogo', scr), tri = u => { const f = u % 2; return f < 1 ? f : 2 - f; };
+  bounce = now => { if (scr.classList.contains('awake') || byId.work.active) return; const W = saver.clientWidth - mlogo.offsetWidth, H = saver.clientHeight - mlogo.offsetHeight; if (W <= 0 || H <= 0) return; const t = now / 1000 + 30; mlogo.style.transform = `translate(${(tri(t / 13) * W).toFixed(1)}px,${(tri(t / 8) * H).toFixed(1)}px)`; };
   const clocks = $$('[data-clock]', scr), tick = () => { const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); for (const c of clocks) c.textContent = t; }; tick(); clockTimer = setInterval(tick, 15000);
   byId.work.onClose = closeWins;
 }
@@ -641,7 +659,7 @@ function frame(now) {
   for (const l of lamps) l.lit += ((lampOn(l) ? 1 : 0) - l.lit) * .1;
   byId.linkedin.wheel.rotation.x -= .07 * byId.linkedin.hover;
   byId.work.surface.el.classList.toggle('awake', hovered === byId.work);
-  byId.github.led.material.emissiveIntensity = (Math.sin(now / 130) * Math.sin(now / 310) + Math.sin(now / 2100)) > .45 ? 1.2 : .06;
+  byId.radio.led.material.emissiveIntensity += ((radio.playing ? 1.2 : 0) - byId.radio.led.material.emissiveIntensity) * .1;
   applyTheme(themeT);
   camera.getWorldDirection(fwd);
   for (const s of surfaces) {
@@ -651,7 +669,7 @@ function frame(now) {
     s.obj.visible = vis;
   }
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
-  gl.render(scene, camera); css.render(scene, camera); placeFloating();
+  gl.render(scene, camera); css.render(scene, camera); placeFloating(); bounce(now);
 }
 
 /* ------------------------------------------------------------------ sizing, boot */
@@ -672,9 +690,9 @@ if (dbg.has('up')) byId.join.up = 1;
   if (byId[id] && !byId[id].action && !byId[id].href) { const t = byId[id]; active = t; present(t, true, true); state = 'page'; body.dataset.state = 'page'; setPose(fitPose(t.fit(isPortrait()))); }
   if (dbg.has('hover') && byId[dbg.get('hover')]) setHover(byId[dbg.get('hover')]);
   if (dbg.has('win')) openWin(dbg.get('win'));
-  if (dbg.has('debug')) window.room = { look, drag, glance, cam, lamps, wb, byId, camera, dir: () => camera.getWorldDirection(V3()).toArray(), openWin: id => openWin(id), get state() { return state; }, get active() { return active; }, get focusLock() { return focusLock; } };
+  if (dbg.has('debug')) window.room = { look, drag, glance, cam, lamps, wb, byId, camera, radio, dir: () => camera.getWorldDirection(V3()).toArray(), openWin: id => openWin(id), get state() { return state; }, get active() { return active; }, get focusLock() { return focusLock; } };
   prompts();
 }
 requestAnimationFrame(frame);
-return function dispose() { disposed = true; ac.abort(); clearInterval(clockTimer); destroyDemos(); gl.dispose(); gl.domElement.remove(); css.domElement.remove(); root.querySelector('.overlay')?.remove(); delete document.body.dataset.state; document.body.classList.remove('preload', 'hover', 'dragging'); document.documentElement.classList.remove('lit'); };
+return function dispose() { disposed = true; ac.abort(); clearInterval(clockTimer); destroyDemos(); radio.dispose(); gl.dispose(); gl.domElement.remove(); css.domElement.remove(); root.querySelector('.overlay')?.remove(); delete document.body.dataset.state; document.body.classList.remove('preload', 'hover', 'dragging'); document.documentElement.classList.remove('lit'); };
 }

@@ -33,6 +33,7 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 		<button type="button" data-thing="tripod">table lamp</button>
 		<button type="button" data-thing="lantern">paper lantern</button>
 		<button type="button" data-thing="pendant">pendant</button>
+		<button type="button" data-thing="radio">play the radio</button>
 	</nav>
 
 	<!-- no WebGL: the room needs a graphics card -->
@@ -46,17 +47,17 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 
 	<!-- laptop → our work: a tiny desktop OS -->
 	<template id="t-screen">
-		<div class="saver"><div class="sx"><div class="sy mlogo"><span class="lw" aria-label="ez co"><span class="ls"></span><span class="lt"><span>ez</span><span>co</span></span></span><time data-clock>--:--</time></div></div></div>
+		<div class="saver"><div class="mlogo" aria-label="ez co"><span class="lw"><span class="ls"></span><span class="lt"><span>ez</span><span>co</span></span></span></div></div>
 		<div class="os">
 			<div class="bar"><span><b>ez os</b> · our work</span><span data-clock>--:--</span></div>
 			<div class="desk">
 				{projects.map((p) => (
 					<button class="app" data-app={p.id} data-href={p.href}>
 						<span class="ico">{p.icon}</span><span class="nm">{p.title}</span>
-						<span class="tip"><b>{p.title}</b>{p.description}<small>{p.tags.join(' · ')}{p.href ? ' · opens ' + new URL(p.href).hostname + ' ↗' : ''}</small></span>
+						<span class="tip">{p.description}<small>{p.tags.join(' · ')}{p.href ? ' · opens ' + new URL(p.href).hostname + ' ↗' : ''}</small></span>
 					</button>
 				))}
-				<button class="app" data-app="newproject"><span class="ico plus">+</span><span class="nm">new project</span><span class="tip"><b>new project</b>Want to see an idea come to life? Tell us about it.<small>opens a dialog</small></span></button>
+				<button class="app" data-app="newproject"><span class="ico plus">+</span><span class="nm">new project</span><span class="tip">See your idea come to life</span></button>
 			</div>
 			<div class="win" data-win="newproject" hidden>
 				<div class="tb"><span>new project</span><button type="button" data-close aria-label="close">×</button></div>
@@ -94,17 +95,12 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 	<template id="t-reader">
 		<div class="bar"><span>ez co · blog</span><span>{posts.length} post{posts.length === 1 ? '' : 's'}</span></div>
 		<div class="scroller">
-			<div class="posts">
-				{posts.map((p) => (
-					<a href={`#/blog/${p.slug}`} data-slug={p.slug}><b>{p.fm.title}</b><small>{fmtDate(p.fm.date)}{p.fm.author ? ' · ' + p.fm.author : ''}</small></a>
-				))}
-			</div>
 			{posts.map(({ slug, fm, Content }) => (
 				<article data-slug={slug} hidden>
 					<h1>{fm.title}</h1>
+					{fm.tags?.length ? <div class="tags">{fm.tags.map((t) => <span class="tag">{t}</span>)}</div> : null}
 					<div class="meta">{fmtDate(fm.date)}{fm.author ? ' · ' + fm.author : ''}</div>
 					<Content />
-					{fm.tags?.length ? <div class="tags">{fm.tags.map((t) => <span class="tag">{t}</span>)}</div> : null}
 				</article>
 			))}
 		</div>

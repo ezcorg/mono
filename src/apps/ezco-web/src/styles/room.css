@@ -88,20 +88,15 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 /* laptop screen: a tiny desktop OS */
 .scr{background:var(--bg);font-family:var(--mono)}
 /* lock screen: a monospace logo drifting about, the time beneath; wakes on hover, gone when open */
-.scr .saver{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden;background:var(--bg);transition:opacity .5s;z-index:5}
-.scr .saver .sx{animation:driftx 13s ease-in-out infinite alternate}
-.scr .saver .sy{animation:drifty 9s ease-in-out infinite alternate}
-.scr .saver .mlogo{--ls:120px;display:flex;flex-direction:column;align-items:center;gap:1em}
+.scr .saver{position:absolute;inset:0;overflow:hidden;background:var(--bg);transition:opacity .5s;z-index:5}
+.scr .saver .mlogo{--ls:120px;position:absolute;left:0;top:0;will-change:transform}
 .scr .saver .lw{position:relative;width:calc(var(--ls)*2);height:var(--ls);overflow:hidden;isolation:isolate;background:var(--bg)}
 .scr .saver .lw::before,.scr .saver .lw::after{content:'';position:absolute;top:0;width:var(--ls);height:var(--ls);border:2px solid var(--fg);z-index:3}
 .scr .saver .lw::before{left:0}.scr .saver .lw::after{left:var(--ls)}
 .scr .saver .lt{position:absolute;inset:0;display:flex;font:700 calc(var(--ls)*.36)/1 var(--mono);color:#fff;mix-blend-mode:difference;z-index:2}
 .scr .saver .lt span{width:var(--ls);height:var(--ls);display:grid;place-items:center}
 .scr .saver .ls{position:absolute;top:0;left:var(--ls);width:var(--ls);height:var(--ls);background:var(--fg);z-index:1;animation:logoslide 9s ease-in-out infinite}
-.scr .saver time{font:400 15px/1 var(--mono);letter-spacing:.12em;opacity:.55}
 @keyframes logoslide{0%,40%{transform:translateX(0)}50%,90%{transform:translateX(-100%)}100%{transform:translateX(0)}}
-@keyframes driftx{from{translate:-95% 0}to{translate:95% 0}}
-@keyframes drifty{from{translate:0 -85%}to{translate:0 85%}}
 .scr.awake .saver,.scr.active .saver{opacity:0;pointer-events:none}
 .scr.awake .os{display:block}
 .os{display:none;position:absolute;inset:0;overflow:hidden;font:12.5px/1.4 var(--mono);color:var(--fg);background:var(--bg);background-image:radial-gradient(var(--line-soft) .8px,transparent 1px);background-size:18px 18px}
@@ -132,10 +127,9 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 .win .tb button:hover,.win .tb button:focus-visible{background:var(--fg);color:var(--bg)}
 .win .body{flex:1;min-height:0;position:relative}
 .win .body .scroller{padding:1em 1.1em 1.2em}
-.win .demo{position:absolute;inset:0;overflow:auto;background:#1e1e1e;color:#f5f5f5}
-.win .demo .cm-editor{min-height:100%}
-.win .demo .ProseMirror{font-family:'Source Serif 4',system-ui,Avenir,Helvetica,Arial,serif}
-.win .demo .loading-indicator{position:absolute;inset:0;display:grid;place-items:center;font:12px var(--mono);opacity:.6}
+.win .demo{position:absolute;inset:0;overflow:hidden;background:#1e1e1e;color:#f5f5f5}
+.win .demo iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#1e1e1e}
+.radio-player{position:fixed;left:-9999px;top:0;width:200px;height:200px;opacity:.01;pointer-events:none}
 .win .form{font-family:var(--mono);font-size:1em}
 .win .form input,.win .form select,.win .form textarea{font-family:var(--mono)}
 .win .form .thanks{font-family:var(--mono);font-size:1em}
@@ -164,7 +158,8 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 .reader .idle{position:absolute;inset:0;border-radius:3px;display:grid;place-items:center;font:500 44px/1.5 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--fg);text-align:center;background:var(--bg)}
 .reader .idle span{display:block;font-size:.5em;opacity:.55}
 .reader.active .idle{display:none}
-.tags{display:flex;flex-wrap:wrap;gap:.3em;margin-top:.5em}
+.tags{display:flex;flex-wrap:wrap;gap:.3em;margin:0 0 .6em}
+.reader h1+.tags{margin-top:-.1em}
 .tag{font:400 .68em/1 var(--sans);border:1px solid var(--line-soft);border-radius:999px;padding:.3em .6em;opacity:.75}
 
 /* kanban */
