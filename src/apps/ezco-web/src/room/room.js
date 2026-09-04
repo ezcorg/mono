@@ -186,7 +186,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* corner desk + stool + laptop + a desk plant → our work */
 {
-  const t = thing({ id: 'work', label: 'our work', anchor: V3(-.27, -.02, -.4), side: V3(-.16, -.14, -.39) });   // label on top, or beside the screen while the radio's controls hang above it
+  const t = thing({ id: 'work', label: 'our work', anchor: V3(-.27, -.02, -.4), side: V3(-.385, -.09, -.39) });   // label on top, or to the left of the screen (arrow pointing at it) while the radio's controls hang above
   const g = t.group;
   decor.group.add(box(.42, .02, .2, { x: -.29, y: -.22, z: -.4, ...dm }), box(.2, .02, .34, { x: -.4, y: -.22, z: -.13, ...dm }));
   for (const [x, z] of [[-.11, -.31], [-.11, -.49], [-.31, .03], [-.48, .03], [-.48, -.49]]) decor.group.add(box(.018, .27, .018, { x, y: -.365, z, ...dm }));
@@ -208,7 +208,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* a floppy and a thumb drive on the near end of the desk → GitHub */
 {
-  const t = thing({ id: 'github', label: 'GitHub', href: $('#srnav [data-thing=github]').href, ext: true, anchor: V3(-.39, -.13, -.05) });
+  const t = thing({ id: 'github', label: 'GitHub', href: $('#srnav [data-thing=github]').href, ext: true, anchor: V3(-.39, -.16, -.05) });
   const f = new THREE.Group(); f.position.set(-.41, -.21, -.07); f.rotation.y = .25; t.group.add(f);
   const diskGeo = (() => { const q = .045, c = .015, sh = new THREE.Shape(); sh.moveTo(-q, -q); sh.lineTo(q, -q); sh.lineTo(q, q - c); sh.lineTo(q - c, q); sh.lineTo(-q, q); sh.closePath(); return new THREE.ExtrudeGeometry(sh, { depth: .003, bevelEnabled: false }); })();
   f.add(t.pick(mesh(diskGeo, { mat: t.mat, edge: t.edge, rx: -Math.PI / 2 })));                                                   // the disk, one corner cut like the save icon
