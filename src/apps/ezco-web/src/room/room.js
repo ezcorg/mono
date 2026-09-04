@@ -186,7 +186,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* corner desk + stool + laptop + a desk plant → our work */
 {
-  const t = thing({ id: 'work', label: 'our work', anchor: V3(-.27, -.02, -.4) });
+  const t = thing({ id: 'work', label: 'our work', side: true, anchor: V3(-.16, -.14, -.39) });   // beside the screen, clear of the radio's controls and the pothos
   const g = t.group;
   decor.group.add(box(.42, .02, .2, { x: -.29, y: -.22, z: -.4, ...dm }), box(.2, .02, .34, { x: -.4, y: -.22, z: -.13, ...dm }));
   for (const [x, z] of [[-.11, -.31], [-.11, -.49], [-.31, .03], [-.48, .03], [-.48, -.49]]) decor.group.add(box(.018, .27, .018, { x, y: -.365, z, ...dm }));
@@ -528,7 +528,7 @@ function applyTheme(t) {
 /* ------------------------------------------------------------------ hover, labels, picking */
 const labelsEl = $('#labels');
 for (const t of things) if (t.id) {
-  const l = document.createElement('span'); l.className = 'lbl' + (t.action ? ' action' : '') + (t.ext ? ' ext' : ''); l.textContent = t.label; labelsEl.appendChild(l); t.lbl = l;
+  const l = document.createElement('span'); l.className = 'lbl' + (t.action ? ' action' : '') + (t.ext ? ' ext' : '') + (t.side ? ' side' : ''); l.textContent = t.label; labelsEl.appendChild(l); t.lbl = l;
   l.addEventListener('click', () => { if (state === 'room') activate(t); }); l.addEventListener('pointerenter', () => setHover(t)); l.addEventListener('pointerleave', () => setHover(null));
 }
 const RADIO_CTL = V3(-.36, .052, -.44);

@@ -31,6 +31,8 @@ body.preload .room *{transition:none!important}
 .lbl.action::after{content:''}
 .lbl.on{opacity:1;margin-top:0;pointer-events:auto;cursor:pointer}
 .lbl.ext::after{content:' ↗'}
+.lbl.side{translate:0 -50%;margin-top:0;margin-left:.9em}
+.lbl.side.on{margin-left:.5em}
 .lbl:hover{background:var(--fg);color:var(--bg)}
 .lbl .ic{width:1.15em;height:1.15em;vertical-align:-.22em}
 .ctl{position:absolute;left:0;top:0;translate:-50% 0;margin-top:.6em;display:flex;gap:.3em;opacity:0;transition:opacity .2s;pointer-events:none}
