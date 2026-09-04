@@ -477,7 +477,7 @@ const chip = (k, txt, act, on) => `<span${act ? ` class="btn${on ? ' on' : ''}" 
 function prompts() {
   const el = $('#prompts');
   if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
-  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', lightsText(lights.mode), 'lights') + chip('esc', 'step outside', '#/');
+  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
   else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', 'close', '#/room');
   else el.innerHTML = '';
 }
@@ -489,8 +489,7 @@ function toggleLabels() { showLabels = !showLabels; prompts(); }
 const prefersDark = matchMedia('(prefers-color-scheme: dark)');
 const lights = { mode: 'auto' };
 try { localStorage.removeItem('ezco-lit'); const m = localStorage.getItem('ezco-lights'); if (['auto', 'day', 'night'].includes(m)) lights.mode = m; } catch {}
-const DIAL = { night: .95, auto: 0, day: -.95 }, LIGHT_ICON = { auto: '◐', day: '☀\uFE0E', night: '☾' };
-const lightsText = mode => `${LIGHT_ICON[mode]} ${mode}`;   // knob angle: night at eleven, auto at noon, day at one
+const DIAL = { night: .95, auto: 0, day: -.95 }, LIGHT_ICON = { auto: '◐', day: '☀\uFE0E', night: '☾' };   // knob angle: night at eleven, auto at noon, day at one
 function setLights(mode, instant) {
   lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}
   const on = mode === 'auto' ? !prefersDark.matches : mode === 'day';
