@@ -186,7 +186,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* corner desk + stool + laptop + a desk plant → our work */
 {
-  const t = thing({ id: 'work', label: 'our work', anchor: V3(-.27, -.02, -.4), side: V3(-.385, -.09, -.39) });   // label on top, or to the left of the screen (arrow pointing at it) while the radio's controls hang above
+  const t = thing({ id: 'work', label: 'our work', anchor: V3(-.27, -.02, -.4) });
   const g = t.group;
   decor.group.add(box(.42, .02, .2, { x: -.29, y: -.22, z: -.4, ...dm }), box(.2, .02, .34, { x: -.4, y: -.22, z: -.13, ...dm }));
   for (const [x, z] of [[-.11, -.31], [-.11, -.49], [-.31, .03], [-.48, .03], [-.48, -.49]]) decor.group.add(box(.018, .27, .018, { x, y: -.365, z, ...dm }));
@@ -208,7 +208,7 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
 
 /* a floppy and a thumb drive on the near end of the desk → GitHub */
 {
-  const t = thing({ id: 'github', label: 'GitHub', href: $('#srnav [data-thing=github]').href, ext: true, anchor: V3(-.39, -.16, -.05) });
+  const t = thing({ id: 'github', label: 'GitHub', href: $('#srnav [data-thing=github]').href, ext: true, anchor: V3(-.39, -.13, -.05) });
   const f = new THREE.Group(); f.position.set(-.41, -.21, -.07); f.rotation.y = .25; t.group.add(f);
   const diskGeo = (() => { const q = .045, c = .015, sh = new THREE.Shape(); sh.moveTo(-q, -q); sh.lineTo(q, -q); sh.lineTo(q, q - c); sh.lineTo(q - c, q); sh.lineTo(-q, q); sh.closePath(); return new THREE.ExtrudeGeometry(sh, { depth: .003, bevelEnabled: false }); })();
   f.add(t.pick(mesh(diskGeo, { mat: t.mat, edge: t.edge, rx: -Math.PI / 2 })));                                                   // the disk, one corner cut like the save icon
@@ -528,12 +528,8 @@ function applyTheme(t) {
 const labelsEl = $('#labels');
 for (const t of things) if (t.id) {
   const l = document.createElement('span'); l.className = 'lbl' + (t.action ? ' action' : '') + (t.ext ? ' ext' : ''); l.textContent = t.label; labelsEl.appendChild(l); t.lbl = l;
-  l.addEventListener('click', () => { if (state === 'room') activate(t); }); l.addEventListener('pointerenter', () => setHover(t)); l.addEventListener('pointerleave', () => setHover(null));
+  l.addEventListener('click', e => { if (e.target.closest('button')) return; if (state === 'room') activate(t); }); l.addEventListener('pointerenter', () => setHover(t)); l.addEventListener('pointerleave', () => setHover(null));
 }
-const RADIO_CTL = V3(-.36, .052, -.44);
-const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track">⏮\uFE0E</button><button data-act="toggle" aria-label="pause">⏸\uFE0E</button><button data-act="next" aria-label="next track">⏭\uFE0E</button>'; labelsEl.appendChild(ctl);
-ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
-ctl.addEventListener('pointerenter', () => setHover(byId.radio)); ctl.addEventListener('pointerleave', () => setHover(null));
 let hovered = null;
 function setHover(t) { if (hovered === t) return; hovered = t; body.classList.toggle('hover', !!t && state === 'room'); }
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -557,7 +553,7 @@ addEventListener('pointermove', e => {
 }, { passive: true });
 /* drag to look from anywhere that isn't an open page's controls */
 addEventListener('pointerdown', e => {
-  if (state === 'logo' || focusLock || e.button > 0 || e.target.closest('.surface.active, a, button, input, select, textarea, label, .prompts, .sr-nav, .lbl, .ctl')) return;
+  if (state === 'logo' || focusLock || e.button > 0 || e.target.closest('.surface.active, a, button, input, select, textarea, label, .prompts, .sr-nav, .lbl')) return;
   if (state === 'page' && active?.id === 'whiteboard' && e.target === gl.domElement) { const uv = wbHit(e); if (uv) { wbDraw = { id: e.pointerId, stroke: [] }; wb.strokes.push(wbDraw.stroke); if (wb.strokes.length === 1) byId.whiteboard.tex.redraw(); wbAdd(uv); } return; }
   dragging = { x: e.clientX, y: e.clientY, yaw: drag.yaw, pitch: drag.pitch, id: e.pointerId }; dragMoved = false;
 });
@@ -605,7 +601,15 @@ for (const el of surfaces.flatMap(s => $$('.scroller', s.el))) {
 }
 for (const t of things) if (t.id) setInteractive(t, false);
 /* the radio: audio only, from a hidden player behind the wall */
-radio.on(st => { const t = byId.radio; t.label = st === 'playing' ? '♪ ' + ((radio.title() || 'Nujabes').replace(/^Nujabes\s*[-–]\s*/, '').slice(0, 34) + ((radio.title() || '').length > 34 ? '…' : '')) : st === 'loading' ? '♫ tuning…' : '♫ play some Nujabes'; if (t.lbl) t.lbl.textContent = t.label; const b = $('#srnav [data-thing=radio]'); if (b) b.textContent = st === 'playing' ? 'pause the radio' : 'play the radio'; const tg = $('[data-act=toggle]', ctl); tg.textContent = radio.playing ? '⏸\uFE0E' : '▶\uFE0E'; tg.setAttribute('aria-label', radio.playing ? 'pause' : 'play'); });
+/* once the radio has been touched its label is the transport itself; the track name lives in the buttons' tooltips and the screen-reader text */
+byId.radio.lbl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
+radio.on(st => {
+  const t = byId.radio, title = radio.title() || 'Nujabes', b = $('#srnav [data-thing=radio]');
+  if (st === 'off') { t.lbl.classList.remove('bar'); t.lbl.textContent = t.label = '♫ play some Nujabes'; if (b) b.textContent = 'play the radio'; return; }
+  const tip = esc(st === 'loading' ? 'tuning…' : '♪ ' + title);
+  t.lbl.classList.add('bar'); t.lbl.innerHTML = `<button data-act="prev" title="${tip}" aria-label="previous track">⏮\uFE0E</button><button data-act="toggle" title="${tip}" aria-label="${radio.playing ? 'pause' : 'play'}">${radio.playing ? '⏸\uFE0E' : '▶\uFE0E'}</button><button data-act="next" title="${tip}" aria-label="next track">⏭\uFE0E</button>`;
+  if (b) b.textContent = (radio.playing ? 'pause the radio · ' : 'play the radio · ') + title;
+});
 /* the laptop's little OS: programs on a desktop, windows for the demos and the new-project dialog */
 let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = () => {};
 {
@@ -679,9 +683,7 @@ function frame(now) {
     if (vis) { const dist = toCam.length(); ray.set(camera.position, tmp.copy(wp).sub(camera.position).normalize()); ray.far = dist; vis = !ray.intersectObjects(occluders, false).some(h => !(h.object === shell && h.face.materialIndex === 4)); ray.far = Infinity; }
     s.obj.visible = vis;
   }
-  const ctlOn = state === 'room' && radio.state !== 'off';
-  for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5); if (on) { const aside = !!t.side && ctlOn; t.lbl.classList.toggle('side', aside); tmp.copy(aside ? t.side : t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
-  { if (ctlOn) { tmp.copy(RADIO_CTL).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on'); }
+  for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
   gl.render(scene, camera); css.render(scene, camera); placeFloating(); bounce(now);
 }
 
