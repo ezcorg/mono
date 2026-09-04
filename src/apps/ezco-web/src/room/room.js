@@ -1,7 +1,7 @@
 /* the room — ported from experiments/cube-room.html (the experiment stays as the reference copy) */
 let THREE, CSS3DRenderer, CSS3DObject;   // loaded behind the loading label, see boot()
-import { submitProject, turnstile } from './forms.js';
-import { mountDemo, destroyDemos } from './demos.js';
+import { submitProject, checkProject, turnstile } from './forms.js';
+import { mountDemo, destroyDemo, destroyDemos, themeDemos } from './demos.js';
 import { radio } from './radio.js';
 
 /* Boots the room into `opts.mount` (the element holding the chrome + templates). Returns a dispose(). */
@@ -30,8 +30,9 @@ const Y = V3(0, 1, 0);
    Authored in cube units (edge = 1), rendered at ×K: CSS3DRenderer maps world units to CSS px, so K puts
    the focused DOM planes near scale 1 (crisp, 1px borders stay 1px) and far apart for Chrome's 3D sorter. */
 const K = 2500;
-const gl = new THREE.WebGLRenderer({ antialias: true });
+const gl = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 gl.setPixelRatio(Math.min(devicePixelRatio, 2)); gl.shadowMap.enabled = true; gl.shadowMap.type = THREE.PCFSoftShadowMap;
+gl.shadowMap.autoUpdate = false;   // the casters hardly ever move: the maps are re-rendered only while something does (see frame()), not eight passes every frame
 gl.domElement.id = 'gl'; root.prepend(gl.domElement);
 const css = new CSS3DRenderer(); css.domElement.id = 'css'; gl.domElement.after(css.domElement);
 { const q = new URLSearchParams(location.search); if (q.has('nodom')) css.domElement.style.display = 'none'; if (q.has('nogl')) gl.domElement.style.visibility = 'hidden'; }   // bisecting renderer artifacts in any build: ?nodom hides the DOM layer, ?nogl the WebGL one
@@ -63,7 +64,7 @@ function canvasTex(w, h, draw) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   t.redraw = () => { draw(c.getContext('2d'), w, h); t.needsUpdate = true; }; t.redraw(); return t;
 }
-const themeColors = () => themeT < .5 ? { bg: '#000', fg: '#f5f5f5' } : { bg: '#f5f5f5', fg: '#000' };
+const themeColors = () => themeT < .5 ? { bg: '#000', fg: '#f5f5f5', mid: THEMES.night.bezel } : { bg: '#f5f5f5', fg: '#000', mid: THEMES.day.bezel };
 /* a stand-in employee: a dog in profile */
 function drawDog(ctx, cx, cy, s, fg) {
   ctx.fillStyle = fg; ctx.strokeStyle = fg; ctx.lineCap = 'round';
@@ -112,9 +113,10 @@ logoTex.co = canvasTex(1024, 1024, (ctx, W) => drawLogo(ctx, W, 'co', -logoT));
 const extMat = new THREE.MeshStandardMaterial({ color: '#000', roughness: .95 }), none = new THREE.MeshBasicMaterial({ visible: false });
 const shellMats = [new THREE.MeshBasicMaterial({ map: logoTex.co }), extMat, extMat, extMat, none, extMat];
 const shell = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), shellMats); scene.add(shell);
-const doorGroup = new THREE.Group(); doorGroup.position.set(-.5, 0, .512); scene.add(doorGroup);
+const doorGroup = new THREE.Group(); doorGroup.position.set(-.5, 0, .502); scene.add(doorGroup);
 const doorMats = [extMat, extMat, extMat, extMat, new THREE.MeshBasicMaterial({ map: logoTex.ez }), extMat];
-const door = new THREE.Mesh(new THREE.BoxGeometry(1, 1, .02), doorMats); door.position.set(.5, 0, 0); doorGroup.add(door);
+/* the door fills the opening inside the frame bars (they show .012 around it) and sits flush with their front, so the face's painted border stays inside the frame instead of lying over it */
+const door = new THREE.Mesh(new THREE.BoxGeometry(.976, .976, .02), doorMats); door.position.set(.5, 0, 0); doorGroup.add(door);
 const ghost = m => { const c = m.clone(); c.transparent = true; c.opacity = m === none ? 0 : .14; c.depthWrite = false; return c; };
 const mirror = new THREE.Group(); mirror.scale.y = -1; mirror.position.y = -1.004; scene.add(mirror);   // a hair below the floor, or the ghost's underside z-fights it during the walk in
 mirror.add(new THREE.Mesh(shell.geometry, shellMats.map(ghost)));
@@ -123,13 +125,15 @@ const doorM = new THREE.Mesh(door.geometry, doorMats.map(ghost)); doorM.position
 const ground = new THREE.GridHelper(12, 96, THEMES.night.edge, THEMES.night.edge); ground.position.y = -.502; ground.material.transparent = true; ground.material.opacity = .09; scene.add(ground);
 
 /* ------------------------------------------------------------------ the room: a glass box on a solid frame */
+/* everything inside the box lives in `interior`: from outside, with the door shut, none of it can be seen, so none of it is drawn (three.js culls by frustum only, not by occlusion) */
+const interior = new THREE.Group(); scene.add(interior);
 const floorMat = (() => { const m = new THREE.MeshStandardMaterial({ color: THEMES.night.floor, roughness: .95 }); reg.floor.push(m); return m; })();
 const glassMat = new THREE.MeshStandardMaterial({ color: THEMES.night.glass, transparent: true, opacity: .1, roughness: .08, metalness: 0, depthWrite: false });
 const frameMat = stdMat(THEMES.night.bezel, { roughness: .55, metalness: .2 });
 const plantMat = stdMat(THEMES.night.plant, { side: THREE.DoubleSide });
 const lanternMat = new THREE.MeshStandardMaterial({ color: '#2a2a2a', emissive: '#ffffff', emissiveIntensity: .7, roughness: .9 });
 function pane(w, h, x, y, z, rx, ry, mat) { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.position.set(x, y, z); m.rotation.set(rx, ry, 0); m.receiveShadow = mat === floorMat; return m; }
-scene.add(pane(1, 1, 0, 0, -.5, 0, 0, glassMat), pane(1, 1, -.5, 0, 0, 0, Math.PI / 2, glassMat), pane(1, 1, .5, 0, 0, 0, -Math.PI / 2, glassMat), pane(1, 1, 0, .5, 0, Math.PI / 2, 0, glassMat), pane(1, 1, 0, -.5, 0, -Math.PI / 2, 0, floorMat));
+interior.add(pane(1, 1, 0, 0, -.5, 0, 0, glassMat), pane(1, 1, -.5, 0, 0, 0, Math.PI / 2, glassMat), pane(1, 1, .5, 0, 0, 0, -Math.PI / 2, glassMat), pane(1, 1, 0, .5, 0, Math.PI / 2, 0, glassMat), pane(1, 1, 0, -.5, 0, -Math.PI / 2, 0, floorMat));
 const frameEdge = edgeMat();
 const bar = (w, h, d, x, y, z) => { const m = box(w, h, d, { x, y, z, mat: frameMat, edge: frameEdge, shadow: false }); return m; };
 { const E = .024, M = .009;
@@ -137,15 +141,15 @@ const bar = (w, h, d, x, y, z) => { const m = box(w, h, d, { x, y, z, mat: frame
   for (const sy of [-.5, .5]) for (const sz of [-.5, .5]) scene.add(bar(1 + E, E, E, 0, sy, sz));
   for (const sy of [-.5, .5]) for (const sx of [-.5, .5]) scene.add(bar(E, E, 1 + E, sx, sy, 0));
   scene.add(bar(M, 1, M, -.494, 0, 0), bar(M, 1, M, .494, 0, 0), bar(M, 1, M, 0, 0, -.494), bar(1, M, M, 0, .06, -.494), bar(M, M, 1, -.494, .06, 0), bar(M, M, 1, .494, .06, 0), bar(1, M, M, 0, .494, 0), bar(M, M, 1, 0, .494, 0)); }
-const grid = new THREE.GridHelper(1, 10, THEMES.night.edge, THEMES.night.edge); grid.position.y = -.499; grid.material.transparent = true; grid.material.opacity = THEMES.night.grid; scene.add(grid);
+const grid = new THREE.GridHelper(1, 10, THEMES.night.edge, THEMES.night.edge); grid.position.y = -.499; grid.material.transparent = true; grid.material.opacity = THEMES.night.grid; interior.add(grid);
 const rugMat = new THREE.MeshStandardMaterial({ color: THEMES.night.rug, roughness: 1 }); reg.rug.push(rugMat);
-const rug = new THREE.Mesh(new THREE.PlaneGeometry(.56, .42), rugMat); rug.rotation.x = -Math.PI / 2; rug.position.set(.06, -.497, .12); rug.receiveShadow = true; rug.add(edges(rug.geometry, edgeMat())); scene.add(rug);
+const rug = new THREE.Mesh(new THREE.PlaneGeometry(.56, .42), rugMat); rug.rotation.x = -Math.PI / 2; rug.position.set(.06, -.497, .12); rug.receiveShadow = true; rug.add(edges(rug.geometry, edgeMat())); interior.add(rug);
 
 /* ------------------------------------------------------------------ things (furniture that is also navigation) + decor */
 const things = [], byId = {}, pickables = [], surfaces = [];
 function thing(def) {
   const t = { ...def, group: new THREE.Group(), hover: 0, active: false, mat: stdMat(THEMES.night.obj), bezel: stdMat(THEMES.night.bezel, { roughness: .6, metalness: .1 }), edge: edgeMat() };
-  reg.things.push(t); scene.add(t.group); things.push(t); if (t.id) byId[t.id] = t;
+  reg.things.push(t); interior.add(t.group); things.push(t); if (t.id) byId[t.id] = t;
   t.pick = m => { m.userData.thing = t; pickables.push(m); return m; };
   t.box = (w, h, d, o = {}) => t.pick(box(w, h, d, { mat: t.mat, edge: t.edge, ...o }));
   t.bez = (w, h, d, o = {}) => t.pick(box(w, h, d, { mat: t.bezel, edge: t.edge, ...o }));
@@ -233,7 +237,8 @@ const glow = (x, y, z, s) => { const sp = new THREE.Sprite(new THREE.SpriteMater
     for (let i = 0; i < 7; i++) r.add(t.box(.0018, .026, .002, { x: -.027 + i * .005, y: .02, z: .0185 }));   // speaker grille
     r.add(t.pick(cyl(.007, .004, { x: .022, y: .025, z: .019, rx: Math.PI / 2, mat: t.mat, edge: t.edge })), t.box(.002, .006, .001, { x: .022, y: .028, z: .0215 }));   // tuning knob + pointer
     r.add(along(t.cyl(.0012, .066), V3(.03, .04, -.01), V3(.052, .1, -.022), V3(0, 1, 0)));   // antenna
-    t.led = new THREE.Mesh(new THREE.BoxGeometry(.003, .003, .002), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0, roughness: .4 })); t.led.position.set(.022, .01, .0185); r.add(t.led); }
+    t.led = new THREE.Mesh(new THREE.BoxGeometry(.003, .003, .002), new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0, roughness: .4 })); t.led.position.set(.022, .01, .0185); r.add(t.led);
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(.08, .036, .04), none); hit.position.set(0, .058, 0); r.add(t.pick(hit)); }   // reaches up to the anchor, so the pointer can climb from the radio to its bar without a gap
   { const t = thing({ id: 'linkedin', label: 'LinkedIn', href: 'https://linkedin.com/company/eeezco/', ext: true, anchor: V3(-.21, .2, -.455) });
     const r = new THREE.Group(); r.position.set(-.21, top, -.455); t.group.add(r);
     for (const x of [-.032, .032]) r.add(t.bez(.005, .052, .034, { x, y: .026 }));
@@ -280,12 +285,13 @@ function drawBoard(ctx, W, H) {
   const g = t.group;
   const photo = { img: null, failed: false };
   const eotm = canvasTex(520, 640, (ctx, W, H) => {
-    const { bg, fg } = themeColors(); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    const { bg, fg, mid } = themeColors(); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
     const px = 48, py = 44, pw = W - 2 * px, ph = H - 224;
     ctx.strokeStyle = fg; ctx.lineWidth = 3; ctx.strokeRect(px - 7, py - 7, pw + 14, ph + 14);
     if (photo.img) { const r = Math.max(pw / photo.img.width, ph / photo.img.height), sw = pw / r, sh = ph / r; ctx.drawImage(photo.img, (photo.img.width - sw) / 2, (photo.img.height - sh) * FACE, sw, sh, px, py, pw, ph); }
     else { ctx.fillStyle = fg; ctx.globalAlpha = .07; ctx.fillRect(px, py, pw, ph); ctx.globalAlpha = 1; if (photo.failed) drawDog(ctx, px + pw / 2, py + ph * .58, pw * .3, fg); }   // blank while the photo loads: no flash
-    const plY = py + ph + 30; ctx.fillStyle = fg; ctx.fillRect(px + 16, plY, pw - 32, 100); ctx.fillStyle = bg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const plY = py + ph + 30; ctx.fillStyle = mid; ctx.fillRect(px + 16, plY, pw - 32, 100); ctx.globalAlpha = .35; ctx.strokeStyle = fg; ctx.lineWidth = 2; ctx.strokeRect(px + 17, plY + 1, pw - 34, 98); ctx.globalAlpha = 1;   // the plate in the room's mid tone (the bezels'), engraved in the ink colour
+    ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.font = '700 36px Helvetica, Arial, sans-serif'; ctx.letterSpacing = '8px'; ctx.fillText('LADY', W / 2 + 4, plY + 38);
     ctx.font = '500 15px Helvetica, Arial, sans-serif'; ctx.letterSpacing = '3px'; ctx.fillText('EMPLOYEE OF THE MONTH', W / 2 + 1, plY + 76);
   });
@@ -376,7 +382,7 @@ function lamp(id, name, base, x, y, z, shadows) {
 const heldTilt = new THREE.Quaternion().setFromAxisAngle(V3(1, 0, 0), -.62);
 {
   const t = thing({ id: 'join', label: 'come work with us', anchor: V3() }); t.held = true; t.up = 0; t.forceUp = false; t.frozen = false;
-  t.group.add(t.bez(.21, .3, .012), t.box(.06, .025, .02, { y: .14, z: .006 }));
+  t.group.add(t.bez(.21, .3, .012), t.box(.06, .025, .02, { y: .14, z: .006 })); t.group.traverse(m => { m.castShadow = false; });   // it rides in front of the camera; a shadow from it would keep the shadow maps busy every frame
   t.surface = surface(t, { cls: 'sheet', html: tpl('sheet'), w: .17, h: .24, x: 0, y: -.012, z: .0065 });
   t.fit = () => ({ c: V3(0, -.012, .0065).applyQuaternion(t.group.quaternion).add(t.group.position), n: V3(0, 0, 1).applyQuaternion(t.group.quaternion), w: .17, h: .24, max: 560 });
   t.present = on => { t.forceUp = on; t.frozen = on; };
@@ -505,7 +511,7 @@ function setLights(mode, instant) {
   document.documentElement.classList.toggle('lit', on); themeTarget = on ? 1 : 0;
   const t = byId.lights; t.label = `lights: ${mode}`; if (t.lbl) { t.lbl.innerHTML = LIGHT_ICON[mode]; t.lbl.title = t.label; } $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
   if (instant) t.knob.rotation.x = DIAL[mode]; else tween({ from: t.knob.rotation.x, to: DIAL[mode], dur: 220, update: v => { t.knob.rotation.x = v; } });
-  refreshLamps(); prompts();
+  refreshLamps(); prompts(); themeDemos(on);
 }
 const cycleLights = () => setLights({ auto: 'day', day: 'night', night: 'auto' }[lights.mode]);
 prefersDark.addEventListener('change', () => { if (lights.mode === 'auto') setLights('auto'); }, { signal });
@@ -616,7 +622,7 @@ for (const t of things) if (t.id) setInteractive(t, false);
 const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track" tabindex="-1">⏮\uFE0E</button><button data-act="toggle" aria-label="pause" tabindex="-1">⏸\uFE0E</button><button data-act="next" aria-label="next track" tabindex="-1">⏭\uFE0E</button>';
 root.appendChild(ctl);   // after the accessible page list (every control in the room carries an explicit tabindex: Safari's plain Tab only visits form fields and elements that have one), so once the radio is on, Tab reaches ⏮ ⏸ ⏭ right after "play the radio"; until then they're out of the tab order
 ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
-let ctlHover = false, ctlFocus = false, ctlSeen = -1e9;
+let ctlHover = false, ctlFocus = false;
 ctl.addEventListener('pointerenter', () => { ctlHover = true; }); ctl.addEventListener('pointerleave', () => { ctlHover = false; });
 ctl.addEventListener('focusin', () => { ctlFocus = true; });   // keeps the bar up while a button has focus; the camera stays put
 ctl.addEventListener('focusout', e => { if (!ctl.contains(e.relatedTarget)) ctlFocus = false; });
@@ -626,22 +632,38 @@ radio.on(st => {
   const tg = $('[data-act=toggle]', ctl); tg.textContent = radio.playing ? '⏸\uFE0E' : '▶\uFE0E'; tg.setAttribute('aria-label', radio.playing ? 'pause' : 'play');
   if (b) b.textContent = st === 'off' ? 'play the radio' : (radio.playing ? 'pause the radio · ' : 'play the radio · ') + title;
 });
-/* the laptop's little OS: programs on a desktop, windows for the demos and the new-project dialog */
+/* the laptop's little OS: programs on a desktop, windows for the demos and the new-project dialog.
+   A window manager of the smallest kind: any number of windows open, one in front, the rest minimised to the bar. */
 let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = () => {};
 {
-  const scr = byId.work.surface.el, wins = $$('.win', scr);
+  const scr = byId.work.surface.el, wins = $$('.win', scr), os = $('.os', scr), tasks = $('.tasks', scr);
   /* editors measure themselves with getBoundingClientRect, which a perspective transform confuses; so a demo window is lifted out of the
-     3D plane into a fixed overlay sized from a hidden placeholder that stays in the OS, and the camera holds still while it is open */
-  const os = $('.os', scr), overlay = document.createElement('div'); overlay.className = 'overlay'; root.appendChild(overlay);
+     3D plane into a fixed overlay sized from a hidden placeholder that stays in the OS, and the camera holds still while one is in front.
+     It stays in the overlay for as long as it is open: minimised, its document keeps running (display:none doesn't reload an iframe). */
+  const overlay = document.createElement('div'); overlay.className = 'overlay'; root.appendChild(overlay);
   const ph = document.createElement('div'); ph.className = 'win wide ph'; ph.hidden = true; os.appendChild(ph);
-  let floating = null;
-  const closeWins = () => { if (floating) { os.appendChild(floating); floating.style.cssText = ''; floating = null; } ph.hidden = true; focusLock = false; wins.forEach(w => { w.hidden = true; }); destroyDemos(); };
-  openWin = id => { closeWins(); const w = wins.find(w => w.dataset.win === id); if (!w || !byId.work.active) return; w.hidden = false;
-    if (w.dataset.demo) { floating = w; overlay.appendChild(w); ph.hidden = false; focusLock = true; placeFloating(); mountDemo(w.dataset.demo, $('.demo', w)); }
-    else { armForms(); $('input, button', w)?.focus(); } };
-  placeFloating = () => { if (!floating) return; const r = ph.getBoundingClientRect(); floating.style.cssText = `left:${r.left.toFixed(1)}px;top:${r.top.toFixed(1)}px;width:${r.width.toFixed(1)}px;height:${r.height.toFixed(1)}px`; };
+  const opened = []; let front = null;
+  const title = w => w.dataset.win === 'newproject' ? 'new project' : w.dataset.win, icon = w => $(`.app[data-app="${w.dataset.win}"] .ico`, scr)?.innerHTML || '';
+  const drawTasks = () => { tasks.innerHTML = opened.map(w => `<button type="button" class="task ${w === front ? 'on' : 'min'}" data-task="${w.dataset.win}" tabindex="0" title="${w === front ? 'minimise' : 'bring up'} ${esc(title(w))}"><span class="ico">${icon(w)}</span>${esc(title(w))}</button>`).join(''); };
+  const hide = w => { w.hidden = true; if (front === w) { front = null; ph.hidden = true; focusLock = false; } };
+  const raise = w => {
+    if (front && front !== w) hide(front);
+    front = w; w.hidden = false;
+    if (w.dataset.demo) { if (w.parentElement !== overlay) overlay.appendChild(w); ph.hidden = false; focusLock = true; placeFloating(); mountDemo(w.dataset.demo, $('.demo', w), { lit: isLit() }); }
+    else { armForms(); $('input, button', w)?.focus(); }
+    drawTasks();
+  };
+  const minimise = w => { hide(w); drawTasks(); };
+  const close = w => { hide(w); const i = opened.indexOf(w); if (i >= 0) opened.splice(i, 1); if (w.dataset.demo) destroyDemo(w.dataset.demo); drawTasks(); };
+  const closeWins = () => { for (const w of [...opened]) close(w); };
+  openWin = id => { const w = wins.find(w => w.dataset.win === id); if (!w || !byId.work.active) return; if (!opened.includes(w)) opened.push(w); raise(w); };
+  placeFloating = () => { if (!front?.dataset.demo) return; const r = ph.getBoundingClientRect(); front.style.cssText = `left:${r.left.toFixed(1)}px;top:${r.top.toFixed(1)}px;width:${r.width.toFixed(1)}px;height:${r.height.toFixed(1)}px`; };
   for (const b of $$('.app', scr)) b.addEventListener('click', () => { if (!byId.work.active) { activate(byId.work); return; } if (b.dataset.href) open(b.dataset.href, '_blank', 'noopener'); else openWin(b.dataset.app); });
-  for (const b of $$('[data-close]', scr)) b.addEventListener('click', closeWins);
+  tasks.addEventListener('click', e => { const b = e.target.closest('.task'); if (!b) return; const w = wins.find(w => w.dataset.win === b.dataset.task); if (w) (w === front ? minimise : raise)(w); });
+  for (const b of $$('[data-close]', scr)) b.addEventListener('click', () => close(b.closest('.win')));
+  for (const b of $$('[data-min]', scr)) b.addEventListener('click', () => minimise(b.closest('.win')));
+  /* the demo documents draw their own title bars; their buttons ask through postMessage */
+  addEventListener('message', e => { if (e.origin !== location.origin || !e.data?.ezos) return; const w = opened.find(w => w.dataset.demo && $('iframe', w)?.contentWindow === e.source); if (!w) return; if (e.data.ezos === 'close') close(w); else if (e.data.ezos === 'minimize') minimise(w); });
   /* the lock screen logo bounces like the DVD one: linear, exact reflections, and — with 13 s per width and 8 s per height —
      it lands exactly in a corner every 104 s (first time ~74 s in) */
   const saver = $('.saver', scr), mlogo = $('.mlogo', scr), tri = u => { const f = u % 2; return f < 1 ? f : 2 - f; };
@@ -655,6 +677,7 @@ for (const f of surfaces.flatMap(s => $$('form.np', s.el))) f.addEventListener('
   e.preventDefault(); if (f.classList.contains('busy')) return;
   const el = f.elements, data = { name: el.name.value.trim(), email: el.email.value.trim(), service: el.service.value, message: el.message.value.trim() };
   if (el.budget.value) data.budget = Number(el.budget.value);
+  const problem = checkProject(data); if (problem) { $('.err', f).textContent = problem; f.classList.add('failed'); return; }
   f.classList.add('busy'); f.classList.remove('failed');
   const r = await submitProject(data, turnstile.token(f), opts.api);
   f.classList.remove('busy');
@@ -667,12 +690,14 @@ q('#join-form').addEventListener('submit', e => { e.preventDefault(); e.target.c
 
 /* ------------------------------------------------------------------ frame loop */
 const fwd = V3(), tmp = V3(), nrm = V3(), toCam = V3(), wp = V3(), qt = new THREE.Quaternion(), occluders = [shell, door];
-let firstFrame = true;
+let firstFrame = true, frames = 0;
 function frame(now) {
   if (disposed) return;
   requestAnimationFrame(frame);
   if (firstFrame) { firstFrame = false; $('#loading').classList.add('off'); setTimeout(() => body.classList.remove('preload'), 400); }
   runTweens(now);
+  interior.visible = !(state === 'logo' && doorGroup.rotation.y > -.01);
+  gl.shadowMap.needsUpdate = frames++ < 3 || tweens.length > 0 || byId.linkedin.hover > .002;   // the door, the tablet, the dial and the rolodex are the only casters that move
   if (camTween) { const k = clamp((now - camTween.start) / camTween.dur, 0, 1), e = easeInOut(k); cam.pos.lerpVectors(camTween.p0, camTween.p1, e); cam.target.lerpVectors(camTween.t0, camTween.t1, e); if (k >= 1) { const r = camTween.res; camTween = null; r(); } }
   par.x += (parT.x - par.x) * .06; par.y += (parT.y - par.y) * .06;
   if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos, .08);
@@ -699,8 +724,7 @@ function frame(now) {
     if (vis) { const dist = toCam.length(); ray.set(camera.position, tmp.copy(wp).sub(camera.position).normalize()); ray.far = dist; vis = !ray.intersectObjects(occluders, false).some(h => !(h.object === shell && h.face.materialIndex === 4)); ray.far = Infinity; }
     s.obj.visible = vis;
   }
-  if (state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels)) ctlSeen = now;
-  const ctlOn = state === 'room' && radio.state !== 'off' && now - ctlSeen < 350;   // a short grace so the pointer can travel from the radio to the bar
+  const ctlOn = state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels);   // no grace: it fades exactly like a label (the radio's hit box reaches up to it)
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5) && !(t.id === 'radio' && ctlOn); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
   if (ctlOn) { tmp.copy(byId.radio.anchor).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on');
   gl.render(scene, camera); css.render(scene, camera); placeFloating(); bounce(now);
@@ -724,7 +748,7 @@ if (dbg.has('up')) byId.join.up = 1;
   if (byId[id] && !byId[id].action && !byId[id].href) { const t = byId[id]; active = t; present(t, true, true); state = 'page'; body.dataset.state = 'page'; setPose(fitPose(t.fit(isPortrait()))); }
   if (dbg.has('hover') && byId[dbg.get('hover')]) setHover(byId[dbg.get('hover')]);
   if (dbg.has('win')) openWin(dbg.get('win'));
-  if (dbg.has('debug')) window.room = { look, drag, glance, cam, lamps, wb, byId, camera, radio, dir: () => camera.getWorldDirection(V3()).toArray(), openWin: id => openWin(id), get state() { return state; }, get active() { return active; }, get focusLock() { return focusLock; } };
+  if (dbg.has('debug')) window.room = { look, drag, glance, cam, lamps, wb, byId, camera, radio, gl, interior, dir: () => camera.getWorldDirection(V3()).toArray(), openWin: id => openWin(id), get state() { return state; }, get active() { return active; }, get focusLock() { return focusLock; } };
   prompts();
 }
 requestAnimationFrame(frame);
