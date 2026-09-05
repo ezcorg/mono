@@ -59,10 +59,9 @@ edge while there's more below; a finger drag scrolls them (`touch-action: none`,
 - The transformed surface element must not clip: `overflow:hidden` on a 3D-transformed element breaks Chrome's pointer
   hit-testing (clicks fall through to the canvas). Content roots (`.scroller`, `.os`, `.kb`) clip instead. Native scroll
   containers inside CSS3D planes break depth sorting too, so surfaces scroll by hand.
-- A plane's content is laid out at its reading width and rastered at the scale it is seen at: a `.zw` wrapper inside the
-  surface carries a 2D `scale(res)` (`surface.setRes`), and `refreshRes()` picks `res` for every plane from wherever the
-  camera is headed (the open page reads at 1). Chrome re-rasters 3D layers at their on-screen scale by itself; Safari
-  and Firefox raster them at layout size and minify, which turns 1px rules into dashes from across the room.
+- From across the room the planes are minified about three times, and 1px rules alias in Safari and Firefox (Chrome
+  re-rasters 3D layers at their on-screen scale). Tried and reverted: rastering each plane's content at the scale it is
+  seen at through a 2D-scaled wrapper — it didn't help enough to keep.
 - Editors measure themselves with `getBoundingClientRect`, which a perspective transform confuses (CodeMirror's measure
   loop). A demo window is therefore lifted out of the 3D plane into a fixed `.overlay`, sized every frame from a hidden
   placeholder that stays in the OS, and the camera holds still (`focusLock`) while one is open. Desktop icons only work

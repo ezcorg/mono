@@ -167,16 +167,10 @@ function thing(def) {
   return t;
 }
 function surface(t, o) {
-  const el = document.createElement('div'); el.className = 'surface ' + o.cls; const zw = document.createElement('div'); zw.className = 'zw'; zw.innerHTML = o.html; el.appendChild(zw);
+  const el = document.createElement('div'); el.className = 'surface ' + o.cls; el.innerHTML = o.html;
   const obj = new CSS3DObject(el); el.style.userSelect = 'text'; el.style.webkitUserSelect = 'text';
   obj.position.set(o.x, o.y, o.z); if (o.ry) obj.rotation.y = o.ry; if (o.rx) obj.rotation.x = o.rx;
-  /* the content is laid out at `px` (its width when read up close) and rastered at `res` of that: from the room the planes are seen at a third of
-     their size, and a 1px line minified by the compositor breaks into dashes — so the content is scaled down by a 2D transform first (painted at
-     that scale, antialiased) and the 3D transform then shows it near 1:1; up close, res goes back to 1 */
-  const s = { el, obj, w: o.w, h: o.h, thing: t, fixedW: o.fixedW, px: 600, res: 1,
-    setW(px) { s.px = Math.round(px); s.apply(); },
-    setRes(r) { r = Math.max(.2, Math.min(1, Math.round(r * 20) / 20)); if (r !== s.res) { s.res = r; s.apply(); } },
-    apply() { const ph = Math.round(o.h / o.w * s.px); zw.style.width = s.px + 'px'; zw.style.height = ph + 'px'; zw.style.transform = `scale(${s.res})`; el.style.width = (s.px * s.res).toFixed(2) + 'px'; el.style.height = (ph * s.res).toFixed(2) + 'px'; obj.scale.setScalar(o.w / (s.px * s.res)); } };
+  const s = { el, obj, w: o.w, h: o.h, thing: t, fixedW: o.fixedW, setW(px) { px = Math.round(px); el.style.width = px + 'px'; el.style.height = Math.round(o.h / o.w * px) + 'px'; obj.scale.setScalar(o.w / px); } };
   s.setW(o.fixedW || 600); (o.parent || t.group).add(obj); surfaces.push(s);
   if (t.id) {
     el.addEventListener('pointerenter', () => setHover(t)); el.addEventListener('pointerleave', () => setHover(null));
@@ -447,11 +441,7 @@ function fitPose(spec) {
   const px = spec.w * W / (2 * d * tanV * aspect);
   return { pos: spec.c.clone().addScaledVector(spec.n, d), target: spec.c.clone(), d, px };
 }
-function layoutSurfaces() { for (const t of things) if (t.fit && t.surface) { const spec = t.fit(isPortrait()), f = fitPose(spec); t.surface.setW(f.px * t.surface.w / spec.w); } refreshRes(); }
-/* the raster scale a plane wants from where the camera is going (a page's fit, or the room's pose): its width on screen from there over its
-   layout width; the open page itself is read at 1 */
-function resFor(t, from) { const s = t.surface, W = innerWidth, dist = t.fit(isPortrait()).c.distanceTo(from); return s.w * W / (2 * dist * Math.tan(camera.fov * D2R / 2) * (W / innerHeight)) / s.px; }
-function refreshRes(from = active ? fitPose(active.fit(isPortrait())).pos : POSE.room().pos) { for (const t of things) if (t.surface) t.surface.setRes(t.active ? 1 : resFor(t, from)); }
+function layoutSurfaces() { for (const t of things) if (t.fit && t.surface) { const spec = t.fit(isPortrait()), f = fitPose(spec); t.surface.setW(f.px * t.surface.w / spec.w); } }
 const look = { yaw: 0, pitch: 0 }, drag = { yaw: 0, pitch: 0 }, glance = { yaw: 0, pitch: 0 }, par = { x: 0, y: 0 };
 let parT = { x: 0, y: 0 };
 let pageLim = { yaw: 6, lo: -4, hi: 4 };
@@ -497,14 +487,14 @@ async function openPage(t, sub) {
   if (active === t) return;
   const prev = active; if (prev) present(prev, false);
   t.back = prev && !prev.back ? prev : null;   // opened from another page (the manifesto's links): closing goes back there
-  active = t; present(t, true); refreshRes();
+  active = t; present(t, true);
   absorbLook();
   setState('page');
   await poseTo(fitPose(t.fit(isPortrait())), 1100);
 }
 async function closePage(silent) {
   if (!active) return;
-  present(active, false); active = null; refreshRes();
+  present(active, false); active = null;
   absorbLook();
   if (!silent) { setState('room'); await poseTo(POSE.room(), 1000); }
 }

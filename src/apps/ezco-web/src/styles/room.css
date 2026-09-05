@@ -64,7 +64,6 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 /* ---------------------------------------------------------------- content surfaces */
 /* the transformed element itself must not clip: overflow:hidden on a 3D-transformed element breaks Chrome's hit-testing, so each content root clips instead */
 .surface{font-family:var(--serif);font-size:16px;line-height:1.45;color:var(--fg);background:var(--bg);overflow:visible;transition:background .6s,color .6s,box-shadow .25s;user-select:text;-webkit-user-select:text}
-.surface .zw{position:absolute;left:0;top:0;transform-origin:0 0}   /* the content, laid out at reading size and scaled to the size it's seen at (see surface() in room.js) */
 .surface.active{pointer-events:auto}
 .surface a{color:inherit}
 .surface h2{font:300 1.75em/1.15 var(--serif);letter-spacing:-.02em;margin:0 0 .5em}
