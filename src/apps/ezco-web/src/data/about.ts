@@ -13,16 +13,15 @@ export const sections: Section[] = [
 	{
 		heading: 'who we are',
 		statements: [
-			{ text: 'We are a democratic collective of passionate technologists who want to build without compromising our values.' },
-			{ text: 'We want to help others and share the things we build along the way.' },
-			{ text: 'We do not chase short-term profits at the expense of long term prosperity.' },
-			{ text: 'We will never be evil.' },
+			{ text: 'We are passionate technologists determined to build without compromising our values.' },
+			{ text: 'We do not believe in chasing short-term profits at the expense of long-term prosperity.' },
+			{ text: 'We will never be evil (<i>seriously</i>).' },
 		],
 	},
 	{
 		heading: 'who you are',
 		statements: [
-			{ text: 'Someone who shares our aspirations and has something they want to build.' },
+			{ text: 'Someone who feels the same.' },
 			{
 				text: 'Someone who wants to join or work with our collective.',
 				links: [
