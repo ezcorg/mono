@@ -59,6 +59,10 @@ edge while there's more below; a finger drag scrolls them (`touch-action: none`,
 - The transformed surface element must not clip: `overflow:hidden` on a 3D-transformed element breaks Chrome's pointer
   hit-testing (clicks fall through to the canvas). Content roots (`.scroller`, `.os`, `.kb`) clip instead. Native scroll
   containers inside CSS3D planes break depth sorting too, so surfaces scroll by hand.
+- A plane's content is laid out at its reading width and rastered at the scale it is seen at: a `.zw` wrapper inside the
+  surface carries a 2D `scale(res)` (`surface.setRes`), and `refreshRes()` picks `res` for every plane from wherever the
+  camera is headed (the open page reads at 1). Chrome re-rasters 3D layers at their on-screen scale by itself; Safari
+  and Firefox raster them at layout size and minify, which turns 1px rules into dashes from across the room.
 - Editors measure themselves with `getBoundingClientRect`, which a perspective transform confuses (CodeMirror's measure
   loop). A demo window is therefore lifted out of the 3D plane into a fixed `.overlay`, sized every frame from a hidden
   placeholder that stays in the OS, and the camera holds still (`focusLock`) while one is open. Desktop icons only work
@@ -66,8 +70,9 @@ edge while there's more below; a finger drag scrolls them (`touch-action: none`,
 - Camera tweens start from what you actually see: `absorbLook()` bakes the drag/parallax offset into the camera target
   before a pose tween, so opening or closing a page never snaps back to the "ideal" angle first. A fit never puts the
   camera behind the far wall (`maxD` on the whiteboard and kanban fits — a portrait viewport would otherwise stand outside
-  the room to fit a wide board). The clipboard, opened from a link, is first placed where looking down in the room puts
-  it, then held still while the camera comes to it.
+  the room to fit a wide board). The clipboard, opened, comes to you: it settles squarely in front of the camera at
+  reading distance (gliding from your hands if it was up), so the camera only tilts down to it; a page opened from
+  another page (the manifesto's links) remembers it (`t.back`) and `esc` goes back there.
 - Motion is in wall-clock terms: every follow-lerp goes through `lerpK(rate)`, which scales the per-frame rate to the
   time that actually passed (reference 120 Hz, where the feel was tuned). Safari caps pages at 60 fps by default
   ("Prefer Page Rendering Updates near 60fps" in Develop → Feature Flags) — before this, the room followed the pointer

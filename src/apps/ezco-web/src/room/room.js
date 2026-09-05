@@ -167,10 +167,16 @@ function thing(def) {
   return t;
 }
 function surface(t, o) {
-  const el = document.createElement('div'); el.className = 'surface ' + o.cls; el.innerHTML = o.html;
+  const el = document.createElement('div'); el.className = 'surface ' + o.cls; const zw = document.createElement('div'); zw.className = 'zw'; zw.innerHTML = o.html; el.appendChild(zw);
   const obj = new CSS3DObject(el); el.style.userSelect = 'text'; el.style.webkitUserSelect = 'text';
   obj.position.set(o.x, o.y, o.z); if (o.ry) obj.rotation.y = o.ry; if (o.rx) obj.rotation.x = o.rx;
-  const s = { el, obj, w: o.w, h: o.h, thing: t, fixedW: o.fixedW, setW(px) { px = Math.round(px); el.style.width = px + 'px'; el.style.height = Math.round(o.h / o.w * px) + 'px'; obj.scale.setScalar(o.w / px); } };
+  /* the content is laid out at `px` (its width when read up close) and rastered at `res` of that: from the room the planes are seen at a third of
+     their size, and a 1px line minified by the compositor breaks into dashes — so the content is scaled down by a 2D transform first (painted at
+     that scale, antialiased) and the 3D transform then shows it near 1:1; up close, res goes back to 1 */
+  const s = { el, obj, w: o.w, h: o.h, thing: t, fixedW: o.fixedW, px: 600, res: 1,
+    setW(px) { s.px = Math.round(px); s.apply(); },
+    setRes(r) { r = Math.max(.2, Math.min(1, Math.round(r * 20) / 20)); if (r !== s.res) { s.res = r; s.apply(); } },
+    apply() { const ph = Math.round(o.h / o.w * s.px); zw.style.width = s.px + 'px'; zw.style.height = ph + 'px'; zw.style.transform = `scale(${s.res})`; el.style.width = (s.px * s.res).toFixed(2) + 'px'; el.style.height = (ph * s.res).toFixed(2) + 'px'; obj.scale.setScalar(o.w / (s.px * s.res)); } };
   s.setW(o.fixedW || 600); (o.parent || t.group).add(obj); surfaces.push(s);
   if (t.id) {
     el.addEventListener('pointerenter', () => setHover(t)); el.addEventListener('pointerleave', () => setHover(null));
@@ -394,10 +400,19 @@ const heldTilt = new THREE.Quaternion().setFromAxisAngle(V3(1, 0, 0), -.62);
   const t = thing({ id: 'join', label: 'come work with us', anchor: V3() }); t.held = true; t.up = 0; t.forceUp = false; t.frozen = false;
   t.group.add(t.bez(.21, .3, .012), t.box(.06, .025, .02, { y: .14, z: .006 })); t.group.traverse(m => { m.castShadow = false; });   // it rides in front of the camera; a shadow from it would keep the shadow maps busy every frame
   t.surface = surface(t, { cls: 'sheet', html: tpl('sheet'), w: .17, h: .24, x: 0, y: -.012, z: .0065 });
-  t.fit = () => ({ c: V3(0, -.012, .0065).applyQuaternion(t.group.quaternion).add(t.group.position), n: V3(0, 0, 1).applyQuaternion(t.group.quaternion), w: .17, h: .24, max: 560 });
-  /* opened, the clipboard is placed where looking down from the room's pose puts it, then held still while the camera comes to it —
-     opened from a link it used to freeze wherever it was, under the floor or behind the wall */
-  t.present = on => { t.forceUp = on; t.frozen = false; if (on) { const p = POSE.room(), keep = cam.pos.clone(); camera.position.copy(p.pos).multiplyScalar(K); camera.lookAt(tmp.copy(p.target).multiplyScalar(K)); camera.rotateX(-22 * D2R); camera.updateMatrixWorld(); cam.pos.copy(p.pos); t.up = 1; updateHeld(); cam.pos.copy(keep); } t.frozen = on; };
+  t.fit = () => { const p = t.goal?.p ?? t.group.position, q = t.goal?.q ?? t.group.quaternion; return { c: V3(0, -.012, .0065).applyQuaternion(q).add(p), n: V3(0, 0, 1).applyQuaternion(q), w: .17, h: .24, max: 560 }; };
+  /* opened, the clipboard comes to you: it settles squarely in front of the camera where you are, at the distance the sheet is read from, so
+     the camera only tilts down to it (glides there if it was already up in your hands; from a page it appears from below). The fit reads the
+     goal, not the group, so the camera and the clipboard arrive together. */
+  t.present = (on, instant) => {
+    t.forceUp = on; t.frozen = on; if (!on) { t.goal = null; return; }
+    const d = fitPose({ c: V3(), n: V3(0, 0, 1), w: .17, h: .24, max: 560 }).d, q = camera.quaternion.clone().multiply(new THREE.Quaternion().setFromAxisAngle(V3(1, 0, 0), -.5));   // 29° down
+    const f = V3(0, 0, -1).applyQuaternion(q), p = cam.pos.clone().addScaledVector(f, d).sub(V3(0, -.012, .0065).applyQuaternion(q));   // the sheet's centre lands exactly d ahead
+    t.goal = { p, q };
+    if (instant || t.up < .5) { t.group.position.copy(p); t.group.quaternion.copy(q); }
+    else { const p0 = t.group.position.clone(), q0 = t.group.quaternion.clone(); tween({ from: 0, to: 1, dur: 1100, update: k => { t.group.position.lerpVectors(p0, p, k); t.group.quaternion.slerpQuaternions(q0, q, k); } }); }
+    t.up = 1;
+  };
 }
 function updateHeld() {
   const t = byId.join; if (t.frozen) return;
@@ -432,7 +447,11 @@ function fitPose(spec) {
   const px = spec.w * W / (2 * d * tanV * aspect);
   return { pos: spec.c.clone().addScaledVector(spec.n, d), target: spec.c.clone(), d, px };
 }
-function layoutSurfaces() { for (const t of things) if (t.fit && t.surface) { const spec = t.fit(isPortrait()), f = fitPose(spec); t.surface.setW(f.px * t.surface.w / spec.w); } }
+function layoutSurfaces() { for (const t of things) if (t.fit && t.surface) { const spec = t.fit(isPortrait()), f = fitPose(spec); t.surface.setW(f.px * t.surface.w / spec.w); } refreshRes(); }
+/* the raster scale a plane wants from where the camera is going (a page's fit, or the room's pose): its width on screen from there over its
+   layout width; the open page itself is read at 1 */
+function resFor(t, from) { const s = t.surface, W = innerWidth, dist = t.fit(isPortrait()).c.distanceTo(from); return s.w * W / (2 * dist * Math.tan(camera.fov * D2R / 2) * (W / innerHeight)) / s.px; }
+function refreshRes(from = active ? fitPose(active.fit(isPortrait())).pos : POSE.room().pos) { for (const t of things) if (t.surface) t.surface.setRes(t.active ? 1 : resFor(t, from)); }
 const look = { yaw: 0, pitch: 0 }, drag = { yaw: 0, pitch: 0 }, glance = { yaw: 0, pitch: 0 }, par = { x: 0, y: 0 };
 let parT = { x: 0, y: 0 };
 let pageLim = { yaw: 6, lo: -4, hi: 4 };
@@ -476,15 +495,16 @@ async function openPage(t, sub) {
   if (t.id === 'newproject' && sub) { const sel = q('#np-service'); if ([...sel.options].some(o => o.value === sub)) sel.value = sub; }
   if (t.id === 'blog') t.show(sub);
   if (active === t) return;
-  if (active) present(active, false);
-  active = t; present(t, true);
+  const prev = active; if (prev) present(prev, false);
+  t.back = prev && !prev.back ? prev : null;   // opened from another page (the manifesto's links): closing goes back there
+  active = t; present(t, true); refreshRes();
   absorbLook();
   setState('page');
   await poseTo(fitPose(t.fit(isPortrait())), 1100);
 }
 async function closePage(silent) {
   if (!active) return;
-  present(active, false); active = null;
+  present(active, false); active = null; refreshRes();
   absorbLook();
   if (!silent) { setState('room'); await poseTo(POSE.room(), 1000); }
 }
@@ -508,7 +528,7 @@ function prompts() {
   const el = $('#prompts');
   if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
   else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
-  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', 'close', '#/room');
+  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
   else el.innerHTML = '';
 }
 $('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else go(a); });
@@ -612,7 +632,7 @@ gl.domElement.addEventListener('click', e => {
 gl.domElement.addEventListener('pointerleave', () => { setHover(null); logoHot = false; });
 addEventListener('keydown', e => {
   if (e.target.matches('input,textarea,select')) return;
-  if (e.key === 'Escape') { if (state === 'page') go('#/room'); else if (state === 'room') go('#/'); return; }
+  if (e.key === 'Escape') { if (state === 'page') go(active?.back ? '#/' + active.back.id : '#/room'); else if (state === 'room') go('#/'); return; }
   if (state === 'logo' && (e.key === 'Enter' || e.key === 'ArrowDown')) { go('#/room'); return; }
   if ((e.key === 'l' || e.key === 'L') && state !== 'logo') { cycleLights(); return; }
   if (['?', '/', 'i', 'I'].includes(e.key) && state === 'room') { toggleLabels(); return; }
