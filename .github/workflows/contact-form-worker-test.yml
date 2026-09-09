@@ -37,6 +37,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # the worker imports @joinezco/shared by its built dist/, which is gitignored
+      - name: Build shared package
+        run: pnpm --filter @joinezco/shared build
+
       - name: Type check
         working-directory: src/apps/contact-form-worker
         run: pnpm typecheck

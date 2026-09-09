@@ -28,8 +28,11 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        working-directory: src/apps/contact-form-worker
         run: pnpm install --frozen-lockfile
+
+      # wrangler bundles @joinezco/shared from its built dist/, which is gitignored
+      - name: Build shared package
+        run: pnpm --filter @joinezco/shared build
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
