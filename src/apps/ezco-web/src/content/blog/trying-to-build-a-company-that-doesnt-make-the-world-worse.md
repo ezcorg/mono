@@ -19,7 +19,7 @@ In a meta where executives and majority shareholders rule with no accountability
 
 Above, endless layers of middle management confound and control. Together, they ensure that success thrusts upward triumphantly while failure dribbles down below. A life of meetings, spreadsheets, and presentations; in return a fragile fiefdom and the occasional booster seat at the table.
 
-At the top, even with the best intentions, the pressure to perform and meet expectations leads to predictable decisions. An unfaithful market constantly reminds that its love is conditional, and that other suitors are lying in wait. Plus, the world looks so much smaller atop an ivory tower, you can barely see the ants burning.
+At the top, even with the best intentions, the pressure to perform and meet expectations leads to predictable decisions. An unfaithful market constantly reminds that its love is conditional, and that other suitors are lying in wait. Plus, the world looks much smaller from an ivory tower, you can *barely* see the ants burning.
 
 Outside, network effects, walled gardens, and lack of competition--due to years of ineffective and unenforced antitrust law--make it difficult for buyers to vote with their wallets. A predatory corporate ecosystem favors the ruthless, and *survival of the shittest* hasn't evolved consumer-friendly outcomes.
 
@@ -35,14 +35,13 @@ Or, at least, the ones with org charts.
 
 Create flat or other _interestingly-shaped_ organizations with immediate checks and balances on power. Build communities where every member has some say, where decisions are made collaboratively rather than top-down, and consensus cannot be ignored or obscured. Make it dynamic enough to self-correct when it needs to. Let experts in their domains make decisions they're best equipped to make, and defer to others for those they're not. Incentivize participation, discourage apathy, outlaw exploitation. Care for others to know you'll be cared for.
 
-Reject employment contracts that force you or others to invest into an imbalanced power dynamic and unfair compensation just because it's considered an improvement to serfdom. Don't accept the notion that starting a company or having money is a valid reason to sit above others in perpetuity. Stop idolizing wealth and excess. Save your time and attention for something meaningful.
+Reject employment contracts that force you or others to invest into an imbalanced power dynamic and unfair compensation just because it's better than serfdom. Don't accept the notion that starting a company or having money is a valid reason to sit above others in perpetuity. Stop idolizing wealth and excess. Save your time and attention for something meaningful.
 
 Be transparent. Be accountable. Be different. Be brave.
 
 Don't be evil.
 
+✌️
 <br>
-
-Stay tuned,
 
 \- `ez co`
