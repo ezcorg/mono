@@ -19,11 +19,25 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 Outside, the building wears its one line ("your friendly neighborhood tech collective") as a label pinned above its near
 corner, like any thing's label; it inverts the logo when pointed at and comes in when clicked.
 
-Keys: `↵` or scroll to come in · click · drag or arrows to look (in a page too) · `?` labels · `l` lights · `esc` back. In the
+Keys: `↵` or scroll to come in · click · drag or arrows to look (in a page too) · `?` labels · `l` lights · `m` sound · `esc` back. In the
 OS, a bar chip brings a window up or minimises it; every control carries an explicit `tabindex` (Safari's Tab needs one).
 In a page you can look as far as the thing's whole area (`limitsFor`): a phone's portrait crop of the kanban or the gallery
 wall can be panned to the other columns or the other frame. Scroll areas (`.scroller`, in-flow `.scroll`) fade their bottom
 edge while there's more below; a finger drag scrolls them (`touch-action: none`, or the browser cancels the pointer events).
+
+## Sounds
+
+The things you touch make small noises, placed where they are (`src/room/sfx.js`: Web Audio, synthesised — no files — one
+`PannerNode` per sound at the thing's position, the listener riding the camera, so the lamp on your left clicks on your
+left). The radio's switch clicks, and the first time it's switched on it hisses between stations until the music comes
+(the music itself plays from the YouTube frame, so it isn't placed); the lamps sound like what they're made of (a muffled
+knock through the paper lantern, a bright tick that rings in the metal pendant, two woody clicks from the table lamp's
+rotary switch); the wall dial has a detent per position it passes; the tablet's power button clicks on and off; every
+button in the laptop's OS — and the title-bar buttons of the demo documents, which report their clicks by postMessage — is
+a mouse click at the desk; the rolodex flicks a card per card that passes and moves a little air while it spins. The
+context opens on the first pointer or key gesture (browsers keep audio silent until one), so a hover before any click is
+mute. `m`, the chip, or the accessible "sound" button switch it off (`ezco-sound` in localStorage). For verification,
+`play`, `static` and `wind` take `at` (context time), so an `OfflineAudioContext` can render every sound to a file.
 
 ## Real addresses (for crawlers)
 
@@ -87,7 +101,7 @@ hash routes when it boots, so a crawler can walk the site and a visitor never le
   half as fast there.
 - The laptop's lock-screen logo and the desktop's programs are sized to the screen (container units), so a phone gets
   the same picture as a desk.
-- Remembered in localStorage: `ezco-lights` (auto/day/night), `ezco-lamps` (per-lamp overrides), `ezco-board` (strokes).
+- Remembered in localStorage: `ezco-lights` (auto/day/night), `ezco-lamps` (per-lamp overrides), `ezco-board` (strokes), `ezco-sound` (off).
 - three.js loads behind the loading label (its own chunk); the label and the lock-screen logo animate with a clipped
   inverted copy rather than `mix-blend-mode`, which Safari rasterises badly inside 3D transforms. No web fonts are loaded
   for the room itself (Helvetica/Arial/system); the demo fonts live in `global.css`.
