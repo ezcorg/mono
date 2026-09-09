@@ -447,7 +447,7 @@ pub struct WebConfig {
     /// Path to a TLS certificate file (PEM) for the web server.
     /// When set (along with web_tls_key_path), the web server uses this
     /// certificate instead of auto-generating one from the proxy CA.
-    /// Useful with `tailscale cert` which produces <hostname>.crt/.key files.
+    /// Useful with `tailscale cert` which produces `<hostname>.crt` / `.key` files.
     #[arg(long = "web-tls-cert-path", env = "WEB_TLS_CERT_PATH")]
     pub web_tls_cert_path: Option<PathBuf>,
 
@@ -721,11 +721,11 @@ impl AppConfig {
     }
 
     /// Serialize the effective configuration to a TOML file (under `[config]`,
-    /// see [`ConfigFile`]).
+    /// see `ConfigFile`).
     ///
     /// The file may contain secrets (`db_password`, `jwt_secret`,
     /// `admin_password`); callers are responsible for restricting its
-    /// permissions (see [`crate::fs_secure`]).
+    /// permissions (see `crate::util::fs_secure`).
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(&ConfigFileRef { config: self })?;
         crate::util::fs_secure::write_secret(path, content)?;
