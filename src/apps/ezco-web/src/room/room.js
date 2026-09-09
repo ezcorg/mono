@@ -657,7 +657,7 @@ for (const t of things) if (t.id) setInteractive(t, false);
 for (const scope of [root, ...surfaces.map(s => s.el)]) for (const a of $$('a[data-room]', scope)) { const p = a.getAttribute('href') || ''; if (p.startsWith('/')) a.setAttribute('href', '#' + p.replace(/\/+$/, '')); }
 /* outside, the building wears its one-line label, pinned above its near corner like any other thing's label; it inverts the logo and comes in */
 /* it shows while the building is pointed at (or the label itself is, or has focus); where nothing hovers, it's always up */
-const bldg = $('#bldg'), bldgAt = V3(0, .5, 0), noHover = matchMedia('(hover: none)').matches; let bldgFocus = false;
+const bldg = $('#bldg'), bldgAt = V3(0, .66, 0), noHover = matchMedia('(hover: none)').matches; let bldgFocus = false;
 bldg.addEventListener('pointerenter', () => { logoHot = true; body.classList.add('hover'); }); bldg.addEventListener('pointerleave', () => { logoHot = false; body.classList.remove('hover'); });
 bldg.addEventListener('focus', () => { bldgFocus = true; }); bldg.addEventListener('blur', () => { bldgFocus = false; });
 bldg.addEventListener('click', () => { if (state === 'logo') go('#/room'); });
