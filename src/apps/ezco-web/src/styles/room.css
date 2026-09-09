@@ -197,6 +197,7 @@ body.preload .room *{transition:none!important}
 .manifesto.fullscreen{box-shadow:none}
 .manifesto.fullscreen .scroller,.sheet.fullscreen .scroller{padding:clamp(1.5rem,5vh,3rem) clamp(1.25rem,6vw,3rem) 4rem}
 /* the board at screen size: three columns on a wide screen; on a narrow one, one column at a time, the next peeking, swiped sideways with a fade while there's more */
+.board.fullscreen{background:transparent}   /* the .full container's paper shows through, one continuous tiling from top to bar */
 .board.fullscreen .kb{padding:1rem;overflow:auto;background-image:none;touch-action:pan-x pan-y}
 .board.fullscreen .kb.morex{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 3em),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 3em),transparent)}
 @media (max-width:720px){
