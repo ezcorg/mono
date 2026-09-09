@@ -17,7 +17,7 @@ In a meta where executives and majority shareholders rule with no accountability
 
 Above, endless layers of middle management confound and control. Together, they ensure that success thrusts upward triumphantly while failure dribbles down below. A life of meetings, spreadsheets, and presentations; in return a fragile fiefdom and the occasional booster seat at the table.
 
-At the top, even with the best intentions, the pressure to perform and meet expectations leads to predictable decisions. An unfaithful market constantly reminding that its love is conditional, and that other suitors are lying in wait. Plus, the world looks so much smaller atop an ivory tower, you can barely see the ants suffering.
+At the top, even with the best intentions, the pressure to perform and meet expectations leads to predictable decisions. An unfaithful market constantly reminds that its love is conditional, and that other suitors are lying in wait. Plus, the world looks so much smaller atop an ivory tower, you can barely see the ants burning.
 
 Outside, network effects, walled gardens, and lack of competition--due to years of ineffective and unenforced antitrust law--make it difficult for buyers to vote with their wallets. A predatory corporate ecosystem favors the ruthless, and *survival of the shittest* hasn't evolved consumer-friendly outcomes.
 
