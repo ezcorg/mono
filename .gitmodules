@@ -21,4 +21,5 @@
 	url = https://github.com/bytecodealliance/wrpc
 [submodule "src/rust/conf-rs"]
 	path = src/rust/conf-rs
-	url = https://github.com/cbeck88/conf-rs
+	url = https://github.com/ezcorg/conf-rs
+	branch = ezco
