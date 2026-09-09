@@ -20,7 +20,7 @@ export const projects: Project[] = [
 		description: 'A minimal Markdown editor component that still has all the features you need.',
 		tags: ['TipTap', 'ProseMirror', 'TypeScript'],
 		demo: 'markdown-editor',
-		github: 'https://github.com/join-ezco/mono/tree/main/src/typescript/markdown-editor',
+		github: 'https://github.com/ezcorg/mono/tree/main/src/typescript/markdown-editor',
 	},
 	{
 		id: 'codeblock',
@@ -29,7 +29,7 @@ export const projects: Project[] = [
 		description: 'A codeblock component that acts like a full code editor.',
 		tags: ['CodeMirror', 'TypeScript'],
 		demo: 'codeblock',
-		github: 'https://github.com/join-ezco/mono/tree/main/src/typescript/codeblock',
+		github: 'https://github.com/ezcorg/mono/tree/main/src/typescript/codeblock',
 	},
 	{
 		id: 'witmproxy',
@@ -38,6 +38,6 @@ export const projects: Project[] = [
 		description: 'A WASM-in-the-middle proxy.',
 		tags: ['Rust', 'wasmtime'],
 		href: 'https://crates.io/crates/witmproxy',
-		github: 'https://github.com/join-ezco/mono/tree/main/src/apps/witmproxy',
+		github: 'https://github.com/ezcorg/mono/tree/main/src/apps/witmproxy',
 	},
 ];

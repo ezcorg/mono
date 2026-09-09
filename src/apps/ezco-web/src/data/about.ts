@@ -36,13 +36,13 @@ export const sections: Section[] = [
 /** What's on the board right now (the kanban's "doing" column). */
 export const lately: string[] = [
 	'A man-in-the-middle proxy to filter addictive and low-effort content',
-	'A browser-based Markdown (and code) editor',
+	'A browser-based Markdown and code editor',
 	'An aesthetically pleasing wireless charging device',
 	'A platform to power democratic organizations',
 ];
 
 export const links = {
-	github: 'https://github.com/join-ezco',
+	github: 'https://github.com/ezcorg/',
 	linkedin: 'https://linkedin.com/company/eeezco/',
 };
 

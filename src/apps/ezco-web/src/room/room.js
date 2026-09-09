@@ -522,7 +522,7 @@ function prompts() {
   const el = $('#prompts');
   if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
   else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
-  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + (active && (active.surface || active.id === 'whiteboard') ? chip('f', full ? 'exit fullscreen' : 'fullscreen', 'full', !!full) : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
+  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + (full?.id === 'newproject' && isPortrait() ? chip('swipe', 'columns') : '') + (active && (active.surface || active.id === 'whiteboard') ? chip('f', full ? 'exit fullscreen' : 'fullscreen', 'full', !!full) : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
   else el.innerHTML = '';
   document.documentElement.style.setProperty('--bar-h', el.offsetHeight + 'px');
 }
@@ -597,7 +597,7 @@ addEventListener('pointermove', e => {
   if (dragging && e.pointerId === dragging.id) {
     const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
     if (!dragMoved && Math.hypot(dx, dy) > 6) { dragMoved = true; body.classList.add('dragging'); }
-    if (dragMoved) { const lim = limits(); drag.yaw = clamp(dragging.yaw + dx * .22, -lim.yaw, lim.yaw); drag.pitch = clamp(dragging.pitch + dy * .16, lim.lo, lim.hi); }
+    if (dragMoved) { const lim = limits(); drag.yaw = clamp(dragging.yaw + dx * .22, -lim.yaw, lim.yaw); drag.pitch = clamp(dragging.pitch + dy * .16, lim.lo, lim.hi); if (state === 'logo' && e.pointerType === 'touch') bldgUntil = performance.now() + 2500; }
     return;
   }
   if (wbDraw && e.pointerId === wbDraw.id) { const uv = wbHit(e); if (uv) wbAdd(uv); return; }
@@ -606,6 +606,7 @@ addEventListener('pointermove', e => {
 /* drag to look from anywhere that isn't an open page's controls */
 addEventListener('pointerdown', e => {
   if (e.button > 0) return;
+  if (state === 'logo' && e.pointerType === 'touch') bldgUntil = performance.now() + 2500;
   if (state === 'page' && active?.id === 'whiteboard' && (e.target === gl.domElement || e.target === wbCanvas)) { const uv = wbHit(e); if (uv) { wbDraw = { id: e.pointerId, stroke: [] }; wb.strokes.push(wbDraw.stroke); if (wb.strokes.length === 1) byId.whiteboard.tex.redraw(); wbAdd(uv); } return; }
   if (focusLock || e.target.closest('.surface.active, a, button, input, select, textarea, label, .prompts, .sr-nav, .lbl, .ctl')) return;
   dragging = { x: e.clientX, y: e.clientY, yaw: drag.yaw, pitch: drag.pitch, id: e.pointerId }; dragMoved = false;
@@ -652,20 +653,22 @@ for (const s of surfaces) s.thing.scrollEls = $$('.scroller, .scroll', s.el);
 for (const el of surfaces.flatMap(s => s.thing.scrollEls)) {
   el.tabIndex = 0;
   const by = d => { el.scrollTop = clamp(el.scrollTop + d, 0, el.scrollHeight - el.clientHeight); more(el); };
-  el.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); by(e.deltaY); }, { passive: false });
+  const native = () => el.closest('.surface')?.classList.contains('fullscreen');   // flat on the screen, the browser scrolls it
+  el.addEventListener('scroll', () => more(el), { passive: true });
+  el.addEventListener('wheel', e => { if (native()) return; e.preventDefault(); e.stopPropagation(); by(e.deltaY); }, { passive: false });
   /* a finger drag scrolls: touch events, not pointer events — a drag that starts on a textarea gets its pointer events cancelled once the
      browser claims the gesture for the textarea's own scrolling, while touchmove keeps arriving */
   let ty = null; el.addEventListener('touchstart', e => { ty = e.touches[0].clientY; }, { passive: true });
-  el.addEventListener('touchmove', e => { if (ty === null) return; by(ty - e.touches[0].clientY); ty = e.touches[0].clientY; e.preventDefault(); e.stopPropagation(); }, { passive: false });
+  el.addEventListener('touchmove', e => { if (ty === null || native()) return; by(ty - e.touches[0].clientY); ty = e.touches[0].clientY; e.preventDefault(); e.stopPropagation(); }, { passive: false });
   el.addEventListener('touchend', () => { ty = null; }); el.addEventListener('touchcancel', () => { ty = null; });
-  el.addEventListener('keydown', e => { if (e.target.matches('input,textarea,select')) return; const h = el.clientHeight, d = { ArrowDown: 40, ArrowUp: -40, PageDown: h * .9, PageUp: -h * .9, ' ': h * .9, End: 1e6, Home: -1e6 }[e.key]; if (d !== undefined) { e.preventDefault(); e.stopPropagation(); by(d); } });
+  el.addEventListener('keydown', e => { if (e.target.matches('input,textarea,select') || native()) return; const h = el.clientHeight, d = { ArrowDown: 40, ArrowUp: -40, PageDown: h * .9, PageUp: -h * .9, ' ': h * .9, End: 1e6, Home: -1e6 }[e.key]; if (d !== undefined) { e.preventDefault(); e.stopPropagation(); by(d); } });
 }
 for (const t of things) if (t.id) setInteractive(t, false);
 /* links between pages are written as static addresses (`/join/`, crawlable); in the room they are hash routes */
 for (const scope of [root, ...surfaces.map(s => s.el)]) for (const a of $$('a[data-room]', scope)) { const p = a.getAttribute('href') || ''; if (p.startsWith('/')) a.setAttribute('href', '#' + p.replace(/\/+$/, '')); }
 /* outside, the building wears its one-line label, pinned above its near corner like any other thing's label; it inverts the logo and comes in */
 /* it shows while the building is pointed at (or the label itself is, or has focus); where nothing hovers, it's always up */
-const bldg = $('#bldg'), bldgAt = V3(0, .66, 0), noHover = matchMedia('(hover: none)').matches; let bldgFocus = false;
+const bldg = $('#bldg'), bldgAt = V3(0, .66, 0), noHover = matchMedia('(hover: none)').matches; let bldgFocus = false, bldgUntil = 0;   // no hover: the label shows while the screen is touched, and a moment after
 bldg.addEventListener('pointerenter', () => { logoHot = true; body.classList.add('hover'); }); bldg.addEventListener('pointerleave', () => { logoHot = false; body.classList.remove('hover'); });
 bldg.addEventListener('focus', () => { bldgFocus = true; }); bldg.addEventListener('blur', () => { bldgFocus = false; });
 bldg.addEventListener('click', () => { if (state === 'logo') go('#/room'); });
@@ -731,23 +734,28 @@ let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = (
 const fullEl = document.createElement('div'); fullEl.className = 'full'; root.appendChild(fullEl);
 const stage = fullEl.appendChild(document.createElement('div')); stage.className = 'stage';   // the space above the bar; the sheet is centred in it absolutely (a grid would start-align a sheet wider than a phone)
 const wbCanvas = byId.whiteboard.tex.image;
+$('.kb', byId.newproject.surface.el).addEventListener('scroll', e => moreX(e.currentTarget), { passive: true });
+const FULL_W = { blog: 46 * 16, about: 40 * 16, join: 36 * 16 };   // reading widths, in px; the board and the screen take the whole width
 function fitFull() {
   if (!full) return;
-  const availW = stage.clientWidth, availH = stage.clientHeight;
-  if (full.surface) { const el = full.surface.el, k = Math.min(availW / el.offsetWidth, availH / el.offsetHeight); el.style.transform = `scale(${k.toFixed(4)})`; }
-  else { const k = Math.min(availW / wb.W, availH / wb.H); wbCanvas.style.width = Math.round(wb.W * k) + 'px'; wbCanvas.style.height = Math.round(wb.H * k) + 'px'; }
+  const W = stage.clientWidth, H = stage.clientHeight;
+  if (full.surface) { const el = full.surface.el; el.style.width = Math.min(W, FULL_W[full.id] || W) + 'px'; el.style.height = H + 'px'; }   // laid out at this size: the OS, the columns and the text reflow
+  else { const k = Math.min(W / wb.W, H / wb.H); wbCanvas.style.width = Math.round(wb.W * k) + 'px'; wbCanvas.style.height = Math.round(wb.H * k) + 'px'; }
+  if (full.id === 'newproject') moreX($('.kb', full.surface.el));
 }
+const moreX = el => el.classList.toggle('morex', el.scrollWidth - el.clientWidth - el.scrollLeft > 4);   // more columns to the right: the edge fades
 function enterFull(t) {
   if (full || !t || !(t.surface || t.id === 'whiteboard')) return;
-  full = t; focusLock = true; fullEl.classList.add('on');
-  if (t.surface) { const s = t.surface; s.full = true; s.obj.visible = false; s.el.style.transform = ''; stage.appendChild(s.el); }
+  full = t; focusLock = true; fullEl.classList.add('on'); fullEl.dataset.full = t.id;
+  if (t.surface) { const s = t.surface; s.full = true; s.obj.visible = false; s.savedTransform = s.el.style.transform; s.el.style.transform = ''; s.el.classList.add('fullscreen'); stage.appendChild(s.el); }
   else stage.appendChild(wbCanvas);
-  fitFull(); prompts();
+  fitFull(); t.scrollEls?.forEach(more); prompts();
 }
 function exitFull() {
   if (!full) return;
-  const t = full; full = null; focusLock = demoInFront(); fullEl.classList.remove('on');
-  if (t.surface) { const s = t.surface; s.full = false; s.el.style.transform = ''; }   // the renderer takes the element back on its next frame
+  const t = full; full = null; focusLock = demoInFront(); fullEl.classList.remove('on'); delete fullEl.dataset.full;
+  /* the renderer takes the element back on its next frame, but only rewrites its transform when the camera's view of it changes — and the camera hasn't moved — so the one it had is put back by hand */
+  if (t.surface) { const s = t.surface; s.full = false; s.el.classList.remove('fullscreen'); s.el.style.transform = s.savedTransform || ''; }
   else { wbCanvas.remove(); wbCanvas.style.width = wbCanvas.style.height = ''; }
   layoutSurfaces(); prompts();
 }
@@ -828,7 +836,7 @@ function frame(now) {
   const ctlOn = state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels);   // no grace: it fades exactly like a label (the radio's hit box reaches up to it)
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5) && !(t.id === 'radio' && ctlOn); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
   if (ctlOn) { tmp.copy(byId.radio.anchor).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on');
-  if (state === 'logo') { tmp.copy(bldgAt).multiplyScalar(K).project(camera); bldg.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; bldg.classList.toggle('on', tmp.z < 1 && (logoHot || bldgFocus || noHover)); } else bldg.classList.remove('on');
+  if (state === 'logo') { tmp.copy(bldgAt).multiplyScalar(K).project(camera); bldg.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; bldg.classList.toggle('on', tmp.z < 1 && (logoHot || bldgFocus || (noHover && now < bldgUntil))); } else bldg.classList.remove('on');
   const tGl = performance.now(); if (!NOGL) gl.render(scene, camera); const tCss = performance.now(); if (!NODOM) css.render(scene, camera); placeFloating(); bounce(now);
   if (perf) perf.tick(now, tFrame, tGl, tCss, performance.now());
 }

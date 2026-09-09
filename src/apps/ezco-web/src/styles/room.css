@@ -183,12 +183,26 @@ body.preload .room *{transition:none!important}
 .win.wide{left:3%;right:3%;top:9%;bottom:3%}
 .win.ph{visibility:hidden}
 /* fullscreen: the page's sheet on its own, scaled to the space above the prompt bar; the room waits underneath */
-.full{position:fixed;inset:0;z-index:1;display:none;overflow:hidden;padding:calc(env(safe-area-inset-top,0px) + 1rem) 1rem calc(var(--bar-h,2rem) + clamp(1rem,3vh,1.75rem) + .9rem);background:var(--bg)}
+.full{position:fixed;inset:0;z-index:1;display:none;overflow:hidden;padding:env(safe-area-inset-top,0px) 0 calc(var(--bar-h,2rem) + clamp(1rem,3vh,1.75rem) + .9rem);background:var(--bg)}
 .full.on{display:block}
+.full[data-full=newproject]{background-image:radial-gradient(var(--line-soft) 1.2px,transparent 1.5px);background-size:22px 22px}   /* the board's paper tiles the whole screen, bar included */
 .full .stage{position:relative;width:100%;height:100%}
-.full .stage>*{position:absolute!important;left:50%;top:50%;translate:-50% -50%;transform-origin:center}   /* centred whatever its layout size; the scale comes from room.js */
+.full .stage>*{position:absolute!important;left:50%;top:50%;translate:-50% -50%}   /* centred; room.js lays it out at the stage's size */
 .full .surface{display:block!important;transition:none}   /* its object is invisible in the scene, and the renderer writes display:none inline for that */
 .full canvas{display:block;touch-action:none;cursor:crosshair;box-shadow:0 0 0 1px var(--line-soft)}
+/* flat on the screen the browser scrolls the sheets itself (the hand-rolled scrolling is for planes in the room) */
+.surface.fullscreen .scroller,.surface.fullscreen .scroll{overflow:auto;touch-action:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.reader.fullscreen{border:0;border-radius:0}
+.reader.fullscreen .scroller{padding:clamp(1.5rem,5vh,3rem) clamp(1.25rem,6vw,3.5rem) 4rem}
+.manifesto.fullscreen{box-shadow:none}
+.manifesto.fullscreen .scroller,.sheet.fullscreen .scroller{padding:clamp(1.5rem,5vh,3rem) clamp(1.25rem,6vw,3rem) 4rem}
+/* the board at screen size: three columns on a wide screen; on a narrow one, one column at a time, the next peeking, swiped sideways with a fade while there's more */
+.board.fullscreen .kb{padding:1rem;overflow:auto;background-image:none;touch-action:pan-x pan-y}
+.board.fullscreen .kb.morex{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 3em),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 3em),transparent)}
+@media (max-width:720px){
+  .board.fullscreen .kb{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:86%;gap:1rem;scroll-snap-type:x mandatory}
+  .board.fullscreen .col{scroll-snap-align:start}
+}
 .overlay{position:fixed;inset:0;z-index:2;pointer-events:none}
 .overlay .win{position:fixed;right:auto;bottom:auto;pointer-events:auto;font:12.5px/1.4 var(--mono);color:var(--fg)}
 .win .tb{display:flex;align-items:center;justify-content:space-between;gap:1em;padding:.45em .7em;border-bottom:1px solid var(--line-soft);font-size:11.5px;letter-spacing:.06em}
