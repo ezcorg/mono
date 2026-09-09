@@ -21,7 +21,7 @@ type NerdIcon = { value: string; hexCode: number; color?: string };
 
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'open-terminal' | 'file-action' | 'clear-filesystem';
+    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem';
     icon: string;
     iconColor?: string;
     query: string;
@@ -94,7 +94,7 @@ export type ToolbarIntent =
     | 'file-action'    // Wants rename/save-as/delete
     | 'browse'         // Wants to browse the file system
     | 'settings'       // Wants to change settings
-    | 'command'        // Wants a specific command (import, terminal)
+    | 'command'        // Wants a specific command (import)
     | 'language'       // Typed a language name
     | 'unknown';       // Can't determine intent
 
@@ -128,10 +128,6 @@ export interface ToolbarHost {
 
     // File actions (optional, e.g. SVG preview toggle)
     fileActions?: FileActionEntry[];
-
-    // Terminal command visibility
-    hasTerminal?: boolean;
-    onEnterTerminal?(): void;
 
     /** Clear the filesystem and all related persistent storage. */
     onClearFilesystem?(): Promise<void>;
@@ -209,9 +205,12 @@ const ELLIPSIS_ICON = '\uf141';
 export const DEFAULT_FILE_ICON = '\ue64e';
 export const COG_ICON = '\uf013';
 export const FOLDER_ICON = '\ue613';
-export const FOLDER_OPEN_ICON = '\ue614';
+// FontAwesome "folder-open" (U+F07C). The Seti open-folder glyph (U+E614)
+// renders as a stray "#" in fonts that don't carry that private-use slot,
+// whereas the FontAwesome range is reliably present -- and an open folder
+// reads more idiomatically as "browse/open a file" than a hash ever did.
+export const FOLDER_OPEN_ICON = '\uf07c';
 const PARENT_DIR_ICON = '\uf112';
-export const TERMINAL_ICON = '\uf120';
 
 const BINARY_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
 const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
@@ -279,14 +278,22 @@ const toolbarStyleModule = new StyleModule({
         color: 'var(--cm-toolbar-color)',
         padding: '0 2px 0 6px',
         width: '100%',
-        flex: '1',
+        flex: 1,
     },
     '.cm-toolbar-input-container': {
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
-        flex: '1',
+        flex: 1,
     },
+    // Sized to the FULL gutter width (line numbers + fold gutter) —
+    // matching `.cm-search-result-icon-container` below — so the toolbar
+    // input that follows starts at the same x as the code content (which
+    // begins after the full gutter) AND as the dropdown result labels.
+    // The glyph inside (width `--cm-gutter-lineno-width`, right-aligned)
+    // still lines up with the line-number column. Kept in sync with the
+    // scoped rule in themes/index.ts (which wins when the toolbar is
+    // inside a `.cm-editor`); this standalone copy covers detached use.
     '.cm-toolbar-state-icon-container': {
         width: 'var(--cm-gutter-width, 2em)',
         minWidth: 'var(--cm-icon-col-width, 2em)',
@@ -302,6 +309,18 @@ const toolbarStyleModule = new StyleModule({
         width: 'var(--cm-gutter-lineno-width, 2em)',
         minWidth: 'var(--cm-icon-col-width, 2em)',
         transition: 'opacity 0.15s ease',
+    },
+    // `cm-toolbar-compact` (CodeblockConfig.toolbarLayout: 'compact'): the icon column hugs the text instead of
+    // matching the editor's gutter — for a toolbar hosted away from the editor.
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon-container, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container': {
+        width: 'auto',
+        minWidth: '0',
+    },
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
+        width: 'auto',
+        minWidth: '0',
+        paddingRight: '1ch',
+        textAlign: 'left',
     },
     '.cm-search-results': {
         position: 'absolute',
@@ -340,16 +359,17 @@ const toolbarStyleModule = new StyleModule({
                 minWidth: 'var(--cm-icon-col-width, 2em)',
             },
         },
-        '&:hover': {
-            '& div': { color: 'var(--cm-search-result-color-hover)' },
-            backgroundColor: 'var(--cm-search-result-bg-hover)',
-        },
+        // macOS-style single highlight: only the `.selected` row is coloured.
+        // There's deliberately no `&:hover` rule — pointing at a row instead
+        // moves `selectedIndex` to it (see renderItem's `mouseenter`), so the
+        // pointer and the keyboard drive the *same* single highlight rather
+        // than lighting up two rows at once.
         '&.selected': {
             '& div': { color: 'var(--cm-search-result-color-selected)' },
             backgroundColor: 'var(--cm-search-result-select-bg)',
         },
         '& > .cm-search-result-label': {
-            flex: '1',
+            flex: 1,
             padding: '0 2px 0 6px',
         },
     },
@@ -483,7 +503,15 @@ export class ToolbarCore {
         const hasValidFile = !!currentPath;
         const hasContent = this.host.getDocContent().length > 0;
         const isLanguageQuery = isValidProgrammingLanguage(query);
-        const hasExactFileMatch = searchResults.length > 0 && searchResults[0].id === query;
+        // "Exact match" = the typed query refers to an existing file.
+        // Two ways to confirm: the search index returned it as the top
+        // hit, *or* the query is literally the currently-open file's
+        // path (which is the case the moment the user clicks into the
+        // input without typing — the input is pre-populated with the
+        // current path). The path check is what suppresses bogus
+        // "Create new file 'X'" / "Rename to 'X'" entries when X is
+        // already open.
+        const hasExactFileMatch = this.queryMatchesExistingFile(query, searchResults);
 
         // Save as
         if (hasContent || hasValidFile) {
@@ -518,11 +546,6 @@ export class ToolbarCore {
 
         // Open file (browse)
         commands.push({ id: 'Open file', type: 'open-file', icon: FOLDER_OPEN_ICON, query: '' });
-
-        // Terminal
-        if (this.host.hasTerminal) {
-            commands.push({ id: 'Open terminal', type: 'open-terminal', icon: TERMINAL_ICON, query: '' });
-        }
 
         // Import
         commands.push({ id: 'Import file(s)', type: 'import-local-files', icon: '\uf15b', query: '' });
@@ -564,7 +587,6 @@ export class ToolbarCore {
         [/^(open|browse|find|explore|ls|dir)\b/i, 'browse'],
         [/^(rename|mv|move|save|export)\b/i, 'file-action'],
         [/^(import|upload)\b/i, 'command'],
-        [/^(terminal|term|shell|bash|sh|console)\b/i, 'command'],
         [/^(settings?|config|prefs?|preferences?|options?)\b/i, 'settings'],
         [/^(theme|dark|light|font|color)\b/i, 'settings'],
     ];
@@ -573,20 +595,40 @@ export class ToolbarCore {
      * Analyze input query to detect user intent using heuristics.
      * Returns a confidence-weighted intent.
      */
-    private detectIntent(query: string, hasFileResults: boolean): { intent: ToolbarIntent; confidence: number } {
+    /** True when `query` refers to a file that already exists — either the top
+     *  search hit is an exact path match, or it's literally the open file. Used
+     *  to tell "open/search this file" apart from "create this new file". */
+    private queryMatchesExistingFile(query: string, searchResults: SearchResult[]): boolean {
+        const currentPath = this.getCurrentFilePath();
+        return (searchResults.length > 0 && searchResults[0].id === query) ||
+            (currentPath !== null && currentPath === query);
+    }
+
+    /** A complete filename with an extension, e.g. `readme.md`, `src/main.ts`. */
+    private static readonly COMPLETE_FILENAME = /[^/\\]\.\w{1,10}$/;
+
+    private detectIntent(query: string, searchResults: SearchResult[]): { intent: ToolbarIntent; confidence: number } {
         const q = query.trim();
         if (!q) return { intent: 'unknown', confidence: 0 };
         const ql = q.toLowerCase();
+        const hasFileResults = searchResults.length > 0;
+        // A complete, valid filepath that doesn't already exist is a create —
+        // not a search — so the create-file commands get promoted to the top.
+        const completeNewFile =
+            ToolbarCore.COMPLETE_FILENAME.test(q) && !this.queryMatchesExistingFile(q, searchResults);
 
         // Direct path: contains slash or starts with dot — clearly looking for a file
         if (q.includes('/')) {
             if (q.endsWith('/')) return { intent: 'browse', confidence: 0.9 };
+            if (completeNewFile) return { intent: 'file-create', confidence: 0.85 };
             return { intent: 'file-search', confidence: 0.85 };
         }
         if (q.startsWith('.')) return { intent: 'file-search', confidence: 0.8 };
 
         // File extension pattern: e.g. "main.ts", "readme.md"
-        if (/\.\w{1,10}$/.test(q)) return { intent: 'file-search', confidence: 0.8 };
+        if (ToolbarCore.COMPLETE_FILENAME.test(q)) {
+            return { intent: completeNewFile ? 'file-create' : 'file-search', confidence: 0.8 };
+        }
 
         // Command keywords
         for (const [pattern, intent] of ToolbarCore.COMMAND_PATTERNS) {
@@ -619,10 +661,14 @@ export class ToolbarCore {
                 return [...fileResults, ...commands];
 
             case 'file-create': {
-                // Promote create/save-as commands above file results
-                const create = commands.filter(c => c.type === 'create-file' || c.type === 'save-as');
-                const rest = commands.filter(c => c.type !== 'create-file' && c.type !== 'save-as');
-                return [...create, ...fileResults, ...rest];
+                // Create the new file first, then the "save/rename the current
+                // file to this path" actions, then any incidental matches, then
+                // the rest.
+                const create = commands.filter(c => c.type === 'create-file');
+                const saveRename = commands.filter(c => c.type === 'save-as' || c.type === 'rename-file');
+                const rest = commands.filter(c =>
+                    c.type !== 'create-file' && c.type !== 'save-as' && c.type !== 'rename-file');
+                return [...create, ...saveRename, ...fileResults, ...rest];
             }
 
             case 'file-action': {
@@ -649,11 +695,11 @@ export class ToolbarCore {
             }
 
             case 'command': {
-                // Promote terminal and import commands
+                // Promote the import commands
                 const promoted = commands.filter(c =>
-                    c.type === 'open-terminal' || c.type === 'import-local-files' || c.type === 'import-local-folder');
+                    c.type === 'import-local-files' || c.type === 'import-local-folder');
                 const rest = commands.filter(c =>
-                    c.type !== 'open-terminal' && c.type !== 'import-local-files' && c.type !== 'import-local-folder');
+                    c.type !== 'import-local-files' && c.type !== 'import-local-folder');
                 return [...promoted, ...fileResults, ...rest];
             }
 
@@ -712,19 +758,62 @@ export class ToolbarCore {
 
         if (i === this.selectedIndex) li.classList.add("selected");
         li.addEventListener("mousedown", (ev) => ev.preventDefault());
+        li.addEventListener("mouseenter", () => this.hoverSelect(i));
         li.addEventListener("click", (ev) => { ev.stopPropagation(); this.selectResult(result); });
         return li;
+    }
+
+    /** macOS-style hover: pointing at a row makes it *the* selected row, so
+     *  there's only ever one highlight and keyboard nav continues from the
+     *  pointed-at item. */
+    private hoverSelect(i: number) {
+        if (this.selectedIndex === i) return;
+        this.selectedIndex = i;
+        this.highlightSelection(false);
+    }
+
+    /** Reflect `selectedIndex` onto the already-rendered rows *in place*
+     *  (toggle the `.selected` class) instead of rebuilding the list.
+     *
+     *  This is what lets keyboard nav take precedence over the mouse: a full
+     *  `updateDropdown()` re-render replaces the row under a stationary
+     *  cursor, and the browser fires a fresh `mouseenter` on the new element
+     *  — which would snap the selection straight back to the hovered row,
+     *  defeating the arrow keys. Toggling a class moves no DOM, so no
+     *  `mouseenter` fires and the keyboard selection holds until the pointer
+     *  actually moves again. (It's also far cheaper per keystroke.)
+     *
+     *  `scrollIntoView` is true for keyboard moves (keep the active row
+     *  visible while arrowing a long list) and false for hover (the row is
+     *  already under the cursor, so scrolling would yank the list around). */
+    private highlightSelection(scrollIntoView: boolean) {
+        const items = this.resultsList.querySelectorAll<HTMLElement>('.cm-search-result');
+        items.forEach((el, idx) => el.classList.toggle('selected', idx === this.selectedIndex));
+        if (scrollIntoView) {
+            const sel = items[this.selectedIndex];
+            if (sel) sel.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     private updateDropdown() {
         const results = this.results;
         const children: HTMLElement[] = [];
 
+        // Preserve the prioritized order: commands that come *before* the first
+        // file result stay pinned at the top (e.g. "Create new file" for a
+        // complete, new filepath), the file results are collapsed in the
+        // middle, and the remaining commands follow. Without this split the
+        // collapse logic would force every command below every file result,
+        // undoing `prioritizeResults`' create-first ordering.
+        const leadingCommands: SearchResult[] = [];
         const fileResults: SearchResult[] = [];
-        const commandResults: SearchResult[] = [];
+        const trailingCommands: SearchResult[] = [];
+        let seenFile = false;
         for (const r of results) {
-            if (!isCommandResult(r) && !isBrowseEntry(r) && !isSettingsEntry(r)) fileResults.push(r);
-            else commandResults.push(r);
+            const isCommand = isCommandResult(r) || isBrowseEntry(r) || isSettingsEntry(r);
+            if (!isCommand) { fileResults.push(r); seenFile = true; }
+            else if (seenFile) trailingCommands.push(r);
+            else leadingCommands.push(r);
         }
 
         const total = fileResults.length;
@@ -733,9 +822,10 @@ export class ToolbarCore {
         const hiddenCount = total - visibleFileCount;
 
         this.visibleItems = [];
+        for (const cmd of leadingCommands) this.visibleItems.push(cmd);
         for (let i = 0; i < visibleFileCount; i++) this.visibleItems.push(fileResults[i]);
         if (shouldCollapse) this.visibleItems.push(SHOW_MORE_SENTINEL);
-        for (const cmd of commandResults) this.visibleItems.push(cmd);
+        for (const cmd of trailingCommands) this.visibleItems.push(cmd);
 
         this.visibleItems.forEach((item, i) => {
             if (item === SHOW_MORE_SENTINEL) {
@@ -751,6 +841,7 @@ export class ToolbarCore {
                 li.appendChild(label);
                 if (i === this.selectedIndex) li.classList.add("selected");
                 li.addEventListener("mousedown", ev => ev.preventDefault());
+                li.addEventListener("mouseenter", () => this.hoverSelect(i));
                 li.addEventListener("click", ev => { ev.stopPropagation(); this.expandResults(); });
                 children.push(li);
             } else {
@@ -795,9 +886,6 @@ export class ToolbarCore {
             this.enterSettingsMode();
         } else if (command.type === 'open-file') {
             this.enterBrowseMode();
-        } else if (command.type === 'open-terminal') {
-            this.setResults([]);
-            this.host.onEnterTerminal?.();
         } else if (command.type === 'save-as') {
             if (command.requiresInput) {
                 const ext = command.query ? languageToFileExtension(command.query) : undefined;
@@ -1223,12 +1311,20 @@ export class ToolbarCore {
         const query = this.input.value;
         let results: SearchResult[] = [];
         if (query.trim()) {
+            // Even on the "untouched" path (user just clicked into the
+            // input without typing, so input.value is the current file
+            // path), we still need to run the FS search so
+            // `createCommandResults` can detect that the query matches
+            // an existing file. Without this, `hasExactFileMatch` is
+            // always false on first open and the dropdown shows
+            // nonsensical "Create new file 'X'" / "Rename to 'X'"
+            // entries for the file the user already has open.
+            const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 100);
             if (!this.inputTouched) {
-                results = this.createCommandResults(query, []);
+                results = this.createCommandResults(query, searchResults);
             } else {
-                const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 100);
                 const commands = this.createCommandResults(query, searchResults);
-                const { intent } = this.detectIntent(query, searchResults.length > 0);
+                const { intent } = this.detectIntent(query, searchResults);
                 results = this.prioritizeResults(searchResults, commands, intent);
             }
         } else {
@@ -1256,16 +1352,26 @@ export class ToolbarCore {
         }
         if (this.browseMode.active) {
             const prefix = this.browseMode.currentPath === '/' ? '/' : this.browseMode.currentPath + '/';
-            this.browseMode.filter = query.startsWith(prefix) ? query.slice(prefix.length) : query;
-            this.refreshBrowseEntries();
-            return;
+            const filter = query.startsWith(prefix) ? query.slice(prefix.length) : query;
+            // If the user has typed a complete filename inside the browsed
+            // directory (e.g. `src/example.md`), they're creating a file, not
+            // navigating — leave browse mode and fall through to the normal
+            // search/create flow so the create-file commands are offered for
+            // the full path. Otherwise keep filtering the directory listing.
+            if (ToolbarCore.COMPLETE_FILENAME.test(filter.trim())) {
+                this.exitBrowseMode();
+            } else {
+                this.browseMode.filter = filter;
+                this.refreshBrowseEntries();
+                return;
+            }
         }
 
         let results: SearchResult[] = [];
         if (query.trim()) {
             const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 1000);
             const commands = this.createCommandResults(query, searchResults);
-            const { intent, confidence } = this.detectIntent(query, searchResults.length > 0);
+            const { intent, confidence } = this.detectIntent(query, searchResults);
             this.lastIntent = intent;
 
             // Auto-enter modes for high-confidence structural intents
@@ -1364,8 +1470,8 @@ export class ToolbarCore {
                 else if (event.key === "Escape") { event.preventDefault(); this.cancelSettingsEdit(); }
                 return;
             }
-            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.updateDropdown(); } }
-            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.updateDropdown(); } }
+            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.highlightSelection(true); } }
+            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.highlightSelection(true); } }
             else if (event.key === "Enter" && results.length && this.selectedIndex >= 0) { event.preventDefault(); this.selectResult(results[this.selectedIndex]); }
             else if (event.key === "Backspace") { if (this.settingsMode.filter === '') { event.preventDefault(); this.exitSettingsMode(); this.setResults([]); this.resetInputToCurrentFile(); } }
             else if (event.key === "Escape") { event.preventDefault(); this.exitSettingsMode(); this.setResults([]); this.resetInputToCurrentFile(); this.input.blur(); }
@@ -1374,8 +1480,8 @@ export class ToolbarCore {
         // Browse mode
         if (this.browseMode.active) {
             const results = this.results;
-            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.updateDropdown(); } }
-            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.updateDropdown(); } }
+            if (event.key === "ArrowDown") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex + 1, results.length); this.highlightSelection(true); } }
+            else if (event.key === "ArrowUp") { event.preventDefault(); if (results.length) { this.selectedIndex = mod(this.selectedIndex - 1, results.length); this.highlightSelection(true); } }
             else if (event.key === "Enter" && results.length && this.selectedIndex >= 0) { event.preventDefault(); this.selectResult(results[this.selectedIndex]); }
             else if (event.key === "Backspace") {
                 if (this.browseMode.filter === '' && this.browseMode.currentPath !== '/') {
@@ -1398,11 +1504,11 @@ export class ToolbarCore {
         // Normal search mode — navigate visibleItems
         if (event.key === "ArrowDown") {
             event.preventDefault();
-            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex + 1, this.visibleItems.length); this.updateDropdown(); }
+            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex + 1, this.visibleItems.length); this.highlightSelection(true); }
             else { this.host.focusEditor(); }
         } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex - 1, this.visibleItems.length); this.updateDropdown(); }
+            if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex - 1, this.visibleItems.length); this.highlightSelection(true); }
         } else if (event.key === "Enter" && this.visibleItems.length && this.selectedIndex >= 0) {
             event.preventDefault();
             const item = this.visibleItems[this.selectedIndex];

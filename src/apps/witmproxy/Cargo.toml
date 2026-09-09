@@ -1,6 +1,6 @@
 [package]
 name = "witmproxy"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2024"
 authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A WASM-in-the-middle proxy"
@@ -42,10 +42,14 @@ x509-parser = "0.18.1"
 time = { version = "0.3", features = ["macros"] }
 
 # WASM runtime (component-model + async)
-wasmtime = { features = ["component-model-async"], version = "43.0.0" }
-wasmtime-wasi = { features = ["p3"], version = "43.0.0" }
-wasmtime-wasi-http = { features = ["p3"], version = "43.0.0" }
-wit-bindgen = { version = "0.54.0", features = ["default"] }
+# Pinned exactly: wasmtime's wasip3 modules are explicitly outside semver
+# ("not compliant with semver ... bug and security fixes limited to wasip3
+# will not be given patch releases"), so upgrades are deliberate and gated
+# on the adversarial suite rather than picked up by a caret range.
+wasmtime = { features = ["component-model-async"], version = "=48.0.1" }
+wasmtime-wasi = { features = ["p3"], version = "=48.0.1" }
+wasmtime-wasi-http = { features = ["p3"], version = "=48.0.1" }
+wit-bindgen = { version = "0.61.1", features = ["default"] }
 # WASM signature verification
 wasmsign2 = "0.2.6"
 
@@ -90,12 +94,12 @@ url = "2.5"
 
 # Template engine
 askama = { version = "0.15.5", features = ["derive"] }
-# cargo-generate is huge (libgit2, libssh2, openssl) — only needed for `witm plugin new`
-cargo-generate = { version = "0.23.7", features = ["vendored-openssl"], optional = true }
 
 clap = { version = "4.5.47", features = ["derive"] }
 semver = "1"
-confique = { version = "0.4.0", features = ["toml"] }
+# Unified CLI + env + config-file layering (vendored submodule at src/rust/conf-rs).
+# `serde` feature enables the config-file (TOML) layer via a self-describing document.
+conf = { path = "../../rust/conf-rs", features = ["serde"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 # Must match version in sqlx
 libsqlite3-sys = { version = "0.30.1", features = [
@@ -118,6 +122,8 @@ bipatch = "1.0.0"
 # Optional test helper dependencies
 tempfile = { version = "3.8", optional = true }
 service-manager = "0.11.0"
+zeroize = "1"
+rpassword = "7"
 
 [dev-dependencies]
 # Test dependencies
@@ -128,8 +134,6 @@ tempfile = "3.8"
 default = ["otel"]
 # Feature to expose test utilities for integration tests in other crates
 test-helpers = ["dep:tempfile"]
-# Include cargo-generate for `witm plugin new` (large dependency tree)
-plugin-new = ["dep:cargo-generate"]
 # OpenTelemetry metrics, logs, and tracing
 otel = [
     "dep:opentelemetry",
@@ -139,3 +143,6 @@ otel = [
     "dep:tracing-opentelemetry",
     "dep:sysinfo",
 ]
+
+[lints]
+workspace = true

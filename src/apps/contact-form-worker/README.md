@@ -65,14 +65,12 @@ Accepts form data with the following fields:
 **Required:**
 - `name`: Contact name
 - `email`: Contact email
-- `service`: Service type
-- `minBudget`: Minimum budget
-- `maxBudget`: Maximum budget
-- `currency`: Currency code
+- `service`: Service type (`open-source`, `software-development`, `consulting`, `other`)
 - `message`: Message (minimum 50 characters)
+- `turnstileToken`: Cloudflare Turnstile response
 
 **Optional:**
-- `dateRange`: Project timeline
+- `budget`: Budget in USD (a single positive number)
 
 ### Response Format
 

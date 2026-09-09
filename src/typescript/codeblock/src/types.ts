@@ -3,20 +3,6 @@ import { FileType } from "@volar/language-service";
 import { SnapshotNode } from "@joinezco/memfs/snapshot";
 import { FsApi } from "@joinezco/memfs/node/types";
 
-export interface JswasiConfig {
-    /** URL to rootfs tar.gz archive (default: antmicro's jswasi-rootfs) */
-    rootfsUrl?: string;
-    /** OPFS bucket name for the root filesystem (default: "fsa1") */
-    opfsBucket?: string;
-    /** Lazy-loaded filesystem layers. Chunks are fetched on demand. */
-    lazyLayers?: Array<{
-        /** URL of the `fs.json` manifest. */
-        manifestUrl: string;
-        /** Base URL for chunk files (defaults to manifest's baseUrl). */
-        baseUrl?: string;
-    }>;
-}
-
 // TODO: consider changing interface to allow writes at specific offsets within files
 export interface VfsInterface {
     /**

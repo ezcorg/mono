@@ -1,0 +1,16 @@
+package demo:res@0.1.0;
+
+/// Fixture for the generator's resource-dispatch paths: exercises all four WIT
+/// function kinds over a resource handle — constructor, method, static, and a
+/// freestanding function that returns/takes the handle.
+interface counter {
+  resource counter {
+    constructor(start: u32);
+    increment: func(by: u32) -> u32;
+    value: func() -> u32;
+    from-value: static func(v: u32) -> counter;
+  }
+
+  /// Freestanding, returns an owned handle (like wasi:filesystem preopens).
+  make: func(start: u32) -> counter;
+}

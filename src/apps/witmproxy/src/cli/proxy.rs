@@ -1,45 +1,78 @@
-use super::Services;
-use crate::config::AppConfig;
+// The `Conf` / `Subcommands` derives generate public interfaces over these
+// types, so they must stay `pub` even though this module is private and
+// nothing outside the crate can name them. `pub(crate)` fails with E0446.
+#![allow(unreachable_pub)]
+
+use super::{GlobalArgs, Services};
+use crate::config::{TlsConfig, TlsScopedConfig};
 use anyhow::Result;
-use clap::Subcommand;
+use conf::{Conf, Subcommands};
 use std::path::PathBuf;
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use tracing::error;
 use tracing::{info, warn};
 
-#[derive(Subcommand)]
+#[derive(Subcommands)]
+#[conf(serde)]
 pub enum ProxyCommands {
     /// Enable system HTTP proxy to route through witmproxy
-    Enable {
-        /// Show what would be done without actually doing it
-        #[arg(short = 'n', long)]
-        dry_run: bool,
-    },
+    #[conf(serde(rename = "config"))]
+    Enable(ProxyDryRunArgs),
     /// Disable system HTTP proxy
-    Disable {
-        /// Show what would be done without actually doing it
-        #[arg(short = 'n', long)]
-        dry_run: bool,
-    },
+    #[conf(serde(rename = "config"))]
+    Disable(ProxyDryRunArgs),
     /// Show current proxy status
-    Status,
+    #[conf(serde(rename = "config"))]
+    Status(ProxyStatusArgs),
+}
+
+impl ProxyCommands {
+    /// The config scope + shared flags carried by whichever leaf was invoked.
+    pub(crate) fn scope(&self) -> (&TlsScopedConfig, &GlobalArgs) {
+        match self {
+            ProxyCommands::Enable(a) | ProxyCommands::Disable(a) => (&a.config, &a.globals),
+            ProxyCommands::Status(a) => (&a.config, &a.globals),
+        }
+    }
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct ProxyDryRunArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: TlsScopedConfig,
+
+    /// Show what would be done without actually doing it
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct ProxyStatusArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: TlsScopedConfig,
 }
 
 pub struct ProxyHandler {
-    config: AppConfig,
+    tls: TlsConfig,
 }
 
 impl ProxyHandler {
-    pub fn new(config: AppConfig) -> Self {
-        Self { config }
+    pub fn new(tls: TlsConfig) -> Self {
+        Self { tls }
     }
 
     pub async fn handle(&self, command: &ProxyCommands) -> Result<()> {
         match command {
-            ProxyCommands::Enable { dry_run } => self.enable_proxy(*dry_run).await,
-            ProxyCommands::Disable { dry_run } => self.disable_proxy(*dry_run).await,
-            ProxyCommands::Status => self.show_proxy_status().await,
+            ProxyCommands::Enable(a) => self.enable_proxy(a.dry_run).await,
+            ProxyCommands::Disable(a) => self.disable_proxy(a.dry_run).await,
+            ProxyCommands::Status(_) => self.show_proxy_status().await,
         }
     }
 
@@ -131,7 +164,6 @@ impl ProxyHandler {
     async fn get_proxy_url(&self) -> Result<String> {
         // Get app directory from cert_dir parent
         let app_dir = self
-            .config
             .tls
             .cert_dir
             .parent()
@@ -229,7 +261,9 @@ impl ProxyHandler {
                 use anyhow::anyhow;
                 let url_without_protocol = proxy_url.strip_prefix("http://").unwrap_or(proxy_url);
                 let parts: Vec<&str> = url_without_protocol.split(':').collect();
-                let host = parts[0];
+                // `split` always yields at least one element; use `first` so the
+                // compiler checks that rather than an index relying on it.
+                let host = *parts.first().ok_or_else(|| anyhow!("Empty proxy URL"))?;
                 let port = parts
                     .get(1)
                     .ok_or_else(|| anyhow!("Missing port in proxy URL"))?

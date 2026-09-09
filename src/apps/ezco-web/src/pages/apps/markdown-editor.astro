@@ -1,0 +1,48 @@
+---
+/* The markdown-editor demo in its own document, framed by the laptop's OS window (see src/room/demos.js). Not a page people visit. */
+import '../../styles/global.css';
+import '../../styles/ezos-frame.css';
+import { projects } from '../../data/work';
+const { github, icon } = projects.find((p) => p.id === 'markdown-editor')!;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="robots" content="noindex" />
+		<title>markdown-editor</title>
+		<style is:global>
+			html, body { font-family: 'Source Serif 4', system-ui, serif; font-size: 14px; }
+			#mount { overflow: auto; }
+			#mount .ProseMirror { font-family: 'Source Serif 4', system-ui, Avenir, Helvetica, Arial, serif; }
+			/* no focus frame around the document: it is the whole window */
+			#mount .ProseMirror, #mount .ProseMirror:focus, #mount .ProseMirror-focused, #mount .ezco-mde, #mount .ezco-mde-content, #mount .ezco-mde-body-host, #mount .ezco-mde-body { outline: none !important; box-shadow: none !important; border-color: transparent !important; }
+		</style>
+	</head>
+	<body>
+		<div id="mount"><div class="loading">loading…</div></div>
+		<script is:inline define:vars={{ github, icon }}>
+			window.__ezos = { github, icon };
+		</script>
+		<script>
+			import { getDemoFs } from '../../scripts/demo-fs';
+			import { frame } from '../../scripts/ezos-frame';
+			const { tool, dark } = frame((window as unknown as { __ezos: { github: string; icon: string } }).__ezos);
+			const el = document.getElementById('mount')!;
+			(async () => {
+				const fs = await getDemoFs();
+				const [{ createEditor }, { SearchIndex }] = await Promise.all([import('@joinezco/markdown-editor'), import('@joinezco/codeblock')]);
+				const index = await SearchIndex.get(fs, '.codeblock/index.json').catch(() => undefined);
+				el.innerHTML = '';
+				/* the file-search toolbar mounts in the title bar; the block-action gutter stays out of the way */
+				const editor = createEditor({ element: el, autofocus: false, fs: { fs, filepath: 'hello.md', autoSave: true }, toolbar: { fs, index, filepath: 'hello.md', mount: tool, autoHide: false, className: 'ezos-search' }, blockActions: false });
+				/* the lights in the room switch the editor's theme (and its embedded codeblocks') too */
+				const wrap = editor.view.dom.closest('.ezco-mde') ?? editor.view.dom;
+				const theme = (d: boolean) => { wrap.setAttribute('data-theme', d ? 'dark' : 'light'); editor.commands.setCodeblockTheme({ dark: d }); };
+				theme(dark()); addEventListener('ezos-theme', (e) => theme((e as CustomEvent<{ dark: boolean }>).detail.dark));
+			})().catch((e) => { console.error(e); el.innerHTML = '<div class="loading">couldn\'t start markdown-editor</div>'; });
+		</script>
+	</body>
+</html>

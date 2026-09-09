@@ -1,0 +1,54 @@
+# {{project-name}}
+
+{{description}}
+
+A [witmproxy](https://witmproxy.rs) plugin, compiled to a signed WASM component.
+
+## Build
+
+```sh
+make
+```
+
+This generates a signing keypair on first run (`key.secret` / `key.public`),
+builds for `wasm32-wasip2`, and signs the component. The public key is compiled
+into the component itself, and the host verifies the signature against it before
+loading the plugin -- so rebuild after any key change.
+
+Prerequisites:
+
+```sh
+rustup target add wasm32-wasip2
+cargo install wasmsign2-cli
+```
+
+## Install
+
+```sh
+witm plugin add target/wasm32-wasip2/release/{{crate_name}}.signed.wasm
+```
+
+## Where to start
+
+* `manifest()` in `src/lib.rs` declares the plugin's identity and the
+  capabilities it requests. The user decides what is actually granted and may
+  narrow any scope, so treat every capability as optional.
+* `handle()` in `src/lib.rs` is the event handler.
+
+Each requested capability carries a CEL `scope` expression that the host
+evaluates *before* instantiating this component. Narrow scopes are not just a
+permissions story -- they let the host skip instantiation entirely for events
+you do not care about, which is the cheapest performance win available to you.
+
+## WIT
+
+`wit/` is vendored from the host at generation time, so it matches the witmproxy
+version that generated this project ({{witm-version}}). To move to a newer host:
+
+```sh
+wkg get --format wit witmproxy:plugin@<version> --output wit/world.wit
+```
+
+## License
+
+{{license}}

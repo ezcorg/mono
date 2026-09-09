@@ -1,0 +1,90 @@
+# the noshorts plugin: a `witmproxy-plugin-noshorts-v*` tag (or a manual run) checks it, builds and signs it
+# (src/scripts/release-noshorts.sh) and makes a GitHub release with the component and its public key
+name: witmproxy-plugin-noshorts
+
+on:
+  push:
+    tags: ['witmproxy-plugin-noshorts-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: version to publish (e.g. 0.0.2)
+        required: true
+        type: string
+      dry_run:
+        description: check and build, release nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/rust
+        with:
+          targets: wasm32-wasip2
+          components: rustfmt, clippy
+      - run: src/scripts/check-noshorts.sh
+
+  release:
+    if: ${{ !inputs.dry_run }}
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/rust
+        with:
+          targets: wasm32-wasip2
+      - id: v
+        run: |
+          v="${{ inputs.version }}"; [ -n "$v" ] || v="${GITHUB_REF_NAME#witmproxy-plugin-noshorts-v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          src/scripts/release-noshorts.sh "$v"
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}
+          name: witmproxy-plugin-noshorts v${{ steps.v.outputs.version }}
+          prerelease: ${{ contains(steps.v.outputs.version, 'alpha') || contains(steps.v.outputs.version, 'beta') || contains(steps.v.outputs.version, 'rc') }}
+          files: dist/witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}.*
+          body: |
+            ## witmproxy-plugin-noshorts v${{ steps.v.outputs.version }}
+
+            A witmproxy plugin that blocks YouTube and Instagram shorts.
+
+            ### Installation
+
+            ```bash
+            # Install directly from this release URL:
+            witm plugin add https://github.com/${{ github.repository }}/releases/download/witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}/witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}.wasm
+
+            # Or download the .wasm file and install locally:
+            witm plugin add witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}.wasm
+            ```
+
+            ### Verified Installation
+
+            Pin trust to the release public key to verify the plugin was signed by the expected author:
+
+            ```bash
+            # Download the public key and install with verification:
+            witm plugin add \
+              --public-key witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}.key.public \
+              witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}.wasm
+
+            # Or verify with wasmsign2 directly:
+            wasmsign2 verify -i witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}.wasm -p witmproxy-plugin-noshorts-v${{ steps.v.outputs.version }}.key.public
+            ```

@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 use cel_cxx::Activation;
 use serde::{Deserialize, Serialize};
-use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, sqlite::SqliteRow};
-use tracing::error;
-use wasmtime::Engine;
+use sqlx::{QueryBuilder, Row, Sqlite, Transaction, query, query_scalar, sqlite::SqliteRow};
+use tracing::{error, warn};
 use wasmtime::component::Component;
 
 use crate::events::Event;
@@ -13,21 +12,25 @@ use crate::{
     Runtime,
     db::{Db, Insert},
     plugins::capabilities::Capability,
-    wasm::{
-        Host,
-        bindgen::{
-            Plugin, PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
-            witmproxy::plugin::capabilities::Capability as WitCapability,
-        },
+    wasm::bindgen::{
+        PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
+        witmproxy::plugin::capabilities::Capability as WitCapability,
     },
 };
 
 pub mod capabilities;
 pub mod cel;
+pub mod limits;
 pub mod registry;
 
 #[cfg(test)]
 mod tenant_tests;
+
+#[cfg(test)]
+mod perf_tests;
+
+#[cfg(test)]
+mod adversarial_tests;
 
 #[derive(Serialize, Deserialize)]
 pub struct WitmPlugin {
@@ -52,6 +55,11 @@ pub struct WitmPlugin {
     // Raw bytes of the WASM component for storage
     // TODO: stream this when receiving from API
     pub component_bytes: Vec<u8>,
+    // Operator-supplied per-plugin resource limit overrides. Empty means
+    // "inherit every dimension from the global configuration"; see
+    // `crate::plugins::limits`.
+    #[serde(default)]
+    pub limits: crate::plugins::limits::LimitOverrides,
 }
 
 impl WitmPlugin {
@@ -79,23 +87,21 @@ impl WitmPlugin {
         Ok(self)
     }
 
-    /// Only needs the `component` column
+    /// Needs the `component` and `enabled` columns.
+    ///
+    /// Takes a shared `&Runtime` (borrowing its engine + linker) instead of
+    /// building a fresh `Runtime` (new Engine + linker) per row.
     pub async fn from_db_row(
         plugin_row: SqliteRow,
         db: &mut Db,
-        engine: &Engine,
+        runtime: &Runtime,
         env: &'static cel_cxx::Env<'static>,
     ) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
-        let component = Component::from_binary(engine, &component_bytes)?;
-        let runtime = Runtime::try_default()?;
-        let mut store = wasmtime::Store::new(engine, Host::default());
-        let instance = runtime
-            .linker
-            .instantiate_async(&mut store, &component)
-            .await?;
-        let plugin_instance = Plugin::new(&mut store, &instance)?;
+        let enabled: bool = plugin_row.try_get("enabled")?;
+        let component = Component::from_binary(&runtime.engine, &component_bytes)?;
+        let (plugin_instance, mut store) = runtime.instantiate_plugin_component(&component).await?;
         let guest_result = store
             .run_concurrent(async move |store| {
                 let manifest = match plugin_instance
@@ -114,6 +120,30 @@ impl WitmPlugin {
             .await??;
 
         let mut plugin = WitmPlugin::from(guest_result).with_component(component, component_bytes);
+        // Reflect the stored enabled flag (the manifest defaults it to `true`).
+        plugin.enabled = enabled;
+
+        // Per-plugin limit overrides. A malformed value must not take the
+        // plugin (or the daemon) down, but it must not silently fall back to
+        // "unbounded" either: defaulting inherits the global limits, which is
+        // the safe direction, and the operator is told their override is being
+        // ignored.
+        let limits_json: String = plugin_row
+            .try_get("limits")
+            .unwrap_or_else(|_| "{}".to_string());
+        plugin.limits = match serde_json::from_str(&limits_json) {
+            Ok(limits) => limits,
+            Err(e) => {
+                warn!(
+                    target: "plugins::limits",
+                    plugin_id = %plugin.id(),
+                    error = %e,
+                    "stored per-plugin limit overrides are malformed; \
+                     falling back to the global limits for this plugin"
+                );
+                crate::plugins::limits::LimitOverrides::default()
+            }
+        };
         let capabilities = query(
             "
             SELECT capability, config, granted
@@ -171,16 +201,21 @@ impl WitmPlugin {
     ) -> Result<Vec<Self>> {
         let rows = query(
             "
-            SELECT component
+            SELECT component, enabled
             FROM plugins
             ",
         )
         .fetch_all(&db.pool)
         .await?;
 
+        // Reuse the caller's engine (cheap Arc clone) and build the linker once
+        // here, instead of constructing a fresh Runtime (new Engine + linker)
+        // per row inside `from_db_row`.
+        let runtime = Runtime::from_engine(engine.clone())?;
+
         let mut plugins = Vec::new();
         for row in rows {
-            match WitmPlugin::from_db_row(row, db, engine, env).await {
+            match WitmPlugin::from_db_row(row, db, &runtime, env).await {
                 Ok(plugin) => plugins.push(plugin),
                 Err(e) => {
                     error!(
@@ -207,6 +242,10 @@ impl WitmPlugin {
     }
 
     pub fn can_handle(&self, event: &dyn Event) -> bool {
+        // A globally-disabled plugin never handles events.
+        if !self.enabled {
+            return false;
+        }
         self.capabilities
             .iter()
             // Have we been granted the associated event capability?
@@ -270,6 +309,9 @@ impl From<PluginManifest> for WitmPlugin {
             component_bytes: vec![],
             metadata,
             capabilities,
+            // A manifest cannot ask for its own limits: overrides are the
+            // operator's decision, and are loaded from the database.
+            limits: crate::plugins::limits::LimitOverrides::default(),
         }
     }
 }
@@ -283,11 +325,28 @@ impl Insert for WitmPlugin {
     async fn insert_tx(&self, db: &mut Db) -> Result<Transaction<'_, Sqlite>> {
         let mut tx: Transaction<'_, Sqlite> = db.pool.begin().await?;
 
+        // Re-installing a plugin (an upgrade, say) must not silently discard an
+        // operator's per-plugin limit overrides: that would quietly widen the
+        // blast radius of the very plugin someone had deliberately constrained.
+        // `INSERT OR REPLACE` writes a whole new row, so carry the stored value
+        // forward unless this instance is itself carrying overrides.
+        let limits = if self.limits.is_empty() {
+            let existing: Option<String> =
+                query_scalar("SELECT limits FROM plugins WHERE namespace = ? AND name = ?")
+                    .bind(self.namespace.clone())
+                    .bind(self.name.clone())
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            existing.unwrap_or_else(|| "{}".to_string())
+        } else {
+            serde_json::to_string(&self.limits)?
+        };
+
         // Insert or replace into plugins table (triggers on delete for related tables)
         query(
             "
-            INSERT OR REPLACE INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO plugins (namespace, name, version, author, description, license, url, publickey, enabled, component, limits)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
         )
         .bind(self.namespace.clone())
@@ -300,6 +359,7 @@ impl Insert for WitmPlugin {
         .bind(self.publickey.clone())
         .bind(self.enabled)
         .bind(self.component_bytes.clone())
+        .bind(limits)
         .execute(&mut *tx)
         .await?;
 

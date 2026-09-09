@@ -15,13 +15,10 @@ const resolveLib = async (name: string): Promise<string> => {
     return loader();
 };
 
-// Load a lazy filesystem backed by OPFS.
-// On first visit the manifest is fetched (~1KB) and chunks are loaded on demand.
-// On subsequent visits, files are served directly from OPFS.
-const fs = await Vfs.lazy({
-    manifestUrl: '/lazy/fs.json',
-    backingName: 'codeblock-example',
-});
+// The same filesystem the editors run on: a SharedWorker over OPFS (in-memory where OPFS is missing).
+// Files persist across visits; the first one gets a file to look at.
+const fs = await Vfs.worker(undefined, 'codeblock-example');
+if (!(await fs.exists('example.ts'))) await fs.writeFile('example.ts', 'export const hello = (name: string) => `hello, ${name}`;\n');
 
 const parent = document.getElementById('editor') as HTMLDivElement;
 const path = '.codeblock/index.json'

@@ -1,24 +1,25 @@
 ---
-import BlogPost from '../../layouts/BlogPost.astro';
+import RoomLayout from '../../layouts/RoomLayout.astro';
+import StaticPage from '../../components/StaticPage.astro';
+import Room from '../../components/Room.astro';
+import { posts, fmtDate } from '../../data/posts';
+import { SITE, roomRoute } from '../../data/site';
 
-export async function getStaticPaths() {
-	const posts = await Astro.glob('../../content/blog/*.md');
-
-	return posts
-		.filter((post) => !post.frontmatter.draft)
-		.map((post) => {
-			const slug = post.file.split('/').pop()?.replace('.md', '') || '';
-			return {
-				params: { slug },
-				props: { post },
-			};
-		});
-}
-
+export function getStaticPaths() { return posts.map((p) => ({ params: { slug: p.slug }, props: { post: p } })); }
 const { post } = Astro.props;
-const { Content } = post;
+const { fm, Content } = post;
+const jsonld = {
+	'@context': 'https://schema.org', '@type': 'BlogPosting', headline: fm.title, description: fm.description, datePublished: fm.date,
+	author: fm.author ? { '@type': 'Person', name: fm.author } : { '@type': 'Organization', name: 'ez co' },
+	publisher: { '@type': 'Organization', name: 'ez co', url: SITE }, mainEntityOfPage: SITE + post.path, keywords: fm.tags?.join(', '),
+};
 ---
 
-<BlogPost frontmatter={post.frontmatter}>
-	<Content />
-</BlogPost>
+<RoomLayout title={`${fm.title} · ez co`} description={fm.description} canonical={post.path} route={roomRoute(post.path)} type="article" published={fm.date} jsonld={jsonld}>
+	<StaticPage title={fm.title} current="/blog">
+		<p class="meta">{fmtDate(fm.date)}{fm.author ? ' · ' + fm.author : ''}{fm.tags?.length ? ' · ' + fm.tags.join(', ') : ''}</p>
+		<article><Content /></article>
+		<p><a href="/blog/">← all posts</a></p>
+	</StaticPage>
+	<Room />
+</RoomLayout>

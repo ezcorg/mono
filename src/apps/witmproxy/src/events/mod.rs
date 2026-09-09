@@ -12,25 +12,44 @@ use crate::wasm::{
 
 pub mod connect;
 pub mod content;
+pub mod recovery;
 pub mod request;
 pub mod response;
 pub mod timer;
 
 /// Trait representing an event that can be handled by the plugin system
 pub trait Event: Send {
-    /// Returns the [CapabilityKind] required to handle events of this type
-    fn capability(&self) -> CapabilityKind;
+    /// Returns the [EventKind] this event represents.
+    fn kind(&self) -> EventKind;
 
-    /// Returns the [EventKind] associated with this event type
-    fn kind(&self) -> EventKind {
-        match self.capability() {
-            CapabilityKind::HandleEvent(kind) => kind,
-            _ => panic!("Event capability must be of HandleEvent kind"),
-        }
+    /// Returns the [CapabilityKind] required to handle events of this type.
+    ///
+    /// Derived from [`Self::kind`] rather than declared separately: the two
+    /// were previously independent, so `kind()` had to panic on a capability
+    /// that was not a `HandleEvent`. Deriving it makes that state
+    /// unrepresentable.
+    fn capability(&self) -> CapabilityKind {
+        CapabilityKind::HandleEvent(self.kind())
     }
 
     /// Converts into Event by consuming the event and storing it in the provided Store
     fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent>;
+
+    /// Like [`Self::into_event_data`], but installs a bounded tee on the
+    /// event's body so the event can be rebuilt if the guest fails.
+    ///
+    /// Only called under `RecoveryPolicy::FailOpen`; the default implementation
+    /// hands the event over unchanged and reports that recovery is
+    /// unavailable, which is the correct answer for an event type whose
+    /// payload the host cannot duplicate.
+    fn into_event_data_recoverable(
+        self: Box<Self>,
+        store: &mut Store<Host>,
+        _limit: u64,
+        _breaches: std::sync::Arc<crate::plugins::limits::BreachRecorder>,
+    ) -> Result<(WasmEvent, Option<crate::events::recovery::EventShadow>)> {
+        Ok((self.into_event_data(store)?, None))
+    }
 
     /// Register event-specific variables and functions with the CEL environment
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>

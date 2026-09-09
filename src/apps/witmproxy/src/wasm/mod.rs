@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use std::io::Cursor;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 
 use anyhow::Result;
@@ -25,6 +25,7 @@ mod runtime;
 
 use crate::events::content::InboundContent;
 use crate::plugins::capabilities::Capability;
+use crate::plugins::limits::{BreachRecorder, LimitKind, ResolvedLimits};
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     CapabilityKind, HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
     HostCapabilityProviderWithStore, HostClockClient, HostClockClientWithStore, HostContent,
@@ -97,31 +98,62 @@ impl CapabilityProvider {
     }
 }
 
-impl From<&Vec<Capability>> for CapabilityProvider {
-    fn from(capabilities: &Vec<Capability>) -> Self {
+impl CapabilityProvider {
+    /// Build a provider from a plugin's granted capabilities.
+    ///
+    /// `local_storage` is the plugin's PERSISTENT storage client (one per
+    /// plugin, owned by the registry). A clone is handed to the provider so
+    /// that writes survive across events for the same plugin. `None` disables
+    /// the local-storage capability even if granted.
+    pub fn build(
+        capabilities: &[Capability],
+        local_storage: Option<LocalStorageClient>,
+        limits: &ResolvedLimits,
+        breaches: Arc<BreachRecorder>,
+    ) -> Self {
         let mut provider = CapabilityProvider::new();
         for cap in capabilities {
-            if cap.granted {
-                match &cap.inner.kind {
-                    CapabilityKind::Logger => {
-                        provider = provider.with_logger(Logger::new());
+            if !cap.granted {
+                continue;
+            }
+            match &cap.inner.kind {
+                CapabilityKind::Logger => {
+                    // A fresh logger per provider, i.e. per event: the budget is
+                    // a per-event budget by construction.
+                    provider =
+                        provider.with_logger(Logger::with_limits(limits, Arc::clone(&breaches)));
+                }
+                CapabilityKind::Annotator => {
+                    provider = provider.with_annotator(AnnotatorClient::new());
+                }
+                CapabilityKind::LocalStorage => {
+                    if let Some(client) = local_storage.clone() {
+                        provider = provider.with_local_storage(client);
                     }
-                    CapabilityKind::Annotator => {
-                        provider = provider.with_annotator(AnnotatorClient::new());
-                    }
-                    CapabilityKind::LocalStorage => {
-                        provider = provider.with_local_storage(LocalStorageClient::new());
-                    }
-                    CapabilityKind::Clock => {
-                        provider = provider.with_clock(ClockClient::new());
-                    }
-                    CapabilityKind::HandleEvent(_) => {
-                        // Event handling capabilities are managed separately
-                    }
+                }
+                CapabilityKind::Clock => {
+                    provider = provider.with_clock(ClockClient::new());
+                }
+                CapabilityKind::HandleEvent(_) => {
+                    // Event handling capabilities are managed separately
                 }
             }
         }
         provider
+    }
+}
+
+impl From<&Vec<Capability>> for CapabilityProvider {
+    fn from(capabilities: &Vec<Capability>) -> Self {
+        // Fresh (non-persistent) local storage. Callers that need storage to
+        // survive across events should use `CapabilityProvider::build` with a
+        // persistent client instead.
+        Self::build(
+            capabilities,
+            Some(LocalStorageClient::new()),
+            &ResolvedLimits::DEFAULTS,
+            BreachRecorder::new("<anonymous>"),
+        )
     }
 }
 
@@ -145,11 +177,49 @@ impl Default for AnnotatorClient {
 /// Custom StreamProducer for body streaming
 pub struct BodyStreamProducer {
     body: UnsyncBoxBody<Bytes, ErrorCode>,
+    /// Remainder of a frame larger than the guest's read capacity.
+    ///
+    /// Held here rather than in wasmtime's host buffer. The previous code
+    /// stored it with `Destination::set_buffer` and then called
+    /// `as_direct(capacity)`, which in wasmtime 43 only resized the buffer when
+    /// it was empty. In 48 `as_direct` resizes unconditionally, discarding it:
+    ///
+    /// ```text
+    /// *buffer.marked_written = 0;
+    /// buffer.dst.resize(capacity, 0);
+    /// ```
+    ///
+    /// Every body larger than one guest read was therefore truncated after the
+    /// first chunk. Owning the remainder keeps this correct regardless of how
+    /// the host buffer behaves.
+    pending: Option<Bytes>,
 }
 
 impl BodyStreamProducer {
     pub fn new(body: UnsyncBoxBody<Bytes, ErrorCode>) -> Self {
-        Self { body }
+        Self {
+            body,
+            pending: None,
+        }
+    }
+
+    /// Write up to `cap` bytes of `data` to `dst`, retaining any remainder.
+    fn emit<D>(
+        &mut self,
+        store: StoreContextMut<'_, D>,
+        dst: Destination<'_, u8, Bytes>,
+        mut data: Bytes,
+        cap: usize,
+    ) {
+        let n = data.len().min(cap);
+        if data.len() > n {
+            self.pending = Some(data.split_off(n));
+        }
+        let mut direct = dst.as_direct(store, n);
+        if let Some(slice) = direct.remaining().get_mut(..n) {
+            slice.copy_from_slice(&data);
+        }
+        direct.mark_written(n);
     }
 }
 
@@ -158,7 +228,7 @@ where
     D: 'static,
 {
     type Item = u8;
-    type Buffer = Cursor<Bytes>;
+    type Buffer = Bytes;
 
     fn poll_produce<'a>(
         mut self: Pin<&mut Self>,
@@ -183,6 +253,22 @@ where
             None => None,
         };
 
+        // Serve a retained remainder before pulling another frame, so a frame
+        // larger than the guest's read capacity is delivered across as many
+        // polls as it takes.
+        if let Some(pending) = self.pending.take() {
+            match cap {
+                Some(cap) => {
+                    self.emit(store, dst, pending, cap.into());
+                    return Poll::Ready(Ok(StreamResult::Completed));
+                }
+                None => {
+                    dst.set_buffer(pending);
+                    return Poll::Ready(Ok(StreamResult::Completed));
+                }
+            }
+        }
+
         // Loop to skip empty data frames from the HTTP body.
         // HTTP/2 can produce zero-length DATA frames which would cause
         // wasmtime to error with "Completed without producing any items"
@@ -192,29 +278,16 @@ where
                 Poll::Ready(Some(Ok(frame))) => {
                     // Try to extract data from the frame
                     match frame.into_data().map_err(http_body::Frame::into_trailers) {
-                        Ok(mut data_frame) => {
+                        Ok(data_frame) => {
                             // Skip empty data frames and poll again
                             if data_frame.is_empty() {
                                 continue;
                             }
                             if let Some(cap) = cap {
-                                let n = data_frame.len();
-                                let cap_usize = cap.into();
-                                if n > cap_usize {
-                                    // Data doesn't fit, buffer the rest
-                                    dst.set_buffer(Cursor::new(data_frame.split_off(cap_usize)));
-                                    let mut dst_direct = dst.as_direct(store, cap_usize);
-                                    dst_direct.remaining().copy_from_slice(&data_frame);
-                                    dst_direct.mark_written(cap_usize);
-                                } else {
-                                    // Copy the whole frame
-                                    let mut dst_direct = dst.as_direct(store, n);
-                                    dst_direct.remaining()[..n].copy_from_slice(&data_frame);
-                                    dst_direct.mark_written(n);
-                                }
+                                self.emit(store, dst, data_frame, cap.into());
                             } else {
                                 // No capacity info, just buffer it
-                                dst.set_buffer(Cursor::new(data_frame));
+                                dst.set_buffer(data_frame);
                             }
                             return Poll::Ready(Ok(StreamResult::Completed));
                         }
@@ -237,28 +310,155 @@ where
     }
 }
 
+/// Shared budget state. Held behind an `Arc` so every clone of a `Logger`
+/// charges the SAME budget: `CapabilityProvider::logger()` hands out a clone on
+/// every call, so a per-clone budget would be trivially bypassed by a guest
+/// re-acquiring the capability in a loop.
+#[derive(Debug)]
+struct LogBudget {
+    bytes_used: AtomicU64,
+    messages_used: AtomicU64,
+    /// `0` means unbounded.
+    max_bytes: u64,
+    /// `0` means unbounded.
+    max_messages: u64,
+    breaches: Arc<BreachRecorder>,
+}
+
+/// Per-event logging budget for one plugin.
+///
+/// Two problems are addressed here.
+///
+/// **Volume.** The log sink is backed by `tracing-appender` writing to disk, so
+/// an unthrottled plugin can fill the operator's disk from inside the sandbox.
+/// A plugin holding the `logger` capability is trusted to describe what it is
+/// doing, not to decide how much of the host's disk it may consume, so the
+/// budget is per event and is reset for every event.
+///
+/// **Injection.** The message is guest-controlled and was previously passed to
+/// `tracing` verbatim. A message containing newlines can forge additional log
+/// lines -- including lines that look like they came from the host -- which
+/// corrupts exactly the audit trail an operator would use to investigate the
+/// plugin. Control characters are escaped rather than dropped so the original
+/// content is still recoverable.
 #[derive(Clone)]
-pub struct Logger {}
+pub struct Logger {
+    budget: Arc<LogBudget>,
+}
+
+/// Longest single message admitted after escaping. Bounds one pathological
+/// message independently of the per-event byte budget.
+const MAX_LOG_MESSAGE_LEN: usize = 8 * 1024;
 
 impl Logger {
     pub fn new() -> Self {
-        Self {}
+        Self::with_limits(&ResolvedLimits::DEFAULTS, BreachRecorder::new("<unknown>"))
+    }
+
+    pub fn with_limits(limits: &ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
+        Self {
+            budget: Arc::new(LogBudget {
+                bytes_used: AtomicU64::new(0),
+                messages_used: AtomicU64::new(0),
+                max_bytes: limits.max_log_bytes_per_event,
+                max_messages: limits.max_log_messages_per_event,
+                breaches,
+            }),
+        }
+    }
+
+    /// Escape control characters so a guest cannot forge log lines, and bound
+    /// the length of any single message.
+    fn sanitize(message: &str) -> String {
+        let mut out = String::with_capacity(message.len().min(MAX_LOG_MESSAGE_LEN));
+        for ch in message.chars() {
+            if out.len() >= MAX_LOG_MESSAGE_LEN {
+                out.push_str("...[truncated]");
+                break;
+            }
+            match ch {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if c.is_control() => out.push_str(&format!("\\u{{{:04x}}}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    /// Escape and bound a guest-supplied string for inclusion in an operator
+    /// report (a log line, the management API).
+    ///
+    /// Guest error messages cross the same trust boundary as guest log
+    /// messages and need the same treatment, so both go through here.
+    pub fn sanitize_for_report(message: &str) -> String {
+        Self::sanitize(message)
+    }
+
+    /// Test accessor for [`Self::sanitize`].
+    #[cfg(test)]
+    pub fn sanitize_for_test(message: &str) -> String {
+        Self::sanitize(message)
+    }
+
+    /// Charge a message against the per-event budget.
+    ///
+    /// Returns the sanitized message when it may be emitted, or `None` when the
+    /// budget is exhausted (recorded and reported to the operator).
+    fn admit(&self, message: &str) -> Option<String> {
+        let msg = Self::sanitize(message);
+
+        let b = &*self.budget;
+        if b.max_messages > 0 {
+            let used = b.messages_used.fetch_add(1, Ordering::Relaxed) + 1;
+            if used > b.max_messages {
+                // Report only on the transition, so the breach report itself
+                // cannot become the flood.
+                if used == b.max_messages + 1 {
+                    b.breaches
+                        .record(LimitKind::LogMessages, used, b.max_messages);
+                }
+                return None;
+            }
+        }
+
+        if b.max_bytes > 0 {
+            let used =
+                b.bytes_used.fetch_add(msg.len() as u64, Ordering::Relaxed) + msg.len() as u64;
+            if used > b.max_bytes {
+                if used.saturating_sub(msg.len() as u64) <= b.max_bytes {
+                    b.breaches.record(LimitKind::LogBytes, used, b.max_bytes);
+                }
+                return None;
+            }
+        }
+
+        Some(msg)
     }
 
     pub fn info(&self, message: String) {
-        tracing::info!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::info!(target: "plugins::guest", "{}", m);
+        }
     }
 
     pub fn warn(&self, message: String) {
-        tracing::warn!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::warn!(target: "plugins::guest", "{}", m);
+        }
     }
 
     pub fn error(&self, message: String) {
-        tracing::error!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::error!(target: "plugins::guest", "{}", m);
+        }
     }
 
     pub fn debug(&self, message: String) {
-        tracing::debug!("{}", message);
+        if let Some(m) = self.admit(&message) {
+            tracing::debug!(target: "plugins::guest", "{}", m);
+        }
     }
 }
 
@@ -271,9 +471,28 @@ impl Default for Logger {
 /// A local storage client with shared mutable state via Arc<RwLock<>>.
 /// Clone is cheap (just Arc clone) and all clones share the same storage.
 /// Uses Bytes internally for efficient storage and cheap cloning.
+///
+/// # Quotas
+///
+/// This map lives in HOST memory and persists for the lifetime of the plugin,
+/// so it is not bounded by the store's `max_memory_mb` limit (which caps guest
+/// linear memory only). Without an explicit quota a plugin could grow the
+/// daemon's resident set without bound -- one `set()` per request is enough --
+/// while staying entirely inside its guest memory cap.
+///
+/// The caps are held in atomics rather than captured at construction because
+/// the client is persistent across events while the operator's configuration
+/// can change; the registry refreshes them per event.
 #[derive(Clone)]
 pub struct LocalStorageClient {
     store: Arc<RwLock<HashMap<String, Bytes>>>,
+    /// Current total accounted size, in bytes (keys plus values).
+    bytes_used: Arc<AtomicU64>,
+    /// `0` means unbounded.
+    max_bytes: Arc<AtomicU64>,
+    /// `0` means unbounded.
+    max_keys: Arc<AtomicU64>,
+    breaches: Arc<BreachRecorder>,
 }
 
 impl Default for LocalStorageClient {
@@ -284,14 +503,78 @@ impl Default for LocalStorageClient {
 
 impl LocalStorageClient {
     pub fn new() -> Self {
+        Self::with_limits(&ResolvedLimits::DEFAULTS, BreachRecorder::new("<unknown>"))
+    }
+
+    pub fn with_limits(limits: &ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
         Self {
             store: Arc::new(RwLock::new(HashMap::new())),
+            bytes_used: Arc::new(AtomicU64::new(0)),
+            max_bytes: Arc::new(AtomicU64::new(limits.max_local_storage_bytes)),
+            max_keys: Arc::new(AtomicU64::new(limits.max_local_storage_keys)),
+            breaches,
         }
     }
 
-    /// Set a key-value pair in the store (async)
-    pub async fn set(&self, key: String, value: Vec<u8>) {
-        self.store.write().await.insert(key, Bytes::from(value));
+    /// Refresh the quotas from the plugin's currently-effective limits.
+    /// Called per event so a configuration change takes effect without a
+    /// restart and without discarding the plugin's stored data.
+    pub fn update_limits(&self, limits: &ResolvedLimits) {
+        self.max_bytes
+            .store(limits.max_local_storage_bytes, Ordering::Relaxed);
+        self.max_keys
+            .store(limits.max_local_storage_keys, Ordering::Relaxed);
+    }
+
+    /// Bytes currently accounted against the quota.
+    pub fn bytes_used(&self) -> u64 {
+        self.bytes_used.load(Ordering::Relaxed)
+    }
+
+    /// Set a key-value pair in the store (async).
+    ///
+    /// Returns `false` when the write was refused for exceeding a quota. The
+    /// WIT signature returns nothing, so a refusal is invisible to the guest by
+    /// design -- a plugin must not be able to probe the host's remaining
+    /// headroom -- but it is recorded and logged for the operator.
+    pub async fn set(&self, key: String, value: Vec<u8>) -> bool {
+        let max_bytes = self.max_bytes.load(Ordering::Relaxed);
+        let max_keys = self.max_keys.load(Ordering::Relaxed);
+
+        // Account for the key as well as the value: many small keys are just as
+        // effective at exhausting memory as one large value.
+        let incoming = (key.len() as u64).saturating_add(value.len() as u64);
+
+        let mut guard = self.store.write().await;
+        let previous = guard
+            .get(&key)
+            .map(|v| (key.len() as u64).saturating_add(v.len() as u64));
+        let is_new_key = previous.is_none();
+
+        if max_keys > 0 && is_new_key && guard.len() as u64 >= max_keys {
+            let attempted = (guard.len() as u64).saturating_add(1);
+            drop(guard);
+            self.breaches
+                .record(LimitKind::LocalStorageKeys, attempted, max_keys);
+            return false;
+        }
+
+        let projected = self
+            .bytes_used
+            .load(Ordering::Relaxed)
+            .saturating_sub(previous.unwrap_or(0))
+            .saturating_add(incoming);
+
+        if max_bytes > 0 && projected > max_bytes {
+            drop(guard);
+            self.breaches
+                .record(LimitKind::LocalStorageBytes, projected, max_bytes);
+            return false;
+        }
+
+        guard.insert(key, Bytes::from(value));
+        self.bytes_used.store(projected, Ordering::Relaxed);
+        true
     }
 
     /// Get a value by key (async). Returns cloned Bytes which is cheap.
@@ -301,8 +584,26 @@ impl LocalStorageClient {
 
     /// Delete a key from the store (async)
     pub async fn delete(&self, key: &str) {
-        self.store.write().await.remove(key);
+        if let Some(removed) = self.store.write().await.remove(key) {
+            let freed = (key.len() as u64).saturating_add(removed.len() as u64);
+            let _ = self
+                .bytes_used
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                    Some(cur.saturating_sub(freed))
+                });
+        }
     }
+}
+
+/// Decide whether a `set-body` chunk fits within the configured cap.
+///
+/// Split out of the stream consumer (a local struct inside `set_body`) purely
+/// so the arithmetic is reachable from tests. `0` means unbounded.
+pub(crate) fn body_chunk_admitted(written: u64, chunk_len: u64, max_bytes: u64) -> bool {
+    if max_bytes == 0 {
+        return true;
+    }
+    written.saturating_add(chunk_len) <= max_bytes
 }
 
 /// A clock client providing access to the current system time.
@@ -327,7 +628,11 @@ impl ClockClient {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as u64
+            .as_millis()
+            // Saturates rather than wrapping; only reachable ~584 million
+            // years past the epoch.
+            .try_into()
+            .unwrap_or(u64::MAX)
     }
 }
 
@@ -340,7 +645,8 @@ impl Default for ClockClient {
 /// Builder-style structure used to create a [`WitmProxyCtx`].
 #[derive(Default)]
 pub struct WitmProxyCtxBuilder {
-    // Add any initial configuration here
+    limits: Option<ResolvedLimits>,
+    breaches: Option<Arc<BreachRecorder>>,
 }
 
 impl WitmProxyCtxBuilder {
@@ -350,16 +656,31 @@ impl WitmProxyCtxBuilder {
     }
 
     /// Uses the configured context so far to construct the final [`WitmProxyCtx`].
+    /// Attach the effective per-plugin limits and breach recorder.
+    pub fn with_limits(mut self, limits: ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
+        self.limits = Some(limits);
+        self.breaches = Some(breaches);
+        self
+    }
+
     pub fn build(self) -> WitmProxyCtx {
         WitmProxyCtx {
-            // Initialize context state
+            limits: self.limits.unwrap_or(ResolvedLimits::DEFAULTS),
+            breaches: self
+                .breaches
+                .unwrap_or_else(|| BreachRecorder::new("<unknown>")),
         }
     }
 }
 
 /// Capture the state necessary for use in the `witmproxy:plugin` API implementation.
 pub struct WitmProxyCtx {
-    // Add context state here
+    /// Effective limits for the plugin this store belongs to. Host capability
+    /// implementations (which only see the store, not the registry) read these
+    /// to enforce quotas on guest-driven work such as `content.set-body`.
+    pub limits: ResolvedLimits,
+    /// Breach recorder for the same plugin.
+    pub breaches: Arc<BreachRecorder>,
 }
 
 impl WitmProxyCtx {
@@ -371,14 +692,24 @@ impl WitmProxyCtx {
 
 /// A wrapper capturing the needed internal `witmproxy:plugin` state.
 pub struct WitmProxyCtxView<'a> {
-    _ctx: &'a WitmProxyCtx,
+    ctx: &'a WitmProxyCtx,
     pub table: &'a mut ResourceTable,
 }
 
 impl<'a> WitmProxyCtxView<'a> {
     /// Create a new view into the `witmproxy:plugin` state.
     pub fn new(ctx: &'a WitmProxyCtx, table: &'a mut ResourceTable) -> Self {
-        Self { _ctx: ctx, table }
+        Self { ctx, table }
+    }
+
+    /// Effective limits for the plugin owning this store.
+    pub fn limits(&self) -> &ResolvedLimits {
+        &self.ctx.limits
+    }
+
+    /// Breach recorder for the plugin owning this store.
+    pub fn breaches(&self) -> Arc<BreachRecorder> {
+        Arc::clone(&self.ctx.breaches)
     }
 }
 
@@ -388,21 +719,56 @@ pub struct Host {
     pub wasi: WasiCtx,
     pub http: WasiHttpCtx,
     pub witmproxy_ctx: WitmProxyCtx,
+    /// Per-store resource limits (memory cap). Defaults to unbounded; the
+    /// `Runtime` installs a real cap via `store.limiter(|h| &mut h.limits)`
+    /// only when a memory limit is configured.
+    pub limits: wasmtime::StoreLimits,
+}
+
+impl Host {
+    /// Build host state carrying the effective limits and breach recorder for
+    /// the plugin this store belongs to.
+    pub fn with_context(limits: ResolvedLimits, breaches: Arc<BreachRecorder>) -> Self {
+        Self {
+            witmproxy_ctx: WitmProxyCtxBuilder::new()
+                .with_limits(limits, breaches)
+                .build(),
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Host {
     fn default() -> Self {
         Self {
             table: ResourceTable::new(),
-            wasi: WasiCtxBuilder::new().build(),
+            wasi: {
+                // Defence in depth. The linker registers the whole WASI p2/p3
+                // surface, including `wasi:sockets`. A default `WasiCtx` denies
+                // every address through its socket-address check, so a plugin
+                // cannot actually connect -- but `allow_tcp` / `allow_udp`
+                // default to true, which leaves the socket *machinery* reachable
+                // and one future default change away from being useful. The
+                // proxy grants plugins no outbound network capability by
+                // design (note the deliberately omitted `wasi:http/client` in
+                // `Runtime::build_linker`), so state that here explicitly
+                // rather than relying on a default.
+                let mut builder = WasiCtxBuilder::new();
+                builder
+                    .allow_tcp(false)
+                    .allow_udp(false)
+                    .allow_ip_name_lookup(false);
+                builder.build()
+            },
             http: WasiHttpCtx::new(),
             witmproxy_ctx: WitmProxyCtxBuilder::new().build(),
+            limits: wasmtime::StoreLimits::default(),
         }
     }
 }
 
-impl HostContentWithStore for WitmProxy {
-    async fn drop<T>(
+impl<T> HostContentWithStore<T> for WitmProxy {
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: wasmtime::component::Resource<InboundContent>,
     ) -> wasmtime::Result<()> {
@@ -413,7 +779,7 @@ impl HostContentWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn content_type<T>(
+    async fn content_type(
         accessor: &Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
     ) -> wasmtime::Result<String> {
@@ -425,36 +791,49 @@ impl HostContentWithStore for WitmProxy {
         Ok(content_type)
     }
 
-    async fn body<T>(
+    /// Take the body, consuming the old handle and returning a fresh,
+    /// body-less one alongside the stream.
+    ///
+    /// Deleting the old table entry is what makes a double-take
+    /// unrepresentable: the guest no longer holds a handle it could call
+    /// again. Previously this took the body out in place and a second call
+    /// silently observed `None`.
+    async fn consume_body(
         accessor: &wasmtime::component::Accessor<T, Self>,
-        self_: wasmtime::component::Resource<InboundContent>,
-    ) -> wasmtime::Result<wasmtime::component::StreamReader<u8>> {
-        // Get mutable access to extract the data without consuming the resource
-        let data = accessor.with(|mut access| {
+        this: wasmtime::component::Resource<InboundContent>,
+    ) -> wasmtime::Result<(
+        wasmtime::component::StreamReader<u8>,
+        wasmtime::component::Resource<InboundContent>,
+    )> {
+        let (body, remainder) = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
-            let content = state.table.get_mut(&self_)?;
-            // Take the data out, leaving None in its place
-            // body() returns Result<Option<...>, Error> but we can unwrap the Result part
-            Ok::<Option<UnsyncBoxBody<Bytes, ErrorCode>>, wasmtime::component::ResourceTableError>(
-                content.body().unwrap_or(None),
-            )
+            // Take ownership of the whole content, not just its body.
+            let mut content = state.table.delete(this)?;
+            let body = content.body().unwrap_or(None);
+            Ok::<_, wasmtime::component::ResourceTableError>((body, content))
         })?;
 
-        // If data is None, it was already taken
-        let body = data.ok_or_else(|| {
-            wasmtime::Error::msg(
-                "Content data has already been consumed. Use set_data to refill it.",
-            )
+        let body = body.ok_or_else(|| {
+            // Reachable only if the host itself handed over a content whose
+            // body was already taken, which would be a host bug rather than
+            // guest misuse -- guest misuse is now a type error.
+            wasmtime::Error::msg("content was handed to a guest with no body attached")
         })?;
 
-        let reader = accessor.with(|mut access| {
-            let store = &mut access.as_context_mut();
-            StreamReader::new(store, BodyStreamProducer::new(body))
-        })?;
-        Ok(reader)
+        accessor.with(|mut access| {
+            let handle = {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                state.table.push(remainder)?
+            };
+            let reader = {
+                let store = &mut access.as_context_mut();
+                StreamReader::new(store, BodyStreamProducer::new(body))?
+            };
+            Ok::<_, wasmtime::Error>((reader, handle))
+        })
     }
 
-    async fn set_body<T>(
+    async fn set_body(
         accessor: &wasmtime::component::Accessor<T, Self>,
         self_: wasmtime::component::Resource<InboundContent>,
         content: wasmtime::component::StreamReader<u8>,
@@ -477,9 +856,22 @@ impl HostContentWithStore for WitmProxy {
             Ok::<(), wasmtime::component::ResourceTableError>(())
         })?;
 
-        // Create a StreamConsumer that forwards data to the channel
+        // Create a StreamConsumer that forwards data to the channel.
+        //
+        // The guest supplies this stream, so its length is guest-controlled and
+        // unrelated to the size of the request that triggered the event: without
+        // a cap, a plugin can answer a small request with an unbounded response
+        // and turn the proxy into an amplifier.
         struct ChannelStreamConsumer {
             tx: PollSender<Result<Frame<Bytes>, ErrorCode>>,
+            /// Bytes forwarded so far.
+            written: u64,
+            /// `0` means unbounded.
+            max_bytes: u64,
+            breaches: Arc<BreachRecorder>,
+            /// Set once the cap trips, so the breach is reported exactly once
+            /// even if the consumer is polled again.
+            tripped: bool,
         }
 
         impl<D> wasmtime::component::StreamConsumer<D> for ChannelStreamConsumer {
@@ -502,10 +894,37 @@ impl HostContentWithStore for WitmProxy {
 
                         // Only send frame if there's data
                         if n > 0 {
+                            let max = self.max_bytes;
+                            let projected = self.written.saturating_add(n as u64);
+
+                            if !body_chunk_admitted(self.written, n as u64, max) {
+                                // Fail the body rather than truncating it. A
+                                // silently short body is worse than a failed
+                                // one: truncated JSON or HTML can parse as
+                                // valid-but-wrong downstream, whereas an error
+                                // frame surfaces as a failed response.
+                                if !self.tripped {
+                                    self.tripped = true;
+                                    self.breaches.record(
+                                        LimitKind::ResponseBodyBytes,
+                                        projected,
+                                        max,
+                                    );
+                                }
+                                let _ = self.tx.send_item(Err(ErrorCode::InternalError(Some(
+                                    format!(
+                                        "plugin response body exceeded the configured \
+                                         limit of {max} bytes"
+                                    ),
+                                ))));
+                                return Poll::Ready(Ok(StreamResult::Dropped));
+                            }
+
                             let buf = Bytes::copy_from_slice(buf);
                             match self.tx.send_item(Ok(Frame::data(buf))) {
                                 Ok(()) => {
                                     src.mark_read(n);
+                                    self.written = projected;
                                     Poll::Ready(Ok(StreamResult::Completed))
                                 }
                                 Err(..) => {
@@ -531,10 +950,24 @@ impl HostContentWithStore for WitmProxy {
             }
         }
 
-        // Pipe the stream reader to the channel consumer
+        // Pipe the stream reader to the channel consumer, carrying this
+        // plugin's effective body cap.
         let poll_sender = PollSender::new(tx);
         accessor.with(|mut access| {
-            let _ = content.pipe(&mut access, ChannelStreamConsumer { tx: poll_sender });
+            let (max_bytes, breaches) = {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                (state.limits().max_response_body_bytes, state.breaches())
+            };
+            let _ = content.pipe(
+                &mut access,
+                ChannelStreamConsumer {
+                    tx: poll_sender,
+                    written: 0,
+                    max_bytes,
+                    breaches,
+                    tripped: false,
+                },
+            );
         });
 
         Ok(())
@@ -542,8 +975,8 @@ impl HostContentWithStore for WitmProxy {
 }
 
 // Implement the Host traits using the accessor pattern
-impl HostLocalStorageClientWithStore for WitmProxy {
-    async fn set<T>(
+impl<T> HostLocalStorageClientWithStore<T> for WitmProxy {
+    async fn set(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
@@ -560,7 +993,7 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn get<T>(
+    async fn get(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
@@ -575,7 +1008,7 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         Ok(client.get(&key).await.map(|bytes| bytes.to_vec()))
     }
 
-    async fn delete<T>(
+    async fn delete(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
@@ -591,7 +1024,7 @@ impl HostLocalStorageClientWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<LocalStorageClient>,
     ) -> wasmtime::Result<()> {
@@ -603,8 +1036,8 @@ impl HostLocalStorageClientWithStore for WitmProxy {
     }
 }
 
-impl HostAnnotatorClientWithStore for WitmProxy {
-    async fn annotate<T>(
+impl<T> HostAnnotatorClientWithStore<T> for WitmProxy {
+    async fn annotate(
         accessor: &Accessor<T, Self>,
         self_: Resource<AnnotatorClient>,
         content: Resource<InboundContent>,
@@ -619,7 +1052,7 @@ impl HostAnnotatorClientWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<AnnotatorClient>,
     ) -> wasmtime::Result<()> {
@@ -631,8 +1064,8 @@ impl HostAnnotatorClientWithStore for WitmProxy {
     }
 }
 
-impl HostLoggerWithStore for WitmProxy {
-    async fn info<T>(
+impl<T> HostLoggerWithStore<T> for WitmProxy {
+    async fn info(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -646,7 +1079,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn warn<T>(
+    async fn warn(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -660,7 +1093,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn error<T>(
+    async fn error(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -674,7 +1107,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn debug<T>(
+    async fn debug(
         accessor: &Accessor<T, Self>,
         self_: Resource<Logger>,
         message: String,
@@ -688,7 +1121,7 @@ impl HostLoggerWithStore for WitmProxy {
         Ok(())
     }
 
-    async fn drop<T>(accessor: &Accessor<T, Self>, rep: Resource<Logger>) -> wasmtime::Result<()> {
+    async fn drop(accessor: &Accessor<T, Self>, rep: Resource<Logger>) -> wasmtime::Result<()> {
         accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             state.table.delete(rep)
@@ -697,8 +1130,8 @@ impl HostLoggerWithStore for WitmProxy {
     }
 }
 
-impl HostClockClientWithStore for WitmProxy {
-    async fn now_seconds<T>(
+impl<T> HostClockClientWithStore<T> for WitmProxy {
+    async fn now_seconds(
         accessor: &Accessor<T, Self>,
         self_: Resource<ClockClient>,
     ) -> wasmtime::Result<u64> {
@@ -710,7 +1143,7 @@ impl HostClockClientWithStore for WitmProxy {
         Ok(result)
     }
 
-    async fn now_millis<T>(
+    async fn now_millis(
         accessor: &Accessor<T, Self>,
         self_: Resource<ClockClient>,
     ) -> wasmtime::Result<u64> {
@@ -722,7 +1155,7 @@ impl HostClockClientWithStore for WitmProxy {
         Ok(result)
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<ClockClient>,
     ) -> wasmtime::Result<()> {
@@ -734,8 +1167,8 @@ impl HostClockClientWithStore for WitmProxy {
     }
 }
 
-impl HostCapabilityProviderWithStore for WitmProxy {
-    async fn logger<T>(
+impl<T> HostCapabilityProviderWithStore<T> for WitmProxy {
+    async fn logger(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<Logger>>> {
@@ -755,7 +1188,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn local_storage<T>(
+    async fn local_storage(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<LocalStorageClient>>> {
@@ -775,7 +1208,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn annotator<T>(
+    async fn annotator(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<AnnotatorClient>>> {
@@ -795,7 +1228,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn clock<T>(
+    async fn clock(
         accessor: &Accessor<T, Self>,
         cap: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<Option<Resource<ClockClient>>> {
@@ -814,7 +1247,7 @@ impl HostCapabilityProviderWithStore for WitmProxy {
             .unwrap_or(None))
     }
 
-    async fn drop<T>(
+    async fn drop(
         accessor: &Accessor<T, Self>,
         rep: Resource<CapabilityProvider>,
     ) -> wasmtime::Result<()> {
@@ -846,9 +1279,9 @@ impl WasiView for Host {
     }
 }
 
-impl wasmtime_wasi_http::p3::WasiHttpView for Host {
-    fn http(&mut self) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
-        wasmtime_wasi_http::p3::WasiHttpCtxView {
+impl wasmtime_wasi_http::WasiHttpView for Host {
+    fn http(&mut self) -> wasmtime_wasi_http::WasiHttpCtxView<'_> {
+        wasmtime_wasi_http::WasiHttpCtxView {
             table: &mut self.table,
             ctx: &mut self.http,
             hooks: Default::default(),

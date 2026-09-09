@@ -1,23 +1,42 @@
 use anyhow::Result;
-use clap::Subcommand;
+use conf::{Conf, Subcommands};
+
+use super::GlobalArgs;
 
 use crate::cli::api_client::{ApiClient, AuthStore};
 
-#[derive(Subcommand)]
+#[derive(Subcommands)]
+#[conf(serde)]
 pub enum AuthCommands {
     /// Login to a remote witmproxy server
-    Login {
-        /// Server URL
-        #[arg(long)]
-        server: String,
-        /// Email address
-        #[arg(long)]
-        email: Option<String>,
-    },
+    Login(AuthLoginArgs),
     /// Logout (remove stored credentials)
-    Logout,
+    Logout(GlobalArgs),
     /// Show current auth status
-    Status,
+    Status(GlobalArgs),
+}
+
+#[derive(Conf)]
+#[conf(serde)]
+pub struct AuthLoginArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+
+    /// Server URL
+    #[arg(long)]
+    pub server: String,
+    /// Email address
+    #[arg(long)]
+    pub email: Option<String>,
+}
+
+impl AuthCommands {
+    pub(crate) fn globals(&self) -> &GlobalArgs {
+        match self {
+            AuthCommands::Login(a) => &a.globals,
+            AuthCommands::Logout(g) | AuthCommands::Status(g) => g,
+        }
+    }
 }
 
 pub struct AuthHandler;
@@ -25,9 +44,9 @@ pub struct AuthHandler;
 impl AuthHandler {
     pub async fn handle(&self, command: &AuthCommands) -> Result<()> {
         match command {
-            AuthCommands::Login { server, email } => self.login(server, email.as_deref()).await,
-            AuthCommands::Logout => self.logout(),
-            AuthCommands::Status => self.status(),
+            AuthCommands::Login(a) => self.login(&a.server, a.email.as_deref()).await,
+            AuthCommands::Logout(_) => self.logout(),
+            AuthCommands::Status(_) => self.status(),
         }
     }
 
@@ -45,7 +64,7 @@ impl AuthHandler {
         print!("Password: ");
         let password = rpassword_fallback()?;
 
-        let client = ApiClient::new(server, None);
+        let client = ApiClient::new(server, None)?;
         let result = client.login(&email, &password).await?;
 
         if let Some(token) = result.get("token").and_then(|t| t.as_str()) {

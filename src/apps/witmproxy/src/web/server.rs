@@ -25,7 +25,7 @@ use tracing::warn;
 pub struct WebServer {
     listen_addr: Option<SocketAddr>,
     ca: CertificateAuthority,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
     config: AppConfig,
     config_path: Option<std::path::PathBuf>,
     db_pool: Option<SqlitePool>,
@@ -40,7 +40,7 @@ struct Assets;
 impl WebServer {
     pub fn new(
         ca: CertificateAuthority,
-        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        plugin_registry: Option<Arc<PluginRegistry>>,
         config: AppConfig,
     ) -> Self {
         Self {
@@ -81,7 +81,7 @@ impl WebServer {
                 .parse()
                 .map_err(|e| anyhow::anyhow!("Invalid web bind address: {}", e))?
         } else {
-            "127.0.0.1:0".parse().unwrap()
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0))
         };
 
         let state = AppState {
@@ -89,7 +89,10 @@ impl WebServer {
             plugin_registry: self.plugin_registry.clone(),
         };
 
-        salvo::http::request::set_global_secure_max_size(1024 * 1024 * 1024); // 1 GB
+        // Cap request bodies at 64 MiB. The largest legitimate body is a plugin
+        // upload (a WASM component, a few MB); the previous 1 GiB ceiling let a
+        // single unauthenticated client exhaust memory.
+        salvo::http::request::set_global_secure_max_size(64 * 1024 * 1024);
 
         // Build TLS config: use user-provided cert/key if available,
         // otherwise generate one from our CA (e.g. for localhost dev).
@@ -117,7 +120,8 @@ impl WebServer {
 
         let acceptor = TcpListener::new(bind_addr).rustls(rustls).bind().await;
         // Store the actual bound address
-        self.listen_addr = Some(acceptor.inner().local_addr()?);
+        let listen_addr = acceptor.inner().local_addr()?;
+        self.listen_addr = Some(listen_addr);
         let cors = Cors::new()
             .allow_origin(AllowOrigin::any())
             .allow_methods(AllowMethods::any())
@@ -125,7 +129,7 @@ impl WebServer {
             .into_handler();
 
         let mut app = Router::new()
-            .hoop(ForceHttps::new().https_port(self.listen_addr.unwrap().port()))
+            .hoop(ForceHttps::new().https_port(listen_addr.port()))
             .hoop(cors)
             .hoop(affix_state::inject(state))
             .push(Router::with_path("/").get(index_page))
@@ -138,16 +142,54 @@ impl WebServer {
             // Static assets
             .push(Router::with_path("/static/{*path}").get(static_embed::<Assets>()));
 
-        // Inject db pool and auth config for auth + management endpoints
+        // Auth + app config are always available (unlike the optional DB pool) and
+        // are needed by the JWT/ACL hoops, so inject them unconditionally. This
+        // lets plugin management work even when the web server has no DB pool of
+        // its own — the plugin registry carries its own database.
+        //
+        // The AppConfig is injected as a shared `Arc<RwLock<_>>` so the management
+        // API's GET/PUT operate on the *running* process's config: PUT updates it
+        // in place (and persists), and a subsequent GET reflects the change,
+        // rather than each request seeing a private startup snapshot.
+        let shared_config = Arc::new(RwLock::new(self.config.clone()));
+        app = app
+            .hoop(affix_state::inject(self.config.auth.clone()))
+            .hoop(affix_state::inject(shared_config))
+            .hoop(affix_state::inject(management::ConfigPath(
+                self.config_path.clone().unwrap_or_default(),
+            )));
         if let Some(ref pool) = self.db_pool {
-            app = app
-                .hoop(affix_state::inject(pool.clone()))
-                .hoop(affix_state::inject(self.config.auth.clone()))
-                .hoop(affix_state::inject(self.config.clone()))
-                .hoop(affix_state::inject(management::ConfigPath(
-                    self.config_path.clone().unwrap_or_default(),
-                )));
+            app = app.hoop(affix_state::inject(pool.clone()));
+        }
 
+        // Global plugin-management routes only need the plugin registry (already
+        // in AppState), not the web DB pool — register them whenever the plugin
+        // system is enabled, regardless of whether a DB pool was provided.
+        if self.plugin_registry.is_some() {
+            let plugin_router = Router::new()
+                .hoop(jwt_auth)
+                .hoop(acl_check)
+                .push(
+                    Router::with_path("/api/plugins")
+                        .get(list_plugins)
+                        .post(upsert_plugin)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/plugins/{namespace}/{name}/enabled")
+                        .put(set_plugin_enabled)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/plugins/{namespace}/{name}")
+                        .delete(delete_plugin)
+                        .options(preflight),
+                );
+            app = app.push(plugin_router);
+        }
+
+        // Auth endpoints and tenant/group/config management need the DB pool.
+        if self.db_pool.is_some() {
             // Auth endpoints (unauthenticated, but need db pool + auth config)
             app = app
                 .push(
@@ -228,22 +270,6 @@ impl WebServer {
                     Router::with_path("/api/manage/config")
                         .get(management::get_config)
                         .put(management::update_config)
-                        .options(preflight),
-                )
-                .push(
-                    Router::with_path("/api/plugins")
-                        .get(list_plugins)
-                        .post(upsert_plugin)
-                        .options(preflight),
-                )
-                .push(
-                    Router::with_path("/api/plugins/{namespace}/{name}/enabled")
-                        .put(set_plugin_enabled)
-                        .options(preflight),
-                )
-                .push(
-                    Router::with_path("/api/plugins/{namespace}/{name}")
-                        .delete(delete_plugin)
                         .options(preflight),
                 );
 
@@ -338,9 +364,8 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
     };
 
     if let Some(registry) = registry {
-        let registry = registry.read().await;
-        let plugins: Vec<PluginSummary> = registry
-            .plugins()
+        let plugins = registry.plugins();
+        let plugins: Vec<PluginSummary> = plugins
             .values()
             .map(|p| PluginSummary {
                 namespace: p.namespace.clone(),
@@ -415,8 +440,6 @@ async fn upsert_plugin(
     };
 
     let plugin = match registry
-        .read()
-        .await
         .plugin_from_component_with_key(bytes, expected_key.as_deref())
         .await
     {
@@ -431,7 +454,6 @@ async fn upsert_plugin(
             return;
         }
     };
-    let mut registry = registry.write().await;
 
     let result = registry.register_plugin(plugin).await;
     match result {
@@ -476,7 +498,6 @@ async fn delete_plugin(
         return;
     };
 
-    let mut registry = registry.write().await;
     match registry
         .remove_plugin(&name.into_inner(), Some(&namespace.into_inner()))
         .await
@@ -517,9 +538,7 @@ async fn set_plugin_enabled(
     let registry = depot
         .obtain::<AppState>()
         .map(|s| s.plugin_registry.clone())
-        .map_err(|_| {
-            salvo::http::StatusError::internal_server_error().brief("Internal server error")
-        })?;
+        .map_err(|e| crate::web::internal_error("Internal server error", e))?;
 
     let registry = registry.ok_or_else(|| {
         salvo::http::StatusError::bad_request().brief("Plugin system is disabled")
@@ -529,16 +548,20 @@ async fn set_plugin_enabled(
     let plugin_name = name.into_inner();
     let enabled = body.into_inner().enabled;
 
-    let mut reg = registry.write().await;
-    let plugin_id = format!("{}/{}", ns, plugin_name);
-    if let Some(plugin) = reg.plugins_mut().get_mut(&plugin_id) {
-        plugin.enabled = enabled;
-        Ok(if enabled {
+    match registry
+        .set_plugin_enabled(&ns, &plugin_name, enabled)
+        .await
+    {
+        Ok(true) => Ok(if enabled {
             "Plugin enabled"
         } else {
             "Plugin disabled"
-        })
-    } else {
-        Err(salvo::http::StatusError::not_found().brief("Plugin not found"))
+        }),
+        Ok(false) => Err(salvo::http::StatusError::not_found().brief("Plugin not found")),
+        Err(e) => {
+            warn!("Failed to set plugin enabled state: {}", e);
+            Err(salvo::http::StatusError::internal_server_error()
+                .brief("Failed to update plugin enabled state"))
+        }
     }
 }

@@ -1,18 +1,16 @@
 use crate::{
-    AppConfig, Db, Runtime,
+    Db, Runtime,
     cli::load_plugins_from_directory,
-    config::confique_app_config_layer::AppConfigLayer,
+    config::PluginScopedConfig,
     plugins::{WitmPlugin, registry::PluginRegistry},
     test_utils::test_component_path,
     wasm::bindgen::Event,
 };
 use anyhow::Result;
 use cel_cxx::{Env, EnvBuilder};
-use confique::{Config, Layer};
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::tempdir;
-use tokio::sync::RwLock;
 
 use super::plugin;
 
@@ -24,19 +22,13 @@ fn create_static_cel_env() -> Result<&'static Env<'static>> {
     Ok(Box::leak(Box::new(env)))
 }
 
-/// Test helper that creates an AppConfig with test paths
-fn create_test_config(temp_path: &Path) -> AppConfig {
-    let db_path = temp_path.join("test.db");
-    let cert_dir = temp_path.join("certs");
-    let mut partial_config = AppConfigLayer::default_values();
-    partial_config.db.db_path = Some(db_path);
-    partial_config.db.db_password = Some("test_password".to_string());
-    partial_config.tls.cert_dir = Some(cert_dir);
-
-    AppConfig::builder()
-        .preloaded(partial_config)
-        .load()
-        .expect("Failed to load test config")
+/// Test helper that creates the plugin-command config scope with test paths
+fn create_test_config(temp_path: &Path) -> PluginScopedConfig {
+    let mut config = PluginScopedConfig::default();
+    config.db.db_path = temp_path.join("test.db");
+    config.db.db_password = Some("test_password".into());
+    config.tls.cert_dir = temp_path.join("certs");
+    config
         .with_resolved_paths()
         .expect("Failed to resolve paths in test config")
 }
@@ -55,10 +47,12 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
 
     // Test adding the plugin
     plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
+            globals: Default::default(),
+            config: Default::default(),
             source: wasm_path.clone(),
             public_key: None,
-        })
+        }))
         .await?;
 
     // Verify the plugin was actually added to the database
@@ -103,10 +97,12 @@ async fn test_witm_plugin_add_nonexistent_file() {
 
     // Test with non-existent file
     let result = plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
+            globals: Default::default(),
+            config: Default::default(),
             source: "/nonexistent/file.wasm".to_string(),
             public_key: None,
-        })
+        }))
         .await;
 
     assert!(result.is_err(), "Should fail for non-existent file");
@@ -132,10 +128,12 @@ async fn test_witm_plugin_add_non_wasm_file() {
 
     // Test with non-WASM file
     let result = plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
+            globals: Default::default(),
+            config: Default::default(),
             source: dummy_file.to_str().unwrap().to_string(),
             public_key: None,
-        })
+        }))
         .await;
 
     assert!(result.is_err(), "Should fail for non-WASM file");
@@ -160,10 +158,12 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
 
     // Add the plugin first
     plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
+            globals: Default::default(),
+            config: Default::default(),
             source: wasm_path.clone(),
             public_key: None,
-        })
+        }))
         .await?;
 
     // Verify plugin was added
@@ -182,9 +182,11 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
 
     // Test removing the plugin by name
     plugin_handler
-        .handle(&plugin::PluginCommands::Remove {
+        .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
+            globals: Default::default(),
+            config: Default::default(),
             plugin_name: plugin_name.clone(),
-        })
+        }))
         .await?;
 
     // Verify plugin was removed
@@ -211,10 +213,12 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
 
     // Add the plugin first
     plugin_handler
-        .handle(&plugin::PluginCommands::Add {
+        .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
+            globals: Default::default(),
+            config: Default::default(),
             source: wasm_path.clone(),
             public_key: None,
-        })
+        }))
         .await?;
 
     // Verify plugin was added and get its full ID
@@ -233,9 +237,11 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
 
     // Test removing the plugin by namespace/name
     plugin_handler
-        .handle(&plugin::PluginCommands::Remove {
+        .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
+            globals: Default::default(),
+            config: Default::default(),
             plugin_name: full_plugin_id.clone(),
-        })
+        }))
         .await?;
 
     // Verify plugin was removed
@@ -259,9 +265,11 @@ async fn test_witm_plugin_remove_nonexistent() {
 
     // Test removing a nonexistent plugin
     let result = plugin_handler
-        .handle(&plugin::PluginCommands::Remove {
+        .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
+            globals: Default::default(),
+            config: Default::default(),
             plugin_name: "nonexistent_plugin".to_string(),
-        })
+        }))
         .await;
     assert!(
         result.is_ok(),
@@ -285,17 +293,14 @@ async fn test_plugin_dir_loading() -> Result<()> {
     // Create runtime and plugin registry
     let runtime = Runtime::try_default()?;
     let registry = PluginRegistry::new(db, runtime)?;
-    let registry = Arc::new(RwLock::new(registry));
+    let registry = Arc::new(registry);
 
     // Initially, plugin directory is empty, so no plugins should be loaded
     load_plugins_from_directory(&plugin_dir, registry.clone()).await?;
-    {
-        let reg = registry.read().await;
-        assert!(
-            reg.plugins().is_empty(),
-            "No plugins should be loaded from empty directory"
-        );
-    }
+    assert!(
+        registry.plugins().is_empty(),
+        "No plugins should be loaded from empty directory"
+    );
 
     // Copy test component to plugin directory
     let wasm_path = test_component_path()?;
@@ -304,14 +309,11 @@ async fn test_plugin_dir_loading() -> Result<()> {
 
     // Load plugins again - should find the plugin now
     load_plugins_from_directory(&plugin_dir, registry.clone()).await?;
-    {
-        let reg = registry.read().await;
-        assert_eq!(
-            reg.plugins().len(),
-            1,
-            "Expected exactly one plugin to be loaded from directory"
-        );
-    }
+    assert_eq!(
+        registry.plugins().len(),
+        1,
+        "Expected exactly one plugin to be loaded from directory"
+    );
 
     Ok(())
 }
@@ -332,7 +334,7 @@ async fn test_plugin_dir_invalid_wasm_skipped() -> Result<()> {
     // Create runtime and plugin registry
     let runtime = Runtime::try_default()?;
     let registry = PluginRegistry::new(db, runtime)?;
-    let registry = Arc::new(RwLock::new(registry));
+    let registry = Arc::new(registry);
 
     // Create an invalid wasm file
     let invalid_path = plugin_dir.join("invalid.wasm");
@@ -350,14 +352,11 @@ async fn test_plugin_dir_invalid_wasm_skipped() -> Result<()> {
         "Should not fail even with invalid wasm files"
     );
 
-    {
-        let reg = registry.read().await;
-        assert_eq!(
-            reg.plugins().len(),
-            1,
-            "Should load only the valid plugin, skipping invalid"
-        );
-    }
+    assert_eq!(
+        registry.plugins().len(),
+        1,
+        "Should load only the valid plugin, skipping invalid"
+    );
 
     Ok(())
 }
@@ -378,7 +377,7 @@ async fn test_plugin_dir_non_wasm_files_ignored() -> Result<()> {
     // Create runtime and plugin registry
     let runtime = Runtime::try_default()?;
     let registry = PluginRegistry::new(db, runtime)?;
-    let registry = Arc::new(RwLock::new(registry));
+    let registry = Arc::new(registry);
 
     // Create non-wasm files that should be ignored
     std::fs::write(plugin_dir.join("readme.txt"), b"readme content")?;
@@ -392,14 +391,11 @@ async fn test_plugin_dir_non_wasm_files_ignored() -> Result<()> {
     // Load plugins - should only load .wasm files
     load_plugins_from_directory(&plugin_dir, registry.clone()).await?;
 
-    {
-        let reg = registry.read().await;
-        assert_eq!(
-            reg.plugins().len(),
-            1,
-            "Should only load .wasm files, ignoring other extensions"
-        );
-    }
+    assert_eq!(
+        registry.plugins().len(),
+        1,
+        "Should only load .wasm files, ignoring other extensions"
+    );
 
     Ok(())
 }

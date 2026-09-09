@@ -1,12 +1,8 @@
 import { defineConfig, envField } from 'astro/config';
-import tailwindcss from "@tailwindcss/vite";
 
 // https://astro.build/config
 export default defineConfig({
     vite: {
-        plugins: [
-            tailwindcss()
-        ],
         worker: {
             format: 'es',
         },
@@ -33,6 +29,19 @@ export default defineConfig({
                 '@codemirror/lang-java',
                 '@codemirror/lang-cpp',
                 '@codemirror/lang-yaml',
+            ],
+            // Skip pre-bundling for our workspace packages. Vite caches
+            // pre-bundles by content hash, and that cache wasn't
+            // invalidating when the workspace package's `dist/` files
+            // were rebuilt — so changes to `@joinezco/markdown-editor`
+            // or `@joinezco/codeblock` could appear to do nothing in
+            // the browser until `node_modules/.vite` was wiped by
+            // hand. Excluding them makes Vite serve their built files
+            // directly on each request.
+            exclude: [
+                '@joinezco/markdown-editor',
+                '@joinezco/codeblock',
+                '@joinezco/shared',
             ],
         },
     },

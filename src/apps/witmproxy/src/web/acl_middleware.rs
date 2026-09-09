@@ -123,6 +123,20 @@ fn derive_resource_from_request(req: &Request) -> String {
         _ => "read",
     };
 
+    // Global plugin routes live outside /api/manage/. Map them to an explicit
+    // `plugins:` resource instead of the catch-all `unknown:*` (which could be
+    // matched by an unrelated 3-segment wildcard grant).
+    // /api/plugins             -> plugins:*:action
+    // /api/plugins/:ns/:name   -> plugins:<ns>/<name>:action
+    if let Some(rest) = path.strip_prefix("/api/plugins") {
+        let segs: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        return match segs.as_slice() {
+            [] => format!("plugins:*:{}", action),
+            [name] => format!("plugins:{}:{}", name, action),
+            [ns, name, ..] => format!("plugins:{}/{}:{}", ns, name, action),
+        };
+    }
+
     // Parse management API paths
     // /api/manage/tenants -> tenants:*:action
     // /api/manage/tenants/:id -> tenants:<id>:action

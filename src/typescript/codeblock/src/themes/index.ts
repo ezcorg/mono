@@ -62,12 +62,10 @@ export const codeblockTheme = EditorView.theme({
                 minWidth: 'var(--cm-icon-col-width, 2ch)',
             }
         },
-        '&:hover': {
-            '& div': {
-                color: 'var(--cm-search-result-color-hover)',
-            },
-            backgroundColor: 'var(--cm-search-result-bg-hover)',
-        },
+        // macOS-style single highlight: only the `.selected` row is coloured
+        // (no `&:hover` — pointing at a row moves `selectedIndex` to it, see
+        // toolbar-core.ts's `mouseenter`, so pointer + keyboard share one
+        // highlight instead of lighting up two rows).
         '&.selected': {
             '& div': {
                 color: 'var(--cm-search-result-color-selected)',
@@ -79,6 +77,13 @@ export const codeblockTheme = EditorView.theme({
             padding: '0 2px 0 6px',
         },
     },
+    // Sized to the FULL gutter width (line numbers + fold gutter) — matching
+    // `.cm-search-result-icon-container` below — so the toolbar input that
+    // follows it starts at the same x as the code content (which begins after
+    // the full gutter) AND as the dropdown result labels. The glyph inside
+    // (width `--cm-gutter-lineno-width`, right-aligned) still lines up with
+    // the line-number column. Tests enforce this in codeblock's
+    // toolbar-align test and `markdown-editor/src/test/layout.test.ts`.
     '.cm-toolbar-state-icon-container': {
         width: 'var(--cm-gutter-width)',
         minWidth: 'var(--cm-icon-col-width, 2ch)',
@@ -97,6 +102,17 @@ export const codeblockTheme = EditorView.theme({
         minWidth: 'var(--cm-icon-col-width, 2ch)',
         transition: 'opacity 0.15s ease',
     },
+    // The compact layout (CodeblockConfig.toolbarLayout) inside the editor too, for a toolbar that stays in its panel.
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon-container, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container': {
+        width: 'auto',
+        minWidth: '0',
+    },
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-toolbar-state-icon, .cm-toolbar-panel.cm-toolbar-compact .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
+        width: 'auto',
+        minWidth: '0',
+        paddingRight: '1ch',
+        textAlign: 'left',
+    },
     '&': {
         fontSize: FS,
     },
@@ -107,15 +123,35 @@ export const codeblockTheme = EditorView.theme({
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'var(--cm-font-family)',
-        boxShadow: '-12px 12px 0px rgba(0,0,0,0.3)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18), 0 1px 4px rgba(0, 0, 0, 0.1)',
         fontSize: FS,
         maxWidth: 'min(100vw - 2rem, 80ch)',
         border: '2px solid var(--cm-tooltip-border)',
-        overflow: 'auto',
-        overflowWrap: 'break-word',
+        // Prefer wrapping over a horizontal scrollbar: long hover docs and
+        // signatures should grow the tooltip *downward*, never sideways.
+        // (`overflow-y: auto` still lets a very tall tooltip scroll.)
+        overflowX: 'hidden',
+        overflowY: 'auto',
+        overflowWrap: 'anywhere',
         wordBreak: 'break-word',
         background: 'var(--cm-tooltip-background)',
         color: 'var(--cm-tooltip-color)',
+        // Tooltip docs/diagnostics are read-only reference text; let it be
+        // selected/copied with a normal text cursor rather than inheriting the
+        // editor chrome's behaviour.
+        userSelect: 'text',
+        WebkitUserSelect: 'text',
+        cursor: 'auto',
+    },
+    // LSP hover docs (`@codemirror/lsp-client` renders markdown into
+    // `.cm-lsp-documentation`) include code fences as <pre>/<code>, which
+    // default to `white-space: pre` and would push the tooltip wide enough
+    // to scroll horizontally. Force them to soft-wrap instead. (The package's
+    // own `.documentation` rules below target a class it no longer emits.)
+    '.cm-lsp-documentation, .cm-lsp-documentation pre, .cm-lsp-documentation code': {
+        whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
     },
     // The autocomplete dropdown must allow overflow so the completion
     // info panel (detail/docs) can render beside it without clipping.
@@ -145,18 +181,25 @@ export const codeblockTheme = EditorView.theme({
     '.cm-tooltip-lint': {
         order: -1,
     },
+    // Diagnostics (lint hover/panel) lost CodeMirror's default `border-left`
+    // severity bar, which also carried its left inset — so they read tighter
+    // than LSP hover docs (`.cm-lsp-documentation`, 4px). Give every severity
+    // a uniform, comfortable padding so error text isn't crammed against the
+    // tooltip border, and break long messages instead of overflowing.
     '.cm-diagnostic': {
-        padding: '3px 6px',
+        padding: '4px 8px',
         whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
         marginLeft: 0,
         borderLeft: 'none',
     },
+    // Error and info differ only in colour; padding/border come from the
+    // shared `.cm-diagnostic` rule above so the two stay consistent.
     '.cm-diagnostic-info': {
         backgroundColor: 'var(--cm-diagnostic-info-bg)',
         color: 'var(--cm-diagnostic-info-color)',
     },
     '.cm-diagnostic-error': {
-        borderLeft: 'none',
         backgroundColor: 'var(--cm-diagnostic-error-bg)',
         color: 'var(--cm-diagnostic-error-color)',
     },
@@ -207,13 +250,48 @@ export const codeblockTheme = EditorView.theme({
     '.cm-gutters': {
         borderRight: 'none',
     },
+    // Hold the line-number gutter to the same minimum the icon columns use, so
+    // a narrow (e.g. 1-digit) gutter widens to match — keeping the line numbers
+    // in the same left-aligned column as the search-result / toolbar icons, and
+    // giving the right-aligned numbers the same left breathing room.
+    '.cm-lineNumbers': {
+        minWidth: 'var(--cm-icon-col-width, 2ch)',
+    },
     '.cm-panels-top': {
         borderBottom: 'none',
         zIndex: 301,
     },
-    // CSS border spinner for file loading indicator.
-    // Rendered as a separate element inside .cm-toolbar-state-icon-container,
-    // so it has fixed dimensions and doesn't inherit gutter-width sizing.
+    // When a codeblock's toolbar is in use, bump its panels-top above
+    // the default 301 used by other codeblocks. Otherwise a later
+    // codeblock's toolbar paints over this one's open dropdown — the
+    // dropdown's own `z-index: 200` is confined to its panels-top
+    // stacking context, and that stacking context's z-index loses to
+    // any later sticky panels-top at the same z-index (document order
+    // tie-break).
+    //
+    // We trigger this on two conditions:
+    //   1. `:focus-within` — the user is interacting with the input.
+    //   2. `:has(.cm-search-results:not(:empty))` — the dropdown is
+    //      populated. This handles the case where focus has moved
+    //      away (e.g. into the dropdown's hover target) but the
+    //      dropdown is still visible and shouldn't be occluded.
+    '.cm-panels-top:focus-within, .cm-panels-top:has(.cm-search-results:not(:empty))': {
+        zIndex: 401,
+    },
+    // CSS border spinner for file loading indicator. Rendered as a
+    // separate element inside .cm-toolbar-state-icon-container; the
+    // container is a flex row so `margin-left: auto` pushes the
+    // spinner toward the right and `align-self: center` centers it
+    // vertically within the toolbar row.
+    //
+    // The container spans the FULL gutter width (so the toolbar input
+    // that follows starts at the code's x — see the state-icon-container
+    // rule above), but the spinner should sit in the *line-number*
+    // sub-column where the file-type glyph lives, not at the far gutter
+    // edge. `margin-right` pulls it back from the container's right edge
+    // by the non-lineno portion of the gutter, landing its right edge on
+    // the line-number column's right edge (enforced by markdown-editor's
+    // layout.test.ts against `.cm-lineNumbers`).
     '.cm-loading': {
         display: 'inline-block',
         width: FS,
@@ -224,7 +302,9 @@ export const codeblockTheme = EditorView.theme({
         boxSizing: 'border-box',
         animation: 'cm-spin 0.8s linear infinite',
         transition: 'opacity 0.15s ease-out',
-        margin: 'auto',
+        marginLeft: 'auto',
+        marginRight: 'calc(var(--cm-gutter-width) - var(--cm-gutter-lineno-width))',
+        alignSelf: 'center',
     },
     '@keyframes cm-spin': {
         '0%': { transform: 'rotate(0deg)' },
@@ -361,33 +441,6 @@ export const codeblockTheme = EditorView.theme({
     '.cm-lsp-log-log': {
         opacity: '0.6',
     },
-    // Terminal wrapper — replaces the toolbar input with ghostty.
-    // Starts at top: 0 to cover the hidden toolbar elements (filler),
-    // then extends downward as content grows. Height set by JS.
-    '.cm-terminal-wrapper': {
-        position: 'absolute',
-        top: '0',
-        left: '0',
-        right: '0',
-        height: '0',
-        maxHeight: '50vh',
-        zIndex: 150,
-        background: 'var(--cm-toolbar-background)',
-    },
-    '.cm-terminal-container': {
-        overflow: 'hidden',
-        position: 'relative',
-        outline: 'none',
-    },
-    // Terminal cursor — block cursor rendered as a mark decoration
-    '.cm-terminal-cursor': {
-        background: 'var(--cm-foreground, #d4d4d4)',
-        color: 'var(--cm-background, #1e1e1e)',
-        animation: 'cm-terminal-blink 1s step-end infinite',
-    },
-    '@keyframes cm-terminal-blink': {
-        '50%': { opacity: '0' },
-    },
     // Auto-hide toolbar: JS manages retract/expand by toggling
     // .cm-toolbar-retracted on .cm-panels-top (see toolbar.ts).
     // The transition makes expand/retract feel smooth.
@@ -395,5 +448,103 @@ export const codeblockTheme = EditorView.theme({
         maxHeight: '0px',
         overflow: 'hidden',
         transition: 'max-height 0.15s ease-out',
+    },
+    // ── Toolbar-mode copy affordance ────────────────────────────────
+    // The state-icon's nerd-font glyph is hidden by setting
+    // `color: transparent` (keeps the text node in the DOM — see the
+    // comment in panels/copy-button.ts for why that matters) and
+    // overlaid with an absolutely-positioned SVG. The state-icon's
+    // own padding, width, display, and text-align are untouched,
+    // so the toolbar row's height is identical between modes — no
+    // codeblock-bounds shift, no block-action indicator drift.
+    '.cm-toolbar-state-icon.cm-copy-icon-active': {
+        color: 'transparent',
+        cursor: 'pointer',
+        position: 'relative',
+    },
+    '.cm-copy-icon-overlay': {
+        // Center the SVG over the glyph's character cell rather than
+        // right-aligning the box. The glyph sits in a `1ch`-wide cell
+        // whose right edge is at `padding-right` (= `calc(1ch + 3px)`)
+        // from the container's right; the cell's *center* is therefore
+        // at `calc(1.5ch + 3px)` from the right. Anchor the SVG's
+        // center there with `right` + `translateX(50%)`. This matters
+        // because `1ch` is typically narrower than `1em` (nerd-font's
+        // monospace `ch` ≈ 0.6em), so right-aligning a 1em-wide SVG
+        // puts its visible *center* a few pixels left of the glyph's
+        // visible center — exactly the offset users notice.
+        position: 'absolute',
+        top: '50%',
+        // `calc(1.5ch + 3px)` puts the SVG center on the glyph cell's
+        // center mathematically; the subtracted `2px` nudges it
+        // slightly right to land on the nerd-font glyph's *visible*
+        // center (the search icon's ink isn't perfectly centered in
+        // its character cell — sits a touch left of geometric centre).
+        right: 'calc(1.5ch + 1px)',
+        transform: 'translate(50%, -50%)',
+        width: '1em',
+        height: '1em',
+        display: 'block',
+        color: 'var(--cm-foreground)',
+        // The overlay paints, but doesn't capture clicks — the
+        // state-icon parent owns the hit area, ensuring the click
+        // handler also fires when the user clicks the (transparent)
+        // text underneath the SVG.
+        pointerEvents: 'none',
+    },
+    '.cm-copy-icon-overlay > svg': {
+        width: '100%',
+        height: '100%',
+        display: 'block',
+    },
+    '.cm-toolbar-state-icon.cm-copy-icon-active:hover .cm-copy-icon-overlay': {
+        color: 'var(--cm-search-result-color-hover, var(--cm-foreground))',
+    },
+    '.cm-toolbar-state-icon.cm-copy-icon-success .cm-copy-icon-overlay': {
+        color: '#3fb950',
+    },
+    // ── Inline-mode copy button (no toolbar) ────────────────────────
+    // Floating button positioned at the end of the first text line.
+    // `top` and `left` are set inline by JS based on the line's
+    // measured end-coordinates; CSS owns size, appearance, and the
+    // hover-reveal transition.
+    '.cm-copy-button-inline': {
+        position: 'absolute',
+        zIndex: 20,
+        width: '24px',
+        height: '24px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxSizing: 'border-box',
+        padding: 0,
+        border: '1px solid var(--cm-tooltip-border, rgba(128, 128, 128, 0.3))',
+        borderRadius: '4px',
+        background: 'var(--cm-toolbar-background, transparent)',
+        color: 'var(--cm-toolbar-color, currentColor)',
+        cursor: 'pointer',
+        lineHeight: 1,
+        opacity: '0',
+        transition: 'opacity 120ms ease-out, color 120ms ease-out, background-color 120ms ease-out',
+        // While hidden, click-through so the corner isn't a dead zone.
+        pointerEvents: 'none',
+    },
+    '.cm-copy-button-inline > svg': {
+        width: '13px',
+        height: '13px',
+        display: 'block',
+        pointerEvents: 'none',
+    },
+    '&:hover .cm-copy-button-inline, &:focus-within .cm-copy-button-inline': {
+        opacity: '1',
+        pointerEvents: 'auto',
+    },
+    '.cm-copy-button-inline:hover': {
+        background: 'var(--cm-search-result-bg-hover, rgba(128, 128, 128, 0.15))',
+    },
+    '.cm-copy-button-inline.cm-copy-button-success': {
+        opacity: '1',
+        pointerEvents: 'auto',
+        color: '#3fb950',
     },
 });

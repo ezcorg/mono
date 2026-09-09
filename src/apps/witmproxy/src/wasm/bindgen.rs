@@ -20,7 +20,7 @@ wasmtime::component::bindgen!({
         "witmproxy:plugin/capabilities.logger": Logger,
         "witmproxy:plugin/capabilities.clock-client": ClockClient,
         "witmproxy:plugin/capabilities.content": InboundContent,
-        "wasi:http/types@0.3.0-rc-2026-03-15": wasmtime_wasi_http::p3::bindings::http::types,
+        "wasi:http/types@0.3.0": wasmtime_wasi_http::p3::bindings::http::types,
     },
 });
 
@@ -617,7 +617,7 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::ActualIn
                             .and_then(|d| d.as_array())
                             .map(|arr| {
                                 arr.iter()
-                                    .filter_map(|b| b.as_u64().map(|n| n as u8))
+                                    .filter_map(|b| b.as_u64().and_then(|n| u8::try_from(n).ok()))
                                     .collect()
                             })
                             .unwrap_or_default();

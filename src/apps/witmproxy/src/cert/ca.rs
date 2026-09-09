@@ -112,7 +112,7 @@ impl CertificateAuthority {
 
         // Extract DER from the saved PEM for get_root_certificate_der()
         let cert_der = CertificateDer::from_pem_slice(cert_pem.as_bytes())
-            .map_err(|_| CertError::InvalidFormat)?
+            .map_err(|e| CertError::InvalidFormat(e.to_string()))?
             .to_vec();
 
         Ok((cert_pem, cert_der, issuer))
@@ -129,6 +129,15 @@ impl CertificateAuthority {
 
         fs::write(cert_path, cert_pem).await?;
         fs::write(key_path, key_pem).await?;
+
+        // The CA private key can mint certificates trusted by the user's browser,
+        // so restrict it to the owner (0o600) — otherwise any other local user
+        // could read it and transparently MITM the victim's HTTPS traffic.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))?;
+        }
 
         info!("Root certificate saved to {:?}", cert_path);
         Ok(())
@@ -161,19 +170,16 @@ impl CertificateAuthority {
             params.subject_alt_names.push(rcgen::SanType::IpAddress(ip));
         } else {
             params.subject_alt_names.push(rcgen::SanType::DnsName(
-                domain
-                    .to_string()
-                    .try_into()
-                    .map_err(|_| CertError::InvalidFormat)?,
+                rcgen::string::Ia5String::try_from(domain.to_string())
+                    .map_err(|e| CertError::InvalidFormat(e.to_string()))?,
             ));
         }
 
         // If it's a wildcard domain, add the base domain too
         if let Some(base_domain) = domain.strip_prefix("*.") {
             params.subject_alt_names.push(SanType::DnsName(
-                base_domain
-                    .try_into()
-                    .map_err(|_| CertError::InvalidFormat)?,
+                rcgen::string::Ia5String::try_from(base_domain)
+                    .map_err(|e| CertError::InvalidFormat(e.to_string()))?,
             ));
         }
 
@@ -207,7 +213,8 @@ impl CertificateAuthority {
 
         Ok(Certificate {
             cert_der: CertificateDer::from(cert_der.to_vec()),
-            key_der: PrivateKeyDer::try_from(key_der).map_err(|_| CertError::InvalidFormat)?,
+            key_der: PrivateKeyDer::try_from(key_der)
+                .map_err(|e| CertError::InvalidFormat(e.to_string()))?,
             pem_cert,
             pem_key,
         })

@@ -1,0 +1,35 @@
+package icanhaz:nocap@0.1.0;
+
+/// The **process** capability — spawn a host program the requestor *names* (its
+/// `image` pinned by the grant), with **piped** stdio and no tty. Where `terminal`
+/// runs the host's own login shell in a PTY, `process` runs one specific program:
+/// `stdin` carries bytes to the child (client→host); the returned stream carries
+/// the child's **stdout** (host→client). Built for language servers + build tools —
+/// `spawn(grant, ["--stdio"], stdin) -> stdout` carrying LSP JSON-RPC. The child's
+/// stderr is logged host-side, never merged into stdout (that would corrupt the
+/// caller's byte protocol — e.g. LSP's `Content-Length` framing).
+///
+/// A **native** host capability, served directly by icanhazd (not mediated by a
+/// wasm policy component — spawning is host-native). P3-shaped: native `stream<u8>`.
+interface process {
+  /// `grant` is a bearer token for a consented `process` capability; the daemon
+  /// refuses an unknown / expired / wrong-kind token before spawning. The program
+  /// is **not** named here — it is the `image` the grant pinned at consent time, so
+  /// a caller can't substitute a different binary. `args` is the child's argv (after
+  /// argv[0]); it is honoured only when the grant negotiated `guest-chooses-argv`,
+  /// otherwise a non-empty `args` is refused. `stdin` streams bytes to the child;
+  /// closing it sends EOF (the LSP `exit` convention). The result streams the
+  /// child's stdout until it exits or the stream is dropped.
+  spawn: func(
+    grant: string,
+    args: list<string>,
+    stdin: stream<u8>,
+  ) -> result<stream<u8>, string>;
+}
+
+/// Loopback world for the native wRPC bridge: importing `process` generates the
+/// client stub, exporting it generates the server Handler.
+world process-wrpc {
+  import process;
+  export process;
+}

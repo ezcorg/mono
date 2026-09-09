@@ -1,0 +1,36 @@
+{
+  "name": "witmproxy (Nix flake)",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  // The mono repo is a single Cargo workspace; witmproxy is a member, so the
+  // whole repo must be mounted (cargo walks up to the workspace-root Cargo.toml).
+  "workspaceFolder": "/workspaces/mono",
+
+  "onCreateCommand": {
+    "safe-dir": "git config --global --add safe.directory /workspaces/mono",
+    // Warm the flake toolchain at build time and let direnv export it to
+    // rust-analyzer (the mkhl.direnv extension picks up src/apps/witmproxy/.envrc).
+    "warm-flake": "nix develop ./src/apps/witmproxy --command rustc --version && direnv allow src/apps/witmproxy"
+  },
+
+  // conf-rs / wrpc are git submodules the build depends on.
+  "postStartCommand": "git -C /workspaces/mono submodule update --init --recursive || true",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "jnoortheen.nix-ide",
+        "mkhl.direnv"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy"
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

@@ -1,7 +1,7 @@
 /**
  * CodeMirror panel adapter for the shared ToolbarCore.
  *
- * Handles CM-specific concerns: terminal mode, LSP log, auto-hide,
+ * Handles CM-specific concerns: LSP log, auto-hide,
  * gutter-width CSS variables, loading spinner, settings compartment
  * reconfiguration, and the CM StateField / StateEffect plumbing.
  */
@@ -14,7 +14,7 @@ import { goBack, goForward, canGoBack, canGoForward } from "../navigation";
 import { settingsField, resolveThemeDark, updateSettingsEffect, EditorSettings } from "./settings";
 import {
     ToolbarCore, type ToolbarHost, type ToolbarIntent, type SearchResult, type SettingsEntry,
-    SEARCH_ICON, getFileIcon, DEFAULT_FILE_ICON,
+    getFileIcon, DEFAULT_FILE_ICON,
 } from "./toolbar-core";
 
 // Re-export shared types so existing consumers keep working
@@ -262,8 +262,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
             icon: fa.icon,
             action: () => fa.action(view),
         })),
-        hasTerminal: !!view.state.facet(CodeblockFacet).jswasi,
-        onEnterTerminal() { enterTerminalMode(); },
         onClearFilesystem: clearFilesystem,
         goBack() { return goBack(view); },
         goForward() { return goForward(view); },
@@ -282,7 +280,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 'file-action: wants to rename, save-as, or perform an action on a file',
                 'browse: wants to explore directory structure',
                 'settings: wants to change editor settings, theme, font, etc.',
-                'command: wants to run a command like import, terminal, etc.',
+                'command: wants to run a command like import',
                 'language: typed a programming language name',
                 'unknown: can\'t determine intent',
                 'Respond with only the category name, nothing else.',
@@ -303,6 +301,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
     } satisfies ToolbarHost);
 
     const dom = core.dom;
+    if (view.state.facet(CodeblockFacet).toolbarLayout === 'compact') dom.classList.add('cm-toolbar-compact');   // icon column hugs the text (see CodeblockConfig.toolbarLayout)
 
     // --- LSP log button ---
     const lspLogBtn = document.createElement("button");
@@ -341,66 +340,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
     // LSP log button hidden — feature non-functional. Keeping code for future use.
     // dom.appendChild(lspLogBtn);
 
-    // --- Terminal mode (CM-specific) ---
-    let terminalMode = { active: false };
-    let terminalResizeObserver: ResizeObserver | null = null;
-
-    const terminalWrapper = document.createElement("div");
-    terminalWrapper.className = "cm-terminal-wrapper";
-    terminalWrapper.style.display = 'none';
-    dom.appendChild(terminalWrapper);
-
-    terminalWrapper.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); exitTerminalMode(); }
-    }, { capture: true });
-
-    function handleTerminalClickOutside(event: Event) {
-        if (!terminalMode.active) return;
-        if (!dom.contains(event.target as Node)) exitTerminalMode();
-    }
-
-    function syncTerminalWrapperHeight() {
-        const cmEditor = terminalWrapper.querySelector('.cm-editor') as HTMLElement | null;
-        if (!cmEditor) return;
-        const minPx = dom.offsetHeight;
-        terminalWrapper.style.height = `${Math.min(Math.max(cmEditor.scrollHeight, minPx), window.innerHeight * 0.5)}px`;
-    }
-
-    async function enterTerminalMode() {
-        terminalMode.active = true;
-        view.dom.style.setProperty('--cm-gutter-width', '0px');
-        view.dom.style.setProperty('--cm-gutter-lineno-width', '0px');
-        core.stateIconContainer.style.visibility = 'hidden';
-        core.inputContainer.style.visibility = 'hidden';
-        terminalWrapper.style.display = '';
-        safeDispatch(view, { effects: setSearchResults.of([]) });
-        document.addEventListener("click", handleTerminalClickOutside);
-        const termMod = await import('./terminal');
-        const terminalEl = await termMod.ensureTerminalElement(view);
-        if (!terminalWrapper.contains(terminalEl)) terminalWrapper.appendChild(terminalEl);
-        termMod.setHeightCallback(() => { if (terminalMode.active) syncTerminalWrapperHeight(); });
-        terminalResizeObserver = new ResizeObserver(() => {
-            termMod.handleTerminalResize(view.state.field(settingsField).fontSize);
-        });
-        terminalResizeObserver.observe(terminalWrapper);
-        requestAnimationFrame(() => { termMod.focusTerminalEl(); syncTerminalWrapperHeight(); });
-    }
-
-    function exitTerminalMode() {
-        if (!terminalMode.active) return;
-        terminalMode.active = false;
-        updateGutterWidthVariables();
-        core.stateIconContainer.style.visibility = '';
-        core.inputContainer.style.visibility = '';
-        terminalWrapper.style.display = 'none';
-        core.stateIcon.textContent = SEARCH_ICON;
-        core.resetInputToCurrentFile();
-        import('./terminal').then(({ setHeightCallback }) => setHeightCallback(null));
-        terminalResizeObserver?.disconnect();
-        terminalResizeObserver = null;
-        document.removeEventListener("click", handleTerminalClickOutside);
-    }
-
     // --- System theme listener ---
     const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
     function handleSystemThemeChange() {
@@ -430,7 +369,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
     // --- Gutter width ---
     function updateGutterWidthVariables() {
         const chWidth = view.defaultCharacterWidth;
-        const iconColWidth = Math.ceil(2 * chWidth);
+        // Minimum width for the icon columns (search-result icons, toolbar
+        // state icon) when the real gutter is narrower than them — e.g. a
+        // 1-digit line-number gutter for a file under 10 lines. A right-aligned
+        // icon needs room for the glyph (~1ch) + its `padding-right` (1ch+3px)
+        // PLUS a few px of left breathing room, or it hugs the left border. The
+        // line-number gutter is held to this same minimum (themes/index.ts) so
+        // the line numbers and icons still share one left-aligned column.
+        const iconColWidth = Math.ceil(2 * chWidth) + 8;
         view.dom.style.setProperty('--cm-icon-col-width', `${iconColWidth}px`);
         const gutters = view.dom.querySelector('.cm-gutters');
         if (gutters) {
@@ -539,18 +485,16 @@ export const toolbarPanel = (view: EditorView): Panel => {
             // Sync file path
             if (prevFile.path !== nextFile.path) {
                 updateLspLogIcon();
-                if (!core.isNamingModeActive() && !lspLogOverlay && !core.isSettingsModeActive() && !terminalMode.active) {
+                if (!core.isNamingModeActive() && !lspLogOverlay && !core.isSettingsModeActive()) {
                     core.setFilePath(nextFile.path);
                 }
             }
         },
         destroy() {
             core.destroy();
-            document.removeEventListener("click", handleTerminalClickOutside);
             systemThemeQuery.removeEventListener('change', handleSystemThemeChange);
             if (autoHideEnabled) disableAutoHide();
             closeLspLogOverlay();
-            exitTerminalMode();
             gutterObserver?.disconnect();
         }
     };

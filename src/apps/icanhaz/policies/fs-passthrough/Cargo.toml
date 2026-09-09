@@ -1,0 +1,17 @@
+[package]
+name = "fs-passthrough"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Filesystem passthrough policy component (world fs-passthrough): imports the raw host wasi:filesystem (preopen-jailed) and re-exports it, so the host can serve real wasi:filesystem@0.2 over wRPC. Builds to a wasm32-wasip2 component."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.58"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

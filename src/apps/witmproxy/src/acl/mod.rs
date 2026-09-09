@@ -115,7 +115,7 @@ pub fn evaluate(permissions: &[Permission], resource: &str) -> bool {
         .iter()
         .map(|p| p.resource.specificity())
         .max()
-        .unwrap();
+        .unwrap_or(0);
 
     // Filter to only the most-specific rules
     let most_specific: Vec<&&Permission> = matching

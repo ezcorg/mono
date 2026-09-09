@@ -7,6 +7,13 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [solid()],
 
+  // @joinezco/codeblock ships web workers and is consumed as a workspace
+  // package; excluding it from dep pre-bundling avoids esbuild mangling those
+  // worker/asset URLs (mirrors the markdown-editor demo's own config).
+  optimizeDeps: {
+    exclude: ["@joinezco/codeblock"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors
@@ -16,6 +23,12 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    // Cross-origin isolation so embedded-codeblock workers (and their
+    // SharedArrayBuffer-backed features) work in dev.
+    headers: {
+      "Cross-Origin-Embedder-Policy": "credentialless",
+      "Cross-Origin-Opener-Policy": "same-origin",
+    },
     hmr: host
       ? {
         protocol: "ws",

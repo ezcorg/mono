@@ -2,7 +2,7 @@
  * Filesystem SharedWorker — single source of truth for all VFS operations.
  *
  * Both the main thread and the LSP worker communicate with this worker
- * via Comlink.  All reads, writes, chunk hydration, and OPFS access
+ * via Comlink.  All reads, writes, snapshot hydration, and OPFS access
  * happen here — neither the main thread nor the LSP worker touch OPFS
  * directly.
  */
@@ -119,48 +119,6 @@ export const mountFromUrl = async (opts: { url: string; name?: string; mountPoin
 }
 
 /**
- * Mount a lazy-loading filesystem.  The LazyVfs, ChunkFetcher, and all
- * OPFS I/O run in the dedicated OPFS worker to avoid Firefox SharedWorker
- * event loop starvation.  This SharedWorker acts as a thin relay.
- */
-export const mountLazy = async (opts: {
-    manifestUrl: string;
-    backingName?: string;
-}) => {
-    const { manifestUrl, backingName = 'codeblock-lazy' } = opts;
-    const { OpfsVfs } = await import('../utils/opfs-vfs');
-
-    if (!opfsWorkerPort) {
-        try {
-            opfsWorkerPort = new Worker(new URL('./opfs.worker.js', import.meta.url), { type: 'module' });
-        } catch {
-            throw new Error('[fs.worker] No OPFS worker port. Call setOpfsWorkerPort first.');
-        }
-    }
-    const opfsVfs = new OpfsVfs(opfsWorkerPort);
-
-    // Delegate everything to the OPFS worker: manifest loading, version
-    // check, OPFS clearing, LazyVfs creation, chunk fetching, and hydration.
-    await opfsVfs.call('mountLazy', { manifestUrl, backingName });
-
-    // Create a thin VfsInterface that proxies through the OPFS worker's
-    // lazy-aware methods (which go through LazyVfs in the dedicated worker).
-    const lazyProxy: VfsInterface = {
-        readFile: (path: string) => opfsVfs.call('lazyReadFile', path),
-        writeFile: (path: string, data: string) => opfsVfs.call('writeFile', path, data),
-        mkdir: (path: string, options: { recursive: boolean }) => opfsVfs.mkdir(path, options),
-        readDir: (path: string) => opfsVfs.call('lazyReadDir', path),
-        exists: (path: string) => opfsVfs.call('lazyExists', path),
-        stat: (path: string) => opfsVfs.call('lazyStat', path),
-        unlink: (path: string) => opfsVfs.call('unlink', path),
-        watch: async function* () {},
-    };
-
-    sharedVfs = lazyProxy;
-    return Comlink.proxy(sharedVfs);
-}
-
-/**
  * Get a MessagePort connected to the shared VFS via a simple
  * request/response protocol (NOT Comlink).
  *
@@ -219,5 +177,5 @@ async function hydrateFromSnapshot(vfs: VfsInterface, node: any, path: string): 
 // SharedWorker connection handler
 onconnect = async function (event) {
     const [port] = event.ports;
-    Comlink.expose({ mount, mountFromUrl, mountLazy, getVfsPort, setOpfsWorkerPort }, port);
+    Comlink.expose({ mount, mountFromUrl, getVfsPort, setOpfsWorkerPort }, port);
 }

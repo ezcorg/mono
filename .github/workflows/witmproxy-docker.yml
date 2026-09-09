@@ -1,0 +1,61 @@
+# the witmproxy image on ghcr.io, from main and from `witmproxy-v*` tags
+name: witmproxy-docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['witmproxy-v*']
+    paths:
+      - src/apps/witmproxy/**
+      - src/rust/**
+      - Cargo.toml
+      - Cargo.lock
+      - .dockerignore
+      - .github/workflows/witmproxy-docker.yml
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: an extra image tag, besides the generated ones
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ezcorg/witmproxy
+
+jobs:
+  push:
+    runs-on: [self-hosted, linux, theo-msi]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # tags: `main` from the branch, `latest` on the default branch, the version from a `witmproxy-v*` tag, a short sha, and the manual input
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=match,pattern=witmproxy-v(.*),group=1
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: src/apps/witmproxy/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

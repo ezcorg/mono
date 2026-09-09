@@ -1,0 +1,251 @@
+/* the room — generated from experiments/cube-room.html, then edited; keep the two in step by hand */
+:root{
+  --bg:#000; --fg:#F5F5F5; --dim:#333;
+  --line:rgba(245,245,245,.6); --line-soft:rgba(245,245,245,.22); --fill:rgba(245,245,245,.07); --bld:#2c2c2c;
+  --glow:rgba(255,255,255,.35); --bezel:#2b2b2b; --sel:rgba(245,245,245,.14);
+  --serif:Times,'Times New Roman',serif; --sans:Helvetica,Arial,system-ui,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+}
+html.lit{--bg:#F5F5F5; --fg:#000; --dim:#cfcfcf; --line:rgba(0,0,0,.6); --line-soft:rgba(0,0,0,.2); --fill:rgba(0,0,0,.05); --bld:#c9c9c9; --glow:rgba(255,220,120,.6); --bezel:#cfcfcf; --sel:rgba(0,0,0,.08)}
+*,*::before,*::after{box-sizing:border-box}
+html:has(body[data-state]),body[data-state]{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden;transition:background .6s,color .6s}
+.room{color:var(--fg)}
+.room.no-webgl,html:not(.js) .room{display:none}   /* no scripts (a crawler, a reader): the static copy is the page */
+/* the static copy of a page (real HTML at a real address, for crawlers and feed readers): gone once scripts run, back if the room can't boot */
+.static a{color:inherit}
+.static{max-width:38rem;margin:0 auto;padding:2.5rem 1.25rem 4rem;font:16px/1.5 var(--serif);color:var(--fg);background:var(--bg)}
+html.js .static{display:none}
+html.js.no-webgl .static{display:block}
+.static header{display:flex;flex-wrap:wrap;align-items:baseline;gap:.6rem 1.4rem;margin-bottom:2.5rem;font:500 13px/1 var(--sans);letter-spacing:.06em}
+.static .wordmark{font-weight:700;text-decoration:none;border:1px solid var(--line);padding:.55em .85em}
+.static nav{display:flex;flex-wrap:wrap;gap:.5rem 1.2rem}
+.static nav a{text-decoration:none;opacity:.7}
+.static nav a:hover,.static nav a[aria-current]{opacity:1;text-decoration:underline;text-underline-offset:.25em}
+.static .nowebgl{display:none;font:400 13px/1.4 var(--sans);border:1px solid var(--line-soft);padding:.6em .8em;margin:0 0 2rem}
+html.no-webgl .static .nowebgl{display:block}
+.static h1{font:300 2.2rem/1.1 var(--serif);letter-spacing:-.025em;margin:0 0 1rem}
+.static h2{font:300 1.4rem/1.2 var(--serif);letter-spacing:-.02em;margin:2rem 0 .5rem}
+.static .lede{font-size:1.15em;opacity:.8}
+.static .meta{font:500 .72em/1.4 var(--sans);letter-spacing:.12em;text-transform:uppercase;opacity:.6}
+.static article+article{margin-top:2rem}
+.static ul{padding-left:1.2em}.static li{margin:0 0 .4em}
+[data-state] a{color:inherit}
+.room button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+#gl,#css{position:fixed;inset:0}
+#gl{z-index:0;touch-action:none}
+#css{z-index:1;pointer-events:none}
+body[data-state=room] #gl{cursor:grab}
+body.dragging #gl,body.dragging .surface{cursor:grabbing!important}
+body.hover #gl{cursor:pointer}
+body.preload .room *{transition:none!important}
+
+/* ---------------------------------------------------------------- 2D chrome */
+.labels{position:fixed;inset:0;z-index:2;pointer-events:none}
+.lbl{position:absolute;left:0;top:0;translate:-50% -100%;white-space:nowrap;font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.55em .85em;opacity:0;transition:opacity .2s,margin .2s;margin-top:.4em}
+.lbl::after{content:' →'}
+.lbl.action::after{content:''}
+.lbl.on{opacity:1;margin-top:0;pointer-events:auto;cursor:pointer}
+.lbl.ext::after{content:' ↗'}
+.lbl:hover{background:var(--fg);color:var(--bg)}
+/* the building's label, outside: the one line about us, pinned above the near corner of the box; a click comes in */
+.room .lbl.bldg{font:500 clamp(13px,1.25vw,17px)/1.35 var(--sans);letter-spacing:.08em;background:var(--bg);border:1px solid var(--line);padding:.6em 1em;margin-top:-.6em;max-width:min(84vw,28em);white-space:normal;text-align:center;transition:opacity .25s,margin .25s}
+.room .lbl.bldg::after{content:''}
+.room .lbl.bldg.on{margin-top:-1.2em}
+.room .lbl.bldg:hover,.room .lbl.bldg:focus-visible{background:var(--fg);color:var(--bg);outline:0}
+.lbl .ic{width:1.15em;height:1.15em;vertical-align:-.22em}
+.ctl{position:fixed;left:0;top:0;z-index:2;translate:-50% -100%;margin-top:.4em;display:flex;gap:.3em;opacity:0;pointer-events:none;transition:opacity .2s,margin .2s}
+.ctl.on{opacity:1;pointer-events:auto;margin-top:0}
+.ctl button{font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.55em .7em;border-radius:0;cursor:pointer}
+.ctl button:hover,.ctl button:focus-visible{background:var(--fg);color:var(--bg);outline:0}
+.prompts{position:fixed;left:0;right:0;bottom:clamp(1rem,3vh,1.75rem);z-index:3;display:flex;justify-content:center;gap:.4rem 1.4rem;flex-wrap:wrap;padding:0 1rem;pointer-events:none;font:400 13px/1 var(--sans);letter-spacing:.03em;color:var(--fg);text-shadow:0 0 10px var(--bg),0 0 3px var(--bg)}
+.prompts span{display:inline-flex;align-items:center;gap:.5em;white-space:nowrap}
+.prompts i{font-style:normal;opacity:.5;margin:0 .15em}
+.prompts .ic{width:1.15em;height:1.15em;vertical-align:-.25em}
+.prompts kbd{font:500 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--fg);background:var(--bg);border:1px solid var(--fg);padding:.35em .5em;border-radius:2px;min-width:1.7em;text-align:center;text-shadow:none}
+.prompts .btn{pointer-events:auto;cursor:pointer}
+.prompts .btn:hover kbd,.prompts .btn.on kbd{background:var(--fg);color:var(--bg)}
+.sr-nav{position:fixed;left:50%;bottom:clamp(3.5rem,8vh,5rem);z-index:4;translate:-50% 0;display:flex;gap:.5rem}
+.sr-nav a,.sr-nav button{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.sr-nav a:focus-visible,.sr-nav button:focus-visible{position:static;width:auto;height:auto;clip:auto;font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--bg);background:var(--fg);padding:.6em .9em;outline:0;text-decoration:none}
+/* the loading screen is a label with the logo's sliding block running through it */
+.loading{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:var(--bg);transition:opacity .5s,visibility 0s .5s}
+.loading .lw{position:relative;display:block;font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.55em .85em}
+.loading .ls{position:absolute;inset:0;padding:.55em .85em;background:var(--fg);color:var(--bg);animation:loadslide 1.5s ease-in-out infinite}
+@keyframes loadslide{0%{clip-path:polygon(-45% 0,0 0,0 100%,-45% 100%)}100%{clip-path:polygon(100% 0,145% 0,145% 100%,100% 100%)}}
+.loading.off{opacity:0;pointer-events:none;visibility:hidden}
+.perf{position:fixed;left:.6rem;top:.6rem;z-index:9;font:500 11px/1 var(--mono);letter-spacing:.04em;color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:.5em .7em;white-space:nowrap;pointer-events:none}
+.bench{position:fixed;left:50%;top:50%;translate:-50% -50%;z-index:9;width:min(760px,92vw);display:flex;flex-direction:column;gap:.6em;background:var(--bg);color:var(--fg);border:1px solid var(--line);padding:1em;font:12px/1.5 var(--mono)}
+.bench textarea{width:100%;font:inherit;color:inherit;background:transparent;border:1px solid var(--line-soft);padding:.5em .6em;resize:none;white-space:pre;overflow:auto}
+.bench button{align-self:flex-start;font:inherit;color:var(--bg);background:var(--fg);border:0;padding:.4em 1em;cursor:pointer}
+
+/* ---------------------------------------------------------------- content surfaces */
+/* the transformed element itself must not clip: overflow:hidden on a 3D-transformed element breaks Chrome's hit-testing, so each content root clips instead */
+.surface{font-family:var(--serif);font-size:16px;line-height:1.45;color:var(--fg);background:var(--bg);overflow:visible;transition:background .6s,color .6s,box-shadow .25s;user-select:text;-webkit-user-select:text}
+.surface.active{pointer-events:auto}
+.surface a{color:inherit}
+.surface h2{font:300 1.75em/1.15 var(--serif);letter-spacing:-.02em;margin:0 0 .5em}
+.surface h3{font:300 1.3em/1.2 var(--serif);letter-spacing:-.02em;margin:1em 0 .4em}
+.surface p{margin:0 0 .7em}
+.surface .lede{opacity:.75;margin-bottom:1em}
+.mission ul{list-style:none;margin:0;padding:0}
+.mission li{position:relative;padding-left:1.1em;margin-bottom:.5em}
+.mission li::before{content:'*';position:absolute;left:0;top:0;opacity:.6;font-weight:700}
+.surface .link{text-decoration:underline;text-decoration-color:var(--line);text-decoration-thickness:1px;text-underline-offset:.2em;border-radius:3px;padding:0 .15em;margin:0 -.15em;transition:background .15s,text-decoration-color .15s}
+.surface .link:hover,.surface .link:focus-visible{background:var(--sel);text-decoration-color:currentColor;outline:0}
+.scroller{position:absolute;inset:0;overflow:hidden;outline:0;touch-action:none}   /* touch-action: the browser would otherwise claim a finger drag as a pan and cancel the pointer events the scroller listens to */
+.scroll{overflow:hidden;min-height:0;outline:0;touch-action:none}
+.scroller:focus-visible,.scroll:focus-visible{box-shadow:inset 0 0 0 2px var(--line-soft)}
+/* while there's more below, the bottom of the viewport fades out (a mask on the scroll box: no layout, nothing to scroll past) */
+.scroller.more,.scroll.more{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 3.5em),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 3.5em),transparent)}
+.form{display:flex;flex-direction:column;gap:.6em;font-family:var(--sans);font-size:.92em}
+.form label{display:block;font-size:.8em;opacity:.75;margin-bottom:.2em}
+.form input,.form select,.form textarea{width:100%;font:inherit;line-height:1.3;color:var(--fg);background:transparent;border:1px solid var(--line-soft);padding:.5em .6em;border-radius:0;-webkit-appearance:none;appearance:none;transition:border-color .2s}
+.form select{background-image:linear-gradient(45deg,transparent 50%,var(--fg) 50%),linear-gradient(135deg,var(--fg) 50%,transparent 50%);background-position:calc(100% - .9em) 50%,calc(100% - .55em) 50%;background-size:.35em .35em;background-repeat:no-repeat}
+.form select option{background:var(--bg);color:var(--fg)}
+.form input:focus,.form select:focus,.form textarea:focus{outline:0;border-color:var(--fg)}
+.form textarea{resize:none;min-height:7em}
+.form .money{position:relative}
+.form .money span{position:absolute;left:.6em;top:50%;translate:0 -50%;opacity:.6}
+.form .money input{padding-left:1.5em;padding-right:3.2em;-moz-appearance:textfield}
+.form .money input::-webkit-inner-spin-button,.form .money input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.form .money i{position:absolute;right:.6em;top:50%;translate:0 -50%;font-style:normal;font-size:.75em;letter-spacing:.08em;opacity:.55;pointer-events:none}
+.form .submit{align-self:flex-start;background:var(--fg);color:var(--bg);padding:.6em 1.1em;border:1px solid var(--fg);font:inherit;margin-top:.2em;cursor:pointer}
+.form .thanks{display:none;font-family:var(--serif);font-size:1.1em;border:1px solid var(--fg);padding:.8em}
+.form .err{display:none;font-size:.85em;color:var(--fg);border:1px solid var(--fg);padding:.5em .7em}
+.form.failed .err{display:block}
+.form.busy .submit{opacity:.5;pointer-events:none}
+.form .cf-turnstile{min-height:65px}
+.form .cf-turnstile:empty{display:none}
+.form.sent>*{display:none}.form.sent .thanks{display:block}
+.form input[type=file]{padding:.3em}
+
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+/* laptop screen: a tiny desktop OS */
+.scr{background:var(--bg);font-family:var(--mono)}
+/* lock screen: a monospace logo drifting about, the time beneath; wakes on hover, gone when open */
+.scr .saver{position:absolute;inset:0;overflow:hidden;background:var(--bg);transition:opacity .5s;z-index:5;container-type:inline-size}
+.scr .saver .mlogo{--ls:min(120px,13.3cqw);position:absolute;left:0;top:0;width:calc(var(--ls)*2);height:var(--ls);will-change:transform}
+.scr .saver .lw{display:block;position:relative;width:calc(var(--ls)*2);height:var(--ls);overflow:hidden;background:var(--bg)}
+.scr .saver .lw::before,.scr .saver .lw::after{content:'';position:absolute;top:0;width:var(--ls);height:var(--ls);border:2px solid var(--fg);z-index:3}
+.scr .saver .lw::before{left:0}.scr .saver .lw::after{left:var(--ls)}
+/* the sliding block carries an inverted copy of the letters that counter-slides, so no blend modes are needed (Safari draws those badly inside 3D transforms) */
+.scr .saver .lt{position:absolute;inset:0;display:flex;font:700 calc(var(--ls)*.36)/1 var(--mono);color:var(--fg);z-index:1}
+.scr .saver .lt span{width:var(--ls);height:var(--ls);display:grid;place-items:center}
+.scr .saver .ls{position:absolute;top:0;left:var(--ls);width:var(--ls);height:var(--ls);overflow:hidden;background:var(--fg);z-index:2;animation:logoslide 9s ease-in-out infinite}
+.scr .saver .ls .lt{left:calc(-1 * var(--ls));width:calc(var(--ls)*2);color:var(--bg);animation:logoslide-back 9s ease-in-out infinite}
+@keyframes logoslide-back{0%,40%{transform:translateX(0)}50%,90%{transform:translateX(var(--ls))}100%{transform:translateX(0)}}
+@keyframes logoslide{0%,40%{transform:translateX(0)}50%,90%{transform:translateX(-100%)}100%{transform:translateX(0)}}
+.scr.awake .saver,.scr.active .saver{opacity:0;pointer-events:none}
+.scr.awake .os{display:block}
+.os{display:none;position:absolute;inset:0;overflow:hidden;font:12.5px/1.4 var(--mono);color:var(--fg);background:var(--bg);background-image:radial-gradient(var(--line-soft) .8px,transparent 1px);background-size:18px 18px;container-type:inline-size}
+.scr.active .os{display:block}
+.scr.active .doc{display:none}
+.os .bar{position:absolute;left:0;right:0;top:0;height:2.2em;display:flex;align-items:center;gap:1em;padding:0 1em;background:var(--bg);border-bottom:1px solid var(--line-soft);font-size:11.5px;letter-spacing:.06em}
+.os .bar b{font-weight:700}
+/* the open windows, as the bar's tasks: the one in front is inverted, minimised ones outlined */
+.os .bar .tasks{flex:1;min-width:0;display:flex;align-items:center;gap:.4em;overflow:hidden}
+.os .bar .task{display:inline-flex;align-items:center;gap:.4em;max-width:16em;padding:.2em .6em .2em .45em;font:inherit;letter-spacing:.04em;color:inherit;border:0;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:background .15s,opacity .15s}
+.os .bar .task .ico{font-size:1.05em;line-height:1;display:inline-grid;place-items:center}
+.os .bar .task .ico svg{width:1em;height:1em}
+.os .bar .task.on{background:var(--sel)}
+.os .bar .task.min{opacity:.6}
+.os .bar .task:hover,.os .bar .task:focus-visible{background:var(--sel);opacity:1;outline:0}
+.os .desk{position:absolute;left:0;right:0;top:2.2em;bottom:0;padding:3% 2.5%;display:flex;flex-wrap:wrap;align-content:flex-start;gap:.6em 0}
+/* inside a bordered window nothing else is boxed: icons, chips and buttons sit bare and take a tint when pointed at */
+/* sized to the screen (the desktop is 900px wide at most; a phone's is a third of that and still gets one row of programs) */
+.app{position:relative;width:clamp(64px,11.5cqw,104px);display:flex;flex-direction:column;align-items:center;gap:.4em;padding:.7em .3em .5em;font:inherit;color:inherit;text-align:center}
+.app .ico{width:clamp(36px,6cqw,54px);height:clamp(36px,6cqw,54px);display:grid;place-items:center;font-size:clamp(20px,3.3cqw,30px);line-height:1;border-radius:6px;transition:background .2s}
+.app .ico.plus svg{width:1em;height:1em;display:block}
+.app .nm{font-size:clamp(9px,1.28cqw,11.5px);max-width:100%;line-height:1.15;overflow-wrap:anywhere}
+.app:hover .ico,.app:focus-visible .ico{background:var(--sel)}
+.app:focus-visible{outline:1px dashed var(--line);outline-offset:-1px}
+.app .tip{display:none;position:absolute;top:100%;left:50%;translate:-50% 0;width:224px;margin-top:.2em;text-align:left;background:var(--bg);border:1px solid var(--line-soft);border-radius:4px;padding:.6em .75em;z-index:3;font-size:11.5px;line-height:1.45;box-shadow:4px 4px 0 var(--line-soft);pointer-events:none}
+.app:first-child .tip{left:0;translate:0}
+.app:hover .tip,.app:focus-visible .tip{display:block}
+.app .tip b{display:block;font-weight:700;margin-bottom:.15em}
+.app .tip small{display:block;opacity:.65;margin-top:.35em}
+.win{position:absolute;left:5%;right:5%;top:9%;bottom:3%;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);box-shadow:8px 8px 0 var(--line-soft);z-index:4}
+.win[hidden]{display:none}
+.win.wide{left:3%;right:3%;top:9%;bottom:3%}
+.win.ph{visibility:hidden}
+.overlay{position:fixed;inset:0;z-index:2;pointer-events:none}
+.overlay .win{position:fixed;right:auto;bottom:auto;pointer-events:auto;font:12.5px/1.4 var(--mono);color:var(--fg)}
+.win .tb{display:flex;align-items:center;justify-content:space-between;gap:1em;padding:.45em .7em;border-bottom:1px solid var(--line-soft);font-size:11.5px;letter-spacing:.06em}
+.win .tb .wc{display:flex;gap:.3em}
+.win .tb button{font:inherit;line-height:1;min-width:1.7em;padding:.25em .45em;border:0;border-radius:3px;cursor:pointer}
+.win .tb button:hover,.win .tb button:focus-visible{background:var(--sel);outline:0}
+.win .body{flex:1;min-height:0;position:relative}
+.win .body .scroller{padding:1em 1.1em 1.2em}
+.win .demo{position:absolute;inset:0;overflow:hidden;background:var(--bg);color:var(--fg)}
+.win .demo iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--bg)}
+.radio-player{position:fixed;left:-9999px;top:0;width:200px;height:200px;opacity:.01;pointer-events:none}
+.win .form{font-family:var(--mono);font-size:1em}
+.win .form input,.win .form select,.win .form textarea{font-family:var(--mono)}
+.win .form .thanks{font-family:var(--mono);font-size:1em}
+
+/* tablet reader */
+.reader{background:var(--bg);border:7px solid var(--bezel);border-radius:10px;transition:border-color .6s}
+.reader .bar{position:absolute;left:0;right:0;top:0;height:2.6em;display:flex;align-items:center;justify-content:space-between;padding:0 6%;font:500 12px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;opacity:.7;border-bottom:1px solid var(--line-soft)}
+.reader .scroller{top:2.6em;padding:7% 7% 10%}
+/* a post: the title block stands apart (a rule under it), each section starts with a short rule and room above it, and the text breathes */
+.reader article header{margin:0 0 1.8em;padding-bottom:1.2em;border-bottom:1px solid var(--line-soft)}
+.reader h1{font:300 1.9em/1.1 var(--serif);letter-spacing:-.025em;margin:0 0 .5em;text-wrap:balance}
+.reader .meta{font:500 .66em/1.4 var(--sans);letter-spacing:.14em;text-transform:uppercase;opacity:.6;margin:0}
+.reader header .tags{margin:.9em 0 0}
+.reader p{margin:0 0 1.05em;text-wrap:pretty}
+.reader article>p:first-of-type{font-size:1.06em}
+.reader h2,.reader h3{font:300 1.4em/1.2 var(--serif);letter-spacing:-.02em;margin:2.2em 0 .7em}
+.reader h3{font-size:1.18em;margin-top:1.8em}
+.reader h2::before,.reader h3::before{content:'';display:block;width:2.2em;height:1px;background:var(--line);margin-bottom:.75em}
+.reader article>h2:first-child{margin-top:0}
+.reader hr{width:2.2em;height:1px;border:0;background:var(--line);margin:2em auto}
+.reader code{font-family:var(--mono);font-size:.88em;background:var(--fill);padding:.05em .35em;border-radius:3px}
+.reader article[hidden]{display:none}
+.reader article img{max-width:100%}
+.reader article pre{font-family:var(--mono);font-size:.85em;background:var(--fill);padding:.7em .9em;margin:0 0 1.2em;overflow-x:auto}
+.reader article pre code{background:none;padding:0;font-size:1em}
+.reader article blockquote{margin:0 0 1.2em;padding:.1em 0 .1em 1em;border-left:1px solid var(--line);font-style:italic;opacity:.85}
+.reader article ul,.reader article ol{margin:0 0 1.05em;padding-left:1.3em}
+.reader article li{padding:0;margin:0 0 .35em}
+.reader article li::before{content:none}
+.reader article strong{font-weight:700}
+/* the other posts, after the one you're reading */
+.reader .posts{margin-top:2.6em;padding-top:1.4em;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:.5em}
+.reader .posts h4{margin:0 0 .3em;font:500 .66em/1.4 var(--sans);letter-spacing:.14em;text-transform:uppercase;opacity:.6}
+.reader .posts a{display:block;text-decoration:none;border:1px solid var(--line-soft);padding:.6em .75em;transition:background .2s,color .2s}
+.reader .posts a.on,.reader .posts a:hover{background:var(--fg);color:var(--bg)}
+.reader .posts b{display:block;font-weight:400;font-size:1.05em}
+.reader .posts small{display:block;font:400 .72em/1.3 var(--sans);opacity:.65;margin-top:.2em}
+.reader .idle{position:absolute;inset:0;border-radius:3px;display:grid;place-items:center;font:500 44px/1.5 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--fg);text-align:center;background:var(--bg)}
+.reader .idle span{display:block;font-size:.5em;opacity:.55}
+.reader.active .idle{display:none}
+.tags{display:flex;flex-wrap:wrap;gap:.3em;margin:0 0 .6em}
+.tag{font:400 .68em/1 var(--sans);border:1px solid var(--line-soft);border-radius:999px;padding:.3em .6em;opacity:.75}
+
+/* kanban */
+.board{background:var(--bg);font-family:var(--sans)}
+.kb{position:absolute;inset:0;padding:3%;overflow:hidden;display:grid;grid-template-columns:1.45fr 1fr 1fr;gap:2.5%;background-image:radial-gradient(var(--line-soft) 1.2px,transparent 1.5px);background-size:22px 22px}
+.kb .col.scroll{padding:8px 10px 14px 8px;margin:-8px -10px -14px -8px}   /* room for the note's tilt, pin and shadow inside the clipping column */
+.col{display:flex;flex-direction:column;gap:12px;min-height:0}
+.col h4{margin:0 0 4px;font:500 12px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;text-align:center;opacity:.7;border-bottom:1px solid var(--line-soft);padding-bottom:8px}
+.note{position:relative;background:var(--fill);border:1px solid var(--line);padding:12px 11px 10px;font:400 12.5px/1.3 var(--serif);color:var(--fg);rotate:-1.5deg;box-shadow:2px 3px 0 var(--line-soft);transition:background .25s,color .25s}
+.note:nth-child(odd){rotate:1.2deg}
+.note::before{content:'';position:absolute;left:50%;top:-5px;width:9px;height:9px;border-radius:50%;background:var(--fg);translate:-50% 0}
+.note small{display:block;font:400 .82em/1.2 var(--sans);opacity:.6;margin-top:.3em}
+.note.new{rotate:-.6deg;background:var(--bg);border:1.5px solid var(--fg);padding:1em .9em;font:16px/1.45 var(--sans);box-shadow:5px 6px 0 var(--line-soft)}
+.note.new::before{background:var(--fg)}
+.note.new b{display:block;font:300 1.35em/1.1 var(--serif);margin-bottom:.35em;letter-spacing:-.01em}
+.note.new .stuckText{display:none;font:400 15px/1.35 var(--serif)}
+.note.new.stuck .form{display:none}
+.note.new.stuck .stuckText{display:block}
+
+/* manifesto */
+.manifesto{background:var(--bg);box-shadow:inset 0 0 0 4px var(--bg),inset 0 0 0 5px var(--line-soft)}
+.manifesto .scroller{padding:7% 8%}
+.manifesto h3:first-child{margin-top:0}
+.manifesto .mission{border:1px solid var(--line-soft);padding:.6em .7em;background:var(--fill)}   /* text on a plaque now: no hover state */
+
+/* clipboard sheet */
+.sheet{background:var(--bg);box-shadow:inset 0 0 0 1px var(--line-soft)}
+.sheet .scroller{padding:9% 8% 6%}
+.sheet h2{font-size:1.5em;margin-bottom:.15em}

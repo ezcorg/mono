@@ -1,56 +1,57 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use anyhow::Result;
-use bytes::Bytes;
 use cel_cxx::Env;
-use http_body::Body;
-use http_body_util::{Full, combinators::UnsyncBoxBody};
-use hyper::{Request, Response, body::Incoming};
 use tracing::{debug, info, warn};
 use wasmtime::Store;
-use wasmtime_wasi_http::p3::{
-    Request as WasiRequest, WasiHttpView, bindings::http::types::ErrorCode,
-};
+use wasmtime::component::{Component, InstancePre, Resource};
+use wasmtime_wasi_http::WasiHttpView;
+use wasmtime_wasi_http::p3::Request as WasiRequest;
 
+use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
+use crate::wasm::Logger;
+use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::PluginError as GuestPluginError;
 use crate::{
     db::{Db, Insert},
     events::{Event, connect::Connect, content::InboundContent, response::ContextualResponse},
     plugins::WitmPlugin,
     wasm::{
-        CapabilityProvider, Host, Runtime,
+        CapabilityProvider, Host, LocalStorageClient, Runtime,
         bindgen::{
             Plugin, UserInput,
             witmproxy::plugin::capabilities::{Event as WasmEvent, EventKind},
         },
     },
 };
+use std::future;
 
 pub struct PluginRegistry {
-    plugins: HashMap<String, WitmPlugin>,
+    /// Copy-on-write plugin map: readers take an `Arc` snapshot and never hold
+    /// a lock across guest execution; mutators clone the map, apply the change,
+    /// and swap the `Arc` in. The lock is only held for the instant of the
+    /// snapshot/swap — NEVER across an `.await` — so a mutation can't stall
+    /// in-flight events and in-flight events can't stall mutations.
+    plugins: RwLock<Arc<HashMap<String, Arc<WitmPlugin>>>>,
     pub db: Db,
     pub runtime: Runtime,
     env: &'static Env<'static>,
-}
-
-/// Result of handling a request through the plugin chain.
-/// Omits any internal WASI types, only exposes HTTP types.
-pub enum HostHandleRequestResult<T = Incoming>
-where
-    T: Body<Data = Bytes> + Send + Sync + 'static,
-{
-    None,
-    Noop(Request<T>),
-    Request(Request<UnsyncBoxBody<Bytes, ErrorCode>>),
-    Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
-}
-
-pub enum HostHandleResponseResult<T = Full<Bytes>>
-where
-    T: Body<Data = Bytes> + Send + Sync + 'static,
-{
-    None,
-    Noop(Response<T>),
-    Response(Response<UnsyncBoxBody<Bytes, ErrorCode>>),
+    /// One persistent local-storage client per plugin id, so `set` survives
+    /// across events (a fresh `Store` is created per event for isolation).
+    /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
+    local_storage: Mutex<HashMap<String, LocalStorageClient>>,
+    /// Cached, pre-resolved `InstancePre` per plugin id. Import resolution /
+    /// type-checking is the expensive part of instantiation; caching it means a
+    /// plugin's second and subsequent events don't re-pay that cost.
+    instance_pre_cache: Mutex<HashMap<String, InstancePre<Host>>>,
+    /// Count of import resolutions actually performed (cache misses). A plugin
+    /// invoked N times should resolve exactly once. Exposed for tests.
+    instance_pre_resolutions: AtomicUsize,
+    /// One breach recorder per plugin id, so limit-breach counts accumulate
+    /// across events rather than resetting per request.
+    breaches: Mutex<HashMap<String, Arc<BreachRecorder>>>,
 }
 
 impl WasmEvent {
@@ -66,6 +67,47 @@ impl WasmEvent {
     }
 }
 
+/// Signals how the plugin chain should proceed after one plugin runs.
+enum GuestStep {
+    /// Continue the chain with the event the guest returned.
+    ///
+    /// Note this covers "not for me" as well: a plugin that does not care
+    /// about an event returns it unchanged, which is a normal `Next`.
+    Next(Box<dyn Event>),
+    /// The guest returned `none`, which the WIT defines as "abandon any
+    /// further event processing". For a timer that is a legitimate
+    /// side-effect-only run; for anything else the event ends here.
+    Terminate,
+}
+
+/// What the guest's `handle` returns: either an event decision, or a
+/// structured reason it could not handle the event.
+type GuestReturn = Result<Option<WasmEvent>, GuestPluginError>;
+
+/// Render a guest-reported error for the operator.
+///
+/// The message is guest-controlled, so it gets the same treatment as a log
+/// message: control characters escaped and length capped. It is reported to the
+/// operator only -- it is deliberately NOT reflected to the HTTP client, which
+/// would turn a plugin's internal detail into an information leak.
+fn describe_plugin_error(err: &GuestPluginError) -> String {
+    fn detail(msg: &Option<String>) -> String {
+        match msg {
+            Some(m) => format!(": {}", Logger::sanitize_for_report(m)),
+            None => String::new(),
+        }
+    }
+    match err {
+        GuestPluginError::InvalidConfiguration(m) => {
+            format!("invalid-configuration{}", detail(m))
+        }
+        GuestPluginError::CapabilityUnavailable(kind) => {
+            format!("capability-unavailable: {kind}")
+        }
+        GuestPluginError::InternalError(m) => format!("internal-error{}", detail(m)),
+    }
+}
+
 impl PluginRegistry {
     pub fn new(db: Db, runtime: Runtime) -> Result<Self> {
         let env = WasmEvent::register(Env::builder().with_standard(true))?.build()?;
@@ -74,26 +116,128 @@ impl PluginRegistry {
         // TODO: fix this with proper lifetime management
         let env: &'static Env<'static> = Box::leak(Box::new(env));
         Ok(Self {
-            plugins: HashMap::new(),
+            plugins: RwLock::new(Arc::new(HashMap::new())),
             db,
             runtime,
             env,
+            local_storage: Mutex::new(HashMap::new()),
+            instance_pre_cache: Mutex::new(HashMap::new()),
+            instance_pre_resolutions: AtomicUsize::new(0),
+            breaches: Mutex::new(HashMap::new()),
         })
     }
 
-    pub fn plugins(&self) -> &HashMap<String, WitmPlugin> {
-        &self.plugins
+    /// Number of import resolutions performed so far (cache misses). Used by
+    /// tests to assert that instantiation cost is not re-paid per event.
+    pub fn instance_pre_resolutions(&self) -> usize {
+        self.instance_pre_resolutions.load(Ordering::Relaxed)
     }
 
-    pub fn plugins_mut(&mut self) -> &mut HashMap<String, WitmPlugin> {
-        &mut self.plugins
-    }
-
-    pub async fn load_plugins(&mut self) -> Result<()> {
-        let plugins = WitmPlugin::all(&mut self.db, &self.runtime.engine, self.env).await?;
-        for plugin in plugins.into_iter() {
-            self.plugins.insert(plugin.id(), plugin);
+    /// Get the cached `InstancePre` for a plugin, resolving+caching on first use.
+    /// Subsequent calls reuse the cached resolution (only the cheap per-event
+    /// instantiation is paid).
+    fn instance_pre_for(
+        &self,
+        plugin_id: &str,
+        component: &Component,
+    ) -> Result<InstancePre<Host>> {
+        if let Some(pre) = Self::lock_cache(&self.instance_pre_cache).get(plugin_id) {
+            return Ok(pre.clone());
         }
+        let pre = self.runtime.build_instance_pre(component)?;
+        self.instance_pre_resolutions
+            .fetch_add(1, Ordering::Relaxed);
+        Self::lock_cache(&self.instance_pre_cache).insert(plugin_id.to_string(), pre.clone());
+        Ok(pre)
+    }
+
+    /// Set the per-plugin resource limits enforced during guest execution.
+    /// A value of `0` for any limit disables that dimension (unlimited).
+    /// Set the *global* baseline limits. Per-plugin overrides are resolved
+    /// against these at execution time, so tightening a global default never
+    /// removes an operator's ability to loosen it for one plugin.
+    pub fn set_limits(&mut self, limits: ResolvedLimits) {
+        self.runtime.limits = limits;
+    }
+
+    /// Get (or lazily create) the persistent local-storage client for a plugin.
+    /// Take a cache lock, recovering from poisoning.
+    ///
+    /// A poisoned lock means a panic happened elsewhere while holding it.
+    /// These maps are plain caches with no cross-entry invariant, so the data
+    /// cannot be half-updated in a way that matters, and propagating the panic
+    /// would take down a live connection task instead.
+    fn lock_cache<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        match m.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    /// Snapshot the plugin map, recovering from poisoning for the same reason.
+    fn read_plugins<T>(l: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+        match l.read() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    /// Per-plugin breach recorder, created on first use. Shared so the breach
+    /// counter accumulates across events rather than resetting each request --
+    /// a plugin that trips a limit on every single request is a different
+    /// signal from one that tripped it once.
+    fn breaches_for(&self, plugin_id: &str) -> Arc<BreachRecorder> {
+        let mut map = match self.breaches.lock() {
+            Ok(map) => map,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Arc::clone(
+            map.entry(plugin_id.to_string())
+                .or_insert_with(|| BreachRecorder::new(plugin_id)),
+        )
+    }
+
+    fn local_storage_for(&self, plugin_id: &str) -> LocalStorageClient {
+        let mut map = match self.local_storage.lock() {
+            Ok(map) => map,
+            // This map is a plain cache with no cross-entry invariant, so a
+            // panic elsewhere cannot have left it inconsistent. Recovering
+            // beats propagating a panic onto a live connection task.
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        map.entry(plugin_id.to_string())
+            .or_insert_with(LocalStorageClient::new)
+            .clone()
+    }
+
+    /// A point-in-time snapshot of the plugin map. Cheap (one `Arc` clone);
+    /// callers that need a consistent view across several operations should
+    /// take one snapshot and reuse it.
+    pub fn plugins(&self) -> Arc<HashMap<String, Arc<WitmPlugin>>> {
+        Self::read_plugins(&self.plugins).clone()
+    }
+
+    /// Apply a mutation copy-on-write: clone the current map, mutate the
+    /// clone, swap it in. In-flight readers keep their snapshot.
+    fn mutate_plugins(&self, f: impl FnOnce(&mut HashMap<String, Arc<WitmPlugin>>)) {
+        let mut guard = match self.plugins.write() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut map = (**guard).clone();
+        f(&mut map);
+        *guard = Arc::new(map);
+    }
+
+    pub async fn load_plugins(&self) -> Result<()> {
+        // `WitmPlugin::all` takes `&mut Db` but only needs the (Clone) pool.
+        let mut db = self.db.clone();
+        let plugins = WitmPlugin::all(&mut db, &self.runtime.engine, self.env).await?;
+        self.mutate_plugins(|map| {
+            for plugin in plugins.into_iter() {
+                map.insert(plugin.id(), Arc::new(plugin));
+            }
+        });
         Ok(())
     }
 
@@ -112,15 +256,18 @@ impl PluginRegistry {
         component_bytes: Vec<u8>,
         expected_public_key: Option<&[u8]>,
     ) -> Result<WitmPlugin> {
-        let component =
-            wasmtime::component::Component::from_binary(&self.runtime.engine, &component_bytes)?;
-        let mut store = wasmtime::Store::new(&self.runtime.engine, Host::default());
-        let instance = self
+        // Compiling a component is CPU-heavy (hundreds of ms); run it off the
+        // async executor so an upload doesn't stall request handling.
+        let engine = self.runtime.engine.clone();
+        let (component, component_bytes) = tokio::task::spawn_blocking(move || {
+            let component = wasmtime::component::Component::from_binary(&engine, &component_bytes)?;
+            Ok::<_, anyhow::Error>((component, component_bytes))
+        })
+        .await??;
+        let (plugin_instance, mut store) = self
             .runtime
-            .linker
-            .instantiate_async(&mut store, &component)
+            .instantiate_plugin_component(&component)
             .await?;
-        let plugin_instance = Plugin::new(&mut store, &instance)?;
         let guest_result = store
             .run_concurrent(async move |store| {
                 let manifest = match plugin_instance
@@ -188,19 +335,67 @@ impl PluginRegistry {
         Ok(plugin)
     }
 
-    pub async fn register_plugin(&mut self, plugin: WitmPlugin) -> Result<()> {
-        // Upsert the given plugin into the database
-        plugin.insert(&mut self.db).await?;
+    /// Register a directly-constructed plugin, compiling its capability scope
+    /// expressions the way the real load path does.
+    ///
+    /// Test-only. Production always arrives through `plugin_from_component`,
+    /// which compiles the scopes as part of loading. Without that compilation
+    /// `can_handle` finds no CEL program for any capability and silently
+    /// returns false, so a test that skips it never executes the plugin it
+    /// thinks it is testing.
+    #[cfg(test)]
+    pub(crate) async fn register_plugin_for_test(&self, plugin: WitmPlugin) -> Result<()> {
+        let plugin = plugin.compile_capability_scope_expressions(self.env)?;
+        self.register_plugin(plugin).await
+    }
+
+    pub async fn register_plugin(&self, plugin: WitmPlugin) -> Result<()> {
+        // Upsert the given plugin into the database (`Insert` takes `&mut Db`
+        // but only needs the Clone pool).
+        let mut db = self.db.clone();
+        plugin.insert(&mut db).await?;
         // Add it to the registry
-        self.plugins.insert(plugin.id(), plugin);
+        self.mutate_plugins(|map| {
+            map.insert(plugin.id(), Arc::new(plugin));
+        });
         Ok(())
     }
 
-    pub async fn remove_plugin(
-        &mut self,
+    /// Toggle a plugin's enabled flag: persists to the DB, then swaps a
+    /// freshly loaded copy of the plugin into the in-memory map. Returns
+    /// `Ok(false)` if no such plugin exists.
+    pub async fn set_plugin_enabled(
+        &self,
+        namespace: &str,
         name: &str,
-        namespace: Option<&str>,
-    ) -> Result<Vec<String>> {
+        enabled: bool,
+    ) -> Result<bool> {
+        let result = sqlx::query("UPDATE plugins SET enabled = ? WHERE namespace = ? AND name = ?")
+            .bind(enabled)
+            .bind(namespace)
+            .bind(name)
+            .execute(&self.db.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+        let row =
+            sqlx::query("SELECT component, enabled FROM plugins WHERE namespace = ? AND name = ?")
+                .bind(namespace)
+                .bind(name)
+                .fetch_one(&self.db.pool)
+                .await?;
+        let mut db = self.db.clone();
+        let plugin = WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env).await?;
+        // The cached InstancePre (if any) stays valid: it was resolved from a
+        // component compiled from the same bytes on the same engine.
+        self.mutate_plugins(|map| {
+            map.insert(plugin.id(), Arc::new(plugin));
+        });
+        Ok(true)
+    }
+
+    pub async fn remove_plugin(&self, name: &str, namespace: Option<&str>) -> Result<Vec<String>> {
         // Delete from database and get the deleted records using RETURNING
         let deleted_plugins: Vec<(String, String)> = if let Some(namespace) = namespace {
             // Delete specific plugin with namespace
@@ -221,47 +416,270 @@ impl PluginRegistry {
 
         // Build list of plugin IDs that were removed and remove from in-memory registry
         let mut removed_plugin_ids = Vec::new();
-        for (ns, n) in deleted_plugins {
-            let plugin_id = WitmPlugin::make_id(&ns, &n);
-            if self.plugins.remove(&plugin_id).is_some() {
-                removed_plugin_ids.push(plugin_id);
+        self.mutate_plugins(|map| {
+            for (ns, n) in &deleted_plugins {
+                let plugin_id = WitmPlugin::make_id(ns, n);
+                if map.remove(&plugin_id).is_some() {
+                    removed_plugin_ids.push(plugin_id);
+                }
+            }
+        });
+        // Drop the cached InstancePre so a reloaded component isn't
+        // instantiated from a stale resolution.
+        {
+            let mut cache = Self::lock_cache(&self.instance_pre_cache);
+            for plugin_id in &removed_plugin_ids {
+                cache.remove(plugin_id);
             }
         }
 
         Ok(removed_plugin_ids)
     }
 
-    fn new_store(&self) -> Store<Host> {
-        self.runtime.new_store()
+    /// A store for host-side event data, carrying the *global* limits: this
+    /// store holds the in-flight event, not any one plugin's guest state.
+    fn new_store(&self) -> Result<Store<Host>> {
+        self.runtime
+            .new_store(&self.runtime.limits, BreachRecorder::new("<event>"))
+    }
+
+    /// Resolve the effective limits for one plugin: its overrides applied over
+    /// the global baseline.
+    fn limits_for(&self, overrides: &LimitOverrides) -> ResolvedLimits {
+        overrides.resolve(&self.runtime.limits)
+    }
+
+    /// Run one plugin's `create` + `handle` against `store`, enforcing the
+    /// configured fuel/timeout limits and FAILING OPEN: on any create/handle
+    /// error, fuel/memory exhaustion, or timeout the plugin is skipped and the
+    /// (unmodified) event continues down the chain.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_plugin_in_store(
+        &self,
+        plugin_id: &str,
+        plugin_instance: Plugin,
+        mut store: Store<Host>,
+        event_data: WasmEvent,
+        cap_resource: Resource<CapabilityProvider>,
+        config: Vec<UserInput>,
+        kind: EventKind,
+        limits: &ResolvedLimits,
+        shadow: Option<crate::events::recovery::EventShadow>,
+    ) -> Result<(GuestStep, Store<Host>)> {
+        // Apply the per-call budgets (the memory/table caps are already
+        // installed on the store). A `0` limit means unbounded.
+        //
+        // `apply_call_limits` arms an epoch deadline as well as fuel. That is
+        // what makes the wall-clock bound below meaningful: `tokio::time::timeout`
+        // can only cancel a future, and cancelling the future that drives a
+        // guest does not stop a guest that never yields back to the executor.
+        // The epoch deadline preempts it from outside; the timeout remains as a
+        // second bound covering time spent in host calls.
+        self.runtime.apply_call_limits(&mut store, limits)?;
+        let timeout_ms = limits.timeout_ms;
+
+        let guest = store.run_concurrent(async move |store| {
+            // Create the plugin resource with the user-supplied configuration.
+            let plugin_resource = match plugin_instance
+                .witmproxy_plugin_witm_plugin()
+                .plugin()
+                .call_create(store, config)
+                .await?
+            {
+                Ok(resource) => resource,
+                Err(e) => {
+                    // A configure error is a plugin-level failure: surface it as
+                    // an error so the caller fails open. (Previously this
+                    // silently returned None and aborted the whole request.)
+                    return Err(anyhow::anyhow!(
+                        "plugin create returned configure error: {e:?}"
+                    ));
+                }
+            };
+
+            // Handle the event using the plugin resource.
+            let result = plugin_instance
+                .witmproxy_plugin_witm_plugin()
+                .plugin()
+                .call_handle(store, plugin_resource, event_data, cap_resource)
+                .await?;
+
+            // A plugin may leave background work running after `handle`
+            // returns -- the canonical case is spawning a task that streams a
+            // rewritten body. Returning here ends the `run_concurrent` event
+            // loop, which tears those tasks down along with any streams they
+            // hold, truncating the body after a single chunk.
+            //
+            // wasmtime documents `poll_no_interesting_tasks` for exactly this:
+            // "Hosts can use this as a signal that the guest wants to stay
+            // alive a little longer, even after a task has returned." Its own
+            // `wasi:http` worker loop stays inside `run_concurrent` on the
+            // same signal.
+            //
+            // Wasmtime 43 kept these tasks alive across the boundary without
+            // being asked; 48 does not.
+            future::poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
+
+            Ok::<GuestReturn, anyhow::Error>(result)
+        });
+
+        // Enforce the wall-clock timeout (`0` == no timeout).
+        let outcome: Result<GuestReturn> = if timeout_ms > 0 {
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), guest).await {
+                Ok(Ok(inner)) => inner,
+                Ok(Err(e)) => Err(e.into()),
+                Err(_elapsed) => Err(anyhow::anyhow!(
+                    "plugin execution exceeded timeout of {timeout_ms}ms"
+                )),
+            }
+        } else {
+            match guest.await {
+                Ok(inner) => inner,
+                Err(e) => Err(e.into()),
+            }
+        };
+
+        match outcome {
+            Ok(Err(plugin_error)) => {
+                let described = describe_plugin_error(&plugin_error);
+                warn!(
+                    target: "plugins",
+                    plugin_id = %plugin_id,
+                    event_kind = kind.to_string(),
+                    plugin_error = %described,
+                    "Plugin reported it could not handle the event; failing closed"
+                );
+                Err(anyhow::anyhow!(
+                    "plugin {plugin_id} could not handle a {kind} event ({described})"
+                ))
+            }
+            Ok(Ok(Some(new_event_data))) => {
+                let event = Self::wasm_event_into_boxed(&mut store, new_event_data)?;
+                Ok((GuestStep::Next(event), store))
+            }
+            // `none` means "abandon further processing" per the WIT contract.
+            // A plugin that simply does not care about an event returns the
+            // event unchanged instead, which lands in the `Ok(Some(..))` arm.
+            Ok(Ok(None)) => {
+                if kind == EventKind::Timer {
+                    debug!(
+                        target: "plugins",
+                        plugin_id = %plugin_id,
+                        "Timer plugin returned none (side-effect only); ending the chain"
+                    );
+                } else {
+                    debug!(
+                        target: "plugins",
+                        plugin_id = %plugin_id,
+                        event_kind = kind.to_string(),
+                        "Plugin returned none; terminating event handling as requested"
+                    );
+                }
+                Ok((GuestStep::Terminate, store))
+            }
+            Err(e) => {
+                // The event payload holds linear resources: once a guest has
+                // taken a body it cannot be handed back. Continuing the chain
+                // would forward something neither peer asked for, so the
+                // default is to end the event rather than guess.
+                if limits.recovery == RecoveryPolicy::FailOpen {
+                    match shadow {
+                        Some(shadow) if shadow.is_recoverable() => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %plugin_id,
+                                event_kind = kind.to_string(),
+                                error = %e,
+                                "Plugin execution failed; recovering the event and \
+                                 continuing the chain. Side effects the plugin \
+                                 already performed are NOT undone."
+                            );
+                            let event = shadow.rebuild()?;
+                            return Ok((GuestStep::Next(event), store));
+                        }
+                        Some(_) => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %plugin_id,
+                                event_kind = kind.to_string(),
+                                "Plugin failed and the event is no longer recoverable \
+                                 (the body outgrew max_event_recovery_buffer_bytes); \
+                                 failing closed"
+                            );
+                        }
+                        None => {
+                            warn!(
+                                target: "plugins",
+                                plugin_id = %plugin_id,
+                                event_kind = kind.to_string(),
+                                "Plugin failed and this event type cannot be \
+                                 duplicated; failing closed"
+                            );
+                        }
+                    }
+                }
+                warn!(
+                    target: "plugins",
+                    plugin_id = %plugin_id,
+                    event_kind = kind.to_string(),
+                    error = %e,
+                    "Plugin execution failed (error/limit/timeout); failing closed"
+                );
+                Err(e.context(format!(
+                    "plugin {plugin_id} failed while handling a {kind} event"
+                )))
+            }
+        }
+    }
+
+    /// Extract a returned guest [`WasmEvent`] back into an owned, store-independent
+    /// [`Event`] for the next iteration of the plugin chain.
+    fn wasm_event_into_boxed(store: &mut Store<Host>, ev: WasmEvent) -> Result<Box<dyn Event>> {
+        Ok(match ev {
+            WasmEvent::Request(r) => {
+                let req = store.data_mut().http().table.delete(r)?;
+                Box::new(req)
+            }
+            WasmEvent::Response(r) => {
+                let response = store.data_mut().http().table.delete(r.response)?;
+                Box::new(ContextualResponse {
+                    request: r.request,
+                    response,
+                })
+            }
+            WasmEvent::InboundContent(c) => {
+                let content = store.data_mut().table.delete(c)?;
+                Box::new(content)
+            }
+            WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
+                timestamp: ctx.timestamp,
+            }),
+        })
     }
 
     pub fn find_first_unexecuted_plugin(
         &self,
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
-    ) -> Option<&WitmPlugin> {
-        self.plugins
-            .values()
-            .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
+    ) -> Option<Arc<WitmPlugin>> {
+        Self::find_first_unexecuted_in(&self.plugins(), event, executed_plugins)
     }
 
-    /// Find first unexecuted plugin from a pre-filtered effective set.
-    fn find_first_unexecuted_in_set<'a>(
-        &'a self,
+    /// Snapshot-based lookup so a whole event chain sees one consistent view.
+    fn find_first_unexecuted_in(
+        plugins: &HashMap<String, Arc<WitmPlugin>>,
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
-        effective_set: &HashSet<String>,
-    ) -> Option<&'a WitmPlugin> {
-        self.plugins.values().find(|p| {
-            effective_set.contains(&p.id())
-                && !executed_plugins.contains(&p.id())
-                && p.can_handle(event)
-        })
+    ) -> Option<Arc<WitmPlugin>> {
+        plugins
+            .values()
+            .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
+            .cloned()
     }
 
     /// Check if any plugins can handle an event
     pub fn can_handle(&self, event: &dyn Event) -> bool {
-        self.plugins.values().any(|p| p.can_handle(event))
+        self.plugins().values().any(|p| p.can_handle(event))
     }
 
     /// Returns the set of plugin IDs that are effective for a given tenant.
@@ -271,7 +689,8 @@ impl PluginRegistry {
         overrides: &[crate::db::tenants::TenantPluginOverride],
     ) -> HashSet<String> {
         let mut effective = HashSet::new();
-        for (id, plugin) in &self.plugins {
+        let plugins = self.plugins();
+        for (id, plugin) in plugins.iter() {
             let mut enabled = plugin.enabled;
             // Check for tenant-specific override
             for ov in overrides {
@@ -330,13 +749,16 @@ impl PluginRegistry {
     /// Validates that the final [Event] matches the expected output type for its event kind, returning an error if not
     #[tracing::instrument(skip(self, event), fields(event_kind = ?event.kind()))]
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
-        let any_plugins = self.plugins.values().any(|p| p.can_handle(&*event));
+        // One snapshot for the whole event: a consistent view of the plugin
+        // set, with no lock held while guests execute.
+        let plugins = self.plugins();
+        let any_plugins = plugins.values().any(|p| p.can_handle(&*event));
         if !any_plugins {
             debug!(
                 "No plugins with matching capability and scope; skipping plugin processing for event of kind: {:?}",
                 event.kind()
             );
-            let mut store = self.new_store();
+            let mut store = self.new_store()?;
             let event_data = event.into_event_data(&mut store)?;
             return Ok((event_data, store));
         }
@@ -347,11 +769,11 @@ impl PluginRegistry {
         );
 
         let mut current_event = event;
-        let mut store = self.new_store();
+        let mut store = self.new_store()?;
         let mut executed_plugins = HashSet::new();
 
         while let Some(plugin) =
-            { self.find_first_unexecuted_plugin(&*current_event, &executed_plugins) }
+            Self::find_first_unexecuted_in(&plugins, &*current_event, &executed_plugins)
         {
             tracing::info!(
                 plugin.id = %plugin.id(),
@@ -361,8 +783,15 @@ impl PluginRegistry {
                 "Executing plugin"
             );
 
-            executed_plugins.insert(plugin.id());
+            let plugin_id = plugin.id();
+            executed_plugins.insert(plugin_id.clone());
             let kind = current_event.kind();
+
+            // Effective limits for THIS plugin: its overrides applied over the
+            // global baseline. Resolved per event rather than cached so an
+            // operator's change takes effect on the next request without a
+            // restart.
+            let plugin_limits = self.limits_for(&plugin.limits);
             let component = if let Some(c) = &plugin.component {
                 c
             } else {
@@ -375,294 +804,88 @@ impl PluginRegistry {
                 continue;
             };
 
-            let (plugin_instance, component_store) =
-                match self.runtime.instantiate_plugin_component(component).await {
-                    Ok(pi) => pi,
-                    Err(e) => {
-                        warn!(
-                            target: "plugins",
-                            plugin_id = %plugin.id(),
-                            event_kind = kind.to_string(),
-                            error = %e,
-                            "Failed to instantiate plugin component; skipping"
-                        );
-                        continue;
-                    }
-                };
+            // Resolve+cache the component's imports once (InstancePre), then pay
+            // only the cheap per-event instantiation on this and future events.
+            let instantiated = match self.instance_pre_for(&plugin_id, component) {
+                Ok(pre) => {
+                    self.runtime
+                        .instantiate_from_pre(&pre, &plugin_limits, self.breaches_for(&plugin_id))
+                        .await
+                }
+                Err(e) => Err(e),
+            };
+            let (plugin_instance, component_store) = match instantiated {
+                Ok(pi) => pi,
+                Err(e) => {
+                    warn!(
+                        target: "plugins",
+                        plugin_id = %plugin.id(),
+                        event_kind = kind.to_string(),
+                        error = %e,
+                        "Failed to instantiate plugin component; skipping"
+                    );
+                    continue;
+                }
+            };
 
             store = component_store;
-            let event_data = current_event.into_event_data(&mut store)?;
+            // Under fail-open, install a bounded tee on the event's body so it
+            // can be rebuilt if this plugin fails. Nothing is copied until the
+            // guest actually reads, so a plugin that only inspects headers
+            // pays nothing.
+            let (event_data, shadow) = if plugin_limits.recovery == RecoveryPolicy::FailOpen {
+                current_event.into_event_data_recoverable(
+                    &mut store,
+                    plugin_limits.max_event_recovery_buffer_bytes,
+                    self.breaches_for(&plugin_id),
+                )?
+            } else {
+                (current_event.into_event_data(&mut store)?, None)
+            };
 
-            // Build the capability provider based on the plugin's granted capabilities
-            let provider = CapabilityProvider::from(&plugin.capabilities);
+            // Build the capability provider, handing the plugin its PERSISTENT
+            // local-storage client so writes survive across events.
+            let storage = self.local_storage_for(&plugin_id);
+            // Refresh the persistent client's quotas from this plugin's
+            // currently-effective limits, so a configuration change applies on
+            // the next event without discarding stored data.
+            storage.update_limits(&plugin_limits);
+            let provider = CapabilityProvider::build(
+                &plugin.capabilities,
+                Some(storage),
+                &plugin_limits,
+                self.breaches_for(&plugin_id),
+            );
             let cap_resource = store.data_mut().table.push(provider)?;
             let config = plugin.configuration.clone();
 
-            let guest_result = store
-                .run_concurrent(async move |store| {
-                    // Create the plugin resource with user-supplied configuration
-                    let create_result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_create(store, config)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling plugin create"
-                            );
-                            return Err(e);
-                        }
-                    };
-
-                    let plugin_resource = match create_result {
-                        Ok(resource) => resource,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = ?e,
-                                "Plugin create returned configure error"
-                            );
-                            return Ok(None);
-                        }
-                    };
-
-                    // Handle the event using the plugin resource
-                    let result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_handle(store, plugin_resource, event_data, cap_resource)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling handle"
-                            );
-                            return Err(e);
-                        }
-                    };
-                    Ok(result)
-                })
-                .await??;
-            match guest_result {
-                Some(new_event_data) => {
-                    // Create a new event from the returned Event for the next iteration
-                    current_event = match new_event_data {
-                        WasmEvent::Request(r) => {
-                            let req = store.data_mut().http().table.delete(r)?;
-                            Box::new(req)
-                        }
-                        WasmEvent::Response(r) => {
-                            let response = store.data_mut().http().table.delete(r.response)?;
-                            let request_ctx = r.request;
-                            Box::new(ContextualResponse {
-                                request: request_ctx,
-                                response,
-                            })
-                        }
-                        WasmEvent::InboundContent(c) => {
-                            let content = store.data_mut().table.delete(c)?;
-                            Box::new(content)
-                        }
-                        WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
-                            timestamp: ctx.timestamp,
-                        }),
-                    };
-                }
-                None => {
-                    // Timer events may legitimately return None (side-effect only)
+            let (step, next_store) = self
+                .run_plugin_in_store(
+                    &plugin_id,
+                    plugin_instance,
+                    store,
+                    event_data,
+                    cap_resource,
+                    config,
+                    kind,
+                    &plugin_limits,
+                    shadow,
+                )
+                .await?;
+            store = next_store;
+            match step {
+                GuestStep::Next(event) => current_event = event,
+                GuestStep::Terminate => {
+                    // The plugin asked for handling to stop. For a timer that
+                    // is a normal side-effect-only run, so hand back a fresh
+                    // timer event; for anything else the event does not
+                    // proceed, and the caller surfaces that as a failure.
                     if kind == EventKind::Timer {
-                        debug!("Timer plugin returned None; stopping timer chain");
                         let timer_event = crate::events::timer::TimerEvent::now();
                         let event_data = Box::new(timer_event).into_event_data(&mut store)?;
                         return Ok((event_data, store));
                     }
-                    anyhow::bail!("Plugin returned no event data; cannot continue processing");
-                }
-            }
-        }
-
-        let kind = current_event.kind();
-        let event_data = current_event.into_event_data(&mut store)?;
-        kind.validate_output(&event_data)?;
-        Ok((event_data, store))
-    }
-
-    /// Handle an event with tenant-specific plugin filtering and configuration.
-    /// Uses `effective_set` to filter plugins and `tenant_config` to override per-plugin config.
-    #[tracing::instrument(skip(self, event, effective_set, tenant_config), fields(event_kind = ?event.kind()))]
-    pub async fn handle_event_for_tenant(
-        &self,
-        event: Box<dyn Event>,
-        effective_set: &HashSet<String>,
-        tenant_config: &[crate::db::tenants::TenantPluginConfig],
-    ) -> Result<(WasmEvent, Store<Host>)> {
-        let any_plugins = self
-            .plugins
-            .values()
-            .any(|p| effective_set.contains(&p.id()) && p.can_handle(&*event));
-        if !any_plugins {
-            debug!(
-                "No effective tenant plugins for event of kind: {:?}",
-                event.kind()
-            );
-            let mut store = self.new_store();
-            let event_data = event.into_event_data(&mut store)?;
-            return Ok((event_data, store));
-        }
-
-        let mut current_event = event;
-        let mut store = self.new_store();
-        let mut executed_plugins = HashSet::new();
-
-        while let Some(plugin) =
-            { self.find_first_unexecuted_in_set(&*current_event, &executed_plugins, effective_set) }
-        {
-            tracing::info!(
-                plugin.id = %plugin.id(),
-                plugin.namespace = %plugin.namespace,
-                plugin.name = %plugin.name,
-                plugin.version = %plugin.version,
-                scope = "tenant",
-                "Executing plugin (tenant-scoped)"
-            );
-            debug!(
-                "Executing handle_event for plugin: {} (tenant-scoped)",
-                plugin.id()
-            );
-
-            executed_plugins.insert(plugin.id());
-            let kind = current_event.kind();
-            let component = if let Some(c) = &plugin.component {
-                c
-            } else {
-                warn!(
-                    target: "plugins",
-                    plugin_id = %plugin.id(),
-                    event_kind = kind.to_string(),
-                    "Plugin component missing; skipping"
-                );
-                continue;
-            };
-
-            let (plugin_instance, component_store) =
-                match self.runtime.instantiate_plugin_component(component).await {
-                    Ok(pi) => pi,
-                    Err(e) => {
-                        warn!(
-                            target: "plugins",
-                            plugin_id = %plugin.id(),
-                            event_kind = kind.to_string(),
-                            error = %e,
-                            "Failed to instantiate plugin component; skipping"
-                        );
-                        continue;
-                    }
-                };
-
-            store = component_store;
-            let event_data = current_event.into_event_data(&mut store)?;
-
-            let provider = CapabilityProvider::from(&plugin.capabilities);
-            let cap_resource = store.data_mut().table.push(provider)?;
-            // Use tenant-resolved config
-            let config = self.resolve_config(plugin, tenant_config);
-
-            let guest_result = store
-                .run_concurrent(async move |store| {
-                    let create_result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_create(store, config)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling plugin create"
-                            );
-                            return Err(e);
-                        }
-                    };
-
-                    let plugin_resource = match create_result {
-                        Ok(resource) => resource,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = ?e,
-                                "Plugin create returned configure error"
-                            );
-                            return Ok(None);
-                        }
-                    };
-
-                    let result = match plugin_instance
-                        .witmproxy_plugin_witm_plugin()
-                        .plugin()
-                        .call_handle(store, plugin_resource, event_data, cap_resource)
-                        .await
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            warn!(
-                                target: "plugins",
-                                event_kind = kind.to_string(),
-                                error = %e,
-                                "Error calling handle"
-                            );
-                            return Err(e);
-                        }
-                    };
-                    Ok(result)
-                })
-                .await??;
-
-            match guest_result {
-                Some(new_event_data) => {
-                    current_event = match new_event_data {
-                        WasmEvent::Request(r) => {
-                            let req = store.data_mut().http().table.delete(r)?;
-                            Box::new(req)
-                        }
-                        WasmEvent::Response(r) => {
-                            let response = store.data_mut().http().table.delete(r.response)?;
-                            let request_ctx = r.request;
-                            Box::new(ContextualResponse {
-                                request: request_ctx,
-                                response,
-                            })
-                        }
-                        WasmEvent::InboundContent(c) => {
-                            let content = store.data_mut().table.delete(c)?;
-                            Box::new(content)
-                        }
-                        WasmEvent::Timer(ctx) => Box::new(crate::events::timer::TimerEvent {
-                            timestamp: ctx.timestamp,
-                        }),
-                    };
-                }
-                None => {
-                    if kind == EventKind::Timer {
-                        debug!("Timer plugin returned None; stopping timer chain");
-                        let timer_event = crate::events::timer::TimerEvent::now();
-                        let event_data = Box::new(timer_event).into_event_data(&mut store)?;
-                        return Ok((event_data, store));
-                    }
-                    anyhow::bail!("Plugin returned no event data; cannot continue processing");
+                    anyhow::bail!("plugin {plugin_id} terminated handling of a {kind} event");
                 }
             }
         }
@@ -691,7 +914,7 @@ mod tests {
 
     /// Create a test plugin with the specific CEL expression for filtering
     async fn register_test_plugin_with_cel_filter(
-        registry: &mut PluginRegistry,
+        registry: &PluginRegistry,
         cel_expression: &str,
     ) -> Result<(), anyhow::Error> {
         let wasm_path = test_component_path()?;
@@ -737,6 +960,7 @@ mod tests {
         ];
 
         let plugin = WitmPlugin {
+            limits: Default::default(),
             name: "test_plugin_with_filter".into(),
             component_bytes,
             namespace: "test".into(),
@@ -758,11 +982,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_first_unexecuted_plugin_with_cel_filter() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin with the specific CEL expression
         let cel_expression = "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression).await?;
+        register_test_plugin_with_cel_filter(&registry, cel_expression).await?;
 
         let executed_plugins = HashSet::new();
 
@@ -773,7 +997,7 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -789,7 +1013,7 @@ mod tests {
             .header("skipthis", "false")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -805,7 +1029,7 @@ mod tests {
             .header("skipthis", "true")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -820,7 +1044,7 @@ mod tests {
             .header("host", "donotprocess.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -836,7 +1060,7 @@ mod tests {
             .header("skipthis", "false")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -852,7 +1076,7 @@ mod tests {
             .header("skipthis", "true")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         assert!(
@@ -872,7 +1096,7 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let executed_plugins = HashSet::new();
         let event: Box<dyn Event> = Box::new(wasi_req);
         let matching_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
@@ -886,7 +1110,7 @@ mod tests {
     #[tokio::test]
     async fn test_find_first_unexecuted_plugin_no_request_capability() -> Result<(), anyhow::Error>
     {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin without Request capability
         let wasm_path = test_component_path()?;
@@ -921,6 +1145,7 @@ mod tests {
         ];
 
         let plugin = WitmPlugin {
+            limits: Default::default(),
             name: "response_only_plugin".into(),
             component_bytes,
             namespace: "test".into(),
@@ -944,7 +1169,7 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
         let executed_plugins = HashSet::new();
 
         let event: Box<dyn Event> = Box::new(wasi_req);
@@ -959,11 +1184,11 @@ mod tests {
     #[tokio::test]
     async fn test_find_first_unexecuted_plugin_excludes_executed_plugins()
     -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register first plugin that matches all requests
         let cel_expression1 = "true";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression1).await?;
+        register_test_plugin_with_cel_filter(&registry, cel_expression1).await?;
 
         // Create another plugin with a different name to test multiple plugins
         let wasm_path = test_component_path()?;
@@ -1007,6 +1232,7 @@ mod tests {
         ];
 
         let plugin2 = WitmPlugin {
+            limits: Default::default(),
             name: "second_test_plugin".into(),
             component_bytes,
             namespace: "test".into(),
@@ -1032,26 +1258,24 @@ mod tests {
             .header("host", "example.com")
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
-        let (wasi_req, _io) = WasiRequest::from_http(req);
+        let (wasi_req, _io) = WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
 
         let mut executed_plugins = HashSet::new();
 
         // First call should return a plugin
         let event: Box<dyn Event> = Box::new(wasi_req);
-        let first_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
-        assert!(
-            first_plugin.is_some(),
-            "Should find a plugin when none are executed"
-        );
+        let first_plugin = registry
+            .find_first_unexecuted_plugin(&*event, &executed_plugins)
+            .expect("Should find a plugin when none are executed");
 
         // Add the first plugin to executed set
-        executed_plugins.insert(first_plugin.unwrap().id());
+        executed_plugins.insert(first_plugin.id());
 
         // Second call should return a different plugin (if there are multiple)
         let second_plugin = registry.find_first_unexecuted_plugin(&*event, &executed_plugins);
         if let Some(second_plugin) = second_plugin {
             assert_ne!(
-                first_plugin.unwrap().id(),
+                first_plugin.id(),
                 second_plugin.id(),
                 "Should return a different plugin"
             );
@@ -1071,11 +1295,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_plugin_with_namespace() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register a plugin
         let cel_expression = "true";
-        register_test_plugin_with_cel_filter(&mut registry, cel_expression).await?;
+        register_test_plugin_with_cel_filter(&registry, cel_expression).await?;
 
         // Verify plugin is registered
         assert_eq!(registry.plugins().len(), 1);
@@ -1099,7 +1323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_plugin_without_namespace() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Register multiple plugins with same name but different namespaces
         let wasm_path = test_component_path()?;
@@ -1138,6 +1362,7 @@ mod tests {
             ];
 
             let plugin = WitmPlugin {
+                limits: Default::default(),
                 name: name.to_string(),
                 component_bytes: component_bytes.clone(),
                 namespace: namespace.to_string(),
@@ -1174,7 +1399,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_nonexistent_plugin() -> Result<(), anyhow::Error> {
-        let (mut registry, _temp_dir) = create_plugin_registry().await?;
+        let (registry, _temp_dir) = create_plugin_registry().await?;
 
         // Try to remove a plugin that doesn't exist
         let removed = registry

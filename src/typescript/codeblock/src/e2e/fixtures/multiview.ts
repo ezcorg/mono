@@ -4,7 +4,7 @@ import { SearchIndex } from "../../utils/search";
 
 async function init() {
     // Use FSA (OPFS) directly — SharedWorker hangs in headless Chrome.
-    const fs = await Vfs.fsa(`codeblock-test-multiview-${Date.now()}`);
+    const fs = await Vfs.worker(undefined, `codeblock-test-multiview-${Date.now()}`);
     const index = await SearchIndex.get(fs, '.codeblock/index.json');
 
     const parentA = document.getElementById('editor-a') as HTMLDivElement;

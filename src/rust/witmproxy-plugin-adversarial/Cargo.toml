@@ -1,0 +1,19 @@
+[package]
+name = "witmproxy-plugin-adversarial"
+version = "0.0.1"
+edition = "2024"
+description = "Deliberately hostile plugin used to exercise witmproxy's sandbox limits"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.61.1", features = ["async-spawn"] }
+
+[package.metadata.component]
+package = "witmproxy:witmproxy-plugin-adversarial-plugin"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]

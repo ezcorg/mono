@@ -1,0 +1,47 @@
+package icanhaz:fspass@0.1.0;
+
+// No local wasi deps would let wit-bindgen fall back to its bundled 0.2.6 while
+// wasmtime-wasi 46 provides 0.2.12 — a version skew that makes wrpc-wasmtime see
+// two distinct `descriptor` resource types. So the full 0.2.12 set is vendored in
+// deps/ and referenced explicitly; imports == exports == 0.2.12.
+
+/// Host-provided consent gate: the host validates the bearer token against its
+/// grant store (a live `filesystem` grant) and returns the granted **root path**
+/// (relative to the served preopen) the descriptor should be scoped to, else a
+/// denial. `""`/`"/"` ⇒ the whole preopen.
+interface gate {
+  authorize: func(grant: string) -> result<string, string>;
+}
+
+/// The gated entry point. Exchange a consented grant for the **root descriptor**;
+/// thereafter that descriptor (and any it opens) IS the capability — every
+/// `wasi:filesystem/types` method works on it. `preopens` is deliberately NOT
+/// exported, so `open-root` is the only way to obtain a descriptor: an ungated
+/// peer has no handle and no access.
+interface mount {
+  use wasi:filesystem/types@0.2.12.{descriptor};
+  open-root: func(grant: string) -> result<descriptor, string>;
+}
+
+/// Import-only world — the single shared home of the value types (see lib.rs).
+world fs-raw {
+  import wasi:filesystem/types@0.2.12;
+  import wasi:filesystem/preopens@0.2.12;
+}
+
+/// The passthrough: import the raw host wasi:filesystem (preopen-jailed) + the
+/// consent gate; re-export the filesystem (descriptor methods) + the gated mount.
+world fs-passthrough {
+  import wasi:filesystem/types@0.2.12;
+  import wasi:filesystem/preopens@0.2.12;
+  import gate;
+  export wasi:filesystem/types@0.2.12;
+  export mount;
+}
+
+/// The mirror world a wRPC client generates against: it mounts (with a grant),
+/// then drives the returned descriptor.
+world fs-client {
+  import wasi:filesystem/types@0.2.12;
+  import mount;
+}

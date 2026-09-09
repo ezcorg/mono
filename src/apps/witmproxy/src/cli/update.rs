@@ -1,14 +1,18 @@
-use crate::config::{AppConfig, system_app_dir};
+use crate::config::{AppConfig, UpdateConfig, system_app_dir};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 // ---------------------------------------------------------------------------
 // 4a. Current version
 // ---------------------------------------------------------------------------
 
 pub fn current_version() -> semver::Version {
+    #[allow(
+        clippy::expect_used,
+        reason = "our own crate version; cargo guarantees it is valid semver"
+    )]
     env!("CARGO_PKG_VERSION").parse().expect("valid semver")
 }
 
@@ -237,25 +241,35 @@ async fn download_release_binary(version: &semver::Version) -> Result<Vec<u8>> {
 
     let bytes = resp.bytes().await?.to_vec();
 
-    // Basic magic-byte validation
-    let valid = if cfg!(target_os = "macos") {
-        // Mach-O: 0xFEEDFACE, 0xFEEDFACF, or fat binary 0xCAFEBABE
-        bytes.len() >= 4
-            && (bytes[..4] == [0xFE, 0xED, 0xFA, 0xCE]
-                || bytes[..4] == [0xFE, 0xED, 0xFA, 0xCF]
-                || bytes[..4] == [0xCF, 0xFA, 0xED, 0xFE]
-                || bytes[..4] == [0xCE, 0xFA, 0xED, 0xFE]
-                || bytes[..4] == [0xCA, 0xFE, 0xBA, 0xBE])
-    } else {
-        // ELF: 0x7F ELF
-        bytes.len() >= 4 && bytes[..4] == [0x7F, b'E', b'L', b'F']
-    };
-
-    if !valid {
+    if !looks_like_executable(&bytes) {
         anyhow::bail!("Downloaded binary has invalid magic bytes — not a valid executable");
     }
 
     Ok(bytes)
+}
+
+/// True if `bytes` begins with a plausible executable magic number for the
+/// current platform (Mach-O / fat binary on macOS, ELF otherwise).
+fn looks_like_executable(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    let Some(magic) = bytes.get(..4) else {
+        return false;
+    };
+    if cfg!(target_os = "macos") {
+        // Mach-O (thin, either endianness/width) or fat binary (0xCAFEBABE).
+        matches!(
+            magic,
+            [0xFE, 0xED, 0xFA, 0xCE]
+                | [0xFE, 0xED, 0xFA, 0xCF]
+                | [0xCF, 0xFA, 0xED, 0xFE]
+                | [0xCE, 0xFA, 0xED, 0xFE]
+                | [0xCA, 0xFE, 0xBA, 0xBE]
+        )
+    } else {
+        magic == [0x7F, b'E', b'L', b'F']
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -316,18 +330,7 @@ async fn try_delta_update(
         .context("failed to apply delta patch")?;
 
     // Validate the patched binary
-    let valid = if cfg!(target_os = "macos") {
-        new_binary.len() >= 4
-            && (new_binary[..4] == [0xFE, 0xED, 0xFA, 0xCE]
-                || new_binary[..4] == [0xFE, 0xED, 0xFA, 0xCF]
-                || new_binary[..4] == [0xCF, 0xFA, 0xED, 0xFE]
-                || new_binary[..4] == [0xCE, 0xFA, 0xED, 0xFE]
-                || new_binary[..4] == [0xCA, 0xFE, 0xBA, 0xBE])
-    } else {
-        new_binary.len() >= 4 && new_binary[..4] == [0x7F, b'E', b'L', b'F']
-    };
-
-    if !valid {
+    if !looks_like_executable(&new_binary) {
         anyhow::bail!("Patched binary has invalid magic bytes — patch may be corrupt");
     }
 
@@ -367,19 +370,42 @@ fn replace_binary(new_binary: &[u8]) -> Result<()> {
 
     // Rename current → .old, temp → current
     if let Err(e) = std::fs::rename(&current_exe, &old_path) {
-        // Clean up temp
-        let _ = std::fs::remove_file(&temp_path);
+        if let Err(cleanup) = std::fs::remove_file(&temp_path) {
+            debug!(
+                "could not remove temp binary {}: {cleanup}",
+                temp_path.display()
+            );
+        }
         return Err(e).context("failed to rename current binary to .old");
     }
 
     if let Err(e) = std::fs::rename(&temp_path, &current_exe) {
-        // Restore old binary
-        let _ = std::fs::rename(&old_path, &current_exe);
-        return Err(e).context("failed to rename new binary into place");
+        // The current binary has already been moved aside, so a failed restore
+        // leaves NO executable at `current_exe`. That is a broken install, and
+        // the error must say so and say where the old binary is -- reporting
+        // only the original failure would send the user looking in the wrong
+        // place while their `witm` is missing.
+        if let Err(restore) = std::fs::rename(&old_path, &current_exe) {
+            error!(
+                "update failed AND rollback failed: {} is missing; the previous \
+                 binary is at {}. Restore it manually.",
+                current_exe.display(),
+                old_path.display()
+            );
+            return Err(e).context(format!(
+                "failed to install the new binary, and rolling back also failed \
+                 ({restore}). {} is missing; the previous binary is at {}",
+                current_exe.display(),
+                old_path.display()
+            ));
+        }
+        return Err(e).context("failed to rename new binary into place (rolled back)");
     }
 
-    // Clean up .old
-    let _ = std::fs::remove_file(&old_path);
+    // Clean up .old. A leftover file is harmless, so this is best effort.
+    if let Err(e) = std::fs::remove_file(&old_path) {
+        debug!("could not remove {}: {e}", old_path.display());
+    }
 
     Ok(())
 }
@@ -411,12 +437,12 @@ async fn update_via_cargo_install(version: &semver::Version) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 pub struct UpdateHandler {
-    config: AppConfig,
+    update: UpdateConfig,
 }
 
 impl UpdateHandler {
-    pub fn new(config: AppConfig) -> Self {
-        Self { config }
+    pub fn new(update: UpdateConfig) -> Self {
+        Self { update }
     }
 
     pub async fn handle(&self, force: bool, from_source: bool) -> Result<()> {
@@ -453,7 +479,7 @@ impl UpdateHandler {
 
         let mut updated = false;
 
-        if !from_source && self.config.update.prefer_prebuilt {
+        if !from_source && self.update.prefer_prebuilt {
             // Try delta patch first (much smaller download)
             match try_delta_update(&current, &latest).await {
                 Ok(Some(binary)) => match replace_binary(&binary) {
@@ -515,6 +541,8 @@ impl UpdateHandler {
 // 4i. Daemon auto-update loop
 // ---------------------------------------------------------------------------
 
+/// The daemon auto-update loop takes the full [`AppConfig`]: after swapping
+/// the binary it re-runs `service install`, which persists the config file.
 pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
     // Wait 60s after startup to avoid startup churn
     tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
@@ -594,10 +622,7 @@ pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
                                 None,
                                 false,
                             );
-                            if let Err(e) = handler
-                                .install_service(confique::Layer::default_values(), true)
-                                .await
-                            {
+                            if let Err(e) = handler.install_service(true).await {
                                 warn!("Auto-update: failed to reinstall service: {:#}", e);
                             }
                             if let Err(e) = handler.restart_service().await {

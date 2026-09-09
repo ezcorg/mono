@@ -1,123 +1,36 @@
-@import "tailwindcss";
+/* Nerd font for codeblock icons. Mirrors the @font-face the codeblock
+   library injects dynamically; declaring it statically here keeps the
+   font available regardless of when the library's own <style> lands. */
+@font-face {
+    font-family: 'UbuntuMono NF';
+    src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
 
-@layer base {}
-@theme {
-    --breakpoint-xs: 360px;
+/* The markdown-editor's prose face. */
+@font-face {
+    font-family: 'Source Serif 4';
+    src: url('/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf') format('truetype-variations');
+    font-weight: 200 900;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Source Serif 4';
+    src: url('/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf') format('truetype-variations');
+    font-weight: 200 900;
+    font-style: italic;
+    font-display: swap;
 }
 
 html {
-    font-family: 'Inter', 'Helvetica', system-ui, sans-serif;
-    scroll-behavior: smooth;
+    font-family: Helvetica, Arial, system-ui, sans-serif;
+    background: #000;
 }
-
 body {
     margin: 0;
     padding: 0;
     min-height: 100vh;
-}
-
-.work-item-card {
-    .ezco-mde {
-        --ezco-mde-bg: var(--ezco-mde-bg-dark);
-        --ezco-mde-code-bg: var(--ezco-mde-code-bg-dark);
-    }
-}
-
-.work-item-card:hover {
-    .ezco-mde {
-        --ezco-mde-code-bg: var(--ezco-mde-code-bg-light);
-        --ezco-mde-bg: var(--ezco-mde-bg-light);
-    }
-}
-
-@keyframes blink {
-
-    0%,
-    49% {
-        opacity: 1;
-    }
-
-    50%,
-    100% {
-        opacity: 0;
-    }
-}
-
-.page-content>section {
-    width: 100%;
-    max-width: min(80ch, 100vw);
-    margin-left: auto;
-    margin-right: auto;
-
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    padding: 2rem 1rem 0;
-}
-
-@media (width >= 640px) {
-    .page-content > section {
-        padding-left: 1.5rem;
-        padding-right: 1.5rem;
-    }
-}
-
-@media (width >= 768px) {
-    .page-content > section {
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }
-}
-
-.page-content > section > div {
-    width: 100%;
-    display: flex;
-    align-items: center;
-}
-
-.animate-blink {
-    animation: blink 1s step-start infinite;
-}
-
-.ProseMirror {
-    padding: 1.5rem;
-    flex: 1;
-    max-width: 100%;
-    font-optical-sizing: auto;
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-
-    &:focus-visible {
-        outline: none;
-    }
-
-    h1:first-of-type {
-        margin-top: 0;
-    }
-
-    & a:hover {
-        cursor: pointer;
-    }
-
-    li>p {
-        margin-top: 0;
-        margin-bottom: 0;
-    }
-
-    ol,
-    ul,
-    menu {
-        list-style: revert;
-    }
-
-    .cm-editor[data-theme='dark'] {
-        --cm-line-highlight: #ffffff1a;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .cm-editor {
-            --cm-line-highlight: #ffffff1a;
-        }
-    }
 }

@@ -6,7 +6,6 @@ use crate::web::WebServer;
 use crate::web::auth::{Claims, create_token};
 use std::sync::Arc;
 use tempfile::tempdir;
-use tokio::sync::RwLock;
 
 /// Helper to create a web server with auth enabled and a DB pool.
 async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, tempfile::TempDir) {
@@ -14,7 +13,7 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
 
     let (ca, mut config) = create_ca_and_config().await;
     config.auth.enabled = true;
-    config.auth.jwt_secret = Some("test-secret-key".to_string());
+    config.auth.jwt_secret = Some("test-secret-key".into());
     config.auth.jwt_issuer = Some("witmproxy".to_string());
 
     let temp_dir = tempdir().unwrap();
@@ -24,9 +23,8 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
     let pool = db.pool.clone();
 
     let runtime = Runtime::try_default().unwrap();
-    let plugin_registry = Arc::new(RwLock::new(
-        crate::plugins::registry::PluginRegistry::new(db, runtime).unwrap(),
-    ));
+    let plugin_registry =
+        Arc::new(crate::plugins::registry::PluginRegistry::new(db, runtime).unwrap());
 
     let mut web_server = WebServer::new(ca, Some(plugin_registry), config);
     web_server = web_server.with_db_pool(pool.clone());
@@ -41,6 +39,9 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
     let base_url = format!("https://{}", bind_addr);
 
     // Leak web_server so it stays alive for the test
+    // Keep the server alive for the rest of the test; the process
+    // exits at the end, so leaking it is the intent.
+    #[allow(clippy::mem_forget, reason = "test fixture outlives the test body")]
     std::mem::forget(web_server);
 
     (client, base_url, pool, temp_dir)
@@ -66,9 +67,11 @@ fn make_expired_token(tenant_id: &str, secret: &str) -> String {
 // Register + Login flow
 // ---------------------------------------------------------------------------
 
+/// Self-registration is gated behind admin approval: it creates a disabled
+/// tenant and returns 202 Accepted with no usable token.
 #[tokio::test]
-async fn register_returns_jwt() {
-    let (client, base_url, _pool, _dir) = setup_auth_server().await;
+async fn register_creates_pending_tenant() {
+    let (client, base_url, pool, _dir) = setup_auth_server().await;
 
     let resp = client
         .post(format!("{}/api/auth/register", base_url))
@@ -81,20 +84,45 @@ async fn register_returns_jwt() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 201, "Register should return 201 Created");
+    assert_eq!(
+        resp.status(),
+        202,
+        "Register should return 202 Accepted (pending admin approval)"
+    );
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["token"].is_string(), "Response should contain a token");
+    assert_eq!(
+        body["token"], "",
+        "No token should be issued until approval"
+    );
     assert!(
         body["tenant_id"].is_string(),
         "Response should contain tenant_id"
     );
+
+    // The new tenant must exist but be disabled pending approval.
+    let tenant = Tenant::by_email(&pool, "alice@test.com")
+        .await
+        .unwrap()
+        .expect("tenant should have been created");
+    assert!(
+        !tenant.enabled,
+        "self-registered tenant should be disabled pending approval"
+    );
+}
+
+/// Approve a pending self-registration by enabling the tenant.
+async fn approve_tenant(pool: &sqlx::SqlitePool, email: &str) {
+    let tenant = Tenant::by_email(pool, email).await.unwrap().unwrap();
+    Tenant::update_enabled(pool, &tenant.id, true)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn login_with_valid_credentials() {
-    let (client, base_url, _pool, _dir) = setup_auth_server().await;
+    let (client, base_url, pool, _dir) = setup_auth_server().await;
 
-    // Register first
+    // Register first (creates a disabled tenant), then an admin approves it.
     client
         .post(format!("{}/api/auth/register", base_url))
         .json(&serde_json::json!({
@@ -105,6 +133,7 @@ async fn login_with_valid_credentials() {
         .send()
         .await
         .unwrap();
+    approve_tenant(&pool, "bob@test.com").await;
 
     // Login
     let resp = client
@@ -117,16 +146,16 @@ async fn login_with_valid_credentials() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 200, "Login should return 200");
+    assert_eq!(resp.status(), 200, "Login should return 200 after approval");
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body["token"].is_string());
 }
 
 #[tokio::test]
 async fn login_with_invalid_credentials_returns_401() {
-    let (client, base_url, _pool, _dir) = setup_auth_server().await;
+    let (client, base_url, pool, _dir) = setup_auth_server().await;
 
-    // Register
+    // Register + approve so we exercise the password check (not the disabled check).
     client
         .post(format!("{}/api/auth/register", base_url))
         .json(&serde_json::json!({
@@ -137,6 +166,7 @@ async fn login_with_invalid_credentials_returns_401() {
         .send()
         .await
         .unwrap();
+    approve_tenant(&pool, "charlie@test.com").await;
 
     // Login with wrong password
     let resp = client

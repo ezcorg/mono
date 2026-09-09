@@ -1,0 +1,170 @@
+---
+/* The room: the chrome, the accessible page list, and the content templates the furniture renders.
+   Content comes from the same sources as the flat pages (src/data/*, src/content/blog). The scene itself is src/room/room.js. */
+import { projects } from '../data/work';
+import { sections, lately, links, statementHtml } from '../data/about';
+import { posts, fmtDate } from '../data/posts';
+import { TAGLINE } from '../data/site';
+import { MIN_BUDGET } from '../room/forms.js';
+/* links between pages are written as the static addresses (`/join/`), which crawlers can follow; the room turns every
+   `a[data-room]` into its hash route (`#/join`) when it boots */
+const roomHref = (href: string) => href + '/';
+---
+
+<div class="room" id="room">
+	<div class="loading" id="loading" aria-live="polite"><span class="lw"><span class="lt">loading</span><span class="ls" aria-hidden="true">loading</span></span></div>
+	<div class="labels" id="labels"><button class="lbl bldg" id="bldg" type="button" title="come in">{TAGLINE}</button></div>
+	<div class="prompts" id="prompts"></div>
+	<nav class="sr-nav" id="srnav" aria-label="Pages">
+		<a tabindex="0" href="/work/" data-room data-thing="work">our work</a>
+		<a tabindex="0" href="/blog/" data-room data-thing="blog">blog</a>
+		<a tabindex="0" href="/newproject/" data-room data-thing="newproject">start a project</a>
+		<a tabindex="0" href="/about/" data-room data-thing="about">about us</a>
+		<a tabindex="0" href="#/whiteboard" data-thing="whiteboard">whiteboard</a>
+		<a tabindex="0" href={links.github} target="_blank" rel="noopener" data-thing="github">GitHub ↗</a>
+		<a tabindex="0" href={links.linkedin} target="_blank" rel="noopener" data-thing="linkedin">LinkedIn ↗</a>
+		<a tabindex="0" href="/join/" data-room data-thing="join">come work with us</a>
+		<button tabindex="0" type="button" data-thing="lights" id="srlights">switch to day</button>
+		<button tabindex="0" type="button" data-thing="tripod">table lamp</button>
+		<button tabindex="0" type="button" data-thing="lantern">paper lantern</button>
+		<button tabindex="0" type="button" data-thing="pendant">pendant</button>
+		<button tabindex="0" type="button" data-thing="radio">play the radio</button>
+	</nav>
+
+	<!-- laptop → our work: a tiny desktop OS -->
+	<template id="t-screen">
+		<div class="saver"><div class="mlogo" aria-label="ez co"><span class="lw"><span class="lt"><span>ez</span><span>co</span></span><span class="ls" aria-hidden="true"><span class="lt"><span>ez</span><span>co</span></span></span></span></div></div>
+		<div class="os">
+			<div class="bar"><span class="sys"><b>ez os</b></span><span class="tasks"></span><span data-clock>--:--</span></div>
+			<div class="desk">
+				{projects.map((p) => (
+					<button class="app" data-app={p.id} data-href={p.href}>
+						<span class="ico">{p.icon}</span><span class="nm">{p.title}</span>
+						<span class="tip">{p.description}<small>{p.tags.join(' · ')}{p.href ? ' · opens ' + new URL(p.href).hostname + ' ↗' : ''}</small></span>
+					</button>
+				))}
+				<button class="app" data-app="newproject"><span class="ico plus"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5v15M4.5 12h15" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span><span class="nm">new project</span><span class="tip">See your idea come to life</span></button>
+			</div>
+			<div class="win" data-win="newproject" hidden>
+				<div class="tb"><span>new project</span><span class="wc"><button type="button" data-min aria-label="minimise" title="minimise">–</button><button type="button" data-close aria-label="close" title="close">×</button></span></div>
+				<div class="body"><div class="scroller">
+					<form class="form np" id="os-np-form">
+						<div><label for="os-name">Name *</label><input id="os-name" name="name" placeholder="Who are you?" required maxlength="100"></div>
+						<div><label for="os-email">Email *</label><input id="os-email" name="email" type="email" placeholder="Where can we reach you?" required></div>
+						<div><label for="os-service">Service *</label>
+							<select id="os-service" name="service" required>
+								<option value="" disabled selected>What can we help you with?</option>
+								<option value="open-source">Open source</option>
+								<option value="software-development">Software development</option>
+								<option value="consulting">Consulting</option>
+								<option value="other">Other</option>
+							</select></div>
+						<div><label for="os-budget">Budget <small style="opacity:.6">(optional)</small></label><div class="money"><span>$</span><input id="os-budget" type="number" name="budget" min={MIN_BUDGET} max="1000000000" step="1" placeholder={`${MIN_BUDGET} or more`}><i>USD</i></div></div>
+						<div><label for="os-msg">Message * <small style="opacity:.6">(at least 50 characters)</small></label><textarea id="os-msg" name="message" placeholder="In a few sentences, what are you hoping to build?" required minlength="50" maxlength="2000"></textarea></div>
+						<div class="cf-turnstile"></div>
+						<div class="err" role="alert"></div>
+						<button class="submit" type="submit">submit</button>
+						<div class="thanks">Got it. It's on the board across the room, and we'll write back soon.</div>
+					</form>
+				</div></div>
+			</div>
+			{projects.filter((p) => p.demo).map((p) => (
+				<div class="win wide" data-win={p.id} data-demo={p.demo} hidden>
+					<div class="body"><div class="demo"></div></div>
+				</div>
+			))}
+		</div>
+	</template>
+
+	<!-- tablet → blog -->
+	<template id="t-reader">
+		<div class="bar"><span>ez co · blog</span><span>{posts.length} post{posts.length === 1 ? '' : 's'}</span></div>
+		<div class="scroller">
+			{posts.map(({ slug, fm, Content }) => (
+				<article data-slug={slug} hidden>
+					<header>
+						<h1>{fm.title}</h1>
+						<div class="meta">{fmtDate(fm.date)}{fm.author ? ' · ' + fm.author : ''}</div>
+						{fm.tags?.length ? <div class="tags">{fm.tags.map((t) => <span class="tag">{t}</span>)}</div> : null}
+					</header>
+					<Content />
+				</article>
+			))}
+			{posts.length > 1 && (
+				<nav class="posts" aria-label="More posts">
+					<h4>more from the blog</h4>
+					{posts.map((p) => <a href={p.path} data-room data-slug={p.slug}><b>{p.fm.title}</b><small>{fmtDate(p.fm.date)}{p.fm.description ? ' · ' + p.fm.description : ''}</small></a>)}
+				</nav>
+			)}
+		</div>
+		<div class="idle">blog<br><span style="opacity:.6;font-size:.85em">tap to read</span></div>
+	</template>
+
+	<!-- kanban → start a project -->
+	<template id="t-kanban">
+		<div class="kb">
+			<div class="col scroll"><h4>ideas</h4>
+				<form class="note new form np" id="np-form">
+					<b>Want us to make something?</b>
+					<div class="stuckText"></div>
+					<div><label for="np-name">Name *</label><input id="np-name" name="name" placeholder="Who are you?" required maxlength="100"></div>
+					<div><label for="np-email">Email *</label><input id="np-email" name="email" type="email" placeholder="Where can we reach you?" required></div>
+					<div><label for="np-service">Service *</label>
+						<select id="np-service" name="service" required>
+							<option value="" disabled selected>What can we help you with?</option>
+							<option value="open-source">Open source</option>
+							<option value="software-development">Software development</option>
+							<option value="consulting">Consulting</option>
+							<option value="other">Other</option>
+						</select></div>
+					<div><label for="np-budget">Budget <small style="opacity:.6">(optional)</small></label><div class="money"><span>$</span><input id="np-budget" type="number" name="budget" min={MIN_BUDGET} max="1000000000" step="1" placeholder={`${MIN_BUDGET} or more`}><i>USD</i></div></div>
+					<div><label for="np-msg">Message * <small style="opacity:.6">(at least 50 characters)</small></label><textarea id="np-msg" name="message" placeholder="In a few sentences, what are you hoping to build?" required minlength="50" maxlength="2000"></textarea></div>
+					<div class="cf-turnstile"></div>
+					<div class="err" role="alert"></div>
+					<button class="submit" type="submit">submit</button>
+					<div class="thanks">It's on the board. We'll write back soon.</div>
+				</form>
+			</div>
+			<div class="col"><h4>doing</h4>
+				{lately.map((t) => <div class="note">{t}</div>)}
+			</div>
+			<div class="col"><h4>done</h4>
+				{projects.map((p) => <div class="note">{p.title}<small>{p.tags.slice(0, 2).join(' · ')}</small></div>)}
+			</div>
+		</div>
+	</template>
+
+	<!-- framed manifesto → about -->
+	<template id="t-manifesto">
+		<div class="scroller">
+			{sections.map((s) => (
+				<>
+					<h3>{s.heading}</h3>
+					<div class="mission"><ul>{s.statements.map((st) => <li set:html={statementHtml(st, roomHref)} />)}</ul></div>
+				</>
+			))}
+		</div>
+	</template>
+
+	<!-- clipboard → come work with us -->
+	<template id="t-sheet">
+		<div class="scroller">
+			<h2>come work with us</h2>
+			<p class="lede">A sign-up sheet. We're a democratic collective, not an employer — every member has a voice, and a share.</p>
+			<form class="form" id="join-form">
+				<div><label for="j-name">Name *</label><input id="j-name" name="name" required></div>
+				<div><label for="j-email">Email *</label><input id="j-email" name="email" type="email" required></div>
+				<div><label for="j-cv">Resume/CV * <small style="opacity:.6">(PDF, DOC, DOCX)</small></label><input id="j-cv" name="resume" type="file" accept=".pdf,.doc,.docx" required></div>
+				<div><label for="j-why">Why do you want to join? *</label><textarea id="j-why" name="motivation" required></textarea></div>
+				<button class="submit" type="submit">submit</button>
+				<div class="thanks">Thanks! We're not ready for new members just yet, but feel free to find another way to get in touch if you're determined.</div>
+			</form>
+		</div>
+	</template>
+</div>
+
+<script>
+	import { boot } from '../room/room.js';
+	const SITE_KEY = import.meta.env.DEV ? '1x00000000000000000000AA' : '0x4AAAAAABjl6CJ20hxOvkB9';
+	boot({ mount: document.getElementById('room'), turnstileSiteKey: SITE_KEY, photo: '/employee.jpg' });
+</script>

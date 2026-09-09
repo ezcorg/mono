@@ -14,11 +14,7 @@ async fn e2e_simple_json_test() -> Result<()> {
     let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await?;
     proxy.start().await.unwrap();
 
-    // Register test component, ensure write lock is dropped after use to prevent deadlock
-    {
-        let mut registry = registry.write().await;
-        register_test_component(&mut registry).await.unwrap();
-    }
+    register_test_component(&registry).await.unwrap();
 
     let target = create_json_echo_server("127.0.0.1", None, ca.clone(), Protocol::Http2).await;
     let client = create_client(
@@ -53,17 +49,10 @@ async fn e2e_simple_json_test() -> Result<()> {
     debug!("Response JSON: {:?}", json);
     // Expect the request header added by the WASM plugin
     assert!(json.headers.contains_key("witmproxy"));
-    assert!(json.headers.get("witmproxy").unwrap().contains("req"));
+    assert!(json.headers["witmproxy"].contains("req"));
     // Expect the response header added by the WASM plugin
     assert!(headers.contains_key("witmproxy"));
-    assert!(
-        headers
-            .get("witmproxy")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .contains("res")
-    );
+    assert!(headers["witmproxy"].to_str().unwrap().contains("res"));
     Ok(())
 }
 
@@ -75,11 +64,7 @@ async fn e2e_simple_html_test() -> Result<()> {
     let (mut proxy, registry, ca, _config, _temp_dir) = create_witmproxy().await?;
     proxy.start().await.unwrap();
 
-    // Register test component, ensure write lock is dropped after use to prevent deadlock
-    {
-        let mut registry = registry.write().await;
-        register_test_component(&mut registry).await.unwrap();
-    }
+    register_test_component(&registry).await.unwrap();
 
     let target = create_html_server("127.0.0.1", None, ca.clone(), Protocol::Http2).await;
     let client = create_client(
@@ -145,11 +130,8 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
     // Register both plugins:
     // - test component: has Connect scope "true" so MITM is triggered for 127.0.0.1
     // - noshorts: has InboundContent scope matching text/html, uses spawn for body streaming
-    {
-        let mut registry = registry.write().await;
-        register_test_component(&mut registry).await.unwrap();
-        register_noshorts_plugin(&mut registry).await.unwrap();
-    }
+    register_test_component(&registry).await.unwrap();
+    register_noshorts_plugin(&registry).await.unwrap();
 
     let target = create_html_server("127.0.0.1", None, ca.clone(), Protocol::Http2).await;
     let client = create_client(
@@ -204,5 +186,76 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
         response_text
     );
 
+    Ok(())
+}
+
+/// A large HTML body survives a content-rewriting plugin intact.
+///
+/// Regression test for three separate causes of body truncation, all of which
+/// only showed up above a few KB -- the pre-existing fixture is a single chunk,
+/// which is why this went unnoticed:
+///
+///  1. `BodyStreamProducer` paired `Destination::set_buffer` with
+///     `as_direct`, which discards the buffer in wasmtime 48 (43 only resized
+///     an empty one), losing everything past the first chunk of a frame.
+///  2. The guest's spawned body-streaming task was torn down when the
+///     `run_concurrent` driving `handle` returned. Wasmtime 48 requires the
+///     host to keep the event loop alive via `poll_no_interesting_tasks`.
+///  3. The default fuel budget of 1,000,000 could not parse a 400 KB page, so
+///     the guest trapped mid-parse.
+#[tokio::test]
+async fn large_body_through_content_plugin_is_not_truncated() -> anyhow::Result<()> {
+    use crate::test_utils::*;
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut proxy, registry, ca, _config, _tmp) = create_witmproxy().await?;
+    proxy.start().await.unwrap();
+    // test_component supplies the Connect scope that triggers MITM for
+    // 127.0.0.1; noshorts alone only intercepts youtube.com.
+    register_test_component(&registry).await.unwrap();
+    register_noshorts_plugin(&registry).await.unwrap();
+
+    // Realistic markup rather than one huge comment or script, which would
+    // exercise lol_html's token buffer instead of the streaming path.
+    let padding = 400_000;
+    let body = format!(
+        "<!DOCTYPE html><html><head><title>Big</title></head><body><h1>Hello from test server</h1>{}</body></html>",
+        "<div class=\"row\"><span>cell</span></div>".repeat(padding / 40)
+    );
+    let expected_min = body.len();
+
+    let target =
+        create_html_server_with_body("127.0.0.1", None, ca.clone(), Protocol::Http2, body).await;
+    let client = create_client(
+        ca,
+        &format!("http://{}", proxy.proxy_listen_addr().unwrap()),
+        Protocol::Http2,
+    )
+    .await;
+    let text = client
+        .get(format!(
+            "https://127.0.0.1:{}/",
+            target.listen_addr().port()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        text.len() >= expected_min,
+        "body truncated: received {} bytes, expected at least {}",
+        text.len(),
+        expected_min
+    );
+    assert!(
+        text.contains(r#"a[href*="shorts"]"#),
+        "noshorts CSS was not injected into a large page"
+    );
     Ok(())
 }

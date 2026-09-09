@@ -8,7 +8,7 @@ use crate::wasm::{
     Host,
     bindgen::{
         Event as WasmEvent,
-        witmproxy::plugin::capabilities::{CapabilityKind, EventKind, TimerContext},
+        witmproxy::plugin::capabilities::{EventKind, TimerContext},
     },
 };
 
@@ -28,14 +28,29 @@ impl TimerEvent {
 }
 
 impl Event for TimerEvent {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::Timer)
+    fn kind(&self) -> EventKind {
+        EventKind::Timer
     }
 
     fn into_event_data(self: Box<Self>, _store: &mut Store<Host>) -> Result<WasmEvent> {
         Ok(WasmEvent::Timer(TimerContext {
             timestamp: self.timestamp,
         }))
+    }
+
+    fn into_event_data_recoverable(
+        self: Box<Self>,
+        store: &mut Store<Host>,
+        _limit: u64,
+        _breaches: std::sync::Arc<crate::plugins::limits::BreachRecorder>,
+    ) -> Result<(WasmEvent, Option<crate::events::recovery::EventShadow>)> {
+        // A timer carries no stream and no resource, so it is always
+        // recoverable at zero cost.
+        let timestamp = self.timestamp;
+        Ok((
+            self.into_event_data(store)?,
+            Some(crate::events::recovery::EventShadow::Timer { timestamp }),
+        ))
     }
 
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>

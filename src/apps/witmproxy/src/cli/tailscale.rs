@@ -5,10 +5,10 @@ use serde::Deserialize;
 use tracing::{debug, info, warn};
 
 #[derive(Debug)]
-pub struct TailscaleInfo {
-    pub ipv4: Option<String>,
-    pub ipv6: Option<String>,
-    pub dns_name: Option<String>,
+pub(crate) struct TailscaleInfo {
+    pub(crate) ipv4: Option<String>,
+    pub(crate) ipv6: Option<String>,
+    pub(crate) dns_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -108,7 +108,7 @@ async fn check_reachable(ip: &str, port: u16) -> bool {
 
 /// Detect Tailscale, verify the web server is reachable over it, and display
 /// a URL + QR code if everything checks out.
-pub async fn discover_and_display(web_addr: SocketAddr) -> Option<TailscaleInfo> {
+pub(crate) async fn discover_and_display(web_addr: SocketAddr) -> Option<TailscaleInfo> {
     let info = detect_tailscale()?;
     debug!("Tailscale detected: {:?}", info);
 

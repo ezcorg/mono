@@ -34,6 +34,13 @@ export class ContextMenu {
         this.view = view;
         this.onCloseCb = onClose ?? null;
 
+        // While the menu is open, suppress hover tooltips — moving the pointer
+        // over symbols behind or beside the menu shouldn't pop LSP hovers on
+        // top of it. The flag goes on <html> (not the editor) because CM
+        // renders `position: fixed` tooltips outside the `.cm-editor` subtree;
+        // the global CSS rule in context-menu/styles.ts keys off this class.
+        document.documentElement.classList.add('cm-context-menu-open');
+
         // Filter items by availability
         const available = items.filter(i => i.available(ctx));
         if (available.length === 0) return;
@@ -142,6 +149,7 @@ export class ContextMenu {
         this.onCloseCb = null;
         const v = this.view;
         this.view = null;
+        document.documentElement.classList.remove('cm-context-menu-open');
         cb?.();
         // Restore focus to editor
         v?.focus();

@@ -1,0 +1,71 @@
+package icanhaz:nocap@0.1.0;
+
+/// Shared vocabulary: how authority is *described*, *attenuated*, and *denied*.
+///
+/// NoCap = Negotiated Object-Capability Protocol. Authority is always an
+/// explicit, narrowable grant bound to a principal — there is no ambient
+/// authority anywhere in these interfaces.
+interface types {
+  use wasi:clocks/wall-clock@0.2.0.{ datetime };
+
+  /// Who is asking. Capabilities bind to this.
+  record principal {
+    kind: principal-kind,
+    /// e.g. "https://notes.example.com", an installed-app id, or a tailnet node.
+    id: string,
+    display-name: option<string>,
+  }
+  enum principal-kind { web-origin, installed-app, peer }
+
+  /// The *category* of host power requested. Each maps to a WASI (or extended)
+  /// world the provider furnishes. (http / device / clock / random follow the
+  /// same request-record shape and are elided here.)
+  variant capability-kind {
+    filesystem(fs-request),
+    sockets(socket-request),
+    process(process-request),
+    terminal(terminal-request),
+  }
+
+  record fs-request  { roots: list<path-grant> }
+  record path-grant  { path: string, rights: fs-rights }
+  flags  fs-rights   { read, write, create, delete, watch }
+
+  record socket-request { allow: list<endpoint>, may-listen: bool }
+  record endpoint       { host: string, lo-port: u16, hi-port: u16, proto: transport }
+  enum   transport      { tcp, udp }
+
+  /// `args` is the argv (after argv[0]) the grant pins — shown to the human at
+  /// consent and run verbatim, unless `guest-chooses-argv` lets the caller override
+  /// it at spawn time.
+  record process-request { image: string, args: list<string>, guest-chooses-argv: bool }
+
+  /// Open an interactive shell. `jailed` requests a sandboxed shell; clearing it
+  /// asks for the *real* host shell — which the daemon may still refuse.
+  record terminal-request { shell: option<string>, jailed: bool }
+
+  /// Macaroon-style caveats: monotonic — they can only ever *narrow* a grant.
+  variant caveat {
+    expires(datetime),
+    idle-timeout-ms(u64),
+    max-bytes(u64),
+    only-paths(list<string>),
+    only-endpoints(list<endpoint>),
+  }
+
+  /// Why a request didn't yield a capability.
+  variant denied {
+    user-rejected,
+    not-authorized,        // principal isn't allowed to ask here
+    no-provider,           // nothing can satisfy this kind
+    unsupported(string),   // provider lacks the capability
+    quota,
+    revoked,
+  }
+
+  record grant-info {
+    id: string,            // durable handle for `session.resume`
+    holder: principal,
+    summary: string,       // human-legible, for the consent UI + audit view
+  }
+}

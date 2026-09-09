@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { CurrencyCode, convertBudgetToUSD, MIN_USD_VALUE, isSupportedCurrency } from './currency';
 
 // Valid service types
 export const VALID_SERVICES = [
@@ -11,7 +10,7 @@ export const VALID_SERVICES = [
 
 export type ServiceType = typeof VALID_SERVICES[number];
 
-// Contact form validation schema
+// Contact form validation schema: what the room's "new project" forms send
 export const ContactFormSchema = z.object({
     name: z
         .string()
@@ -32,26 +31,13 @@ export const ContactFormSchema = z.object({
         .enum(VALID_SERVICES, {
             errorMap: () => ({ message: 'Please select a valid service type' })
         }),
-    dateRange: z
-        .tuple([z.date(), z.date()])
-        .refine(([start, end]) => start <= end, {
-            message: 'Start date must be before or equal to end date',
-            path: ['dateRange']
-        })
+
+    /* A single, optional budget in USD. */
+    budget: z
+        .number()
+        .positive('Budget must be positive')
+        .max(1e9, 'Budget must be less than $1,000,000,000')
         .optional(),
-
-    minBudget: z.number().positive('Minimum budget must be positive'),
-
-    maxBudget: z.number().positive('Maximum budget must be positive'),
-
-    currency: z
-        .string()
-        .min(3, 'Currency code must be 3 characters')
-        .max(3, 'Currency code must be 3 characters')
-        .toUpperCase()
-        .refine(isSupportedCurrency, {
-            message: 'Unsupported currency code'
-        }) as z.ZodType<CurrencyCode>,
 
     message: z
         .string()
@@ -62,32 +48,14 @@ export const ContactFormSchema = z.object({
     turnstileToken: z
         .string()
         .optional()
-}).refine(
-    (data: any) => {
-        // Ensure maxBudget >= minBudget
-        return data.maxBudget >= data.minBudget;
-    },
-    {
-        message: 'Maximum budget must be greater than or equal to minimum budget',
-        path: ['maxBudget']
-    }
-).refine(
-    (data: any) => {
-        // Ensure minimum budget is at least $1000 USD equivalent
-        try {
-            const minBudgetUSD = convertBudgetToUSD(data.minBudget, data.currency);
-            return minBudgetUSD >= MIN_USD_VALUE;
-        } catch {
-            return false;
-        }
-    },
-    {
-        message: `Minimum budget must be at least $${MIN_USD_VALUE.toLocaleString()} USD equivalent`,
-        path: ['minBudget']
-    }
-);
+});
 
 export type ContactFormData = z.infer<typeof ContactFormSchema>;
+
+/** The budget for humans: "$2,500 USD" or "Not specified". */
+export function describeBudget(data: Pick<ContactFormData, 'budget'>): string {
+    return data.budget === undefined ? 'Not specified' : `$${data.budget.toLocaleString('en-US')} USD`;
+}
 
 // Validation result types
 export type ValidationSuccess<T> = {
@@ -134,13 +102,13 @@ export function validateContactForm(data: Record<string, any>): ValidationResult
 
         return {
             success: false,
-            error: 'Unknown validation error'
+            error: 'An unexpected validation error occurred'
         };
     }
 }
 
 /**
- * Get user-friendly error message from validation result
+ * Get a user-friendly error message from validation errors
  */
 export function getValidationErrorMessage(result: ValidationError): string {
     if (result.fieldErrors) {

@@ -1,0 +1,285 @@
+/* icanhaz demo chrome — a faithful port of the markdown-editor package's
+   "custom" mac-window dev preview (src/App.css), pared down to the single
+   always-custom window the icanhaz demos present. The editor renders as the
+   fullscreen input component inside a simulated macOS window, with the
+   library's file-search toolbar mounted into the titlebar, an auto-generated
+   outline in the left column, and a light/system/dark theme toggle. Unlike the
+   package's preview (which reads a local snapshot VFS) the fs here is the wRPC
+   host filesystem, gated by consent. */
+
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf") format("truetype-variations");
+  font-weight: 200 900;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf") format("truetype-variations");
+  font-weight: 200 900;
+  font-style: italic;
+}
+
+:root { color-scheme: light dark; }
+
+html, body { height: 100%; margin: 0; }
+
+/* A neutral "desktop" so the simulated window reads as a floating app window. */
+.dev-page {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 20px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  font-family: system-ui, -apple-system, Avenir, Helvetica, Arial, sans-serif;
+}
+
+.dev-header,
+.mac-window {
+  width: 100%;
+  max-width: 980px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.dev-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.dev-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dev-title strong {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.dev-title code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+/* Connection/status chip (right side of the header). */
+.dev-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.14);
+  opacity: 0.85;
+  white-space: nowrap;
+  max-width: 60ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dev-status.is-error {
+  background: rgba(255, 95, 87, 0.16);
+  color: #c62f26;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dev-status.is-error { color: #ff9a92; }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Simulated macOS window (the "custom" variant, always on).
+   ────────────────────────────────────────────────────────────── */
+.mac-window {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  max-height: 860px;
+  /* Follow the editor's theme so dark mode is cohesive (the editor itself is
+     transparent and renders over this surface). */
+  background: var(--ezco-mde-bg, #fff);
+  color: var(--ezco-mde-fg, #1d1d1f);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--ezco-mde-divider, rgba(0, 0, 0, 0.12));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.mac-titlebar {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 14px;
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.mac-lights {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  z-index: 1;
+}
+
+.mac-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+.mac-light--close { background: #ff5f57; }
+.mac-light--min { background: #febc2e; }
+.mac-light--max { background: #28c840; }
+
+/* The library's file-search toolbar mounts here, filling the titlebar between
+   the traffic lights and the theme toggle (in place of a window title). The
+   toolbar is fully driven by `--ezco-mde-toolbar-*` custom properties (which
+   inherit), so overriding those rethemes it into a slim, titlebar-native
+   search field. */
+.mac-titlebar-toolbar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  /* The `transform` makes this its own stacking context; lift it above the
+     editor body so the results dropdown is never occluded by an embedded
+     codeblock's positive z-index. */
+  z-index: 50;
+  width: min(360px, calc(100% - 210px));
+  display: flex;
+  align-items: center;
+  --ezco-mde-toolbar-bg: rgba(127, 127, 127, 0.14);
+  --ezco-mde-toolbar-fg: var(--ezco-mde-fg, currentColor);
+  --ezco-mde-toolbar-muted: rgba(127, 127, 127, 0.95);
+  --ezco-mde-toolbar-border: 1px solid transparent;
+  --ezco-mde-toolbar-radius: 7px;
+  --ezco-mde-toolbar-shadow: none;
+  --ezco-mde-toolbar-pad-y: 3px;
+  --ezco-mde-toolbar-pad-x: 8px;
+  --ezco-mde-toolbar-min-width: 0;
+  --ezco-mde-toolbar-margin: 0;
+  --ezco-mde-toolbar-font-size: 13px;
+}
+
+/* The toolbar root defaults to a floating pill (`position: sticky;
+   width: fit-content`). In the titlebar it's a static, full-width field. */
+.cm-toolbar-panel.ezco-mde-toolbar.mac-titlebar-search {
+  position: relative;
+  top: auto;
+  width: 100%;
+  max-width: none;
+  height: 28px;
+  box-sizing: border-box;
+}
+
+/* Constrain the results dropdown to the field's width (anchor both edges). */
+.cm-toolbar-panel.ezco-mde-toolbar.mac-titlebar-search .cm-search-results {
+  left: 0;
+  right: 0;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
+
+/* Light / system / dark segmented control in the titlebar. Colours derive from
+   the window's themed `currentColor` / `--ezco-mde-bg` so it reads on both
+   surfaces. */
+.theme-toggle {
+  position: relative;
+  z-index: 1;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  height: 28px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: rgba(127, 127, 127, 0.16);
+}
+
+.theme-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: currentColor;
+  opacity: 0.5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 120ms ease, opacity 120ms ease;
+}
+
+.theme-toggle button:hover { opacity: 0.85; }
+
+.theme-toggle button:focus-visible {
+  outline: 2px solid var(--ezco-mde-link-color, #5861ff);
+  outline-offset: 1px;
+}
+
+.theme-toggle button.is-active {
+  background: var(--ezco-mde-bg, #fff);
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* The editor body — the scroll container. A left gutter gives the block-action
+   indicator (which renders to the left of the editor element) room; without it
+   the indicator sits outside the window and is clipped. */
+.mac-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Flex row INSIDE the scroller, so it grows to the editor's full scroll height
+   and the sticky sidebar column stays pinned as the document scrolls. */
+.mac-body-row {
+  display: flex;
+  flex-direction: row;
+  min-height: 100%;
+}
+
+/* Left outline column. */
+.mac-sidebar { flex: none; }
+.mac-sidebar:has(.ezco-mde-sidebar--empty) { display: none; }
+
+/* Editor column. The library's `.ezco-mde` wrapper renders inside it. */
+.mac-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+/* Editor element fills the inset body; its own padding lives on .ezco-mde. */
+.mac-body .ezco-mde-body {
+  padding: 10px 0;
+  outline: none;
+}
+
+/* The "custom" signature: the prose (and its outline) render in Source Serif 4.
+   The library's `.ezco-mde-sidebar` sets its own font-family, so override it on
+   the nav itself (an ancestor font-family wouldn't win against that rule). */
+.mac-window .mac-body .ezco-mde-body,
+.mac-window .mac-sidebar .ezco-mde-sidebar {
+  font-family: "Source Serif 4", system-ui, Georgia, serif;
+}

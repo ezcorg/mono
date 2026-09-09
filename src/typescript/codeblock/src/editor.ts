@@ -8,7 +8,7 @@ import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { VfsInterface, JswasiConfig } from "./types";
+import { VfsInterface } from "./types";
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { lintKeymap, setDiagnostics } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
@@ -16,6 +16,7 @@ import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
+import { copyButtonExtension } from "./panels/copy-button";
 import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
 import type { EditorSettings } from "./panels/settings";
 import { createAiExtension, reconfigureAi } from "./ai/extension";
@@ -91,6 +92,10 @@ export type CodeblockConfig = {
     filepath?: string;
     content?: string;
     toolbar?: boolean;
+    /** How the toolbar lays out its icon column. `gutter` (default) sizes the search glyph and the result icons to the
+     *  editor's line-number gutter so they line up with the code (the look inside the markdown-editor); `compact` keeps
+     *  them tight to the text, for a toolbar hosted away from the editor — a window's title bar, say. */
+    toolbarLayout?: 'gutter' | 'compact';
     index?: SearchIndex;
     language?: ExtensionOrLanguage;
     dark?: boolean;
@@ -99,8 +104,12 @@ export type CodeblockConfig = {
         /** Resolves a TypeScript lib name (e.g. "es5") to its `.d.ts` file content */
         resolveLib: (name: string) => Promise<string>;
     };
-    /** jswasi configuration. When provided, enables the "Open terminal" command. */
-    jswasi?: JswasiConfig;
+    /** Show a hover-revealed copy-to-clipboard button in the top-right
+     *  of the editor. Particularly useful for short shell snippets where
+     *  the editor acts as a "code to run" rather than a workspace.
+     *  When unset, defaults to `true` for `.sh` files and `false`
+     *  otherwise. */
+    copyButton?: boolean;
 };
 export type CreateCodeblockArgs = CodeblockConfig & {
     parent: HTMLElement;
@@ -199,7 +208,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, index, dark, settings, typescript, jswasi }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, index, dark, settings, typescript, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -207,16 +216,22 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     }
     const showLineNums = resolvedSettings.showLineNumbers !== false; // default true
     const showFold = resolvedSettings.showFoldGutter !== false; // default true
+    const wrapLines = resolvedSettings.lineWrap === true; // default false
+    // Default-on for .sh; opt-in for everything else.
+    const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
         readOnlyCompartment.of(EditorState.readOnly.of(false)),
-        lineWrappingCompartment.of([]),
+        // Honour the initial `lineWrap` setting (consistent with
+        // showLineNumbers/showFoldGutter above); the settings panel later
+        // reconfigures this same compartment to toggle it.
+        lineWrappingCompartment.of(wrapLines ? EditorView.lineWrapping : []),
         lineNumbersCompartment.of(showLineNums ? [lineNumbers(), highlightActiveLineGutter()] : []),
         foldGutterCompartment.of(showFold ? [foldGutter()] : []),
         tooltips({ position: "fixed" }),
@@ -230,6 +245,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         keymap.of(navigationKeymap.concat([indentWithTab])),
         vscodeLightDark,
         searchResultsField,
+        ...(wantsCopyButton ? [copyButtonExtension] : []),
     ];
 };
 
@@ -300,7 +316,12 @@ const codeblockView = ViewPlugin.define((view) => {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
             await fs.writeFile(fileState.path, content).catch(console.error)
-            LSP.notifyFileChanged(fileState.path, FileChangeType.Changed);
+            // The OPEN document is now persisted → send textDocument/didSave. This is what
+            // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
+            // borrow, and other errors that don't run off the live edit buffer, and which
+            // otherwise never update until reload). We write the disk BEFORE didSave so flycheck
+            // reads current content. (didChangeWatchedFiles is for OTHER files — see below.)
+            LSP.notifyFileSaved(fileState.path, content);
 
             // Notify other views of the same file
             fileChangeBus.notify(fileState.path, content, view);
@@ -704,10 +725,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, index, dark, settings, typescript, jswasi }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, index, dark, settings, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, index, dark, settings, typescript, jswasi })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript })]
     });
     const view = new EditorView({ state, parent });
     return view;

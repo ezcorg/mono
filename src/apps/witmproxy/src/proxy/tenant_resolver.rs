@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::db::tenants;
-use crate::tenant::TenantContext;
+use crate::proxy::tenant::TenantContext;
 
 /// Pluggable trait for determining tenant identity from a TCP peer address.
 /// No auth logic belongs here -- just identity resolution.
@@ -300,6 +300,21 @@ impl std::fmt::Display for TenantResolverKind {
             TenantResolverKind::IpMapping => write!(f, "ip-mapping"),
             TenantResolverKind::Tailscale => write!(f, "tailscale"),
             TenantResolverKind::Header => write!(f, "header"),
+        }
+    }
+}
+
+impl std::str::FromStr for TenantResolverKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ip-mapping" => Ok(TenantResolverKind::IpMapping),
+            "tailscale" => Ok(TenantResolverKind::Tailscale),
+            "header" => Ok(TenantResolverKind::Header),
+            other => Err(format!(
+                "unknown tenant resolver '{other}' (expected ip-mapping, tailscale, or header)"
+            )),
         }
     }
 }

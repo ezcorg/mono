@@ -1,0 +1,22 @@
+---
+import RoomLayout from '../../layouts/RoomLayout.astro';
+import StaticPage from '../../components/StaticPage.astro';
+import Room from '../../components/Room.astro';
+import { posts, fmtDate } from '../../data/posts';
+import { routes, roomRoute } from '../../data/site';
+const r = routes.find((r) => r.path === '/blog')!;
+---
+
+<RoomLayout title={`${r.title} · ez co`} description={r.description} canonical="/blog/" route={roomRoute('/blog')}>
+	<StaticPage title={r.title} current="/blog">
+		{posts.map((p) => (
+			<article>
+				<h2><a href={p.path}>{p.fm.title}</a></h2>
+				<p class="meta">{fmtDate(p.fm.date)}{p.fm.author ? ' · ' + p.fm.author : ''}</p>
+				{p.fm.description && <p>{p.fm.description}</p>}
+			</article>
+		))}
+		<p><a href="/blog/rss.xml">RSS</a></p>
+	</StaticPage>
+	<Room />
+</RoomLayout>

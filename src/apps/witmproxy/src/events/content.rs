@@ -14,10 +14,7 @@ use crate::{
     plugins::cel::{CelContent, CelTime},
     wasm::{
         Host,
-        bindgen::{
-            Event as WasmEvent,
-            witmproxy::plugin::capabilities::{CapabilityKind, EventKind},
-        },
+        bindgen::{Event as WasmEvent, witmproxy::plugin::capabilities::EventKind},
     },
 };
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
@@ -26,16 +23,54 @@ pub struct InboundContent {
     parts: Parts,
     content_type: String,
     body: Option<UnsyncBoxBody<Bytes, ErrorCode>>,
+    /// True when the body was left in its original wire form because its
+    /// `Content-Encoding` is unsupported and could not be decompressed. In this
+    /// mode the body must be forwarded untouched (so we must not strip the
+    /// `Content-Encoding`/`Content-Length` headers) and callers should skip
+    /// plugin content processing.
+    passthrough: bool,
 }
 
 impl Event for InboundContent {
-    fn capability(&self) -> CapabilityKind {
-        CapabilityKind::HandleEvent(EventKind::InboundContent)
+    fn kind(&self) -> EventKind {
+        EventKind::InboundContent
     }
 
     fn into_event_data(self: Box<Self>, store: &mut Store<Host>) -> Result<WasmEvent> {
         let handle: Resource<InboundContent> = store.data_mut().table.push(*self)?;
         Ok(WasmEvent::InboundContent(handle))
+    }
+
+    fn into_event_data_recoverable(
+        mut self: Box<Self>,
+        store: &mut Store<Host>,
+        limit: u64,
+        breaches: std::sync::Arc<crate::plugins::limits::BreachRecorder>,
+    ) -> Result<(WasmEvent, Option<crate::events::recovery::EventShadow>)> {
+        use crate::events::recovery::{EventShadow, TeeBody};
+
+        let Some(body) = self.body.take() else {
+            // No body to duplicate; hand it over with no recovery available
+            // rather than pretending otherwise.
+            return Ok((self.into_event_data(store)?, None));
+        };
+
+        let status = self.parts.status;
+        let version = self.parts.version;
+        let headers = self.parts.headers.clone();
+        let content_type = self.content_type.clone();
+
+        let (teed, recording) = TeeBody::wrap(body, limit, breaches);
+        self.body = Some(teed);
+
+        let shadow = EventShadow::InboundContent {
+            status,
+            version,
+            headers,
+            content_type,
+            recording,
+        };
+        Ok((self.into_event_data(store)?, Some(shadow)))
     }
 
     fn register_cel_env<'a>(env: cel_cxx::EnvBuilder<'a>) -> Result<cel_cxx::EnvBuilder<'a>>
@@ -73,12 +108,27 @@ impl InboundContent {
         content_type: String,
         body: UnsyncBoxBody<Bytes, ErrorCode>,
     ) -> Result<Self> {
+        // If the Content-Encoding is unrecognized we can't safely decompress the
+        // body. Rather than erroring (which would tear down the connection), fall
+        // back to passing the response through untouched: keep the original,
+        // still-encoded body and flag it so the caller skips plugin content
+        // processing and we don't strip the Content-Encoding header on the way out.
+        if matches!(parts.encoding(), ContentEncoding::Unknown) {
+            return Ok(Self {
+                parts,
+                content_type,
+                body: Some(body),
+                passthrough: true,
+            });
+        }
+
         let body = InboundContent::decompress(&parts, body)?;
 
         Ok(Self {
             parts,
             content_type,
             body: Some(body),
+            passthrough: false,
         })
     }
 
@@ -122,7 +172,11 @@ impl InboundContent {
                         ContentEncoding::Deflate => Box::new(DeflateEncoder::new(buf_reader)),
                         ContentEncoding::Br => Box::new(BrotliEncoder::new(buf_reader)),
                         ContentEncoding::Zstd => Box::new(ZstdEncoder::new(buf_reader)),
-                        _ => unreachable!(),
+                        // Identity and Unknown are filtered out before this
+                        // point; passing the reader through unchanged is the
+                        // correct behaviour for them regardless, and beats
+                        // aborting the process on a body-processing path.
+                        _ => Box::new(buf_reader),
                     };
 
                     // Convert AsyncRead back to a stream of Bytes
@@ -184,7 +238,11 @@ impl InboundContent {
                         ContentEncoding::Deflate => Box::new(DeflateDecoder::new(buf_reader)),
                         ContentEncoding::Br => Box::new(BrotliDecoder::new(buf_reader)),
                         ContentEncoding::Zstd => Box::new(ZstdDecoder::new(buf_reader)),
-                        _ => unreachable!(),
+                        // Identity and Unknown are filtered out before this
+                        // point; passing the reader through unchanged is the
+                        // correct behaviour for them regardless, and beats
+                        // aborting the process on a body-processing path.
+                        _ => Box::new(buf_reader),
                     };
 
                     // Convert AsyncRead back to a stream of Bytes
@@ -203,8 +261,32 @@ impl InboundContent {
         }
     }
 
+    /// Rebuild content from parts whose body has ALREADY been decoded.
+    ///
+    /// `new` decompresses on the way in; a recovered body has been through
+    /// that once already, so this skips it. Only for recovery.
+    pub(crate) fn from_decoded(
+        parts: Parts,
+        content_type: String,
+        body: UnsyncBoxBody<Bytes, ErrorCode>,
+    ) -> Self {
+        Self {
+            parts,
+            content_type,
+            body: Some(body),
+            passthrough: false,
+        }
+    }
+
     pub fn content_type(&self) -> String {
         self.content_type.clone()
+    }
+
+    /// Whether this content is being passed through untouched because its
+    /// `Content-Encoding` is unsupported. Callers should skip plugin content
+    /// processing when this is `true`.
+    pub fn is_passthrough(&self) -> bool {
+        self.passthrough
     }
 
     pub fn body(&mut self) -> Result<Option<UnsyncBoxBody<Bytes, ErrorCode>>> {
@@ -218,6 +300,7 @@ impl InboundContent {
     pub fn into_response(self) -> Result<Response<UnsyncBoxBody<Bytes, ErrorCode>>> {
         // Build the HTTP response using the parts
         // If data was taken, provide an empty body
+        let passthrough = self.passthrough;
         let body = self.body.unwrap_or_else(|| {
             use http_body_util::Empty;
             Empty::<Bytes>::new()
@@ -228,10 +311,12 @@ impl InboundContent {
         // let body = InboundContent::compress(&self.parts, body)?;
 
         let mut parts = self.parts;
-        // Content length is no longer valid after decompression/modification
-        parts.headers.remove(hyper::header::CONTENT_LENGTH);
-        // Remove content-encoding as we have decompressed the body
-        parts.headers.remove(hyper::header::CONTENT_ENCODING);
+        if !passthrough {
+            // The body was decompressed (and possibly modified), so the original
+            // Content-Length and Content-Encoding headers no longer describe it.
+            parts.headers.remove(hyper::header::CONTENT_LENGTH);
+            parts.headers.remove(hyper::header::CONTENT_ENCODING);
+        }
         Ok(Response::from_parts(parts, body))
     }
 }

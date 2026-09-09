@@ -1,7 +1,18 @@
+//! Test scaffolding shared by unit tests and the `e2e` integration crate.
+//!
+//! Exempt from the panic-adjacent lints the rest of the crate denies. These
+//! run only under test, and a helper that cannot build its fixture should
+//! abort the test at the point of failure rather than thread a `Result` that
+//! every call site would immediately unwrap anyway. The lints stay in force
+//! for the daemon and proxy paths, where a panic takes down live traffic.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
 use std::net::SocketAddr;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::Result;
 use http_body_util::BodyExt;
@@ -12,7 +23,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use tracing::error;
@@ -69,7 +79,7 @@ pub async fn create_plugin_registry() -> Result<(PluginRegistry, tempfile::TempD
 ///
 /// In conjunction with our echo server, we can verify that the target server
 /// received the modified request, and that the client received the modified response.
-pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+pub async fn register_test_component(registry: &PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = test_component_path()?;
     let component_bytes = std::fs::read(&wasm_path)?;
 
@@ -78,7 +88,7 @@ pub async fn register_test_component(registry: &mut PluginRegistry) -> Result<()
     registry.register_plugin(plugin).await
 }
 
-pub async fn register_noop_plugin(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+pub async fn register_noop_plugin(registry: &PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = noop_plugin_path()?;
     let component_bytes = std::fs::read(&wasm_path)?;
 
@@ -87,7 +97,7 @@ pub async fn register_noop_plugin(registry: &mut PluginRegistry) -> Result<(), a
     registry.register_plugin(plugin).await
 }
 
-pub async fn register_noshorts_plugin(registry: &mut PluginRegistry) -> Result<(), anyhow::Error> {
+pub async fn register_noshorts_plugin(registry: &PluginRegistry) -> Result<(), anyhow::Error> {
     let wasm_path = noshorts_plugin_path()?;
     let component_bytes = std::fs::read(&wasm_path)?;
 
@@ -106,14 +116,14 @@ pub async fn create_db() -> (Db, tempfile::TempDir) {
 
 pub async fn create_witmproxy() -> Result<(
     WitmProxy,
-    Arc<RwLock<PluginRegistry>>,
+    Arc<PluginRegistry>,
     CertificateAuthority,
     AppConfig,
     tempfile::TempDir,
 )> {
     let (ca, config) = create_ca_and_config().await;
     let (registry, temp_dir) = create_plugin_registry().await?;
-    let registry = Arc::new(RwLock::new(registry));
+    let registry = Arc::new(registry);
     let proxy = WitmProxy::new(ca.clone(), Some(registry.clone()), config.clone());
     Ok((proxy, registry, ca, config, temp_dir))
 }
@@ -287,6 +297,32 @@ pub async fn create_html_server(
     ca: CertificateAuthority,
     proto: Protocol,
 ) -> ServerHandle {
+    create_html_server_with_body(host, port, ca, proto, DEFAULT_TEST_HTML.to_string()).await
+}
+
+/// The page `create_html_server` serves by default.
+pub const DEFAULT_TEST_HTML: &str = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+</head>
+<body>
+    <h1>Hello from test server</h1>
+</body>
+</html>"#;
+
+/// Like [`create_html_server`], but serves a caller-supplied page.
+///
+/// Exists so tests can serve a body large enough to span many stream chunks:
+/// the default fixture fits in a single read, which hides size-dependent
+/// behaviour in the content-rewriting pipeline.
+pub async fn create_html_server_with_body(
+    host: &str,
+    port: Option<u16>,
+    ca: CertificateAuthority,
+    proto: Protocol,
+    body: String,
+) -> ServerHandle {
     let port = port.unwrap_or(0); // Use OS-assigned port if None
 
     let cert = ca
@@ -331,28 +367,25 @@ pub async fn create_html_server(
                     };
 
                     let acceptor = acceptor.clone();
+                    let body = body.clone();
                     tokio::spawn(async move {
                         match acceptor.accept(stream).await {
                             Ok(tls) => {
                                 let io = hyper_util::rt::TokioIo::new(tls);
 
-                                let svc = hyper::service::service_fn(|_req| async {
-                                    let html = r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Test Page</title>
-</head>
-<body>
-    <h1>Hello from test server</h1>
-</body>
-</html>"#;
-
-                                    Ok::<_, hyper::Error>(
-                                        hyper::Response::builder()
-                                            .header("content-type", "text/html")
-                                            .body(http_body_util::Full::new(bytes::Bytes::from(html)))
-                                            .unwrap()
-                                    )
+                                let body = body.clone();
+                                let svc = hyper::service::service_fn(move |_req| {
+                                    let html = body.clone();
+                                    async move {
+                                        Ok::<_, hyper::Error>(
+                                            hyper::Response::builder()
+                                                .header("content-type", "text/html")
+                                                .body(http_body_util::Full::new(
+                                                    bytes::Bytes::from(html),
+                                                ))
+                                                .unwrap(),
+                                        )
+                                    }
                                 });
 
                                 match proto {
@@ -522,111 +555,146 @@ pub async fn create_client(
         .build()
         .unwrap()
 }
+/// Path to the deliberately hostile test component, building it on demand.
+///
+/// Unsigned on purpose: the fixture declares an empty public key so the host
+/// skips signature verification, which keeps `wasmsign2` out of the test path.
+pub fn adversarial_component_path() -> Result<String> {
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        let component = build_component(
+            "witmproxy-plugin-adversarial",
+            "witmproxy_plugin_adversarial",
+        )?;
+        Ok(component.to_string_lossy().into_owned())
+    })
+}
 
 pub fn test_component_path() -> Result<String> {
-    let path = format!(
-        "{}/../../../target/wasm32-wasip2/release/wasm_test_component.signed.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
-
-    if !Path::new(&path).exists() {
-        // Build the component
-        let component_dir = format!(
-            "{}/../../../src/rust/wasm-test-component",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let status = Command::new("make")
-            .current_dir(&component_dir)
-            .status()
-            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", component_dir, e))?;
-
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to build wasm-test-component: make exited with status {}",
-                status
-            ));
-        }
-
-        // Verify the file was created
-        if !Path::new(&path).exists() {
-            return Err(anyhow::anyhow!(
-                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
-                path
-            ));
-        }
-    }
-
-    Ok(path)
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        signed_component(
+            "wasm-test-component",
+            "wasm_test_component",
+            "src/rust/wasm-test-component",
+        )
+    })
 }
 
 pub fn noshorts_plugin_path() -> Result<String> {
-    let path = format!(
-        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noshorts.signed.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
-
-    if !Path::new(&path).exists() {
-        // Build the component
-        let plugin_dir = format!(
-            "{}/../../../src/rust/witmproxy-plugin-noshorts",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let status = Command::new("make")
-            .current_dir(&plugin_dir)
-            .status()
-            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", plugin_dir, e))?;
-
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to build witmproxy-plugin-noshorts: make exited with status {}",
-                status
-            ));
-        }
-
-        // Verify the file was created
-        if !Path::new(&path).exists() {
-            return Err(anyhow::anyhow!(
-                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
-                path
-            ));
-        }
-    }
-
-    Ok(path)
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        signed_component(
+            "witmproxy-plugin-noshorts",
+            "witmproxy_plugin_noshorts",
+            "src/rust/witmproxy-plugin-noshorts",
+        )
+    })
 }
 
 pub fn noop_plugin_path() -> Result<String> {
-    let path = format!(
-        "{}/../../../target/wasm32-wasip2/release/witmproxy_plugin_noop.signed.wasm",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    static PATH: OnceLock<Result<String, String>> = OnceLock::new();
+    memoized(&PATH, || {
+        signed_component(
+            "witmproxy-plugin-noop",
+            "witmproxy_plugin_noop",
+            "src/rust/witmproxy-plugin-noop",
+        )
+    })
+}
 
-    if !Path::new(&path).exists() {
-        // Build the component
-        let plugin_dir = format!(
-            "{}/../../../src/rust/witmproxy-plugin-noop",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let status = Command::new("make")
-            .current_dir(&plugin_dir)
-            .status()
-            .map_err(|e| anyhow::anyhow!("Failed to execute make in {}: {}", plugin_dir, e))?;
+/// Workspace root, reached from this crate's manifest directory.
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
 
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to build witmproxy-plugin-noop: make exited with status {}",
-                status
-            ));
-        }
+/// Builds `package` for `wasm32-wasip2` and returns the component cargo produced.
+///
+/// Cargo owns the staleness decision, so an untouched crate costs a no-op build
+/// and a source edit rebuilds. These helpers used to build only when the
+/// artifact was *missing*, which silently kept pre-wasmtime-48 fixtures across
+/// the upgrade until every plugin test failed parsing a component the new host
+/// no longer accepted.
+fn build_component(package: &str, artifact: &str) -> Result<PathBuf> {
+    let root = workspace_root();
+    // Reuse the cargo running the tests, so the pinned toolchain carries over.
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let output = Command::new(cargo)
+        .current_dir(&root)
+        .args([
+            "build",
+            "--release",
+            "--target",
+            "wasm32-wasip2",
+            "-p",
+            package,
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run cargo for {package}: {e}"))?;
 
-        // Verify the file was created
-        if !Path::new(&path).exists() {
-            return Err(anyhow::anyhow!(
-                "Build completed but expected file not found: {}. Make sure the build process creates the signed WASM file.",
-                path
-            ));
-        }
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "building {package} failed with status {}:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        ));
     }
 
-    Ok(path)
+    let component = root.join(format!("target/wasm32-wasip2/release/{artifact}.wasm"));
+    if !component.exists() {
+        return Err(anyhow::anyhow!(
+            "building {package} succeeded but {} is missing",
+            component.display()
+        ));
+    }
+
+    Ok(component)
+}
+
+/// Builds `package` and returns the path to its signed component.
+///
+/// `wasmsign2` has no staleness logic of its own, so the signature is redone
+/// whenever cargo produced a component newer than it. The keypair in `key_dir`
+/// is generated when absent: the host checks a component against the public key
+/// the plugin itself declares, never against one specific key.
+fn signed_component(package: &str, artifact: &str, key_dir: &str) -> Result<String> {
+    let component = build_component(package, artifact)?;
+    let signed = component.with_file_name(format!("{artifact}.signed.wasm"));
+
+    if !signature_is_current(&signed, &component)? {
+        let key_dir = workspace_root().join(key_dir);
+        let secret_key = key_dir.join("key.secret");
+        if !secret_key.exists() {
+            let keypair = wasmsign2::KeyPair::generate();
+            keypair.pk.to_file(key_dir.join("key.public"))?;
+            keypair.sk.to_file(&secret_key)?;
+        }
+
+        let module = wasmsign2::Module::deserialize_from_file(&component)?;
+        wasmsign2::SecretKey::from_file(&secret_key)?
+            .sign(module, None)?
+            .serialize_to_file(&signed)?;
+    }
+
+    Ok(signed.to_string_lossy().into_owned())
+}
+
+/// Whether `signed` exists and is no older than the component it was made from.
+fn signature_is_current(signed: &Path, component: &Path) -> Result<bool> {
+    let Ok(signed) = std::fs::metadata(signed) else {
+        return Ok(false);
+    };
+
+    Ok(signed.modified()? >= std::fs::metadata(component)?.modified()?)
+}
+
+/// Runs `build` once per process, so a fixture shared by tests running in
+/// parallel costs a single cargo invocation rather than one per test.
+fn memoized(
+    cell: &'static OnceLock<Result<String, String>>,
+    build: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    cell.get_or_init(|| build().map_err(|e| format!("{e:#}")))
+        .clone()
+        .map_err(|e| anyhow::anyhow!(e))
 }

@@ -1,7 +1,7 @@
 use crate::{
     exports::witmproxy::plugin::witm_plugin::{
         Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin,
-        Plugin as PluginResource, PluginManifest, UserInput,
+        Plugin as PluginResource, PluginError, PluginManifest, UserInput,
     },
     witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Event, EventKind},
 };
@@ -18,7 +18,7 @@ struct Component;
 impl Guest for Component {
     type Plugin = PluginInstance;
 
-    fn manifest() -> PluginManifest {
+    async fn manifest() -> PluginManifest {
         PluginManifest {
             name: "noop".to_string(),
             namespace: "witmproxy".to_string(),
@@ -57,12 +57,17 @@ impl Guest for Component {
 struct PluginInstance;
 
 impl GuestPlugin for PluginInstance {
-    fn create(_config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
+    async fn create(_config: Vec<UserInput>) -> Result<PluginResource, ConfigureError> {
         Ok(PluginResource::new(PluginInstance))
     }
 
-    fn handle(&self, ev: Event, _cp: CapabilityProvider) -> Option<Event> {
-        Some(ev)
+    async fn handle(
+        &self,
+        ev: Event,
+        _cp: CapabilityProvider,
+    ) -> Result<Option<Event>, PluginError> {
+        // Not interested in anything: hand the event back unchanged.
+        Ok(Some(ev))
     }
 }
 

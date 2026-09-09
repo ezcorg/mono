@@ -21,7 +21,7 @@ describe('Editor - File Operations', () => {
 
     beforeEach(async () => {
         // Use an incognito context so OPFS state from the dev server's
-        // lazy filesystem doesn't leak into tests.
+        // example filesystem doesn't leak into tests.
         page = await newIsolatedPage(browser, BASE_URL);
     });
 

@@ -1,0 +1,62 @@
+# cargo-deny configuration.
+#
+#   cargo install --locked cargo-deny
+#   cargo deny check
+#
+# Motivation: witmproxy carries an unusually large native-dependency surface for
+# a Rust project (bundled SQLCipher + vendored OpenSSL, ring, wasmsign2,
+# cel-cxx). Advisory-DB coverage over that tree is worth more here than in a
+# pure-Rust project.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "warn"
+# Add RUSTSEC ids here only with a dated comment explaining why the advisory
+# does not apply, so the exemption can be re-reviewed rather than inherited.
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# witmproxy itself ships AGPL-3.0-only. These are the permissive licenses we
+# accept from *dependencies*; a copyleft dep would need an explicit decision.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+    "BSL-1.0",
+    "NCSA",
+    "CC0-1.0",
+]
+exceptions = []
+
+[[licenses.clarify]]
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+skip-tree = []
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -1,7 +1,14 @@
 import { Browser, Page } from 'puppeteer-core';
 import puppeteer from 'puppeteer-core';
 
-export const CHROME_PATH = '/usr/bin/google-chrome';
+// Resolve a Chrome binary: explicit `CHROME_PATH` env wins, otherwise
+// fall back to the platform default. CI runs on Linux (`/usr/bin/...`);
+// the macOS default lets the same suite run locally without extra setup.
+export const CHROME_PATH =
+    process.env.CHROME_PATH ||
+    (process.platform === 'darwin'
+        ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        : '/usr/bin/google-chrome');
 
 /** Get the dev server URL started by globalSetup. */
 export function getDevServerUrl(): string {
@@ -27,7 +34,7 @@ export async function launchBrowser(): Promise<Browser> {
 /**
  * Create a new page inside an incognito browser context so each test
  * gets a clean OPFS / storage state, uncontaminated by the dev
- * server's lazy filesystem.
+ * server's example filesystem.
  */
 export async function newIsolatedPage(browser: Browser, url: string): Promise<Page> {
     const context = await browser.createBrowserContext();
@@ -87,7 +94,7 @@ export async function openFile(page: Page, filename: string) {
 }
 
 /** Wait for file loading to complete and editor to be ready for typing.
- *  With LazyVfs, the async chain is: openFileEffect microtask → handleOpen
+ *  The async chain is: openFileEffect microtask → handleOpen
  *  (async OPFS read) → safeDispatch content + fileLoadedEffect → panel
  *  update syncs toolbar input → readOnly reconfiguration microtask. */
 async function waitForFileReady(page: Page, filename: string) {

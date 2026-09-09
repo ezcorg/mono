@@ -3,5 +3,7 @@ packages:
   - src/typescript/tiptap-markdown/example
   - src/apps/*
   - src/apps/workers/*
+  - src/apps/icanhaz/web
+  - src/apps/icanhaz/app
 allowUnusedPatches: true
 catalog:

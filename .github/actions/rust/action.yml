@@ -1,0 +1,32 @@
+name: rust toolchain
+description: nightly Rust with the given targets and components, the cargo cache, and the system libraries witmproxy links against
+inputs:
+  targets:
+    description: comma-separated extra targets
+    default: ''
+  components:
+    description: comma-separated extra components
+    default: ''
+  cache-key:
+    description: extra cache key (the OS or target, for matrices)
+    default: ''
+  save-cache:
+    description: whether this run may write the cache
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      with:
+        toolchain: nightly
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ inputs.save-cache }}
+        workspaces: |
+          . -> target
+    - if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      shell: bash

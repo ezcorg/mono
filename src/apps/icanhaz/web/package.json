@@ -1,0 +1,36 @@
+{
+  "name": "@joinezco/icanhaz-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser NoCap client + terminal — connects markdown-editor to icanhazd over a (Tailscale-fronted) WebSocket.",
+  "main": "src/lib.ts",
+  "exports": {
+    ".": "./src/lib.ts",
+    "./terminal-block": "./src/terminal-block.ts",
+    "./xterm-view": "./src/xterm-view.ts"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "test:browser": "vitest run"
+  },
+  "dependencies": {
+    "@joinezco/codeblock": "workspace:*",
+    "@joinezco/markdown-editor": "workspace:*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
+  },
+  "peerDependencies": {
+    "@tiptap/core": "^3.0.0"
+  },
+  "devDependencies": {
+    "@tiptap/core": "^3.31.3",
+    "@vitest/browser-playwright": "^4.1.11",
+    "playwright": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}

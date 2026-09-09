@@ -26,7 +26,7 @@ impl Claims {
     pub fn new(tenant_id: &str, email: Option<&str>, issuer: &str, duration_secs: u64) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         Self {
             sub: tenant_id.to_string(),
@@ -112,7 +112,7 @@ pub async fn jwt_auth(
     if let Some(ref secret) = auth_config.jwt_secret {
         match decode_token(
             &token,
-            secret,
+            secret.expose(),
             auth_config.jwt_issuer.as_deref(),
             auth_config.jwt_audience.as_deref(),
         ) {

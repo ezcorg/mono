@@ -43,7 +43,7 @@ const mockCtx = {
     waitUntil: vi.fn(),
     passThroughOnException: vi.fn(),
     props: {},
-} as ExecutionContext;
+} as unknown as ExecutionContext;   // a partial mock: workers-types keeps adding fields (tracing, lately)
 
 describe('Contact Form Worker', () => {
     beforeEach(() => {
@@ -176,9 +176,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'invalid-email',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements for the message field.'
             };
 
@@ -232,14 +230,35 @@ describe('Contact Form Worker', () => {
             expect(responseData.fieldErrors.email).toContain('Email is required');
         });
 
+        it('accepts a single optional budget and none at all', async () => {
+            for (const budget of [2500, undefined]) {
+                const jsonData: Record<string, unknown> = {
+                    name: 'John Doe',
+                    email: 'john@example.com',
+                    service: 'consulting',
+                    turnstileToken: 'test-token',
+                    message: 'This is a test message that is long enough to meet the minimum requirements for the message field.'
+                };
+                if (budget !== undefined) jsonData.budget = budget;
+                fetchMock.get('https://challenges.cloudflare.com').intercept({ path: '/turnstile/v0/siteverify', method: 'POST' }).reply(200, { success: true });
+                const request = new Request('https://example.com', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.168.1.1', 'Origin': 'https://joinez.co' },
+                    body: JSON.stringify(jsonData),
+                });
+                const response = await worker.fetch(request, mockEnv, mockCtx);
+                expect(response.status).toBe(200);
+                const html = ((mockSend.mock.calls.at(-1)?.[0] ?? {}) as { html?: string }).html ?? '';
+                expect(html).toContain(budget === undefined ? 'Not specified' : '$2,500 USD');
+            }
+        });
+
         it('should return validation errors for invalid budget values', async () => {
             const jsonData = {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 100, // Too low
-                maxBudget: 50, // Less than min
-                currency: 'USD',
+                budget: -5, // Not positive
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
             };
 
@@ -259,8 +278,7 @@ describe('Contact Form Worker', () => {
                 fieldErrors: Record<string, string[]>;
             };
             expect(responseData.success).toBe(false);
-            expect(responseData.fieldErrors.minBudget).toBeDefined();
-            expect(responseData.fieldErrors.maxBudget).toBeDefined();
+            expect(responseData.fieldErrors.budget).toBeDefined();
         });
     });
 
@@ -270,9 +288,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 turnstileToken: 'test-token',
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
             };
@@ -309,9 +325,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'invalid-token'
             };
@@ -346,9 +360,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.'
                 // Missing turnstileToken
             };
@@ -378,9 +390,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token'
             };
@@ -418,9 +428,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token',
             };
@@ -478,9 +486,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token',
             };
@@ -517,9 +523,7 @@ describe('Contact Form Worker', () => {
                 name: 'John Doe',
                 email: 'john@example.com',
                 service: 'software-development',
-                minBudget: 1000,
-                maxBudget: 5000,
-                currency: 'USD',
+                budget: 2500,
                 message: 'This is a test message that is long enough to meet the minimum requirements.',
                 turnstileToken: 'test-token',
             };

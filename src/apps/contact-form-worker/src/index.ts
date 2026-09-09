@@ -1,4 +1,4 @@
-import { validateContactForm, getValidationErrorMessage, type ContactFormData } from '@joinezco/shared';
+import { validateContactForm, getValidationErrorMessage, type ContactFormData, describeBudget } from '@joinezco/shared';
 import { WorkerMailer } from 'worker-mailer';
 
 interface Env {
@@ -69,11 +69,6 @@ export default {
         try {
             // Parse and validate JSON data
             const jsonData = await request.json() as Record<string, any>;
-
-            // Handle dateRange deserialization if present
-            if (jsonData.dateRange && Array.isArray(jsonData.dateRange)) {
-                jsonData.dateRange = jsonData.dateRange.map((dateStr: string) => new Date(dateStr));
-            }
 
             const validationResult = validateContactForm(jsonData);
 
@@ -198,18 +193,10 @@ async function sendEmail(data: ContactFormData, env: Env) {
         secure: true,
     })
 
-    // Format dateRange for display
-    const formatDateRange = (dateRange?: [Date, Date]) => {
-        if (!dateRange) return 'Not specified';
-        const [start, end] = dateRange;
-        return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
-    };
-
     const emailBody = `
 <h2>Project details:</h2>
 <ul>
-    <li><strong>Timeline:</strong> ${formatDateRange(data.dateRange)}</li>
-    <li><strong>Budget:</strong> ${data.currency} ${data.minBudget} - ${data.maxBudget}</li>
+    <li><strong>Budget:</strong> ${describeBudget(data)}</li>
 </ul>
 
 <h2>Message:</h2>

@@ -1,110 +1,92 @@
 import { SlashCommand } from '../extensions/slash-commands'
 
-// Settings modal utility function
-const openSettingsModal = (editor: any) => {
-    // Create a simple modal for settings
-    const modal = document.createElement('div')
-    modal.className = 'settings-modal-overlay'
-
-    const modalContent = document.createElement('div')
-    modalContent.className = 'settings-modal'
-
-    modalContent.innerHTML = `
-    <div class="settings-header">
-      <h3>Editor Settings</h3>
-      <button class="settings-close">&times;</button>
-    </div>
-    <div class="settings-content">
-      <div class="setting-group">
-        <label>
-          <input type="checkbox" id="auto-save" ${editor.storage.persistence?.options?.autoSave ? 'checked' : ''}>
-          Auto-save documents
-        </label>
-      </div>
-      <div class="setting-group">
-        <label>
-          <input type="checkbox" id="word-wrap" checked>
-          Word wrap
-        </label>
-      </div>
-      <div class="setting-group">
-        <label>
-          Theme:
-          <select id="theme-select">
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-            <option value="auto">Auto</option>
-          </select>
-        </label>
-      </div>
-    </div>
-    <div class="settings-footer">
-      <button class="settings-save">Save</button>
-      <button class="settings-cancel">Cancel</button>
-    </div>
-  `
-
-    modal.appendChild(modalContent)
-
-    const closeModal = () => {
-        if (document.body.contains(modal)) {
-            document.body.removeChild(modal)
-        }
-    }
-
-    const saveSettings = () => {
-        const autoSave = (modal.querySelector('#auto-save') as HTMLInputElement).checked
-        const theme = (modal.querySelector('#theme-select') as HTMLSelectElement).value
-
-        // Apply settings
-        if (editor.storage.persistence?.options) {
-            editor.storage.persistence.options.autoSave = autoSave
-        }
-
-        // Apply theme (you can extend this based on your theme system)
-        document.documentElement.setAttribute('data-theme', theme)
-
-        console.log('Settings saved:', { autoSave, theme })
-        closeModal()
-    }
-
-    // Event listeners
-    const closeButton = modal.querySelector('.settings-close')
-    const cancelButton = modal.querySelector('.settings-cancel')
-    const saveButton = modal.querySelector('.settings-save')
-
-    if (closeButton) closeButton.addEventListener('click', closeModal)
-    if (cancelButton) cancelButton.addEventListener('click', closeModal)
-    if (saveButton) saveButton.addEventListener('click', saveSettings)
-
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeModal()
-    })
-
-    // Handle escape key
-    const handleEscape = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-            closeModal()
-            document.removeEventListener('keydown', handleEscape)
-        }
-    }
-    document.addEventListener('keydown', handleEscape)
-
-    document.body.appendChild(modal)
-}
-
-
+/**
+ * Default slash-command palette for the markdown editor.
+ *
+ * Each command first deletes the typed "/query" range, then runs an
+ * editor command chain. Everything here drives built-in editor commands
+ * (no app-specific UI), so the palette ships with the library and works
+ * for any consumer.
+ */
 export const defaultSlashCommands: SlashCommand[] = [
     {
-        title: 'Settings',
-        description: 'Configure editor preferences',
-        icon: '⚙️',
-        command: ({ editor, range }) => {
-            // Remove the slash command text
-            editor.chain().focus().deleteRange(range).run()
-
-            // Open settings modal
-            openSettingsModal(editor)
-        },
+        title: 'Heading 1',
+        description: 'Large section heading',
+        icon: 'H1',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).setHeading({ level: 1 }).run(),
+    },
+    {
+        title: 'Heading 2',
+        description: 'Medium section heading',
+        icon: 'H2',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).setHeading({ level: 2 }).run(),
+    },
+    {
+        title: 'Heading 3',
+        description: 'Small section heading',
+        icon: 'H3',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).setHeading({ level: 3 }).run(),
+    },
+    {
+        title: 'Bullet list',
+        description: 'An unordered list',
+        icon: '•',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).toggleBulletList().run(),
+    },
+    {
+        title: 'Numbered list',
+        description: 'An ordered list',
+        icon: '1.',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).toggleOrderedList().run(),
+    },
+    {
+        title: 'Task list',
+        description: 'A checklist of to-dos',
+        icon: '☐',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).toggleTaskList().run(),
+    },
+    {
+        title: 'Code block',
+        description: 'A formatted block of code',
+        icon: '</>',
+        command: ({ editor, range }) =>
+            editor
+                .chain()
+                .focus()
+                .deleteRange(range)
+                .insertContent({ type: 'ezcodeBlock', attrs: { language: '' } })
+                .run(),
+    },
+    {
+        title: 'Quote',
+        description: 'Capture a quotation',
+        icon: '“',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).toggleBlockquote().run(),
+    },
+    {
+        title: 'Table',
+        description: 'Insert a 3×3 table',
+        icon: '⊞',
+        command: ({ editor, range }) =>
+            editor
+                .chain()
+                .focus()
+                .deleteRange(range)
+                .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                .run(),
+    },
+    {
+        title: 'Divider',
+        description: 'A horizontal rule',
+        icon: '—',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).setHorizontalRule().run(),
     },
 ]

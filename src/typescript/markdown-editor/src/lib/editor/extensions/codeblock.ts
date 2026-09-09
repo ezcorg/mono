@@ -1,6 +1,7 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
-import { Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core';
-import { basicSetup, codeblock, CodeblockFS, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
+import { Node, mergeAttributes, InputRule } from '@tiptap/core';
+import type { NodeType } from '@tiptap/pm/model';
+import { basicSetup, codeblock, CodeblockFS, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
@@ -52,6 +53,52 @@ class CodeblockRegistry {
 
 export const codeblockRegistry = CodeblockRegistry.getInstance();
 
+/**
+ * Resolve the light/dark mode the editor is rendered in, so an embedded
+ * codeblock matches it by default. An explicit `data-theme` on the editor
+ * (or any ancestor) wins; otherwise we follow the OS colour-scheme.
+ */
+function isDarkMode(reference?: Element | null): boolean {
+    if (typeof document !== 'undefined') {
+        const themed = (reference ?? document.body)?.closest?.('[data-theme]') as HTMLElement | null;
+        const explicit = themed?.getAttribute('data-theme');
+        if (explicit === 'dark') return true;
+        if (explicit === 'light') return false;
+    }
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        : false;
+}
+
+/**
+ * Measure the editor's base paragraph font size in px (resolving
+ * `--ezco-mde-text-base`), so an embedded codeblock can default to the same
+ * size — keeping prose and code at one scale unless a consumer overrides it.
+ * Returns null if it can't be measured.
+ */
+function measureBaseFontPx(): number | null {
+    if (typeof document === 'undefined') return null;
+    const probe = document.createElement('span');
+    probe.style.cssText =
+        'position:absolute;visibility:hidden;pointer-events:none;font-size:var(--ezco-mde-text-base)';
+    document.body.appendChild(probe);
+    const px = parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    return Number.isFinite(px) && px > 0 ? px : null;
+}
+
+// When the editor is in "system" mode (no pinned `data-theme`), keep all
+// codeblocks in step with the OS colour-scheme as it changes. Set up once.
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => {
+        if (typeof document !== 'undefined' && document.querySelector('[data-theme]')) return;
+        codeblockRegistry.setTheme({ dark: mql.matches });
+    };
+    if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onChange);
+    else if (typeof (mql as any).addListener === 'function') (mql as any).addListener(onChange);
+}
+
 let fsWorkerPromise: Promise<any> | null = null;
 
 function getFileSystemWorker() {
@@ -61,7 +108,21 @@ function getFileSystemWorker() {
     return fsWorkerPromise;
 }
 
-export const ExtendedCodeblock = Node.create({
+export interface ExtendedCodeblockOptions {
+    /**
+     * Default CodeMirror editor settings applied to every embedded
+     * codeblock. Merged over the extension's own defaults (line wrap on),
+     * so a consumer can override any of them, e.g.
+     * `ExtendedCodeblock.configure({ settings: { lineWrap: false } })`.
+     */
+    settings: Record<string, unknown>;
+    /** Attributes spread onto the rendered `<code>` element. */
+    HTMLAttributes: Record<string, unknown>;
+    /** Class prefix used when parsing/serializing the language (default `language-`). */
+    languageClassPrefix: string;
+}
+
+export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
     name: 'ezcodeBlock', // Unique name for your node
     group: 'block', // Belongs to the 'block' group (like paragraph, heading)
     content: 'text*', // Can contain text content
@@ -69,6 +130,17 @@ export const ExtendedCodeblock = Node.create({
     defining: true, // A defining node encapsulates its content
     code: true, // Indicates this node represents code
     isolating: true, // Content inside is isolated from outside editing actions
+
+    addOptions() {
+        return {
+            // Long lines inside prose shouldn't force a horizontal scrollbar,
+            // so embedded codeblocks soft-wrap by default. Override per-editor
+            // via `ExtendedCodeblock.configure({ settings: { lineWrap: false } })`.
+            settings: { lineWrap: true },
+            HTMLAttributes: {},
+            languageClassPrefix: 'language-',
+        };
+    },
 
     addAttributes() {
         return {
@@ -192,23 +264,76 @@ export const ExtendedCodeblock = Node.create({
             return { language: 'markdown' };
         };
 
+        // Turn the matched "```"/"```lang" trigger into a codeblock.
+        //
+        // The default `textblockTypeInputRule` only converts the current
+        // textblock in place. That fails inside a list item, whose schema
+        // (`paragraph block*`) requires a *leading paragraph* — you can't
+        // replace that required paragraph with a codeblock. So when an
+        // in-place conversion isn't valid but we're inside a list item,
+        // insert the codeblock as the next block *within* the item. It
+        // then renders indented to the item's level (an "indented
+        // codeblock") and round-trips to markdown as a fenced block nested
+        // under the list item.
+        const codeblockType = this.type;
+        const applyCodeblock = (
+            state: any,
+            range: { from: number; to: number },
+            attrs: Record<string, unknown>,
+        ): null | void => {
+            const { tr } = state;
+            const $start = state.doc.resolve(range.from);
+            const type = codeblockType as NodeType;
+
+            const canReplaceInPlace = $start
+                .node(-1)
+                .canReplaceWith($start.index(-1), $start.indexAfter(-1), type);
+
+            if (canReplaceInPlace) {
+                tr.delete(range.from, range.to).setBlockType(range.from, range.from, type, attrs);
+                return;
+            }
+
+            const containerName = $start.node(-1)?.type.name;
+            if (containerName !== 'listItem' && containerName !== 'taskItem') {
+                // Nowhere valid to put a codeblock here — leave the text as
+                // typed rather than silently swallowing it.
+                return null;
+            }
+
+            // Drop the trigger text, then insert the codeblock as the
+            // sibling block right after the (now possibly empty) paragraph.
+            tr.delete(range.from, range.to);
+            const $pos = tr.doc.resolve(tr.mapping.map(range.from));
+            const insertAt = $pos.after($pos.depth);
+            const node = type.createAndFill(attrs);
+            if (!node) return null;
+            tr.insert(insertAt, node);
+            // Park the selection inside the new codeblock so its NodeView
+            // takes focus (empty codeblocks open their language toolbar).
+            tr.setSelection(TextSelection.near(tr.doc.resolve(insertAt + 1)));
+        };
+
         return [
             // ```language + space — more specific, checked first
-            textblockTypeInputRule({
+            new InputRule({
                 find: /^```([^\s`]+)\s$/,
-                type: this.type,
-                getAttributes: match => parseLanguageAttributes(match[1]?.trim()),
+                handler: ({ state, range, match }) =>
+                    applyCodeblock(state, range, parseLanguageAttributes(match[1]?.trim())),
             }),
             // ``` alone — triggers immediately on the third backtick
-            textblockTypeInputRule({
+            new InputRule({
                 find: /^```$/,
-                type: this.type,
-                getAttributes: () => ({ language: '' }),
+                handler: ({ state, range }) =>
+                    applyCodeblock(state, range, { language: '' }),
             }),
         ];
     },
 
     addNodeView() {
+        // Snapshot the configured defaults; `lineWrap: true` unless a
+        // consumer overrode it via `configure({ settings })`.
+        const codeblockSettings = { lineWrap: true, ...(this.options.settings || {}) };
         return ({ editor, node, getPos }: any) => {
             const { view, schema } = editor;
             let updating = false;
@@ -290,6 +415,37 @@ export const ExtendedCodeblock = Node.create({
             }
 
             const maybeExit = () => {
+                // When the codeblock lives inside a list item, "exiting" it
+                // should continue the list — add a new sibling list item
+                // after the current one and drop the cursor into it. This is
+                // the intuitive counterpart to pressing Enter in a list.
+                // (The default `exitCode` only adds a paragraph *inside* the
+                // current item, and won't fire at all when there's no block
+                // after the codeblock — so Shift-Enter felt like it did
+                // nothing for indented codeblocks.)
+                const pos = getPos();
+                if (pos !== undefined) {
+                    const $pos = view.state.doc.resolve(pos);
+                    let liDepth = -1;
+                    for (let d = $pos.depth; d > 0; d--) {
+                        const name = $pos.node(d).type.name;
+                        if (name === 'listItem' || name === 'taskItem') { liDepth = d; break; }
+                    }
+                    if (liDepth >= 0) {
+                        const itemType = $pos.node(liDepth).type;
+                        const attrs = itemType.name === 'taskItem' ? { checked: false } : null;
+                        const newItem = itemType.createAndFill(attrs);
+                        if (newItem) {
+                            const insertAt = $pos.after(liDepth);
+                            const tr = view.state.tr.insert(insertAt, newItem);
+                            tr.setSelection(Selection.near(tr.doc.resolve(insertAt + 1)));
+                            view.dispatch(tr.scrollIntoView());
+                            view.focus();
+                            return true;
+                        }
+                    }
+                }
+
                 if (!exitCode(view.state, view.dispatch)) return false;
                 view.focus();
                 return true;
@@ -336,6 +492,43 @@ export const ExtendedCodeblock = Node.create({
                 ] as KeyBinding[]
             }
 
+            // Keep the ProseMirror node's `file`/`language` attributes in
+            // sync with the codeblock's live state. The filename can change
+            // *inside* CodeMirror — when the user picks/creates a file via
+            // the codeblock toolbar it updates `currentFileField` but not
+            // the PM node. Without this sync the node attr stays stale, so
+            // (a) the file is dropped from serialized markdown and (b) if
+            // the NodeView is ever recreated (e.g. an edit to a sibling
+            // list item reflows the list) it reloads from the stale attr
+            // and loses the filename + syntax/semantic highlighting.
+            const syncFileAttrs = (update: ViewUpdate) => {
+                if (updating) return;
+                const next = update.state.field(currentFileField, false);
+                if (!next || next.loading) return;
+                const prev = update.startState.field(currentFileField, false);
+                if (prev && prev.path === next.path && prev.language === next.language) return;
+
+                const pos = getPos();
+                if (pos === undefined) return;
+                const current = view.state.doc.nodeAt(pos);
+                if (!current || current.type !== node.type) return;
+
+                const newFile = next.path ?? null;
+                const newLang = next.language ?? current.attrs.language ?? 'markdown';
+                if (current.attrs.file === newFile && current.attrs.language === newLang) return;
+
+                updating = true;
+                try {
+                    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+                        ...current.attrs,
+                        file: newFile,
+                        language: newLang,
+                    }));
+                } finally {
+                    updating = false;
+                }
+            };
+
             // Create initial state without codeblock extension
             const initialState = EditorState.create({
                 doc: node.textContent || '',
@@ -353,10 +546,13 @@ export const ExtendedCodeblock = Node.create({
             // This ensures proper stacking order based on DOM position
             reassignZIndexes();
 
-            // Handle ArrowUp from toolbar to escape to ProseMirror above
+            // Handle toolbar-input keys that need to act on the surrounding
+            // ProseMirror document rather than the codeblock's search box.
             dom.addEventListener('keydown', (e) => {
                 const target = e.target as HTMLElement;
-                if (target.classList.contains('cm-toolbar-input') && e.key === 'ArrowUp') {
+                if (!target.classList.contains('cm-toolbar-input')) return;
+
+                if (e.key === 'ArrowUp') {
                     // Check if the dropdown is open — if so, let toolbar handle it
                     const dropdown = dom.querySelector('.cm-search-results');
                     if (dropdown && dropdown.children.length > 0) return;
@@ -371,6 +567,53 @@ export const ExtendedCodeblock = Node.create({
                         view.dispatch(tr);
                         view.focus();
                     }
+                } else if (e.key === 'Escape') {
+                    // Aborting the language/file picker on a codeblock that's
+                    // still empty — i.e. one just created by typing ``` , with no
+                    // language chosen, no file, and no body — should remove the
+                    // stub rather than leave an empty codeblock behind. A
+                    // codeblock with real content lets Escape fall through to the
+                    // toolbar's normal reset/blur.
+                    const pos = getPos();
+                    if (pos === undefined) return;
+                    const current = view.state.doc.nodeAt(pos);
+                    const stillEmpty = !!current && current.type === node.type &&
+                        current.textContent.length === 0 &&
+                        !current.attrs.file &&
+                        (!current.attrs.language || current.attrs.language === '');
+                    if (!stillEmpty) return;
+
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Replace the stub with an empty paragraph so the caret lands
+                    // back where the user was (and the doc never ends up with an
+                    // invalid/empty top node).
+                    const paragraph = view.state.schema.nodes.paragraph;
+                    const filler = paragraph?.createAndFill();
+                    const tr = filler
+                        ? view.state.tr.replaceWith(pos, pos + current.nodeSize, filler)
+                        : view.state.tr.delete(pos, pos + current.nodeSize);
+                    tr.setSelection(Selection.near(tr.doc.resolve(Math.min(pos + 1, tr.doc.content.size))))
+                        .scrollIntoView();
+                    view.dispatch(tr);
+                    view.focus();
+                } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                    // Mirror the "clear the code, then Backspace deletes the
+                    // block" affordance on the toolbar/filepath field: once that
+                    // field has been cleared, a further Backspace/Delete removes
+                    // the whole codeblock (instead of no-op'ing on the already-
+                    // empty input).
+                    const input = target as HTMLInputElement;
+                    if (input.value !== '') return;
+                    const pos = getPos();
+                    if (pos === undefined) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const selection = Selection.near(view.state.doc.resolve(pos), -1);
+                    const tr = view.state.tr.setSelection(selection).scrollIntoView();
+                    tr.delete(pos, pos + node.nodeSize);
+                    view.dispatch(tr);
+                    view.focus();
                 }
             }, true);
 
@@ -385,6 +628,16 @@ export const ExtendedCodeblock = Node.create({
             fsPromise.then(fs => {
                 fsWorker = fs;
                 SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
+                    // Default the code font size to the editor's paragraph
+                    // size MINUS 2px: an equal px value reads visually larger in
+                    // the monospace code font (wider glyphs, tighter leading)
+                    // than in the prose font, so we nudge it down to balance the
+                    // two. An explicit `settings.fontSize` (configured on the
+                    // extension) still wins.
+                    const baseFontPx = measureBaseFontPx();
+                    const resolvedSettings = baseFontPx
+                        ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
+                        : codeblockSettings;
                     // Reconfigure with codeblock extension once fs is ready
                     cm.setState(EditorState.create({
                         doc: node.textContent || '',
@@ -392,13 +645,20 @@ export const ExtendedCodeblock = Node.create({
                             keymap.of(codemirrorKeymap()),
                             basicSetup,
                             EditorView.updateListener.of((update) => forwardUpdate(cm, update)),
+                            EditorView.updateListener.of(syncFileAttrs),
                             codeblock({
                                 content: node.textContent,
                                 fs: fsWorker,
                                 language: node.attrs.language,
                                 filepath: node.attrs.file,
                                 index,
-                                dark: true,
+                                // Match the editor's light/dark mode rather
+                                // than forcing dark; respects an explicit
+                                // `data-theme`, else follows the OS.
+                                dark: isDarkMode(view.dom),
+                                // Soft-wrap by default + match the editor font
+                                // size (configurable via the `settings` option).
+                                settings: resolvedSettings,
                             }),
                         ]
                     }));
@@ -425,8 +685,23 @@ export const ExtendedCodeblock = Node.create({
                 dom,
                 setSelection(anchor, head) {
                     // If the codeblock wasn't focused (entering from outside),
-                    // direct to the toolbar input for keyboard navigation
+                    // direct to the toolbar input for keyboard navigation —
+                    // EXCEPT when the user is selecting text inside a hover or
+                    // diagnostic tooltip rendered within this codeblock. Those
+                    // tooltips live in the CodeMirror DOM, so dragging a
+                    // selection across one makes ProseMirror's DOM observer call
+                    // setSelection; stealing focus to the toolbar there collapses
+                    // the selection and reads as "my selection jumped into the
+                    // search box". Leave the tooltip selection alone instead.
                     if (!cm.hasFocus) {
+                        const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+                        const anchorNode = sel?.anchorNode ?? null;
+                        const anchorEl = anchorNode
+                            ? (anchorNode.nodeType === 1
+                                ? (anchorNode as Element)
+                                : anchorNode.parentElement)
+                            : null;
+                        if (anchorEl?.closest('.cm-tooltip')) return;
                         const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
                         if (toolbarInput) {
                             toolbarInput.focus();
@@ -448,6 +723,23 @@ export const ExtendedCodeblock = Node.create({
                 stopEvent() { return true },
                 update(updated) {
                     if (updated.type != node.type) return false
+                    // The embedded CodeMirror is configured for a specific
+                    // language/file at creation and can't hot-swap them. When
+                    // the whole document is replaced (the toolbar's open-file
+                    // does `setContent`), ProseMirror reconciles codeblocks by
+                    // position and may reuse THIS NodeView for a *different*
+                    // codeblock — one with another language or filename. Left
+                    // alone, CodeMirror would keep rendering the previous file's
+                    // language (e.g. an unnamed `sh` block bleeding into a
+                    // reopened doc's `javascript` block). Bail out so PM rebuilds
+                    // the NodeView from the new attrs. Attr writes that originate
+                    // from this codeblock (syncFileAttrs) set `updating`, so the
+                    // codeblock's own file picks don't trip this and lose focus.
+                    if (!updating &&
+                        (updated.attrs.language !== node.attrs.language ||
+                            updated.attrs.file !== node.attrs.file)) {
+                        return false
+                    }
                     node = updated
                     if (updating) return true
 

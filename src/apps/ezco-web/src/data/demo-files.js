@@ -1,0 +1,129 @@
+export const files = [
+	['example.ts', `// Type inference and generics
+interface User {
+	name: string;
+	email: string;
+	role: "admin" | "editor" | "viewer";
+}
+
+function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+	return obj[key];
+}
+
+const user: User = {
+	name: "Alice",
+	email: "alice@example.com",
+	role: "admin",
+};
+
+// Hover over 'role' to see inferred type
+const role = getProperty(user, "role");
+
+// Autocomplete works after the dot
+// user.
+
+// Async patterns
+async function fetchUsers(): Promise<User[]> {
+	return [user];
+}
+
+// Mapped types
+type ReadonlyUser = Readonly<User>;
+type PartialUser = Partial<User>;
+
+// Template literal types
+type EventName = \`on\$\{Capitalize<string>}\`;
+
+export { user, fetchUsers, type ReadonlyUser, type PartialUser };
+`],
+	['index.ts', `import { CodeblockFS } from "@joinezco/codeblock";
+import { createEditor } from "@joinezco/markdown-editor";
+
+async function init() {
+	const fs = await CodeblockFS.worker(undefined, "demo");
+
+	// Seed files only if hello.md doesn't exist yet (first visit)
+	const exists = await fs.exists("hello.md");
+	if (!exists) {
+		await fs.writeFile("hello.md", "# hello, world");
+	}
+	const container = document.getElementById("editor-mount")!;
+
+	const editor = createEditor({
+		element: container,
+		autofocus: false,
+		fs: {
+			fs,
+			filepath: "hello.md",
+		},
+	});
+	editor.view.dom.setAttribute("data-theme", "dark");
+}
+
+init().catch(console.error);
+`],
+	['install-mde.sh', 'pnpm add @joinezco/markdown-editor'],
+	['install-cb.sh', 'pnpm add @joinezco/codeblock'],
+	['hello.md', `# \`@joinezco/markdown-editor\`
+
+## Usage
+
+### Install
+\`\`\`install-mde.sh
+\`\`\`
+
+### Basic example
+
+\`\`\`index.ts
+\`\`\`
+
+## Features
+
+### Lists
+
+#### Bullets
+
+* *Italic* and **Bold** text
+* \`Inline code\`
+* Links (auto-detected [example.com](http://example.com) and [manual](https://google.com)
+
+#### Ordered
+
+1. \`todo:\` Emojis
+2. 
+
+#### Tasks
+
+* [x] Task 1 (Done)
+
+* [ ] Task 2 (Pending)
+
+  * [ ] Subtask 2.1
+
+* [ ] Task 3
+
+### Tables
+
+| Header 1 | Header 2 | Header 3 |
+|----------|----------|----------|
+| Cell 1   | Cell 2   | Cell 3   |
+| Cell 4   | Cell 5   | Cell 6   |
+
+### Codeblocks
+
+\`\`\`javascript
+function greet(name) {
+	console.log(\`Hello, \${name}!\`);
+}
+
+greet('World');
+\`\`\`
+
+#### Virtual filesystem
+
+Reference and change files in a document-local filesystem.
+
+\`\`\`example.ts
+\`\`\`
+`]
+]

@@ -3,8 +3,8 @@ use crate::test_utils::{create_plugin_registry, register_noop_plugin, register_t
 
 #[tokio::test]
 async fn effective_plugins_no_overrides_returns_all_enabled() {
-    let (mut registry, _dir) = create_plugin_registry().await.unwrap();
-    register_test_component(&mut registry).await.unwrap();
+    let (registry, _dir) = create_plugin_registry().await.unwrap();
+    register_test_component(&registry).await.unwrap();
 
     let overrides: Vec<TenantPluginOverride> = vec![];
     let effective = registry.effective_plugins_for_tenant(&overrides);
@@ -14,7 +14,7 @@ async fn effective_plugins_no_overrides_returns_all_enabled() {
         !effective.is_empty(),
         "Expected at least one effective plugin"
     );
-    for (id, plugin) in registry.plugins() {
+    for (id, plugin) in registry.plugins().iter() {
         if plugin.enabled {
             assert!(
                 effective.contains(id),
@@ -27,12 +27,13 @@ async fn effective_plugins_no_overrides_returns_all_enabled() {
 
 #[tokio::test]
 async fn effective_plugins_tenant_override_disables_plugin() {
-    let (mut registry, _dir) = create_plugin_registry().await.unwrap();
-    register_test_component(&mut registry).await.unwrap();
+    let (registry, _dir) = create_plugin_registry().await.unwrap();
+    register_test_component(&registry).await.unwrap();
 
     // Get the first plugin's namespace/name
     let (plugin_ns, plugin_name) = {
-        let p = registry.plugins().values().next().unwrap();
+        let plugins = registry.plugins();
+        let p = plugins.values().next().unwrap();
         (p.namespace.clone(), p.name.clone())
     };
 
@@ -53,11 +54,12 @@ async fn effective_plugins_tenant_override_disables_plugin() {
 
 #[tokio::test]
 async fn effective_plugins_tenant_override_enables_disabled_plugin() {
-    let (mut registry, _dir) = create_plugin_registry().await.unwrap();
-    register_test_component(&mut registry).await.unwrap();
+    let (registry, _dir) = create_plugin_registry().await.unwrap();
+    register_test_component(&registry).await.unwrap();
 
     let (plugin_ns, plugin_name, plugin_id) = {
-        let p = registry.plugins().values().next().unwrap();
+        let plugins = registry.plugins();
+        let p = plugins.values().next().unwrap();
         (p.namespace.clone(), p.name.clone(), p.id())
     };
 
@@ -99,9 +101,9 @@ async fn effective_plugins_tenant_override_enables_disabled_plugin() {
 
 #[tokio::test]
 async fn effective_plugins_multiple_plugins_different_overrides() {
-    let (mut registry, _dir) = create_plugin_registry().await.unwrap();
-    register_test_component(&mut registry).await.unwrap();
-    register_noop_plugin(&mut registry).await.unwrap();
+    let (registry, _dir) = create_plugin_registry().await.unwrap();
+    register_test_component(&registry).await.unwrap();
+    register_noop_plugin(&registry).await.unwrap();
 
     let plugins: Vec<_> = registry
         .plugins()
@@ -131,10 +133,11 @@ async fn effective_plugins_multiple_plugins_different_overrides() {
 
 #[tokio::test]
 async fn resolve_config_no_tenant_config_returns_global() {
-    let (mut registry, _dir) = create_plugin_registry().await.unwrap();
-    register_test_component(&mut registry).await.unwrap();
+    let (registry, _dir) = create_plugin_registry().await.unwrap();
+    register_test_component(&registry).await.unwrap();
 
-    let plugin = registry.plugins().values().next().unwrap();
+    let plugins = registry.plugins();
+    let plugin = plugins.values().next().unwrap();
     let tenant_config: Vec<TenantPluginConfig> = vec![];
 
     let resolved = registry.resolve_config(plugin, &tenant_config);
@@ -149,10 +152,11 @@ async fn resolve_config_no_tenant_config_returns_global() {
 
 #[tokio::test]
 async fn resolve_config_tenant_overrides_specific_input() {
-    let (mut registry, _dir) = create_plugin_registry().await.unwrap();
-    register_test_component(&mut registry).await.unwrap();
+    let (registry, _dir) = create_plugin_registry().await.unwrap();
+    register_test_component(&registry).await.unwrap();
 
-    let plugin = registry.plugins().values().next().unwrap();
+    let plugins = registry.plugins();
+    let plugin = plugins.values().next().unwrap();
 
     // Only test if the plugin has configuration inputs
     if plugin.configuration.is_empty() {
@@ -186,10 +190,11 @@ async fn resolve_config_tenant_overrides_specific_input() {
 
 #[tokio::test]
 async fn resolve_config_ignores_config_for_other_plugins() {
-    let (mut registry, _dir) = create_plugin_registry().await.unwrap();
-    register_test_component(&mut registry).await.unwrap();
+    let (registry, _dir) = create_plugin_registry().await.unwrap();
+    register_test_component(&registry).await.unwrap();
 
-    let plugin = registry.plugins().values().next().unwrap();
+    let plugins = registry.plugins();
+    let plugin = plugins.values().next().unwrap();
 
     // Config for a different plugin should not affect this plugin
     let tenant_config = vec![TenantPluginConfig {

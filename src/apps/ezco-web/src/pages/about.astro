@@ -1,68 +1,21 @@
 ---
-import Layout from '../layouts/Layout.astro';
-import Footer from '../components/Footer.astro';
-import Navbar from '../components/Navbar.astro';
-import MissionSection from '../components/MissionSection.astro';
-
-// Content variables
-const sections = [
-	{
-		heading: "who we are",
-		statements: [
-			{ text: "We are a democratic collective of passionate technologists who want to build without compromising our values." },
-			{ text: "We want to help others and share the things we build along the way." },
-			{ text: "We do not chase short-term profits at the expense of long term prosperity." },
-			{ text: "We will never be evil." }
-		]
-	},
-	{
-		heading: "who you are",
-		statements: [
-			{ text: "Someone who shares our aspirations and has something they want to build." },
-			{
-				text: "Someone who wants to join or work with our collective.",
-				links: [
-					{ text: "join", href: "/join" },
-					{ text: "work with", href: "/newproject" }
-				]
-			}
-		]
-	},
-	{
-		heading: "what we're working on lately",
-		statements: [
-			{ text: "A man-in-the-middle proxy to filter addictive and low-effort content"},
-			{ text: "A browser-based Markdown (and code) editor" },
-			{ text: "An aesthetically pleasing wireless charging device"},
-			{ text: "A platform to power democratic organizations" },
-		]
-	},
-];
+import RoomLayout from '../layouts/RoomLayout.astro';
+import StaticPage from '../components/StaticPage.astro';
+import Room from '../components/Room.astro';
+import { sections, statementHtml, links } from '../data/about';
+import { routes, roomRoute } from '../data/site';
+const r = routes.find((r) => r.path === '/about')!;
 ---
 
-<style>
-	.about-content h2 {
-		font-family: 'Times New Roman', Times, serif;
-	}
-</style>
-
-<Layout
-	title="About | ez co"
-	description="Learn more about ez co"
->
-	<section>
-		<div class="w-full mx-auto flex flex-col gap-8 about-content">
-			<Navbar currentPath="/about" />
-			{sections.map((section) => (
-				<MissionSection
-					heading={section.heading}
-					statements={section.statements}
-				/>
-			))}
-		</div>
-	</section>
-
-	<Footer slot="footer" />
-</Layout>
-
-<script></script>
+<RoomLayout title={`${r.title} · ez co`} description={r.description} canonical="/about/" route={roomRoute('/about')}>
+	<StaticPage title={r.title} current="/about">
+		{sections.map((s) => (
+			<section>
+				<h2>{s.heading}</h2>
+				<ul>{s.statements.map((st) => <li set:html={statementHtml(st, (h) => h + '/')} />)}</ul>
+			</section>
+		))}
+		<p>Employee of the month: Lady. Find us on <a href={links.github}>GitHub</a> and <a href={links.linkedin}>LinkedIn</a>.</p>
+	</StaticPage>
+	<Room />
+</RoomLayout>

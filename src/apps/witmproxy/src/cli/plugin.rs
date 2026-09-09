@@ -1,78 +1,164 @@
-use super::Services;
+// The `Conf` / `Subcommands` derives generate public interfaces over these
+// types, so they must stay `pub` even though this module is private and
+// nothing outside the crate can name them. `pub(crate)` fails with E0446.
+#![allow(unreachable_pub)]
+
+use super::{GlobalArgs, Services};
 use crate::cert::ca::get_root_cert_path;
-use crate::{AppConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
+use crate::{config::PluginScopedConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
-use clap::Subcommand;
+use conf::{Conf, Subcommands};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-#[derive(Subcommand)]
+/// Every leaf reads its config subset from the `[config]` file section: the
+/// variants are all `serde(rename = "config")` and `Cli::parse_args` mirrors
+/// the `[config]` table under this command's doc key (see
+/// `mirror_config_for_nested_commands`).
+#[derive(Subcommands)]
+#[conf(serde)]
 pub enum PluginCommands {
     /// List all installed plugins
-    List,
+    #[conf(serde(rename = "config"))]
+    List(PluginListArgs),
     /// Create a new plugin from a template
-    New {
-        /// Name of the plugin
-        plugin_name: String,
-        /// Programming language for the plugin
-        #[arg(short, long, default_value = "rust")]
-        language: String,
-        /// Destination directory for the generated plugin
-        #[arg(short, long)]
-        dest: Option<PathBuf>,
-    },
+    #[conf(serde(rename = "config"))]
+    New(PluginNewArgs),
     /// Add a plugin from a local path or URL
-    Add {
-        /// Local .wasm file path or URL (https://...)
-        source: String,
-        /// Path to a trusted public key file to verify the plugin was signed
-        /// by a known author (not just self-signed)
-        #[arg(short, long)]
-        public_key: Option<PathBuf>,
-    },
+    #[conf(serde(rename = "config"))]
+    Add(PluginAddArgs),
     /// Remove a plugin by name or namespace/name
-    Remove {
-        /// Plugin name or namespace/name to remove
-        plugin_name: String,
-    },
+    #[conf(serde(rename = "config"))]
+    Remove(PluginRemoveArgs),
     /// View or set configuration values for an installed plugin
-    Configure {
-        /// Plugin name or namespace/name (e.g. "@ezco/noop")
-        plugin_name: String,
-        /// Set a configuration value (format: key=value), may be repeated
-        #[arg(short, long = "set", value_name = "KEY=VALUE")]
-        set_values: Vec<String>,
-    },
+    #[conf(serde(rename = "config"))]
+    Configure(PluginConfigureArgs),
+}
+
+impl PluginCommands {
+    /// The config scope + shared flags carried by whichever leaf was invoked.
+    pub(crate) fn scope(&self) -> (&PluginScopedConfig, &GlobalArgs) {
+        match self {
+            PluginCommands::List(a) => (&a.config, &a.globals),
+            PluginCommands::New(a) => (&a.config, &a.globals),
+            PluginCommands::Add(a) => (&a.config, &a.globals),
+            PluginCommands::Remove(a) => (&a.config, &a.globals),
+            PluginCommands::Configure(a) => (&a.config, &a.globals),
+        }
+    }
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct PluginListArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct PluginNewArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
+    /// Name of the plugin
+    #[arg(pos)]
+    pub plugin_name: String,
+    /// Programming language for the plugin
+    #[arg(short, long, default_value = "rust")]
+    pub language: String,
+    /// Destination directory for the generated plugin
+    #[arg(short, long)]
+    pub dest: Option<PathBuf>,
+    /// Plugin namespace (used to scope the plugin's identity)
+    #[arg(long)]
+    pub namespace: Option<String>,
+    /// Plugin author; defaults to `git config user.name`
+    #[arg(long)]
+    pub author: Option<String>,
+    /// Short description of what the plugin does
+    #[arg(long)]
+    pub description: Option<String>,
+    /// SPDX license identifier for the generated project
+    #[arg(long)]
+    pub license: Option<String>,
+    /// Homepage URL for the plugin
+    #[arg(long)]
+    pub url: Option<String>,
+    /// Overwrite files that already exist in the destination
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct PluginAddArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
+    /// Local .wasm file path or URL (https://...)
+    #[arg(pos)]
+    pub source: String,
+    /// Path to a trusted public key file to verify the plugin was signed
+    /// by a known author (not just self-signed)
+    #[arg(short, long)]
+    pub public_key: Option<PathBuf>,
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct PluginRemoveArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
+    /// Plugin name or namespace/name to remove
+    #[arg(pos)]
+    pub plugin_name: String,
+}
+
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct PluginConfigureArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+    #[conf(flatten, serde(flatten))]
+    pub config: PluginScopedConfig,
+
+    /// Plugin name or namespace/name (e.g. "@ezco/noop")
+    #[arg(pos)]
+    pub plugin_name: String,
+    /// Set a configuration value (format: key=value), may be repeated
+    #[arg(repeat, short = 's', long = "set")]
+    pub set_values: Vec<String>,
 }
 
 /// Plugin command handler that contains the resolved configuration and verbose flag
 pub struct PluginHandler {
-    pub config: AppConfig,
-    #[cfg_attr(not(feature = "plugin-new"), allow(dead_code))]
-    pub verbose: bool,
+    pub config: PluginScopedConfig,
 }
 
 impl PluginHandler {
-    pub fn new(config: AppConfig, verbose: bool) -> Self {
-        Self { config, verbose }
+    pub fn new(config: PluginScopedConfig, _verbose: bool) -> Self {
+        Self { config }
     }
 
     pub async fn handle(&self, command: &PluginCommands) -> Result<()> {
         match command {
-            PluginCommands::List => self.list_plugins().await,
-            PluginCommands::New {
-                plugin_name,
-                language,
-                dest,
-            } => self.create_new_plugin(plugin_name, language, dest).await,
-            PluginCommands::Add { source, public_key } => {
-                self.add_plugin(source, public_key.as_deref()).await
+            PluginCommands::List(_) => self.list_plugins().await,
+            PluginCommands::New(a) => self.create_new_plugin(a).await,
+            PluginCommands::Add(a) => self.add_plugin(&a.source, a.public_key.as_deref()).await,
+            PluginCommands::Remove(a) => self.remove_plugin(&a.plugin_name).await,
+            PluginCommands::Configure(a) => {
+                self.configure_plugin(&a.plugin_name, &a.set_values).await
             }
-            PluginCommands::Remove { plugin_name } => self.remove_plugin(plugin_name).await,
-            PluginCommands::Configure {
-                plugin_name,
-                set_values,
-            } => self.configure_plugin(plugin_name, set_values).await,
         }
     }
 
@@ -193,7 +279,9 @@ impl PluginHandler {
     }
 
     async fn list_plugins(&self) -> Result<()> {
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         let rows = sqlx::query(
@@ -263,89 +351,60 @@ impl PluginHandler {
         Ok(())
     }
 
-    #[cfg(feature = "plugin-new")]
-    async fn create_new_plugin(
-        &self,
-        plugin_name: &str,
-        language: &str,
-        dest: &Option<PathBuf>,
-    ) -> Result<()> {
-        use cargo_generate::{GenerateArgs, TemplatePath, generate};
+    /// Scaffold a new plugin project from the templates embedded in this binary.
+    ///
+    /// Previously this shelled out to `cargo-generate` to clone a template repo
+    /// over git. That pulled libgit2, libssh2 and a second vendored OpenSSL into
+    /// the dependency tree (behind the `plugin-new` feature) to do work that is,
+    /// in substance, variable substitution over a handful of files. It also let
+    /// the template drift from the host: the generated project got whatever WIT
+    /// was on the template repo's `main`, which is not necessarily the WIT world
+    /// this binary implements. The embedded templates vendor `wit/` from this
+    /// build, so a scaffolded plugin always matches its host.
+    async fn create_new_plugin(&self, args: &PluginNewArgs) -> Result<()> {
+        use crate::cli::template::{ScaffoldOptions, scaffold};
 
-        let template_path = match language {
-            "rust" => TemplatePath {
-                auto_path: None,
-                subfolder: None,
-                test: false,
-                git: Some("https://github.com/ezcorg/witmproxy-plugin-template-rust".to_string()),
-                branch: Some("main".to_string()),
-                tag: None,
-                revision: None,
-                path: None,
-                favorite: None,
-            },
-            _ => {
-                anyhow::bail!(
-                    "Unsupported language: {}. Currently supported: rust",
-                    language
-                );
-            }
-        };
-        // Resolve destination path
-        let destination = match dest {
+        let destination = match &args.dest {
             Some(path) => std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
             None => std::env::current_dir()?,
         };
-        std::fs::create_dir_all(destination.as_path())?;
 
-        info!(
-            "Creating new plugin '{}' using {} template at destination: {:?}",
-            plugin_name, language, destination
-        );
-
-        let args = GenerateArgs {
-            template_path,
-            list_favorites: false,
-            name: Some(plugin_name.to_string()),
-            force: false,
-            verbose: self.verbose,
-            quiet: false,
-            continue_on_error: false,
-            template_values_file: None,
-            silent: false,
-            config: None,
-            vcs: None,
-            lib: true,
-            bin: false,
-            ssh_identity: None,
-            gitconfig: None,
-            define: vec![format!("plugin-name={}", plugin_name)],
-            init: false,
-            destination: Some(destination),
-            force_git_init: false,
-            allow_commands: false,
-            overwrite: false,
-            skip_submodules: false,
-            other_args: None,
-            no_workspace: false,
+        let opts = ScaffoldOptions {
+            plugin_name: args.plugin_name.clone(),
+            language: args.language.clone(),
+            destination,
+            namespace: args.namespace.clone(),
+            author: args.author.clone(),
+            description: args.description.clone(),
+            license: args.license.clone(),
+            url: args.url.clone(),
+            force: args.force,
         };
 
-        generate(args)?;
+        let root = scaffold(&opts)?;
+
+        info!(
+            plugin_name = %args.plugin_name,
+            language = %args.language,
+            path = %root.display(),
+            "created new plugin project"
+        );
+
+        println!(
+            "Created plugin `{}` at {}",
+            args.plugin_name,
+            root.display()
+        );
+        println!();
+        println!("Next steps:");
+        println!("  cd {}", root.display());
+        println!("  make                 # generate signing keys, build, and sign");
+        println!(
+            "  witm plugin add target/wasm32-wasip2/release/{}.signed.wasm",
+            args.plugin_name.replace('-', "_")
+        );
 
         Ok(())
-    }
-
-    #[cfg(not(feature = "plugin-new"))]
-    async fn create_new_plugin(
-        &self,
-        _plugin_name: &str,
-        _language: &str,
-        _dest: &Option<PathBuf>,
-    ) -> Result<()> {
-        anyhow::bail!(
-            "The `plugin new` command requires the `plugin-new` feature.\n\
-             Reinstall with: cargo install witmproxy --features plugin-new"
-        );
     }
 
     /// Fetch WASM bytes from a URL or local file path.
@@ -362,7 +421,7 @@ impl PluginHandler {
             }
             let bytes = resp.bytes().await?.to_vec();
             // Sanity check: WASM files start with \0asm
-            if bytes.len() < 4 || bytes[..4] != [0x00, b'a', b's', b'm'] {
+            if !bytes.starts_with(&[0x00, b'a', b's', b'm']) {
                 anyhow::bail!("Downloaded file does not appear to be a valid WASM component");
             }
             eprintln!("Downloaded {} bytes.", bytes.len());
@@ -405,12 +464,14 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         // Create runtime and registry
         let runtime = Runtime::try_default()?;
-        let mut registry = PluginRegistry::new(db, runtime)?;
+        let registry = PluginRegistry::new(db, runtime)?;
 
         // Create plugin from component bytes (including signature verification)
         let mut plugin = registry
@@ -440,7 +501,9 @@ impl PluginHandler {
             None => (plugin_name.to_string(), "default".to_string()),
         };
 
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         if set_values.is_empty() {
@@ -512,11 +575,13 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db = Db::from_path(self.config.db.db_path.clone(), &self.config.db.db_password).await?;
+        let db_password = self.config.db.resolve_password()?;
+        let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
+        drop(db_password);
         db.migrate().await?;
 
         let runtime = Runtime::try_default()?;
-        let mut registry = PluginRegistry::new(db, runtime)?;
+        let registry = PluginRegistry::new(db, runtime)?;
 
         registry.remove_plugin(&name, namespace.as_deref()).await?;
         Ok(())

@@ -41,8 +41,13 @@ impl Db {
             db_path_str.to_string()
         };
 
+        // SQLCipher wants `PRAGMA key = '<passphrase>'` — a SQL string literal.
+        // sqlx emits the pragma value verbatim, so quote it here and double any
+        // embedded single quotes; otherwise a password containing a hyphen,
+        // space, or quote produces a syntax error or the wrong key.
+        let quoted_key = format!("'{}'", password.replace('\'', "''"));
         let options = SqliteConnectOptions::from_str(&db_path)?
-            .pragma("key", password.to_owned())
+            .pragma("key", quoted_key)
             .create_if_missing(true);
 
         // TODO: configure pool
@@ -139,5 +144,34 @@ mod tests {
         let _correct_db = Db::from_path(db_path, original_password)
             .await
             .expect("Database should open successfully with correct password");
+    }
+
+    /// A password may contain any character a user (or a prompt) supplies —
+    /// hyphens, spaces, single quotes. These must survive being handed to
+    /// `PRAGMA key` (which requires a properly quoted SQL string literal), both
+    /// when creating the database and when reopening it.
+    #[tokio::test]
+    async fn test_password_with_special_characters() {
+        let temp_dir = tempdir().expect("Failed to create temp directory");
+        let db_path = temp_dir.path().join("test.db");
+        // Hyphen breaks a bare `PRAGMA key = value`; a single quote breaks a
+        // naively single-quoted one.
+        let password = "p-a s'sw\"ord-123";
+
+        {
+            let db = Db::from_path(db_path.clone(), password)
+                .await
+                .expect("create with special-character password");
+            db.migrate().await.expect("migrate");
+        }
+
+        // Reopen with the same password: must succeed and be queryable.
+        let db = Db::from_path(db_path.clone(), password)
+            .await
+            .expect("reopen with special-character password");
+        sqlx::query("SELECT COUNT(*) FROM sqlite_master")
+            .fetch_one(&db.pool)
+            .await
+            .expect("query after reopen with special-character password");
     }
 }

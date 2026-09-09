@@ -1,4 +1,7 @@
-#![feature(impl_trait_in_bindings)]
+// The `conf` Subcommands derive emits private helper structs for named-field
+// variants, which surface through the generated impls on our `pub` command
+// enums. This is benign (the helpers are an implementation detail), so allow it.
+#![allow(private_interfaces)]
 // Library interface for witmproxy
 // This exposes the internal modules for testing and external use
 
@@ -11,8 +14,7 @@ pub mod events;
 pub mod http;
 pub mod plugins;
 pub mod proxy;
-pub mod telemetry;
-pub mod tenant;
+pub mod util;
 pub mod wasm;
 pub mod web;
 
@@ -38,13 +40,13 @@ pub use web::WebServer;
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tracing::{info, warn};
 
 /// Main WitmProxy struct that holds everything necessary to run the proxy
 pub struct WitmProxy {
     ca: CertificateAuthority,
-    plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+    plugin_registry: Option<Arc<PluginRegistry>>,
     config: AppConfig,
     config_path: Option<std::path::PathBuf>,
     db_pool: Option<sqlx::SqlitePool>,
@@ -62,7 +64,7 @@ impl WitmProxy {
     /// * [`config`](AppConfig) - The application configuration
     pub fn new(
         ca: CertificateAuthority,
-        plugin_registry: Option<Arc<RwLock<PluginRegistry>>>,
+        plugin_registry: Option<Arc<PluginRegistry>>,
         config: AppConfig,
     ) -> Self {
         Self {
@@ -88,7 +90,7 @@ impl WitmProxy {
     }
 
     /// Get the plugin registry
-    pub fn plugin_registry(&self) -> &Option<Arc<RwLock<PluginRegistry>>> {
+    pub fn plugin_registry(&self) -> &Option<Arc<PluginRegistry>> {
         &self.plugin_registry
     }
 

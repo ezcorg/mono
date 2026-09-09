@@ -8,8 +8,8 @@ import { CborUint8Array } from '@jsonjoy.com/json-pack/lib/cbor/types';
 import { FsApi } from '@joinezco/memfs/node/types';
 
 export const writer = new Writer(1024 * 32);
-export const encoder = new CborEncoder(writer);
-export const decoder = new CborDecoder();
+export const encoder: CborEncoder = new CborEncoder(writer);
+export const decoder: CborDecoder = new CborDecoder();   // annotated: the inferred type names a transitive @jsonjoy.com/buffers path, which tsc calls non-portable
 
 // Cross-platform compression utilities
 const isNode = typeof process !== 'undefined' && process.versions?.node;

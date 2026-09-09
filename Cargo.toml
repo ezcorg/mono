@@ -1,16 +1,33 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "src/apps/witmproxy",
     "src/apps/witmproxy/e2e",
-    "src/apps/ezfilter-client/src-tauri",
     "src/apps/eznote/src-tauri",
     "src/rust/wasm-test-component",
     "src/rust/witmproxy-plugin-noop",
     "src/rust/witmproxy-plugin-noshorts",
+    "src/rust/witmproxy-plugin-adversarial",
     "src/rust/cicd",
+    "src/apps/ezfilter/src-tauri",
+    "src/apps/ezfilter/e2e",
+    "src/apps/icanhaz/host",
+    "src/apps/icanhaz/app/src-tauri",
 ]
-exclude = []
+exclude = [
+    # Vendored upstream workspace (bytecodealliance/wrpc). It defines its own
+    # [workspace]; we depend on its crates by path (wrpc-transport, wrpc-wasmtime,
+    # wrpc-websockets, wit-bindgen-wrpc). Excluded so Cargo doesn't try to pull
+    # them into the mono workspace.
+    "src/rust/wrpc",
+    # Policy components are wasm32-wasip2 guests (cdylib); keep them out of the
+    # host workspace so a host-target `cargo build` never tries to compile them.
+    "src/apps/icanhaz/policies",
+    # Vendored upstream workspace (cbeck88/conf-rs). Defines its own [workspace];
+    # witmproxy depends on the `conf` crate by path. Excluded so Cargo doesn't
+    # pull it (and its conf_derive/conf_extra members) into the mono workspace.
+    "src/rust/conf-rs",
+]
 
 # Workspace-wide configuration
 [profile.release]
@@ -29,3 +46,79 @@ incremental = true
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# ---------------------------------------------------------------------------
+# Workspace lints
+#
+# Opt a crate in with `[lints] workspace = true` in its Cargo.toml.
+#
+# Rationale: witmproxy terminates TLS for untrusted traffic and executes
+# untrusted WASM plugins. A panic on a per-connection or per-plugin task is not
+# a style problem, it is a denial-of-service vector, so the panic-adjacent lints
+# below are treated as a security control rather than a preference.
+#
+# The backlog these started at `warn` for is cleared, so they are gates now.
+# Test code is exempted via the `allow-*-in-tests` keys in clippy.toml; the
+# handful of remaining call sites carry a site-level `allow` with a `reason`.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unused_imports = "deny"
+unreachable_pub = "deny"
+
+[workspace.lints.clippy]
+# The `all` group stays at `warn` rather than `deny`: it grows with every
+# clippy release, so denying it means a toolchain bump can break local builds
+# for reasons unrelated to the change being made. CI runs clippy with
+# `-D warnings`, so the group is still a gate there -- just not one that fires
+# on a developer's machine the day nightly adds a new style lint.
+all = { level = "warn", priority = -1 }
+# Service/plugin stacks produce deep generic types; renaming them into aliases
+# purely to satisfy the lint makes the signatures harder to read, not easier.
+type_complexity = "allow"
+
+# Don't panic: a panic in a connection or plugin task takes down live traffic.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+get_unwrap = "deny"
+indexing_slicing = "deny"
+
+# Don't fail silently: dropped futures and swallowed errors hide plugin misbehaviour.
+let_underscore_future = "deny"
+unused_result_ok = "deny"
+map_err_ignore = "deny"
+# `let_underscore_must_use` was run across the tree once and found exactly one
+# real defect (a silently-ignored rollback `rename` in the binary updater,
+# which could leave no executable installed). The other ~35 sites are
+# deliberate discards where `let _ =` is the idiomatic expression of intent:
+# idempotent installers that error when already installed, channel sends whose
+# receiver may be gone, `OnceLock::set`. Denying it would mean suppressing
+# correct code 35 times, so it stays off; re-run it periodically instead.
+let_underscore_must_use = "allow"
+
+# Async footguns. `await_holding_lock` in particular encodes the invariant that
+# plugins/registry.rs currently documents in a comment: the plugin-map lock is
+# never held across an await.
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+if_let_mutex = "deny"
+large_futures = "deny"
+
+# Output discipline: this is a daemon, diagnostics belong in `tracing`.
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+
+# Memory / unsafe hygiene.
+mem_forget = "deny"
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+
+# Numeric correctness: cert validity windows and fuel/quota arithmetic.
+float_cmp = "deny"
+lossy_float_literal = "deny"
+invalid_upcast_comparisons = "deny"
+cast_possible_truncation = "deny"

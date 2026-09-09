@@ -1,0 +1,23 @@
+package icanhaz:nocap@0.1.0;
+
+/// Host metadata about a consented grant — just enough for a client to address the
+/// same files a native host tool does. `root-path` returns the host **absolute
+/// path** a filesystem grant is jailed to, so the client can form real `file://`
+/// URIs: a native language server (rust-analyzer) speaks host paths, not the
+/// client's grant-relative VFS paths.
+///
+/// Gated by the grant — you only learn the path for a filesystem grant you already
+/// hold. This discloses *where* the jail lives on disk (a minor disclosure beyond
+/// the consented read/write), never authority beyond the jail. A **native** host
+/// capability, served directly by icanhazd.
+interface workspace {
+  /// The host absolute path a filesystem `grant` is scoped to (its jail root).
+  /// Refuses an unknown / expired / non-filesystem token.
+  root-path: func(grant: string) -> result<string, string>;
+}
+
+/// Loopback world for the native wRPC bridge.
+world workspace-wrpc {
+  import workspace;
+  export workspace;
+}

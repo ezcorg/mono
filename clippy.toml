@@ -1,0 +1,22 @@
+# Clippy configuration for the mono workspace.
+#
+# Lint *levels* live in [workspace.lints] in the root Cargo.toml; this file only
+# carries clippy's own tunables.
+#
+# The panic-adjacent lints (unwrap_used / expect_used / panic / indexing_slicing)
+# are deliberately relaxed inside tests: a failing assertion should panic, and
+# forcing `?` through every test body buys nothing.
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+
+# Plugin/proxy futures are held across awaits on a per-connection basis; the
+# default 16kB threshold fires constantly on boxed hyper/wasmtime futures.
+future-size-threshold = 32768
+
+# Deny-by-default doc lints are noisy on WIT-generated bindings.
+missing-docs-in-crate-items = false

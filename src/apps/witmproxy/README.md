@@ -72,7 +72,7 @@ The witmproxy plugin WIT interface is automatically published to [GitHub Contain
 
 ```sh
 # Fetch the WIT interface for plugin development
-wkg get --format wit witmproxy:plugin@0.0.6 --output plugin.wit
+wkg get --format wit witmproxy:plugin@0.0.7 --output plugin.wit
 ```
 
 ###
@@ -123,8 +123,7 @@ Consider either [supporting the author directly](https://github.com/sponsors/tbr
 
 ### Prerequisites
 
-- **Nightly Rust**: `witmproxy` requires nightly Rust for development (`rustup default nightly` or use `+nightly` with cargo commands)
-- **WASM target**: Plugin development requires the `wasm32-wasip2` target: `rustup target add wasm32-wasip2`
+- **Rust toolchain**: pinned by [`rust-toolchain.toml`](../../../rust-toolchain.toml) at the repository root. rustup installs the channel, components, and targets (including `wasm32-wasip2` for plugin development) on first build, so no manual setup is needed
 - **wkg**: The [`wkg`](https://github.com/bytecodealliance/wasm-pkg-tools) CLI is required for updating and fetching WIT (WebAssembly Interface Type) files used by the plugin interface
 
 ### Steps
@@ -134,6 +133,30 @@ Consider either [supporting the author directly](https://github.com/sponsors/tbr
 3. Make your changes
 4. Add tests
 5. Submit a pull request
+
+### Troubleshooting
+
+**`cargo build` fails in `cel-cxx-ffi` with `absolute path inclusion(s) found in rule '@@abseil-cpp+//absl/...'`**
+
+`cel-cxx-ffi` builds `cel-cpp` with Bazel, which autodetects the system C++
+toolchain once and caches it, recording the compiler's header directories as
+absolute paths (`/usr/lib/gcc/x86_64-linux-gnu/14/include`, and so on). Bazel
+does not invalidate that cache when the system compiler is upgraded in place, so
+after a GCC major bump every header the new compiler pulls in looks like an
+undeclared absolute include and the build fails on an unrelated-looking Abseil
+target.
+
+Nothing in this repository is wrong when this happens; it is stale local Bazel
+state. Drop the cached toolchain description and let Bazel re-detect the
+compiler:
+
+```bash
+find ~/.cache/bazel -maxdepth 5 -name '*local_config_cc*' -exec rm -rf {} +
+```
+
+The next `cargo build` regenerates it against the current compiler. Running
+`bazel clean --expunge` in the vendored `cel` workspace works too, but discards
+the entire cel-cpp build cache rather than just the toolchain description.
 
 ## Acknowledgements
 
