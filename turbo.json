@@ -13,6 +13,16 @@
         "dev": {
             "persistent": true,
             "cache": false
+        },
+        "typecheck": {
+            "dependsOn": [
+                "^build"
+            ]
+        },
+        "test:run": {
+            "dependsOn": [
+                "^build"
+            ]
         }
     },
     "concurrency": "12"

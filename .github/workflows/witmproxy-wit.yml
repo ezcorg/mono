@@ -1,0 +1,38 @@
+# the witmproxy WIT package on ghcr.io (src/scripts/publish-wit.sh), whenever the world changes
+name: witmproxy-wit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/apps/witmproxy/wit/world.wit
+      - src/scripts/publish-wit.sh
+      - .github/workflows/witmproxy-wit.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "version to publish (default: the one in Cargo.toml)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: [self-hosted, linux, theo-msi]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: command -v wkg >/dev/null || cargo install wkg@0.13.0
+      - run: src/scripts/publish-wit.sh "${{ inputs.version }}" "${{ github.repository_owner }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}

@@ -1,0 +1,40 @@
+# the contact-form worker: checked on every change, deployed from main
+name: contact-form-worker
+
+on:
+  pull_request:
+    paths:
+      - src/apps/contact-form-worker/**
+      - src/typescript/shared/**
+      - .github/workflows/contact-form-worker.yml
+      - .github/actions/pnpm/**
+  push:
+    branches: [main]
+    paths:
+      - src/apps/contact-form-worker/**
+      - src/typescript/shared/**
+      - .github/workflows/contact-form-worker.yml
+      - .github/actions/pnpm/**
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/pnpm
+      - run: pnpm check:worker
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/pnpm
+      - run: pnpm check:shared   # wrangler bundles @joinezco/shared from its built dist/
+      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: src/apps/contact-form-worker
+          command: deploy

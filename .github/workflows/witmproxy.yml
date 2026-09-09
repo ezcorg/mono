@@ -1,0 +1,188 @@
+# witmproxy: checked on every change (src/scripts/check-witmproxy.sh); binaries built from main; a `witmproxy-v*` tag
+# (or a manual run) publishes to crates.io and makes a GitHub release with the binaries and bidiff patches
+name: witmproxy
+
+on:
+  pull_request:
+    paths:
+      - src/apps/witmproxy/**
+      - src/rust/**
+      - src/scripts/*witm*.sh
+      - clippy.toml
+      - deny.toml
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/witmproxy.yml
+      - .github/actions/rust/**
+  push:
+    branches: [main]
+    tags: ['witmproxy-v*']   # path filters don't apply to tags
+    paths:
+      - src/apps/witmproxy/**
+      - src/rust/**
+      - src/scripts/*witm*.sh
+      - clippy.toml
+      - deny.toml
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/witmproxy.yml
+      - .github/actions/rust/**
+  workflow_dispatch:
+    inputs:
+      version:
+        description: version to publish (e.g. 0.0.8)
+        required: true
+        type: string
+      dry_run:
+        description: build and package, publish nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  # the version being released, if this run is a release
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - id: v
+        run: |
+          v="${{ inputs.version }}"; [ -n "$v" ] || case "$GITHUB_REF" in refs/tags/witmproxy-v*) v="${GITHUB_REF_NAME#witmproxy-v}";; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ -n "$v" ] && [ "${{ inputs.dry_run }}" != 'true' ]; then echo "release=true" >> "$GITHUB_OUTPUT"; else echo "release=false" >> "$GITHUB_OUTPUT"; fi
+
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]   # windows-latest disabled until Windows cel-cxx compilation is fixed
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/rust
+        with:
+          targets: wasm32-wasip2, wasm32-unknown-unknown
+          components: rustfmt, clippy
+          cache-key: ${{ matrix.os }}
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - run: src/scripts/check-witmproxy.sh
+        env:
+          LINT: ${{ runner.os == 'Linux' && 1 || 0 }}   # the lint-only steps once, on Linux
+
+  publish:
+    if: needs.meta.outputs.version != ''
+    needs: [meta, check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/rust
+        with:
+          targets: wasm32-wasip2, wasm32-unknown-unknown
+      - run: src/scripts/release-witmproxy.sh "${{ needs.meta.outputs.version }}" ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - if: needs.meta.outputs.release == 'true'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: witmproxy-v${{ needs.meta.outputs.version }}
+          name: witmproxy v${{ needs.meta.outputs.version }}
+          prerelease: ${{ contains(needs.meta.outputs.version, 'alpha') || contains(needs.meta.outputs.version, 'beta') || contains(needs.meta.outputs.version, 'rc') }}
+          body: |
+            ## witmproxy v${{ needs.meta.outputs.version }}
+
+            Published to [crates.io](https://crates.io/crates/witmproxy/${{ needs.meta.outputs.version }})
+
+            ### Installation
+
+            ```bash
+            # Install from crates.io
+            cargo install witmproxy@${{ needs.meta.outputs.version }}
+
+            # Or download a pre-built binary from the release assets below
+            # and place it on your PATH as `witm`
+            ```
+
+            ### Changes
+
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/src/apps/witmproxy/CHANGELOG.md) for details.
+
+  # release binaries: kept as run artifacts from main, attached to the release when there is one
+  binaries:
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.check.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
+    needs: [meta, check, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: witm-linux-x64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: witm-macos-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: witm-macos-arm64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/rust
+        with:
+          targets: ${{ matrix.target }}
+          cache-key: ${{ matrix.target }}
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - run: src/scripts/build-witm.sh ${{ matrix.target }} ${{ matrix.artifact }} "${{ needs.meta.outputs.version }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          retention-days: 7
+      - if: needs.meta.outputs.release == 'true'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: witmproxy-v${{ needs.meta.outputs.version }}
+          files: dist/${{ matrix.artifact }}
+
+  patches:
+    if: needs.meta.outputs.release == 'true'
+    needs: [meta, binaries]
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact: [witm-linux-x64, witm-macos-x64, witm-macos-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # the previous release tag
+      - uses: ./.github/actions/rust
+      - id: patch
+        run: echo "path=$(src/scripts/patch-witm.sh "${{ needs.meta.outputs.version }}" ${{ matrix.artifact }})" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.patch.outputs.path != ''
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: witmproxy-v${{ needs.meta.outputs.version }}
+          files: ${{ steps.patch.outputs.path }}

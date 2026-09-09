@@ -1,0 +1,10 @@
+# keeps the pinned action SHAs in .github/actions and .github/workflows current
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/pnpm
+      - /.github/actions/rust
+    schedule:
+      interval: monthly
