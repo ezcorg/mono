@@ -522,7 +522,7 @@ function prompts() {
   const el = $('#prompts');
   if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
   else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
-  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + (full?.id === 'newproject' && isPortrait() ? chip('swipe', 'columns') : '') + (active && (active.surface || active.id === 'whiteboard') ? chip('f', full ? 'exit fullscreen' : 'fullscreen', 'full', !!full) : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
+  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + (active && (active.surface || active.id === 'whiteboard') ? chip('f', full ? 'exit' : 'fullscreen', 'full', !!full) : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
   else el.innerHTML = '';
   document.documentElement.style.setProperty('--bar-h', el.offsetHeight + 'px');
 }
