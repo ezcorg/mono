@@ -1,0 +1,21 @@
+---
+import RoomLayout from '../layouts/RoomLayout.astro';
+import StaticPage from '../components/StaticPage.astro';
+import Room from '../components/Room.astro';
+import { lately } from '../data/about';
+import { projects } from '../data/work';
+import { routes, roomRoute } from '../data/site';
+const r = routes.find((r) => r.path === '/newproject')!;
+---
+
+<RoomLayout title={`${r.title} · ez co`} description={r.description} canonical="/newproject/" route={roomRoute('/newproject')}>
+	<StaticPage title={r.title} current="/newproject">
+		<p class="lede">Want us to make something? Open source, software development, consulting — tell us in a few sentences what you're hoping to build, and we'll write back.</p>
+		<p>The form is on the kanban board in <a href="/#/newproject">the room</a>.</p>
+		<h2>doing</h2>
+		<ul>{lately.map((t) => <li>{t}</li>)}</ul>
+		<h2>done</h2>
+		<ul>{projects.map((p) => <li><a href={p.github}>{p.title}</a> — {p.description}</li>)}</ul>
+	</StaticPage>
+	<Room />
+</RoomLayout>

@@ -1,0 +1,21 @@
+---
+import RoomLayout from '../layouts/RoomLayout.astro';
+import StaticPage from '../components/StaticPage.astro';
+import Room from '../components/Room.astro';
+import { projects } from '../data/work';
+import { routes, roomRoute } from '../data/site';
+const r = routes.find((r) => r.path === '/work')!;
+---
+
+<RoomLayout title={`${r.title} · ez co`} description={r.description} canonical="/work/" route={roomRoute('/work')}>
+	<StaticPage title={r.title} current="/work">
+		{projects.map((p) => (
+			<article>
+				<h2>{p.icon} {p.title}</h2>
+				<p>{p.description}</p>
+				<p class="meta">{p.tags.join(' · ')} · <a href={p.github}>source</a>{p.href && <> · <a href={p.href}>{new URL(p.href).hostname}</a></>}</p>
+			</article>
+		))}
+	</StaticPage>
+	<Room />
+</RoomLayout>

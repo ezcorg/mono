@@ -1,0 +1,16 @@
+---
+import RoomLayout from '../layouts/RoomLayout.astro';
+import StaticPage from '../components/StaticPage.astro';
+import Room from '../components/Room.astro';
+import { routes, roomRoute } from '../data/site';
+import { links } from '../data/about';
+const r = routes.find((r) => r.path === '/join')!;
+---
+
+<RoomLayout title={`${r.title} · ez co`} description={r.description} canonical="/join/" route={roomRoute('/join')}>
+	<StaticPage title={r.title} current="/join">
+		<p class="lede">A sign-up sheet. We're a democratic collective, not an employer — every member has a voice, and a share.</p>
+		<p>We're not ready for new members just yet. If you're determined, find us on <a href={links.github}>GitHub</a> or <a href={links.linkedin}>LinkedIn</a>.</p>
+	</StaticPage>
+	<Room />
+</RoomLayout>

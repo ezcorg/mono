@@ -16,17 +16,33 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
 | dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own (its label is a bulb, filled when lit) and remembers overrides until you put it back to the default |
 
+Outside, the building wears its one line ("your friendly neighborhood tech collective") as a label pinned above its near
+corner, like any thing's label; it inverts the logo when pointed at and comes in when clicked.
+
 Keys: `↵` or scroll to come in · click · drag or arrows to look (in a page too) · `?` labels · `l` lights · `esc` back. In the
 OS, a bar chip brings a window up or minimises it; every control carries an explicit `tabindex` (Safari's Tab needs one).
 In a page you can look as far as the thing's whole area (`limitsFor`): a phone's portrait crop of the kanban or the gallery
 wall can be panned to the other columns or the other frame. Scroll areas (`.scroller`, in-flow `.scroll`) fade their bottom
 edge while there's more below; a finger drag scrolls them (`touch-action: none`, or the browser cancels the pointer events).
 
+## Real addresses (for crawlers)
+
+The room routes by hash (`#/blog/<slug>`), which crawlers never see, so the pages that carry text also exist as static
+pages: `/work/`, `/blog/`, `/blog/<slug>/`, `/newproject/`, `/about/`, `/join/` (`src/pages/*`, the list in
+`src/data/site.ts`, posts in `src/data/posts.ts`), plus `/sitemap.xml`, `/blog/rss.xml` and `robots.txt`. Each one is the
+same document as `/` (`RoomLayout` + `Room`) with a readable copy of the page in front (`StaticPage.astro`: the text,
+the post, JSON-LD for posts, canonical + Open Graph in the head) and one difference: an inline script in the head swaps
+the address for the room's route (`history.replaceState` → `/#/blog/<slug>`, the query string kept) before the room
+boots, so a visitor lands in the room on that thing, while the HTML a crawler fetched is the article. `html.js` hides the
+static copy; without scripts, or without WebGL (`html.no-webgl`), it's the page. Links between pages are written as the
+static addresses with `data-room` (the accessible list, the manifesto, the blog's "more posts"); the room turns them into
+hash routes when it boots, so a crawler can walk the site and a visitor never leaves the room.
+
 ## Where things live
 
 - `src/pages/index.astro` → `src/layouts/RoomLayout.astro` + `src/components/Room.astro`. The component holds the 2D
-  chrome, the accessible page list (`.sr-nav`, object-level tab stops), the no-WebGL fallback, and the `<template>`s the
-  furniture renders — filled at build time from `src/data/work.ts`, `src/data/about.ts` and `src/content/blog/*.md`.
+  chrome, the accessible page list (`.sr-nav`, object-level tab stops), and the `<template>`s the
+  furniture renders — filled at build time from `src/data/work.ts`, `src/data/about.ts` and `src/data/posts.ts`.
 - `src/room/room.js` is the scene: three.js WebGL for the room (geometry, edges, lights, shadows) and `CSS3DRenderer` for the
   content surfaces, sharing one camera. `boot({ mount, turnstileSiteKey, photo })` returns a `dispose()`.
 - `src/room/forms.js` posts the project form to the contact-form worker (`src/apps/contact-form-worker`, schema in
@@ -40,13 +56,6 @@ edge while there's more below; a finger drag scrolls them (`touch-action: none`,
   palette (`ezos-frame.css`), syntax colours their own. The markdown-editor runs with `blockActions: false` (the library
   builds no gutter then). `src/room/radio.js` is the hidden player.
 - `src/styles/room.css` is the room's CSS; `src/styles/global.css` only carries the demo fonts.
-- `experiments/cube-room.html` is the single-file experiment the room was ported from. It is frozen at the port; changes
-  go to `src/room` now. In dev mode the site accepts the same debug params before the route:
-  `?lit ?dark ?look=yaw,pitch ?hover=<id> ?labels ?up ?win=<app> ?photo=<url> ?debug` (`?debug` exposes `window.room`).
-  In any build: `?perf` shows a readout (rAF interval, the frame function's JS time, gl.render, css.render, draw calls);
-  `?nogl` / `?nodom` skip a renderer, `?noaa` drops antialiasing, `?noshadow` the shadow maps, `?dpr=1` the pixel ratio —
-  one at a time, to find which layer a browser is slow in. `?bench` runs all of them for you (one reload each, panning,
-  three seconds apiece, outside and then inside) and ends with a box of results and a copy button.
 
 ## Rendering notes worth knowing
 

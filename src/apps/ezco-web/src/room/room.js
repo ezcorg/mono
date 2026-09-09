@@ -7,7 +7,7 @@ import { radio } from './radio.js';
 /* Boots the room into `opts.mount` (the element holding the chrome + templates). Returns a dispose(). */
 export async function boot(opts = {}) {
 const root = opts.mount || document.body;
-{ const probe = document.createElement('canvas'); if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) { root.classList.add('no-webgl'); return () => {}; } }
+{ const probe = document.createElement('canvas'); if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) { root.classList.add('no-webgl'); document.documentElement.classList.add('no-webgl'); return () => {}; } }   // html.no-webgl shows the page's static copy instead
 [THREE, { CSS3DRenderer, CSS3DObject }] = await Promise.all([import('three'), import('three/addons/renderers/CSS3DRenderer.js')]);
 const ac = new AbortController(), { signal } = ac; let disposed = false;
 const addEventListener = (type, fn, o) => window.addEventListener(type, fn, { ...(typeof o === 'object' ? o : {}), signal });
@@ -335,6 +335,7 @@ function drawBoard(ctx, W, H) {
   t.present = (on, instant) => instant ? place(on ? 1 : 0) : tween({ from: on ? 0 : 1, to: on ? 1 : 0, dur: 900, update: place });
   const arts = $$('article[data-slug]', t.surface.el), links = $$('.posts a[data-slug]', t.surface.el);
   t.show = slug => { const s = arts.some(a => a.dataset.slug === slug) ? slug : arts[0]?.dataset.slug; for (const a of arts) a.hidden = a.dataset.slug !== s; for (const l of links) l.classList.toggle('on', l.dataset.slug === s); $('.scroller', t.surface.el).scrollTop = 0; };
+  t.title = () => arts.find(a => !a.hidden)?.querySelector('h1')?.textContent || 'blog';   // the open post names the tab
   t.show();
   const n = V3(0, Math.sin(.9), Math.cos(.9));
   t.fit = () => ({ c: held.p.clone().addScaledVector(n, .0045), n, w: .15, h: .2, max: 640 });
@@ -459,7 +460,7 @@ function absorbLook() { const d = cam.target.distanceTo(cam.pos); camera.getWorl
 
 /* ------------------------------------------------------------------ state machine */
 let state = 'logo', active = null, busy = false, showLabels = false;
-const setState = s => { state = s; body.dataset.state = s; prompts(); document.title = state === 'page' && active ? `${active.label} · ez co` : 'ez co'; };
+const setState = s => { state = s; body.dataset.state = s; prompts(); document.title = state === 'page' && active ? `${active.title?.() || active.label} · ez co` : 'ez co'; };
 const doorTo = (a, dur) => tween({ from: doorGroup.rotation.y, to: a, dur, update: v => { doorGroup.rotation.y = v; doorGroupM.rotation.y = v; } });
 async function enterRoom() {
   if (state !== 'logo' || busy) return; busy = true; setState('entering'); drag.yaw = drag.pitch = 0;
@@ -483,7 +484,7 @@ async function openPage(t, sub) {
   if (!t || t.action || t.href) return;
   if (state === 'logo' || state === 'entering') { await enterRoom(); if (state !== 'room') return; }
   if (t.id === 'newproject' && sub) { const sel = q('#np-service'); if ([...sel.options].some(o => o.value === sub)) sel.value = sub; }
-  if (t.id === 'blog') t.show(sub);
+  if (t.id === 'blog') { t.show(sub); if (active === t) { setState('page'); t.scrollEls.forEach(more); } }   // another post on the open tablet: retitle, refresh the fade
   if (active === t) return;
   const prev = active; if (prev) present(prev, false);
   t.back = prev && !prev.back ? prev : null;   // opened from another page (the manifesto's links): closing goes back there
@@ -652,6 +653,12 @@ for (const el of surfaces.flatMap(s => s.thing.scrollEls)) {
   el.addEventListener('keydown', e => { if (e.target.matches('input,textarea,select')) return; const h = el.clientHeight, d = { ArrowDown: 40, ArrowUp: -40, PageDown: h * .9, PageUp: -h * .9, ' ': h * .9, End: 1e6, Home: -1e6 }[e.key]; if (d !== undefined) { e.preventDefault(); e.stopPropagation(); by(d); } });
 }
 for (const t of things) if (t.id) setInteractive(t, false);
+/* links between pages are written as static addresses (`/join/`, crawlable); in the room they are hash routes */
+for (const scope of [root, ...surfaces.map(s => s.el)]) for (const a of $$('a[data-room]', scope)) { const p = a.getAttribute('href') || ''; if (p.startsWith('/')) a.setAttribute('href', '#' + p.replace(/\/+$/, '')); }
+/* outside, the building wears its one-line label, pinned above its near corner like any other thing's label; it inverts the logo and comes in */
+const bldg = $('#bldg'), bldgAt = V3(.5, .5, .5);
+bldg.addEventListener('pointerenter', () => { logoHot = true; body.classList.add('hover'); }); bldg.addEventListener('pointerleave', () => { logoHot = false; body.classList.remove('hover'); });
+bldg.addEventListener('click', () => { if (state === 'logo') go('#/room'); });
 /* the radio: audio only, from a hidden player behind the wall */
 /* once the radio has been touched, a ⏮ ⏸ ⏭ bar stands where its label was and stays as long as the radio is on;
    the track name lives in the buttons' tooltips and the screen-reader text */
@@ -772,6 +779,7 @@ function frame(now) {
   const ctlOn = state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels);   // no grace: it fades exactly like a label (the radio's hit box reaches up to it)
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5) && !(t.id === 'radio' && ctlOn); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
   if (ctlOn) { tmp.copy(byId.radio.anchor).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on');
+  if (state === 'logo') { tmp.copy(bldgAt).multiplyScalar(K).project(camera); bldg.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; bldg.classList.toggle('on', tmp.z < 1 && !firstFrame); } else bldg.classList.remove('on');
   const tGl = performance.now(); if (!NOGL) gl.render(scene, camera); const tCss = performance.now(); if (!NODOM) css.render(scene, camera); placeFloating(); bounce(now);
   if (perf) perf.tick(now, tFrame, tGl, tCss, performance.now());
 }

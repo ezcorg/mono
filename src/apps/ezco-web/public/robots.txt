@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /apps/
+
+Sitemap: https://joinez.co/sitemap.xml

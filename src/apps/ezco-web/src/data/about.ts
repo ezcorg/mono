@@ -49,6 +49,6 @@ export const links = {
 /** Statement text with its links applied, as HTML. */
 export function statementHtml(s: Statement, hrefFor: (href: string) => string = (h) => h): string {
 	let html = s.text;
-	for (const l of s.links ?? []) html = html.replace(l.text, `<a class="link" href="${hrefFor(l.href)}">${l.text}</a>`);
+	for (const l of s.links ?? []) html = html.replace(l.text, `<a class="link" href="${hrefFor(l.href)}" data-room>${l.text}</a>`);
 	return html;
 }

@@ -1,50 +1,35 @@
 ---
 /* The room: the chrome, the accessible page list, and the content templates the furniture renders.
    Content comes from the same sources as the flat pages (src/data/*, src/content/blog). The scene itself is src/room/room.js. */
-import type { MarkdownInstance } from 'astro';
 import { projects } from '../data/work';
 import { sections, lately, links, statementHtml } from '../data/about';
+import { posts, fmtDate } from '../data/posts';
+import { TAGLINE } from '../data/site';
 import { MIN_BUDGET } from '../room/forms.js';
-
-interface Frontmatter { title: string; description?: string; date: string; author?: string; tags?: string[]; draft?: boolean }
-const postModules = import.meta.glob<MarkdownInstance<Frontmatter>>('../content/blog/*.md', { eager: true });
-const posts = Object.entries(postModules)
-	.map(([file, m]) => ({ slug: file.split('/').pop()!.replace(/\.md$/, ''), fm: m.frontmatter, Content: m.Content }))
-	.filter((p) => !p.fm.draft)
-	.sort((a, b) => new Date(b.fm.date).getTime() - new Date(a.fm.date).getTime());
-const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); // frontmatter dates are calendar dates
-const roomHref = (href: string) => '#' + href; // flat-page paths become room routes
+/* links between pages are written as the static addresses (`/join/`), which crawlers can follow; the room turns every
+   `a[data-room]` into its hash route (`#/join`) when it boots */
+const roomHref = (href: string) => href + '/';
 ---
 
 <div class="room" id="room">
 	<div class="loading" id="loading" aria-live="polite"><span class="lw"><span class="lt">loading</span><span class="ls" aria-hidden="true">loading</span></span></div>
-	<div class="labels" id="labels"></div>
-	<div class="hero-copy" id="hero"><p>your friendly neighborhood tech collective</p></div>
+	<div class="labels" id="labels"><button class="lbl bldg" id="bldg" type="button" title="come in">{TAGLINE}</button></div>
 	<div class="prompts" id="prompts"></div>
 	<nav class="sr-nav" id="srnav" aria-label="Pages">
-		<a tabindex="0" href="#/work" data-thing="work">our work</a>
-		<a tabindex="0" href="#/blog" data-thing="blog">blog</a>
-		<a tabindex="0" href="#/newproject" data-thing="newproject">start a project</a>
-		<a tabindex="0" href="#/about" data-thing="about">about us</a>
+		<a tabindex="0" href="/work/" data-room data-thing="work">our work</a>
+		<a tabindex="0" href="/blog/" data-room data-thing="blog">blog</a>
+		<a tabindex="0" href="/newproject/" data-room data-thing="newproject">start a project</a>
+		<a tabindex="0" href="/about/" data-room data-thing="about">about us</a>
 		<a tabindex="0" href="#/whiteboard" data-thing="whiteboard">whiteboard</a>
 		<a tabindex="0" href={links.github} target="_blank" rel="noopener" data-thing="github">GitHub ↗</a>
 		<a tabindex="0" href={links.linkedin} target="_blank" rel="noopener" data-thing="linkedin">LinkedIn ↗</a>
-		<a tabindex="0" href="#/join" data-thing="join">come work with us</a>
+		<a tabindex="0" href="/join/" data-room data-thing="join">come work with us</a>
 		<button tabindex="0" type="button" data-thing="lights" id="srlights">switch to day</button>
 		<button tabindex="0" type="button" data-thing="tripod">table lamp</button>
 		<button tabindex="0" type="button" data-thing="lantern">paper lantern</button>
 		<button tabindex="0" type="button" data-thing="pendant">pendant</button>
 		<button tabindex="0" type="button" data-thing="radio">play the radio</button>
 	</nav>
-
-	<!-- no WebGL: the room needs a graphics card -->
-	<div class="room-fallback">
-		<div>
-			<h1>ez co</h1>
-			<p>your friendly neighborhood tech collective</p>
-			<p>The room needs WebGL, which this browser doesn't have. Find us on <a href={links.github}>GitHub</a> or <a href={links.linkedin}>LinkedIn</a> instead.</p>
-		</div>
-	</div>
 
 	<!-- laptop → our work: a tiny desktop OS -->
 	<template id="t-screen">
@@ -97,12 +82,20 @@ const roomHref = (href: string) => '#' + href; // flat-page paths become room ro
 		<div class="scroller">
 			{posts.map(({ slug, fm, Content }) => (
 				<article data-slug={slug} hidden>
-					<h1>{fm.title}</h1>
-					{fm.tags?.length ? <div class="tags">{fm.tags.map((t) => <span class="tag">{t}</span>)}</div> : null}
-					<div class="meta">{fmtDate(fm.date)}{fm.author ? ' · ' + fm.author : ''}</div>
+					<header>
+						<h1>{fm.title}</h1>
+						<div class="meta">{fmtDate(fm.date)}{fm.author ? ' · ' + fm.author : ''}</div>
+						{fm.tags?.length ? <div class="tags">{fm.tags.map((t) => <span class="tag">{t}</span>)}</div> : null}
+					</header>
 					<Content />
 				</article>
 			))}
+			{posts.length > 1 && (
+				<nav class="posts" aria-label="More posts">
+					<h4>more from the blog</h4>
+					{posts.map((p) => <a href={p.path} data-room data-slug={p.slug}><b>{p.fm.title}</b><small>{fmtDate(p.fm.date)}{p.fm.description ? ' · ' + p.fm.description : ''}</small></a>)}
+				</nav>
+			)}
 		</div>
 		<div class="idle">blog<br><span style="opacity:.6;font-size:.85em">tap to read</span></div>
 	</template>

@@ -1,8 +1,18 @@
 ---
 import RoomLayout from '../layouts/RoomLayout.astro';
+import StaticPage from '../components/StaticPage.astro';
 import Room from '../components/Room.astro';
+import { TAGLINE, routes } from '../data/site';
+import { links } from '../data/about';
 ---
 
 <RoomLayout>
+	<StaticPage title="ez co">
+		<p class="lede">{TAGLINE}</p>
+		<ul>
+			{routes.map((r) => <li><a href={r.path + '/'}>{r.title}</a> — {r.description}</li>)}
+			<li><a href={links.github}>GitHub</a> · <a href={links.linkedin}>LinkedIn</a></li>
+		</ul>
+	</StaticPage>
 	<Room />
 </RoomLayout>

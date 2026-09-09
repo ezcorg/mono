@@ -9,11 +9,25 @@ html.lit{--bg:#F5F5F5; --fg:#000; --dim:#cfcfcf; --line:rgba(0,0,0,.6); --line-s
 *,*::before,*::after{box-sizing:border-box}
 html:has(body[data-state]),body[data-state]{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden;transition:background .6s,color .6s}
 .room{color:var(--fg)}
-.room-fallback{display:none;min-height:100vh;place-items:center;text-align:center;font-family:var(--serif);padding:2rem}
-.room-fallback h1{font-weight:300;font-size:2rem;margin:0 0 .5rem}
-.room-fallback nav{display:flex;flex-wrap:wrap;justify-content:center;gap:1rem 1.5rem;margin-top:1.5rem;font-family:var(--sans);font-size:.9rem}
-.room.no-webgl .room-fallback{display:grid}
-.room.no-webgl>:not(.room-fallback){display:none}
+.room.no-webgl,html:not(.js) .room{display:none}   /* no scripts (a crawler, a reader): the static copy is the page */
+/* the static copy of a page (real HTML at a real address, for crawlers and feed readers): gone once scripts run, back if the room can't boot */
+.static a{color:inherit}
+.static{max-width:38rem;margin:0 auto;padding:2.5rem 1.25rem 4rem;font:16px/1.5 var(--serif);color:var(--fg);background:var(--bg)}
+html.js .static{display:none}
+html.js.no-webgl .static{display:block}
+.static header{display:flex;flex-wrap:wrap;align-items:baseline;gap:.6rem 1.4rem;margin-bottom:2.5rem;font:500 13px/1 var(--sans);letter-spacing:.06em}
+.static .wordmark{font-weight:700;text-decoration:none;border:1px solid var(--line);padding:.55em .85em}
+.static nav{display:flex;flex-wrap:wrap;gap:.5rem 1.2rem}
+.static nav a{text-decoration:none;opacity:.7}
+.static nav a:hover,.static nav a[aria-current]{opacity:1;text-decoration:underline;text-underline-offset:.25em}
+.static .nowebgl{display:none;font:400 13px/1.4 var(--sans);border:1px solid var(--line-soft);padding:.6em .8em;margin:0 0 2rem}
+html.no-webgl .static .nowebgl{display:block}
+.static h1{font:300 2.2rem/1.1 var(--serif);letter-spacing:-.025em;margin:0 0 1rem}
+.static h2{font:300 1.4rem/1.2 var(--serif);letter-spacing:-.02em;margin:2rem 0 .5rem}
+.static .lede{font-size:1.15em;opacity:.8}
+.static .meta{font:500 .72em/1.4 var(--sans);letter-spacing:.12em;text-transform:uppercase;opacity:.6}
+.static article+article{margin-top:2rem}
+.static ul{padding-left:1.2em}.static li{margin:0 0 .4em}
 [data-state] a{color:inherit}
 .room button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 #gl,#css{position:fixed;inset:0}
@@ -32,6 +46,11 @@ body.preload .room *{transition:none!important}
 .lbl.on{opacity:1;margin-top:0;pointer-events:auto;cursor:pointer}
 .lbl.ext::after{content:' ↗'}
 .lbl:hover{background:var(--fg);color:var(--bg)}
+/* the building's label, outside: the one line about us, pinned above the near corner of the box; a click comes in */
+.room .lbl.bldg{font:500 13px/1.35 var(--sans);letter-spacing:.08em;background:var(--bg);border:1px solid var(--line);padding:.55em .85em;margin-top:-.4em;max-width:min(80vw,26em);white-space:normal;text-align:center}
+.room .lbl.bldg::after{content:''}
+.room .lbl.bldg.on{margin-top:-.9em}
+.room .lbl.bldg:hover{background:var(--fg);color:var(--bg)}
 .lbl .ic{width:1.15em;height:1.15em;vertical-align:-.22em}
 .ctl{position:fixed;left:0;top:0;z-index:2;translate:-50% -100%;margin-top:.4em;display:flex;gap:.3em;opacity:0;pointer-events:none;transition:opacity .2s,margin .2s}
 .ctl.on{opacity:1;pointer-events:auto;margin-top:0}
@@ -44,9 +63,6 @@ body.preload .room *{transition:none!important}
 .prompts kbd{font:500 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--fg);background:var(--bg);border:1px solid var(--fg);padding:.35em .5em;border-radius:2px;min-width:1.7em;text-align:center;text-shadow:none}
 .prompts .btn{pointer-events:auto;cursor:pointer}
 .prompts .btn:hover kbd,.prompts .btn.on kbd{background:var(--fg);color:var(--bg)}
-.hero-copy{position:fixed;left:0;right:0;bottom:clamp(4rem,10vh,6rem);z-index:2;display:flex;flex-direction:column;align-items:center;gap:1rem;text-align:center;padding:0 1rem;pointer-events:none;transition:opacity .5s,translate .5s}
-body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
-.hero-copy p{margin:0;font:300 clamp(1.15rem,2.4vw,1.75rem)/1.3 var(--serif);letter-spacing:-.01em}
 .sr-nav{position:fixed;left:50%;bottom:clamp(3.5rem,8vh,5rem);z-index:4;translate:-50% 0;display:flex;gap:.5rem}
 .sr-nav a,.sr-nav button{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .sr-nav a:focus-visible,.sr-nav button:focus-visible{position:static;width:auto;height:auto;clip:auto;font:500 13px/1 var(--sans);letter-spacing:.06em;color:var(--bg);background:var(--fg);padding:.6em .9em;outline:0;text-decoration:none}
@@ -170,29 +186,40 @@ body:not([data-state=logo]) .hero-copy{opacity:0;translate:0 1rem}
 /* tablet reader */
 .reader{background:var(--bg);border:7px solid var(--bezel);border-radius:10px;transition:border-color .6s}
 .reader .bar{position:absolute;left:0;right:0;top:0;height:2.6em;display:flex;align-items:center;justify-content:space-between;padding:0 6%;font:500 12px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;opacity:.7;border-bottom:1px solid var(--line-soft)}
-.reader .scroller{top:2.6em;padding:5% 6% 8%}
-.reader h1{font:300 1.5em/1.15 var(--serif);letter-spacing:-.02em;margin:.2em 0 .3em}
-.reader .meta{font:400 .72em/1.2 var(--sans);opacity:.6;margin-bottom:1.1em}
-.reader p{margin:0 0 .75em}
-.reader h2{font-size:1.25em;margin:.9em 0 .35em}
-.reader code{font-family:var(--mono);font-size:.9em;background:var(--fill);padding:0 .3em}
-.reader .posts{margin-bottom:1.4em}
-.reader .posts a{display:block;text-decoration:none;border:1px solid var(--line-soft);padding:.5em .6em;transition:background .2s,color .2s}
-.reader .posts a.on,.reader .posts a:hover{background:var(--fg);color:var(--bg)}
+.reader .scroller{top:2.6em;padding:7% 7% 10%}
+/* a post: the title block stands apart (a rule under it), each section starts with a short rule and room above it, and the text breathes */
+.reader article header{margin:0 0 1.8em;padding-bottom:1.2em;border-bottom:1px solid var(--line-soft)}
+.reader h1{font:300 1.9em/1.1 var(--serif);letter-spacing:-.025em;margin:0 0 .5em;text-wrap:balance}
+.reader .meta{font:500 .66em/1.4 var(--sans);letter-spacing:.14em;text-transform:uppercase;opacity:.6;margin:0}
+.reader header .tags{margin:.9em 0 0}
+.reader p{margin:0 0 1.05em;text-wrap:pretty}
+.reader article>p:first-of-type{font-size:1.06em}
+.reader h2,.reader h3{font:300 1.4em/1.2 var(--serif);letter-spacing:-.02em;margin:2.2em 0 .7em}
+.reader h3{font-size:1.18em;margin-top:1.8em}
+.reader h2::before,.reader h3::before{content:'';display:block;width:2.2em;height:1px;background:var(--line);margin-bottom:.75em}
+.reader article>h2:first-child{margin-top:0}
+.reader hr{width:2.2em;height:1px;border:0;background:var(--line);margin:2em auto}
+.reader code{font-family:var(--mono);font-size:.88em;background:var(--fill);padding:.05em .35em;border-radius:3px}
 .reader article[hidden]{display:none}
 .reader article img{max-width:100%}
-.reader article pre{font-family:var(--mono);font-size:.85em;background:var(--fill);padding:.6em .8em;overflow-x:auto}
-.reader article blockquote{margin:0 0 .75em;padding-left:.8em;border-left:2px solid var(--line-soft);opacity:.85}
-.reader article ul,.reader article ol{margin:0 0 .75em;padding-left:1.2em}
-.reader article li{padding:0;margin:0 0 .2em}
+.reader article pre{font-family:var(--mono);font-size:.85em;background:var(--fill);padding:.7em .9em;margin:0 0 1.2em;overflow-x:auto}
+.reader article pre code{background:none;padding:0;font-size:1em}
+.reader article blockquote{margin:0 0 1.2em;padding:.1em 0 .1em 1em;border-left:1px solid var(--line);font-style:italic;opacity:.85}
+.reader article ul,.reader article ol{margin:0 0 1.05em;padding-left:1.3em}
+.reader article li{padding:0;margin:0 0 .35em}
 .reader article li::before{content:none}
+.reader article strong{font-weight:700}
+/* the other posts, after the one you're reading */
+.reader .posts{margin-top:2.6em;padding-top:1.4em;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:.5em}
+.reader .posts h4{margin:0 0 .3em;font:500 .66em/1.4 var(--sans);letter-spacing:.14em;text-transform:uppercase;opacity:.6}
+.reader .posts a{display:block;text-decoration:none;border:1px solid var(--line-soft);padding:.6em .75em;transition:background .2s,color .2s}
+.reader .posts a.on,.reader .posts a:hover{background:var(--fg);color:var(--bg)}
 .reader .posts b{display:block;font-weight:400;font-size:1.05em}
 .reader .posts small{display:block;font:400 .72em/1.3 var(--sans);opacity:.65;margin-top:.2em}
 .reader .idle{position:absolute;inset:0;border-radius:3px;display:grid;place-items:center;font:500 44px/1.5 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--fg);text-align:center;background:var(--bg)}
 .reader .idle span{display:block;font-size:.5em;opacity:.55}
 .reader.active .idle{display:none}
 .tags{display:flex;flex-wrap:wrap;gap:.3em;margin:0 0 .6em}
-.reader h1+.tags{margin-top:-.1em}
 .tag{font:400 .68em/1 var(--sans);border:1px solid var(--line-soft);border-radius:999px;padding:.3em .6em;opacity:.75}
 
 /* kanban */

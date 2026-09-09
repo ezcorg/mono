@@ -1,0 +1,19 @@
+---
+/* The readable copy of a room page: real HTML at a real address, for crawlers, feed readers, and browsers without WebGL.
+   Hidden as soon as scripts run (the room paints the same content on its furniture); shown again if the room can't boot. */
+import { routes } from '../data/site';
+export interface Props { title: string; current?: string }
+const { title, current } = Astro.props;
+---
+
+<main class="static">
+	<header>
+		<a class="wordmark" href="/">ez co</a>
+		<nav aria-label="Pages">
+			{routes.map((r) => <a href={r.path + '/'} aria-current={r.path === current ? 'page' : undefined}>{r.title}</a>)}
+		</nav>
+	</header>
+	<p class="nowebgl">The room needs WebGL, which this browser doesn't have; here is the page as text.</p>
+	<h1>{title}</h1>
+	<slot />
+</main>
