@@ -717,15 +717,25 @@ let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = (
   byId.work.onClose = closeWins;
 }
 /* a new project from either form lands on the kanban's ideas column */
-const stick = (name, service, msg) => { const f = q('#np-form'); $('.stuckText', f).innerHTML = `${msg.length > 90 ? msg.slice(0, 90) + '…' : msg}<small>${name} · ${service.replace('-', ' ')}</small>`; f.classList.add('stuck'); };
+/* the sheet becomes a note on the board: the summary goes in, the classes swap, and the height is tweened between what the form measured and what the note measures */
+const stick = (name, service, msg) => {
+  const f = q('#np-form'), h0 = f.offsetHeight;
+  $('.stuckText', f).innerHTML = `<span class="done"><i>✓</i>on the board</span>${esc(msg.length > 90 ? msg.slice(0, 90) + '…' : msg)}<small>${esc(name)} · ${esc(service.replace('-', ' '))}</small>`;
+  f.classList.add('stuck');
+  if (reduced) return;
+  const h1 = f.offsetHeight; f.style.height = h0 + 'px'; f.offsetHeight;   // FLIP: settle at the old height, then let it shrink
+  f.style.transition = 'height .7s cubic-bezier(.2,.9,.3,1)'; f.style.height = h1 + 'px';
+  f.addEventListener('transitionend', function done(e) { if (e.propertyName !== 'height') return; f.style.height = f.style.transition = ''; f.removeEventListener('transitionend', done); byId.newproject.scrollEls?.forEach(more); });
+};
 for (const f of surfaces.flatMap(s => $$('form.np', s.el))) f.addEventListener('submit', async e => {
   e.preventDefault(); if (f.classList.contains('busy')) return;
   const el = f.elements, data = { name: el.name.value.trim(), email: el.email.value.trim(), service: el.service.value, message: el.message.value.trim() };
   if (el.budget.value) data.budget = Number(el.budget.value);
   const problem = checkProject(data); if (problem) { $('.err', f).textContent = problem; f.classList.add('failed'); return; }
+  const btn = $('.submit', f); btn.dataset.label ??= btn.textContent; btn.textContent = 'sending';
   f.classList.add('busy'); f.classList.remove('failed');
   const r = await submitProject(data, turnstile.token(f), opts.api);
-  f.classList.remove('busy');
+  f.classList.remove('busy'); btn.textContent = btn.dataset.label;
   if (!r.ok) { $('.err', f).textContent = r.error; f.classList.add('failed'); turnstile.reset(f); return; }
   stick(data.name || 'someone', data.service, data.message); if (f.id !== 'np-form') f.classList.add('sent');
 });

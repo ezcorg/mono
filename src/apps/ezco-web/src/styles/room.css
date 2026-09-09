@@ -108,14 +108,23 @@ body.preload .room *{transition:none!important}
 .form .money input{padding-left:1.5em;padding-right:3.2em;-moz-appearance:textfield}
 .form .money input::-webkit-inner-spin-button,.form .money input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 .form .money i{position:absolute;right:.6em;top:50%;translate:0 -50%;font-style:normal;font-size:.75em;letter-spacing:.08em;opacity:.55;pointer-events:none}
-.form .submit{align-self:flex-start;background:var(--fg);color:var(--bg);padding:.6em 1.1em;border:1px solid var(--fg);font:inherit;margin-top:.2em;cursor:pointer}
-.form .thanks{display:none;font-family:var(--serif);font-size:1.1em;border:1px solid var(--fg);padding:.8em}
+.form .submit{align-self:flex-start;display:inline-flex;align-items:center;background:var(--fg);color:var(--bg);padding:.6em 1.1em;border:1px solid var(--fg);font:inherit;margin-top:.2em;cursor:pointer}
+/* while a submission is in flight: a ring turns in the button, the fields dim and stop taking input */
+.form .submit::before{content:'';width:0;height:1em;margin-right:0;border:2px solid var(--bg);border-right-color:transparent;border-radius:50%;opacity:0;transition:width .25s,margin .25s,opacity .25s}
+.form.busy .submit{pointer-events:none}
+.form.busy .submit::before{width:1em;margin-right:.6em;opacity:1;animation:spin .7s linear infinite}
+.form>div,.form label{transition:opacity .3s}
+.form.busy>div{opacity:.5;pointer-events:none}
+@keyframes spin{to{rotate:360deg}}
+.form .thanks{display:none;align-items:flex-start;gap:.7em;font-family:var(--serif);font-size:1.1em;border:1px solid var(--fg);padding:.8em;animation:rise .45s cubic-bezier(.2,.9,.3,1) both}
+.form .thanks::before{content:'✓';flex:none;width:1.5em;height:1.5em;border-radius:50%;background:var(--fg);color:var(--bg);display:grid;place-items:center;font:700 .8em/1 var(--sans);animation:pop .5s .2s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes rise{from{opacity:0;translate:0 .4em}}
+@keyframes pop{from{scale:0}}
 .form .err{display:none;font-size:.85em;color:var(--fg);border:1px solid var(--fg);padding:.5em .7em}
 .form.failed .err{display:block}
-.form.busy .submit{opacity:.5;pointer-events:none}
 .form .cf-turnstile{min-height:65px}
 .form .cf-turnstile:empty{display:none}
-.form.sent>*{display:none}.form.sent .thanks{display:block}
+.form.sent>*{display:none}.form.sent .thanks{display:flex}
 .form input[type=file]{padding:.3em}
 
 @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
@@ -232,12 +241,17 @@ body.preload .room *{transition:none!important}
 .note:nth-child(odd){rotate:1.2deg}
 .note::before{content:'';position:absolute;left:50%;top:-5px;width:9px;height:9px;border-radius:50%;background:var(--fg);translate:-50% 0}
 .note small{display:block;font:400 .82em/1.2 var(--sans);opacity:.6;margin-top:.3em}
-.note.new{rotate:-.6deg;background:var(--bg);border:1.5px solid var(--fg);padding:1em .9em;font:16px/1.45 var(--sans);box-shadow:5px 6px 0 var(--line-soft)}
+.note.new{rotate:-.6deg;background:var(--bg);border:1.5px solid var(--fg);padding:1em .9em;font:16px/1.45 var(--sans);box-shadow:5px 6px 0 var(--line-soft);overflow:hidden;transition:rotate .7s cubic-bezier(.3,1.5,.5,1),box-shadow .7s,padding .7s,border-color .7s,background .7s,color .25s}
 .note.new::before{background:var(--fg)}
 .note.new b{display:block;font:300 1.35em/1.1 var(--serif);margin-bottom:.35em;letter-spacing:-.01em}
-.note.new .stuckText{display:none;font:400 15px/1.35 var(--serif)}
-.note.new.stuck .form{display:none}
-.note.new.stuck .stuckText{display:block}
+.note.new .stuckText{display:none;font:400 13px/1.35 var(--serif)}
+/* sent: the sheet shrinks into one of the board's notes (its height is tweened by stick() in room.js), tilts the other way and wears a check */
+.note.new.stuck{rotate:1.4deg;padding:12px 11px 10px;background:var(--fill);border-color:var(--line);box-shadow:2px 3px 0 var(--line-soft)}
+.note.new.stuck>:not(.stuckText){display:none}
+.note.new.stuck .stuckText{display:block;animation:rise .5s .25s cubic-bezier(.2,.9,.3,1) both}
+.stuckText .done{display:flex;align-items:center;gap:.45em;margin-bottom:.5em;font:500 10px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;opacity:.75}
+.stuckText .done i{width:1.5em;height:1.5em;border-radius:50%;background:var(--fg);color:var(--bg);display:grid;place-items:center;font:700 .95em/1 var(--sans);font-style:normal;animation:pop .5s .45s cubic-bezier(.3,1.6,.5,1) both}
+.stuckText small{margin-top:.45em}
 
 /* manifesto */
 .manifesto{background:var(--bg);box-shadow:inset 0 0 0 4px var(--bg),inset 0 0 0 5px var(--line-soft)}
