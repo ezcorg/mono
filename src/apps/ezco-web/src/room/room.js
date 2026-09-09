@@ -656,8 +656,10 @@ for (const t of things) if (t.id) setInteractive(t, false);
 /* links between pages are written as static addresses (`/join/`, crawlable); in the room they are hash routes */
 for (const scope of [root, ...surfaces.map(s => s.el)]) for (const a of $$('a[data-room]', scope)) { const p = a.getAttribute('href') || ''; if (p.startsWith('/')) a.setAttribute('href', '#' + p.replace(/\/+$/, '')); }
 /* outside, the building wears its one-line label, pinned above its near corner like any other thing's label; it inverts the logo and comes in */
-const bldg = $('#bldg'), bldgAt = V3(.5, .5, .5);
+/* it shows while the building is pointed at (or the label itself is, or has focus); where nothing hovers, it's always up */
+const bldg = $('#bldg'), bldgAt = V3(0, .5, 0), noHover = matchMedia('(hover: none)').matches; let bldgFocus = false;
 bldg.addEventListener('pointerenter', () => { logoHot = true; body.classList.add('hover'); }); bldg.addEventListener('pointerleave', () => { logoHot = false; body.classList.remove('hover'); });
+bldg.addEventListener('focus', () => { bldgFocus = true; }); bldg.addEventListener('blur', () => { bldgFocus = false; });
 bldg.addEventListener('click', () => { if (state === 'logo') go('#/room'); });
 /* the radio: audio only, from a hidden player behind the wall */
 /* once the radio has been touched, a ⏮ ⏸ ⏭ bar stands where its label was and stays as long as the radio is on;
@@ -779,7 +781,7 @@ function frame(now) {
   const ctlOn = state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels);   // no grace: it fades exactly like a label (the radio's hit box reaches up to it)
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5) && !(t.id === 'radio' && ctlOn); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
   if (ctlOn) { tmp.copy(byId.radio.anchor).multiplyScalar(K).project(camera); ctl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; ctl.classList.toggle('on', tmp.z < 1); } else ctl.classList.remove('on');
-  if (state === 'logo') { tmp.copy(bldgAt).multiplyScalar(K).project(camera); bldg.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; bldg.classList.toggle('on', tmp.z < 1 && !firstFrame); } else bldg.classList.remove('on');
+  if (state === 'logo') { tmp.copy(bldgAt).multiplyScalar(K).project(camera); bldg.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; bldg.classList.toggle('on', tmp.z < 1 && (logoHot || bldgFocus || noHover)); } else bldg.classList.remove('on');
   const tGl = performance.now(); if (!NOGL) gl.render(scene, camera); const tCss = performance.now(); if (!NODOM) css.render(scene, camera); placeFloating(); bounce(now);
   if (perf) perf.tick(now, tFrame, tGl, tCss, performance.now());
 }

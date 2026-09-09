@@ -16,8 +16,9 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | clipboard in your hands | come work with us — rises when you look down or tab to it (no backend yet: it says so) |
 | dial by the door | lights: ◐ auto (follows the system colour scheme) · ☀ day · ☾ night; every lamp switches on its own (its label is a bulb, filled when lit) and remembers overrides until you put it back to the default |
 
-Outside, the building wears its one line ("your friendly neighborhood tech collective") as a label pinned above its near
-corner, like any thing's label; it inverts the logo when pointed at and comes in when clicked.
+Outside, the building wears its one line ("your friendly neighborhood tech collective") as a label above its roof, like
+any thing's label: it shows while the building (or the label, or its focus) is pointed at — always, where nothing hovers —
+inverts the logo, and comes in when clicked.
 
 Keys: `↵` or scroll to come in · click · drag or arrows to look (in a page too) · `?` labels · `l` lights · `esc` back. In the
 OS, a bar chip brings a window up or minimises it; every control carries an explicit `tabindex` (Safari's Tab needs one).

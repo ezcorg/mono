@@ -47,10 +47,10 @@ body.preload .room *{transition:none!important}
 .lbl.ext::after{content:' ↗'}
 .lbl:hover{background:var(--fg);color:var(--bg)}
 /* the building's label, outside: the one line about us, pinned above the near corner of the box; a click comes in */
-.room .lbl.bldg{font:500 13px/1.35 var(--sans);letter-spacing:.08em;background:var(--bg);border:1px solid var(--line);padding:.55em .85em;margin-top:-.4em;max-width:min(80vw,26em);white-space:normal;text-align:center}
+.room .lbl.bldg{font:500 clamp(13px,1.25vw,17px)/1.35 var(--sans);letter-spacing:.08em;background:var(--bg);border:1px solid var(--line);padding:.6em 1em;margin-top:-.6em;max-width:min(84vw,28em);white-space:normal;text-align:center;transition:opacity .25s,margin .25s}
 .room .lbl.bldg::after{content:''}
-.room .lbl.bldg.on{margin-top:-.9em}
-.room .lbl.bldg:hover{background:var(--fg);color:var(--bg)}
+.room .lbl.bldg.on{margin-top:-1.2em}
+.room .lbl.bldg:hover,.room .lbl.bldg:focus-visible{background:var(--fg);color:var(--bg);outline:0}
 .lbl .ic{width:1.15em;height:1.15em;vertical-align:-.22em}
 .ctl{position:fixed;left:0;top:0;z-index:2;translate:-50% -100%;margin-top:.4em;display:flex;gap:.3em;opacity:0;pointer-events:none;transition:opacity .2s,margin .2s}
 .ctl.on{opacity:1;pointer-events:auto;margin-top:0}
