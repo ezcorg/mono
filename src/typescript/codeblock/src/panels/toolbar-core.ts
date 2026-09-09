@@ -21,7 +21,7 @@ type NerdIcon = { value: string; hexCode: number; color?: string };
 
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'open-terminal' | 'file-action' | 'clear-filesystem';
+    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem';
     icon: string;
     iconColor?: string;
     query: string;
@@ -94,7 +94,7 @@ export type ToolbarIntent =
     | 'file-action'    // Wants rename/save-as/delete
     | 'browse'         // Wants to browse the file system
     | 'settings'       // Wants to change settings
-    | 'command'        // Wants a specific command (import, terminal)
+    | 'command'        // Wants a specific command (import)
     | 'language'       // Typed a language name
     | 'unknown';       // Can't determine intent
 
@@ -128,10 +128,6 @@ export interface ToolbarHost {
 
     // File actions (optional, e.g. SVG preview toggle)
     fileActions?: FileActionEntry[];
-
-    // Terminal command visibility
-    hasTerminal?: boolean;
-    onEnterTerminal?(): void;
 
     /** Clear the filesystem and all related persistent storage. */
     onClearFilesystem?(): Promise<void>;
@@ -215,7 +211,6 @@ export const FOLDER_ICON = '\ue613';
 // reads more idiomatically as "browse/open a file" than a hash ever did.
 export const FOLDER_OPEN_ICON = '\uf07c';
 const PARENT_DIR_ICON = '\uf112';
-export const TERMINAL_ICON = '\uf120';
 
 const BINARY_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
 const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
@@ -552,11 +547,6 @@ export class ToolbarCore {
         // Open file (browse)
         commands.push({ id: 'Open file', type: 'open-file', icon: FOLDER_OPEN_ICON, query: '' });
 
-        // Terminal
-        if (this.host.hasTerminal) {
-            commands.push({ id: 'Open terminal', type: 'open-terminal', icon: TERMINAL_ICON, query: '' });
-        }
-
         // Import
         commands.push({ id: 'Import file(s)', type: 'import-local-files', icon: '\uf15b', query: '' });
         commands.push({ id: 'Import folder', type: 'import-local-folder', icon: FOLDER_ICON, query: '' });
@@ -597,7 +587,6 @@ export class ToolbarCore {
         [/^(open|browse|find|explore|ls|dir)\b/i, 'browse'],
         [/^(rename|mv|move|save|export)\b/i, 'file-action'],
         [/^(import|upload)\b/i, 'command'],
-        [/^(terminal|term|shell|bash|sh|console)\b/i, 'command'],
         [/^(settings?|config|prefs?|preferences?|options?)\b/i, 'settings'],
         [/^(theme|dark|light|font|color)\b/i, 'settings'],
     ];
@@ -706,11 +695,11 @@ export class ToolbarCore {
             }
 
             case 'command': {
-                // Promote terminal and import commands
+                // Promote the import commands
                 const promoted = commands.filter(c =>
-                    c.type === 'open-terminal' || c.type === 'import-local-files' || c.type === 'import-local-folder');
+                    c.type === 'import-local-files' || c.type === 'import-local-folder');
                 const rest = commands.filter(c =>
-                    c.type !== 'open-terminal' && c.type !== 'import-local-files' && c.type !== 'import-local-folder');
+                    c.type !== 'import-local-files' && c.type !== 'import-local-folder');
                 return [...promoted, ...fileResults, ...rest];
             }
 
@@ -897,9 +886,6 @@ export class ToolbarCore {
             this.enterSettingsMode();
         } else if (command.type === 'open-file') {
             this.enterBrowseMode();
-        } else if (command.type === 'open-terminal') {
-            this.setResults([]);
-            this.host.onEnterTerminal?.();
         } else if (command.type === 'save-as') {
             if (command.requiresInput) {
                 const ext = command.query ? languageToFileExtension(command.query) : undefined;

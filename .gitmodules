@@ -7,9 +7,6 @@
 [submodule "src/typescript/tiptap-markdown"]
 	path = src/typescript/tiptap-markdown
 	url = https://github.com/ezcorg/tiptap-markdown
-[submodule "src/typescript/jswasi"]
-	path = src/typescript/jswasi
-	url = https://github.com/ezcorg/jswasi
 [submodule "src/rust/witmproxy-plugin-template-rust"]
 	path = src/rust/witmproxy-plugin-template-rust
 	url = https://github.com/ezcorg/witmproxy-plugin-template-rust

@@ -40,7 +40,7 @@ export { user, fetchUsers, type ReadonlyUser, type PartialUser };
 import { createEditor } from "@joinezco/markdown-editor";
 
 async function init() {
-	const fs = await CodeblockFS.fsa("demo");
+	const fs = await CodeblockFS.worker(undefined, "demo");
 
 	// Seed files only if hello.md doesn't exist yet (first visit)
 	const exists = await fs.exists("hello.md");

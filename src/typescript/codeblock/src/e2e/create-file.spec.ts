@@ -145,11 +145,13 @@ describe('Create file flow (e2e)', () => {
             { timeout: 3000 }
         );
 
-        // Now edit the content
+        // Now edit the content (select all with the platform's modifier: on a Mac,
+        // CodeMirror binds Ctrl-a to "line start", not "select all")
+        const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
         await page.click('.cm-content');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(mod);
         await page.keyboard.press('a');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(mod);
         await page.keyboard.type('new content after save');
 
         // Verify the editor has the new content

@@ -22,7 +22,7 @@ import { getDevServerUrl, launchBrowser } from './helpers';
  * We compare where text actually begins (border-box left + left padding +
  * left border), not raw element rects, because the input, code lines, and
  * labels each carry their own left padding. Uses the in-browser-OPFS fixture
- * (no lazy manifest) so the editor mounts without any network dependency.
+ * so the editor mounts without any network dependency.
  */
 describe('Toolbar search row x-alignment (e2e)', () => {
     let browser: Browser;

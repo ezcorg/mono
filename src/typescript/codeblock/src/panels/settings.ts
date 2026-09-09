@@ -11,7 +11,6 @@ export interface EditorSettings {
     lspLogEnabled: boolean;
     agentUrl: string;
     aiModel: string;
-    terminalEnabled: boolean;
     maxVisibleLines: number; // 0 = unlimited
     showLineNumbers: boolean;
     showFoldGutter: boolean;
@@ -27,7 +26,6 @@ const defaultSettings: EditorSettings = {
     lspLogEnabled: false,
     agentUrl: '',
     aiModel: 'sonnet',
-    terminalEnabled: false,
     maxVisibleLines: 0,
     showLineNumbers: true,
     showFoldGutter: true,
@@ -323,26 +321,6 @@ export function createSettingsOverlay(view: EditorView): HTMLElement {
     aiSection.appendChild(aiHintRow);
 
     overlay.appendChild(aiSection);
-
-    // Terminal section
-    const termSection = document.createElement("div");
-    termSection.className = "cm-settings-section";
-    const termTitle = document.createElement("div");
-    termTitle.className = "cm-settings-section-title";
-    termTitle.textContent = "Terminal";
-    termSection.appendChild(termTitle);
-
-    const termRow = document.createElement("div");
-    termRow.className = "cm-settings-row";
-    const termBtn = document.createElement("button");
-    termBtn.className = "cm-settings-button cm-settings-button-disabled";
-    termBtn.textContent = "Terminal (coming soon)";
-    termBtn.disabled = true;
-    termRow.appendChild(termBtn);
-    termSection.appendChild(termRow);
-    // TODO: ghostty-web + wanix integration
-
-    overlay.appendChild(termSection);
 
     return overlay;
 }

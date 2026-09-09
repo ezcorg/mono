@@ -7,130 +7,11 @@ import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { SnapshotNode } from "@joinezco/memfs/snapshot";
 import { promises } from "node:fs";
 import type { FsApi } from "@joinezco/memfs/node/types";
-import { TopLevelFs } from "@joinezco/jswasi/filesystem";
-import { constants } from "@joinezco/jswasi";
 
 Comlink.transferHandlers.set("asyncGenerator", asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set("watchOptions", watchOptionsTransferHandler);
 
 export namespace Vfs {
-    export const fromJswasiFs = async (jswasiFs: TopLevelFs): Promise<VfsInterface> => {
-        // Map WASI filetype to @volar/language-service FileType
-        const toVolarFileType = (filetype: number): FileType => {
-            // WASI preview1 common values: 3 = directory, 4 = regular file, 7 = symlink
-            switch (filetype) {
-                case 3: return FileType.Directory;
-                case 7: return FileType.SymbolicLink;
-                default: return FileType.File;
-            }
-        };
-
-        // Normalize to absolute path for TopLevelFs
-        const ensureAbs = (p: string) => (p && p.startsWith("/")) ? p : `/${p ?? ""}`;
-
-        // Pull constants if available (fall back to literals when missing)
-        const WASI_ESUCCESS = constants.WASI_ESUCCESS ?? 0;
-        const WASI_EEXIST = constants.WASI_EEXIST ?? 20;
-        const WASI_O_TRUNC = constants.WASI_O_TRUNC ?? 0x00000010;
-        const WASI_O_CREAT = constants.WASI_O_CREAT ?? 0x00000001;
-        const WASI_O_DIRECTORY = constants.WASI_O_DIRECTORY ?? 0x00020000;
-
-        return {
-            async readFile(path: string): Promise<string> {
-                const abs = ensureAbs(path);
-                const { desc, err } = await jswasiFs.open(abs);
-                if (err !== WASI_ESUCCESS) throw new Error(`readFile open failed (${err}) for ${abs}`);
-                const { content, err: readErr } = await desc.read_str();
-                if (readErr !== WASI_ESUCCESS) throw new Error(`readFile read_str failed (${readErr}) for ${abs}`);
-                desc.close(); // Close after reading
-                return content;
-            },
-
-            async writeFile(path: string, data: string): Promise<void> {
-                const abs = ensureAbs(path);
-                const { desc, err } = await jswasiFs.open(abs, 0, WASI_O_CREAT | WASI_O_TRUNC);
-                if (err !== WASI_ESUCCESS) throw new Error(`writeFile open failed (${err}) for ${abs}`);
-                const encoder = new TextEncoder();
-                const buf = encoder.encode(data);
-                const { err: writeErr } = await desc.pwrite(buf.buffer, 0n);
-                desc.close(); // Close after writing
-                if (writeErr !== WASI_ESUCCESS) throw new Error(`writeFile pwrite failed (${writeErr}) for ${abs}`);
-            },
-
-            async *watch(_path: string, { signal }: { signal: AbortSignal }) {
-                return jswasiFs.watch(_path, { signal })
-            },
-
-            async mkdir(path: string, options: { recursive: boolean }): Promise<void> {
-                const abs = ensureAbs(path);
-                if (options?.recursive) {
-                    const parts = abs.split("/").filter(Boolean);
-                    for (let i = 0; i < parts.length; i++) {
-                        const cur = "/" + parts.slice(0, i + 1).join("/");
-                        // Always attempt createDir — don't rely on exists()
-                        // which can return stale results in concurrent scenarios.
-                        const res = await jswasiFs.createDir(cur);
-                        if (res !== WASI_ESUCCESS && res !== WASI_EEXIST) {
-                            throw new Error(`mkdir recursive failed (${res}) at ${cur}`);
-                        }
-                    }
-                } else {
-                    const res = await jswasiFs.createDir(abs);
-                    if (res !== WASI_ESUCCESS) {
-                        throw new Error(`mkdir failed (${res}) for ${abs}`);
-                    }
-                }
-            },
-
-            async readDir(path: string): Promise<[string, FileType][]> {
-                const abs = ensureAbs(path);
-                const { desc, err } = await jswasiFs.open(abs, 0, WASI_O_DIRECTORY);
-                if (err !== WASI_ESUCCESS) throw new Error(`readDir open failed (${err}) for ${abs}`);
-                const { err: rerr, dirents } = await desc.readdir(true);
-                if (rerr !== WASI_ESUCCESS) throw new Error(`readDir readdir failed (${rerr}) for ${abs}`);
-
-                return dirents.map((d) => [d.name, toVolarFileType(d.d_type)] as [string, FileType]);
-            },
-
-            async exists(path: string): Promise<boolean> {
-                const abs = ensureAbs(path);
-                const { desc, err } = await jswasiFs.open(abs);
-                if (err !== WASI_ESUCCESS) return false;
-                const stat = await desc.getFilestat();
-                desc.close(); // Close after getting file status
-                return stat.err === WASI_ESUCCESS;
-            },
-
-            async stat(path: string) {
-                const abs = ensureAbs(path);
-                const { desc, err } = await jswasiFs.open(abs);
-                if (err !== WASI_ESUCCESS) return null;
-                const res = await desc.getFilestat();
-                desc.close(); // Close after getting file status
-                if (res.err !== WASI_ESUCCESS) return null;
-                const filestat = res.filestat;
-                // filestat times are typically in ns; convert to ms for Date
-                const nsToDate = (ns: bigint) => new Date(Number(ns / 1000000n));
-                return {
-                    name: abs,
-                    atime: nsToDate(filestat.atim),
-                    mtime: nsToDate(filestat.mtim),
-                    ctime: nsToDate(filestat.ctim),
-                    size: Number(filestat.size),
-                    type: toVolarFileType(filestat.filetype),
-                };
-            },
-
-            async unlink(path: string): Promise<void> {
-                const abs = ensureAbs(path);
-                const res = await jswasiFs.removeEntry(abs, false);
-                if (res !== WASI_ESUCCESS) {
-                    throw new Error(`unlink failed (${res}) for ${abs}`);
-                }
-            },
-        } as VfsInterface;
-    }
-
     export const fromMemfs = (fs: FsApi): VfsInterface => {
         return {
             async readFile(path: string): Promise<string> {
@@ -289,45 +170,6 @@ export namespace Vfs {
     }
 
     /**
-     * Check if the browser supports FileSystemFileHandle.createWritable().
-     */
-    export const supportsCreateWritable = (): boolean => {
-        return typeof FileSystemFileHandle !== 'undefined' &&
-            'createWritable' in FileSystemFileHandle.prototype;
-    }
-
-    /**
-     * Auto-detect the best available filesystem backend.
-     * Uses OPFS (FSA) when createWritable is supported (Chrome, Firefox),
-     * falls back to an in-memory worker backend (Safari and others).
-     *
-     * @param name - Unique name for the FSA storage bucket (used when OPFS is available)
-     */
-    export const auto = async (name = 'codeblock'): Promise<VfsInterface> => {
-        if (supportsCreateWritable()) {
-            return fsa(name);
-        }
-        return worker();
-    }
-
-    /**
-     * Create an FSA (File System Access / OPFS) backed filesystem.
-     * Data persists across page reloads via the browser's Origin Private File System.
-     *
-     * @param name - Unique name for the FSA storage bucket (default: 'codeblock')
-     */
-    export const fsa = async (name = 'codeblock'): Promise<VfsInterface> => {
-        const topFs = new TopLevelFs();
-        await topFs.addMount(
-            // @ts-ignore - TopLevelFs.addMount typing
-            undefined, "", undefined, "/",
-            "fsa", 0n,
-            { name, keepMetadata: "true", create: "true" }
-        );
-        return Vfs.fromJswasiFs(topFs);
-    }
-
-    /**
      * Create a filesystem worker with optional snapshot data.
      *
      * @param bufferOrUrl - Either a snapshot buffer or URL to a snapshot file.
@@ -338,7 +180,6 @@ export namespace Vfs {
     type FsWorkerProxy = {
         mount: (args: any) => Promise<VfsInterface>;
         mountFromUrl: (args: any) => Promise<VfsInterface>;
-        mountLazy: (args: any) => Promise<VfsInterface>;
         getVfsPort: () => Promise<MessagePort>;
         setOpfsWorkerPort: (port: MessagePort) => void;
     };
@@ -396,24 +237,6 @@ export namespace Vfs {
         console.debug('Filesystem worker mounted');
         return vfs;
     }
-
-    /**
-     * Create a lazy-loading VFS backed by a SharedWorker.
-     * All chunk fetching, decompression, and OPFS writes happen in the
-     * worker thread — the main thread only receives proxied results.
-     */
-    export const lazy = async (opts: {
-        manifestUrl: string;
-        backingName?: string;
-    }): Promise<VfsInterface> => {
-        const proxy = getFsWorkerProxy();
-        const vfs = await proxy.mountLazy({
-            manifestUrl: opts.manifestUrl,
-            backingName: opts.backingName ?? 'codeblock-lazy',
-        });
-        console.debug('Lazy filesystem worker mounted');
-        return vfs;
-    };
 
     export async function* walk(fs: VfsInterface, path: string): AsyncIterable<string> {
         const files = await fs.readDir(path);

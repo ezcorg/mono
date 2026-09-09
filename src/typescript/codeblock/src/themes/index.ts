@@ -441,33 +441,6 @@ export const codeblockTheme = EditorView.theme({
     '.cm-lsp-log-log': {
         opacity: '0.6',
     },
-    // Terminal wrapper — replaces the toolbar input with ghostty.
-    // Starts at top: 0 to cover the hidden toolbar elements (filler),
-    // then extends downward as content grows. Height set by JS.
-    '.cm-terminal-wrapper': {
-        position: 'absolute',
-        top: '0',
-        left: '0',
-        right: '0',
-        height: '0',
-        maxHeight: '50vh',
-        zIndex: 150,
-        background: 'var(--cm-toolbar-background)',
-    },
-    '.cm-terminal-container': {
-        overflow: 'hidden',
-        position: 'relative',
-        outline: 'none',
-    },
-    // Terminal cursor — block cursor rendered as a mark decoration
-    '.cm-terminal-cursor': {
-        background: 'var(--cm-foreground, #d4d4d4)',
-        color: 'var(--cm-background, #1e1e1e)',
-        animation: 'cm-terminal-blink 1s step-end infinite',
-    },
-    '@keyframes cm-terminal-blink': {
-        '50%': { opacity: '0' },
-    },
     // Auto-hide toolbar: JS manages retract/expand by toggling
     // .cm-toolbar-retracted on .cm-panels-top (see toolbar.ts).
     // The transition makes expand/retract feel smooth.

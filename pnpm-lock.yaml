@@ -329,9 +329,6 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.11
         version: 6.43.11
-      '@joinezco/jswasi':
-        specifier: workspace:*
-        version: link:../jswasi
       '@joinezco/memfs':
         specifier: workspace:*
         version: link:../memfs
@@ -350,12 +347,6 @@ importers:
       '@marimo-team/codemirror-ai':
         specifier: ^0.3.9
         version: 0.3.9(@codemirror/state@6.7.4)(@codemirror/view@6.43.11)
-      '@typescript/vfs':
-        specifier: ^1.6.4
-        version: 1.6.4(typescript@5.9.3)
-      '@uiw/codemirror-theme-vscode':
-        specifier: ^4.25.11
-        version: 4.25.11(@codemirror/language@6.12.4)(@codemirror/state@6.7.4)(@codemirror/view@6.43.11)
       '@volar/language-server':
         specifier: 2.4.13
         version: 2.4.13
@@ -368,30 +359,12 @@ importers:
       comlink:
         specifier: ^4.4.2
         version: 4.4.2
-      events:
-        specifier: ^3.3.0
-        version: 3.3.0
-      ghostty-web:
-        specifier: ^0.4.0
-        version: 0.4.0
-      ignore:
-        specifier: ^7.0.9
-        version: 7.0.9
       lodash:
         specifier: ^4.18.1
         version: 4.18.1
-      lz-string:
-        specifier: ^1.5.0
-        version: 1.5.0
-      markdown-it:
-        specifier: ^14.3.1
-        version: 14.3.1
       minisearch:
         specifier: ^7.2.0
         version: 7.2.0
-      parse-gitignore:
-        specifier: ^2.0.0
-        version: 2.0.0
       path-browserify:
         specifier: ^1.0.1
         version: 1.0.1
@@ -401,12 +374,6 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
-      uuid:
-        specifier: ^13.0.2
-        version: 13.0.2
-      vite-plugin-node-polyfills:
-        specifier: ^0.25.0
-        version: 0.25.0(rollup@4.63.1)(vite@8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
       volar-service-typescript:
         specifier: 0.0.70
         version: 0.0.70(@volar/language-service@2.4.13)
@@ -416,9 +383,6 @@ importers:
       vscode-languageserver-protocol:
         specifier: ^3.18.3
         version: 3.18.3
-      vscode-languageserver-textdocument:
-        specifier: ^1.0.14
-        version: 1.0.14
       vscode-uri:
         specifier: ^3.2.0
         version: 3.2.0
@@ -429,15 +393,9 @@ importers:
       '@types/lodash':
         specifier: ^4.17.25
         version: 4.17.25
-      '@types/markdown-it':
-        specifier: ^14.2.0
-        version: 14.2.0
       '@types/node':
         specifier: ^25.9.5
         version: 25.9.5
-      '@types/parse-gitignore':
-        specifier: ^1.0.2
-        version: 1.0.2
       '@types/sharedworker':
         specifier: ^0.0.223
         version: 0.0.223
@@ -459,24 +417,6 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@25.9.5)(@vitest/browser-playwright@4.1.11)(@vitest/ui@4.1.11)(happy-dom@20.14.0)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.10.5(@types/node@25.9.5)(typescript@5.9.3))(vite@8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
-
-  src/typescript/jswasi:
-    devDependencies:
-      esbuild:
-        specifier: ^0.25.10
-        version: 0.25.12
-      typescript:
-        specifier: ^5.6.0
-        version: 5.9.3
-
-  src/typescript/lazy-pack:
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.5
-        version: 25.9.5
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
 
   src/typescript/lsp-client:
     dependencies:
@@ -4894,9 +4834,6 @@ packages:
   '@types/normalize-package-data@2.4.4':
     resolution: {integrity: sha512-37i+OaWTh9qeK4LSHPsyRC7NahnGotNuZvjLSgcPzblpHB3rrCJxAOgI5gCdKm7coonsaX1Of0ILiTcnZjbfxA==}
 
-  '@types/parse-gitignore@1.0.2':
-    resolution: {integrity: sha512-AQwj+lNTWI7y1kkMe8qLByiToXoXs/du70qGFIHJZaJUVrF5jB8QzvWmLyR1VWYqRagpY8ABrqAjs7uHsJnVBQ==}
-
   '@types/parse-json@4.0.2':
     resolution: {integrity: sha512-dISoDXWWQwUquiKsyZ4Ng+HX2KsPL7LyHKHQwgGFEA3IaKac4Obd+h2a/a6waisAoepJlBcx9paWqjA8/HVjCw==}
 
@@ -5044,21 +4981,6 @@ packages:
   '@typescript-eslint/visitor-keys@8.70.0':
     resolution: {integrity: sha512-BoC8PiO4Hkdo0TVJh9Ntxr5MxPDI7/oFsrygN5ADelFSeXG/qgNuucIGA+L5Z6JpPTE/uRfcTWtscjbUaufepQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
-
-  '@typescript/vfs@1.6.4':
-    resolution: {integrity: sha512-PJFXFS4ZJKiJ9Qiuix6Dz/OwEIqHD7Dme1UwZhTK11vR+5dqW2ACbdndWQexBzCx+CPuMe5WBYQWCsFyGlQLlQ==}
-    peerDependencies:
-      typescript: '*'
-
-  '@uiw/codemirror-theme-vscode@4.25.11':
-    resolution: {integrity: sha512-fTQ5676L9iV3Y6UyDBDd8Wt9Gewh55aC5rqnCtIpwyVFb6zJEHJScI4g43lzAD2IKhY7HlozB1ucrS3UqBFNEQ==}
-
-  '@uiw/codemirror-themes@4.25.11':
-    resolution: {integrity: sha512-SBNCOgRsCtewGNocRbmjbCkltGXlFcPJsvhxQ351VynQjnWUiPbUrFcEU/haQ3HanROdAAjWXZJPk5bMBxl2jw==}
-    peerDependencies:
-      '@codemirror/language': '>=6.0.0'
-      '@codemirror/state': '>=6.0.0'
-      '@codemirror/view': '>=6.0.0'
 
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
@@ -7162,9 +7084,6 @@ packages:
     resolution: {integrity: sha512-b1O07XYq8eRuVzBNgJLstU6FYc1tS6wnMtF1I1D9lE8LxZSOGZ7LhxN54yPP6mGw5f2CkXY2BQUL9Fx41qvcIg==}
     engines: {node: '>= 14'}
 
-  ghostty-web@0.4.0:
-    resolution: {integrity: sha512-0puDBik2qapbD/QQBW9o5ZHfXnZBqZWx/ctBiVtKZ6ZLds4NYb+wZuw1cRLXZk9zYovIQ908z3rvFhexAvc5Hg==}
-
   giget@2.0.0:
     resolution: {integrity: sha512-L5bGsVkxJbJgdnwyuheIunkGatUF/zssUoxxjACCseZYAVbaqdh9Tsmmlkl8vYan09H7sbvKt4pS8GqKLBrEzA==}
     hasBin: true
@@ -8274,10 +8193,6 @@ packages:
     peerDependencies:
       solid-js: ^1.4.7
 
-  lz-string@1.5.0:
-    resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
-    hasBin: true
-
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -9085,10 +9000,6 @@ packages:
   parse-asn1@5.1.9:
     resolution: {integrity: sha512-fIYNuZ/HastSb80baGOuPRo1O9cf4baWw5WsAp7dBuUzeTD/BoaG8sVTdlPFksBE2lF21dN+A1AnrpIjSWqHHg==}
     engines: {node: '>= 0.10'}
-
-  parse-gitignore@2.0.0:
-    resolution: {integrity: sha512-RmVuCHWsfu0QPNW+mraxh/xjQVw/lhUCUru8Zni3Ctq3AoMhpDTq0OVdKS6iesd6Kqb7viCV3isAL43dciOSog==}
-    engines: {node: '>=14'}
 
   parse-json@4.0.0:
     resolution: {integrity: sha512-aOIos8bujGN93/8Ox/jPLh7RwVnPEysynVFE+fQZyg6jKELEHwzgKdLRFHUgXJL6kylijVSBC4BvN9OmsB48Rw==}
@@ -10881,10 +10792,6 @@ packages:
   utils-merge@1.0.1:
     resolution: {integrity: sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==}
     engines: {node: '>= 0.4.0'}
-
-  uuid@13.0.2:
-    resolution: {integrity: sha512-vzi9uRZ926x4XV73S/4qQaTwPXM2JBj6/6lI/byHH1jOpCzb0zDbfytgA9LcN/hzb2l7WQSQnxITOVx5un/wGw==}
-    hasBin: true
 
   uuid@8.3.2:
     resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
@@ -15619,10 +15526,6 @@ snapshots:
 
   '@types/normalize-package-data@2.4.4': {}
 
-  '@types/parse-gitignore@1.0.2':
-    dependencies:
-      '@types/node': 25.9.5
-
   '@types/parse-json@4.0.2': {}
 
   '@types/qs@6.15.1': {}
@@ -15883,27 +15786,6 @@ snapshots:
     dependencies:
       '@typescript-eslint/types': 8.70.0
       eslint-visitor-keys: 5.0.1
-
-  '@typescript/vfs@1.6.4(typescript@5.9.3)':
-    dependencies:
-      debug: 4.4.3(supports-color@8.1.1)
-      typescript: 5.9.3
-    transitivePeerDependencies:
-      - supports-color
-
-  '@uiw/codemirror-theme-vscode@4.25.11(@codemirror/language@6.12.4)(@codemirror/state@6.7.4)(@codemirror/view@6.43.11)':
-    dependencies:
-      '@uiw/codemirror-themes': 4.25.11(@codemirror/language@6.12.4)(@codemirror/state@6.7.4)(@codemirror/view@6.43.11)
-    transitivePeerDependencies:
-      - '@codemirror/language'
-      - '@codemirror/state'
-      - '@codemirror/view'
-
-  '@uiw/codemirror-themes@4.25.11(@codemirror/language@6.12.4)(@codemirror/state@6.7.4)(@codemirror/view@6.43.11)':
-    dependencies:
-      '@codemirror/language': 6.12.4
-      '@codemirror/state': 6.7.4
-      '@codemirror/view': 6.43.11
 
   '@ungap/structured-clone@1.4.0': {}
 
@@ -18739,8 +18621,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  ghostty-web@0.4.0: {}
-
   giget@2.0.0:
     dependencies:
       citty: 0.1.6
@@ -20141,8 +20021,6 @@ snapshots:
     dependencies:
       solid-js: 1.9.15
 
-  lz-string@1.5.0: {}
-
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -21129,8 +21007,6 @@ snapshots:
       evp_bytestokey: 1.0.3
       pbkdf2: 3.1.6
       safe-buffer: 5.2.1
-
-  parse-gitignore@2.0.0: {}
 
   parse-json@4.0.0:
     dependencies:
@@ -23207,8 +23083,6 @@ snapshots:
 
   utils-merge@1.0.1: {}
 
-  uuid@13.0.2: {}
-
   uuid@8.3.2: {}
 
   v8-compile-cache-lib@3.0.1: {}
@@ -23261,14 +23135,6 @@ snapshots:
       - terser
       - tsx
       - yaml
-
-  vite-plugin-node-polyfills@0.25.0(rollup@4.63.1)(vite@8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)):
-    dependencies:
-      '@rollup/plugin-inject': 5.0.5(rollup@4.63.1)
-      node-stdlib-browser: 1.3.1
-      vite: 8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
-    transitivePeerDependencies:
-      - rollup
 
   vite-plugin-node-polyfills@0.25.0(rollup@4.63.1)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.27.7)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)):
     dependencies:

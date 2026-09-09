@@ -34,7 +34,7 @@ export async function launchBrowser(): Promise<Browser> {
 /**
  * Create a new page inside an incognito browser context so each test
  * gets a clean OPFS / storage state, uncontaminated by the dev
- * server's lazy filesystem.
+ * server's example filesystem.
  */
 export async function newIsolatedPage(browser: Browser, url: string): Promise<Page> {
     const context = await browser.createBrowserContext();
@@ -94,7 +94,7 @@ export async function openFile(page: Page, filename: string) {
 }
 
 /** Wait for file loading to complete and editor to be ready for typing.
- *  With LazyVfs, the async chain is: openFileEffect microtask → handleOpen
+ *  The async chain is: openFileEffect microtask → handleOpen
  *  (async OPFS read) → safeDispatch content + fileLoadedEffect → panel
  *  update syncs toolbar input → readOnly reconfiguration microtask. */
 async function waitForFileReady(page: Page, filename: string) {
