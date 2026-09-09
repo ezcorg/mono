@@ -15,7 +15,7 @@ export const sections: Section[] = [
 		statements: [
 			{ text: 'We are passionate technologists determined to build without compromising our values.' },
 			{ text: 'We do not believe in chasing short-term profits at the expense of long-term prosperity.' },
-			{ text: 'We will never be evil (<i>seriously</i>).' },
+			{ text: 'We will never be evil (<i>actually</i>).' },
 		],
 	},
 	{
