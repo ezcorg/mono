@@ -1,6 +1,6 @@
 {
   "name": "@joinezco/codeblock",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "type": "module",
   "module": "dist/index.js",
   "main": "dist/index.js",
