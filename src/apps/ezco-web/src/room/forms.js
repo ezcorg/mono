@@ -12,7 +12,7 @@ export function checkProject(d) {
 	if (d.name.length > 100) return 'That name is a little long — 100 characters at most.';
 	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email) || d.email.length > 254) return "That email address doesn't look right.";
 	if (!SERVICES.includes(d.service)) return 'Pick a service.';
-	if (d.budget !== undefined && !(Number.isInteger(d.budget) && d.budget >= MIN_BUDGET && d.budget <= MAX_BUDGET)) return `A budget is $${MIN_BUDGET.toLocaleString('en-US')} or more, in whole dollars — or leave it out.`;
+	if (d.budget !== undefined && !(Number.isInteger(d.budget) && d.budget >= MIN_BUDGET && d.budget <= MAX_BUDGET)) return `$${MIN_BUDGET.toLocaleString('en-US')} or more, in whole dollars — or leave it blank.`;   // short enough to sit beside the button on a phone
 	if (d.message.length < 50) return 'Tell us a little more — at least 50 characters.';
 	if (d.message.length > 2000) return 'Keep it under 2000 characters.';
 	return null;
