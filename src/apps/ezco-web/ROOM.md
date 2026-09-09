@@ -6,7 +6,7 @@ navigation, and the pages render on the furniture. There are no other pages: eve
 | thing | page |
 | --- | --- |
 | laptop on the corner desk | our work — a lock screen (the logo bounces like the DVD one and lands in a corner every 104 s) until you hover, then a tiny desktop OS; each project is a program (codeblock and markdown-editor run for real, each in its own document framed in a window; witmproxy opens crates.io); "+ new project" opens the form as a dialog. Windows minimise to the bar at the top and come back from it (one in front at a time; a minimised demo keeps running); a demo's title bar is drawn by its own document: the program's file search, a GitHub mark for the source, – and × |
-| tablet on the coffee table | blog — every post from `src/content/blog`, newest first; `#/blog/<slug>` picks one |
+| tablet on the coffee table | blog — every post from `src/content/blog`, newest first; `#/blog/<slug>` picks one. A post's `author` links to its `authorUrl` (frontmatter); `tags` are for crawlers only (JSON-LD keywords + a meta tag on the static page), nothing draws them |
 | kanban on the left wall | start a project — the "ideas" note is the form (the same one as the laptop's dialog; the worker's rules are checked in the browser first, `checkProject` in `src/room/forms.js`, which also holds the $500 minimum budget); "doing" and "done" come from `src/data` |
 | gallery wall | about — the employee of the month, Lady (`public/employee.jpg`, greyscaled; blank while it loads, a dog silhouette only if it fails; her plate is in the room's mid tone, the bezels') and the framed manifesto |
 | floppy + thumb drive on the desk | GitHub |
@@ -20,7 +20,13 @@ Outside, the building wears its one line ("your friendly neighborhood tech colle
 any thing's label: it shows while the building (or the label, or its focus) is pointed at — always, where nothing hovers —
 inverts the logo, and comes in when clicked.
 
-Keys: `↵` or scroll to come in · click · drag or arrows to look (in a page too) · `?` labels · `l` lights · `esc` back. In the
+Keys: `↵` or scroll to come in · click · drag or arrows to look (in a page too; outside, a drag orbits the building — touch has no
+parallax to lean on) · `?` labels · `l` lights · `f` fullscreen (in a page) · `esc` back.
+
+Fullscreen (`f`, or the chip): the page's sheet leaves the room for a flat sheet scaled to the space above the prompt bar
+(`.full`; the bar's height is `--bar-h`, so it never covers the sheet); the whiteboard's texture canvas comes as itself and
+is drawn on directly. The camera holds still underneath. It isn't in the URL — a way of looking, not a place; `esc` leaves
+fullscreen first, then the page. On the laptop, a demo window keeps floating over the scaled screen. In the
 OS, a bar chip brings a window up or minimises it; every control carries an explicit `tabindex` (Safari's Tab needs one).
 In a page you can look as far as the thing's whole area (`limitsFor`): a phone's portrait crop of the kanban or the gallery
 wall can be panned to the other columns or the other frame. Scroll areas (`.scroller`, in-flow `.scroll`) fade their bottom
@@ -69,6 +75,12 @@ hash routes when it boots, so a crawler can walk the site and a visitor never le
 - The transformed surface element must not clip: `overflow:hidden` on a 3D-transformed element breaks Chrome's pointer
   hit-testing (clicks fall through to the canvas). Content roots (`.scroller`, `.os`, `.kb`) clip instead. Native scroll
   containers inside CSS3D planes break depth sorting too, so surfaces scroll by hand.
+- An inactive surface takes no pointer events at all: it's `inert` (out of the tab order, out of hit-testing) and
+  `pointer-events:none !important` (three.js sets `auto` inline on every CSS3D element, which once let faces catch clicks and
+  hovers — a tap on a form field from across the room opened the keyboard, not the page, and the cursor over a face was the
+  text one). Everything on a face falls through to the WebGL picking and behaves like the thing the face is on.
+- A demo window is flat on the screen, so raising one zeroes the look (drag, glance): the laptop screen behind it must face
+  the camera squarely, or the window and the screen disagree about the angle.
 - From across the room the planes are minified about three times, and 1px rules alias in Safari and Firefox (Chrome
   re-rasters 3D layers at their on-screen scale). Tried and reverted: rastering each plane's content at the scale it is
   seen at through a 2D-scaled wrapper — it didn't help enough to keep.

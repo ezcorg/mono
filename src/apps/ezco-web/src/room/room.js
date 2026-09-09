@@ -172,14 +172,17 @@ function surface(t, o) {
   obj.position.set(o.x, o.y, o.z); if (o.ry) obj.rotation.y = o.ry; if (o.rx) obj.rotation.x = o.rx;
   const s = { el, obj, w: o.w, h: o.h, thing: t, fixedW: o.fixedW, setW(px) { px = Math.round(px); el.style.width = px + 'px'; el.style.height = Math.round(o.h / o.w * px) + 'px'; obj.scale.setScalar(o.w / px); } };
   s.setW(o.fixedW || 600); (o.parent || t.group).add(obj); surfaces.push(s);
-  if (t.id) {
-    el.addEventListener('pointerenter', () => setHover(t)); el.addEventListener('pointerleave', () => setHover(null));
-    el.addEventListener('click', e => { if (dragMoved || t.active || e.target.closest('a,button,input,select,textarea,label')) return; activate(t); });
-  }
+  /* no listeners of its own: an inactive surface is inert and takes no pointer events (three.js sets pointer-events:auto inline; the stylesheet
+     overrides it), so taps, clicks and hovers on a face fall through to the WebGL picking and behave exactly like the thing the face is on */
   return s;
 }
 /* page controls get an explicit tabindex="0" when enabled, not just the attribute removed: Safari's plain Tab skips links and buttons without one */
-function setInteractive(t, on) { for (const s of surfaces.filter(s => s.thing === t)) for (const el of $$('a,button,input,select,textarea,[tabindex]', s.el)) { if (on) { if (el.dataset.ti !== undefined) { el.setAttribute('tabindex', el.dataset.ti === '' ? '0' : el.dataset.ti); delete el.dataset.ti; } } else if (el.dataset.ti === undefined) { el.dataset.ti = el.getAttribute('tabindex') ?? ''; el.setAttribute('tabindex', '-1'); } } }
+function setInteractive(t, on) {
+  for (const s of surfaces.filter(s => s.thing === t)) {
+    s.el.inert = !on;   // out of the tab order and out of hit-testing while inactive: a tap on a form field from across the room opens the page instead of the keyboard
+    for (const el of $$('a,button,input,select,textarea,[tabindex]', s.el)) { if (on) { if (el.dataset.ti !== undefined) { el.setAttribute('tabindex', el.dataset.ti === '' ? '0' : el.dataset.ti); delete el.dataset.ti; } } else if (el.dataset.ti === undefined) { el.dataset.ti = el.getAttribute('tabindex') ?? ''; el.setAttribute('tabindex', '-1'); } }
+  }
+}
 const decor = thing({ id: '', label: '' });
 const dm = { mat: decor.mat, edge: decor.edge }, dz = { mat: decor.bezel, edge: decor.edge };
 const leafGeo = (w, h) => { const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.quadraticCurveTo(w, h * .45, 0, h); sh.quadraticCurveTo(-w, h * .45, 0, 0); return new THREE.ShapeGeometry(sh, 10); };
@@ -446,7 +449,7 @@ function layoutSurfaces() { for (const t of things) if (t.fit && t.surface) { co
 const look = { yaw: 0, pitch: 0 }, drag = { yaw: 0, pitch: 0 }, glance = { yaw: 0, pitch: 0 }, par = { x: 0, y: 0 };
 let parT = { x: 0, y: 0 };
 let pageLim = { yaw: 6, lo: -4, hi: 4 };
-const limits = () => state === 'page' ? pageLim : { yaw: 50, lo: -22, hi: 14 };
+const limits = () => state === 'page' ? pageLim : state === 'logo' ? { yaw: 70, lo: -8, hi: 30 } : { yaw: 50, lo: -22, hi: 14 };   // outside, the drag orbits the building
 /* how far you may look around in a page: enough to bring every edge of the thing's whole area (its landscape fit) to the centre, so a
    portrait crop can still be panned to the rest of a board or the other frame on the wall — and never less than a little */
 function limitsFor(t) {
@@ -479,7 +482,7 @@ async function leaveRoom() {
   await poseTo(POSE.logo(), 1000);
   busy = false; setState('logo');
 }
-function present(t, on, instant) { t.active = on; t.surface?.el.classList.toggle('active', on); setInteractive(t, on); t.present?.(on, instant); if (!on) t.onClose?.(); if (on) { pageLim = limitsFor(t); t.scrollEls?.forEach(more); } if (on && t.id === 'newproject') armForms(); }
+function present(t, on, instant) { if (!on && full === t) exitFull(); t.active = on; t.surface?.el.classList.toggle('active', on); setInteractive(t, on); t.present?.(on, instant); if (!on) t.onClose?.(); if (on) { pageLim = limitsFor(t); t.scrollEls?.forEach(more); } if (on && t.id === 'newproject') armForms(); }
 async function openPage(t, sub) {
   if (!t || t.action || t.href) return;
   if (state === 'logo' || state === 'entering') { await enterRoom(); if (state !== 'room') return; }
@@ -519,10 +522,11 @@ function prompts() {
   const el = $('#prompts');
   if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
   else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
-  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
+  else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + (active && (active.surface || active.id === 'whiteboard') ? chip('f', full ? 'exit fullscreen' : 'fullscreen', 'full', !!full) : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
   else el.innerHTML = '';
+  document.documentElement.style.setProperty('--bar-h', el.offsetHeight + 'px');
 }
-$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else go(a); });
+$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else if (a === 'full') toggleFull(); else go(a); });
 function toggleLabels() { showLabels = !showLabels; prompts(); }
 
 /* ------------------------------------------------------------------ day / night */
@@ -601,14 +605,17 @@ addEventListener('pointermove', e => {
 }, { passive: true });
 /* drag to look from anywhere that isn't an open page's controls */
 addEventListener('pointerdown', e => {
-  if (state === 'logo' || focusLock || e.button > 0 || e.target.closest('.surface.active, a, button, input, select, textarea, label, .prompts, .sr-nav, .lbl, .ctl')) return;
-  if (state === 'page' && active?.id === 'whiteboard' && e.target === gl.domElement) { const uv = wbHit(e); if (uv) { wbDraw = { id: e.pointerId, stroke: [] }; wb.strokes.push(wbDraw.stroke); if (wb.strokes.length === 1) byId.whiteboard.tex.redraw(); wbAdd(uv); } return; }
+  if (e.button > 0) return;
+  if (state === 'page' && active?.id === 'whiteboard' && (e.target === gl.domElement || e.target === wbCanvas)) { const uv = wbHit(e); if (uv) { wbDraw = { id: e.pointerId, stroke: [] }; wb.strokes.push(wbDraw.stroke); if (wb.strokes.length === 1) byId.whiteboard.tex.redraw(); wbAdd(uv); } return; }
+  if (focusLock || e.target.closest('.surface.active, a, button, input, select, textarea, label, .prompts, .sr-nav, .lbl, .ctl')) return;
   dragging = { x: e.clientX, y: e.clientY, yaw: drag.yaw, pitch: drag.pitch, id: e.pointerId }; dragMoved = false;
 });
 const endDrag = () => { dragging = null; body.classList.remove('dragging'); if (wbDraw) { wbDraw = null; wb.save(); } setTimeout(() => { dragMoved = false; }, 0); };
 /* whiteboard: strokes in board uv space, drawn straight onto the texture canvas as you go */
 let wbDraw = null;
-function wbHit(e) { ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera); const h = ray.intersectObject(byId.whiteboard.plane, false); return h.length ? [+h[0].uv.x.toFixed(4), +h[0].uv.y.toFixed(4)] : null; }
+function wbHit(e) {
+  if (full === byId.whiteboard) { const r = wbCanvas.getBoundingClientRect(), u = (e.clientX - r.left) / r.width, v = 1 - (e.clientY - r.top) / r.height; return u >= 0 && u <= 1 && v >= 0 && v <= 1 ? [+u.toFixed(4), +v.toFixed(4)] : null; }   // flat, in fullscreen
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera); const h = ray.intersectObject(byId.whiteboard.plane, false); return h.length ? [+h[0].uv.x.toFixed(4), +h[0].uv.y.toFixed(4)] : null; }
 function wbAdd(uv) {
   const st = wbDraw.stroke, last = st[st.length - 1]; if (last && Math.hypot((uv[0] - last[0]) * wb.W, (uv[1] - last[1]) * wb.H) < 1.5) return; st.push(uv);
   const tex = byId.whiteboard.tex, ctx = tex.image.getContext('2d'), a = last || uv; ctx.strokeStyle = themeColors().fg; ctx.lineWidth = 5; ctx.lineCap = ctx.lineJoin = 'round';
@@ -623,7 +630,8 @@ gl.domElement.addEventListener('click', e => {
 gl.domElement.addEventListener('pointerleave', () => { setHover(null); logoHot = false; });
 addEventListener('keydown', e => {
   if (e.target.matches('input,textarea,select')) return;
-  if (e.key === 'Escape') { if (state === 'page') go(active?.back ? '#/' + active.back.id : '#/room'); else if (state === 'room') go('#/'); return; }
+  if (e.key === 'Escape') { if (state === 'page') { if (full) exitFull(); else go(active?.back ? '#/' + active.back.id : '#/room'); } else if (state === 'room') go('#/'); return; }
+  if ((e.key === 'f' || e.key === 'F') && state === 'page') { toggleFull(); return; }
   if (state === 'logo' && (e.key === 'Enter' || e.key === 'ArrowDown')) { go('#/room'); return; }
   if ((e.key === 'l' || e.key === 'L') && state !== 'logo') { cycleLights(); return; }
   if (['?', '/', 'i', 'I'].includes(e.key) && state === 'room') { toggleLabels(); return; }
@@ -679,7 +687,7 @@ radio.on(st => {
 });
 /* the laptop's little OS: programs on a desktop, windows for the demos and the new-project dialog.
    A window manager of the smallest kind: any number of windows open, one in front, the rest minimised to the bar. */
-let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = () => {};
+let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = () => {}, full = null, demoInFront = () => false;
 {
   const scr = byId.work.surface.el, wins = $$('.win', scr), os = $('.os', scr), tasks = $('.tasks', scr);
   /* editors measure themselves with getBoundingClientRect, which a perspective transform confuses; so a demo window is lifted out of the
@@ -690,11 +698,13 @@ let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = (
   const opened = []; let front = null;
   const title = w => w.dataset.win === 'newproject' ? 'new project' : w.dataset.win, icon = w => $(`.app[data-app="${w.dataset.win}"] .ico`, scr)?.innerHTML || '';
   const drawTasks = () => { tasks.innerHTML = opened.map(w => `<button type="button" class="task ${w === front ? 'on' : 'min'}" data-task="${w.dataset.win}" tabindex="0" title="${w === front ? 'minimise' : 'bring up'} ${esc(title(w))}"><span class="ico">${icon(w)}</span>${esc(title(w))}</button>`).join(''); };
-  const hide = w => { w.hidden = true; if (front === w) { front = null; ph.hidden = true; focusLock = false; } };
+  const hide = w => { w.hidden = true; if (front === w) { front = null; ph.hidden = true; focusLock = !!full; } };
+  demoInFront = () => !!front?.dataset.demo;
   const raise = w => {
     if (front && front !== w) hide(front);
     front = w; w.hidden = false;
-    if (w.dataset.demo) { if (w.parentElement !== overlay) overlay.appendChild(w); ph.hidden = false; focusLock = true; placeFloating(); mountDemo(w.dataset.demo, $('.demo', w), { lit: isLit() }); }
+    // the window is flat on the screen, so the screen behind it must face the camera squarely: the look goes back to centre
+    if (w.dataset.demo) { if (w.parentElement !== overlay) overlay.appendChild(w); ph.hidden = false; focusLock = true; drag.yaw = drag.pitch = glance.yaw = glance.pitch = 0; placeFloating(); mountDemo(w.dataset.demo, $('.demo', w), { lit: isLit() }); }
     else { armForms(); $('input, button', w)?.focus(); }
     drawTasks();
   };
@@ -716,6 +726,33 @@ let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = (
   const clocks = $$('[data-clock]', scr), tick = () => { const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); for (const c of clocks) c.textContent = t; }; tick(); clockTimer = setInterval(tick, 15000);
   byId.work.onClose = closeWins;
 }
+/* fullscreen: a page's surface leaves the room for a flat sheet scaled to the viewport (the whiteboard's canvas comes as itself, drawable);
+   the camera holds still underneath, and the prompt bar keeps its strip at the bottom (--bar-h). Not in the URL: a way of looking, not a place. */
+const fullEl = document.createElement('div'); fullEl.className = 'full'; root.appendChild(fullEl);
+const stage = fullEl.appendChild(document.createElement('div')); stage.className = 'stage';   // the space above the bar; the sheet is centred in it absolutely (a grid would start-align a sheet wider than a phone)
+const wbCanvas = byId.whiteboard.tex.image;
+function fitFull() {
+  if (!full) return;
+  const availW = stage.clientWidth, availH = stage.clientHeight;
+  if (full.surface) { const el = full.surface.el, k = Math.min(availW / el.offsetWidth, availH / el.offsetHeight); el.style.transform = `scale(${k.toFixed(4)})`; }
+  else { const k = Math.min(availW / wb.W, availH / wb.H); wbCanvas.style.width = Math.round(wb.W * k) + 'px'; wbCanvas.style.height = Math.round(wb.H * k) + 'px'; }
+}
+function enterFull(t) {
+  if (full || !t || !(t.surface || t.id === 'whiteboard')) return;
+  full = t; focusLock = true; fullEl.classList.add('on');
+  if (t.surface) { const s = t.surface; s.full = true; s.obj.visible = false; s.el.style.transform = ''; stage.appendChild(s.el); }
+  else stage.appendChild(wbCanvas);
+  fitFull(); prompts();
+}
+function exitFull() {
+  if (!full) return;
+  const t = full; full = null; focusLock = demoInFront(); fullEl.classList.remove('on');
+  if (t.surface) { const s = t.surface; s.full = false; s.el.style.transform = ''; }   // the renderer takes the element back on its next frame
+  else { wbCanvas.remove(); wbCanvas.style.width = wbCanvas.style.height = ''; }
+  layoutSurfaces(); prompts();
+}
+const toggleFull = () => { if (state === 'page') full ? exitFull() : enterFull(active); };
+
 /* a new project from either form lands on the kanban's ideas column */
 /* the sheet becomes a note on the board: the summary goes in, the classes swap, and the height is tweened between what the form measured and what the note measures */
 const stick = (name, service, msg) => {
@@ -760,7 +797,7 @@ function frame(now) {
   if (camTween) { const k = clamp((now - camTween.start) / camTween.dur, 0, 1), e = easeInOut(k); cam.pos.lerpVectors(camTween.p0, camTween.p1, e); cam.target.lerpVectors(camTween.t0, camTween.t1, e); if (k >= 1) { const r = camTween.res; camTween = null; r(); } }
   if (benchPan) parT = { x: Math.cos(now / 600), y: Math.sin(now / 600) * .6 };   // the bench pans for you
   par.x += (parT.x - par.x) * lerpK(.06); par.y += (parT.y - par.y) * lerpK(.06);
-  if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8, 12 - par.y * 5).pos, lerpK(.08));
+  if (state === 'logo' && !camTween) cam.pos.lerp(POSE.logo(40 + par.x * 8 - drag.yaw * .6, 12 - par.y * 5 + drag.pitch * .5).pos, lerpK(.08));   // the pointer's parallax, and a drag's orbit (touch has no parallax)
   logoT += ((logoHot ? 1 : 0) - logoT) * lerpK(.12); if (logoT < .002) logoT = 0;
   { const u = 1 - logoT; slide.ez.constant = -(-.488 + u * .976) * K; slide.co.constant = (.5 - u) * K; ezInv.visible = coInv.visible = ezInvM.visible = coInvM.visible = logoT > 0; }
   const lim = limits(), k = state === 'room' ? [4, 2.5] : state === 'page' && !focusLock ? [1.2, .8] : [0, 0];
@@ -786,7 +823,7 @@ function frame(now) {
     s.obj.getWorldPosition(wp); nrm.set(0, 0, 1).applyQuaternion(s.obj.getWorldQuaternion(qt)); toCam.copy(camera.position).sub(wp);
     let vis = nrm.dot(toCam) > 0 && fwd.dot(tmp.copy(wp).sub(camera.position)) > 0 && (state === 'room' || state === 'page' || doorGroup.rotation.y < -.4);
     if (vis) { const dist = toCam.length(); ray.set(camera.position, tmp.copy(wp).sub(camera.position).normalize()); ray.far = dist; vis = !ray.intersectObjects(occluders, false).some(h => !(h.object === shell && h.face.materialIndex === 4)); ray.far = Infinity; }
-    s.obj.visible = vis;
+    s.obj.visible = vis && !s.full;
   }
   const ctlOn = state === 'room' && radio.state !== 'off' && (hovered === byId.radio || ctlHover || ctlFocus || showLabels);   // no grace: it fades exactly like a label (the radio's hit box reaches up to it)
   for (const t of things) if (t.id) { const on = state === 'room' && (hovered === t || showLabels) && !(t.held && t.up < .5) && !(t.id === 'radio' && ctlOn); if (on) { tmp.copy(t.anchor).multiplyScalar(K).project(camera); t.lbl.style.transform = `translate(${((tmp.x + 1) / 2 * innerWidth).toFixed(1)}px,${((1 - tmp.y) / 2 * innerHeight).toFixed(1)}px)`; t.lbl.classList.toggle('on', tmp.z < 1); } else t.lbl.classList.remove('on'); }
@@ -828,6 +865,7 @@ if (BENCH_STEP >= 0 && BENCH_STEP < BENCH.length) (async () => {
 /* ------------------------------------------------------------------ sizing, boot */
 function resize() {
   const W = innerWidth, H = innerHeight; camera.aspect = W / H; camera.updateProjectionMatrix(); gl.setSize(W, H); css.setSize(W, H); layoutSurfaces();
+  if (full) fitFull();
   if (active) { setPose(fitPose(active.fit(isPortrait()))); pageLim = limitsFor(active); } else if (state === 'room') setPose(POSE.room()); else if (state === 'logo') setPose(POSE.logo());
 }
 addEventListener('resize', resize);

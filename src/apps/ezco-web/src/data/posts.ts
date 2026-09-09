@@ -1,7 +1,7 @@
 /* The blog: every post in src/content/blog, newest first (drafts left out). Read by the tablet in the room and by /blog/. */
 import type { MarkdownInstance } from 'astro';
 
-export interface Frontmatter { title: string; description?: string; date: string; author?: string; tags?: string[]; draft?: boolean }
+export interface Frontmatter { title: string; description?: string; date: string; author?: string; /** where to learn more about the author */ authorUrl?: string; tags?: string[]; draft?: boolean }
 export interface Post { slug: string; fm: Frontmatter; Content: MarkdownInstance<Frontmatter>['Content']; path: string }
 
 const modules = import.meta.glob<MarkdownInstance<Frontmatter>>('../content/blog/*.md', { eager: true });

@@ -3,6 +3,7 @@ title: "Trying to build a company that doesn't make the world worse"
 description: "A little bit of background about why we exist, and a hint of what we're trying to do."
 date: "2025-06-28"
 author: "theo"
+authorUrl: "https://theo.lol"
 tags: ["ez co", "hello-world", "introduction"]
 draft: false
 ---

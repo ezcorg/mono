@@ -33,7 +33,7 @@ html.no-webgl .static .nowebgl{display:block}
 #gl,#css{position:fixed;inset:0}
 #gl{z-index:0;touch-action:none}
 #css{z-index:1;pointer-events:none}
-body[data-state=room] #gl{cursor:grab}
+body[data-state=room] #gl,body[data-state=logo] #gl{cursor:grab}
 body.dragging #gl,body.dragging .surface{cursor:grabbing!important}
 body.hover #gl{cursor:pointer}
 body.preload .room *{transition:none!important}
@@ -80,6 +80,7 @@ body.preload .room *{transition:none!important}
 /* ---------------------------------------------------------------- content surfaces */
 /* the transformed element itself must not clip: overflow:hidden on a 3D-transformed element breaks Chrome's hit-testing, so each content root clips instead */
 .surface{font-family:var(--serif);font-size:16px;line-height:1.45;color:var(--fg);background:var(--bg);overflow:visible;transition:background .6s,color .6s,box-shadow .25s;user-select:text;-webkit-user-select:text}
+.surface:not(.active){pointer-events:none!important}   /* three.js sets auto inline; an inactive face lets everything through to the thing behind it */
 .surface.active{pointer-events:auto}
 .surface a{color:inherit}
 .surface h2{font:300 1.75em/1.15 var(--serif);letter-spacing:-.02em;margin:0 0 .5em}
@@ -181,6 +182,13 @@ body.preload .room *{transition:none!important}
 .win[hidden]{display:none}
 .win.wide{left:3%;right:3%;top:9%;bottom:3%}
 .win.ph{visibility:hidden}
+/* fullscreen: the page's sheet on its own, scaled to the space above the prompt bar; the room waits underneath */
+.full{position:fixed;inset:0;z-index:1;display:none;overflow:hidden;padding:calc(env(safe-area-inset-top,0px) + 1rem) 1rem calc(var(--bar-h,2rem) + clamp(1rem,3vh,1.75rem) + .9rem);background:var(--bg)}
+.full.on{display:block}
+.full .stage{position:relative;width:100%;height:100%}
+.full .stage>*{position:absolute!important;left:50%;top:50%;translate:-50% -50%;transform-origin:center}   /* centred whatever its layout size; the scale comes from room.js */
+.full .surface{display:block!important;transition:none}   /* its object is invisible in the scene, and the renderer writes display:none inline for that */
+.full canvas{display:block;touch-action:none;cursor:crosshair;box-shadow:0 0 0 1px var(--line-soft)}
 .overlay{position:fixed;inset:0;z-index:2;pointer-events:none}
 .overlay .win{position:fixed;right:auto;bottom:auto;pointer-events:auto;font:12.5px/1.4 var(--mono);color:var(--fg)}
 .win .tb{display:flex;align-items:center;justify-content:space-between;gap:1em;padding:.45em .7em;border-bottom:1px solid var(--line-soft);font-size:11.5px;letter-spacing:.06em}
@@ -198,13 +206,11 @@ body.preload .room *{transition:none!important}
 
 /* tablet reader */
 .reader{background:var(--bg);border:7px solid var(--bezel);border-radius:10px;transition:border-color .6s}
-.reader .bar{position:absolute;left:0;right:0;top:0;height:2.6em;display:flex;align-items:center;justify-content:space-between;padding:0 6%;font:500 12px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;opacity:.7;border-bottom:1px solid var(--line-soft)}
-.reader .scroller{top:2.6em;padding:7% 7% 10%}
+.reader .scroller{padding:9% 7% 10%}
 /* a post: the title block stands apart (a rule under it), each section starts with a short rule and room above it, and the text breathes */
 .reader article header{margin:0 0 1.8em;padding-bottom:1.2em;border-bottom:1px solid var(--line-soft)}
 .reader h1{font:300 1.9em/1.1 var(--serif);letter-spacing:-.025em;margin:0 0 .5em;text-wrap:balance}
 .reader .meta{font:500 .66em/1.4 var(--sans);letter-spacing:.14em;text-transform:uppercase;opacity:.6;margin:0}
-.reader header .tags{margin:.9em 0 0}
 .reader p{margin:0 0 1.05em;text-wrap:pretty}
 .reader article>p:first-of-type{font-size:1.06em}
 .reader h2,.reader h3{font:300 1.4em/1.2 var(--serif);letter-spacing:-.02em;margin:2.2em 0 .7em}
@@ -232,8 +238,6 @@ body.preload .room *{transition:none!important}
 .reader .idle{position:absolute;inset:0;border-radius:3px;display:grid;place-items:center;font:500 44px/1.5 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--fg);text-align:center;background:var(--bg)}
 .reader .idle span{display:block;font-size:.5em;opacity:.55}
 .reader.active .idle{display:none}
-.tags{display:flex;flex-wrap:wrap;gap:.3em;margin:0 0 .6em}
-.tag{font:400 .68em/1 var(--sans);border:1px solid var(--line-soft);border-radius:999px;padding:.3em .6em;opacity:.75}
 
 /* kanban */
 .board{background:var(--bg);font-family:var(--sans)}

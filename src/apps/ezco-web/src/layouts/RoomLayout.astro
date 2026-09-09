@@ -18,9 +18,11 @@ export interface Props {
 	published?: string;
 	/** JSON-LD, serialised as is */
 	jsonld?: object;
+	/** the post's tags: kept for crawlers only, nothing renders them */
+	keywords?: string[];
 }
 
-const { title = 'ez co', description = TAGLINE, canonical = '/', route, type = 'website', published, jsonld } = Astro.props;
+const { title = 'ez co', description = TAGLINE, canonical = '/', route, type = 'website', published, jsonld, keywords } = Astro.props;
 const url = SITE + canonical;
 ---
 
@@ -44,6 +46,7 @@ const url = SITE + canonical;
 		<meta property="og:image:height" content="630" />
 		<meta property="og:image:alt" content="ez co" />
 		{published && <meta property="article:published_time" content={published} />}
+		{keywords?.length && <meta name="keywords" content={keywords.join(', ')} />}
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f5" />
 		<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
