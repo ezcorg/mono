@@ -5,7 +5,7 @@ interface Env {
     EMAIL_USERNAME: string;
     EMAIL_PASSWORD: string;
     RECIPIENT_EMAIL?: string;
-    IP_RATE_LIMITER: any;
+    IP_RATE_LIMITER: RateLimit;
     TURNSTILE_SECRET_KEY: string;
     ALLOWED_ORIGINS?: string;
 }
@@ -93,20 +93,6 @@ export default {
                 request.headers.get('X-Forwarded-For') ||
                 'unknown';
 
-            const ipRateLimit = await env.IP_RATE_LIMITER.limit({ key: clientIP });
-            if (!ipRateLimit.success) {
-                return new Response(JSON.stringify({
-                    success: false,
-                    error: 'Rate limit exceeded. Please try again later.'
-                }), {
-                    status: 429,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': corsOrigin,
-                    },
-                });
-            }
-
             // Verify Turnstile token
             const turnstileToken = jsonData.turnstileToken;
             if (!turnstileToken) {
@@ -135,9 +121,26 @@ export default {
                 });
             }
 
-            // TODO: don't rate-limit on email send failure or internal server errors
+            // Only now does the attempt count against the sender: a request that failed validation or the captcha never
+            // gets this far, so it costs nothing. The binding can't hand a token back, so the budget in wrangler.toml
+            // is a few per minute rather than one — a send that fails leaves room to try again straight away.
+            const ipRateLimit = await env.IP_RATE_LIMITER.limit({ key: clientIP });
+            if (!ipRateLimit.success) {
+                return new Response(JSON.stringify({
+                    success: false,
+                    error: 'Rate limit exceeded. Please try again later.'
+                }), {
+                    status: 429,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': corsOrigin,
+                        'Retry-After': '60',
+                    },
+                });
+            }
+
             try {
-                await sendEmail(contactData, env);
+                await sendEmailWithRetry(contactData, env);
                 return new Response(JSON.stringify({
                     success: true,
                     message: 'Form submitted successfully'
@@ -176,6 +179,16 @@ export default {
         }
     },
 };
+
+/** One more go when a send fails: SMTP connections drop, and the sender's rate-limit token is already spent. */
+async function sendEmailWithRetry(data: ContactFormData, env: Env, tries = 2) {
+    let last: unknown;
+    for (let i = 1; i <= tries; i++) {
+        try { await sendEmail(data, env); return; }
+        catch (e) { last = e; console.warn(`sendEmail attempt ${i} of ${tries} failed:`, e); }
+    }
+    throw last;
+}
 
 async function sendEmail(data: ContactFormData, env: Env) {
     const recipientEmail = env.RECIPIENT_EMAIL || 'dev@joinez.co';

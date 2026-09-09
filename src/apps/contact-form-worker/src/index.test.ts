@@ -303,6 +303,9 @@ describe('Contact Form Worker', () => {
                 body: JSON.stringify(jsonData),
             });
 
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: true });
             // Mock IP rate limit exceeded
             mockEnv.IP_RATE_LIMITER.limit.mockResolvedValue({ success: false });
 
@@ -315,7 +318,44 @@ describe('Contact Form Worker', () => {
                 error: 'Rate limit exceeded. Please try again later.'
             });
             expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://www.joinez.co');
+            expect(response.headers.get('Retry-After')).toBe('60');
             expect(mockEnv.IP_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: '192.168.1.1' });
+            expect(mockConnect).not.toHaveBeenCalled();
+        });
+
+        const validBody = () => JSON.stringify({
+            name: 'John Doe', email: 'john@example.com', service: 'software-development', budget: 2500, turnstileToken: 'test-token',
+            message: 'This is a test message that is long enough to meet the minimum requirements.',
+        });
+        const post = (body: string) => new Request('https://example.com', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.168.1.1', 'Origin': 'https://joinez.co' }, body,
+        });
+
+        it('does not count a request that fails validation', async () => {
+            const response = await worker.fetch(post(JSON.stringify({ name: 'x' })), mockEnv, mockCtx);
+            expect(response.status).toBe(400);
+            expect(mockEnv.IP_RATE_LIMITER.limit).not.toHaveBeenCalled();
+        });
+
+        it('does not count a request that fails the captcha', async () => {
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: false });
+            const response = await worker.fetch(post(validBody()), mockEnv, mockCtx);
+            expect(response.status).toBe(400);
+            expect(mockEnv.IP_RATE_LIMITER.limit).not.toHaveBeenCalled();
+        });
+
+        it('retries a send that fails once, spending a single token', async () => {
+            fetchMock.get('https://challenges.cloudflare.com')
+                .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
+                .reply(200, { success: true });
+            mockConnect.mockRejectedValueOnce(new Error('SMTP connection dropped'));
+            const response = await worker.fetch(post(validBody()), mockEnv, mockCtx);
+            expect(response.status).toBe(200);
+            expect(mockConnect).toHaveBeenCalledTimes(2);
+            expect(mockSend).toHaveBeenCalledTimes(1);
+            expect(mockEnv.IP_RATE_LIMITER.limit).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -505,8 +545,8 @@ describe('Contact Form Worker', () => {
                 .intercept({ method: 'POST', path: '/turnstile/v0/siteverify' })
                 .reply(200, { success: true });
 
-            // Mock WorkerMailer connection failure
-            mockConnect.mockRejectedValueOnce(new Error('SMTP connection failed'));
+            // Mock WorkerMailer connection failure, on the retry too
+            mockConnect.mockRejectedValueOnce(new Error('SMTP connection failed')).mockRejectedValueOnce(new Error('SMTP connection failed'));
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
@@ -544,10 +584,8 @@ describe('Contact Form Worker', () => {
 
             // Mock WorkerMailer send failure
             const mockFailingSend = vi.fn().mockRejectedValue(new Error('Failed to send'));
-            mockConnect.mockResolvedValueOnce({
-                send: mockFailingSend,
-                close: mockClose
-            } as any);
+            const failing = { send: mockFailingSend, close: mockClose } as any;
+            mockConnect.mockResolvedValueOnce(failing).mockResolvedValueOnce(failing);   // the retry fails the same way
 
             const response = await worker.fetch(request, mockEnv, mockCtx);
 
@@ -558,8 +596,8 @@ describe('Contact Form Worker', () => {
                 error: 'Failed to send email'
             });
 
-            // Verify that send was attempted
-            expect(mockFailingSend).toHaveBeenCalled();
+            // Verify that send was attempted, and once more
+            expect(mockFailingSend).toHaveBeenCalledTimes(2);
         });
     });
 

@@ -9,12 +9,13 @@ name = "contact-form-worker"
 [vars]
 ENVIRONMENT = "production"
 
-# Rate limiting bindings
+# Rate limiting: attempts per IP per minute, counted only once a request has passed validation and the captcha.
+# The binding can't refund a token, so the budget leaves room to retry after a failed send (src/index.ts).
 [[unsafe.bindings]]
 name = "IP_RATE_LIMITER"
 type = "ratelimit"
 namespace_id = "1001"
-simple = { limit = 1, period = 60 }
+simple = { limit = 3, period = 60 }
 
 # Add your secrets:
 # wrangler secret put EMAIL_USERNAME
