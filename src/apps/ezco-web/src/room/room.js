@@ -540,7 +540,7 @@ const svg = inner => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${i
 const LIGHT_ICON = {
   day: svg('<circle cx="12" cy="12" r="4" fill="currentColor"/>' + [0, 45, 90, 135, 180, 225, 270, 315].map(a => { const r = a * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r); return `<line x1="${(12 + 6.8 * c).toFixed(2)}" y1="${(12 + 6.8 * sn).toFixed(2)}" x2="${(12 + 9.6 * c).toFixed(2)}" y2="${(12 + 9.6 * sn).toFixed(2)}" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`; }).join('')),
   night: svg('<path d="M14.8 3.2a8.8 8.8 0 1 0 6 15.6 7.4 7.4 0 0 1-6-15.6z" fill="currentColor"/>'),
-  auto: svg('<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.6a8.4 8.4 0 0 0 0 16.8z" fill="currentColor"/>'),
+  auto: svg('<path d="M12 3.6a8.4 8.4 0 0 1 0 16.8z" fill="var(--ic-bg, var(--bg))"/><path d="M12 3.6a8.4 8.4 0 0 0 0 16.8z" fill="currentColor"/><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/>'),   // half ink, half paper (the paper half is solid, not the room showing through)
 };   // knob angle: night at eleven, auto at noon, day at one
 function setLights(mode, instant) {
   lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}

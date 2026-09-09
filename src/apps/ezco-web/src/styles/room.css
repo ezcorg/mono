@@ -45,7 +45,7 @@ body.preload .room *{transition:none!important}
 .lbl.action::after{content:''}
 .lbl.on{opacity:1;margin-top:0;pointer-events:auto;cursor:pointer}
 .lbl.ext::after{content:' ↗'}
-.lbl:hover{background:var(--fg);color:var(--bg)}
+.lbl:hover{background:var(--fg);color:var(--bg);--ic-bg:var(--fg)}   /* inverted, the icon's paper half inverts too */
 /* the building's label, outside: the one line about us, pinned above the near corner of the box; a click comes in */
 .room .lbl.bldg{font:500 clamp(13px,1.25vw,17px)/1.35 var(--sans);letter-spacing:.08em;background:var(--bg);border:1px solid var(--line);padding:.6em 1em;margin-top:-.6em;max-width:min(84vw,28em);white-space:normal;text-align:center;transition:opacity .25s,margin .25s}
 .room .lbl.bldg::after{content:''}
