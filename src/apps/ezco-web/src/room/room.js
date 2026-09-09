@@ -3,7 +3,6 @@ let THREE, CSS3DRenderer, CSS3DObject;   // loaded behind the loading label, see
 import { submitProject, checkProject, turnstile } from './forms.js';
 import { mountDemo, destroyDemo, destroyDemos, themeDemos } from './demos.js';
 import { radio } from './radio.js';
-import { createSfx } from './sfx.js';
 
 /* Boots the room into `opts.mount` (the element holding the chrome + templates). Returns a dispose(). */
 export async function boot(opts = {}) {
@@ -17,8 +16,6 @@ const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [..
 const tpl = id => $('#t-' + id).innerHTML;
 const D2R = Math.PI / 180, body = document.body;
 const reduced = matchMedia('(prefers-reduced-motion:reduce)').matches;
-/* the things' sounds, placed in the room (src/room/sfx.js); the context opens on the first gesture, as browsers require */
-const sfx = createSfx(); for (const ev of ['pointerdown', 'keydown', 'touchstart']) addEventListener(ev, () => sfx.unlock(), { capture: true, passive: true });
 const dbg = new URLSearchParams(import.meta.env.DEV ? location.search : '');
 const isPortrait = () => innerWidth < innerHeight;
 const EMPLOYEE_PHOTO = dbg.get('photo') || opts.photo || '/employee.jpg', FACE = .4;   // FACE: where along the photo's height the crop centres (0 top … 1 bottom)   // grayscale'd onto the frame when it loads; a dog silhouette until then
@@ -492,14 +489,12 @@ async function openPage(t, sub) {
   const prev = active; if (prev) present(prev, false);
   t.back = prev && !prev.back ? prev : null;   // opened from another page (the manifesto's links): closing goes back there
   active = t; present(t, true);
-  if (t.id === 'blog') sfx.play('tablet', t.anchor, { on: true }); else if (t.id === 'work') sfx.play('mouse', t.anchor);
   absorbLook();
   setState('page');
   await poseTo(fitPose(t.fit(isPortrait())), 1100);
 }
 async function closePage(silent) {
   if (!active) return;
-  if (active.id === 'blog') sfx.play('tablet', active.anchor, { on: false });
   present(active, false); active = null;
   absorbLook();
   if (!silent) { setState('room'); await poseTo(POSE.room(), 1000); }
@@ -514,10 +509,7 @@ function route() {
 addEventListener('hashchange', route);
 const go = h => { if (location.hash !== h) location.hash = h; else route(); };
 const isLit = () => document.documentElement.classList.contains('lit');
-const activate = t => { if (!t) return; if (t.action === 'lights') cycleLights(); else if (t.action === 'lamp') toggleLamp(t); else if (t.action === 'radio') switchRadio(); else if (t.href) open(t.href, '_blank', 'noopener'); else go('#/' + t.id); };
-/* the radio's switch clicks; the first time, it hisses between stations until the music comes (or gives up) */
-let hiss = null;
-function switchRadio() { const first = radio.state === 'off'; radio.toggle(); sfx.play('radio', byId.radio.anchor); if (first && radio.state !== 'off') { hiss?.stop(); const h = hiss = sfx.static(byId.radio.anchor); setTimeout(() => { if (hiss === h) { h.stop(1.2); hiss = null; } }, 8000); } }
+const activate = t => { if (!t) return; if (t.action === 'lights') cycleLights(); else if (t.action === 'lamp') toggleLamp(t); else if (t.action === 'radio') radio.toggle(); else if (t.href) open(t.href, '_blank', 'noopener'); else go('#/' + t.id); };
 const q = sel => document.querySelector(sel) || surfaces.map(s => s.el.querySelector(sel)).find(Boolean) || null;
 
 /* ------------------------------------------------------------------ prompts (the option bar) */
@@ -526,13 +518,12 @@ const chip = (k, txt, act, on) => `<span${act ? ` class="btn${on ? ' on' : ''}" 
 function prompts() {
   const el = $('#prompts');
   if (state === 'logo') el.innerHTML = chip(['↵', 'scroll'], 'come in', '#/room');
-  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('m', SOUND_ICON[sfx.enabled ? 'on' : 'off'], 'sound') + chip('esc', 'step outside', '#/');
+  else if (state === 'room') el.innerHTML = chip('click', 'open') + chip('drag', 'look around') + chip('?', 'labels', 'labels', showLabels) + chip('l', LIGHT_ICON[lights.mode], 'lights') + chip('esc', 'step outside', '#/');
   else if (state === 'page') el.innerHTML = (active?.id === 'whiteboard' ? chip('drag', 'draw') + chip('c', 'clear', 'clear') : '') + (active?.id === 'blog' ? chip('scroll', 'read') : '') + (active && ['newproject', 'join'].includes(active.id) ? chip('tab', 'fields') : '') + chip('esc', active?.back ? 'back' : 'close', active?.back ? '#/' + active.back.id : '#/room');
   else el.innerHTML = '';
 }
-$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'sound') toggleSound(); else if (a === 'clear') byId.whiteboard.clear(); else go(a); });
+$('#prompts').addEventListener('click', e => { const b = e.target.closest('.btn'); if (!b) return; const a = b.dataset.act; if (a === 'lights') cycleLights(); else if (a === 'labels') toggleLabels(); else if (a === 'clear') byId.whiteboard.clear(); else go(a); });
 function toggleLabels() { showLabels = !showLabels; prompts(); }
-function toggleSound() { sfx.enabled = !sfx.enabled; if (sfx.enabled) sfx.unlock(); prompts(); const b = $('#srnav [data-thing=sound]'); if (b) b.textContent = sfx.enabled ? 'sound: on' : 'sound: off'; }
 
 /* ------------------------------------------------------------------ day / night */
 /* auto follows the system colour scheme; day and night are explicit, and remembered */
@@ -547,14 +538,8 @@ const LIGHT_ICON = {
   night: svg('<path d="M14.8 3.2a8.8 8.8 0 1 0 6 15.6 7.4 7.4 0 0 1-6-15.6z" fill="currentColor"/>'),
   auto: svg('<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3.6a8.4 8.4 0 0 0 0 16.8z" fill="currentColor"/>'),
 };   // knob angle: night at eleven, auto at noon, day at one
-const SOUND_ICON = {
-  on: svg('<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M15 9.2a4 4 0 0 1 0 5.6M17.6 6.6a7.6 7.6 0 0 1 0 10.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
-  off: svg('<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
-};
-const DIAL_ORDER = ['night', 'auto', 'day'];
 function setLights(mode, instant) {
-  const prev = lights.mode; lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}
-  if (!instant && prev !== mode) sfx.play('dial', byId.lights.anchor, { steps: Math.abs(DIAL_ORDER.indexOf(mode) - DIAL_ORDER.indexOf(prev)) });   // a detent per position the knob passes
+  lights.mode = mode; try { localStorage.setItem('ezco-lights', mode); } catch {}
   const on = mode === 'auto' ? !prefersDark.matches : mode === 'day';
   document.documentElement.classList.toggle('lit', on); themeTarget = on ? 1 : 0;
   const t = byId.lights; t.label = `lights: ${mode}`; if (t.lbl) { t.lbl.innerHTML = LIGHT_ICON[mode]; t.lbl.title = t.label; } $('#srlights').textContent = `lights: ${mode}` + (mode === 'auto' ? ` (${on ? 'day' : 'night'})` : '');
@@ -567,7 +552,6 @@ const lampOn = l => l.override ?? !isLit();   // default: on at night, off by da
 function toggleLamp(l) {
   const next = !lampOn(l); l.override = next === !isLit() ? null : next;   // back at the default → follows day / night again
   lampState[l.id] = l.override; try { localStorage.setItem('ezco-lamps', JSON.stringify(lampState)); } catch {}
-  sfx.play(l.id, l.anchor, { on: lampOn(l) });   // each switch sounds like what it's made of
   refreshLamps();
 }
 const BULB = on => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 21h5M10 18h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1.1 1.9V16h4.8v-.2c.1-.8.5-1.5 1.1-1.9A6 6 0 0 0 12 3z" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
@@ -642,7 +626,6 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape') { if (state === 'page') go(active?.back ? '#/' + active.back.id : '#/room'); else if (state === 'room') go('#/'); return; }
   if (state === 'logo' && (e.key === 'Enter' || e.key === 'ArrowDown')) { go('#/room'); return; }
   if ((e.key === 'l' || e.key === 'L') && state !== 'logo') { cycleLights(); return; }
-  if ((e.key === 'm' || e.key === 'M') && state !== 'logo') { toggleSound(); return; }
   if (['?', '/', 'i', 'I'].includes(e.key) && state === 'room') { toggleLabels(); return; }
   if ((e.key === 'c' || e.key === 'C') && state === 'page' && active?.id === 'whiteboard') { byId.whiteboard.clear(); return; }
   if (state === 'room' || state === 'page') { if (e.key === 'ArrowLeft') drag.yaw += 12; if (e.key === 'ArrowRight') drag.yaw -= 12; if (e.key === 'ArrowUp') drag.pitch += 8; if (e.key === 'ArrowDown') drag.pitch -= 8; }
@@ -650,7 +633,6 @@ addEventListener('keydown', e => {
 addEventListener('wheel', e => { if (state === 'logo' && e.deltaY > 20) go('#/room'); }, { passive: true });
 $$('#srnav [data-thing]').forEach(a => {
   const t = byId[a.dataset.thing];
-  if (a.dataset.thing === 'sound') { a.addEventListener('click', toggleSound); a.textContent = sfx.enabled ? 'sound: on' : 'sound: off'; return; }
   a.addEventListener('focus', () => { if (state !== 'room' || !t) return; if (t.held) { t.forceUp = true; glance.yaw = 0; glance.pitch = -22; } else glanceAt(t); setHover(t); });
   a.addEventListener('blur', () => { glance.yaw = glance.pitch = 0; setHover(null); if (t?.held && !t.active) t.forceUp = false; });
   if (a.tagName === 'BUTTON') a.addEventListener('click', () => activate(t));
@@ -682,13 +664,12 @@ bldg.addEventListener('click', () => { if (state === 'logo') go('#/room'); });
    the track name lives in the buttons' tooltips and the screen-reader text */
 const ctl = document.createElement('span'); ctl.className = 'ctl'; ctl.innerHTML = '<button data-act="prev" aria-label="previous track" tabindex="-1">⏮\uFE0E</button><button data-act="toggle" aria-label="pause" tabindex="-1">⏸\uFE0E</button><button data-act="next" aria-label="next track" tabindex="-1">⏭\uFE0E</button>';
 root.appendChild(ctl);   // after the accessible page list (every control in the room carries an explicit tabindex: Safari's plain Tab only visits form fields and elements that have one), so once the radio is on, Tab reaches ⏮ ⏸ ⏭ right after "play the radio"; until then they're out of the tab order
-ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'toggle') switchRadio(); else { radio[b.dataset.act](); sfx.play('radio', byId.radio.anchor, { vol: .6 }); } });
+ctl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) radio[b.dataset.act](); });
 let ctlHover = false, ctlFocus = false;
 ctl.addEventListener('pointerenter', () => { ctlHover = true; }); ctl.addEventListener('pointerleave', () => { ctlHover = false; });
 ctl.addEventListener('focusin', () => { ctlFocus = true; });   // keeps the bar up while a button has focus; the camera stays put
 ctl.addEventListener('focusout', e => { if (!ctl.contains(e.relatedTarget)) ctlFocus = false; });
 radio.on(st => {
-  if (hiss && (st === 'playing' || st === 'off')) { hiss.stop(st === 'playing' ? .5 : .25); hiss = null; }   // the music has come (or won't): the hiss goes
   const title = radio.title() || 'Nujabes', b = $('#srnav [data-thing=radio]'), tip = st === 'loading' ? 'tuning…' : '♪ ' + title;
   for (const x of $$('button', ctl)) { x.title = tip; x.tabIndex = st === 'off' ? -1 : 0; }
   const tg = $('[data-act=toggle]', ctl); tg.textContent = radio.playing ? '⏸\uFE0E' : '▶\uFE0E'; tg.setAttribute('aria-label', radio.playing ? 'pause' : 'play');
@@ -720,13 +701,12 @@ let openWin, clockTimer, focusLock = false, placeFloating = () => {}, bounce = (
   const closeWins = () => { for (const w of [...opened]) close(w); };
   openWin = id => { const w = wins.find(w => w.dataset.win === id); if (!w || !byId.work.active) return; if (!opened.includes(w)) opened.push(w); raise(w); };
   placeFloating = () => { if (!front?.dataset.demo) return; const r = ph.getBoundingClientRect(); front.style.cssText = `left:${r.left.toFixed(1)}px;top:${r.top.toFixed(1)}px;width:${r.width.toFixed(1)}px;height:${r.height.toFixed(1)}px`; };
-  scr.addEventListener('click', e => { if (byId.work.active && e.target.closest('button')) sfx.play('mouse', byId.work.anchor, { vol: .8 }); });   // every button in the OS is a mouse click at the desk
   for (const b of $$('.app', scr)) b.addEventListener('click', () => { if (!byId.work.active) { activate(byId.work); return; } if (b.dataset.href) open(b.dataset.href, '_blank', 'noopener'); else openWin(b.dataset.app); });
   tasks.addEventListener('click', e => { const b = e.target.closest('.task'); if (!b) return; const w = wins.find(w => w.dataset.win === b.dataset.task); if (w) (w === front ? minimise : raise)(w); });
   for (const b of $$('[data-close]', scr)) b.addEventListener('click', () => close(b.closest('.win')));
   for (const b of $$('[data-min]', scr)) b.addEventListener('click', () => minimise(b.closest('.win')));
   /* the demo documents draw their own title bars; their buttons ask through postMessage */
-  addEventListener('message', e => { if (e.origin !== location.origin || !e.data?.ezos) return; const w = opened.find(w => w.dataset.demo && $('iframe', w)?.contentWindow === e.source); if (!w) return; if (e.data.ezos === 'close') close(w); else if (e.data.ezos === 'minimize') minimise(w); else if (e.data.ezos === 'click') sfx.play('mouse', byId.work.anchor, { vol: .8 }); });
+  addEventListener('message', e => { if (e.origin !== location.origin || !e.data?.ezos) return; const w = opened.find(w => w.dataset.demo && $('iframe', w)?.contentWindow === e.source); if (!w) return; if (e.data.ezos === 'close') close(w); else if (e.data.ezos === 'minimize') minimise(w); });
   /* the lock screen logo bounces like the DVD one: linear, exact reflections, and — with 13 s per width and 8 s per height —
      it lands exactly in a corner every 104 s (first time ~74 s in) */
   const saver = $('.saver', scr), mlogo = $('.mlogo', scr), tri = u => { const f = u % 2; return f < 1 ? f : 2 - f; };
@@ -753,7 +733,7 @@ q('#join-form').addEventListener('submit', e => { e.preventDefault(); e.target.c
 
 /* ------------------------------------------------------------------ frame loop */
 const fwd = V3(), tmp = V3(), nrm = V3(), toCam = V3(), wp = V3(), qt = new THREE.Quaternion(), occluders = [shell, door];
-let firstFrame = true, frames = 0, frameF = 1, lastFrame = 0, wind = null, cardAcc = 0; const CARD = Math.PI * 2 / 22;
+let firstFrame = true, frames = 0, frameF = 1, lastFrame = 0;
 /* the follow-lerps below were tuned frame by frame in a 120 Hz browser; Safari (and any 60 Hz screen) gets half the frames, so each
    step covers the time that actually passed — the room feels the same at every refresh rate instead of twice as slow at 60 */
 const lerpK = r => 1 - Math.pow(1 - r, frameF);
@@ -777,7 +757,6 @@ function frame(now) {
   look.yaw += (tYaw - look.yaw) * lerpK(.1); look.pitch += (tPitch - look.pitch) * lerpK(.1);
   camera.position.copy(cam.pos).multiplyScalar(K); camera.lookAt(tmp.copy(cam.target).multiplyScalar(K));
   camera.rotateOnWorldAxis(Y, look.yaw * D2R); camera.rotateX(look.pitch * D2R); camera.updateMatrixWorld();
-  sfx.update(tmp.copy(camera.position).divideScalar(K), camera.getWorldDirection(fwd), nrm.set(0, 1, 0).applyQuaternion(camera.quaternion));
   updateHeld(); byId.join.group.updateMatrixWorld();
   /* the lerps below settle exactly (snapping once close), so applyTheme — a pass over every material — runs only while a transition is on */
   let restyle = frames < 4;
@@ -785,8 +764,7 @@ function frame(now) {
   { const th = { t: themeT }; settle(th, 't', themeTarget, .08); themeT = th.t; }
   for (const t of things) if (t.id) settle(t, 'hover', (hovered === t && !t.active) ? 1 : 0, .18);
   for (const l of lamps) settle(l, 'lit', lampOn(l) ? 1 : 0, .1);
-  { const t = byId.linkedin, d = .07 * t.hover * frameF; t.wheel.rotation.x -= d;   // the cards flick past one by one, and move a little air
-    if (d > 1e-4) { if (!wind) wind = sfx.wind(t.anchor); wind.set(t.hover); cardAcc += d; if (cardAcc > CARD) { cardAcc -= CARD; sfx.play('card', t.anchor, { vol: .4 + .6 * t.hover }); } } else if (wind) { wind.stop(); wind = null; cardAcc = 0; } }
+  byId.linkedin.wheel.rotation.x -= .07 * byId.linkedin.hover * frameF;
   byId.work.surface.el.classList.toggle('awake', hovered === byId.work);
   byId.radio.led.material.emissiveIntensity += ((radio.playing ? 1.2 : 0) - byId.radio.led.material.emissiveIntensity) * lerpK(.1);
   if (active && frames % 30 === 0) active.scrollEls?.forEach(more);   // content settles late (the captcha, images): keep the fade honest
@@ -853,9 +831,9 @@ if (dbg.has('up')) byId.join.up = 1;
   if (byId[id] && !byId[id].action && !byId[id].href) { const t = byId[id]; active = t; present(t, true, true); state = 'page'; body.dataset.state = 'page'; setPose(fitPose(t.fit(isPortrait()))); }
   if (dbg.has('hover') && byId[dbg.get('hover')]) setHover(byId[dbg.get('hover')]);
   if (dbg.has('win')) openWin(dbg.get('win'));
-  if (dbg.has('debug')) window.room = { look, drag, glance, cam, lamps, wb, byId, camera, radio, sfx, gl, interior, dir: () => camera.getWorldDirection(V3()).toArray(), openWin: id => openWin(id), get state() { return state; }, get active() { return active; }, get focusLock() { return focusLock; } };
+  if (dbg.has('debug')) window.room = { look, drag, glance, cam, lamps, wb, byId, camera, radio, gl, interior, dir: () => camera.getWorldDirection(V3()).toArray(), openWin: id => openWin(id), get state() { return state; }, get active() { return active; }, get focusLock() { return focusLock; } };
   prompts();
 }
 requestAnimationFrame(frame);
-return function dispose() { disposed = true; ac.abort(); clearInterval(clockTimer); destroyDemos(); radio.dispose(); hiss?.stop(0); wind?.stop(); sfx.dispose(); gl.dispose(); gl.domElement.remove(); css.domElement.remove(); root.querySelector('.overlay')?.remove(); delete document.body.dataset.state; document.body.classList.remove('preload', 'hover', 'dragging'); document.documentElement.classList.remove('lit'); };
+return function dispose() { disposed = true; ac.abort(); clearInterval(clockTimer); destroyDemos(); radio.dispose(); gl.dispose(); gl.domElement.remove(); css.domElement.remove(); root.querySelector('.overlay')?.remove(); delete document.body.dataset.state; document.body.classList.remove('preload', 'hover', 'dragging'); document.documentElement.classList.remove('lit'); };
 }

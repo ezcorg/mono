@@ -13,7 +13,7 @@ export function frame({ github, icon = '' }: { github: string; icon?: string }):
 	addEventListener('message', (e) => { if (e.origin === location.origin && e.data?.ezos === 'theme') set(!!e.data.lit); });
 	const tb = document.createElement('div'); tb.className = 'tb';
 	tb.innerHTML = `<span class="ai" aria-hidden="true">${icon}</span><div class="tool"></div><span class="wc"><a tabindex="0" href="${github}" target="_blank" rel="noopener" title="source on GitHub" aria-label="source on GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${GH}"/></svg></a><button type="button" tabindex="0" data-act="minimize" title="minimise" aria-label="minimise">–</button><button type="button" tabindex="0" data-act="close" title="close" aria-label="close">×</button></span>`;
-	tb.addEventListener('click', (e) => { const b = (e.target as HTMLElement).closest('button, a'); if (!b) return; parent.postMessage({ ezos: 'click' }, location.origin); if (b instanceof HTMLButtonElement) parent.postMessage({ ezos: b.dataset.act }, location.origin); });   // the room hears the click at the desk, then acts
+	tb.addEventListener('click', (e) => { const b = (e.target as HTMLElement).closest('button'); if (b) parent.postMessage({ ezos: b.dataset.act }, location.origin); });
 	document.body.prepend(tb);
 	return { tool: tb.querySelector('.tool') as HTMLElement, dark: () => !root.classList.contains('lit') };
 }
