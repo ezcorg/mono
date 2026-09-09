@@ -12,12 +12,12 @@
   "dependencies": {
     "@joinezco/codeblock": "workspace:*",
     "@joinezco/markdown-editor": "workspace:*",
-    "astro": "^5.15.1",
+    "astro": "^5.18.2",
     "three": "0.170.0"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.5",
+    "@astrojs/check": "^0.9.10",
     "@types/three": "0.170.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.3"
   }
 }

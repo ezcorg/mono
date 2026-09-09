@@ -12,12 +12,12 @@
         "typecheck": "tsc --noEmit"
     },
     "devDependencies": {
-        "@types/node": "^24.3.1",
+        "@types/node": "^24.13.3",
         "@types/sharedworker": "^0.0.189",
-        "typescript": "^5.0.0"
+        "typescript": "^5.9.3"
     },
     "dependencies": {
-        "zod": "^4.1.5"
+        "zod": "^4.5.4"
     },
     "files": [
         "dist/**/*"

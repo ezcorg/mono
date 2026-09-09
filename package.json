@@ -6,19 +6,20 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "build:ezco-web": "turbo build --filter=@joinezco/ezco-web",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "check:shared": "turbo run build --filter=@joinezco/shared",
+    "check:worker": "turbo run typecheck test:run --filter=contact-form-worker"
   },
   "keywords": [],
   "author": "",
   "license": "AGPL-3.0-only",
   "devDependencies": {
-    "turbo": "^2.5.2"
+    "turbo": "^2.10.12"
   },
   "packageManager": "pnpm@10.10.0",
   "pnpm": {
     "overrides": {},
     "patchedDependencies": {
-      "@m234/nerd-fonts@0.5.0": "patches/@m234__nerd-fonts@0.5.0.patch"
+      "@m234/nerd-fonts@0.5.2": "patches/@m234__nerd-fonts@0.5.2.patch"
     }
   }
 }

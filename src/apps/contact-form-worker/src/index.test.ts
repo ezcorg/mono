@@ -43,7 +43,7 @@ const mockCtx = {
     waitUntil: vi.fn(),
     passThroughOnException: vi.fn(),
     props: {},
-} as ExecutionContext;
+} as unknown as ExecutionContext;   // a partial mock: workers-types keeps adding fields (tracing, lately)
 
 describe('Contact Form Worker', () => {
     beforeEach(() => {
