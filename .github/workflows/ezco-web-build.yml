@@ -31,5 +31,6 @@ jobs:
       - name: Install dependencies (recursive)
         run: pnpm install -r
 
+      # only ezco-web and what it depends on: a plain `pnpm build` runs turbo over every workspace package
       - name: Build project
-        run: pnpm build
+        run: pnpm build:ezco-web
