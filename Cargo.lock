@@ -11524,14 +11524,19 @@ dependencies = [
 
 [[package]]
 name = "witmproxy-plugin-noshorts"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
- "brotli",
+ "chrono",
  "encoding_rs",
- "flate2",
+ "form_urlencoded",
  "lol_html",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
+ "tracing",
  "tracing-subscriber",
  "wit-bindgen 0.61.1",
  "witmproxy",

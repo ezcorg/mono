@@ -128,6 +128,16 @@ impl Tenant {
             .ok_or_else(|| anyhow::anyhow!("Failed to retrieve created tenant"))
     }
 
+    /// Replace the stored password hash for a tenant.
+    pub async fn update_password_hash(pool: &SqlitePool, id: &str, password_hash: &str) -> Result<()> {
+        sqlx::query("UPDATE tenants SET password_hash = ? WHERE id = ?")
+            .bind(password_hash)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<()> {
         sqlx::query("UPDATE tenants SET enabled = ? WHERE id = ?")
             .bind(enabled)

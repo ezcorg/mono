@@ -97,12 +97,27 @@ pub async fn register_noop_plugin(registry: &PluginRegistry) -> Result<(), anyho
     registry.register_plugin(plugin).await
 }
 
+/// Register the `noshorts` plugin as a body-rewriting fixture.
+///
+/// Its manifest scopes content events to YouTube hosts; here the scope is
+/// widened to any HTML so the host's own streaming tests can drive it
+/// against a loopback server. The request-level policy still only applies
+/// to the plugin's configured hosts, so loopback requests pass through.
 pub async fn register_noshorts_plugin(registry: &PluginRegistry) -> Result<(), anyhow::Error> {
+    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{CapabilityKind, EventKind};
+
     let wasm_path = noshorts_plugin_path()?;
     let component_bytes = std::fs::read(&wasm_path)?;
 
     // Use the actual plugin_from_component method to test the real code path
-    let plugin = registry.plugin_from_component(component_bytes).await?;
+    let mut plugin = registry.plugin_from_component(component_bytes).await?;
+    for cap in plugin.capabilities.iter_mut() {
+        if cap.inner.kind == CapabilityKind::HandleEvent(EventKind::InboundContent) {
+            cap.inner.scope.expression =
+                "content.content_type().startsWith('text/html') && !request.path().startsWith('/__witm/')"
+                    .to_string();
+        }
+    }
     registry.register_plugin(plugin).await
 }
 

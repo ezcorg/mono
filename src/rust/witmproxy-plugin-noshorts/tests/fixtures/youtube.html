@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stand-in for YouTube</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; }
+  ytd-rich-item-renderer { display: block; border: 1px solid #ccc; padding: 8px; margin: 8px 0; }
+  nav a { margin-right: 12px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Home</a>
+  <a id="shorts-link" href="/shorts/">Shorts</a>
+  <a href="/feed/subscriptions">Subscriptions</a>
+</nav>
+<h1>Hello from the stand-in YouTube</h1>
+<video id="player" width="320" height="180"></video>
+<div id="feed">
+  <ytd-rich-item-renderer id="plain"><a id="video-title" href="/watch?v=plain" title="Building a bookshelf from scrap oak">Building a bookshelf from scrap oak</a></ytd-rich-item-renderer>
+  <ytd-rich-item-renderer id="bait"><a id="video-title" href="/watch?v=bait" title="YOU WON'T BELIEVE WHAT HAPPENED NEXT!!! 🤯🔥">YOU WON'T BELIEVE WHAT HAPPENED NEXT!!! 🤯🔥</a></ytd-rich-item-renderer>
+  <ytd-rich-item-renderer id="rage"><a id="video-title" href="/watch?v=rage" title="Karen has a MELTDOWN at Starbucks and gets what she deserves">Karen has a MELTDOWN at Starbucks and gets what she deserves</a></ytd-rich-item-renderer>
+  <ytd-rich-item-renderer id="short"><a id="video-title" href="/shorts/abc123" title="a short">a short</a></ytd-rich-item-renderer>
+</div>
+<grid-shelf-view-model id="shorts-shelf" class="ytGridShelfViewModelHost">
+  <h2>Shorts shelf</h2>
+  <div class="ytGridShelfViewModelGridShelfItem">
+    <ytm-shorts-lockup-view-model-v2 class="shortsLockupViewModelHost"><ytm-shorts-lockup-view-model class="shortsLockupViewModelHost">
+      <a href="/shorts/4WtgUU_6SBo" class="shortsLockupViewModelHostEndpoint reel-item-endpoint">a short in a shelf</a>
+    </ytm-shorts-lockup-view-model></ytm-shorts-lockup-view-model-v2>
+  </div>
+</grid-shelf-view-model>
+<grid-shelf-view-model id="plain-shelf" class="ytGridShelfViewModelHost">
+  <h2>Videos shelf</h2>
+  <a href="/watch?v=inshelf">a normal video in a shelf</a>
+</grid-shelf-view-model>
+</body>
+</html>

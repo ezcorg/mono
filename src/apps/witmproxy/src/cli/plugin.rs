@@ -3,8 +3,8 @@
 // nothing outside the crate can name them. `pub(crate)` fails with E0446.
 #![allow(unreachable_pub)]
 
-use super::{GlobalArgs, Services};
-use crate::cert::ca::get_root_cert_path;
+use super::GlobalArgs;
+use crate::cli::api_client::{ApiClient, DaemonAuthArgs, LocalDaemon};
 use crate::{config::PluginScopedConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
 use conf::{Conf, Subcommands};
@@ -101,6 +101,8 @@ pub struct PluginAddArgs {
     pub globals: GlobalArgs,
     #[conf(flatten, serde(flatten))]
     pub config: PluginScopedConfig,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Local .wasm file path or URL (https://...)
     #[arg(pos)]
@@ -118,6 +120,8 @@ pub struct PluginRemoveArgs {
     pub globals: GlobalArgs,
     #[conf(flatten, serde(flatten))]
     pub config: PluginScopedConfig,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Plugin name or namespace/name to remove
     #[arg(pos)]
@@ -154,40 +158,55 @@ impl PluginHandler {
         match command {
             PluginCommands::List(_) => self.list_plugins().await,
             PluginCommands::New(a) => self.create_new_plugin(a).await,
-            PluginCommands::Add(a) => self.add_plugin(&a.source, a.public_key.as_deref()).await,
-            PluginCommands::Remove(a) => self.remove_plugin(&a.plugin_name).await,
+            PluginCommands::Add(a) => {
+                self.add_plugin(&a.source, a.public_key.as_deref(), &a.auth)
+                    .await
+            }
+            PluginCommands::Remove(a) => self.remove_plugin(&a.plugin_name, &a.auth).await,
             PluginCommands::Configure(a) => {
                 self.configure_plugin(&a.plugin_name, &a.set_values).await
             }
         }
     }
 
-    /// Try to read the web server URL from services.json
-    fn get_web_url(&self) -> Option<String> {
-        let app_dir = self
-            .config
-            .tls
-            .cert_dir
-            .parent()
-            .unwrap_or(&PathBuf::from("."))
-            .to_path_buf();
-
-        let services_path = app_dir.join("services.json");
-        let services_content = std::fs::read_to_string(&services_path).ok()?;
-        let services: Services = serde_json::from_str(&services_content).ok()?;
-
-        Some(services.web)
+    /// The management API client for this command, or `None` when no server
+    /// is known (no login, no local daemon): callers then work on the
+    /// database directly.
+    fn daemon_client(&self, auth: &DaemonAuthArgs) -> Result<Option<ApiClient>> {
+        ApiClient::resolve(auth, LocalDaemon::from_tls(&self.config.tls))
     }
 
-    /// Build a reqwest client that trusts our CA certificate
-    fn build_client(&self) -> Result<reqwest::Client> {
-        let ca_cert_path = get_root_cert_path(&self.config.tls.cert_dir);
-        let ca_cert_pem = std::fs::read(&ca_cert_path)?;
-        let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem)?;
-
-        Ok(reqwest::Client::builder()
-            .add_root_certificate(ca_cert)
-            .build()?)
+    /// Turn a daemon reply into a result: `Ok(true)` on success, `Ok(false)`
+    /// when the daemon could not be reached, and an error with a usable hint
+    /// when it refused.
+    async fn daemon_outcome(
+        client: &ApiClient,
+        sent: std::result::Result<reqwest::Response, anyhow::Error>,
+        done: &str,
+    ) -> Result<bool> {
+        match sent {
+            Ok(resp) if resp.status().is_success() => {
+                info!("{done} via {}", client.base_url());
+                Ok(true)
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                if let Some(hint) = client.auth_hint(status) {
+                    anyhow::bail!("{hint}");
+                }
+                let body = resp.text().await.unwrap_or_default();
+                anyhow::bail!("Daemon returned {}: {}", status, body);
+            }
+            Err(e) => {
+                let reqwest_err = e.downcast_ref::<reqwest::Error>();
+                if reqwest_err.is_some_and(|e| e.is_connect() || e.is_timeout()) {
+                    debug!("Daemon unreachable: {}", e);
+                    Ok(false)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// Try to add plugin via the running daemon's web API.
@@ -196,86 +215,37 @@ impl PluginHandler {
         &self,
         wasm_bytes: &[u8],
         expected_key: Option<&[u8]>,
+        auth: &DaemonAuthArgs,
     ) -> Result<bool> {
-        let web_addr = match self.get_web_url() {
-            Some(addr) => addr,
-            None => return Ok(false),
+        let Some(client) = self.daemon_client(auth)? else {
+            return Ok(false);
         };
-
-        let client = match self.build_client() {
-            Ok(c) => c,
-            Err(e) => {
-                debug!("Failed to build HTTP client: {}", e);
-                return Ok(false);
-            }
-        };
-
-        let url = format!("https://{}/api/plugins", web_addr);
         let part = reqwest::multipart::Part::bytes(wasm_bytes.to_vec())
             .file_name("plugin.wasm")
             .mime_str("application/wasm")?;
         let form = reqwest::multipart::Form::new().part("file", part);
+        let headers: Vec<(&str, String)> = expected_key
+            .map(|key| vec![("X-Expected-Public-Key", hex::encode(key))])
+            .unwrap_or_default();
 
-        let mut request = client.post(&url).multipart(form);
-        if let Some(key) = expected_key {
-            request = request.header("X-Expected-Public-Key", hex::encode(key));
-        }
-
-        match request.send().await {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    info!("Plugin added via running daemon");
-                    Ok(true)
-                } else {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    anyhow::bail!("Daemon returned {}: {}", status, body);
-                }
-            }
-            Err(e) if e.is_connect() || e.is_timeout() => {
-                debug!("Daemon unreachable: {}", e);
-                Ok(false)
-            }
-            Err(e) => Err(e.into()),
-        }
+        let sent = client.post_multipart("/api/plugins", form, &headers).await;
+        Self::daemon_outcome(&client, sent, "Plugin added").await
     }
 
     /// Try to remove plugin via the running daemon's web API.
     /// Returns Ok(true) if successful, Ok(false) if the daemon is unreachable.
-    async fn try_remove_via_web(&self, name: &str, namespace: Option<&str>) -> Result<bool> {
-        let web_addr = match self.get_web_url() {
-            Some(addr) => addr,
-            None => return Ok(false),
+    async fn try_remove_via_web(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+        auth: &DaemonAuthArgs,
+    ) -> Result<bool> {
+        let Some(client) = self.daemon_client(auth)? else {
+            return Ok(false);
         };
-
-        let client = match self.build_client() {
-            Ok(c) => c,
-            Err(e) => {
-                debug!("Failed to build HTTP client: {}", e);
-                return Ok(false);
-            }
-        };
-
         let ns = namespace.unwrap_or("default");
-        let url = format!("https://{}/api/plugins/{}/{}", web_addr, ns, name);
-
-        match client.delete(&url).send().await {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    info!("Plugin removed via running daemon");
-                    Ok(true)
-                } else {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    anyhow::bail!("Daemon returned {}: {}", status, body);
-                }
-            }
-            Err(e) if e.is_connect() || e.is_timeout() => {
-                debug!("Daemon unreachable: {}", e);
-                Ok(false)
-            }
-            Err(e) => Err(e.into()),
-        }
+        let sent = client.delete(&format!("/api/plugins/{}/{}", ns, name)).await;
+        Self::daemon_outcome(&client, sent, "Plugin removed").await
     }
 
     async fn list_plugins(&self) -> Result<()> {
@@ -438,7 +408,12 @@ impl PluginHandler {
         }
     }
 
-    async fn add_plugin(&self, source: &str, public_key_path: Option<&Path>) -> Result<()> {
+    async fn add_plugin(
+        &self,
+        source: &str,
+        public_key_path: Option<&Path>,
+        auth: &DaemonAuthArgs,
+    ) -> Result<()> {
         let component_bytes = self.read_wasm_source(source).await?;
 
         // Read expected public key if provided
@@ -453,7 +428,7 @@ impl PluginHandler {
 
         // Try the web API first (daemon may be running)
         match self
-            .try_add_via_web(&component_bytes, expected_key.as_deref())
+            .try_add_via_web(&component_bytes, expected_key.as_deref(), auth)
             .await
         {
             Ok(true) => return Ok(()),
@@ -495,7 +470,36 @@ impl PluginHandler {
         Ok(())
     }
 
+    /// Load the plugin's declared inputs by instantiating its stored component.
+    ///
+    /// The manifest is the only place the schema lives; it is not persisted.
+    /// Instantiation costs a component compile (well under a second), which
+    /// is fine for a command a person runs by hand.
+    async fn input_schema_for(
+        &self,
+        db: &Db,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<Vec<crate::wasm::bindgen::InputSchema>>> {
+        let row = sqlx::query("SELECT component FROM plugins WHERE namespace = ? AND name = ?")
+            .bind(namespace)
+            .bind(name)
+            .fetch_optional(&db.pool)
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let component: Vec<u8> = sqlx::Row::try_get(&row, "component")?;
+        let runtime = Runtime::try_default()?;
+        let registry = PluginRegistry::new(db.clone(), runtime)?;
+        let plugin = registry.plugin_from_component(component).await?;
+        Ok(Some(plugin.input_schema))
+    }
+
     async fn configure_plugin(&self, plugin_name: &str, set_values: &[String]) -> Result<()> {
+        use crate::plugins::inputs::{coerce_input, display_input, display_type};
+        use crate::wasm::bindgen::ActualInput;
+
         let (name, namespace) = match plugin_name.split_once("/") {
             Some((ns, n)) => (n.to_string(), ns.to_string()),
             None => (plugin_name.to_string(), "default".to_string()),
@@ -506,8 +510,16 @@ impl PluginHandler {
         drop(db_password);
         db.migrate().await?;
 
+        let Some(schema) = self.input_schema_for(&db, &namespace, &name).await? else {
+            anyhow::bail!(
+                "Plugin {}/{} is not installed (see `witm plugin list`)",
+                namespace,
+                name
+            );
+        };
+
         if set_values.is_empty() {
-            // List current configuration
+            // Describe: what the plugin declares, and what is currently set.
             let rows = sqlx::query(
                 "SELECT input_name, input_value FROM plugin_configuration WHERE namespace = ? AND name = ?",
             )
@@ -515,28 +527,84 @@ impl PluginHandler {
             .bind(&name)
             .fetch_all(&db.pool)
             .await?;
+            let current: Vec<(String, String)> = rows
+                .iter()
+                .map(|row| {
+                    let input_name: String = sqlx::Row::try_get(row, "input_name").unwrap_or_default();
+                    let input_value: String = sqlx::Row::try_get(row, "input_value").unwrap_or_default();
+                    let rendered = serde_json::from_str::<ActualInput>(&input_value)
+                        .map(|v| display_input(&v))
+                        .unwrap_or(input_value);
+                    (input_name, rendered)
+                })
+                .collect();
 
-            if rows.is_empty() {
-                println!("No configuration set for plugin {}/{}.", namespace, name);
+            if schema.is_empty() {
+                println!("{}/{} declares no configuration inputs.", namespace, name);
             } else {
-                println!("Configuration for {}/{}:", namespace, name);
-                for row in rows {
-                    let input_name: String = sqlx::Row::try_get(&row, "input_name")?;
-                    let input_value: String = sqlx::Row::try_get(&row, "input_value")?;
-                    println!("  {} = {}", input_name, input_value);
+                println!("Settings declared by {}/{}:\n", namespace, name);
+                for input in &schema {
+                    let set = current.iter().find(|(n, _)| *n == input.name).map(|(_, v)| v);
+                    let default = input.default.as_ref().map(display_input);
+                    println!("  {} ({})", input.name, display_type(&input.input_type));
+                    if let Some(desc) = &input.description {
+                        println!("    {}", desc);
+                    }
+                    match (set, default) {
+                        (Some(v), Some(d)) => println!("    current: {}  (default: {})", v, d),
+                        (Some(v), None) => println!("    current: {}", v),
+                        (None, Some(d)) => println!("    default: {}", d),
+                        (None, None) => {}
+                    }
                 }
+                println!();
             }
+            let stray: Vec<&(String, String)> = current
+                .iter()
+                .filter(|(n, _)| !schema.iter().any(|s| s.name == *n))
+                .collect();
+            if !stray.is_empty() {
+                println!("Stored values the plugin does not declare:");
+                for (n, v) in stray {
+                    println!("  {} = {}", n, v);
+                }
+                println!();
+            }
+            println!(
+                "Change a value with: witm plugin configure {}/{} --set <name>=<value>",
+                namespace, name
+            );
         } else {
-            // Set configuration values
+            // Set configuration values, typed as the plugin declared them.
             for kv in set_values {
                 let (key, value) = kv.split_once('=').ok_or_else(|| {
                     anyhow::anyhow!("Invalid format '{}': expected key=value", kv)
                 })?;
 
-                // Store as a JSON-serialized ActualInput::Str by default
-                let value_json = serde_json::to_string(&crate::wasm::bindgen::ActualInput::Str(
-                    value.to_string(),
-                ))?;
+                let typed = match schema.iter().find(|s| s.name == key) {
+                    Some(input) => coerce_input(input, value)?,
+                    None if schema.is_empty() => {
+                        // A plugin with no declared inputs can still read
+                        // ad-hoc strings; there is nothing to check against.
+                        warn!(
+                            "{}/{} declares no inputs; storing `{}` as a string",
+                            namespace, name, key
+                        );
+                        ActualInput::Str(value.to_string())
+                    }
+                    None => anyhow::bail!(
+                        "{}/{} has no setting named `{}`. Declared settings: {}",
+                        namespace,
+                        name,
+                        key,
+                        schema
+                            .iter()
+                            .map(|s| s.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                };
+                let value_json = serde_json::to_string(&typed)?;
 
                 sqlx::query(
                     "INSERT OR REPLACE INTO plugin_configuration (namespace, name, input_name, input_value) VALUES (?, ?, ?, ?)",
@@ -548,7 +616,13 @@ impl PluginHandler {
                 .execute(&db.pool)
                 .await?;
 
-                info!("Set {}/{} config: {} = {}", namespace, name, key, value);
+                info!(
+                    "Set {}/{} config: {} = {}",
+                    namespace,
+                    name,
+                    key,
+                    display_input(&typed)
+                );
             }
             println!(
                 "Configuration updated for {}/{}. Restart the daemon for changes to take effect.",
@@ -559,14 +633,17 @@ impl PluginHandler {
         Ok(())
     }
 
-    async fn remove_plugin(&self, plugin_name: &str) -> Result<()> {
+    async fn remove_plugin(&self, plugin_name: &str, auth: &DaemonAuthArgs) -> Result<()> {
         let (name, namespace) = match plugin_name.split_once("/") {
             Some((ns, n)) => (n.to_string(), Some(ns.to_string())),
             None => (plugin_name.to_string(), None),
         };
 
         // Try the web API first (daemon may be running)
-        match self.try_remove_via_web(&name, namespace.as_deref()).await {
+        match self
+            .try_remove_via_web(&name, namespace.as_deref(), auth)
+            .await
+        {
             Ok(true) => return Ok(()),
             Ok(false) => {
                 warn!("Daemon not reachable, falling back to direct DB access");

@@ -2,13 +2,13 @@ use anyhow::Result;
 use conf::{Conf, Subcommands};
 
 use super::GlobalArgs;
-use crate::cli::api_client::ApiClient;
+use crate::cli::api_client::{ApiClient, DaemonArgs, DaemonAuthArgs, LocalDaemon};
 
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum GroupCommands {
     /// List all groups
-    List(GlobalArgs),
+    List(DaemonArgs),
     /// Create a new group
     Create(GroupCreateArgs),
     /// Delete a group
@@ -28,6 +28,8 @@ pub enum GroupCommands {
 pub struct GroupCreateArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Group name
     #[arg(pos)]
@@ -39,6 +41,8 @@ pub struct GroupCreateArgs {
 pub struct GroupIdArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Group ID
     #[arg(pos)]
@@ -50,6 +54,8 @@ pub struct GroupIdArgs {
 pub struct GroupMemberArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Group ID
     #[arg(pos)]
@@ -64,6 +70,8 @@ pub struct GroupMemberArgs {
 pub struct GroupAddPermArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Group ID
     #[arg(pos)]
@@ -81,6 +89,8 @@ pub struct GroupAddPermArgs {
 pub struct GroupRemovePermArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Group ID
     #[arg(pos)]
@@ -93,12 +103,23 @@ pub struct GroupRemovePermArgs {
 impl GroupCommands {
     pub(crate) fn globals(&self) -> &GlobalArgs {
         match self {
-            GroupCommands::List(g) => g,
+            GroupCommands::List(a) => &a.globals,
             GroupCommands::Create(a) => &a.globals,
             GroupCommands::Delete(a) => &a.globals,
             GroupCommands::AddMember(a) | GroupCommands::RemoveMember(a) => &a.globals,
             GroupCommands::AddPermission(a) => &a.globals,
             GroupCommands::RemovePermission(a) => &a.globals,
+        }
+    }
+
+    pub(crate) fn auth(&self) -> &DaemonAuthArgs {
+        match self {
+            GroupCommands::List(a) => &a.auth,
+            GroupCommands::Create(a) => &a.auth,
+            GroupCommands::Delete(a) => &a.auth,
+            GroupCommands::AddMember(a) | GroupCommands::RemoveMember(a) => &a.auth,
+            GroupCommands::AddPermission(a) => &a.auth,
+            GroupCommands::RemovePermission(a) => &a.auth,
         }
     }
 }
@@ -107,13 +128,12 @@ pub struct GroupHandler;
 
 impl GroupHandler {
     pub async fn handle(&self, command: &GroupCommands) -> Result<()> {
-        let client = ApiClient::from_auth_store()?
-            .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run 'witm auth login' first."))?;
+        let client = ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
 
         match command {
             GroupCommands::List(_) => {
                 let resp = client.get("/api/manage/groups").await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             GroupCommands::Create(a) => {
                 let resp = client
@@ -122,13 +142,13 @@ impl GroupHandler {
                         &serde_json::json!({"name": a.name, "description": ""}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             GroupCommands::Delete(a) => {
                 let resp = client
                     .delete(&format!("/api/manage/groups/{}", a.id))
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             GroupCommands::AddMember(a) => {
                 let resp = client
@@ -137,7 +157,7 @@ impl GroupHandler {
                         &serde_json::json!({"tenant_id": a.tenant_id}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             GroupCommands::RemoveMember(a) => {
                 let resp = client
@@ -146,7 +166,7 @@ impl GroupHandler {
                         &serde_json::json!({"tenant_id": a.tenant_id}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             GroupCommands::AddPermission(a) => {
                 let resp = client
@@ -155,7 +175,7 @@ impl GroupHandler {
                         &serde_json::json!({"effect": a.effect, "resource": a.resource}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             GroupCommands::RemovePermission(a) => {
                 let resp = client
@@ -164,7 +184,7 @@ impl GroupHandler {
                         a.group_id, a.permission_id
                     ))
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
         }
         Ok(())

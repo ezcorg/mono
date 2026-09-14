@@ -13,7 +13,7 @@ use crate::{
     db::{Db, Insert},
     plugins::capabilities::Capability,
     wasm::bindgen::{
-        PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
+        InputSchema, PluginManifest, UserInput, exports::witmproxy::plugin::witm_plugin::Tag,
         witmproxy::plugin::capabilities::Capability as WitCapability,
     },
 };
@@ -25,6 +25,8 @@ pub mod registry;
 
 #[cfg(test)]
 mod tenant_tests;
+
+pub mod inputs;
 
 #[cfg(test)]
 mod perf_tests;
@@ -49,6 +51,12 @@ pub struct WitmPlugin {
     pub metadata: HashMap<String, String>,
     // User-supplied configuration values passed to plugin on each event
     pub configuration: Vec<UserInput>,
+    /// The inputs the plugin's manifest declares, with types and defaults.
+    /// Populated when a plugin is loaded from its component (the manifest is
+    /// the only source); not persisted, so a plugin loaded from the database
+    /// has an empty schema until its component is instantiated again.
+    #[serde(default)]
+    pub input_schema: Vec<InputSchema>,
     // Compiled WASM component implementing the Plugin interface
     #[serde(skip)]
     pub component: Option<Component>,
@@ -305,6 +313,7 @@ impl From<PluginManifest> for WitmPlugin {
             publickey: manifest.publickey,
             enabled: true,
             configuration: vec![],
+            input_schema: manifest.configuration,
             component: None,
             component_bytes: vec![],
             metadata,

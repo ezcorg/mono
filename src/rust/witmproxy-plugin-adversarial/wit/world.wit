@@ -38,6 +38,11 @@ interface capabilities {
         now-seconds: async func() -> u64;
         /// Returns the current time as a Unix timestamp in milliseconds
         now-millis: async func() -> u64;
+        /// Returns the host's local time zone offset from UTC, in seconds
+        /// (east of UTC is positive). Combine with `now-seconds` to reason
+        /// about the user's local wall-clock time (working hours, day
+        /// boundaries) without shipping a time zone database in the guest.
+        utc-offset-seconds: async func() -> s32;
     }
 
     /// A capability provider, which only returns capabilities that have been granted by the user
@@ -68,7 +73,7 @@ interface capabilities {
         /// ```rs
         /// fn evaluate(request: CelRequest) -> bool { request.path() == "/example" } // for request events
         /// fn evaluate(response: CelResponse, request: CelRequest) -> bool { response.status() == 200 && request.path() == "/example" } // for response events
-        /// fn evaluate(content: CelContent) -> bool { content.content_type() == "text/html" } // for inbound-content events
+        /// fn evaluate(content: CelContent, request: CelRequest) -> bool { content.content_type() == "text/html" && request.host() == "example.com" } // for inbound-content events
         /// ```
         expression: string,
     }
@@ -159,6 +164,16 @@ interface capabilities {
     resource content {
         /// Returns the content type of the content, ex: "text/html; charset=utf-8"
         content-type: async func() -> string;
+
+        /// Returns the context of the request this content is a response to.
+        ///
+        /// Content is scoped by content type alone at the CEL layer (see
+        /// [CelContent]), which is not enough for a plugin that rewrites
+        /// pages for one site: it needs to know which host and path the
+        /// bytes came from, and to recognise (and leave alone) responses it
+        /// synthesised itself. The `request` variable is also bound in the
+        /// scope expression of `inbound-content` events for the same reason.
+        request-context: async func() -> request-context;
 
         /// Take the body, consuming this `content` and yielding both the byte
         /// stream and a fresh, body-less `content` that retains everything

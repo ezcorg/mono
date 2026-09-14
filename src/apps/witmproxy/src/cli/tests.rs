@@ -50,6 +50,7 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
         .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             source: wasm_path.clone(),
             public_key: None,
         }))
@@ -100,6 +101,7 @@ async fn test_witm_plugin_add_nonexistent_file() {
         .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             source: "/nonexistent/file.wasm".to_string(),
             public_key: None,
         }))
@@ -131,6 +133,7 @@ async fn test_witm_plugin_add_non_wasm_file() {
         .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             source: dummy_file.to_str().unwrap().to_string(),
             public_key: None,
         }))
@@ -161,6 +164,7 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
         .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             source: wasm_path.clone(),
             public_key: None,
         }))
@@ -185,6 +189,7 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
         .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             plugin_name: plugin_name.clone(),
         }))
         .await?;
@@ -216,6 +221,7 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
         .handle(&plugin::PluginCommands::Add(plugin::PluginAddArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             source: wasm_path.clone(),
             public_key: None,
         }))
@@ -240,6 +246,7 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
         .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             plugin_name: full_plugin_id.clone(),
         }))
         .await?;
@@ -268,6 +275,7 @@ async fn test_witm_plugin_remove_nonexistent() {
         .handle(&plugin::PluginCommands::Remove(plugin::PluginRemoveArgs {
             globals: Default::default(),
             config: Default::default(),
+            auth: Default::default(),
             plugin_name: "nonexistent_plugin".to_string(),
         }))
         .await;
@@ -397,5 +405,38 @@ async fn test_plugin_dir_non_wasm_files_ignored() -> Result<()> {
         "Should only load .wasm files, ignoring other extensions"
     );
 
+    Ok(())
+}
+
+#[test]
+fn admin_credentials_box_is_aligned_and_shows_the_password() {
+    let boxed = super::admin_credentials_box("admin@localhost", "s3cret-pa55word-xyz");
+    let widths: std::collections::HashSet<usize> =
+        boxed.lines().map(|l| l.chars().count()).collect();
+    assert_eq!(widths.len(), 1, "every line has the same width:\n{boxed}");
+    assert!(boxed.contains("Password: s3cret-pa55word-xyz"));
+    assert!(!boxed.contains("REDACTED"));
+}
+
+#[tokio::test]
+async fn set_password_replaces_the_stored_hash() -> Result<()> {
+    use crate::db::tenants::Tenant;
+    use crate::web::auth::{hash_password, verify_password};
+
+    let (db, _tmp) = crate::test_utils::create_db().await;
+    let old = hash_password("old-password").unwrap();
+    Tenant::create(&db.pool, "t1", "Admin", Some("admin@localhost"), Some(&old), None, None).await?;
+
+    super::auth::set_password_for_email(&db, "admin@localhost", "new-password").await?;
+
+    let tenant = Tenant::by_email(&db.pool, "admin@localhost").await?.unwrap();
+    let hash = tenant.password_hash.as_deref().unwrap();
+    assert!(verify_password("new-password", hash).unwrap());
+    assert!(!verify_password("old-password", hash).unwrap());
+
+    let err = super::auth::set_password_for_email(&db, "nobody@localhost", "x")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("No account"), "{err}");
     Ok(())
 }

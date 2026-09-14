@@ -470,6 +470,29 @@ impl ProxyServer {
 
 // --- Extracted helpers from run_tls_mitm ---
 
+/// Wraps a body that a guest may still be producing so the guest's store
+/// keeps running until the body has been consumed or dropped.
+///
+/// A `wasi:http` body the guest authored (a synthesised response, a rewritten
+/// request) is pulled through a pipe that only makes progress while the store
+/// is inside `run_concurrent`. Dropping the store right after `into_http`, as
+/// this path used to, ended the guest's writer with the body unread.
+fn keep_store_driven(
+    mut store: wasmtime::Store<crate::wasm::Host>,
+    body: http_body_util::combinators::UnsyncBoxBody<Bytes, ErrorCode>,
+) -> http_body_util::combinators::UnsyncBoxBody<Bytes, ErrorCode> {
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let body = crate::proxy::utils::BodyWithSignal::new(body, done_tx);
+    tokio::spawn(async move {
+        let _ = store
+            .run_concurrent(async move |_| {
+                let _ = done_rx.await;
+            })
+            .await;
+    });
+    body.boxed_unsync()
+}
+
 pub(crate) async fn perform_upstream(
     upstream: &reqwest::Client,
     req: reqwest::Request,
@@ -639,7 +662,7 @@ where
                                 }
                             };
                             request_ctx = CelRequest::from(&rq);
-                            let (rq, _io) = match rq.into_http(store, async { Ok(()) }) {
+                            let (rq, _io) = match rq.into_http(&mut store, async { Ok(()) }) {
                                 Ok(v) => v,
                                 Err(e) => {
                                     error!("Failed to convert plugin request to http: {}", e);
@@ -650,7 +673,12 @@ where
                                 }
                             };
 
-                            let rq = rq.map(|b| b.map_err(wasi_error_to_code).boxed_unsync());
+                            let rq = rq.map(|b| {
+                                keep_store_driven(
+                                    store,
+                                    b.map_err(wasi_error_to_code).boxed_unsync(),
+                                )
+                            });
                             let rq: Result<reqwest::Request, ProxyError> =
                                 convert_hyper_boxed_body_to_reqwest_request(rq, &upstream);
                             match rq {
@@ -672,10 +700,13 @@ where
                                     ));
                                 }
                             };
-                            match response.into_http(store, async { Ok(()) }) {
-                                Ok(response) => {
-                                    response.map(|b| b.map_err(wasi_error_to_code).boxed_unsync())
-                                }
+                            match response.into_http(&mut store, async { Ok(()) }) {
+                                Ok(response) => response.map(|b| {
+                                    keep_store_driven(
+                                        store,
+                                        b.map_err(wasi_error_to_code).boxed_unsync(),
+                                    )
+                                }),
                                 Err(e) => {
                                     error!("Failed to convert plugin response to http: {}", e);
                                     return Ok(plain_response(
@@ -705,7 +736,7 @@ where
                         initial_response,
                     );
                     let contextual_response = ContextualResponse {
-                        request: request_ctx.into(),
+                        request: request_ctx.clone().into(),
                         response,
                     };
                     registry.handle_event(Box::new(contextual_response)).await
@@ -776,7 +807,12 @@ where
                     };
                     let (parts, body) = response.into_parts();
                     let body = body.map_err(wasi_error_to_code).boxed_unsync();
-                    let content = match InboundContent::new(parts, content_type.clone(), body) {
+                    let content = match InboundContent::new(
+                        parts,
+                        content_type.clone(),
+                        body,
+                        request_ctx.into(),
+                    ) {
                         Ok(c) => c,
                         Err(e) => {
                             error!("Failed to build inbound content: {}", e);

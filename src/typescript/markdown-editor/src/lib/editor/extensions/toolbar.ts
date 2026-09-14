@@ -21,7 +21,12 @@ export type ToolbarMount =
 export interface ToolbarOptions {
     /** Virtual filesystem — enables file search and open. */
     fs?: VfsInterface
-    /** Search index for file search. */
+    /**
+     * Search index for file search. When omitted (but `fs` is set) one is
+     * loaded from / built into `.codeblock/index.json` on that filesystem in
+     * the background; browsing, opening, creating and renaming files work
+     * regardless of whether the index exists or loads.
+     */
     index?: SearchIndex
     /** Current file path displayed in the toolbar. */
     filepath?: string
@@ -171,7 +176,10 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                     // If no filesystem, don't render the toolbar
                     if (!fs) return { update() {}, destroy() {} }
 
-                    const core = new ToolbarCore({
+                    // The core reads `host.index` on every search, so the host
+                    // object can be handed an index that arrives later (see
+                    // below) without rebuilding the toolbar.
+                    const host = {
                         fs,
                         index,
                         filepath,
@@ -216,7 +224,19 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                             const persistence = (extension.editor.storage as any).persistence
                             return persistence?.options?.filepath ?? extension.options.filepath ?? null
                         },
-                    } satisfies ToolbarHost)
+                    } satisfies ToolbarHost
+                    const core = new ToolbarCore(host)
+
+                    // No index supplied → load/build one in the background.
+                    // `SearchIndex.get` never rejects (a missing, unreadable, or
+                    // corrupt index degrades to an empty one), so the toolbar's
+                    // browse/open/create paths are never gated on it.
+                    let disposed = false
+                    if (!index) {
+                        SearchIndex.get(fs, '.codeblock/index.json').then((built) => {
+                            if (!disposed) host.index = built
+                        })
+                    }
 
                     // Tag the toolbar so the rich-text editor's default styles
                     // apply, plus any consumer-provided class for theming.
@@ -292,6 +312,7 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                     return {
                         update() { /* ToolbarCore is event-driven */ },
                         destroy() {
+                            disposed = true
                             cleanups.forEach((c) => c())
                             core.destroy()
                             core.dom.remove()

@@ -1,0 +1,146 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>noshorts agent</title>
+<style>html,body{margin:0;background:transparent;font:12px system-ui,sans-serif;color:#888}</style>
+<p id="standalone" hidden>This is the witmproxy/noshorts agent. It only does something when loaded inside a YouTube page.</p>
+<script>
+(() => {
+  const cfg = {{CONFIG}};
+  const P = window.parent;
+  if (!P || P === window || !window.frameElement) {
+    document.getElementById('standalone').hidden = false;
+    return;
+  }
+  let doc;
+  try { doc = P.document; } catch (_) { return; } // cross-origin: not our page
+  const frame = window.frameElement;
+
+  // --- activity -----------------------------------------------------------
+  let lastInput = Date.now();
+  for (const t of ['mousemove', 'mousedown', 'keydown', 'wheel', 'scroll', 'pointerdown', 'touchstart']) {
+    doc.addEventListener(t, () => { lastInput = Date.now(); }, { passive: true, capture: true });
+  }
+  const playing = () => {
+    for (const v of doc.querySelectorAll('video')) {
+      if (!v.paused && !v.ended && v.readyState > 2) return true;
+    }
+    return false;
+  };
+  const active = () => {
+    if (playing()) return true;
+    if (doc.visibilityState !== 'visible') return false;
+    if (Date.now() - lastInput > cfg.idleMs) return false;
+    return true;
+  };
+
+  // --- blocking -----------------------------------------------------------
+  let engaged = false;
+  const pauseAll = () => {
+    for (const v of doc.querySelectorAll('video')) { try { v.pause(); v.muted = true; } catch (_) {} }
+  };
+  const engage = (reason) => {
+    if (engaged) return;
+    engaged = true;
+    pauseAll();
+    const s = frame.style;
+    s.setProperty('position', 'fixed', 'important');
+    s.setProperty('inset', '0', 'important');
+    s.setProperty('width', '100vw', 'important');
+    s.setProperty('height', '100vh', 'important');
+    s.setProperty('opacity', '1', 'important');
+    s.setProperty('pointer-events', 'auto', 'important');
+    s.setProperty('z-index', '2147483647', 'important');
+    s.setProperty('border', '0', 'important');
+    s.setProperty('background', '#fff', 'important');
+    frame.removeAttribute('aria-hidden');
+    doc.documentElement.style.setProperty('overflow', 'hidden', 'important');
+    location.replace(cfg.prefix + 'blocked?reason=' + encodeURIComponent(reason) + '&embedded=1');
+  };
+
+  // --- heartbeat ----------------------------------------------------------
+  let lastTick = Date.now();
+  const tick = async () => {
+    const now = Date.now();
+    const dt = Math.max(0, Math.round((now - lastTick) / 1000));
+    lastTick = now;
+    const a = active() ? 1 : 0;
+    let r;
+    try {
+      r = await fetch(cfg.prefix + 'tick?active=' + a + '&dt=' + dt, { cache: 'no-store', credentials: 'omit' });
+    } catch (_) { return; }
+    if (!r.ok) return;
+    let j;
+    try { j = await r.json(); } catch (_) { return; }
+    if (j && j.blocked && j.reason) engage(j.reason);
+  };
+
+  // --- shorts guard (client-side routing never hits the proxy) ------------
+  const guardShorts = () => {
+    if (!cfg.blockShorts) return;
+    const p = P.location.pathname;
+    if (p === '/shorts' || p.startsWith('/shorts/')) {
+      pauseAll();
+      P.location.replace(cfg.prefix + 'blocked?reason=shorts');
+    }
+  };
+
+  // --- clickbait scan -----------------------------------------------------
+  const titleOf = (el) => {
+    const t = el.querySelector(cfg.titleSelector);
+    if (!t) return '';
+    return (t.getAttribute('title') || t.textContent || '').trim();
+  };
+  let scanning = false;
+  const scan = async () => {
+    if (!cfg.filterEnabled || scanning) return;
+    const batch = [];
+    const els = [];
+    for (const el of doc.querySelectorAll(cfg.itemSelector)) {
+      const title = titleOf(el);
+      if (!title || el.dataset.witmTitle === title) continue;
+      el.dataset.witmTitle = title;
+      batch.push({ id: String(els.length), title });
+      els.push(el);
+      if (batch.length >= 40) break;
+    }
+    if (!batch.length) return;
+    scanning = true;
+    try {
+      const r = await fetch(cfg.prefix + 'score', {
+        method: 'POST', cache: 'no-store', credentials: 'omit',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ items: batch }),
+      });
+      if (!r.ok) return;
+      const j = await r.json();
+      for (const it of (j.items || [])) {
+        const el = els[Number(it.id)];
+        if (!el) continue;
+        if (it.hide) {
+          el.style.setProperty('display', 'none', 'important');
+          el.dataset.witmHidden = (it.reasons || []).join(', ');
+        } else if (el.dataset.witmHidden) {
+          el.style.removeProperty('display');
+          delete el.dataset.witmHidden;
+        }
+      }
+    } catch (_) {
+    } finally {
+      scanning = false;
+      // Items that arrived while a batch was in flight.
+      if (doc.querySelector(cfg.itemSelector + ':not([data-witm-title])')) schedule();
+    }
+  };
+  let timer = 0;
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(scan, 600); };
+  if (cfg.filterEnabled) {
+    new MutationObserver(schedule).observe(doc.documentElement, { childList: true, subtree: true, characterData: true });
+    schedule();
+  }
+
+  setInterval(tick, cfg.heartbeatMs);
+  setInterval(guardShorts, 400);
+  guardShorts();
+  tick();
+})();
+</script>

@@ -634,6 +634,14 @@ impl ClockClient {
             .try_into()
             .unwrap_or(u64::MAX)
     }
+
+    /// The host's local time zone offset from UTC in seconds, positive east
+    /// of UTC. Exposed so guests can reason about the user's wall-clock time
+    /// (working hours, day boundaries) without a time zone database.
+    pub fn utc_offset_seconds(&self) -> i32 {
+        use chrono::Offset;
+        chrono::Local::now().offset().fix().local_minus_utc()
+    }
 }
 
 impl Default for ClockClient {
@@ -789,6 +797,18 @@ impl<T> HostContentWithStore<T> for WitmProxy {
             Ok::<String, wasmtime::component::ResourceTableError>(content.content_type())
         })?;
         Ok(content_type)
+    }
+
+    async fn request_context(
+        accessor: &Accessor<T, Self>,
+        self_: wasmtime::component::Resource<InboundContent>,
+    ) -> wasmtime::Result<bindgen::witmproxy::plugin::capabilities::RequestContext> {
+        let request = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let content = state.table.get(&self_)?;
+            Ok::<_, wasmtime::component::ResourceTableError>(content.request_context())
+        })?;
+        Ok(request)
     }
 
     /// Take the body, consuming the old handle and returning a fresh,
@@ -1151,6 +1171,18 @@ impl<T> HostClockClientWithStore<T> for WitmProxy {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let client = state.table.get(&self_)?;
             Ok::<u64, wasmtime::component::ResourceTableError>(client.now_millis())
+        })?;
+        Ok(result)
+    }
+
+    async fn utc_offset_seconds(
+        accessor: &Accessor<T, Self>,
+        self_: Resource<ClockClient>,
+    ) -> wasmtime::Result<i32> {
+        let result = accessor.with(|mut access| {
+            let state: &mut WitmProxyCtxView = &mut access.get();
+            let client = state.table.get(&self_)?;
+            Ok::<i32, wasmtime::component::ResourceTableError>(client.utc_offset_seconds())
         })?;
         Ok(result)
     }

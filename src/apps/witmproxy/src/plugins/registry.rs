@@ -350,14 +350,24 @@ impl PluginRegistry {
     }
 
     pub async fn register_plugin(&self, plugin: WitmPlugin) -> Result<()> {
+        // Compile the scope expressions as they are now. A caller may have
+        // edited a scope after `plugin_from_component` compiled the
+        // manifest's version; without this the stale program would keep
+        // deciding which events the plugin sees.
+        let plugin = plugin.compile_capability_scope_expressions(self.env)?;
         // Upsert the given plugin into the database (`Insert` takes `&mut Db`
         // but only needs the Clone pool).
         let mut db = self.db.clone();
         plugin.insert(&mut db).await?;
+        let plugin_id = plugin.id();
         // Add it to the registry
         self.mutate_plugins(|map| {
-            map.insert(plugin.id(), Arc::new(plugin));
+            map.insert(plugin_id.clone(), Arc::new(plugin));
         });
+        // An upsert replaces the component, so the cached resolution of the
+        // previous one must go with it: otherwise events keep instantiating
+        // the old code until the daemon restarts.
+        Self::lock_cache(&self.instance_pre_cache).remove(&plugin_id);
         Ok(())
     }
 
@@ -518,7 +528,17 @@ impl PluginRegistry {
             //
             // Wasmtime 43 kept these tasks alive across the boundary without
             // being asked; 48 does not.
-            future::poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
+            //
+            // Only for content and timer events, though. A `wasi:http` body a
+            // guest streams itself (a synthesised response, say) is pulled
+            // through a one-slot channel that `into_http` installs later and
+            // that only moves while the store is driven, so its writer task
+            // cannot finish here: waiting for it would block until the
+            // timeout. The proxy keeps the store running while the client
+            // consumes such a body instead.
+            if matches!(kind, EventKind::InboundContent | EventKind::Timer) {
+                future::poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
+            }
 
             Ok::<GuestReturn, anyhow::Error>(result)
         });
@@ -973,6 +993,7 @@ mod tests {
             publickey: vec![],
             capabilities,
             configuration: vec![],
+            input_schema: vec![],
             metadata: std::collections::HashMap::new(),
             component,
         }
@@ -1158,6 +1179,7 @@ mod tests {
             publickey: vec![],
             capabilities,
             configuration: vec![],
+            input_schema: vec![],
             metadata: std::collections::HashMap::new(),
             component,
         };
@@ -1245,6 +1267,7 @@ mod tests {
             publickey: vec![],
             capabilities,
             configuration: vec![],
+            input_schema: vec![],
             metadata: std::collections::HashMap::new(),
             component,
         }
@@ -1375,6 +1398,7 @@ mod tests {
                 publickey: vec![],
                 capabilities,
                 configuration: vec![],
+                input_schema: vec![],
                 metadata: std::collections::HashMap::new(),
                 component,
             };

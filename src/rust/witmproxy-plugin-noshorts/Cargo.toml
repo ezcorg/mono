@@ -1,29 +1,31 @@
 [package]
 name = "witmproxy-plugin-noshorts"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 authors = ["Theodore Brockman"]
-description = "Blocks YouTube and Instagram shorts"
+description = "YouTube with the compulsive parts removed: no Shorts, no access during working hours, a daily time budget, and a first pass at filtering clickbait"
+license = "AGPL-3.0-only"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wit-bindgen = { version = "0.61.1", features = ["async-spawn"] }
-flate2 = "1.0"
-brotli = "8.0.2"
-anyhow = "1.0.100"
 lol_html = "2.7.0"
 encoding_rs = "0.8.35"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+form_urlencoded = "1.2"
 
 [dev-dependencies]
 witmproxy = { path = "../../apps/witmproxy", features = ["test-helpers"] }
 tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
+anyhow = "1.0"
+chrono = "0.4"
+tempfile = "3"
 
 [package.metadata.component]
 package = "witmproxy:witmproxy-plugin-noshorts-plugin"
-
-[package.metadata.component.dependencies]
-
-[package.metadata.component.target.dependencies]

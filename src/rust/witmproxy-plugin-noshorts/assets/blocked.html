@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{TITLE}}</title>
+<style>
+  :root { color-scheme: light dark; --ink: #1d1d1b; --paper: #f7f6f2; --muted: #6b6a66; --rule: #d9d7d0; --accent: #b33f2a; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #ecebe6; --paper: #161615; --muted: #9b9a95; --rule: #333330; --accent: #e0664d; } }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { font: 17px/1.55 ui-serif, Georgia, "Times New Roman", serif; padding: clamp(24px, 8vh, 96px) 24px; }
+  main { max-width: 38rem; margin: 0 auto; }
+  .tag { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.1; margin: .5rem 0 1.25rem; font-weight: 600; letter-spacing: -.01em; }
+  p { margin: 0 0 1rem; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1.25rem; margin: 1.5rem 0; padding: 1rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font-size: 15px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+  section.off { margin-top: 2.5rem; font-size: 15px; color: var(--muted); }
+  section.off h2 { font-size: 15px; font-weight: 600; color: var(--ink); margin: 0 0 .5rem; }
+  footer { margin-top: 3rem; font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <div class="tag">Blocked by witmproxy &middot; noshorts</div>
+  <h1>{{TITLE}}</h1>
+  <p>{{EXPLANATION}}</p>
+  <dl>{{ROWS}}</dl>
+  <p>{{SUGGESTION}}</p>
+  <section class="off">
+    <h2>How to turn this off</h2>
+    <p>This page comes from a plugin called <em>noshorts</em>, running inside the witmproxy service on this computer. There is no button for it here, and the plugin has no settings page.</p>
+    <p>If you still want to change it, you will need to open a terminal, use the proxy's own command-line tool to list the plugins it has installed, and then either remove this one or change one of its configuration values by name (the daily budget in minutes, the working-hours window, the days it applies to, or whether Shorts are blocked). The tool prints the setting names if you ask it to describe the plugin. Nothing takes effect until the service has been restarted, which is a separate command.</p>
+    <p>None of those commands are written on this page on purpose. If you cannot remember them, that is probably a sign to do the thing you were going to do instead.</p>
+  </section>
+  <footer>reason={{CODE}} &middot; {{WHEN}}</footer>
+</main>
+{{EMBEDDED_SCRIPT}}
+</body>
+</html>

@@ -10,7 +10,7 @@ use service_manager::{
 };
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[cfg(target_os = "macos")]
 use service_manager::LaunchdServiceManager;
@@ -585,17 +585,66 @@ impl ServiceHandler {
         Ok(())
     }
 
+    /// How long to give the daemon to exit after a stop request.
+    const STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+    /// How long to give the daemon to come up and answer `/api/health`.
+    const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
+    /// Poll the service manager until it no longer reports the service as
+    /// running. `false` if it is still running when the timeout elapses.
+    async fn wait_for_stop(&self) -> bool {
+        let deadline = std::time::Instant::now() + Self::STOP_TIMEOUT;
+        loop {
+            if !matches!(self.query_service_status(), Some(ServiceStatus::Running)) {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+
+    /// Poll `/api/health` (through whatever address the daemon has written to
+    /// `services.json`) until it answers. `false` on timeout.
+    async fn wait_for_health(&self) -> bool {
+        let deadline = std::time::Instant::now() + Self::START_TIMEOUT;
+        loop {
+            if self.probe_health().await == Some(true) {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Ask the manager to start the service and wait until it is healthy.
+    ///
+    /// The manager handle is not `Send`, so it is created and dropped before
+    /// the first await: this future runs inside `tokio::spawn` for auto-update
+    /// restarts.
+    async fn start_and_wait(&self, label: ServiceLabel) -> Result<()> {
+        Self::get_manager()?
+            .start(ServiceStartCtx { label })
+            .context("Failed to start service")?;
+        if self.wait_for_health().await {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "The service was started but did not become healthy within {}s. \
+             Check `witm service status` and `witm service logs`.",
+            Self::START_TIMEOUT.as_secs()
+        )
+    }
+
     /// Start the service
     pub async fn start_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
         Self::ensure_root()?;
 
-        let manager = Self::get_manager()?;
-        let label = Self::service_label();
-
-        manager
-            .start(ServiceStartCtx { label })
-            .context("Failed to start service")?;
+        self.start_and_wait(Self::service_label()).await?;
 
         println!("✓ Service started.");
         println!("  To view logs: witm service logs -f");
@@ -608,12 +657,17 @@ impl ServiceHandler {
         #[cfg(target_os = "linux")]
         Self::ensure_root()?;
 
-        let manager = Self::get_manager()?;
-        let label = Self::service_label();
-
-        manager
-            .stop(ServiceStopCtx { label })
+        Self::get_manager()?
+            .stop(ServiceStopCtx {
+                label: Self::service_label(),
+            })
             .context("Failed to stop service")?;
+        if !self.wait_for_stop().await {
+            anyhow::bail!(
+                "The service was asked to stop but is still running after {}s.",
+                Self::STOP_TIMEOUT.as_secs()
+            );
+        }
 
         println!("✓ Service stopped.");
 
@@ -621,21 +675,34 @@ impl ServiceHandler {
     }
 
     /// Restart the service
+    ///
+    /// A stop request only asks the daemon to shut down; it exits a moment
+    /// later. Starting again before that happens is a no-op for launchd and
+    /// systemd (the job is still "running"), and once the old process exits
+    /// nothing brings it back. So: stop, wait for the exit, then start and
+    /// wait for the new process to answer.
     pub async fn restart_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
         Self::ensure_root()?;
 
-        let manager = Self::get_manager()?;
         let label = Self::service_label();
 
-        // Stop then start
-        let _ = manager.stop(ServiceStopCtx {
-            label: label.clone(),
-        });
+        let was_running = matches!(self.query_service_status(), Some(ServiceStatus::Running));
+        if was_running {
+            Self::get_manager()?
+                .stop(ServiceStopCtx {
+                    label: label.clone(),
+                })
+                .context("Failed to stop service")?;
+            if !self.wait_for_stop().await {
+                warn!(
+                    "The service is still running after {}s; starting anyway",
+                    Self::STOP_TIMEOUT.as_secs()
+                );
+            }
+        }
 
-        manager
-            .start(ServiceStartCtx { label })
-            .context("Failed to start service")?;
+        self.start_and_wait(label).await?;
 
         println!("✓ Service restarted.");
 

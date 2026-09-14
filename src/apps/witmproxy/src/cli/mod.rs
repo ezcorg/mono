@@ -124,7 +124,8 @@ pub struct ResolvedCli {
 /// themselves — their LEAVES hold the config subset (each leaf variant is
 /// renamed "config" and reads the mirror of `[config]` that
 /// `mirror_config_for_nested_commands` places under the dispatcher's doc
-/// key). `auth`/`tenant`/`group` leaves take no config at all.
+/// key). `tenant`/`group` leaves take no config at all; of the `auth` leaves
+/// only `set-password` does (it edits the local database directly).
 #[derive(Subcommands)]
 #[conf(serde)]
 enum Command {
@@ -161,7 +162,6 @@ enum Command {
     #[conf(serde(rename = "config"))]
     Logs(LogsArgs),
     /// Authentication commands (for remote management)
-    #[conf(serde(skip))]
     Auth(AuthArgs),
     /// Tenant management commands (remote)
     #[conf(serde(skip))]
@@ -467,7 +467,7 @@ type UpdateCheckHandle = tokio::task::JoinHandle<
 /// Mirror the file's `[config]` table at each of those paths so every leaf
 /// sees the same section the root-level commands read.
 fn mirror_config_for_nested_commands(mut doc: toml::Value) -> toml::Value {
-    const DISPATCHER_COMMANDS: &[&str] = &["service", "plugin", "ca", "proxy"];
+    const DISPATCHER_COMMANDS: &[&str] = &["service", "plugin", "ca", "proxy", "auth"];
     let Some(config) = doc.get("config").cloned() else {
         return doc;
     };
@@ -657,14 +657,30 @@ pub(crate) async fn provision(
 /// from interactive contexts (foreground `witm run`, `witm service install`,
 /// and therefore `witm start`) where stdout reaches the user.
 pub(crate) fn print_admin_credentials(email: &str, password: &crate::config::Secret) {
-    println!("\n╔══════════════════════════════════════════╗");
-    println!("║  Default admin account created           ║");
-    println!("║  Email: {email:<36} ║");
-    println!("║  Password: {password:<33?} ║");
-    println!("║                                          ║");
-    println!("║  Save this password - it won't be        ║");
-    println!("║  shown again.                            ║");
-    println!("╚══════════════════════════════════════════╝\n");
+    print!("\n{}\n", admin_credentials_box(email, password.expose()));
+}
+
+/// A boxed notice sized to its contents. The secret's `Debug`/`Display` are
+/// redacted on purpose; this is the one place the generated password is
+/// meant to reach a human, so the caller exposes it.
+pub(crate) fn admin_credentials_box(email: &str, password: &str) -> String {
+    let lines = [
+        "Default admin account created".to_string(),
+        format!("Email: {email}"),
+        format!("Password: {password}"),
+        String::new(),
+        "Save this password - it won't be".to_string(),
+        "shown again.".to_string(),
+    ];
+    let width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) + 4;
+    let rule = "═".repeat(width);
+    let mut out = format!("╔{rule}╗\n");
+    for line in &lines {
+        let pad = width - 2 - line.chars().count();
+        out.push_str(&format!("║  {line}{}║\n", " ".repeat(pad)));
+    }
+    out.push_str(&format!("╚{rule}╝"));
+    out
 }
 
 /// The default config file path for this platform.

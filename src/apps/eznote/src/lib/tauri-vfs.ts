@@ -7,9 +7,12 @@
  * `@tauri-apps/plugin-fs`, so notes live as real files on the host disk under
  * `~/Documents/eznote/`.
  *
- * Paths handed to the editor are bare note names (e.g. `Untitled-….md`); the
- * adapter resolves them against the notes directory. Absolute paths pass
- * through unchanged.
+ * Every path the editor hands over — bare note names (`Untitled-….md`),
+ * `.`/empty, or a rooted path like `/` or `/.codeblock/index.json` — is
+ * resolved *inside* the notes directory. The editor's file browser and search
+ * indexer treat `/` as the root of the workspace, so a leading slash means
+ * "the notes dir", never the host filesystem root (which the Tauri fs scope
+ * would refuse anyway).
  */
 import {
     readTextFile,
@@ -62,12 +65,14 @@ const basename = (p: string): string => p.split(/[\\/]/).pop() ?? p
 
 /** Create a host-filesystem VFS rooted at the absolute directory `base`. */
 export function createTauriVfs(base: string): HostVfs {
-    // Bare names → joined onto the notes dir; `.`/empty → the dir itself;
-    // already-absolute paths pass through.
+    // Everything resolves under `base`: strip any leading `/` or `./`
+    // segments (the editor's VFS convention roots the workspace at `/`), and
+    // `.`/empty means the dir itself. A caller that already has the absolute
+    // notes-dir path is left alone.
     const resolve = (p: string): string => {
-        if (!p || p === '.') return base
-        if (p.startsWith('/')) return p
-        return `${base}/${p}`
+        if (p.startsWith(base)) return p
+        const rel = p.replace(/^(?:\.?\/)+/, '').replace(/^\.$/, '')
+        return rel ? `${base}/${rel}` : base
     }
 
     return {

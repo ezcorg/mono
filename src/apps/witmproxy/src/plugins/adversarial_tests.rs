@@ -42,6 +42,19 @@ use crate::wasm::{LocalStorageClient, Logger, body_chunk_admitted};
 // inside `max_memory_mb`.
 // ---------------------------------------------------------------------------
 
+/// A minimal request context for content fixtures that are not answering any
+/// real request.
+fn test_request_context() -> crate::wasm::bindgen::witmproxy::plugin::capabilities::RequestContext {
+    crate::wasm::bindgen::witmproxy::plugin::capabilities::RequestContext {
+        scheme: "https".to_string(),
+        host: "127.0.0.1".to_string(),
+        path: "/".to_string(),
+        query: vec![],
+        method: "GET".to_string(),
+        headers: vec![],
+    }
+}
+
 fn storage_with(max_bytes: u64, max_keys: u64) -> (LocalStorageClient, Arc<BreachRecorder>) {
     let limits = ResolvedLimits {
         max_local_storage_bytes: max_bytes,
@@ -267,6 +280,7 @@ async fn register_adversarial_for(
             cap(CapabilityKind::HandleEvent(event_kind)),
         ],
         metadata: std::collections::HashMap::new(),
+        input_schema: vec![],
         configuration: vec![UserInput {
             name: "mode".into(),
             value: ActualInput::Str(mode.into()),
@@ -553,7 +567,7 @@ async fn body_bomb_is_contained() -> Result<()> {
     let body = http_body_util::Full::new(Bytes::from_static(b"<html>original</html>"))
         .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
-    let content = InboundContent::new(parts, "text/html".to_string(), body)?;
+    let content = InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
 
     let event: Box<dyn Event> = Box::new(content);
     assert_plugin_will_run(&registry, &*event);
@@ -682,7 +696,7 @@ async fn fail_open_recovers_after_partial_body_consumption() -> Result<()> {
     let body = http_body_util::Full::new(Bytes::from_static(b"<html>original</html>"))
         .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
-    let content = InboundContent::new(parts, "text/html".to_string(), body)?;
+    let content = InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
 
     let event: Box<dyn Event> = Box::new(content);
     assert_plugin_will_run(&registry, &*event);
@@ -721,7 +735,7 @@ async fn fail_open_gives_up_past_the_recovery_budget() -> Result<()> {
     let body = http_body_util::Full::new(Bytes::from(vec![b'x'; 8192]))
         .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
-    let content = InboundContent::new(parts, "text/html".to_string(), body)?;
+    let content = InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
 
     let event: Box<dyn Event> = Box::new(content);
     assert_plugin_will_run(&registry, &*event);

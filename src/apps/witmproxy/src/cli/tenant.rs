@@ -2,13 +2,13 @@ use anyhow::Result;
 use conf::{Conf, Subcommands};
 
 use super::GlobalArgs;
-use crate::cli::api_client::ApiClient;
+use crate::cli::api_client::{ApiClient, DaemonArgs, DaemonAuthArgs, LocalDaemon};
 
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum TenantCommands {
     /// List all tenants
-    List(GlobalArgs),
+    List(DaemonArgs),
     /// Create a new tenant
     Create(TenantCreateArgs),
     /// Enable a tenant
@@ -30,6 +30,8 @@ pub enum TenantCommands {
 pub struct TenantCreateArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Display name
     #[arg(pos)]
@@ -44,6 +46,8 @@ pub struct TenantCreateArgs {
 pub struct TenantIdArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Tenant ID
     #[arg(pos)]
@@ -55,6 +59,8 @@ pub struct TenantIdArgs {
 pub struct TenantMapIpArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Tenant ID
     #[arg(pos)]
@@ -69,6 +75,8 @@ pub struct TenantMapIpArgs {
 pub struct TenantPluginArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Tenant ID
     #[arg(pos)]
@@ -83,6 +91,8 @@ pub struct TenantPluginArgs {
 pub struct TenantSetConfigArgs {
     #[conf(flatten)]
     pub globals: GlobalArgs,
+    #[conf(flatten)]
+    pub auth: DaemonAuthArgs,
 
     /// Tenant ID
     #[arg(pos)]
@@ -98,12 +108,23 @@ pub struct TenantSetConfigArgs {
 impl TenantCommands {
     pub(crate) fn globals(&self) -> &GlobalArgs {
         match self {
-            TenantCommands::List(g) => g,
+            TenantCommands::List(a) => &a.globals,
             TenantCommands::Create(a) => &a.globals,
             TenantCommands::Enable(a) | TenantCommands::Disable(a) => &a.globals,
             TenantCommands::MapIp(a) => &a.globals,
             TenantCommands::EnablePlugin(a) | TenantCommands::DisablePlugin(a) => &a.globals,
             TenantCommands::SetPluginConfig(a) => &a.globals,
+        }
+    }
+
+    pub(crate) fn auth(&self) -> &DaemonAuthArgs {
+        match self {
+            TenantCommands::List(a) => &a.auth,
+            TenantCommands::Create(a) => &a.auth,
+            TenantCommands::Enable(a) | TenantCommands::Disable(a) => &a.auth,
+            TenantCommands::MapIp(a) => &a.auth,
+            TenantCommands::EnablePlugin(a) | TenantCommands::DisablePlugin(a) => &a.auth,
+            TenantCommands::SetPluginConfig(a) => &a.auth,
         }
     }
 }
@@ -112,13 +133,12 @@ pub struct TenantHandler;
 
 impl TenantHandler {
     pub async fn handle(&self, command: &TenantCommands) -> Result<()> {
-        let client = ApiClient::from_auth_store()?
-            .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run 'witm auth login' first."))?;
+        let client = ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
 
         match command {
             TenantCommands::List(_) => {
                 let resp = client.get("/api/manage/tenants").await?;
-                let body = resp.text().await?;
+                let body = client.body(resp).await?;
                 println!("{}", body);
             }
             TenantCommands::Create(a) => {
@@ -142,7 +162,7 @@ impl TenantHandler {
                         }),
                     )
                     .await?;
-                let text = resp.text().await?;
+                let text = client.body(resp).await?;
                 println!("{}", text);
             }
             TenantCommands::Enable(a) => {
@@ -152,7 +172,7 @@ impl TenantHandler {
                         &serde_json::json!({"enabled": true}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             TenantCommands::Disable(a) => {
                 let resp = client
@@ -161,7 +181,7 @@ impl TenantHandler {
                         &serde_json::json!({"enabled": false}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             TenantCommands::MapIp(a) => {
                 let resp = client
@@ -170,7 +190,7 @@ impl TenantHandler {
                         &serde_json::json!({"ip_address": a.ip}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             TenantCommands::EnablePlugin(a) => {
                 let (ns, name) = parse_plugin_id(&a.plugin)?;
@@ -183,7 +203,7 @@ impl TenantHandler {
                         &serde_json::json!({"enabled": true}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             TenantCommands::DisablePlugin(a) => {
                 let (ns, name) = parse_plugin_id(&a.plugin)?;
@@ -196,7 +216,7 @@ impl TenantHandler {
                         &serde_json::json!({"enabled": false}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
             TenantCommands::SetPluginConfig(a) => {
                 let (ns, name) = parse_plugin_id(&a.plugin)?;
@@ -211,7 +231,7 @@ impl TenantHandler {
                         &serde_json::json!({"config": config}),
                     )
                     .await?;
-                println!("{}", resp.text().await?);
+                println!("{}", client.body(resp).await?);
             }
         }
         Ok(())

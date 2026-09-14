@@ -175,14 +175,14 @@ async fn e2e_plugin_body_streaming_subtask() -> Result<()> {
 
     // Verify the noshorts plugin injected its styles via the body-streaming subtask
     assert!(
-        response_text.contains(r#"a[href*="shorts"]"#),
-        "Expected noshorts CSS selector to be injected. Response was: '{}'",
+        response_text.contains(r#"id="witm-noshorts-css""#),
+        "Expected noshorts CSS to be injected. Response was: '{}'",
         response_text
     );
 
     assert!(
-        response_text.contains("<style>"),
-        "Expected <style> tag injected by noshorts plugin. Response was: '{}'",
+        response_text.contains(r#"id="witm-noshorts-agent""#),
+        "Expected the agent frame injected by noshorts plugin. Response was: '{}'",
         response_text
     );
 
@@ -254,7 +254,7 @@ async fn large_body_through_content_plugin_is_not_truncated() -> anyhow::Result<
         expected_min
     );
     assert!(
-        text.contains(r#"a[href*="shorts"]"#),
+        text.contains(r#"id="witm-noshorts-css""#),
         "noshorts CSS was not injected into a large page"
     );
     Ok(())

@@ -11,10 +11,13 @@ use crate::http::utils::ContentEncoding;
 use crate::http::utils::Encoded;
 use crate::{
     events::Event,
-    plugins::cel::{CelContent, CelTime},
+    plugins::cel::{CelContent, CelRequest, CelTime},
     wasm::{
         Host,
-        bindgen::{Event as WasmEvent, witmproxy::plugin::capabilities::EventKind},
+        bindgen::{
+            Event as WasmEvent,
+            witmproxy::plugin::capabilities::{EventKind, RequestContext},
+        },
     },
 };
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
@@ -22,6 +25,11 @@ use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 pub struct InboundContent {
     parts: Parts,
     content_type: String,
+    /// The request this content answers. Content is otherwise anonymous
+    /// bytes plus a content type, which is not enough for a plugin that
+    /// rewrites one site's pages (it has to know the host) or that must
+    /// leave its own synthesised responses alone (it has to know the path).
+    request: RequestContext,
     body: Option<UnsyncBoxBody<Bytes, ErrorCode>>,
     /// True when the body was left in its original wire form because its
     /// `Content-Encoding` is unsupported and could not be decompressed. In this
@@ -59,6 +67,7 @@ impl Event for InboundContent {
         let version = self.parts.version;
         let headers = self.parts.headers.clone();
         let content_type = self.content_type.clone();
+        let request = self.request.clone();
 
         let (teed, recording) = TeeBody::wrap(body, limit, breaches);
         self.body = Some(teed);
@@ -68,6 +77,7 @@ impl Event for InboundContent {
             version,
             headers,
             content_type,
+            request,
             recording,
         };
         Ok((self.into_event_data(store)?, Some(shadow)))
@@ -90,6 +100,10 @@ impl Event for InboundContent {
         activation
             .bind_variable("content", CelContent::from(self))
             .ok()
+            .and_then(|a| {
+                a.bind_variable("request", CelRequest::from(&self.request))
+                    .ok()
+            })
             .and_then(|a| a.bind_variable("time", CelTime::now()).ok())
     }
 }
@@ -107,6 +121,7 @@ impl InboundContent {
         parts: Parts,
         content_type: String,
         body: UnsyncBoxBody<Bytes, ErrorCode>,
+        request: RequestContext,
     ) -> Result<Self> {
         // If the Content-Encoding is unrecognized we can't safely decompress the
         // body. Rather than erroring (which would tear down the connection), fall
@@ -117,6 +132,7 @@ impl InboundContent {
             return Ok(Self {
                 parts,
                 content_type,
+                request,
                 body: Some(body),
                 passthrough: true,
             });
@@ -127,6 +143,7 @@ impl InboundContent {
         Ok(Self {
             parts,
             content_type,
+            request,
             body: Some(body),
             passthrough: false,
         })
@@ -269,10 +286,12 @@ impl InboundContent {
         parts: Parts,
         content_type: String,
         body: UnsyncBoxBody<Bytes, ErrorCode>,
+        request: RequestContext,
     ) -> Self {
         Self {
             parts,
             content_type,
+            request,
             body: Some(body),
             passthrough: false,
         }
@@ -280,6 +299,11 @@ impl InboundContent {
 
     pub fn content_type(&self) -> String {
         self.content_type.clone()
+    }
+
+    /// The request this content is a response to.
+    pub fn request_context(&self) -> RequestContext {
+        self.request.clone()
     }
 
     /// Whether this content is being passed through untouched because its
@@ -325,6 +349,17 @@ impl InboundContent {
 mod tests {
     use super::*;
     use bytes::Bytes;
+
+    fn test_request() -> RequestContext {
+        RequestContext {
+            scheme: "https".to_string(),
+            host: "127.0.0.1".to_string(),
+            path: "/".to_string(),
+            query: vec![],
+            method: "GET".to_string(),
+            headers: vec![],
+        }
+    }
     use http_body_util::{BodyExt, Full};
     use hyper::header::CONTENT_ENCODING;
     use salvo::http::response::Parts;
@@ -737,7 +772,7 @@ mod tests {
 
     //     // Create InboundContent with the pre-compressed body (simulating receiving from server)
     //     let body = create_body(&manually_compressed);
-    //     let mut content = InboundContent::new(parts, "text/html".to_string(), body)
+    //     let mut content = InboundContent::new(parts, "text/html".to_string(), body, test_request())
     //         .expect("InboundContent::new should succeed");
 
     //     // Take the body (it should be decompressed)
@@ -815,7 +850,7 @@ mod tests {
         };
 
         let body = create_body(&manually_compressed);
-        let mut content = InboundContent::new(parts, "text/html".to_string(), body)
+        let mut content = InboundContent::new(parts, "text/html".to_string(), body, test_request())
             .expect("InboundContent::new should succeed");
 
         let decompressed_body = content
@@ -878,7 +913,7 @@ mod tests {
         };
 
         let body = create_body(&manually_compressed);
-        let mut content = InboundContent::new(parts, "text/html".to_string(), body)
+        let mut content = InboundContent::new(parts, "text/html".to_string(), body, test_request())
             .expect("InboundContent::new should succeed");
 
         let decompressed_body = content

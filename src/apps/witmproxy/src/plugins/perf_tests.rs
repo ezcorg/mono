@@ -116,3 +116,25 @@ async fn mutation_is_not_serialized_behind_inflight_event() {
     assert_eq!(registry.plugins().len(), 1);
     inflight.await.unwrap();
 }
+
+/// Re-registering a plugin (an upgrade through `witm plugin add`) must not
+/// keep serving the previously resolved component.
+#[tokio::test]
+async fn reregistration_drops_the_cached_resolution() {
+    let (registry, _tmp) = create_plugin_registry().await.unwrap();
+    let bytes = std::fs::read(test_component_path().unwrap()).unwrap();
+
+    let plugin = registry.plugin_from_component(bytes.clone()).await.unwrap();
+    registry.register_plugin(plugin).await.unwrap();
+    let _ = registry.handle_event(make_request_event()).await.unwrap();
+    assert_eq!(registry.instance_pre_resolutions(), 1);
+
+    let plugin = registry.plugin_from_component(bytes).await.unwrap();
+    registry.register_plugin(plugin).await.unwrap();
+    let _ = registry.handle_event(make_request_event()).await.unwrap();
+    assert_eq!(
+        registry.instance_pre_resolutions(),
+        2,
+        "the upserted component must be resolved afresh"
+    );
+}

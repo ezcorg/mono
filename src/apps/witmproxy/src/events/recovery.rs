@@ -235,6 +235,7 @@ pub enum EventShadow {
         version: http::Version,
         headers: http::HeaderMap,
         content_type: String,
+        request: crate::wasm::bindgen::witmproxy::plugin::capabilities::RequestContext,
         recording: BodyRecording,
     },
     /// Timers carry no consumable resource, so recovery is free and always
@@ -309,6 +310,7 @@ impl EventShadow {
                 version,
                 headers,
                 content_type,
+                request,
                 recording,
             } => {
                 let body = recording
@@ -320,7 +322,12 @@ impl EventShadow {
                 *res.headers_mut() = headers;
                 let (parts, ()) = res.into_parts();
                 Ok(Box::new(
-                    crate::events::content::InboundContent::from_decoded(parts, content_type, body),
+                    crate::events::content::InboundContent::from_decoded(
+                        parts,
+                        content_type,
+                        body,
+                        request,
+                    ),
                 ))
             }
         }
