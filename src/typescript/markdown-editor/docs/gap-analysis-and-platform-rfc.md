@@ -1,6 +1,7 @@
 # Gap analysis + platform RFC: from `@joinezco/markdown-editor` to a local-first, capability-sandboxed knowledge editor
 
-**Status:** analysis / design proposal. v3, 2026-09-13. Nothing here is built.
+**Status:** analysis / design proposal. v4, 2026-09-14. Nothing here is built.
+**Changes in v4:** one shared `ezco:cap` WIT package with a two-string CEL scope replaces the `capability-kind` manifest (§7, §13); grants are minted instances with sturdy references and signed link chains, and Biscuit is demoted to an encoding note (§9.1); guest-authored attenuation code is rejected in favour of CEL, with the reasons recorded (§13.4); four authoring tiers for user-written capabilities in icanhaz (§14); import resolution: native providers, a content-addressed component store, remote providers over wRPC (§15); a milestone work plan (§16).
 **Changes in v3:** certificate format decided after a survey of UCAN, Biscuit, macaroons, Keyhive and OCapN (§9.1); comments re-based on URL anchors with pinned attribute spans, and CriticMarkup dropped after a syntax survey (§4); plugin placement is capability-driven rather than a default (§7.3); the iroh transport already exists in `/Users/theo/dev/djt/crates/wrpc-transport-iroh` and djt runs an iroh endpoint in the browser (§2.3).
 **Changes in v2:** files are the unit and the CRDT is opt-in (§3); sandboxes are resolved by icanhaz through overlays and clones (§5); the editor/vault package split (§6); iframe pages for plugins (§7); capabilities in shared documents, including share bundles with redeemable grants (§9); a comparison with Ink & Switch's Patchwork (§10).
 **Companion:** `comments-discussions-rfc.md` (this doc revises its storage recommendation, see §4).
@@ -15,7 +16,8 @@
 - **The sandbox is whatever icanhaz resolves a handle to.** A filesystem grant can be satisfied by a passthrough, an overlay (copy-on-write membrane), an APFS clone, a container, or a VM. The requester never knows; the user sees a workspace with staged changes and an Apply button.
 - **Split the library.** `@joinezco/markdown-editor` keeps syntax and editing UX behind injected resolvers; a new vault package owns folders-of-documents features (index, search, sync, plugins, AI). Most apps will use both; nobody is forced to.
 - **Plugins are capability-scoped in three sandboxes**: declarative packages (no code), iframe pages with full DOM inside an opaque origin, and WASM components. All three see the same `capability-provider`; only the bridge differs. Do not adopt WASIX.
-- **A document references capabilities, never holds them.** Grants are per principal and issued by the broker that owns the resource. Sharing may attach a bundle of signed, attenuated, peer-bound grant certificates that the recipient redeems at the owner's broker. Certificate format: **Biscuit** (§9.1).
+- **One scope language, shared by icanhaz and witmproxy.** A capability request is `{kind, scope: {when, allow}}` from a shared `ezco:cap` WIT package; both strings are CEL over an environment generated from the target interface's WIT. Narrowing is the host conjoining clauses when it mints a child instance; a rendering profile turns the common clause shapes into sentences; guest code is not a scope language (§13).
+- **A document references capabilities, never holds them.** Grants are per principal and issued by the broker that owns the resource. Sharing may attach a bundle of signed, attenuated, peer-bound grant certificates that the recipient redeems at the owner's broker. A certificate is a sturdy reference to a minted instance plus audience, expiry and a signed chain of extra clauses; no policy language is needed to verify it (§9.1).
 - **Comments anchor by URL.** A thread lists the ranges it is about as links: a text-fragment link (`[[Note#:~:text=brown%20fox]]`, the same link "copy link to highlight" produces) or a pinned span id (`[[Note#c-01J9K]]`). Threads are footnotes; in-body markers are optional pins written as Pandoc attribute spans, not CriticMarkup (§4).
 - **Patchwork is the closest prior art** and validates several of these choices (copy-on-write drafts, iframe isolation, a plugin registry with self-describing documents). It differs on the two axes that matter most to us: Automerge documents are canonical there (disk is a sync target) and there is no capability model below "who may read or edit this document". Take its patterns and a few small modules, not its stack.
 
@@ -193,47 +195,34 @@ The rule: the editor takes every cross-document behavior as an injected interfac
 A plugin declares `wants: list<capability-kind>` in a manifest and receives a `capability-provider` whose getters return `option<T>`: present only if granted. That contract is shared by every plugin kind; only the bridge differs. It is lifted from witmproxy's `witmproxy:plugin` (capability-kind, provider with optional getters, a CEL scope the user may tighten) and icanhaz's `request(want, reason, via)`.
 
 ```wit
-package eznote:plugin@0.1.0;
+package ezco:cap@0.1.0;
 
 interface types {
-  record range { from: u32, to: u32 }
-  variant event {
-    doc-opened(string), doc-changed(list<change>), selection(range),
-    command(string), timer(u64), fs(watch-event), custom(tuple<string, list<u8>>)
-  }
-  variant capability-kind {
-    editor-read, editor-write(scope),            // whole doc | ranges | own-nodes
-    commands(list<string>), slash-commands, block-actions,
-    ui-page(page-spec), ui-panel(panel-spec), ui-style,
-    node-view(string),                           // renderer for a fence language or node
-    events(list<string>), emit-events(list<string>),
-    fs(scope), net(list<string>),                // same shapes as icanhaz today
-    inference(inference-scope), process(process-scope),
-    storage(u64),                                // private KV, byte budget
-  }
-}
-interface host {
-  resource capability-provider {
-    editor: func() -> option<editor>;
-    inference: func() -> option<inference>;
-    fs: func() -> option<wasi:filesystem/types.descriptor>;
-  }
-  resource editor {
-    get-markdown: func() -> string;
-    get-selection: func() -> range;
-    edit: func(base: version, edits: list<text-edit>) -> result<version, conflict>;
-    insert-node: func(pos: u32, node: node);
-    register-command: func(id: string, title: string);
-    emit: func(name: string, payload: list<u8>);
-  }
-}
-world plugin {
-  import host;
-  export manifest: func() -> manifest;
-  export on-event: func(e: types.event) -> result<list<action>, string>;
-  export render: func(lang: string, src: string, ctx: render-ctx) -> result<rendered, string>;
+    /// Both fields are CEL over an environment generated from the target
+    /// interface's WIT and documented beside it (§13). Narrowing is done by
+    /// the host when it mints a child instance: the child's clauses are
+    /// `parent && extra`. A plugin never sees or edits a chain.
+    record scope {
+        /// Evaluated once per event, with the event bound: should the holder run at all.
+        when: string,
+        /// Evaluated per call on the minted resource, with `call`, `event`, `caller`,
+        /// `state` and `time` bound: may this call proceed. `call.method` distinguishes
+        /// methods, so there is no per-method list.
+        allow: string,
+    }
+    /// `kind` is an interface or method path: `icanhaz:nocap/fs.open-at`,
+    /// `witmproxy:plugin/local-storage`, `eznote:editor/write`.
+    record capability { kind: string, scope: scope }
+    variant capability-error {
+        /// Never granted.
+        unavailable,
+        /// Granted, but this call fell outside `allow`; carries the rendered clause.
+        denied(string),
+    }
 }
 ```
+
+The plugin world imports `ezco:cap/types` and the editor's own interfaces, and exports `manifest() -> manifest` (`wants: list<capability>` plus UI contributions), `on-event`, and `render`. The host's `capability-provider` has one getter per interface returning `option<resource>`; every method on those resources returns `result<T, capability-error>`. A `when` and `allow` of `true` is a plain grant, so the simple case costs nothing. There is no `capability-kind` variant: the kind string names the WIT path, which is what lets a witmproxy plugin's request and an eznote agent's request be the same object.
 
 ### 7.1 Declarative packages (no code)
 
@@ -289,22 +278,15 @@ Executors, from light to heavy: **browser** (jco + WASI shim: renderers, formatt
 
 **What this requires in icanhaz.** Today's grant tokens are bearer secrets validated by an in-memory `GrantStore`. Certificates need Ed25519 signing (already present: the iroh secret key), a certificate format, and a `redeem(cert) -> grant` function on the broker next to `request`. Pairings become the persisted form of a redeemed certificate. This is a bounded change, and it is the one piece of new cryptography in this whole document.
 
-### 9.1 Certificate format: survey and decision
+### 9.1 Minted instances, sturdy references, and certificates
 
-| Format | Signing / verification | Offline attenuation | Audience binding | Caveat language | Revocation | Maturity | Drawbacks |
-|---|---|---|---|---|---|---|---|
-| **Macaroons** | HMAC chain; verifier needs the root secret | yes, append caveats | via third-party discharge | opaque caveat strings | expiry caveats | old, simple | verification requires the issuer's secret, so a peer cannot verify without calling home; third-party caveats need a discharge service |
-| **UCAN 1.0** (`ucan/dlg@1.0.0`, invocation at rc.1) | Ed25519 and others via `did:key`; DAG-CBOR envelope with varsig | yes, chain of delegations, `aud`→`iss` alignment | native `aud` | tree of predicates with jq-style selectors over invocation args | separate revocation spec | JS-first (ucanto, Storacha), Go port | DID and IPLD dependencies, nested envelopes grow with chain depth, policy language is weak for budgets and counters, invocation spec still rc |
-| **Biscuit** (Datalog v3.3, format v6) | Ed25519 (default) or P-256; verifier needs only the root public key | yes, append blocks; sealing stops further attenuation | not built in; expressed as a check on the presenter's key | Datalog facts, rules, checks, allow/deny policies; regex, sets, dates, integers | `revocation_id` per block, checked against a list | Rust reference, JS/wasm, Go; Eclipse project; one CVE in third-party blocks fixed in format v6 | Datalog learning curve; root key distribution; protobuf tokens are a few hundred bytes |
-| **Keyhive convergent capabilities** | Ed25519; documents and agents are keys; delegations carry CRDT state | yes | native (delegate to a key) | access levels only (pull/read/write/admin) | coordination-free, concurrent-safe | pre-alpha, unaudited, Automerge-coupled | not a general capability language; unstable |
-| **SPKI / SDSI** (RFC 2693) | public key certs, name-free | yes | native | tags | validity periods | historic | no maintained implementations |
-| **OCapN** | CapTP handoffs signed by the giver; URI layering `MachineLocator ⊂ Sturdyref / Certificate ⊂ CertBear` | by construction (a CertBear attenuates to a Certificate to a locator) | the Certificate/CertBear split *is* audience-bound vs bearer | unspecified ("we'll ignore what the decoded cert decodes to for now") | unspecified | draft; Goblins has handoffs | no certificate format to adopt yet |
+Every grant is a **minted instance** in the broker's instance table: `{id, interface, provider chain, scope (already conjoined), parent, holder, counters, expiry}`. Attenuation mints a child whose scope is `parent.allow && extra` and whose `parent` points back; the chain is host bookkeeping, never data a plugin sees. This is the object-capability answer to "how do I express a narrowed interface": the narrowed thing is an object, and the scope is the program that mediates calls to it (§13).
 
-OCapN's contribution is conceptual and worth keeping: bearer instruments and audience-bound certificates are the same object at two attenuation levels, and implementations should "decode URIs to internal data structures early and encode late". Our share bundle is a set of Certificates; a pairing secret is a CertBear; both attenuate to a locator (the owner's iroh address).
+A **sturdy reference** is an unguessable instance id plus the broker's locator, Cap'n Proto level 2 with icanhaz as the vat. `restore(sturdyref)` by the right audience yields a live handle. A **certificate** is `{sturdy id, audience key, expiry, links, issuer signature}` where each link is `{extra clause | membrane component hash, by, signature}`. The owner's broker composes the links at restore time. Intermediaries attenuate offline by appending a link; anyone can verify the chain narrows because conjunction is syntactic, so no policy evaluation is needed to check containment. OCapN's layering is the mental model: a pairing secret is a CertBear, a share bundle entry is a Certificate, both attenuate to the owner's locator.
 
-**Decision: Biscuit.** Reasons: Ed25519 matches the identity we already have (the iroh `EndpointId` is the public key); a peer or a third broker can verify with only the owner's public key; append-only attenuation matches the two-stage narrowing in §9 (owner at share time, broker at redemption, each adding a block); sealing lets the owner forbid further delegation; third-party blocks let a peer's broker add its own conditions before forwarding a certificate to an agent; the Datalog checks express exactly the caveats icanhaz already models as `capability-kind` scope (paths, images and argv, model names, token budgets, TTLs) without inventing a policy language; per-block revocation ids map onto the broker's revocation list; the Rust and wasm implementations fit the daemon and the browser.
+Formats surveyed before settling on this: macaroons (verifier needs the issuer's secret), UCAN 1.0 (native audience, but DIDs, IPLD envelopes that grow with depth, weak for budgets), Biscuit (Ed25519, offline attenuation by appending blocks, Datalog caveats, mature Rust and wasm), Keyhive (the right long-term model for concurrent revocation, pre-alpha and Automerge-coupled), SPKI (historic). **Biscuit's block structure is an acceptable encoding for the signed link chain if we want a standard container, but its Datalog authorizer would go unused, since our clauses are CEL rendered by the host, so a plain Ed25519 chain is preferred.** Keyhive is the thing to re-evaluate when live mode makes Automerge documents first-class principals.
 
-Two details to fix in our profile of it: **audience binding** is a check in the owner's block (`check if presenter($k), $k == ed25519/<recipient>`), where `presenter` is a fact the broker adds from the QUIC-proven remote identity that `wrpc-transport-iroh` hands every invocation as its connection context; and **scope vocabulary** is a fixed, small set of facts mirroring the WIT `capability-kind` (`fs("/Users/theo/dev/foo")`, `process("cargo", ["test"])`, `inference("haiku", 50000)`), so users never write Datalog and the consent window can render any block as a sentence. UCAN stays the fallback if we ever need interop with the Storacha ecosystem; Keyhive is the thing to re-evaluate when live mode (§3) makes Automerge documents first-class principals.
+Two mechanics: audience binding is checked at redemption against the QUIC-proven remote identity that `wrpc-transport-iroh` hands every invocation as its connection context, and a redeemed certificate persists as a pairing, which is what icanhaz already stores.
 
 ---
 
@@ -381,6 +363,8 @@ The strategic read: Patchwork proves the plugin-registry-plus-drafts UX works fo
 
 ## 12. Suggested sequencing
 
+The direction of travel; §16 turns it into milestones with tasks.
+
 1. **Foundations, no networking (editor + vault split):** images and a binary VFS, wikilinks and region embeds, front matter with `id:`, footnotes, math, callouts, full-text and link index, command palette, file tree; move file management and the index out of `codeblock` into the vault package.
 2. **Versions and workspaces:** the per-file version log with base-version writes; the `edit()` path into open documents; the overlay membrane and `clonefile` resolver in icanhaz; the workspace block with Apply/Discard. This is where agents become useful and safe, and it needs no CRDT.
 3. **Comments** (inline; §4) on top of versions.
@@ -390,3 +374,101 @@ The strategic read: Patchwork proves the plugin-registry-plus-drafts UX works fo
 7. **Compute:** executable fences, checkpoints, peer executors.
 
 Decided: certificate format is Biscuit (§9.1); live mode uses `@automerge/prosemirror` (§3); plugin placement follows the wanted capabilities, with no default (§7.3). Still open: whether threads default to the footnote in the same note or to a review note when created by an agent.
+
+---
+
+## 13. Scoping: the CEL profile
+
+The scope language is CEL, kept, and given three things it lacks on its own: a typed environment generated from WIT, containment by construction, and rendering.
+
+### 13.1 Two evaluation sites
+
+- **Event admission** (`when`): evaluated once per event with the event bound. In witmproxy this is today's `expression`, deciding whether the plugin runs for a request. In the editor it decides whether a plugin sees a document event.
+- **Call admission** (`allow`): evaluated by the membrane on every method call of a minted resource, with `call.method` and `call.args` bound and typed from the WIT signature, the current event as context, `caller`, `state` and `time`. This is where "how" lives: `call.args.key.startsWith("seen/")`, `call.args.path.startsWith("src/")`, `state.tokens + call.args.max_tokens <= 50000`.
+
+### 13.2 The environment is generated from WIT
+
+Each interface gets a CEL environment derived from its WIT: primitives map to CEL scalars, `list` and `option` to lists and optionals, records to opaque types with accessors, resources to opaque handles exposing only an id. The generator runs at build time from `wit-parser` and replaces hand-written mirrors like witmproxy's `CelRequest`. A clause referencing an argument a method does not have fails to compile at load time, which is the first half of verification.
+
+Variables, all optional in the environment, absent fields evaluating false so scopes fail closed: `call.{method,args}`, `event`, `caller.{plugin,key,peer,origin}`, `state.{calls,bytes,…}` plus interface-specific counters such as `tokens`, `time`. `caller` assumes attribution, not identity: in witmproxy it is the plugin's manifest namespace and signing key, which the host already verifies at load; over the network it gains the transport-proven peer key and the WebSocket origin.
+
+### 13.3 Containment, rendering, state, rewrite
+
+- **Containment** is append-only conjunction. Nobody edits an expression; narrowing appends a clause when the host mints a child instance. Widening is impossible by construction and checking a chain is reading it. Cedar's SMT analyzer is the only tool that could check freely rewritten scopes; with the conjunction discipline it is redundant.
+- **Rendering** is a recognizer over the checked AST plus a sentence template per shape: `startsWith`, `==`, `in`, ranges, and the member functions witmproxy already has (`time.is_between_hours`, `time.matches_cron`, `request.host()`). Out-of-profile clauses are still enforced and shown as raw CEL with a badge.
+- **State** lives with the minted instance in the registry, never in the clause and never in the per-event provider (witmproxy builds a `CapabilityProvider` per event, which is why logger budgets are per-event today). The membrane increments counters after each admitted call and binds a snapshot before the next. Budget clauses are pre-checks on an estimate: reserve and settle, or allow one call of overshoot. Durable budgets persist beside the grant like pairings.
+- **Rewrite** (`rewrite: option<string>`, later): a CEL expression returning a transformed `args` record, as Kubernetes uses CEL for mutating admission; the rewritten call must itself satisfy `allow`. Covers "prefix every storage key with the namespace" without refusing.
+- **Deep membranes** are the compiler's job: every resource a call returns is wrapped by type so a granted subtree cannot leak a wider descriptor.
+
+### 13.4 Guest-authored attenuation code: rejected
+
+The alternative of letting a plugin ship a Turing-complete `attenuate(ctx, cap)` was considered and rejected as a guest-facing mechanism. A wrapper can only forward, refuse or transform what it closes over, so it cannot widen, but: it is a guarantee only to the guest, never to the user, and must never be rendered as one; it only works if the wide handle becomes unreachable, which needs a bootstrap phase and an irreversible swap; it sees every call, so it must be capability-less by construction (an empty import list) or it is an exfiltration point; review does not survive conditional behaviour, obfuscation or prompt injection aimed at an AI reviewer; hand-written membranes forget to wrap returned resources and drift when interfaces gain methods; it cannot be rendered or compared. Its one legitimate niche, stateful protocol-shaped constraints, is served by the user-side membrane, which is written as a component with an empty import list (§14), not by the guest.
+
+### 13.5 Shared implementation
+
+A Rust crate `ezco-cap` beside the WIT package, used by both hosts: the WIT-to-CEL environment generator, the rendering profile, and the membrane runtime (instance table, conjunction on mint, evaluation via `cel-cxx`, counters, denial). witmproxy's `register_cel_env` and `compile_scope_expression` become calls into it; icanhaz's `GrantStore` becomes its instance table. Migration in witmproxy: `capability-scope.expression` maps to `when`; `allow` is new and makes the local-storage promise in its WIT comments true; resource methods gain `result<T, capability-error>`; the `capability-kind` variant survives internally as the names of its five provider methods.
+
+---
+
+## 14. Authoring capabilities in icanhaz
+
+A capability is a component whose imports the host satisfies and whose exports satisfy a plugin's imports; `fs-lite-pathjail` is one. Four authoring tiers, because toolchain cost jumps sharply between them:
+
+| Tier | What the user does | Runtime | Bundled cost |
+|---|---|---|---|
+| 1 Narrow | edits `when` / `allow` in the consent window or scope editor | generic CEL membrane | none (already planned) |
+| 2 Script | picks an interface, gets every export stubbed as "call the same import", edits TypeScript in the app | one **QuickJS** interpreter component exporting a generic `dispatch(func, args)`; the host adapts real WIT calls through wasmtime's dynamic linker; script and interpreter are content-addressed as a pair | ~1 MB interpreter wasm, `wit-component` and `wac` as Rust libraries, a pure-JS type stripper (`ts-blank-space`) in the web UI |
+| 3 Component | brings a `.wasm` built with `cargo component`, MoonBit, componentize-js, componentize-py | validated (imports ⊆ capability interfaces, exports match the WIT), content-addressed, scaffolded from the `witm plugin new` template; `nix run` or a container as the toolchain fallback | none |
+| 4 Replace a native provider | builds icanhaz from source | — | none |
+
+Details that make Tier 2 good: `.d.ts` generated from the WIT (`jco types`) feeds the codeblock's Volar TypeScript server, so the user gets completion against the real interface; the script sees only the wrapped capability and a frozen context, enforced by the interpreter component's empty import list; saving re-links the daemon and replays the recorded trace of a real session through the new capability, showing calls admitted, denied and rewritten; committing mints a hash and offers "apply to grants using this capability", re-instantiating them with the old hash revoked.
+
+Decisions: wrapping is the default and replacement is Tier 3, but both come from one template that asks "what should this be built on", with the wrapped capability as the default answer. The daemon and wasmtime are the trusted computing base and are **not** editable in-app; what the app exposes is every capability component's source when a reproducible build (source hash to wasm hash) is registered, the WIT of every interface, and its CEL environment, with "fork this capability" copying source into a Tier 2 or 3 scaffold. User-authored capabilities compile to **wasm, not native**, even when the user is the author: composition, portability across executors, sharing and content-addressing, and bounding the user's own bugs all depend on it; native code belongs only to the providers at the bottom.
+
+---
+
+## 15. Import resolution
+
+A WIT import is an interface, not an implementation; binding it happens at link time in the daemon and that binding is the grant. Implementations come from three places:
+
+1. **Native providers, bundled by definition**: `wasi:filesystem`, `wasi:clocks`, `wasi:io`, `icanhaz:nocap/{process,terminal,watch}`, later `inference`. The roots of authority; a fixed set per daemon version, linked semver-compatibly.
+2. **Capability components, content-addressed and fetched on demand**: a local store keyed by hash, seeded with the shipped components (passthrough, pathjail, the generic membrane, the QuickJS host). Others arrive by hash from the share bundle, the vault, a registry in the `witm plugin add` style, or a peer over iroh. Fetching code by hash is safe to do dynamically; linking it to a native provider is a grant and needs consent. Code is fetched, authority is granted, separately.
+3. **Remote providers over wRPC**: `wrpc-wasmtime` polyfills imports over the wire, which is how the browser executor gets `fs` from the daemon and how a peer executor gets a capability another machine advertises. The only sense in which an import is "fetched dynamically" is authority from a consenting peer.
+
+Rule for Tier 3 components: libraries are not imports. Regex engines, parsers and the like are composed in at build time with `wac`; the validator rejects any remaining import that is not a known capability interface with "compose your libraries", or offers automatic composition when the library component is in the store.
+
+Resolution at grant time, per import: match a native provider (bind directly or through a membrane chain the user chooses); else a store component whose exports satisfy it, resolving its imports recursively; else fetch by hash from the source of the reference, verify, vouch, and retry; else a remote provider with its own consent; else fail with "no provider for `ezco:cap/inference@0.1.0`" and list what could provide it. The binary bundles the native providers and the shipped components, nothing more; an unsatisfiable import is a grant-time event, not an install-time one, and that is the right moment to offer a provider.
+
+---
+
+## 16. Work plan
+
+Milestones are ordered by dependency. Each names the crates or packages touched and the test that proves it. Editor milestones (E) and capability milestones (M) interleave; M0 unblocks almost everything.
+
+**M0. `ezco:cap` package and `ezco-cap` crate.** Publish `ezco:cap@0.1.0` (types from §7) to the wkg registry witmproxy already resolves from, vendored under `src/apps/icanhaz/wit/deps` and `src/apps/witmproxy/wit/deps`. New crate `src/rust/ezco-cap`: WIT-to-CEL environment generator over `wit-parser`; rendering profile (AST recognizer, sentence templates); membrane runtime (instance table, conjunction on mint, `cel-cxx` evaluation, counters, `denied`). Tests: golden environments for `wasi:filesystem` and witmproxy's `request-context`; a property test that a child instance never admits a call its parent denies; sentence rendering for every profile shape. First PR: generate the environment for `request-context` and delete the hand-written `CelRequest`.
+
+**M1. witmproxy adopts it.** `capability-scope` becomes `ezco:cap/types.scope` (`expression` maps to `when`); `allow` evaluated per call on logger, annotator, local-storage and clock; resource methods return `result<T, capability-error>`; counters move from the per-event `CapabilityProvider` to registry-owned grants; the web UI scope editor becomes "add a condition" rendered as sentences. Tests: the noshorts plugin narrowed to `key.startsWith("seen/")` with the denial path exercised end to end; an existing manifest with only `expression` loads unchanged.
+
+**E1. Editor foundations and the vault split.** Images and a binary `VfsInterface`; wikilinks and region embeds; front matter with `id:`; footnotes; math; callouts; full-text and link index; command palette; file tree in eznote; file management and the search index move out of `codeblock` into `@joinezco/vault`. Tests: round-trip for every new node; index rebuild from a fixture vault.
+
+**M2. icanhaz instances, generic membrane, sturdy references.** Instance table replaces `GrantStore`; `broker.request` takes `ezco:cap/types.capability`; a generic CEL membrane component per shipped interface, generated at build, replaces ad-hoc attenuation, with deep wrapping of returned resources; `narrow(instance, clause)` for pledge-style self-narrowing; `restore(sturdyref)`; the consent window renders sentences. Tests: `fs-passthrough` under the generic membrane with `allow: call.args.path.startsWith("src/")`; a browser test that a denied call surfaces `denied(sentence)`; restore by the wrong audience fails.
+
+**E2. Versions and workspaces.** Per-file signed version log with base-version writes; the `edit()` path into open documents; the overlay membrane and `clonefile` resolver in icanhaz (depends on M2); the workspace block with Apply and Discard. Tests: stale base refused; overlay writes never touch the host until Apply; clone is O(1) on APFS.
+
+**E3. Comments.** URL anchors (text fragments, pinned spans, block ids), footnote threads with target lists, margin UI, W3C annotation export. Tests: re-anchoring after edits; multi-range; cross-note threads via the index.
+
+**M3. Certificates and share bundles.** Ed25519-signed link chain; `redeem(cert)` with audience checked against the `wrpc-transport-iroh` connection context; pairing as the persisted form of a redeemed certificate; adopt `wrpc-transport-iroh` from djt (publish or vendor beside `src/rust/wrpc`). Tests: a bundle redeemed by its audience; the same bundle refused for another key; an appended link that widens is rejected at verification.
+
+**E4. Capabilities in the editor.** `inference` capability in icanhaz with a providers config; prose AI actions; plugin manifest with `wants: list<capability>`; the `PluginHost` in the vault package; the iframe bridge speaking the provider over `postMessage`; the `eznote:plugin` WIT and host executor. Tests: a plugin denied `net` cannot fetch; the same plugin under the host executor reaches `fs` through the membrane.
+
+**M4. Authoring tiers.** Tier 2: QuickJS host component with generic `dispatch`, dynamic-linker adapter, `.d.ts` from WIT into the codeblock TypeScript server inside icanhaz's web UI, replay diff against a recorded trace. Tier 3: validator, component store, scaffold from the witmproxy template, reproducible-build registration and view-source. Tests: a scripted wrapper that refuses writes outside a prefix; a Tier 3 component with a stray library import rejected with the composition hint.
+
+**M5. Import resolution and remote providers.** The resolver from §15; fetch by hash from bundle, vault, registry and peer; remote provider over wRPC with consent; "no provider" UX listing sources. Tests: a component whose import resolves through a store component two levels deep; a browser-executor plugin whose `fs` import is polyfilled from the daemon.
+
+**E5. Sync.** The `sync` capability, share bundles in the editor, attachment blobs, presence; evaluate djt's browser iroh endpoint for direct peer sync from the webview.
+
+**E6. Live mode.** Opt-in `@automerge/prosemirror` sessions, history sidecar, exit-to-file; re-evaluate Keyhive.
+
+**E7. Compute.** Executable fences, checkpoints, peer executors.
+
+Suggested first two weeks: M0 in full, M1 through the `when` migration and one `allow`-guarded resource, and E1's images and wikilinks, since those three touch different codebases and can proceed in parallel.

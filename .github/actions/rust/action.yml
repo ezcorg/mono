@@ -1,5 +1,5 @@
 name: rust toolchain
-description: nightly Rust with the given targets and components, the cargo cache, and the system libraries witmproxy links against
+description: the workspace's pinned Rust (rust-toolchain.toml) with the given targets and components, the cargo cache, and the system libraries witmproxy links against
 inputs:
   targets:
     description: comma-separated extra targets
@@ -16,9 +16,15 @@ inputs:
 runs:
   using: composite
   steps:
+    # cargo obeys rust-toolchain.toml regardless of `rustup default`, so the targets and
+    # components have to land on that channel: installing them on another toolchain leaves
+    # cross builds (x86_64-apple-darwin on the arm64 macOS runner) without a `core`.
+    - id: pinned
+      run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      shell: bash
     - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
       with:
-        toolchain: nightly
+        toolchain: ${{ steps.pinned.outputs.channel }}
         targets: ${{ inputs.targets }}
         components: ${{ inputs.components }}
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
