@@ -18,7 +18,9 @@ pub fn coerce_input(schema: &InputSchema, raw: &str) -> Result<ActualInput> {
         InputType::Boolean => match raw.trim().to_ascii_lowercase().as_str() {
             "true" | "yes" | "on" | "1" => ActualInput::Boolean(true),
             "false" | "no" | "off" | "0" => ActualInput::Boolean(false),
-            other => bail!("`{name}` is a boolean; `{other}` is not one of true/false/yes/no/on/off/1/0"),
+            other => {
+                bail!("`{name}` is a boolean; `{other}` is not one of true/false/yes/no/on/off/1/0")
+            }
         },
         InputType::Number => ActualInput::Number(
             raw.trim()
@@ -144,6 +146,9 @@ mod tests {
     fn display() {
         assert_eq!(display_input(&ActualInput::Number(3.0)), "3");
         assert_eq!(display_input(&ActualInput::Str(String::new())), "(empty)");
-        assert_eq!(display_type(&InputType::Select(vec!["x".into(), "y".into()])), "one of x | y");
+        assert_eq!(
+            display_type(&InputType::Select(vec!["x".into(), "y".into()])),
+            "one of x | y"
+        );
     }
 }

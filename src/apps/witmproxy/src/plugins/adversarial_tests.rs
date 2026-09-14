@@ -567,7 +567,8 @@ async fn body_bomb_is_contained() -> Result<()> {
     let body = http_body_util::Full::new(Bytes::from_static(b"<html>original</html>"))
         .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
-    let content = InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
+    let content =
+        InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
 
     let event: Box<dyn Event> = Box::new(content);
     assert_plugin_will_run(&registry, &*event);
@@ -696,7 +697,8 @@ async fn fail_open_recovers_after_partial_body_consumption() -> Result<()> {
     let body = http_body_util::Full::new(Bytes::from_static(b"<html>original</html>"))
         .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
-    let content = InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
+    let content =
+        InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
 
     let event: Box<dyn Event> = Box::new(content);
     assert_plugin_will_run(&registry, &*event);
@@ -735,7 +737,8 @@ async fn fail_open_gives_up_past_the_recovery_budget() -> Result<()> {
     let body = http_body_util::Full::new(Bytes::from(vec![b'x'; 8192]))
         .map_err(|_| wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::InternalError(None))
         .boxed_unsync();
-    let content = InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
+    let content =
+        InboundContent::new(parts, "text/html".to_string(), body, test_request_context())?;
 
     let event: Box<dyn Event> = Box::new(content);
     assert_plugin_will_run(&registry, &*event);

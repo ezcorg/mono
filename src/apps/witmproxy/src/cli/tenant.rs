@@ -133,7 +133,8 @@ pub struct TenantHandler;
 
 impl TenantHandler {
     pub async fn handle(&self, command: &TenantCommands) -> Result<()> {
-        let client = ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
+        let client =
+            ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
 
         match command {
             TenantCommands::List(_) => {

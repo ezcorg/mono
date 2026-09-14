@@ -289,7 +289,10 @@ impl ApiClient {
         form: reqwest::multipart::Form,
         headers: &[(&str, String)],
     ) -> Result<reqwest::Response> {
-        let mut req = self.request(reqwest::Method::POST, path).await.multipart(form);
+        let mut req = self
+            .request(reqwest::Method::POST, path)
+            .await
+            .multipart(form);
         for (k, v) in headers {
             req = req.header(*k, v);
         }
@@ -399,7 +402,11 @@ mod tests {
         assert_eq!(normalise_server_url("127.0.0.1:1/"), "https://127.0.0.1:1");
         assert_eq!(normalise_server_url("HTTP://x"), "http://x");
         assert_eq!(
-            resolve_endpoint(&args(Some("127.0.0.1:1"), None), Some(&stored("https://127.0.0.1:1")), None),
+            resolve_endpoint(
+                &args(Some("127.0.0.1:1"), None),
+                Some(&stored("https://127.0.0.1:1")),
+                None
+            ),
             Some(("https://127.0.0.1:1".into(), Some("stored-token".into())))
         );
     }
@@ -411,22 +418,35 @@ mod tests {
             Some(&stored("https://other")),
             Some("https://127.0.0.1:1"),
         );
-        assert_eq!(r, Some(("https://remote".into(), Some("flag-token".into()))));
+        assert_eq!(
+            r,
+            Some(("https://remote".into(), Some("flag-token".into())))
+        );
     }
 
     #[test]
     fn stored_login_is_used_for_its_own_server_only() {
         let st = stored("https://127.0.0.1:1/");
         let r = resolve_endpoint(&args(None, None), Some(&st), Some("https://127.0.0.1:1"));
-        assert_eq!(r, Some(("https://127.0.0.1:1".into(), Some("stored-token".into()))));
+        assert_eq!(
+            r,
+            Some(("https://127.0.0.1:1".into(), Some("stored-token".into())))
+        );
 
         // An explicit different server does not get the stored token.
         let r = resolve_endpoint(&args(Some("https://elsewhere"), None), Some(&st), None);
         assert_eq!(r, Some(("https://elsewhere".into(), None)));
 
         // The stored server is preferred over the local daemon.
-        let r = resolve_endpoint(&args(None, None), Some(&stored("https://remote")), Some("https://127.0.0.1:1"));
-        assert_eq!(r, Some(("https://remote".into(), Some("stored-token".into()))));
+        let r = resolve_endpoint(
+            &args(None, None),
+            Some(&stored("https://remote")),
+            Some("https://127.0.0.1:1"),
+        );
+        assert_eq!(
+            r,
+            Some(("https://remote".into(), Some("stored-token".into())))
+        );
     }
 
     #[test]

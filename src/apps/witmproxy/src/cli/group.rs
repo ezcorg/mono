@@ -128,7 +128,8 @@ pub struct GroupHandler;
 
 impl GroupHandler {
     pub async fn handle(&self, command: &GroupCommands) -> Result<()> {
-        let client = ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
+        let client =
+            ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
 
         match command {
             GroupCommands::List(_) => {

@@ -244,7 +244,9 @@ impl PluginHandler {
             return Ok(false);
         };
         let ns = namespace.unwrap_or("default");
-        let sent = client.delete(&format!("/api/plugins/{}/{}", ns, name)).await;
+        let sent = client
+            .delete(&format!("/api/plugins/{}/{}", ns, name))
+            .await;
         Self::daemon_outcome(&client, sent, "Plugin removed").await
     }
 
@@ -530,8 +532,10 @@ impl PluginHandler {
             let current: Vec<(String, String)> = rows
                 .iter()
                 .map(|row| {
-                    let input_name: String = sqlx::Row::try_get(row, "input_name").unwrap_or_default();
-                    let input_value: String = sqlx::Row::try_get(row, "input_value").unwrap_or_default();
+                    let input_name: String =
+                        sqlx::Row::try_get(row, "input_name").unwrap_or_default();
+                    let input_value: String =
+                        sqlx::Row::try_get(row, "input_value").unwrap_or_default();
                     let rendered = serde_json::from_str::<ActualInput>(&input_value)
                         .map(|v| display_input(&v))
                         .unwrap_or(input_value);
@@ -544,7 +548,10 @@ impl PluginHandler {
             } else {
                 println!("Settings declared by {}/{}:\n", namespace, name);
                 for input in &schema {
-                    let set = current.iter().find(|(n, _)| *n == input.name).map(|(_, v)| v);
+                    let set = current
+                        .iter()
+                        .find(|(n, _)| *n == input.name)
+                        .map(|(_, v)| v);
                     let default = input.default.as_ref().map(display_input);
                     println!("  {} ({})", input.name, display_type(&input.input_type));
                     if let Some(desc) = &input.description {

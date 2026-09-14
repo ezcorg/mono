@@ -7,7 +7,9 @@ use wit_bindgen::StreamResult;
 
 use crate::config::{InputKind, Settings, Value, schema};
 use crate::pages::{PageFacts, agent_page, blocked_page, body_injection, head_injection};
-use crate::policy::{AGENT_PREFIX, AgentRoute, Ledger, PathKind, Reason, classify_path, decide, time_verdict};
+use crate::policy::{
+    AGENT_PREFIX, AgentRoute, Ledger, PathKind, Reason, classify_path, decide, time_verdict,
+};
 use crate::rewrite::{charset_of, injecting_rewriter};
 use crate::score::score_title;
 use crate::time::LocalTime;
@@ -174,7 +176,9 @@ impl Host {
         let storage = cap
             .local_storage()
             .await
-            .ok_or(PluginError::CapabilityUnavailable(CapabilityKind::LocalStorage))?;
+            .ok_or(PluginError::CapabilityUnavailable(
+                CapabilityKind::LocalStorage,
+            ))?;
         let epoch = clock.now_seconds().await;
         let offset = match settings.utc_offset_override_secs {
             Some(o) => o,
@@ -192,7 +196,11 @@ impl Host {
     }
 
     async fn load_ledger(&self) -> Ledger {
-        match self.storage.get(Self::ledger_key(&self.now.date_string())).await {
+        match self
+            .storage
+            .get(Self::ledger_key(&self.now.date_string()))
+            .await
+        {
             Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
             None => Ledger::default(),
         }
@@ -205,10 +213,14 @@ impl Host {
             .await;
         // Yesterday's entry is never read again; keep the store to one key.
         let yesterday = LocalTime::new(
-            self.now.epoch_secs().saturating_sub(crate::time::SECS_PER_DAY as u64),
+            self.now
+                .epoch_secs()
+                .saturating_sub(crate::time::SECS_PER_DAY as u64),
             self.now.offset_secs(),
         );
-        self.storage.delete(Self::ledger_key(&yesterday.date_string())).await;
+        self.storage
+            .delete(Self::ledger_key(&yesterday.date_string()))
+            .await;
     }
 }
 
@@ -247,7 +259,13 @@ impl PluginInstance {
             Some(reason) => {
                 log_info(
                     cap,
-                    format!("blocked {} {}{} ({})", ctx.method, ctx.host, ctx.path, reason.code()),
+                    format!(
+                        "blocked {} {}{} ({})",
+                        ctx.method,
+                        ctx.host,
+                        ctx.path,
+                        reason.code()
+                    ),
                 )
                 .await;
                 let response = if wants_html(&ctx) {
@@ -457,7 +475,10 @@ impl PluginInstance {
 
 /// Moves whatever the rewriter produced into the outgoing stream. `false`
 /// when the reader has gone away.
-async fn flush(pending: &Rc<RefCell<Vec<u8>>>, tx: &mut wit_bindgen::rt::async_support::StreamWriter<u8>) -> bool {
+async fn flush(
+    pending: &Rc<RefCell<Vec<u8>>>,
+    tx: &mut wit_bindgen::rt::async_support::StreamWriter<u8>,
+) -> bool {
     let data = std::mem::take(&mut *pending.borrow_mut());
     if data.is_empty() {
         return true;
@@ -516,7 +537,9 @@ fn request_context(req: &Request) -> RequestContext {
         Some((p, q)) => (p.to_string(), q.to_string()),
         None => (path_with_query.clone(), String::new()),
     };
-    let query = group(form_urlencoded::parse(query_str.as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())));
+    let query = group(
+        form_urlencoded::parse(query_str.as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())),
+    );
     let headers = group(
         req.get_headers()
             .copy_all()
@@ -575,11 +598,21 @@ async fn read_body(req: Request) -> Vec<u8> {
 }
 
 fn html_response(status: u16, body: String, reason: Option<&str>) -> Response {
-    synthesize(status, "text/html; charset=utf-8", body.into_bytes(), reason)
+    synthesize(
+        status,
+        "text/html; charset=utf-8",
+        body.into_bytes(),
+        reason,
+    )
 }
 
 fn json_response(status: u16, body: serde_json::Value, reason: Option<&str>) -> Response {
-    synthesize(status, "application/json", body.to_string().into_bytes(), reason)
+    synthesize(
+        status,
+        "application/json",
+        body.to_string().into_bytes(),
+        reason,
+    )
 }
 
 /// Builds a complete response the proxy will return to the client instead

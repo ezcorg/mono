@@ -214,15 +214,18 @@ impl Settings {
             return Err("daily_budget_minutes: must be between 0 and 1440".into());
         }
 
-        let work_window = Window::parse(&get("work_hours").to_text())
-            .map_err(|e| field("work_hours", e))?;
-        let work_days = Days::parse(&get("work_days").to_text()).map_err(|e| field("work_days", e))?;
+        let work_window =
+            Window::parse(&get("work_hours").to_text()).map_err(|e| field("work_hours", e))?;
+        let work_days =
+            Days::parse(&get("work_days").to_text()).map_err(|e| field("work_days", e))?;
 
         let offset = get("utc_offset_minutes");
         let utc_offset_override_secs = match offset.as_str().map(str::trim) {
             Some("") | None if matches!(offset, Value::Str(_)) => None,
             _ => {
-                let m = offset.as_f64().map_err(|e| field("utc_offset_minutes", e))?;
+                let m = offset
+                    .as_f64()
+                    .map_err(|e| field("utc_offset_minutes", e))?;
                 if !(-14.0 * 60.0..=14.0 * 60.0).contains(&m) {
                     return Err("utc_offset_minutes: must be between -840 and 840".into());
                 }

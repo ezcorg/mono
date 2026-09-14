@@ -54,12 +54,20 @@ pub fn injecting_rewriter<'h>(
 }
 
 /// One-shot rewrite for tests and small documents.
-pub fn rewrite_all(html: &[u8], encoding: &'static Encoding, head: &str, body: &str) -> Option<Vec<u8>> {
+pub fn rewrite_all(
+    html: &[u8],
+    encoding: &'static Encoding,
+    head: &str,
+    body: &str,
+) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(html.len() + head.len() + body.len());
     {
-        let mut rw = injecting_rewriter(encoding, head.to_string(), body.to_string(), |c: &[u8]| {
-            out.extend_from_slice(c)
-        })?;
+        let mut rw = injecting_rewriter(
+            encoding,
+            head.to_string(),
+            body.to_string(),
+            |c: &[u8]| out.extend_from_slice(c),
+        )?;
         rw.write(html).ok()?;
         rw.end().ok()?;
     }
@@ -73,15 +81,28 @@ mod tests {
     #[test]
     fn charset_detection() {
         assert_eq!(charset_of("text/html"), encoding_rs::UTF_8);
-        assert_eq!(charset_of("text/html; charset=ISO-8859-1"), encoding_rs::WINDOWS_1252);
-        assert_eq!(charset_of("text/html; Charset=\"utf-8\""), encoding_rs::UTF_8);
+        assert_eq!(
+            charset_of("text/html; charset=ISO-8859-1"),
+            encoding_rs::WINDOWS_1252
+        );
+        assert_eq!(
+            charset_of("text/html; Charset=\"utf-8\""),
+            encoding_rs::UTF_8
+        );
         assert_eq!(charset_of("text/html; charset=bogus"), encoding_rs::UTF_8);
     }
 
     #[test]
     fn appends_into_head_and_body() {
-        let html = b"<!doctype html><html><head><title>t</title></head><body><p>hi</p></body></html>";
-        let out = rewrite_all(html, encoding_rs::UTF_8, "<style>x{}</style>", "<iframe></iframe>").unwrap();
+        let html =
+            b"<!doctype html><html><head><title>t</title></head><body><p>hi</p></body></html>";
+        let out = rewrite_all(
+            html,
+            encoding_rs::UTF_8,
+            "<style>x{}</style>",
+            "<iframe></iframe>",
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
         assert_eq!(
             s,

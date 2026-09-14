@@ -129,7 +129,11 @@ impl Tenant {
     }
 
     /// Replace the stored password hash for a tenant.
-    pub async fn update_password_hash(pool: &SqlitePool, id: &str, password_hash: &str) -> Result<()> {
+    pub async fn update_password_hash(
+        pool: &SqlitePool,
+        id: &str,
+        password_hash: &str,
+    ) -> Result<()> {
         sqlx::query("UPDATE tenants SET password_hash = ? WHERE id = ?")
             .bind(password_hash)
             .bind(id)

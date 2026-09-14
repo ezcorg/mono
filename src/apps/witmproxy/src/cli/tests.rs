@@ -425,11 +425,22 @@ async fn set_password_replaces_the_stored_hash() -> Result<()> {
 
     let (db, _tmp) = crate::test_utils::create_db().await;
     let old = hash_password("old-password").unwrap();
-    Tenant::create(&db.pool, "t1", "Admin", Some("admin@localhost"), Some(&old), None, None).await?;
+    Tenant::create(
+        &db.pool,
+        "t1",
+        "Admin",
+        Some("admin@localhost"),
+        Some(&old),
+        None,
+        None,
+    )
+    .await?;
 
     super::auth::set_password_for_email(&db, "admin@localhost", "new-password").await?;
 
-    let tenant = Tenant::by_email(&db.pool, "admin@localhost").await?.unwrap();
+    let tenant = Tenant::by_email(&db.pool, "admin@localhost")
+        .await?
+        .unwrap();
     let hash = tenant.password_hash.as_deref().unwrap();
     assert!(verify_password("new-password", hash).unwrap());
     assert!(!verify_password("old-password", hash).unwrap());

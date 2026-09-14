@@ -220,7 +220,10 @@ pub fn score_title(title: &str, extra_keywords: &[String]) -> Verdict {
     }
 
     // "X vs Y", "Top 10 ...", "#1" style listicles: mild.
-    if lower.starts_with("top ") && words.get(1).is_some_and(|w| w.chars().all(|c| c.is_ascii_digit()))
+    if lower.starts_with("top ")
+        && words
+            .get(1)
+            .is_some_and(|w| w.chars().all(|c| c.is_ascii_digit()))
     {
         score += 0.1;
         reasons.push("listicle");
@@ -275,6 +278,9 @@ mod tests {
 
     #[test]
     fn score_is_clamped() {
-        assert!(s("INSANE SHOCKING EXPOSED DESTROYED!!! YOU WON'T BELIEVE 🤯🤯🤯 (NOT CLICKBAIT)") <= 1.0);
+        assert!(
+            s("INSANE SHOCKING EXPOSED DESTROYED!!! YOU WON'T BELIEVE 🤯🤯🤯 (NOT CLICKBAIT)")
+                <= 1.0
+        );
     }
 }

@@ -77,9 +77,15 @@ pub fn blocked_page(reason: &Reason, facts: &PageFacts<'_>) -> String {
         .collect();
 
     let suggestion = match reason {
-        Reason::Shorts => "If there was a specific video in there, it exists as a normal video too. Search for it.",
-        Reason::WorkHours { .. } => "Whatever you came here for will still be here this evening. Go back to what you were doing.",
-        Reason::Budget { .. } => "Half an hour of attention is a lot. Close the tab; tomorrow's budget is a fresh one.",
+        Reason::Shorts => {
+            "If there was a specific video in there, it exists as a normal video too. Search for it."
+        }
+        Reason::WorkHours { .. } => {
+            "Whatever you came here for will still be here this evening. Go back to what you were doing."
+        }
+        Reason::Budget { .. } => {
+            "Half an hour of attention is a lot. Close the tab; tomorrow's budget is a fresh one."
+        }
     };
 
     let embedded_script = if facts.embedded {
@@ -132,8 +138,7 @@ pub const ITEM_SELECTOR: &str = "ytd-rich-item-renderer, ytd-video-renderer, ytd
      ytm-video-with-context-renderer, ytm-compact-video-renderer, [data-witm-item]";
 
 /// Where the title lives inside an item, first match wins.
-pub const TITLE_SELECTOR: &str =
-    "#video-title, a#video-title-link, h3 a[title], .yt-lockup-metadata-view-model__title, \
+pub const TITLE_SELECTOR: &str = "#video-title, a#video-title-link, h3 a[title], .yt-lockup-metadata-view-model__title, \
      .media-item-headline, h3, h4, [data-witm-title]";
 
 /// The agent document: loaded in a hidden same-origin iframe by every
@@ -204,9 +209,15 @@ mod tests {
         assert!(html.contains("08:00 to 17:00"));
         assert!(html.contains("reason=work-hours"));
         assert!(html.contains("How to turn this off"));
-        assert!(!html.contains("witm plugin"), "the page must not spell out the commands");
+        assert!(
+            !html.contains("witm plugin"),
+            "the page must not spell out the commands"
+        );
         assert!(!html.contains("{{"), "unfilled placeholder");
-        assert!(!html.contains("<script"), "top-level page carries no script");
+        assert!(
+            !html.contains("<script"),
+            "top-level page carries no script"
+        );
 
         let html = blocked_page(
             &Reason::Budget {
@@ -221,7 +232,10 @@ mod tests {
         );
         assert!(html.contains("<dd>30m</dd>"));
         assert!(html.contains("<dd>1m</dd>"));
-        assert!(html.contains("<script"), "embedded page keeps the parent quiet");
+        assert!(
+            html.contains("<script"),
+            "embedded page keeps the parent quiet"
+        );
     }
 
     #[test]
@@ -249,6 +263,9 @@ mod tests {
 
     #[test]
     fn escaping() {
-        assert_eq!(escape_html("<a href=\"x\">&'"), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;");
+        assert_eq!(
+            escape_html("<a href=\"x\">&'"),
+            "&lt;a href=&quot;x&quot;&gt;&amp;&#39;"
+        );
     }
 }

@@ -276,7 +276,12 @@ impl Ledger {
 }
 
 /// The verdict for a request on a managed host. `None` means let it through.
-pub fn decide(settings: &Settings, now: &LocalTime, kind: PathKind, used_secs: u64) -> Option<Reason> {
+pub fn decide(
+    settings: &Settings,
+    now: &LocalTime,
+    kind: PathKind,
+    used_secs: u64,
+) -> Option<Reason> {
     if let PathKind::Agent(_) = kind {
         return None;
     }
@@ -292,7 +297,8 @@ pub fn decide(settings: &Settings, now: &LocalTime, kind: PathKind, used_secs: u
 /// The time-based part of the verdict, shared by request handling and the
 /// heartbeat (which has no path to classify).
 pub fn time_verdict(settings: &Settings, now: &LocalTime, used_secs: u64) -> Option<Reason> {
-    if settings.work_days.contains(now.weekday()) && settings.work_window.contains(now.minute_of_day())
+    if settings.work_days.contains(now.weekday())
+        && settings.work_window.contains(now.minute_of_day())
     {
         return Some(Reason::WorkHours {
             until: settings.work_window.end_hhmm(),
@@ -316,7 +322,10 @@ mod tests {
 
     fn at(weekday_days_since_epoch: i64, hhmm: &str) -> LocalTime {
         let m = parse_hhmm(hhmm).unwrap();
-        LocalTime::new((weekday_days_since_epoch * 86_400 + m as i64 * 60) as u64, 0)
+        LocalTime::new(
+            (weekday_days_since_epoch * 86_400 + m as i64 * 60) as u64,
+            0,
+        )
     }
     // 1970-01-05 was a Monday.
     const MONDAY: i64 = 4;
@@ -384,7 +393,10 @@ mod tests {
     fn shorts_are_refused_regardless_of_time() {
         let s = Settings::default();
         let sat_night = at(SATURDAY, "23:00");
-        assert_eq!(decide(&s, &sat_night, PathKind::Shorts, 0), Some(Reason::Shorts));
+        assert_eq!(
+            decide(&s, &sat_night, PathKind::Shorts, 0),
+            Some(Reason::Shorts)
+        );
         assert_eq!(
             decide(&s, &sat_night, PathKind::ShortsApi, 0),
             Some(Reason::Shorts)

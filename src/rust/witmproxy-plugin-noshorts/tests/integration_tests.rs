@@ -70,10 +70,18 @@ async fn start(config: &[(&str, &str)]) -> Result<Env> {
         .collect();
     registry.register_plugin(plugin).await?;
 
-    let server =
-        create_html_server_with_body("127.0.0.1", None, ca.clone(), Protocol::Http1, FIXTURE.to_string())
-            .await;
-    let proxy_addr = proxy.proxy_listen_addr().expect("proxy started").to_string();
+    let server = create_html_server_with_body(
+        "127.0.0.1",
+        None,
+        ca.clone(),
+        Protocol::Http1,
+        FIXTURE.to_string(),
+    )
+    .await;
+    let proxy_addr = proxy
+        .proxy_listen_addr()
+        .expect("proxy started")
+        .to_string();
     let client = create_client(ca.clone(), &format!("http://{proxy_addr}"), Protocol::Http1).await;
     let origin = format!("https://127.0.0.1:{}", server.listen_addr().port());
 
@@ -114,7 +122,11 @@ impl Env {
     }
 
     async fn status(&self) -> serde_json::Value {
-        self.get_json("/__witm/noshorts/status").await.json().await.unwrap()
+        self.get_json("/__witm/noshorts/status")
+            .await
+            .json()
+            .await
+            .unwrap()
     }
 
     async fn shutdown(self) {
@@ -142,14 +154,26 @@ async fn manifest_declares_typed_settings() -> Result<()> {
             .find(|s| s.name == name)
             .unwrap_or_else(|| panic!("{name} is declared"))
     };
-    assert!(matches!(find("daily_budget_minutes").input_type, InputType::Number));
-    assert!(matches!(find("block_shorts").input_type, InputType::Boolean));
+    assert!(matches!(
+        find("daily_budget_minutes").input_type,
+        InputType::Number
+    ));
+    assert!(matches!(
+        find("block_shorts").input_type,
+        InputType::Boolean
+    ));
     assert!(matches!(find("work_hours").input_type, InputType::Str));
     assert!(matches!(
         find("daily_budget_minutes").default,
         Some(ActualInput::Number(n)) if n == 30.0
     ));
-    assert!(find("work_hours").description.as_deref().unwrap_or("").contains("HH:MM"));
+    assert!(
+        find("work_hours")
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .contains("HH:MM")
+    );
     Ok(())
 }
 
@@ -158,15 +182,34 @@ async fn managed_html_gets_css_and_agent_frame() -> Result<()> {
     let env = start(&[]).await?;
     let resp = env.get_html("/").await;
     assert_eq!(resp.status(), 200);
-    assert_eq!(reason(&resp), None, "a passthrough response carries no plugin header");
+    assert_eq!(
+        reason(&resp),
+        None,
+        "a passthrough response carries no plugin header"
+    );
     let body = resp.text().await?;
-    assert!(body.contains("Hello from the stand-in YouTube"), "original content survives");
-    assert!(body.contains("id=\"witm-noshorts-css\""), "CSS injected: {body}");
-    assert!(body.contains("ytd-reel-shelf-renderer"), "shorts selectors present");
-    assert!(body.contains("id=\"witm-noshorts-agent\""), "agent frame injected");
+    assert!(
+        body.contains("Hello from the stand-in YouTube"),
+        "original content survives"
+    );
+    assert!(
+        body.contains("id=\"witm-noshorts-css\""),
+        "CSS injected: {body}"
+    );
+    assert!(
+        body.contains("ytd-reel-shelf-renderer"),
+        "shorts selectors present"
+    );
+    assert!(
+        body.contains("id=\"witm-noshorts-agent\""),
+        "agent frame injected"
+    );
     assert!(body.contains("src=\"/__witm/noshorts/agent\""));
     let head_end = body.find("</head>").unwrap();
-    assert!(body.find("witm-noshorts-css").unwrap() < head_end, "style lives in <head>");
+    assert!(
+        body.find("witm-noshorts-css").unwrap() < head_end,
+        "style lives in <head>"
+    );
     env.shutdown().await;
     Ok(())
 }
@@ -176,7 +219,10 @@ async fn hide_shorts_ui_can_be_switched_off() -> Result<()> {
     let env = start(&[("hide_shorts_ui", "false")]).await?;
     let body = env.get_html("/").await.text().await?;
     assert!(!body.contains("witm-noshorts-css"));
-    assert!(body.contains("witm-noshorts-agent"), "the agent is still needed for metering");
+    assert!(
+        body.contains("witm-noshorts-agent"),
+        "the agent is still needed for metering"
+    );
     env.shutdown().await;
     Ok(())
 }
@@ -187,12 +233,22 @@ async fn agent_document_is_served_by_the_plugin_and_left_alone() -> Result<()> {
     let resp = env.get_html("/__witm/noshorts/agent").await;
     assert_eq!(resp.status(), 200);
     assert_eq!(reason(&resp).as_deref(), Some("agent"));
-    assert!(resp.headers()["content-type"].to_str()?.starts_with("text/html"));
+    assert!(
+        resp.headers()["content-type"]
+            .to_str()?
+            .starts_with("text/html")
+    );
     let body = resp.text().await?;
     assert!(body.contains("\"heartbeatMs\":3000"), "{body}");
     assert!(body.contains("\"prefix\":\"/__witm/noshorts/\""));
-    assert!(!body.contains("witm-noshorts-agent"), "the agent page must not embed itself");
-    assert!(!body.contains("Hello from the stand-in"), "never reached the origin");
+    assert!(
+        !body.contains("witm-noshorts-agent"),
+        "the agent page must not embed itself"
+    );
+    assert!(
+        !body.contains("Hello from the stand-in"),
+        "never reached the origin"
+    );
     env.shutdown().await;
     Ok(())
 }
@@ -208,7 +264,10 @@ async fn shorts_pages_and_playback_api_are_refused() -> Result<()> {
     assert!(body.contains("Shorts are off"), "{body}");
     assert!(body.contains("How to turn this off"));
     assert!(!body.contains("witm plugin"), "instructions stay vague");
-    assert!(!body.contains("witm-noshorts-agent"), "block pages are not rewritten");
+    assert!(
+        !body.contains("witm-noshorts-agent"),
+        "block pages are not rewritten"
+    );
 
     let resp = env
         .client
@@ -246,7 +305,11 @@ async fn working_hours_block_the_whole_site() -> Result<()> {
     let now = chrono::Utc::now();
     let minute = now.hour() * 60 + now.minute();
     let hhmm = |m: u32| format!("{:02}:{:02}", (m / 60) % 24, m % 60);
-    let window = format!("{}-{}", hhmm((minute + 24 * 60 - 2) % (24 * 60)), hhmm((minute + 3) % (24 * 60)));
+    let window = format!(
+        "{}-{}",
+        hhmm((minute + 24 * 60 - 2) % (24 * 60)),
+        hhmm((minute + 3) % (24 * 60))
+    );
 
     let env = start(&[
         ("work_hours", &window),
@@ -327,17 +390,26 @@ async fn heartbeats_meter_active_time_against_the_budget() -> Result<()> {
     let body = resp.text().await?;
     assert!(body.contains("That is enough YouTube for today"), "{body}");
     assert!(body.contains("<dd>3s</dd>"), "shows what was used: {body}");
-    assert!(!body.contains("<script"), "top-level block page has no script");
+    assert!(
+        !body.contains("<script"),
+        "top-level block page has no script"
+    );
 
     let embedded = env
         .get_html("/__witm/noshorts/blocked?reason=budget&embedded=1")
         .await
         .text()
         .await?;
-    assert!(embedded.contains("<script"), "embedded block page keeps the parent paused");
+    assert!(
+        embedded.contains("<script"),
+        "embedded block page keeps the parent paused"
+    );
 
     // Shorts still report as shorts even once the budget is spent.
-    assert_eq!(reason(&env.get_html("/shorts/x").await).as_deref(), Some("shorts"));
+    assert_eq!(
+        reason(&env.get_html("/shorts/x").await).as_deref(),
+        Some("shorts")
+    );
     env.shutdown().await;
     Ok(())
 }
@@ -374,7 +446,13 @@ async fn score_endpoint_flags_clickbait() -> Result<()> {
     assert_eq!(items.len(), 3);
     assert_eq!(items[0]["hide"], false, "{json}");
     assert_eq!(items[1]["hide"], true, "{json}");
-    assert!(items[1]["reasons"].as_array().unwrap().iter().any(|r| r == "bait phrase"));
+    assert!(
+        items[1]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r == "bait phrase")
+    );
     assert_eq!(items[2]["hide"], true, "operator keyword: {json}");
     env.shutdown().await;
 
@@ -446,16 +524,21 @@ async fn browser_agent_meters_time_hides_bait_and_engages_the_overlay() -> Resul
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let line = stdout.lines().rev().find(|l| l.starts_with('{')).unwrap_or_else(|| {
-        panic!("no JSON result from puppeteer script.\nstdout: {stdout}\nstderr: {stderr}")
-    });
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .unwrap_or_else(|| {
+            panic!("no JSON result from puppeteer script.\nstdout: {stdout}\nstderr: {stderr}")
+        });
     let report: serde_json::Value = serde_json::from_str(line)?;
     if let Some(why) = report["skipped"].as_str() {
         tracing::warn!("browser test skipped: {why}");
         return Ok(());
     }
     assert_eq!(
-        report["ok"], true,
+        report["ok"],
+        true,
         "browser run failed:\n{}\nstderr: {stderr}",
         serde_json::to_string_pretty(&report)?
     );
@@ -483,7 +566,10 @@ async fn real_youtube_is_rewritten_or_blocked() -> Result<()> {
     registry.register_plugin(plugin).await?;
     let client = create_client(
         ca,
-        &format!("http://{}", proxy.proxy_listen_addr().expect("proxy started")),
+        &format!(
+            "http://{}",
+            proxy.proxy_listen_addr().expect("proxy started")
+        ),
         Protocol::Http2,
     )
     .await;
@@ -499,7 +585,10 @@ async fn real_youtube_is_rewritten_or_blocked() -> Result<()> {
     let body = resp.text().await?;
     match status.as_u16() {
         200 => {
-            assert!(body.contains("witm-noshorts-agent"), "agent frame injected into the real page");
+            assert!(
+                body.contains("witm-noshorts-agent"),
+                "agent frame injected into the real page"
+            );
             assert!(body.contains("witm-noshorts-css"));
         }
         403 => {
