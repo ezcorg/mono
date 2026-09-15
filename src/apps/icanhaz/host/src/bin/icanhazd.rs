@@ -53,8 +53,9 @@ async fn main() -> anyhow::Result<()> {
 
     // The grant store the broker mints into and every gated capability checks.
     let grants = GrantStore::shared();
-    // Durable, origin-bound trust: pairings persist across restarts (override the
-    // location with ICANHAZ_PAIRINGS; default a dotfile in $HOME).
+    // Durable, origin-bound trust. Pairings live in the daemon's store; the JSON
+    // dotfile (ICANHAZ_PAIRINGS, default in $HOME) is the legacy location,
+    // imported once and removed when the store opens.
     let pairings_path = std::env::var("ICANHAZ_PAIRINGS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -63,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
         });
     let pairings = Pairings::load(pairings_path);
     // Approved-hosts allowlist (who may initiate requests). Empty ⇒ allow all.
+    // Same store-with-legacy-file arrangement as pairings.
     let hosts_path = std::env::var("ICANHAZ_HOSTS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {

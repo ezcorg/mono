@@ -811,6 +811,111 @@ pub fn revoke_and_unpair(
     revoked
 }
 
+/// Where broker state (pairings, hosts) persists. The store is the durable
+/// home: one JSON blob per key under the `broker` owner of the generic state
+/// table, like any capability's state. A JSON file is the legacy form, read
+/// once and imported when a store is attached ([`Pairings::restore`]).
+#[derive(Clone)]
+enum Persist {
+    /// In memory only (tests).
+    None,
+    /// The legacy dotfile, written with owner-only permissions.
+    File(PathBuf),
+    /// The daemon's store, key under the `broker` owner.
+    Store {
+        store: crate::store::Store,
+        key: &'static str,
+    },
+}
+
+impl Persist {
+    fn save(&self, json: String, what: &'static str) {
+        match self {
+            Persist::None => {}
+            Persist::File(path) => write_private(path, &json, what),
+            Persist::Store { store, key } => {
+                let store = store.clone();
+                let key = *key;
+                spawn_persist(async move {
+                    if let Err(err) = store.state_set("broker", key, json.as_bytes()).await {
+                        tracing::warn!(?err, what, "failed to persist to the store");
+                    }
+                });
+            }
+        }
+    }
+
+    /// The legacy file this backend reads from, if it is one.
+    fn legacy_file(&self) -> Option<&PathBuf> {
+        match self {
+            Persist::File(p) => Some(p),
+            _ => None,
+        }
+    }
+}
+
+/// Run a persistence future on the current tokio runtime, or on a throwaway
+/// one when called from outside (a Tauri command thread).
+fn spawn_persist(fut: impl std::future::Future<Output = ()> + Send + 'static) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(fut);
+        }
+        Err(_) => {
+            std::thread::spawn(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt.block_on(fut),
+                    Err(err) => tracing::warn!(?err, "no runtime to persist on"),
+                }
+            });
+        }
+    }
+}
+
+/// Load `key` from the store's `broker` owner as JSON, else import the legacy
+/// file (deleting it once the import is stored: it held bearer secrets in
+/// plain text), else `T::default()`.
+async fn restore_json<T: serde::de::DeserializeOwned + Serialize + Default>(
+    store: &crate::store::Store,
+    key: &'static str,
+    legacy: Option<&PathBuf>,
+) -> T {
+    match store.state_get("broker", key).await {
+        Ok(Some(bytes)) => match serde_json::from_slice(&bytes) {
+            Ok(v) => return v,
+            Err(err) => tracing::warn!(?err, key, "stored broker state is malformed; ignoring"),
+        },
+        Ok(None) => {}
+        Err(err) => tracing::warn!(?err, key, "could not read broker state"),
+    }
+    if let Some(path) = legacy {
+        if let Some(v) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<T>(&s).ok())
+        {
+            match serde_json::to_vec(&v) {
+                Ok(json) => match store.state_set("broker", key, &json).await {
+                    Ok(()) => {
+                        if let Err(err) = std::fs::remove_file(path) {
+                            tracing::warn!(?err, path = %path.display(), "imported into the store, but could not remove the legacy file");
+                        } else {
+                            tracing::info!(path = %path.display(), key, "imported into the store; legacy file removed");
+                        }
+                        return v;
+                    }
+                    Err(err) => tracing::warn!(?err, key, "could not import into the store"),
+                },
+                Err(err) => tracing::warn!(?err, key, "could not serialise for import"),
+            }
+            return v;
+        }
+    }
+    T::default()
+}
+
 /// Durable, per-origin trust: presenting a pairing secret for an origin skips the
 /// consent prompt for the kinds that origin was approved for. The secret is
 /// stored by the browser in **origin-partitioned** storage (only the paired
@@ -819,8 +924,8 @@ pub fn revoke_and_unpair(
 /// (In-memory: a daemon restart forgets pairings and the human re-approves once.)
 pub struct Pairings {
     by_secret: HashMap<String, Pairing>,
-    /// Where pairings persist across restarts (None = in-memory only, e.g. tests).
-    path: Option<PathBuf>,
+    /// Where pairings persist across restarts.
+    persist: Persist,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -834,12 +939,13 @@ impl Pairings {
     pub fn shared() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
             by_secret: HashMap::new(),
-            path: None,
+            persist: Persist::None,
         }))
     }
 
-    /// Load pairings from `path` (empty if absent/unreadable) and persist every later
-    /// change back to it — durable, origin-bound trust across daemon restarts.
+    /// Load pairings from the legacy JSON `path` (empty if absent/unreadable)
+    /// and persist every later change back to it, until [`Pairings::restore`]
+    /// attaches the store.
     pub fn load(path: PathBuf) -> Arc<Mutex<Self>> {
         let by_secret = std::fs::read_to_string(&path)
             .ok()
@@ -847,15 +953,29 @@ impl Pairings {
             .unwrap_or_default();
         Arc::new(Mutex::new(Self {
             by_secret,
-            path: Some(path),
+            persist: Persist::File(path),
         }))
     }
 
-    /// Best-effort persist to `path` (if any). Called after every mutation.
+    /// Attach the daemon's store: pairings come from its `broker/pairings`
+    /// row from now on (importing the legacy file once, then deleting it),
+    /// and every change persists there.
+    pub async fn restore(this: &Arc<Mutex<Self>>, store: &crate::store::Store) {
+        let legacy = this.lock().unwrap().persist.legacy_file().cloned();
+        let by_secret: HashMap<String, Pairing> =
+            restore_json(store, "pairings", legacy.as_ref()).await;
+        let mut me = this.lock().unwrap();
+        me.by_secret = by_secret;
+        me.persist = Persist::Store {
+            store: store.clone(),
+            key: "pairings",
+        };
+    }
+
+    /// Best-effort persist. Called after every mutation.
     fn save(&self) {
-        let Some(path) = &self.path else { return };
         match serde_json::to_string_pretty(&self.by_secret) {
-            Ok(json) => write_private(path, &json, "pairings"),
+            Ok(json) => self.persist.save(json, "pairings"),
             Err(err) => tracing::warn!(?err, "failed to serialize pairings"),
         }
     }
@@ -958,7 +1078,7 @@ pub struct Hosts {
     /// origin → kinds it requested while unapproved (in-memory; re-collected on demand).
     seen: HashMap<String, std::collections::BTreeSet<String>>,
     strict: bool,
-    path: Option<PathBuf>,
+    persist: Persist,
 }
 
 /// Persist `data` to `path` with **owner-only** perms (0600) — these files can hold
@@ -1010,12 +1130,13 @@ impl Hosts {
             allowed: HashSet::new(),
             seen: HashMap::new(),
             strict: false,
-            path: None,
+            persist: Persist::None,
         }))
     }
 
-    /// Load the allowlist. `strict` ⇒ only approved origins may prompt (the app);
-    /// otherwise an empty allowlist is permissive (headless default).
+    /// Load the allowlist from the legacy JSON `path`. `strict` ⇒ only approved
+    /// requesters may prompt (the app); otherwise an empty allowlist is
+    /// permissive (headless default). [`Hosts::restore`] attaches the store.
     pub fn load(path: PathBuf, strict: bool) -> Arc<Mutex<Self>> {
         let allowed = std::fs::read_to_string(&path)
             .ok()
@@ -1025,15 +1146,26 @@ impl Hosts {
             allowed,
             seen: HashMap::new(),
             strict,
-            path: Some(path),
+            persist: Persist::File(path),
         }))
     }
 
+    /// Attach the daemon's store (`broker/hosts`), importing the legacy file once.
+    pub async fn restore(this: &Arc<Mutex<Self>>, store: &crate::store::Store) {
+        let legacy = this.lock().unwrap().persist.legacy_file().cloned();
+        let allowed: HashSet<String> = restore_json(store, "hosts", legacy.as_ref()).await;
+        let mut me = this.lock().unwrap();
+        me.allowed = allowed;
+        me.persist = Persist::Store {
+            store: store.clone(),
+            key: "hosts",
+        };
+    }
+
     fn save(&self) {
-        if let Some(path) = &self.path {
-            if let Ok(s) = serde_json::to_string_pretty(&self.allowed) {
-                write_private(path, &s, "hosts");
-            }
+        match serde_json::to_string_pretty(&self.allowed) {
+            Ok(json) => self.persist.save(json, "hosts"),
+            Err(err) => tracing::warn!(?err, "failed to serialize hosts"),
         }
     }
 
@@ -2085,5 +2217,53 @@ mod tests {
         assert_eq!(store.lock().unwrap().grants.len(), 0);
 
         server.abort();
+    }
+
+    /// Pairings and hosts persist in the store; a legacy JSON file is imported
+    /// once and then removed, since it held bearer secrets in plain text.
+    #[tokio::test]
+    async fn pairings_and_hosts_persist_in_the_store_and_import_legacy_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let store = crate::store::Store::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+
+        let legacy = dir.path().join("pairings.json");
+        std::fs::write(
+            &legacy,
+            r#"{"s1":{"origin":"https://a.example","kinds":["terminal"]}}"#,
+        )
+        .unwrap();
+        let pairings = Pairings::load(legacy.clone());
+        Pairings::restore(&pairings, &store).await;
+        assert!(!legacy.exists(), "legacy file removed after import");
+        assert!(pairings
+            .lock()
+            .unwrap()
+            .check("s1", "https://a.example", "terminal"));
+
+        // A change persists to the store and a fresh instance restores it.
+        let secret = pairings
+            .lock()
+            .unwrap()
+            .remember(None, "https://b.example", "process")
+            .expect("fresh secret");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let fresh = Pairings::shared();
+        Pairings::restore(&fresh, &store).await;
+        {
+            let fresh = fresh.lock().unwrap();
+            assert!(fresh.check(&secret, "https://b.example", "process"));
+            assert!(fresh.check("s1", "https://a.example", "terminal"));
+        }
+
+        let hosts = Hosts::shared();
+        Hosts::restore(&hosts, &store).await;
+        hosts.lock().unwrap().add("https://c.example");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let again = Hosts::shared();
+        Hosts::restore(&again, &store).await;
+        assert_eq!(again.lock().unwrap().list(), vec!["https://c.example"]);
     }
 }

@@ -210,7 +210,7 @@ pub async fn run(
 
     // Every capability shares one grant store: a token from `broker.request` is the
     // same one fs + terminal validate. `hosts` gates which origins may even prompt.
-    let broker = BrokerProvider::new(grants.clone(), consent, pairings).with_hosts(hosts);
+    let broker = BrokerProvider::new(grants.clone(), consent, pairings.clone()).with_hosts(hosts.clone());
     let terminal = TerminalProvider::new(grants.clone());
     let process = ProcessProvider::new(grants.clone());
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
@@ -218,9 +218,15 @@ pub async fn run(
     let Services {
         providers,
         identity: broker_key,
-        ..
+        store,
     } = services;
     grants.lock().unwrap().set_identity(broker_key.clone());
+    // Pairings and the hosts allowlist live in the store from here on (their
+    // legacy JSON files are imported once, then removed).
+    if let Some(store) = &store {
+        Pairings::restore(&pairings, store).await;
+        Hosts::restore(&hosts, store).await;
+    }
     let iroh_ep = if config.iroh {
         let secret = iroh::SecretKey::from_bytes(&broker_key.to_bytes());
         match iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
