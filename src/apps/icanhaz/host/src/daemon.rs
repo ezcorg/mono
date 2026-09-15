@@ -227,6 +227,8 @@ pub async fn run(
     if let Some(store) = &store {
         Pairings::restore(&pairings, store).await;
         Hosts::restore(&hosts, store).await;
+        // Certified grants (and their sturdy references) come back too.
+        GrantStore::restore(&grants, store).await;
     }
     let iroh_ep = if config.iroh {
         let secret = iroh::SecretKey::from_bytes(&broker_key.to_bytes());

@@ -60,6 +60,7 @@ pub use bindings::icanhaz::nocap::types::{
     TerminalRequest,
 };
 use bindings::icanhaz::nocap::types::{Denied, GrantInfo, Principal, PrincipalKind};
+use bindings::icanhaz::nocap::types::{Endpoint, SocketRequest, Transport};
 /// The call a native handler submits for admission (`ezcap::Call`).
 pub(crate) use ezcap::Call as AdmitCall;
 use ezcap::{Audience, Certificate, Keypair, Membranes, Narrowing, Presented, Scope as EzScope};
@@ -354,6 +355,141 @@ pub struct GrantStore {
     /// ones it issued are redeemed here. Ephemeral until the daemon installs
     /// the persisted one ([`GrantStore::set_identity`]).
     identity: Keypair,
+    /// Where certified grants persist (`broker/grant:<token>` rows), so the
+    /// certificates on them survive a daemon restart. `None` = in memory.
+    persist: Option<crate::store::Store>,
+}
+
+/// A certified grant's durable form. Bearer tokens are the row key; the
+/// store is encrypted, and these rows are what pairings already were.
+#[derive(Serialize, Deserialize)]
+struct DurableGrant {
+    kind: serde_json::Value,
+    scope: EzScope,
+    parent: Option<String>,
+    summary: String,
+    expires_unix: u64,
+    principal: (String, String, Option<String>),
+    /// The sturdy ids certificates on this grant name.
+    sturdy: Vec<String>,
+}
+
+fn kind_to_json(k: &CapabilityKind) -> serde_json::Value {
+    use serde_json::json;
+    match k {
+        CapabilityKind::Filesystem(fs) => {
+            json!({"filesystem": {"roots": fs.roots.iter().map(|r| json!({"path": r.path, "rights": r.rights.bits()})).collect::<Vec<_>>()}})
+        }
+        CapabilityKind::Sockets(s) => {
+            json!({"sockets": {"may_listen": s.may_listen, "allow": s.allow.iter().map(|e| json!({"host": e.host, "lo": e.lo_port, "hi": e.hi_port, "udp": matches!(e.proto, Transport::Udp)})).collect::<Vec<_>>()}})
+        }
+        CapabilityKind::Process(p) => {
+            json!({"process": {"image": p.image, "args": p.args, "guest_chooses_argv": p.guest_chooses_argv}})
+        }
+        CapabilityKind::Terminal(t) => json!({"terminal": {"shell": t.shell, "jailed": t.jailed}}),
+        CapabilityKind::Inference(i) => json!({"inference": {"models": i.models}}),
+    }
+}
+
+fn kind_from_json(v: &serde_json::Value) -> Option<CapabilityKind> {
+    let str_of =
+        |v: &serde_json::Value, k: &str| v.get(k).and_then(|s| s.as_str()).map(str::to_string);
+    let strings = |v: &serde_json::Value, k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if let Some(fs) = v.get("filesystem") {
+        let roots = fs
+            .get("roots")
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|r| {
+                        Some(PathGrant {
+                            path: str_of(r, "path")?,
+                            rights: FsRights::from_bits_truncate(
+                                r.get("rights").and_then(|b| b.as_u64()).unwrap_or(0) as u8,
+                            ),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Some(CapabilityKind::Filesystem(FsRequest { roots }));
+    }
+    if let Some(s) = v.get("sockets") {
+        let allow = s
+            .get("allow")
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| {
+                        Some(Endpoint {
+                            host: str_of(e, "host")?,
+                            lo_port: e.get("lo")?.as_u64()? as u16,
+                            hi_port: e.get("hi")?.as_u64()? as u16,
+                            proto: if e.get("udp").and_then(|b| b.as_bool()).unwrap_or(false) {
+                                Transport::Udp
+                            } else {
+                                Transport::Tcp
+                            },
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Some(CapabilityKind::Sockets(SocketRequest {
+            allow,
+            may_listen: s
+                .get("may_listen")
+                .and_then(|b| b.as_bool())
+                .unwrap_or(false),
+        }));
+    }
+    if let Some(p) = v.get("process") {
+        return Some(CapabilityKind::Process(ProcessRequest {
+            image: str_of(p, "image")?,
+            args: strings(p, "args"),
+            guest_chooses_argv: p
+                .get("guest_chooses_argv")
+                .and_then(|b| b.as_bool())
+                .unwrap_or(false),
+        }));
+    }
+    if let Some(t) = v.get("terminal") {
+        return Some(CapabilityKind::Terminal(TerminalRequest {
+            shell: str_of(t, "shell"),
+            jailed: t.get("jailed").and_then(|b| b.as_bool()).unwrap_or(true),
+        }));
+    }
+    if let Some(i) = v.get("inference") {
+        return Some(CapabilityKind::Inference(InferenceRequest {
+            models: strings(i, "models"),
+        }));
+    }
+    None
+}
+
+fn principal_kind_str(k: PrincipalKind) -> &'static str {
+    match k {
+        PrincipalKind::WebOrigin => "web-origin",
+        PrincipalKind::InstalledApp => "installed-app",
+        PrincipalKind::Peer => "peer",
+    }
+}
+
+fn principal_kind_parse(s: &str) -> PrincipalKind {
+    match s {
+        "web-origin" => PrincipalKind::WebOrigin,
+        "installed-app" => PrincipalKind::InstalledApp,
+        _ => PrincipalKind::Peer,
+    }
 }
 
 impl Default for GrantStore {
@@ -363,6 +499,7 @@ impl Default for GrantStore {
             membranes: builtin_membranes(),
             sturdy: HashMap::new(),
             identity: Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}")),
+            persist: None,
         }
     }
 }
@@ -455,6 +592,132 @@ impl GrantStore {
             },
         );
         Ok(token)
+    }
+
+    /// Persist certified grants in `store` from now on, and bring back the
+    /// ones a previous run persisted (expired rows are dropped), with their
+    /// sturdy references, so certificates issued before a restart still
+    /// redeem. Membrane instances are re-minted from the stored scopes.
+    pub async fn restore(this: &Arc<Mutex<Self>>, store: &crate::store::Store) {
+        let rows = match store.state_list("broker", "grant:").await {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::warn!(?err, "could not read persisted grants");
+                Vec::new()
+            }
+        };
+        let now_unix = unix_now();
+        let mut stale = Vec::new();
+        {
+            let mut me = this.lock().unwrap();
+            for (key, bytes) in rows {
+                let token = key.trim_start_matches("grant:").to_string();
+                let Ok(row) = serde_json::from_slice::<DurableGrant>(&bytes) else {
+                    stale.push(key);
+                    continue;
+                };
+                if row.expires_unix <= now_unix {
+                    stale.push(key);
+                    continue;
+                }
+                let Some(kind) = kind_from_json(&row.kind) else {
+                    stale.push(key);
+                    continue;
+                };
+                let tag = kind_tag(&kind);
+                let instance = if me.membranes.has(tag) {
+                    match me.membranes.mint(tag, &row.scope) {
+                        Ok(id) => Some(id),
+                        Err(err) => {
+                            tracing::warn!(
+                                ?err,
+                                token,
+                                "persisted grant's scope no longer compiles; dropped"
+                            );
+                            stale.push(key);
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let (kind_s, id, display_name) = row.principal;
+                me.grants.insert(
+                    token.clone(),
+                    Grant {
+                        kind,
+                        scope: row.scope,
+                        instance,
+                        parent: row.parent,
+                        summary: row.summary,
+                        expires: Instant::now() + Duration::from_secs(row.expires_unix - now_unix),
+                        principal: Principal {
+                            kind: principal_kind_parse(&kind_s),
+                            id,
+                            display_name,
+                        },
+                        cancel: CancellationToken::new(),
+                    },
+                );
+                for sturdy in row.sturdy {
+                    me.sturdy.insert(sturdy, token.clone());
+                }
+            }
+            me.persist = Some(store.clone());
+        }
+        for key in stale {
+            let _ = store.state_delete("broker", &key).await;
+        }
+    }
+
+    /// Write (or rewrite) a certified grant's durable row.
+    fn persist_grant(&self, token: &str) {
+        let Some(store) = &self.persist else { return };
+        let Some(grant) = self.grants.get(token) else {
+            return;
+        };
+        let remaining = grant.expires.saturating_duration_since(Instant::now());
+        let row = DurableGrant {
+            kind: kind_to_json(&grant.kind),
+            scope: grant.scope.clone(),
+            parent: grant.parent.clone(),
+            summary: grant.summary.clone(),
+            expires_unix: unix_now().saturating_add(remaining.as_secs()),
+            principal: (
+                principal_kind_str(grant.principal.kind).to_string(),
+                grant.principal.id.clone(),
+                grant.principal.display_name.clone(),
+            ),
+            sturdy: self
+                .sturdy
+                .iter()
+                .filter(|(_, t)| t.as_str() == token)
+                .map(|(s, _)| s.clone())
+                .collect(),
+        };
+        let Ok(json) = serde_json::to_vec(&row) else {
+            return;
+        };
+        let store = store.clone();
+        let key = format!("grant:{token}");
+        spawn_persist(async move {
+            if let Err(err) = store.state_set("broker", &key, &json).await {
+                tracing::warn!(?err, "could not persist a certified grant");
+            }
+        });
+    }
+
+    /// Drop the durable rows of revoked grants.
+    fn unpersist(&self, tokens: Vec<String>) {
+        let Some(store) = &self.persist else { return };
+        let store = store.clone();
+        spawn_persist(async move {
+            for token in tokens {
+                let _ = store
+                    .state_delete("broker", &format!("grant:{token}"))
+                    .await;
+            }
+        });
     }
 
     /// Admit one call on a grant: the grant must be live, and its `allow`
@@ -599,6 +862,9 @@ impl GrantStore {
         let expires = unix_now().saturating_add(ttl.as_secs().max(1));
         let sturdy = mint_token();
         self.sturdy.insert(sturdy.clone(), token.to_string());
+        // A certified grant outlives the daemon: its certificates may be
+        // redeemed after a restart.
+        self.persist_grant(token);
         Ok(Certificate::issue(&self.identity, sturdy, audience, expires, extra).encode())
     }
 
@@ -746,6 +1012,7 @@ impl GrantStore {
                 }
                 // Everything narrowed from it goes too (their cancel tokens are
                 // children of this one and have already fired).
+                let mut removed = vec![id.to_string()];
                 let mut gone = vec![id.to_string()];
                 while let Some(parent) = gone.pop() {
                     let children: Vec<String> = self
@@ -756,12 +1023,14 @@ impl GrantStore {
                         .collect();
                     for child in children {
                         self.grants.remove(&child);
+                        removed.push(child.clone());
                         gone.push(child);
                     }
                 }
                 // Certificates on a revoked grant are void: forget their references.
                 let grants = &self.grants;
                 self.sturdy.retain(|_, token| grants.contains_key(token));
+                self.unpersist(removed);
                 true
             }
             None => false,
@@ -2221,6 +2490,71 @@ mod tests {
         assert_eq!(store.lock().unwrap().grants.len(), 0);
 
         server.abort();
+    }
+
+    /// A certified grant persists; after a "restart" (a fresh store with the
+    /// same identity) its certificate still redeems, and revoking it removes
+    /// the row.
+    #[tokio::test]
+    async fn certified_grants_survive_a_restart() {
+        use crate::broker::bindings::exports::icanhaz::nocap::broker::Handler as _;
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = crate::store::Store::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let key = Keypair::generate().unwrap();
+
+        let before = GrantStore::shared();
+        before.lock().unwrap().set_identity(key.clone());
+        GrantStore::restore(&before, &db).await;
+        let token = before.lock().unwrap().issue(
+            CapabilityKind::Process(ProcessRequest {
+                image: "echo".into(),
+                args: vec![],
+                guest_chooses_argv: true,
+            }),
+            "process (echo)".into(),
+            Duration::from_secs(600),
+            anonymous_principal(),
+        );
+        let cert = before
+            .lock()
+            .unwrap()
+            .certify(
+                &token,
+                Audience::Any,
+                Duration::from_secs(300),
+                Narrowing::allow("size(call.args.args) < 2"),
+            )
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // The daemon restarts: a new store with the same identity and database.
+        let after = GrantStore::shared();
+        after.lock().unwrap().set_identity(key);
+        GrantStore::restore(&after, &db).await;
+        let provider = BrokerProvider::new(after.clone(), Consent::AutoApprove, Pairings::shared());
+        let redeemed = provider
+            .redeem(crate::ReqCtx::default(), cert.clone())
+            .await
+            .unwrap()
+            .expect("redeems after restart");
+        let one = AdmitCall::new("spawn").arg("args", vec!["x".to_string()]);
+        assert!(after.lock().unwrap().admit(&redeemed.token, one).is_ok());
+        let two = AdmitCall::new("spawn").arg("args", vec!["x".to_string(), "y".to_string()]);
+        let outcome = after.lock().unwrap().admit(&redeemed.token, two);
+        assert!(matches!(outcome, Err(Denied::OutOfScope(_))), "{outcome:?}");
+        // The restored source token itself still works and lists as before.
+        assert!(after.lock().unwrap().validate_process(&token).is_ok());
+
+        // Revoking removes the row: a third restart knows nothing of it.
+        assert!(after.lock().unwrap().revoke(&token));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let third = GrantStore::shared();
+        GrantStore::restore(&third, &db).await;
+        assert!(third.lock().unwrap().validate_process(&token).is_err());
+        assert!(db.state_list("broker", "grant:").await.unwrap().is_empty());
     }
 
     /// Pairings and hosts persist in the store; a legacy JSON file is imported

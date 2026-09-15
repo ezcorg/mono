@@ -138,6 +138,26 @@ impl Store {
         Ok(())
     }
 
+    /// Every `(key, value)` of `owner` whose key starts with `prefix`.
+    pub async fn state_list(&self, owner: &str, prefix: &str) -> Result<Vec<(String, Vec<u8>)>> {
+        let rows = sqlx::query(
+            "SELECT key, value FROM state WHERE owner = ? AND key LIKE ? ESCAPE '\\' ORDER BY key",
+        )
+        .bind(owner)
+        .bind(format!(
+            "{}%",
+            prefix
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        ))
+        .fetch_all(&self.db.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| Ok((row.try_get("key")?, row.try_get("value")?)))
+            .collect()
+    }
+
     pub async fn state_delete(&self, owner: &str, key: &str) -> Result<bool> {
         let done = sqlx::query("DELETE FROM state WHERE owner = ? AND key = ?")
             .bind(owner)
