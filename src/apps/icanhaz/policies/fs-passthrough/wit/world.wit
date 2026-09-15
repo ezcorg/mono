@@ -11,6 +11,13 @@ package icanhaz:fspass@0.1.0;
 /// denial. `""`/`"/"` ⇒ the whole preopen.
 interface gate {
   authorize: func(grant: string) -> result<string, string>;
+  /// Per-operation admission. `method` is the `wasi:filesystem` descriptor
+  /// method being invoked (kebab-case, e.g. `open-at`); `args` are the
+  /// string-valued arguments the host may bind for the grant's scope (`path`,
+  /// `old-path`, `new-path`). The host evaluates the grant's `allow` clause
+  /// (`ezco:ezcap`) with `call.method` and `call.args.*` bound. `Err` ⇒ the
+  /// operation fails with `access`.
+  admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
 }
 
 /// The gated entry point. Exchange a consented grant for the **root descriptor**;

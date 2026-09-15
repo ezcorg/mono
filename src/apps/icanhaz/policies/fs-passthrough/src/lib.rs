@@ -59,12 +59,14 @@ use raw::wasi::filesystem::types as ty;
 use raw::wasi::io::error::Error as IoError;
 use raw::wasi::io::streams::{InputStream, OutputStream};
 
-/// Re-authorize `grant` with the host gate. A revoked or expired grant returns
-/// `Err`, which every operation turns into `access` — this is what makes revocation
-/// and expiry take effect on an already-open descriptor (the grant is the gate,
-/// checked per op, not just at mount).
-fn reauthorize(grant: &str) -> Result<(), ty::ErrorCode> {
-    icanhaz::fspass::gate::authorize(grant).map(|_| ()).map_err(|_| ty::ErrorCode::Access)
+/// Admit one operation on `grant` with the host gate: the grant must still be
+/// live (revocation and expiry take effect on an already-open descriptor at its
+/// next use) and its scope's `allow` clause must hold for `method` with the
+/// given string arguments bound (`path`, `old-path`, `new-path`). Any refusal
+/// is `access`.
+fn admit(grant: &str, method: &str, args: &[(&str, &str)]) -> Result<(), ty::ErrorCode> {
+    let args: Vec<(String, String)> = args.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    icanhaz::fspass::gate::admit(grant, method, &args).map_err(|_| ty::ErrorCode::Access)
 }
 
 struct Component;
@@ -77,8 +79,8 @@ struct Desc {
 }
 
 impl Desc {
-    fn check(&self) -> Result<(), ty::ErrorCode> {
-        reauthorize(&self.grant)
+    fn check(&self, method: &str, args: &[(&str, &str)]) -> Result<(), ty::ErrorCode> {
+        admit(&self.grant, method, args)
     }
     /// Wrap a descriptor derived from this one (e.g. via `open-at`), inheriting the grant.
     fn derive(&self, inner: imp::Descriptor) -> ex_types::Descriptor {
@@ -103,69 +105,69 @@ impl ex_types::Guest for Component {
 
 impl ex_types::GuestDescriptor for Desc {
     fn read_via_stream(&self, offset: u64) -> Result<InputStream, ty::ErrorCode> {
-        self.check()?;
+        self.check("read-via-stream", &[])?;
         self.inner.read_via_stream(offset)
     }
     fn write_via_stream(&self, offset: u64) -> Result<OutputStream, ty::ErrorCode> {
-        self.check()?;
+        self.check("write-via-stream", &[])?;
         self.inner.write_via_stream(offset)
     }
     fn append_via_stream(&self) -> Result<OutputStream, ty::ErrorCode> {
-        self.check()?;
+        self.check("append-via-stream", &[])?;
         self.inner.append_via_stream()
     }
     fn advise(&self, offset: u64, length: u64, advice: ty::Advice) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("advise", &[])?;
         self.inner.advise(offset, length, advice)
     }
     fn sync_data(&self) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("sync-data", &[])?;
         self.inner.sync_data()
     }
     fn get_flags(&self) -> Result<ty::DescriptorFlags, ty::ErrorCode> {
-        self.check()?;
+        self.check("get-flags", &[])?;
         self.inner.get_flags()
     }
     fn get_type(&self) -> Result<ty::DescriptorType, ty::ErrorCode> {
-        self.check()?;
+        self.check("get-type", &[])?;
         self.inner.get_type()
     }
     fn set_size(&self, size: u64) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("set-size", &[])?;
         self.inner.set_size(size)
     }
     fn set_times(&self, atime: ty::NewTimestamp, mtime: ty::NewTimestamp) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("set-times", &[])?;
         self.inner.set_times(atime, mtime)
     }
     fn read(&self, length: u64, offset: u64) -> Result<(Vec<u8>, bool), ty::ErrorCode> {
-        self.check()?;
+        self.check("read", &[])?;
         self.inner.read(length, offset)
     }
     fn write(&self, buffer: Vec<u8>, offset: u64) -> Result<u64, ty::ErrorCode> {
-        self.check()?;
+        self.check("write", &[])?;
         self.inner.write(&buffer, offset)
     }
     fn read_directory(&self) -> Result<ex_types::DirectoryEntryStream, ty::ErrorCode> {
-        self.check()?;
+        self.check("read-directory", &[])?;
         self.inner
             .read_directory()
             .map(|s| ex_types::DirectoryEntryStream::new(DirStream { inner: s, grant: self.grant.clone() }))
     }
     fn sync(&self) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("sync", &[])?;
         self.inner.sync()
     }
     fn create_directory_at(&self, path: String) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("create-directory-at", &[("path", &path)])?;
         self.inner.create_directory_at(&path)
     }
     fn stat(&self) -> Result<ty::DescriptorStat, ty::ErrorCode> {
-        self.check()?;
+        self.check("stat", &[])?;
         self.inner.stat()
     }
     fn stat_at(&self, path_flags: ty::PathFlags, path: String) -> Result<ty::DescriptorStat, ty::ErrorCode> {
-        self.check()?;
+        self.check("stat-at", &[("path", &path)])?;
         self.inner.stat_at(path_flags, &path)
     }
     fn set_times_at(
@@ -175,7 +177,7 @@ impl ex_types::GuestDescriptor for Desc {
         atime: ty::NewTimestamp,
         mtime: ty::NewTimestamp,
     ) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("set-times-at", &[("path", &path)])?;
         self.inner.set_times_at(path_flags, &path, atime, mtime)
     }
     fn link_at(
@@ -185,7 +187,7 @@ impl ex_types::GuestDescriptor for Desc {
         new_descriptor: ex_types::DescriptorBorrow<'_>,
         new_path: String,
     ) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("link-at", &[("old-path", &old_path), ("new-path", &new_path)])?;
         self.inner.link_at(old_path_flags, &old_path, &new_descriptor.get::<Desc>().inner, &new_path)
     }
     fn open_at(
@@ -195,15 +197,15 @@ impl ex_types::GuestDescriptor for Desc {
         open_flags: ty::OpenFlags,
         flags: ty::DescriptorFlags,
     ) -> Result<ex_types::Descriptor, ty::ErrorCode> {
-        self.check()?;
+        self.check("open-at", &[("path", &path)])?;
         self.inner.open_at(path_flags, &path, open_flags, flags).map(|d| self.derive(d))
     }
     fn readlink_at(&self, path: String) -> Result<String, ty::ErrorCode> {
-        self.check()?;
+        self.check("readlink-at", &[("path", &path)])?;
         self.inner.readlink_at(&path)
     }
     fn remove_directory_at(&self, path: String) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("remove-directory-at", &[("path", &path)])?;
         self.inner.remove_directory_at(&path)
     }
     fn rename_at(
@@ -212,15 +214,15 @@ impl ex_types::GuestDescriptor for Desc {
         new_descriptor: ex_types::DescriptorBorrow<'_>,
         new_path: String,
     ) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("rename-at", &[("old-path", &old_path), ("new-path", &new_path)])?;
         self.inner.rename_at(&old_path, &new_descriptor.get::<Desc>().inner, &new_path)
     }
     fn symlink_at(&self, old_path: String, new_path: String) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("symlink-at", &[("old-path", &old_path), ("new-path", &new_path)])?;
         self.inner.symlink_at(&old_path, &new_path)
     }
     fn unlink_file_at(&self, path: String) -> Result<(), ty::ErrorCode> {
-        self.check()?;
+        self.check("unlink-file-at", &[("path", &path)])?;
         self.inner.unlink_file_at(&path)
     }
     fn is_same_object(&self, other: ex_types::DescriptorBorrow<'_>) -> bool {
@@ -228,7 +230,7 @@ impl ex_types::GuestDescriptor for Desc {
         self.inner.is_same_object(&other.get::<Desc>().inner)
     }
     fn metadata_hash(&self) -> Result<ty::MetadataHashValue, ty::ErrorCode> {
-        self.check()?;
+        self.check("metadata-hash", &[])?;
         self.inner.metadata_hash()
     }
     fn metadata_hash_at(
@@ -236,14 +238,14 @@ impl ex_types::GuestDescriptor for Desc {
         path_flags: ty::PathFlags,
         path: String,
     ) -> Result<ty::MetadataHashValue, ty::ErrorCode> {
-        self.check()?;
+        self.check("metadata-hash-at", &[("path", &path)])?;
         self.inner.metadata_hash_at(path_flags, &path)
     }
 }
 
 impl ex_types::GuestDirectoryEntryStream for DirStream {
     fn read_directory_entry(&self) -> Result<Option<ty::DirectoryEntry>, ty::ErrorCode> {
-        reauthorize(&self.grant)?;
+        admit(&self.grant, "read-directory-entry", &[])?;
         self.inner.read_directory_entry()
     }
 }

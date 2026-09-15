@@ -394,6 +394,32 @@ where
         )
         .map_err(anyhow::Error::from)
         .context("link gate.authorize")?;
+    // Per-operation admission: the component reports the descriptor method and its
+    // string arguments; the grant's `allow` clause decides. Names arrive kebab-case
+    // as in WIT and bind as `call.args.<cel_ident>` (`old-path` → `old_path`).
+    linker
+        .instance("icanhaz:fspass/gate@0.1.0")
+        .map_err(anyhow::Error::from)
+        .context("gate instance")?
+        .func_wrap_async(
+            "admit",
+            |store: wasmtime::StoreContextMut<'_, FsState<C>>,
+             (grant, method, args): (String, String, Vec<(String, String)>)| {
+                let grants = store.data().grants.clone();
+                Box::new(async move {
+                    let mut call = crate::broker::AdmitCall::new(&method);
+                    for (name, value) in args {
+                        call = call.arg(&ezcap::shape::cel_ident(&name), value);
+                    }
+                    let res = grants.lock().unwrap().admit(&grant, call).map_err(|d| {
+                        format!("filesystem denied: {}", crate::broker::denied_text(&d))
+                    });
+                    Ok((res,))
+                })
+            },
+        )
+        .map_err(anyhow::Error::from)
+        .context("link gate.admit")?;
 
     let ty = component.component_type();
     let mut imports = BTreeMap::default();
@@ -959,6 +985,116 @@ mod tests {
     /// so the client's next op on that very handle fails at the host (the handle is no
     /// longer known). This is the descriptor-drop that keeps a long-lived client from
     /// leaking a handle per filesystem op.
+    /// Per-operation scope through the real component: a grant whose `allow`
+    /// clause restricts `open-at` to paths under `ok` admits `ok.txt` and refuses
+    /// `hello.txt` with `access`, while methods the clause does not mention
+    /// (`read`) stay admitted. The component reports `(method, path)` through
+    /// `gate.admit`; the host evaluates the grant's membrane.
+    #[tokio::test]
+    async fn scoped_grant_confines_descriptor_ops_by_path() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use fs_client::icanhaz::fspass::mount;
+        use fs_client::wasi::filesystem::types::{
+            Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
+        };
+        use wasmtime_wasi::FsPerms;
+
+        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ok.txt"), b"in scope\n").unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"out of scope\n").unwrap();
+        let mut builder = WasiCtxBuilder::new();
+        builder
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
+            .unwrap();
+        let wasi = builder.build();
+
+        let grants = GrantStore::shared();
+        let grant = grants
+            .lock()
+            .unwrap()
+            .issue_scoped(
+                CapabilityKind::Filesystem(FsRequest {
+                    roots: vec![PathGrant {
+                        path: "/".to_string(),
+                        rights: FsRights::READ | FsRights::WRITE,
+                    }],
+                }),
+                ezcap::Scope::allow(
+                    r#"call.method != "open-at" || call.args.path.startsWith("ok")"#,
+                ),
+                "filesystem (/) scoped".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            )
+            .expect("scope compiles against the filesystem environment");
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let _handlers = serve_filesystem(
+            srv.as_ref(),
+            &wasm,
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        let root = mount::open_root(&wrpc, (), &grant)
+            .await
+            .unwrap()
+            .expect("mount with a valid grant");
+        let open = |path: &'static str| {
+            let wrpc = wrpc.clone();
+            let root = root.as_borrow();
+            async move {
+                Descriptor::open_at(
+                    &wrpc,
+                    (),
+                    &root,
+                    &PathFlags::empty(),
+                    path,
+                    &OpenFlags::empty(),
+                    &DescriptorFlags::READ,
+                )
+                .await
+                .unwrap()
+            }
+        };
+
+        let file = open("ok.txt").await.expect("ok.txt is in scope");
+        let (bytes, _eof) = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0)
+            .await
+            .unwrap()
+            .expect("read is not restricted by the clause");
+        assert_eq!(&bytes[..], &b"in scope\n"[..]);
+
+        let denied = open("hello.txt").await;
+        assert!(
+            matches!(denied, Err(ErrorCode::Access)),
+            "hello.txt must be refused by the scope, got {denied:?}"
+        );
+
+        // The instance's counters advanced for the admitted ops only.
+        // (open-root, the admitted open-at, and the read: three admitted calls;
+        // the refused open-at does not count.)
+        accept.abort();
+    }
+
     #[tokio::test]
     async fn dropping_a_descriptor_releases_the_handle() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
