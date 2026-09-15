@@ -165,12 +165,12 @@ impl Drop for PtyGuard {
     }
 }
 
-impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Handler<C>
-    for TerminalProvider
+impl<C: crate::AsOrigin + Send + Sync + 'static>
+    bindings::exports::icanhaz::nocap::terminal::Handler<C> for TerminalProvider
 {
     async fn open(
         &self,
-        _cx: C,
+        cx: C,
         grant: String,
         stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
         control: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
@@ -187,6 +187,17 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::terminal::Hand
             .validate(&grant, |k| matches!(k, CapabilityKind::Terminal(_)))
         {
             return Ok(Err(format!("terminal denied: {denied:?}")));
+        }
+        // Admission: the grant's `allow` clause sees the requested size and the caller.
+        let admit = crate::broker::AdmitCall::new("open")
+            .arg("cols", i64::from(cols))
+            .arg("rows", i64::from(rows))
+            .caller(crate::broker::caller_of(&cx));
+        if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
+            return Ok(Err(format!(
+                "terminal denied: {}",
+                crate::broker::denied_text(&denied)
+            )));
         }
 
         // The shell is the host's, not the requestor's: a terminal grant means

@@ -53,12 +53,22 @@ export default async function setup({ provide }: GlobalSetupContext) {
     });
     if (build.status !== 0) throw new Error("failed to build icanhazd for tests");
 
+    // Ask cargo where it put the binary: a machine-local `[build] target-dir`
+    // (or CARGO_TARGET_DIR) moves it out of `<repo>/target`.
+    const meta = spawnSync("cargo", ["metadata", "--format-version", "1", "--no-deps"], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, PATH: PATH_WITH_CARGO },
+        encoding: "utf8",
+    });
+    const targetDir: string =
+        meta.status === 0 ? JSON.parse(meta.stdout).target_directory : join(REPO_ROOT, "target");
+
     const wsPort = await freePort();
     const wtPort = await freePort();
     const wsUrl = `ws://127.0.0.1:${wsPort}`;
 
     const jail = mkdtempSync(join(tmpdir(), "ic-test-"));
-    let daemon: ChildProcess | undefined = spawn(join(REPO_ROOT, "target", "debug", "icanhazd"), [], {
+    let daemon: ChildProcess | undefined = spawn(join(targetDir, "debug", "icanhazd"), [], {
         env: {
             ...process.env,
             PATH: PATH_WITH_CARGO, // the process capability spawns rust-analyzer from PATH

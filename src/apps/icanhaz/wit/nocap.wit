@@ -61,6 +61,8 @@ interface types {
     unsupported(string),   // provider lacks the capability
     quota,
     revoked,
+    invalid-scope(string), // the scope does not compile against the capability's interface
+    out-of-scope(string),  // the grant is live but this call fell outside its `allow`; carries the scope as sentences
   }
 
   record grant-info {

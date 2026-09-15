@@ -28,7 +28,8 @@ use tokio::process::Command;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use wit_bindgen_wrpc::bytes::Bytes;
 
-use crate::broker::GrantStore;
+use crate::broker::{caller_of, denied_text, AdmitCall, GrantStore};
+use crate::AsOrigin;
 
 pub(crate) mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -69,12 +70,12 @@ impl Drop for ProcGuard {
     }
 }
 
-impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handler<C>
+impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handler<C>
     for ProcessProvider
 {
     async fn spawn(
         &self,
-        _cx: C,
+        cx: C,
         grant: String,
         args: Vec<String>,
         stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
@@ -101,6 +102,15 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::process::Handl
                     .to_string(),
             ));
         };
+
+        // Admission: the grant's `allow` clause sees the argv that will actually
+        // run (`call.args.args`), the method (`spawn`) and the caller.
+        let admit = AdmitCall::new("spawn")
+            .arg("args", effective_args.clone())
+            .caller(caller_of(&cx));
+        if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
+            return Ok(Err(format!("process denied: {}", denied_text(&denied))));
+        }
 
         let mut child = match Command::new(&req.image)
             .args(&effective_args)

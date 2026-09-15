@@ -42,6 +42,8 @@ pub mod session;
 
 /// The consent broker — the NoCap gate (request → consent → scoped grant token).
 pub mod broker;
+#[cfg(test)]
+mod scoped_tests;
 
 /// The registry of installed host capabilities (id · emoji · localizable description).
 pub mod capabilities;

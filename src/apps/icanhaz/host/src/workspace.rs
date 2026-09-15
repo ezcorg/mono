@@ -40,15 +40,23 @@ impl WorkspaceProvider {
     }
 }
 
-impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::workspace::Handler<C>
-    for WorkspaceProvider
+impl<C: crate::AsOrigin + Send + Sync + 'static>
+    bindings::exports::icanhaz::nocap::workspace::Handler<C> for WorkspaceProvider
 {
-    async fn root_path(&self, _cx: C, grant: String) -> anyhow::Result<Result<String, String>> {
+    async fn root_path(&self, cx: C, grant: String) -> anyhow::Result<Result<String, String>> {
         // Consent gate: only a live filesystem grant discloses its jail path.
         let paths = match self.grants.lock().unwrap().validate_filesystem(&grant) {
             Ok(paths) => paths,
             Err(denied) => return Ok(Err(format!("workspace denied: {denied:?}"))),
         };
+        let admit =
+            crate::broker::AdmitCall::new("root-path").caller(crate::broker::caller_of(&cx));
+        if let Err(denied) = self.grants.lock().unwrap().admit(&grant, admit) {
+            return Ok(Err(format!(
+                "workspace denied: {}",
+                crate::broker::denied_text(&denied)
+            )));
+        }
         // The grant's first root (e.g. "/jail/") joined under the preopen — the same
         // host directory `mount.open-root` scopes the descriptor to.
         let scope = paths.into_iter().next().unwrap_or_default();

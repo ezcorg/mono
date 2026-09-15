@@ -3832,6 +3832,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "ezcap",
  "futures",
  "notify 6.1.1",
  "portable-pty",
@@ -3848,6 +3849,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-wrpc",
+ "wit-parser 0.254.0",
  "wrpc-transport",
  "wrpc-wasmtime",
  "wrpc-websockets",

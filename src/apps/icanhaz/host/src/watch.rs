@@ -72,12 +72,12 @@ fn frame_event(kind: u8, rel: &str) -> Bytes {
     Bytes::from(buf)
 }
 
-impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::watch::Handler<C>
-    for WatchProvider
+impl<C: crate::AsOrigin + Send + Sync + 'static>
+    bindings::exports::icanhaz::nocap::watch::Handler<C> for WatchProvider
 {
     async fn open(
         &self,
-        _cx: C,
+        cx: C,
         grant: String,
         path: String,
         recursive: bool,
@@ -93,6 +93,18 @@ impl<C: Send + Sync + 'static> bindings::exports::icanhaz::nocap::watch::Handler
             ),
             Err(denied) => return Ok(Err(format!("watch denied: {denied:?}"))),
         };
+        // Admission: the grant's `allow` clause sees the requested path (as the
+        // client named it, grant-relative) and whether the watch is recursive.
+        let admit = crate::broker::AdmitCall::new("open")
+            .arg("path", path.clone())
+            .arg("recursive", recursive)
+            .caller(crate::broker::caller_of(&cx));
+        if let Err(denied) = self.grants.lock().unwrap().admit(&grant, admit) {
+            return Ok(Err(format!(
+                "watch denied: {}",
+                crate::broker::denied_text(&denied)
+            )));
+        }
         // Canonicalise the jail + target; the target must stay under the jail (a
         // canonicalised prefix check defeats `..` and symlink escapes).
         let scope = match scope.canonicalize() {

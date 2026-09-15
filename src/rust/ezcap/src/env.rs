@@ -29,7 +29,10 @@ pub const STATE_CALLS: &str = "state.calls";
 pub const STATE_BYTES: &str = "state.bytes";
 
 /// The declarations for one capability kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serialisable so a host can generate environments at build time (from its
+/// WIT) and embed them, needing no WIT files at runtime.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallEnv {
     pub kind: Kind,
     /// Method names this kind exposes (bare, kebab-case as in WIT).
@@ -160,6 +163,47 @@ impl CallEnv {
         decls.extend(merged.into_values());
         Ok(CallEnv {
             kind: kind.clone(),
+            methods,
+            decls,
+        })
+    }
+
+    /// Merge several interfaces' environments into one kind: a grant that is
+    /// used through more than one interface (a filesystem grant serves the
+    /// descriptor methods, `watch` and `workspace`) admits every call against
+    /// one scope. Method names stay bare; the same argument name must have the
+    /// same shape everywhere, which is checked here.
+    pub fn union(kind: Kind, parts: Vec<CallEnv>) -> Result<CallEnv, EnvError> {
+        let mut methods: Vec<String> = Vec::new();
+        let mut merged: BTreeMap<String, Decl> = BTreeMap::new();
+        for part in parts {
+            methods.extend(part.methods);
+            for decl in part.decls.into_iter().filter(|d| !d.methods.is_empty()) {
+                match merged.get_mut(&decl.name) {
+                    None => {
+                        merged.insert(decl.name.clone(), decl);
+                    }
+                    Some(existing) if existing.shape == decl.shape => {
+                        existing.methods.extend(decl.methods);
+                    }
+                    Some(existing) => {
+                        return Err(EnvError::Conflict {
+                            name: decl.name.clone(),
+                            a: existing.shape.clone(),
+                            method_a: existing.methods.first().cloned().unwrap_or_default(),
+                            b: decl.shape.clone(),
+                            method_b: decl.methods.first().cloned().unwrap_or_default(),
+                        });
+                    }
+                }
+            }
+        }
+        methods.sort();
+        methods.dedup();
+        let mut decls = fixed_decls();
+        decls.extend(merged.into_values());
+        Ok(CallEnv {
+            kind,
             methods,
             decls,
         })

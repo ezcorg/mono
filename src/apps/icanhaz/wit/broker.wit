@@ -8,6 +8,7 @@ package icanhaz:nocap@0.1.0;
 /// policy components (the membrane) narrow what a grant actually permits.
 interface broker {
   use types.{ capability-kind, denied, grant-info };
+  use ezco:ezcap/types@0.1.0.{ scope };
 
   /// A successful grant. `token` is the bearer to present when claiming/using the
   /// capability. `pairing` is set only when the host *first* pairs this origin: a
@@ -24,6 +25,23 @@ interface broker {
   /// is raised, and on approval the origin is paired (a new secret may be
   /// returned) before the grant is issued.
   request: func(want: capability-kind, reason: string, pairing: option<string>) -> result<grant, denied>;
+
+  /// `request` with an admission scope (`ezco:ezcap/types.scope`). The provider
+  /// parameters in `want` say what to instantiate (which roots, which image); the
+  /// scope says how calls on it may be used: `when` is checked at grant time and
+  /// `allow` before every operation, with `call.method`, `call.args.*`, `caller.*`
+  /// and `state.*` bound. The consent surface may append further clauses; it can
+  /// never remove one. A scope that does not compile against the capability's
+  /// interface is `denied(invalid-scope)`. `request` is this call with an
+  /// unrestricted scope.
+  request-scoped: func(want: capability-kind, scope: scope, reason: string, pairing: option<string>) -> result<grant, denied>;
+
+  /// Pledge-style self-narrowing: mint a child grant whose scope is this grant's
+  /// conjoined with `extra` (a field of `"true"` leaves that field unchanged).
+  /// The child inherits the parent's provider parameters, expiry and revocation;
+  /// revoking the parent revokes the child. No consent is raised: a holder may
+  /// always give authority away.
+  narrow: func(token: string, extra: scope) -> result<grant, denied>;
 
   /// What the caller currently holds — for the audit view.
   granted: func() -> list<grant-info>;

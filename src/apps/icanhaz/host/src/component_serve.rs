@@ -370,13 +370,24 @@ where
             |store: wasmtime::StoreContextMut<'_, FsState<C>>, (grant,): (String,)| {
                 let grants = store.data().grants.clone();
                 Box::new(async move {
-                    let res = grants
-                        .lock()
-                        .unwrap()
-                        .validate_filesystem(&grant)
-                        // Hand the component the granted root path to scope the descriptor to.
-                        .map(|paths| paths.into_iter().next().unwrap_or_default())
-                        .map_err(|d| format!("filesystem grant denied: {d:?}"));
+                    // The gate carries only the token (not the method or path),
+                    // so admission here is grant-level: live, and the scope's
+                    // `when` holds. Per-op `allow` for descriptor methods lands
+                    // when `gate.authorize` gains (method, path) arguments.
+                    let res = {
+                        let store = grants.lock().unwrap();
+                        store
+                            .validate_filesystem(&grant)
+                            .and_then(|paths| store.admit_grant(&grant).map(|()| paths))
+                            // Hand the component the granted root path to scope the descriptor to.
+                            .map(|paths| paths.into_iter().next().unwrap_or_default())
+                            .map_err(|d| {
+                                format!(
+                                    "filesystem grant denied: {}",
+                                    crate::broker::denied_text(&d)
+                                )
+                            })
+                    };
                     Ok((res,))
                 })
             },
