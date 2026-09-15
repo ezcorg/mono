@@ -17,7 +17,7 @@ use icanhaz_host::configuration::{Declared, Instance, UserInput};
 use icanhaz_host::daemon::Services;
 use icanhaz_host::broker::{
     CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, InferenceRequest, Pairings,
-    PathGrant, ProcessRequest, TerminalRequest,
+    PathGrant, ProcessRequest, ScopeText, TerminalRequest,
 };
 
 /// Reflect the pending-request count on the tray (menubar badge + tooltip). Driven by
@@ -174,6 +174,32 @@ impl CapabilityDto {
     }
 }
 
+/// `ezco:ezcap` scope on the IPC: the raw CEL, for the window to show on
+/// request, next to its sentences.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ScopeDto {
+    pub when: String,
+    pub allow: String,
+}
+
+/// Clauses the human adds to a request's scope. Either field may be blank.
+#[derive(Deserialize, Clone, Default)]
+pub struct NarrowingDto {
+    pub when: Option<String>,
+    pub allow: Option<String>,
+}
+
+impl NarrowingDto {
+    fn into_narrowing(self) -> Option<ezcap::Narrowing> {
+        let clean = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let n = ezcap::Narrowing {
+            when: clean(self.when),
+            allow: clean(self.allow),
+        };
+        (n.when.is_some() || n.allow.is_some()).then_some(n)
+    }
+}
+
 /// A request awaiting the human's decision, as the consent window renders it.
 #[derive(Serialize, Clone)]
 pub struct PendingDto {
@@ -182,6 +208,9 @@ pub struct PendingDto {
     pub summary: String,
     pub reason: String,
     pub capability: CapabilityDto,
+    pub scope: ScopeDto,
+    /// The scope as sentences; both lists empty for an unrestricted request.
+    pub text: ScopeText,
 }
 
 /// The requests currently awaiting a decision (the window polls this). Also refreshes
@@ -197,6 +226,11 @@ pub fn list_pending(app: AppHandle, pending: State<'_, PendingConsent>) -> Vec<P
             summary: r.summary,
             reason: r.reason,
             capability: (&r.want).into(),
+            text: ScopeText::of(&r.scope),
+            scope: ScopeDto {
+                when: r.scope.when,
+                allow: r.scope.allow,
+            },
         })
         .collect();
     set_tray_badge(&app, out.len());
@@ -459,12 +493,14 @@ pub fn decide(
     id: String,
     allow: bool,
     grant: Option<CapabilityDto>,
+    narrowing: Option<NarrowingDto>,
     remember: bool,
     ttl_secs: u64,
 ) -> bool {
     let decision = if allow {
         Some(Approval {
             grant: grant.and_then(CapabilityDto::into_capability),
+            narrowing: narrowing.and_then(NarrowingDto::into_narrowing),
             remember,
             ttl_secs,
         })
@@ -472,6 +508,27 @@ pub fn decide(
         None
     };
     pending.resolve(&id, decision)
+}
+
+/// Check the clauses the human is typing against the pending request's kind:
+/// the resulting scope's sentences when it compiles, else the error to show.
+/// Nothing is granted here; `decide` applies the narrowing.
+#[tauri::command]
+pub fn check_narrowing(
+    pending: State<'_, PendingConsent>,
+    grants: State<'_, Arc<Mutex<GrantStore>>>,
+    id: String,
+    narrowing: NarrowingDto,
+) -> Result<ScopeText, String> {
+    let Some(req) = pending.list().into_iter().find(|r| r.id == id) else {
+        return Err("that request is no longer pending".to_string());
+    };
+    let scope = match narrowing.into_narrowing() {
+        Some(extra) => req.scope.narrowed(&extra),
+        None => req.scope,
+    };
+    grants.lock().unwrap().check_scope(&req.want, &scope)?;
+    Ok(ScopeText::of(&scope))
 }
 
 #[cfg(test)]

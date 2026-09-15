@@ -85,6 +85,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             consent::list_pending,
             consent::decide,
+            consent::check_narrowing,
             consent::list_grants,
             consent::revoke_grant,
             consent::list_capabilities,

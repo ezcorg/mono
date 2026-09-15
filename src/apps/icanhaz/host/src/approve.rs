@@ -43,6 +43,9 @@ pub struct PendingRequest {
     /// The structured capability requested — what a rich (native) surface renders as
     /// editable controls and attenuates. The loopback page ignores it (approve-as-is).
     pub want: crate::broker::CapabilityKind,
+    /// The requested scope (`ezco:ezcap` CEL). A surface shows it as sentences
+    /// ([`crate::broker::ScopeText`]) and may append clauses in its approval.
+    pub scope: ezcap::Scope,
 }
 
 /// The human's approval, carrying an optional **attenuated** grant. `grant: None`
@@ -51,6 +54,8 @@ pub struct PendingRequest {
 /// clamps it to a subset of the request regardless.
 pub struct Approval {
     pub grant: Option<crate::broker::CapabilityKind>,
+    /// Clauses the human added to the requested scope (`requested && extra`).
+    pub narrowing: Option<ezcap::Narrowing>,
     pub remember: bool,
     pub ttl_secs: u64,
 }
@@ -302,6 +307,7 @@ fn decide(
     let decision = if allow {
         Some(Approval {
             grant: None,
+            narrowing: None,
             remember,
             ttl_secs,
         })
@@ -484,6 +490,7 @@ mod tests {
                 shell: None,
                 jailed: false,
             }),
+            scope: ezcap::Scope::unrestricted(),
         });
 
         // It shows up on the surface.

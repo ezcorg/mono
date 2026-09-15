@@ -70,6 +70,13 @@ impl Membranes {
         self.with(tag, |m| m.env().clone()).ok()
     }
 
+    /// Compile `scope` against `tag`'s interface without minting: what a
+    /// consent surface calls while the human edits a narrowing.
+    pub fn check(&self, tag: &str, scope: &Scope) -> Result<(), RegistryError> {
+        self.with(tag, |m| m.check(scope))?
+            .map_err(RegistryError::from)
+    }
+
     /// Mint an instance for `scope` under `tag`. Compiling the scope against
     /// the kind's interface happens here, so a clause that names an argument
     /// the interface does not have is refused now.

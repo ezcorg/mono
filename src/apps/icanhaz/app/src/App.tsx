@@ -10,7 +10,16 @@ type Capability =
   | { kind: "terminal"; shell: string | null; jailed: boolean }
   | { kind: "sockets"; endpoints: string[]; may_listen: boolean }
   | { kind: "inference"; models: string[] };
-type Pending = { id: string; requester: string; summary: string; reason: string; capability: Capability };
+type ScopeText = { when: string[]; allow: string[] };
+type Pending = {
+  id: string;
+  requester: string;
+  summary: string;
+  reason: string;
+  capability: Capability;
+  scope: { when: string; allow: string };
+  text: ScopeText;
+};
 // Mirror the Rust command DTOs.
 type GrantView = { id: string; holder: string; summary: string; icon: string; expires_in_secs: number };
 type CapabilityView = { id: string; icon: string; description: string };
@@ -507,12 +516,46 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
   const [ttl, setTtl] = createSignal(defaultTtl());
   const [remember, setRemember] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
+  // An extra `allow` clause the human appends; checked live against the kind's
+  // interface, and shown back as sentences before it is applied.
+  const [extra, setExtra] = createSignal("");
+  const [extraText, setExtraText] = createSignal<ScopeText | null>(null);
+  const [extraError, setExtraError] = createSignal<string | null>(null);
+  let checkTimer: ReturnType<typeof setTimeout> | undefined;
+  const check = (allow: string) => {
+    clearTimeout(checkTimer);
+    if (!allow.trim()) {
+      setExtraText(null);
+      setExtraError(null);
+      return;
+    }
+    checkTimer = setTimeout(async () => {
+      try {
+        setExtraText(await invoke<ScopeText>("check_narrowing", { id: props.req.id, narrowing: { allow } }));
+        setExtraError(null);
+      } catch (e) {
+        setExtraText(null);
+        setExtraError(String(e));
+      }
+    }, 250);
+  };
+  onCleanup(() => clearTimeout(checkTimer));
+  const restricted = () => props.req.text.when.length + props.req.text.allow.length > 0;
+  const shown = () => extraText() ?? props.req.text;
 
   const decide = async (allow: boolean) => {
     setBusy(true);
     try {
-      // Send the narrowed capability; the broker clamps it to a subset of the request.
-      await invoke("decide", { id: props.req.id, allow, grant: allow ? cap() : null, remember: remember(), ttlSecs: ttl() });
+      // Send the narrowed capability and clauses; the broker clamps the former
+      // to a subset of the request and conjoins the latter onto its scope.
+      await invoke("decide", {
+        id: props.req.id,
+        allow,
+        grant: allow ? cap() : null,
+        narrowing: allow && extra().trim() ? { allow: extra() } : null,
+        remember: remember(),
+        ttlSecs: ttl(),
+      });
     } finally {
       setBusy(false);
       props.onResolved();
@@ -528,6 +571,28 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
         <div class="reason">{props.req.reason}</div>
       </Show>
       <CapabilityEditor orig={props.req.capability} cap={cap} setCap={setCap} />
+      <div class="cap scope">
+        <div class="cap-title">{restricted() || extra().trim() ? "only" : "no further limits proposed"}</div>
+        <Show when={shown().when.length > 0}>
+          <ul class="sentences" title={props.req.scope.when}>
+            <For each={shown().when}>{(t) => <li><span class="dim">when </span>{t}</li>}</For>
+          </ul>
+        </Show>
+        <Show when={shown().allow.length > 0}>
+          <ul class="sentences" title={props.req.scope.allow}>
+            <For each={shown().allow}>{(t) => <li>{t}</li>}</For>
+          </ul>
+        </Show>
+        <input
+          id={`narrow-${props.req.id}`}
+          class="narrow"
+          classList={{ bad: !!extraError() }}
+          placeholder="add a limit, e.g. state.tokens < 20000"
+          value={extra()}
+          onInput={(e) => { setExtra(e.currentTarget.value); check(e.currentTarget.value); }}
+        />
+        <Show when={extraError()}>{(e) => <div class="form-err">{e()}</div>}</Show>
+      </div>
       <div class="controls">
         <label>
           expires{" "}
@@ -541,7 +606,7 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
         </label>
       </div>
       <div class="actions">
-        <button class="approve" disabled={busy()} onClick={() => decide(true)}>
+        <button class="approve" disabled={busy() || !!extraError()} onClick={() => decide(true)}>
           Approve
         </button>
         <button class="deny" disabled={busy()} onClick={() => decide(false)}>
@@ -670,6 +735,11 @@ h1 { font-size: .95rem; margin: 0 0 .8rem; font-weight: 700; }
 .reason { opacity: .8; margin: .45rem 0; border-left: 2px solid var(--border); padding-left: .6rem; }
 .cap { margin: .55rem 0; }
 .cap-title { opacity: .55; font-size: .8em; text-transform: uppercase; letter-spacing: .06em; margin-bottom: .4rem; }
+.scope { border-top: 1px dashed var(--border); padding-top: .5rem; }
+.sentences { margin: 0 0 .4rem; padding-left: 1.1rem; }
+.sentences li { padding: .05rem 0; }
+.narrow { width: 100%; font: inherit; padding: .3rem .45rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+.narrow.bad { border-color: var(--danger); }
 .cmd { display: block; background: var(--inset); padding: .4rem .55rem; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
 .cmd .prompt { opacity: .45; }
 .root { display: flex; gap: .55rem; align-items: baseline; flex-wrap: wrap; padding: .2rem 0; }

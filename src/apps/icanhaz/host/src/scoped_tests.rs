@@ -218,3 +218,74 @@ async fn caller_origin_is_bound_from_the_transport() {
     let anonymous = AdmitCall::new("spawn").arg("args", Vec::<String>::new());
     assert!(store.lock().unwrap().admit(&token, anonymous).is_err());
 }
+
+/// The consent surface sees the requested scope as sentences and may append
+/// clauses; the broker conjoins them, so the human can only ever tighten.
+#[tokio::test]
+async fn surface_narrowing_conjoins_onto_the_requested_scope() {
+    use crate::approve::{Approval, PendingConsent};
+    use crate::broker::ScopeText;
+
+    let store = GrantStore::shared();
+    let pending = PendingConsent::with_notifier(|_| {});
+    let provider = BrokerProvider::new(
+        store.clone(),
+        Consent::Surface(pending.clone()),
+        Pairings::shared(),
+    );
+
+    // The human's side: wait for the request, read its sentences, append a
+    // clause, approve.
+    let surface = {
+        let pending = pending.clone();
+        let store = store.clone();
+        tokio::spawn(async move {
+            let req = loop {
+                if let Some(r) = pending.list().pop() {
+                    break r;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            };
+            let text = ScopeText::of(&req.scope);
+            assert!(text.when.is_empty());
+            assert_eq!(text.allow.len(), 1, "{text:?}");
+            // A bad clause is refused before it is applied; a good one renders.
+            let extra = ezcap::Narrowing::allow("size(call.args.args) < 3");
+            let bad = ezcap::Narrowing::allow("call.args.nope == 1");
+            {
+                let s = store.lock().unwrap();
+                assert!(s.check_scope(&req.want, &req.scope.narrowed(&bad)).is_err());
+                assert!(s.check_scope(&req.want, &req.scope.narrowed(&extra)).is_ok());
+            }
+            assert!(pending.resolve(
+                &req.id,
+                Some(Approval {
+                    grant: None,
+                    narrowing: Some(extra),
+                    remember: false,
+                    ttl_secs: 60,
+                })
+            ));
+        })
+    };
+
+    let token = grant(&provider, echo_want(), r#""hello" in call.args.args"#)
+        .await
+        .expect("approved with a narrowing");
+    surface.await.expect("surface task");
+
+    let short = AdmitCall::new("spawn").arg("args", vec!["hello".to_string()]);
+    assert!(store.lock().unwrap().admit(&token, short).is_ok());
+    // Within the request's clause, outside the human's.
+    let long = AdmitCall::new("spawn").arg(
+        "args",
+        vec!["hello".to_string(), "a".to_string(), "b".to_string()],
+    );
+    let outcome = store.lock().unwrap().admit(&token, long);
+    match outcome {
+        Err(Denied::OutOfScope(sentences)) => {
+            assert!(sentences.contains("call.args.args"), "{sentences}")
+        }
+        other => panic!("expected out-of-scope, got {other:?}"),
+    }
+}

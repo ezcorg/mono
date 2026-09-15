@@ -71,6 +71,9 @@ pub enum Decision {
     /// time); else a one-time grant.
     Approve {
         grant: CapabilityKind,
+        /// Clauses the human added. Applied as `requested && extra`, so a
+        /// surface can only ever tighten a scope, never rewrite it.
+        narrowing: Option<Narrowing>,
         ttl: Duration,
         remember: bool,
     },
@@ -109,16 +112,25 @@ impl Consent {
         Consent::CliPrompt(Arc::new(tokio::sync::Mutex::new(())))
     }
 
-    pub async fn decide(&self, want: &CapabilityKind, reason: &str, requester: &str) -> Decision {
+    pub async fn decide(
+        &self,
+        want: &CapabilityKind,
+        scope: &EzScope,
+        reason: &str,
+        requester: &str,
+    ) -> Decision {
         match self {
             Consent::AutoApprove => Decision::Approve {
                 grant: want.clone(),
+                narrowing: None,
                 ttl: GRANT_TTL,
                 remember: true,
             },
             Consent::AutoDeny => Decision::Deny(Denied::UserRejected),
-            Consent::CliPrompt(lock) => cli_decide(lock, want, reason, requester).await,
-            Consent::Surface(pending) => surface_decide(pending, want, reason, requester).await,
+            Consent::CliPrompt(lock) => cli_decide(lock, want, scope, reason, requester).await,
+            Consent::Surface(pending) => {
+                surface_decide(pending, want, scope, reason, requester).await
+            }
         }
     }
 }
@@ -129,6 +141,7 @@ fn decision_from_reply(reply: &str, want: &CapabilityKind) -> Decision {
     match reply.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => Decision::Approve {
             grant: want.clone(),
+            narrowing: None,
             ttl: GRANT_TTL,
             remember: true,
         },
@@ -141,6 +154,7 @@ fn decision_from_reply(reply: &str, want: &CapabilityKind) -> Decision {
 async fn cli_decide(
     lock: &Arc<tokio::sync::Mutex<()>>,
     want: &CapabilityKind,
+    scope: &EzScope,
     reason: &str,
     requester: &str,
 ) -> Decision {
@@ -148,14 +162,24 @@ async fn cli_decide(
     use tokio::io::AsyncBufReadExt as _;
 
     let _guard = lock.lock().await;
+    let text = ScopeText::of(scope);
+    let mut lines = String::new();
+    for w in &text.when {
+        lines.push_str(&format!("│ when      : {w}\n"));
+    }
+    for a in &text.allow {
+        lines.push_str(&format!("│ only if   : {a}\n"));
+    }
     eprint!(
         "\n┌─ icanhaz consent ──────────────────────────────\n\
          │ requester : {}\n\
          │ wants     : {}\n\
+         {}\
          │ reason    : {}\n\
          └ approve? [y/N] ",
         requester,
         summarize(want),
+        lines,
         reason,
     );
     let _ = std::io::stderr().flush();
@@ -176,6 +200,7 @@ async fn cli_decide(
 async fn surface_decide(
     pending: &crate::approve::PendingConsent,
     want: &CapabilityKind,
+    scope: &EzScope,
     reason: &str,
     requester: &str,
 ) -> Decision {
@@ -186,6 +211,7 @@ async fn surface_decide(
         summary: summarize(want),
         reason: reason.to_string(),
         want: want.clone(),
+        scope: scope.clone(),
     };
     pending.alert(&req);
     let rx = pending.park(req);
@@ -200,6 +226,7 @@ async fn surface_decide(
             };
             Decision::Approve {
                 grant,
+                narrowing: approval.narrowing,
                 ttl: Duration::from_secs(approval.ttl_secs),
                 remember: approval.remember,
             }
@@ -366,6 +393,23 @@ impl GrantStore {
     /// against the kind's generated environment now, so a clause that names an
     /// argument the interface does not have is refused at grant time
     /// (`denied::invalid-scope`), never discovered at the first call.
+    /// Would `scope` be accepted for a `kind` grant? Compiles it against the
+    /// kind's interface (a clause naming an argument it lacks, or a type
+    /// error, is refused) without minting anything. For consent surfaces to
+    /// validate a human's narrowing before it is applied.
+    pub fn check_scope(&self, kind: &CapabilityKind, scope: &EzScope) -> Result<(), String> {
+        let tag = kind_tag(kind);
+        if self.membranes.has(tag) {
+            self.membranes
+                .check(tag, scope)
+                .map_err(|e| e.to_string())
+        } else if is_unrestricted(scope) {
+            Ok(())
+        } else {
+            Err(format!("no admission environment for `{tag}` capabilities"))
+        }
+    }
+
     pub fn issue_scoped(
         &mut self,
         kind: CapabilityKind,
@@ -1010,6 +1054,33 @@ fn summarize(want: &CapabilityKind) -> String {
     }
 }
 
+/// A scope rendered for a human: one sentence per clause, empty when the
+/// field is unrestricted. What every consent surface shows.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ScopeText {
+    pub when: Vec<String>,
+    pub allow: Vec<String>,
+}
+
+impl ScopeText {
+    pub fn of(scope: &EzScope) -> Self {
+        let render = |expr: &str| -> Vec<String> {
+            if expr.trim() == "true" {
+                Vec::new()
+            } else {
+                ezcap::profile::render(expr)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect()
+            }
+        };
+        ScopeText {
+            when: render(&scope.when),
+            allow: render(&scope.allow),
+        }
+    }
+}
+
 /// [`summarize`] plus the scope as sentences, when it restricts anything.
 fn summarize_scoped(want: &CapabilityKind, scope: &EzScope) -> String {
     let mut s = summarize(want);
@@ -1204,16 +1275,23 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         }
 
         let requester = principal_label(&principal);
-        match self.consent.decide(&want, &reason, &requester).await {
+        match self.consent.decide(&want, &scope, &reason, &requester).await {
             Decision::Deny(denied) => {
                 tracing::info!(%requester, %summary, %reason, "consent denied");
                 Ok(Err(denied))
             }
             Decision::Approve {
                 grant,
+                narrowing,
                 ttl,
                 remember,
             } => {
+                // The human's added clauses conjoin onto the request's scope:
+                // append-only, so the surface can tighten but never widen.
+                let scope = match narrowing {
+                    Some(extra) => scope.narrowed(&extra),
+                    None => scope,
+                };
                 // Pair the origin (if it has one AND the human chose to remember)
                 // so future requests of this kind skip consent; hand back a fresh
                 // secret only on the first pairing.
