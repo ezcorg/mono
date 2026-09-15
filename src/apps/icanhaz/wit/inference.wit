@@ -1,0 +1,48 @@
+package icanhaz:nocap@0.1.0;
+
+/// LLM inference as a **capability**: the host holds the provider credentials
+/// and the configured models; a caller holds a grant whose scope says which
+/// models it may use and how many tokens it may spend. The caller never sees a
+/// key. Backends are configured on the host (OpenAI-compatible HTTP, which
+/// covers Ollama, LM Studio, OpenRouter and vLLM; and Anthropic's Messages
+/// API); which one serves a request is decided by the model name.
+interface inference {
+  /// One chat turn. `role` is `system`, `user` or `assistant`.
+  record message {
+    role: string,
+    content: string,
+  }
+
+  record completion-request {
+    /// The model to use; must be one the grant allows and the host has configured.
+    model: string,
+    messages: list<message>,
+    /// Upper bound on generated tokens; `0` means the provider's default. Also
+    /// the pre-check a budget clause sees as `call.args.request.max-tokens`.
+    max-tokens: u32,
+    temperature: option<f32>,
+    /// An optional system prompt (sent as the provider's system field).
+    system: option<string>,
+  }
+
+  /// A model the host can serve, and the provider that serves it.
+  record model-info {
+    provider: string,
+    model: string,
+  }
+
+  /// Stream a completion. Frames on the returned byte stream are
+  /// `[kind: u8] [len: u32 BE] [payload]`: kind `0` is a UTF-8 text delta,
+  /// kind `1` is the final usage record as JSON
+  /// `{"input_tokens": n, "output_tokens": n}` (the amount charged to the
+  /// grant's `state.tokens`), kind `2` is an error message and ends the stream.
+  complete: func(grant: string, request: completion-request) -> result<stream<u8>, string>;
+
+  /// The models this grant may use, of those the host has configured.
+  models: func(grant: string) -> result<list<model-info>, string>;
+}
+
+world inference-wrpc {
+  import inference;
+  export inference;
+}

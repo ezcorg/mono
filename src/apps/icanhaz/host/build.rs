@@ -25,6 +25,7 @@ fn main() {
             ),
             ("process", &["icanhaz:nocap/process"]),
             ("terminal", &["icanhaz:nocap/terminal"]),
+            ("inference", &["icanhaz:nocap/inference"]),
         ],
     );
 }

@@ -74,6 +74,11 @@ static DEFAULTS: &[Capability] = &[
         descriptions: &[("en", "Get notified when files change under a folder you've granted.")],
     },
     Capability {
+        id: "inference",
+        icon: "🧠",
+        descriptions: &[("en", "Ask a language model through this machine's configured providers, within the models and token budget you grant. Keys stay here.")],
+    },
+    Capability {
         id: "workspace",
         icon: "🗂️",
         descriptions: &[("en", "Read the host path of a granted folder, so a site can form real file:// URIs.")],

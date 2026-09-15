@@ -29,6 +29,13 @@ pub mod workspace;
 /// a consented filesystem grant (`wasi:filesystem@0.2` has no change notifications).
 pub mod watch;
 
+/// LLM inference through the host's configured providers (`inference.wit`).
+pub mod inference;
+/// The inference backends and their streaming clients.
+pub mod providers;
+/// The daemon's durable store (encrypted SQLite): declared configuration + per-owner state.
+pub mod store;
+
 /// The daemon's serving layer — every capability on one wRPC server per transport.
 pub mod serve;
 

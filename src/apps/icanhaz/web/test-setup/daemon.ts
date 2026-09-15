@@ -78,6 +78,13 @@ export default async function setup({ provide }: GlobalSetupContext) {
             ICANHAZ_PAIRINGS: join(jail, "pairings.json"),
             ICANHAZ_HOSTS: join(jail, "hosts.json"),
             ICANHAZ_CONSENT: "auto",
+            // The durable store lives in the jail with a fixed key, so a test run
+            // never touches the real ~/.icanhaz or the keychain.
+            ICANHAZ_DB: join(jail, "icanhaz.db"),
+            ICANHAZ_DB_KEY: "test",
+            // A loopback inference provider, so the inference capability can be
+            // exercised end to end without any API key.
+            ICANHAZ_ECHO: "1",
         },
         stdio: "inherit",
     });

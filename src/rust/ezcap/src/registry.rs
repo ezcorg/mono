@@ -107,6 +107,14 @@ impl Membranes {
         self.with(tag, |m| m.admit_event(id, Ok)).unwrap_or(false)
     }
 
+    /// A counter's current value on an instance (`calls`, `bytes`, or a host
+    /// counter); `None` for an unknown tag or instance.
+    pub fn counter(&self, tag: &str, id: &InstanceId, name: &str) -> Option<i64> {
+        self.with(tag, |m| m.get(id).map(|i| i.counter(name)))
+            .ok()
+            .flatten()
+    }
+
     /// Advance a host-defined counter after a call.
     pub fn charge(&self, tag: &str, id: &InstanceId, counter: &str, amount: i64) {
         let _ = self.with(tag, |m| m.charge(id, counter, amount));

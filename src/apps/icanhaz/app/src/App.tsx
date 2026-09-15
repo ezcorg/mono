@@ -8,7 +8,8 @@ type Capability =
   | { kind: "filesystem"; roots: PathGrant[] }
   | { kind: "process"; image: string; args: string[]; guest_chooses_argv: boolean }
   | { kind: "terminal"; shell: string | null; jailed: boolean }
-  | { kind: "sockets"; endpoints: string[]; may_listen: boolean };
+  | { kind: "sockets"; endpoints: string[]; may_listen: boolean }
+  | { kind: "inference"; models: string[] };
 type Pending = { id: string; requester: string; summary: string; reason: string; capability: Capability };
 // Mirror the Rust command DTOs.
 type GrantView = { id: string; holder: string; summary: string; icon: string; expires_in_secs: number };
@@ -35,6 +36,7 @@ type FsCap = Extract<Capability, { kind: "filesystem" }>;
 type ProcCap = Extract<Capability, { kind: "process" }>;
 type TermCap = Extract<Capability, { kind: "terminal" }>;
 type SockCap = Extract<Capability, { kind: "sockets" }>;
+type InfCap = Extract<Capability, { kind: "inference" }>;
 
 const RIGHTS: (keyof FsRights)[] = ["read", "write", "create", "delete", "watch"];
 const TTLS: [string, number][] = [
@@ -426,6 +428,16 @@ function CapabilityEditor(props: { orig: Capability; cap: () => Capability; setC
       <Show when={props.cap().kind === "sockets"}>
         <div class="cap-title">network{sock().may_listen ? " — may listen" : ""}</div>
         <For each={sock().endpoints}>{(e) => <div class="root"><span class="path">{e}</span></div>}</For>
+      </Show>
+
+      <Show when={props.cap().kind === "inference"}>
+        <div class="cap-title">language model</div>
+        <Show
+          when={(props.cap() as InfCap).models.length > 0}
+          fallback={<div class="root"><span class="path">any configured model</span></div>}
+        >
+          <For each={(props.cap() as InfCap).models}>{(m) => <div class="root"><span class="path">{m}</span></div>}</For>
+        </Show>
       </Show>
     </div>
   );

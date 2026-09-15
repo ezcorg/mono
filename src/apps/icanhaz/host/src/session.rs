@@ -24,7 +24,7 @@ use futures::{Stream, StreamExt as _};
 
 use crate::broker::Revocation;
 
-type ByteStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
+pub type ByteStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
 type Until = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// Wrap `inner` so it ends on revoke/expiry and releases `guard` when dropped.

@@ -42,6 +42,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 # The shared capability scope model (ezco:ezcap): per-call admission membranes.
 ezcap = { path = "../../../rust/ezcap" }
+# The encrypted store (declared configuration + per-owner state).
+ezdb = { path = "../../../rust/ezdb" }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
+# Inference providers over HTTP (OpenAI-compatible, Anthropic).
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 wit-parser = "0.254"
 
 [build-dependencies]

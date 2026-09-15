@@ -25,7 +25,14 @@ interface types {
     sockets(socket-request),
     process(process-request),
     terminal(terminal-request),
+    inference(inference-request),
   }
+
+  /// LLM inference through the host's configured providers. `models` lists the
+  /// models the grant may use (empty = any the host has configured); budgets and
+  /// finer limits are the grant's `allow` clause (`state.tokens`,
+  /// `call.args.request.model`, `call.args.request.max_tokens`).
+  record inference-request { models: list<string> }
 
   record fs-request  { roots: list<path-grant> }
   record path-grant  { path: string, rights: fs-rights }

@@ -14,8 +14,8 @@ use tauri::{AppHandle, State};
 
 use icanhaz_host::approve::{Approval, PendingConsent};
 use icanhaz_host::broker::{
-    CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, Pairings, PathGrant,
-    ProcessRequest, TerminalRequest,
+    CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, InferenceRequest, Pairings,
+    PathGrant, ProcessRequest, TerminalRequest,
 };
 
 /// Reflect the pending-request count on the tray (menubar badge + tooltip). Driven by
@@ -54,6 +54,11 @@ pub enum CapabilityDto {
     Sockets {
         endpoints: Vec<String>,
         may_listen: bool,
+    },
+    /// LLM inference; `models` empty = any model the host has configured. The
+    /// human may narrow the list; token budgets live in the grant's scope.
+    Inference {
+        models: Vec<String>,
     },
 }
 
@@ -99,6 +104,9 @@ impl From<&CapabilityKind> for CapabilityDto {
             CapabilityKind::Terminal(t) => CapabilityDto::Terminal {
                 shell: t.shell.clone(),
                 jailed: t.jailed,
+            },
+            CapabilityKind::Inference(i) => CapabilityDto::Inference {
+                models: i.models.clone(),
             },
             CapabilityKind::Sockets(s) => CapabilityDto::Sockets {
                 endpoints: s
@@ -155,6 +163,9 @@ impl CapabilityDto {
             })),
             CapabilityDto::Terminal { shell, jailed } => {
                 Some(CapabilityKind::Terminal(TerminalRequest { shell, jailed }))
+            }
+            CapabilityDto::Inference { models } => {
+                Some(CapabilityKind::Inference(InferenceRequest { models }))
             }
             CapabilityDto::Sockets { .. } => None,
         }

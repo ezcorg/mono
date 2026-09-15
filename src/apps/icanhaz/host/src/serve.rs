@@ -23,6 +23,7 @@ use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::broker::{bindings as broker, BrokerProvider, GrantStore};
 use crate::component_serve::serve_filesystem;
+use crate::inference::{bindings as inference, InferenceProvider};
 use crate::process::{bindings as proc, ProcessProvider};
 use crate::terminal::{bindings as term, TerminalProvider};
 use crate::watch::{bindings as watch, WatchProvider};
@@ -60,6 +61,7 @@ async fn drive<C, S>(
     proc_p: ProcessProvider,
     ws_p: WorkspaceProvider,
     watch_p: WatchProvider,
+    inf_p: InferenceProvider,
     fs_serve: FsServe,
 ) -> anyhow::Result<()>
 where
@@ -81,6 +83,9 @@ where
     let watch_invs = watch::serve(srv, watch_p)
         .await
         .context("failed to serve watch")?;
+    let inf_invs = inference::serve(srv, inf_p)
+        .await
+        .context("failed to serve inference")?;
     // Real wasi:filesystem (the gated passthrough) on the SAME server, via ServeExt.
     // Its descriptor invocations drain on the returned JoinSet (held for the
     // server's lifetime); the placeholder client is never invoked (no polyfill).
@@ -130,6 +135,11 @@ where
             .into_iter()
             .map(|(i, n, s)| s.map(move |r| (i, n, r))),
     );
+    let mut inf_i = select_all(
+        inf_invs
+            .into_iter()
+            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
+    );
     let mut tasks = JoinSet::new();
     loop {
         select! {
@@ -152,6 +162,10 @@ where
             Some((i, n, r)) = watch_i.next() => match r {
                 Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
                 Err(err) => tracing::warn!(?err, instance = i, name = n, "watch invocation"),
+            },
+            Some((i, n, r)) = inf_i.next() => match r {
+                Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
+                Err(err) => tracing::warn!(?err, instance = i, name = n, "inference invocation"),
             },
             Some(_) = tasks.join_next() => {}
             else => break,
@@ -313,6 +327,7 @@ pub async fn serve_websocket_all(
     proc_p: ProcessProvider,
     ws_p: WorkspaceProvider,
     watch_p: WatchProvider,
+    inf_p: InferenceProvider,
     fs_serve: FsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport::Server::<ReqCtx, MuxRx, MuxTx>::default());
@@ -352,6 +367,7 @@ pub async fn serve_websocket_all(
         proc_p,
         ws_p,
         watch_p,
+        inf_p,
         fs_serve,
     )
     .await;
@@ -368,6 +384,7 @@ pub async fn serve_webtransport_all(
     proc_p: ProcessProvider,
     ws_p: WorkspaceProvider,
     watch_p: WatchProvider,
+    inf_p: InferenceProvider,
     fs_serve: FsServe,
 ) -> anyhow::Result<()> {
     use core::time::Duration;
@@ -434,6 +451,7 @@ pub async fn serve_webtransport_all(
         proc_p,
         ws_p,
         watch_p,
+        inf_p,
         fs_serve,
     )
     .await;

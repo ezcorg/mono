@@ -78,6 +78,18 @@ pub async fn run(
     let process = ProcessProvider::new(grants.clone());
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
+    // The durable store (declared configuration + per-owner state). A daemon
+    // that cannot open it still runs: providers then come from the environment
+    // only and token budgets do not persist.
+    let store = match crate::store::Store::open(crate::store::Store::default_path()).await {
+        Ok(store) => Some(store),
+        Err(e) => {
+            tracing::warn!(error = %e, "store unavailable; running without persistence");
+            None
+        }
+    };
+    let providers = Arc::new(crate::providers::Providers::load(store).await);
+    let inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
     let fs_serve = FsServe {
         component_path: config.fs_component.clone(),
         root: config.root.clone(),
@@ -100,7 +112,11 @@ pub async fn run(
         .await
         .with_context(|| format!("failed to bind WebSocket on {}", config.ws_bind))?;
 
-    eprintln!("icanhaz — broker (consent gate) + terminal + process + real wasi:filesystem + workspace + watch:");
+    eprintln!("icanhaz — broker (consent gate) + terminal + process + real wasi:filesystem + workspace + watch + inference:");
+    eprintln!(
+        "  inference    : {} model(s) configured",
+        providers.models().len()
+    );
     eprintln!("  WebSocket    : ws://{}", config.ws_bind);
     eprintln!("  WebTransport : https://{}", config.wt_bind);
     eprintln!("  cert hashes  : {cert_hashes}");
@@ -118,6 +134,7 @@ pub async fn run(
             process.clone(),
             workspace.clone(),
             watch.clone(),
+            inference.clone(),
             fs_serve.clone()
         ),
         serve_webtransport_all(
@@ -128,6 +145,7 @@ pub async fn run(
             process,
             workspace,
             watch,
+            inference,
             fs_serve
         ),
     )?;
