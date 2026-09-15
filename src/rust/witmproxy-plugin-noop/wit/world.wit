@@ -234,54 +234,10 @@ interface witm-plugin {
         value: string,
     }
 
-    /// Metadata for a file input value
-    record file-input {
-        /// The original file name
-        name: string,
-        /// The MIME type of the file (if known)
-        content-type: option<string>,
-        /// The file contents as bytes
-        data: list<u8>,
-    }
-
-    variant input-type {
-        str,
-        boolean,
-        number,
-        select(list<string>),
-        datetime,
-        daterange,
-        /// A file input (the user uploads a file)
-        file,
-        /// A raw binary data input
-        binary,
-    }
-
-    variant actual-input {
-        str(string),
-        boolean(bool),
-        number(f64),
-        select(string),
-        datetime(string),
-        daterange(tuple<string, string>),
-        /// A file with name, optional content-type, and data
-        file(file-input),
-        /// Raw binary data
-        binary(list<u8>),
-    }
-
-    record input-schema {
-        name: string,
-        input-type: input-type,
-        optional: bool,
-        default: option<actual-input>,
-        description: option<string>,
-    }
-
-    record user-input {
-        name: string,
-        value: actual-input,
-    }
+    /// Declared configuration lives in the shared package: a manifest's
+    /// `configuration` is a list of `input-schema`, and `plugin.create` takes
+    /// the user's `user-input`s. `input-type.secret` exists for credentials.
+    use ezco:ezcap/forms@0.1.0.{file-input, input-type, actual-input, input-schema, user-input};
 
     variant configure-error {
         invalid-inputs(list<user-input>),

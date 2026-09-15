@@ -48,3 +48,65 @@ interface types {
         denied(string),
     }
 }
+
+/// Declared configuration: the typed inputs a host renders as a form and a
+/// guest receives as values. Used by plugin manifests (witmproxy), capability
+/// provider configuration (icanhaz) and, later, editor plugin settings, so one
+/// form model serves every consent and settings surface.
+interface forms {
+    /// A file the user supplied.
+    record file-input {
+        /// The original file name
+        name: string,
+        /// The MIME type of the file (if known)
+        content-type: option<string>,
+        /// The file contents as bytes
+        data: list<u8>,
+    }
+
+    variant input-type {
+        str,
+        boolean,
+        number,
+        select(list<string>),
+        datetime,
+        daterange,
+        /// A file input (the user uploads a file)
+        file,
+        /// A raw binary data input
+        binary,
+        /// A credential or key. Rendered masked, never echoed back by an
+        /// API or log, and stored encrypted where the host has a store.
+        secret,
+    }
+
+    variant actual-input {
+        str(string),
+        boolean(bool),
+        number(f64),
+        select(string),
+        datetime(string),
+        daterange(tuple<string, string>),
+        /// A file with name, optional content-type, and data
+        file(file-input),
+        /// Raw binary data
+        binary(list<u8>),
+        /// The value of a `secret` input.
+        secret(string),
+    }
+
+    /// One input the host asks the user for.
+    record input-schema {
+        name: string,
+        input-type: input-type,
+        optional: bool,
+        default: option<actual-input>,
+        description: option<string>,
+    }
+
+    /// One value the user supplied.
+    record user-input {
+        name: string,
+        value: actual-input,
+    }
+}

@@ -473,6 +473,7 @@ impl Serialize for exports::witmproxy::plugin::witm_plugin::InputType {
             InputType::Daterange => serializer.serialize_str("daterange"),
             InputType::File => serializer.serialize_str("file"),
             InputType::Binary => serializer.serialize_str("binary"),
+            InputType::Secret => serializer.serialize_str("secret"),
         }
     }
 }
@@ -507,6 +508,7 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                     "daterange" => Ok(InputType::Daterange),
                     "file" => Ok(InputType::File),
                     "binary" => Ok(InputType::Binary),
+                    "secret" => Ok(InputType::Secret),
                     _ => Err(de::Error::unknown_variant(
                         value,
                         &[
@@ -518,6 +520,7 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                             "daterange",
                             "file",
                             "binary",
+                            "secret",
                         ],
                     )),
                 }
@@ -546,6 +549,7 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::InputTyp
                             "daterange",
                             "file",
                             "binary",
+                            "secret",
                         ],
                     )),
                 }
@@ -580,6 +584,7 @@ impl Serialize for exports::witmproxy::plugin::witm_plugin::ActualInput {
                 map.serialize_entry("file", &file_map)?;
             }
             ActualInput::Binary(v) => map.serialize_entry("binary", v)?,
+            ActualInput::Secret(v) => map.serialize_entry("secret", v)?,
         }
         map.end()
     }
@@ -646,6 +651,7 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::ActualIn
                         ))
                     }
                     "binary" => Ok(ActualInput::Binary(map.next_value()?)),
+                    "secret" => Ok(ActualInput::Secret(map.next_value()?)),
                     _ => Err(de::Error::unknown_variant(
                         &key,
                         &[
@@ -657,6 +663,7 @@ impl<'de> Deserialize<'de> for exports::witmproxy::plugin::witm_plugin::ActualIn
                             "daterange",
                             "file",
                             "binary",
+                            "secret",
                         ],
                     )),
                 }

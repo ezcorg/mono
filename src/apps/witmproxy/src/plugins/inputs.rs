@@ -44,6 +44,7 @@ pub fn coerce_input(schema: &InputSchema, raw: &str) -> Result<ActualInput> {
                 .ok_or_else(|| anyhow!("`{name}` is a date range; write it as `start..end`"))?;
             ActualInput::Daterange((a.trim().to_string(), b.trim().to_string()))
         }
+        InputType::Secret => ActualInput::Secret(raw.to_string()),
         InputType::File | InputType::Binary => {
             bail!("`{name}` takes a file, which the command line cannot supply; use the web API")
         }
@@ -65,6 +66,8 @@ pub fn display_input(value: &ActualInput) -> String {
         ActualInput::Daterange((a, b)) => format!("{a}..{b}"),
         ActualInput::File(f) => format!("file {} ({} bytes)", f.name, f.data.len()),
         ActualInput::Binary(b) => format!("{} bytes", b.len()),
+        // Never shown: a secret's value does not leave the store.
+        ActualInput::Secret(_) => "••••••".to_string(),
     }
 }
 
@@ -79,6 +82,7 @@ pub fn display_type(t: &InputType) -> String {
         InputType::Daterange => "date range (start..end)".into(),
         InputType::File => "file".into(),
         InputType::Binary => "binary".into(),
+        InputType::Secret => "secret".into(),
     }
 }
 
