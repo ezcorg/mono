@@ -4,6 +4,7 @@
 // `tracing` instead, so the exemption is scoped to this module.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
+use crate::db::Migrate as _;
 use crate::{
     AppConfig, CertificateAuthority, WitmProxy,
     config::{

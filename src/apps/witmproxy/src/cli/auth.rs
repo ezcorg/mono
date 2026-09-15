@@ -1,3 +1,4 @@
+use crate::db::Migrate as _;
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 

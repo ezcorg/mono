@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::Migrate as _;
 use crate::db::tenants::*;
 
 async fn setup_db() -> (Db, tempfile::TempDir) {

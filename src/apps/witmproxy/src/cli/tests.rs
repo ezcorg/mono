@@ -1,3 +1,4 @@
+use crate::db::Migrate as _;
 use crate::{
     Db, Runtime,
     cli::load_plugins_from_directory,

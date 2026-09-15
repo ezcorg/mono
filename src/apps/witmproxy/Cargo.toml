@@ -65,6 +65,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # The shared capability scope model (ezco:ezcap): per-call admission membranes.
 ezcap = { path = "../../rust/ezcap" }
+# The encrypted store (SQLCipher) with a keychain-first key source.
+ezdb = { path = "../../rust/ezdb" }
 toml = "0.9.8"
 
 # Auth

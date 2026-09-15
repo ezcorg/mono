@@ -1,0 +1,24 @@
+[package]
+name = "ezdb"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "An encrypted SQLite (SQLCipher) store whose key comes from the OS keychain when there is one and from a 0600 key file otherwise. Shared by icanhaz and witmproxy."
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
+# Must match the version sqlx uses; the SQLCipher build is what makes the file encrypted at rest.
+libsqlite3-sys = { version = "0.30.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+rand = "0.8"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

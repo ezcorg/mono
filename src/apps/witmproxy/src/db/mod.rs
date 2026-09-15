@@ -4,64 +4,23 @@ pub mod tenants;
 mod tenant_tests;
 
 use anyhow::Result;
-use sqlx::{Sqlite, SqlitePool, Transaction, sqlite::SqliteConnectOptions};
-use std::path::PathBuf;
-use std::str::FromStr;
 
-#[derive(Clone)]
-pub struct Db {
-    pub pool: SqlitePool,
+pub use ezdb::{Db, Insert};
+
+/// witmproxy's embedded schema migrations.
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/db/migrations");
+
+/// `db.migrate()`: run witmproxy's migrations on an [`ezdb::Db`].
+pub trait Migrate {
+    fn migrate(&self) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 
-/// A trait which allows inserting a struct into the database
-pub trait Insert: Send + Sync {
-    fn insert_tx(
-        &self,
-        db: &mut Db,
-    ) -> impl std::future::Future<Output = Result<Transaction<'_, Sqlite>>> + Send;
-    fn insert(&self, db: &mut Db) -> impl std::future::Future<Output = Result<()>> + Send {
-        async move {
-            let tx = self.insert_tx(db).await?;
-            tx.commit().await?;
-            Ok(())
-        }
-    }
-}
-
-impl Db {
-    pub fn new(pool: SqlitePool) -> Self {
-        Db { pool }
-    }
-
-    pub async fn from_path(db_path: PathBuf, password: &str) -> Result<Self> {
-        let db_path_str = db_path.to_string_lossy();
-        let db_path = if !db_path_str.starts_with("sqlite://") {
-            format!("sqlite://{}", db_path_str)
-        } else {
-            db_path_str.to_string()
-        };
-
-        // SQLCipher wants `PRAGMA key = '<passphrase>'` — a SQL string literal.
-        // sqlx emits the pragma value verbatim, so quote it here and double any
-        // embedded single quotes; otherwise a password containing a hyphen,
-        // space, or quote produces a syntax error or the wrong key.
-        let quoted_key = format!("'{}'", password.replace('\'', "''"));
-        let options = SqliteConnectOptions::from_str(&db_path)?
-            .pragma("key", quoted_key)
-            .create_if_missing(true);
-
-        // TODO: configure pool
-        let pool = sqlx::SqlitePool::connect_with(options).await?;
-        Ok(Db { pool })
-    }
-
-    /// Run embedded application database migrations
-    pub async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("src/db/migrations")
-            .run(&self.pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("Database migration failed: {}", e))?;
-        Ok(())
+impl Migrate for Db {
+    // Written as `-> impl Future` rather than `async fn` so the trait's `Send`
+    // bound is stated once, on the trait, and holds for every caller.
+    #[allow(clippy::manual_async_fn)]
+    fn migrate(&self) -> impl std::future::Future<Output = Result<()>> + Send {
+        async move { self.migrate_with(&MIGRATOR).await }
     }
 }
 

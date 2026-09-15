@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::Migrate as _;
 use crate::plugins::registry::PluginRegistry;
 use crate::test_utils::{create_ca_and_config, test_component_path};
 use crate::wasm::Runtime;

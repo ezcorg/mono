@@ -5,6 +5,7 @@
 
 use super::GlobalArgs;
 use crate::cli::api_client::{ApiClient, DaemonAuthArgs, LocalDaemon};
+use crate::db::Migrate as _;
 use crate::{config::PluginScopedConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
 use anyhow::Result;
 use conf::{Conf, Subcommands};

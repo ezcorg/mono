@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::Migrate as _;
 use crate::db::tenants::{Group, Tenant};
 use crate::test_utils::create_ca_and_config;
 use crate::wasm::Runtime;

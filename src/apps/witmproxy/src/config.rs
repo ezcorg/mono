@@ -238,11 +238,27 @@ impl DbConfig {
         match &self.db_password {
             Some(secret) if !secret.is_empty() => Ok(secret.clone()),
             Some(_) => crate::util::secret::prompt("Database password"),
-            None => Err(anyhow::anyhow!(
-                "a database password is required for this command.\n  \
-                 Set the DB_PASSWORD environment variable, pass --db-password <value>,\n  \
-                 or pass a bare --db-password to be prompted."
-            )),
+            // Nothing supplied: the machine's keychain, or a 0600 key file
+            // beside the database, holds a key that is created on first use.
+            // An explicit password still wins, so existing deployments keep
+            // opening with the passphrase they were created with.
+            None => {
+                let dir = self
+                    .db_path
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                let key = ezdb::KeySource::default_for("witmproxy", dir)
+                    .resolve()
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "no database password was given and no key source is available:\n{e}\n  \
+                             Set the DB_PASSWORD environment variable, pass --db-password <value>,\n  \
+                             or pass a bare --db-password to be prompted."
+                        )
+                    })?;
+                Ok(Secret::from(key.expose()))
+            }
         }
     }
 }

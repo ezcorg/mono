@@ -7,6 +7,7 @@
 //! for the daemon and proxy paths, where a panic takes down live traffic.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use crate::db::Migrate as _;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
