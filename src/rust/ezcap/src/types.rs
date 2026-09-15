@@ -71,7 +71,10 @@ impl Narrowing {
     /// Both narrowings, in order: what a chain of appended clauses adds up to.
     pub fn and(&self, other: &Narrowing) -> Narrowing {
         let both = |a: Option<&str>, b: Option<&str>| -> Option<String> {
-            match (a.map(str::trim).filter(|s| !s.is_empty()), b.map(str::trim).filter(|s| !s.is_empty())) {
+            match (
+                a.map(str::trim).filter(|s| !s.is_empty()),
+                b.map(str::trim).filter(|s| !s.is_empty()),
+            ) {
                 (None, None) => None,
                 (Some(a), None) => Some(a.to_string()),
                 (None, Some(b)) => Some(b.to_string()),

@@ -13,12 +13,12 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager as _, State};
 
 use icanhaz_host::approve::{Approval, PendingConsent};
-use icanhaz_host::configuration::{Declared, Instance, UserInput};
-use icanhaz_host::daemon::Services;
 use icanhaz_host::broker::{
     CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, InferenceRequest, Pairings,
     PathGrant, ProcessRequest, ScopeText, TerminalRequest,
 };
+use icanhaz_host::configuration::{Declared, Instance, UserInput};
+use icanhaz_host::daemon::Services;
 
 /// Reflect the pending-request count on the tray (menubar badge + tooltip). Driven by
 /// a backend poll loop (see `lib.rs`) so it stays correct even when the window is hidden

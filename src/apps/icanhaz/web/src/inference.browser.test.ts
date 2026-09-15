@@ -65,7 +65,8 @@ describe("inference capability over wRPC (browser → host)", () => {
 
         const session = await complete(t, token, {
             model: "echo",
-            messages: [{ role: "user", content: "hello from the browser" }],
+            messages: [{ role: "user", content: "hello from the browser", toolCalls: [], toolCallId: undefined }],
+            tools: [],
             maxTokens: 0,
             temperature: undefined,
             system: undefined,
@@ -83,7 +84,8 @@ describe("inference capability over wRPC (browser → host)", () => {
         const token = await grant(t, 'call.args.request.model == "nope"', []);
         const session = await complete(t, token, {
             model: "echo",
-            messages: [{ role: "user", content: "x" }],
+            messages: [{ role: "user", content: "x", toolCalls: [], toolCallId: undefined }],
+            tools: [],
             maxTokens: 0,
             temperature: undefined,
             system: undefined,
@@ -110,5 +112,41 @@ describe("inference capability over wRPC (browser → host)", () => {
         );
         expect(res.tag).toBe("err");
         if (res.tag === "err") expect(res.val.tag).toBe("invalid-scope");
+    });
+    it("relays a tool call as a kind-3 frame and continues after the tool turn", async () => {
+        const t = await connect({ ws: WS });
+        const token = await grant(t, "true", ["echo"]);
+        const tools = [{ name: "search", description: "find things", parameters: '{"type":"object"}' }];
+        const first = await complete(t, token, {
+            model: "echo",
+            messages: [{ role: "user", content: "find x", toolCalls: [], toolCallId: undefined }],
+            tools,
+            maxTokens: 0,
+            temperature: undefined,
+            system: undefined,
+        });
+        const frames = decodeFrames(await collect(first));
+        const [head, next] = frames;
+        expect(head?.kind).toBe(3);
+        const call = JSON.parse(head?.payload ?? "{}") as { id: string; name: string; arguments: string };
+        expect(call.name).toBe("search");
+        expect(JSON.parse(call.arguments)).toEqual({ input: "find x" });
+        expect(next?.kind).toBe(1);
+
+        // The page ran the tool with its own capabilities; hand the answer back.
+        const second = await complete(t, token, {
+            model: "echo",
+            messages: [
+                { role: "user", content: "find x", toolCalls: [], toolCallId: undefined },
+                { role: "assistant", content: "", toolCalls: [call], toolCallId: undefined },
+                { role: "tool", content: "found it", toolCalls: [], toolCallId: call.id },
+            ],
+            tools,
+            maxTokens: 0,
+            temperature: undefined,
+            system: undefined,
+        });
+        const reply = decodeFrames(await collect(second));
+        expect(reply.filter((f) => f.kind === 0).map((f) => f.payload).join("")).toBe("found it");
     });
 });

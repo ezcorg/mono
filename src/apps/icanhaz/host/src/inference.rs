@@ -104,7 +104,29 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inf
             messages: request
                 .messages
                 .into_iter()
-                .map(|m| (m.role, m.content))
+                .map(|m| crate::providers::Message {
+                    role: m.role,
+                    content: m.content,
+                    tool_calls: m
+                        .tool_calls
+                        .into_iter()
+                        .map(|c| crate::providers::ToolCall {
+                            id: c.id,
+                            name: c.name,
+                            arguments: c.arguments,
+                        })
+                        .collect(),
+                    tool_call_id: m.tool_call_id,
+                })
+                .collect(),
+            tools: request
+                .tools
+                .into_iter()
+                .map(|t| crate::providers::Tool {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.parameters,
+                })
                 .collect(),
             max_tokens: request.max_tokens,
             temperature: request.temperature,
@@ -213,7 +235,10 @@ mod tests {
             messages: vec![Message {
                 role: "user".to_string(),
                 content: text.to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
             }],
+            tools: vec![],
             max_tokens,
             temperature: None,
             system: None,
@@ -257,6 +282,54 @@ mod tests {
         assert!(frames[2].1.contains("\"output_tokens\":2"));
         // input 2 + output 2 = 4 tokens charged to the grant.
         assert_eq!(store.lock().unwrap().counter(&token, "tokens"), Some(4));
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_frame_then_the_tool_turn_completes_the_loop() {
+        use super::bindings::exports::icanhaz::nocap::inference::{Tool, ToolCall};
+        let store = GrantStore::shared();
+        let p = InferenceProvider::new(store.clone(), echo_providers(None));
+        let token = grant(&store, &["echo"], "true");
+        let mut req = request("echo", "find x", 0);
+        req.tools.push(Tool {
+            name: "search".to_string(),
+            description: "find things".to_string(),
+            parameters: r#"{"type":"object"}"#.to_string(),
+        });
+        let frames = collect(
+            p.complete((), token.clone(), req.clone())
+                .await
+                .unwrap()
+                .expect("admitted"),
+        )
+        .await;
+        assert_eq!(frames[0].0, 3, "{frames:?}");
+        let call: serde_json::Value = serde_json::from_str(&frames[0].1).unwrap();
+        assert_eq!(call["name"], "search");
+        assert_eq!(call["arguments"], r#"{"input":"find x"}"#);
+        assert_eq!(frames[1].0, 1);
+
+        // The caller ran the tool; the assistant's call and the answer go back.
+        req.messages.push(Message {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                id: "call-1".to_string(),
+                name: "search".to_string(),
+                arguments: call["arguments"].as_str().unwrap().to_string(),
+            }],
+            tool_call_id: None,
+        });
+        req.messages.push(Message {
+            role: "tool".to_string(),
+            content: "found it".to_string(),
+            tool_calls: vec![],
+            tool_call_id: Some("call-1".to_string()),
+        });
+        let frames = collect(p.complete((), token, req).await.unwrap().expect("admitted")).await;
+        assert_eq!(frames[0], (0, "found ".to_string()));
+        assert_eq!(frames[1], (0, "it".to_string()));
+        assert_eq!(frames[2].0, 1);
     }
 
     #[tokio::test]

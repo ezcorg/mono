@@ -257,7 +257,9 @@ async fn surface_narrowing_conjoins_onto_the_requested_scope() {
             {
                 let s = store.lock().unwrap();
                 assert!(s.check_scope(&req.want, &req.scope.narrowed(&bad)).is_err());
-                assert!(s.check_scope(&req.want, &req.scope.narrowed(&extra)).is_ok());
+                assert!(s
+                    .check_scope(&req.want, &req.scope.narrowed(&extra))
+                    .is_ok());
             }
             assert!(pending.resolve(
                 &req.id,
@@ -393,7 +395,10 @@ async fn certificates_redeem_for_their_audience_only() {
     assert!(matches!(outcome, Err(Denied::OutOfScope(_))), "{outcome:?}");
     let mut tampered = cert.clone();
     tampered.replace_range(cert.len() - 4.., "AAAA");
-    let refused = provider.redeem(notes.clone(), tampered).await.expect("wrpc ok");
+    let refused = provider
+        .redeem(notes.clone(), tampered)
+        .await
+        .expect("wrpc ok");
     assert!(matches!(refused, Err(Denied::NotAuthorized)), "{refused:?}");
 
     // An expired certificate is `revoked`; so is one whose source was revoked.
@@ -405,10 +410,16 @@ async fn certificates_redeem_for_their_audience_only() {
         ezcap::Narrowing::default(),
     )
     .encode();
-    let refused = provider.redeem(notes.clone(), expired).await.expect("wrpc ok");
+    let refused = provider
+        .redeem(notes.clone(), expired)
+        .await
+        .expect("wrpc ok");
     // (Also the wrong issuer, but expiry is checked first.)
     assert!(matches!(refused, Err(Denied::Revoked)), "{refused:?}");
-    provider.revoke(ReqCtx::default(), token).await.expect("wrpc ok");
+    provider
+        .revoke(ReqCtx::default(), token)
+        .await
+        .expect("wrpc ok");
     let refused = provider.redeem(notes, cert).await.expect("wrpc ok");
     assert!(matches!(refused, Err(Denied::Revoked)), "{refused:?}");
 }

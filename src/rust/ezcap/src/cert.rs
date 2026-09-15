@@ -458,9 +458,15 @@ mod tests {
     #[test]
     fn audience_and_issuer_are_checked_at_the_broker() {
         let (issuer, other, peer) = keys();
-        let v = Certificate::issue(&issuer, "i", Audience::Peer(peer.public()), 0, Narrowing::default())
-            .verify(1)
-            .unwrap();
+        let v = Certificate::issue(
+            &issuer,
+            "i",
+            Audience::Peer(peer.public()),
+            0,
+            Narrowing::default(),
+        )
+        .verify(1)
+        .unwrap();
         let by_peer = Presented {
             peer: Some(peer.public()),
             ..Default::default()
@@ -474,14 +480,20 @@ mod tests {
         let bearer = Certificate::issue(&issuer, "i", Audience::Any, 0, Narrowing::default())
             .verify(1)
             .unwrap();
-        assert_eq!(bearer.admits(&issuer.public(), &Presented::default()), Ok(()));
+        assert_eq!(
+            bearer.admits(&issuer.public(), &Presented::default()),
+            Ok(())
+        );
     }
 
     #[test]
     fn links_only_append_and_bind_their_order() {
         let (issuer, alice, bob) = keys();
         let root = Certificate::issue(&issuer, "i", Audience::Any, 0, Narrowing::default());
-        let a = root.attenuate(&alice, Narrowing::allow(r#"call.args.path.startsWith("src/")"#));
+        let a = root.attenuate(
+            &alice,
+            Narrowing::allow(r#"call.args.path.startsWith("src/")"#),
+        );
         let ab = a.attenuate(&bob, Narrowing::when("time < 5"));
         let v = ab.verify(1).unwrap();
         assert_eq!(

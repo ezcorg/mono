@@ -7,16 +7,40 @@ package icanhaz:nocap@0.1.0;
 /// covers Ollama, LM Studio, OpenRouter and vLLM; and Anthropic's Messages
 /// API); which one serves a request is decided by the model name.
 interface inference {
-  /// One chat turn. `role` is `system`, `user` or `assistant`.
+  /// A tool the model may call. The host only relays: the caller runs the
+  /// tool with whatever capabilities *it* holds and answers with a `tool`
+  /// turn. `parameters` is the arguments' JSON Schema, as JSON text.
+  record tool {
+    name: string,
+    description: string,
+    parameters: string,
+  }
+
+  /// A call the model made: the payload of a kind-3 frame, and what an
+  /// `assistant` turn echoes back so the model sees its own call.
+  /// `arguments` is JSON text.
+  record tool-call {
+    id: string,
+    name: string,
+    arguments: string,
+  }
+
+  /// One chat turn. `role` is `system`, `user`, `assistant` or `tool`.
   record message {
     role: string,
     content: string,
+    /// The calls an `assistant` turn made (empty otherwise).
+    tool-calls: list<tool-call>,
+    /// For a `tool` turn: the call this answers.
+    tool-call-id: option<string>,
   }
 
   record completion-request {
     /// The model to use; must be one the grant allows and the host has configured.
     model: string,
     messages: list<message>,
+    /// Tools the model may call this turn (empty = none).
+    tools: list<tool>,
     /// Upper bound on generated tokens; `0` means the provider's default. Also
     /// the pre-check a budget clause sees as `call.args.request.max-tokens`.
     max-tokens: u32,
@@ -35,7 +59,9 @@ interface inference {
   /// `[kind: u8] [len: u32 BE] [payload]`: kind `0` is a UTF-8 text delta,
   /// kind `1` is the final usage record as JSON
   /// `{"input_tokens": n, "output_tokens": n}` (the amount charged to the
-  /// grant's `state.tokens`), kind `2` is an error message and ends the stream.
+  /// grant's `state.tokens`), kind `2` is an error message and ends the stream,
+  /// kind `3` is a `tool-call` as JSON `{"id", "name", "arguments"}` (the
+  /// model stopped to call a tool; the usage frame still follows).
   complete: func(grant: string, request: completion-request) -> result<stream<u8>, string>;
 
   /// The models this grant may use, of those the host has configured.

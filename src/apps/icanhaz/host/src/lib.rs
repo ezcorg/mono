@@ -29,15 +29,15 @@ pub mod workspace;
 /// a consented filesystem grant (`wasi:filesystem@0.2` has no change notifications).
 pub mod watch;
 
+/// Declared configuration: `forms`-typed schemas capabilities register, and the
+/// generic list/set/remove operations over the store's `configuration` table.
+pub mod configuration;
 /// LLM inference through the host's configured providers (`inference.wit`).
 pub mod inference;
 /// The inference backends and their streaming clients.
 pub mod providers;
 /// The daemon's durable store (encrypted SQLite): declared configuration + per-owner state.
 pub mod store;
-/// Declared configuration: `forms`-typed schemas capabilities register, and the
-/// generic list/set/remove operations over the store's `configuration` table.
-pub mod configuration;
 
 /// The daemon's serving layer — every capability on one wRPC server per transport.
 pub mod serve;
@@ -53,9 +53,9 @@ pub mod session;
 /// The consent broker — the NoCap gate (request → consent → scoped grant token).
 pub mod broker;
 #[cfg(test)]
-mod scoped_tests;
-#[cfg(test)]
 mod iroh_tests;
+#[cfg(test)]
+mod scoped_tests;
 
 /// The registry of installed host capabilities (id · emoji · localizable description).
 pub mod capabilities;

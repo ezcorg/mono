@@ -17,10 +17,10 @@ use tokio::net::TcpListener;
 
 use crate::broker::{BrokerProvider, Consent, GrantStore, Hosts, Pairings};
 use crate::configuration::{self, Declared, Instance, UserInput};
-use crate::providers::Providers;
-use crate::store::Store;
 use crate::process::ProcessProvider;
+use crate::providers::Providers;
 use crate::serve::{serve_iroh_all, serve_websocket_all, serve_webtransport_all, FsServe};
+use crate::store::Store;
 use crate::terminal::TerminalProvider;
 use crate::watch::WatchProvider;
 use crate::workspace::WorkspaceProvider;
@@ -210,7 +210,8 @@ pub async fn run(
 
     // Every capability shares one grant store: a token from `broker.request` is the
     // same one fs + terminal validate. `hosts` gates which origins may even prompt.
-    let broker = BrokerProvider::new(grants.clone(), consent, pairings.clone()).with_hosts(hosts.clone());
+    let broker =
+        BrokerProvider::new(grants.clone(), consent, pairings.clone()).with_hosts(hosts.clone());
     let terminal = TerminalProvider::new(grants.clone());
     let process = ProcessProvider::new(grants.clone());
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());

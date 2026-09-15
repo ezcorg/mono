@@ -51,6 +51,7 @@ use bindings::exports::icanhaz::nocap::broker::Grant as GrantReply;
 // Re-exported for the capability gate: a provider names `CapabilityKind` to say
 // which kind a presented grant must authorise. `TerminalRequest` is re-exported
 // for constructing terminal wants (tests, the daemon).
+use bindings::exports::icanhaz::nocap::broker::Audience as AudienceWire;
 /// The wire form of `ezco:ezcap/types.scope` (the generated record), distinct
 /// from [`ezcap::Scope`], which the store works with.
 use bindings::ezco::ezcap::types::Scope as ScopeWire;
@@ -62,7 +63,6 @@ use bindings::icanhaz::nocap::types::{Denied, GrantInfo, Principal, PrincipalKin
 /// The call a native handler submits for admission (`ezcap::Call`).
 pub(crate) use ezcap::Call as AdmitCall;
 use ezcap::{Audience, Certificate, Keypair, Membranes, Narrowing, Presented, Scope as EzScope};
-use bindings::exports::icanhaz::nocap::broker::Audience as AudienceWire;
 
 /// The outcome of asking a human (or a stand-in) for consent.
 pub enum Decision {
@@ -410,9 +410,7 @@ impl GrantStore {
     pub fn check_scope(&self, kind: &CapabilityKind, scope: &EzScope) -> Result<(), String> {
         let tag = kind_tag(kind);
         if self.membranes.has(tag) {
-            self.membranes
-                .check(tag, scope)
-                .map_err(|e| e.to_string())
+            self.membranes.check(tag, scope).map_err(|e| e.to_string())
         } else if is_unrestricted(scope) {
             Ok(())
         } else {
@@ -635,8 +633,8 @@ impl GrantStore {
             .get(&verified.instance)
             .cloned()
             .ok_or(Denied::Revoked)?;
-        let until = Instant::now()
-            + Duration::from_secs(verified.expires.saturating_sub(unix_now()));
+        let until =
+            Instant::now() + Duration::from_secs(verified.expires.saturating_sub(unix_now()));
         self.narrow_grant_as(&token, verified.narrowing, Some(holder), Some(until))
     }
 
@@ -1506,8 +1504,10 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         // so no prompt or OS notification fires; it's only recorded for the app's
         // review list, where the user can approve it (see `Hosts`). The
         // anonymous local peer (loopback, no identity) is not gated here.
-        if matches!(principal.kind, PrincipalKind::WebOrigin | PrincipalKind::Peer)
-            && principal.id != "local"
+        if matches!(
+            principal.kind,
+            PrincipalKind::WebOrigin | PrincipalKind::Peer
+        ) && principal.id != "local"
         {
             let mut hosts = self.hosts.lock().unwrap();
             if !hosts.is_allowed(&principal.id) {
@@ -1535,7 +1535,11 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         }
 
         let requester = principal_label(&principal);
-        match self.consent.decide(&want, &scope, &reason, &requester).await {
+        match self
+            .consent
+            .decide(&want, &scope, &reason, &requester)
+            .await
+        {
             Decision::Deny(denied) => {
                 tracing::info!(%requester, %summary, %reason, "consent denied");
                 Ok(Err(denied))

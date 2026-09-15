@@ -77,12 +77,51 @@ impl std::fmt::Debug for ProviderConfig {
     }
 }
 
+/// A tool the model may call (`inference.tool`). `parameters` is JSON Schema text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Tool {
+    pub name: String,
+    pub description: String,
+    pub parameters: String,
+}
+
+/// A call the model made (`inference.tool-call`). `arguments` is JSON text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// One chat turn (`inference.message`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Message {
+    /// `system`, `user`, `assistant` or `tool`.
+    pub role: String,
+    pub content: String,
+    /// Calls an `assistant` turn made.
+    pub tool_calls: Vec<ToolCall>,
+    /// For a `tool` turn: the call it answers.
+    pub tool_call_id: Option<String>,
+}
+
+impl Message {
+    pub fn new(role: &str, content: &str) -> Self {
+        Message {
+            role: role.to_string(),
+            content: content.to_string(),
+            ..Default::default()
+        }
+    }
+}
+
 /// A completion request, provider-agnostic.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Request {
     pub model: String,
-    /// `(role, content)` turns; roles are `system`, `user`, `assistant`.
-    pub messages: Vec<(String, String)>,
+    pub messages: Vec<Message>,
+    /// Tools the model may call this turn.
+    pub tools: Vec<Tool>,
     /// `0` = the provider's default.
     pub max_tokens: u32,
     pub temperature: Option<f32>,
@@ -98,6 +137,9 @@ pub enum Frame {
         output_tokens: u64,
     },
     Error(String),
+    /// The model stopped to call a tool; the caller runs it and continues
+    /// with a `tool` turn. A usage frame still follows.
+    ToolCall(ToolCall),
 }
 
 impl Frame {
@@ -113,6 +155,7 @@ impl Frame {
                 format!("{{\"input_tokens\":{input_tokens},\"output_tokens\":{output_tokens}}}"),
             ),
             Frame::Error(e) => (2, e.clone()),
+            Frame::ToolCall(call) => (3, serde_json::to_string(call).unwrap_or_default()),
         };
         let bytes = payload.as_bytes();
         let mut buf = Vec::with_capacity(5 + bytes.len());
@@ -416,23 +459,42 @@ pub mod sse {
 }
 
 mod echo {
-    use super::{Frame, Request, Sink};
+    use super::{Frame, Message, Request, Sink, ToolCall};
 
+    /// Streams the last user turn back. With tools offered and no `tool`
+    /// answer yet, it instead calls the first tool with
+    /// `{"input": <last user turn>}`; once a `tool` turn is present, it
+    /// streams that turn's content back. Deterministic, for tests and demos.
     pub fn run(request: &Request, tx: &Sink) -> Result<(), String> {
-        let last = request
-            .messages
-            .iter()
-            .rev()
-            .find(|(role, _)| role == "user")
-            .map(|(_, c)| c.clone())
-            .unwrap_or_default();
+        let last = |role: &str| -> Option<&Message> {
+            request.messages.iter().rev().find(|m| m.role == role)
+        };
         let input: u64 = request
             .messages
             .iter()
-            .map(|(_, c)| c.split_whitespace().count() as u64)
+            .map(|m| m.content.split_whitespace().count() as u64)
             .sum();
+        let answered = last("tool");
+        let reply = match (request.tools.first(), answered) {
+            (Some(tool), None) => {
+                let user = last("user").map(|m| m.content.as_str()).unwrap_or("");
+                let call = ToolCall {
+                    id: "call-1".to_string(),
+                    name: tool.name.clone(),
+                    arguments: serde_json::json!({ "input": user }).to_string(),
+                };
+                let _ = tx.send(Frame::ToolCall(call));
+                let _ = tx.send(Frame::Usage {
+                    input_tokens: input,
+                    output_tokens: 1,
+                });
+                return Ok(());
+            }
+            (_, Some(answer)) => answer.content.clone(),
+            (None, None) => last("user").map(|m| m.content.clone()).unwrap_or_default(),
+        };
         let mut output = 0u64;
-        for word in last.split_inclusive(' ') {
+        for word in reply.split_inclusive(' ') {
             output += 1;
             if tx.send(Frame::Text(word.to_string())).is_err() {
                 return Ok(());
@@ -447,16 +509,37 @@ mod echo {
 }
 
 mod openai {
-    use super::{sse, Frame, ProviderConfig, Request, Sink};
+    use super::{sse, Frame, ProviderConfig, Request, Sink, ToolCall};
     use futures::StreamExt as _;
+
+    fn schema(text: &str) -> serde_json::Value {
+        serde_json::from_str(text).unwrap_or_else(|_| serde_json::json!({"type": "object"}))
+    }
 
     pub fn body(request: &Request) -> serde_json::Value {
         let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(system) = &request.system {
             messages.push(serde_json::json!({"role": "system", "content": system}));
         }
-        for (role, content) in &request.messages {
-            messages.push(serde_json::json!({"role": role, "content": content}));
+        for m in &request.messages {
+            let mut turn = serde_json::json!({"role": m.role, "content": m.content});
+            if !m.tool_calls.is_empty() {
+                turn["tool_calls"] = m
+                    .tool_calls
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "id": c.id,
+                            "type": "function",
+                            "function": {"name": c.name, "arguments": c.arguments},
+                        })
+                    })
+                    .collect();
+            }
+            if let Some(id) = &m.tool_call_id {
+                turn["tool_call_id"] = serde_json::json!(id);
+            }
+            messages.push(turn);
         }
         let mut body = serde_json::json!({
             "model": request.model,
@@ -464,6 +547,22 @@ mod openai {
             "stream": true,
             "stream_options": {"include_usage": true},
         });
+        if !request.tools.is_empty() {
+            body["tools"] = request
+                .tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": schema(&t.parameters),
+                        },
+                    })
+                })
+                .collect();
+        }
         if request.max_tokens > 0 {
             body["max_tokens"] = serde_json::json!(request.max_tokens);
         }
@@ -473,8 +572,15 @@ mod openai {
         body
     }
 
+    /// Tool calls stream as deltas keyed by index (id and name first, then
+    /// argument fragments); they are emitted whole when the choice finishes.
+    #[derive(Default)]
+    pub struct State {
+        calls: Vec<ToolCall>,
+    }
+
     /// Frames in one `data:` payload; `[DONE]` yields nothing.
-    pub fn frames(data: &str) -> Vec<Frame> {
+    pub fn frames(state: &mut State, data: &str) -> Vec<Frame> {
         if data.trim() == "[DONE]" {
             return Vec::new();
         }
@@ -482,15 +588,48 @@ mod openai {
             return Vec::new();
         };
         let mut out = Vec::new();
-        let text = v
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("delta"))
+        let choice = v.get("choices").and_then(|c| c.get(0));
+        let delta = choice.and_then(|c| c.get("delta"));
+        let text = delta
             .and_then(|d| d.get("content"))
             .and_then(|t| t.as_str())
             .unwrap_or("");
         if !text.is_empty() {
             out.push(Frame::Text(text.to_string()));
+        }
+        for tc in delta
+            .and_then(|d| d.get("tool_calls"))
+            .and_then(|t| t.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let index = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+            while state.calls.len() <= index {
+                state.calls.push(ToolCall {
+                    id: String::new(),
+                    name: String::new(),
+                    arguments: String::new(),
+                });
+            }
+            if let Some(call) = state.calls.get_mut(index) {
+                if let Some(id) = tc.get("id").and_then(|s| s.as_str()) {
+                    call.id = id.to_string();
+                }
+                if let Some(name) = tc.pointer("/function/name").and_then(|s| s.as_str()) {
+                    call.name.push_str(name);
+                }
+                if let Some(args) = tc.pointer("/function/arguments").and_then(|s| s.as_str()) {
+                    call.arguments.push_str(args);
+                }
+            }
+        }
+        if choice
+            .and_then(|c| c.get("finish_reason"))
+            .is_some_and(|r| !r.is_null())
+        {
+            for call in state.calls.drain(..) {
+                out.push(Frame::ToolCall(call));
+            }
         }
         if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
             out.push(Frame::Usage {
@@ -531,18 +670,23 @@ mod openai {
             return Err(format!("{}: HTTP {status}: {text}", provider.name));
         }
         let mut parser = sse::Parser::default();
+        let mut state = State::default();
         let mut body = resp.bytes_stream();
         let mut saw_usage = false;
         while let Some(chunk) = body.next().await {
             let chunk = chunk.map_err(|e| format!("{}: {e}", provider.name))?;
             for data in parser.push(&String::from_utf8_lossy(&chunk)) {
-                for frame in frames(&data) {
+                for frame in frames(&mut state, &data) {
                     saw_usage |= matches!(frame, Frame::Usage { .. });
                     if tx.send(frame).is_err() {
                         return Ok(());
                     }
                 }
             }
+        }
+        // Calls never finalised by a finish_reason still go out before usage.
+        for call in state.calls.drain(..) {
+            let _ = tx.send(Frame::ToolCall(call));
         }
         if !saw_usage {
             // A server without `stream_options` support: charge nothing rather
@@ -557,16 +701,45 @@ mod openai {
 }
 
 mod anthropic {
-    use super::{sse, Frame, ProviderConfig, Request, Sink};
+    use super::{sse, Frame, ProviderConfig, Request, Sink, ToolCall};
     use futures::StreamExt as _;
 
+    fn json_or_object(text: &str) -> serde_json::Value {
+        serde_json::from_str(text).unwrap_or_else(|_| serde_json::json!({}))
+    }
+
     pub fn body(request: &Request) -> serde_json::Value {
-        let messages: Vec<serde_json::Value> = request
-            .messages
-            .iter()
-            .filter(|(role, _)| role != "system")
-            .map(|(role, content)| serde_json::json!({"role": role, "content": content}))
-            .collect();
+        let mut messages: Vec<serde_json::Value> = Vec::new();
+        for m in request.messages.iter().filter(|m| m.role != "system") {
+            let turn = match m.role.as_str() {
+                // A tool's answer is a `tool_result` block on a user turn.
+                "tool" => serde_json::json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+                        "content": m.content,
+                    }],
+                }),
+                "assistant" if !m.tool_calls.is_empty() => {
+                    let mut blocks: Vec<serde_json::Value> = Vec::new();
+                    if !m.content.is_empty() {
+                        blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+                    }
+                    for c in &m.tool_calls {
+                        blocks.push(serde_json::json!({
+                            "type": "tool_use",
+                            "id": c.id,
+                            "name": c.name,
+                            "input": json_or_object(&c.arguments),
+                        }));
+                    }
+                    serde_json::json!({"role": "assistant", "content": blocks})
+                }
+                _ => serde_json::json!({"role": m.role, "content": m.content}),
+            };
+            messages.push(turn);
+        }
         // Anthropic requires max_tokens; a request that left it to the provider
         // gets a sensible bound rather than a 400.
         let max_tokens = if request.max_tokens == 0 {
@@ -580,6 +753,20 @@ mod anthropic {
             "max_tokens": max_tokens,
             "stream": true,
         });
+        if !request.tools.is_empty() {
+            body["tools"] = request
+                .tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": serde_json::from_str::<serde_json::Value>(&t.parameters)
+                            .unwrap_or_else(|_| serde_json::json!({"type": "object"})),
+                    })
+                })
+                .collect();
+        }
         let system: Vec<&str> = request
             .system
             .iter()
@@ -588,8 +775,8 @@ mod anthropic {
                 request
                     .messages
                     .iter()
-                    .filter(|(r, _)| r == "system")
-                    .map(|(_, c)| c.as_str()),
+                    .filter(|m| m.role == "system")
+                    .map(|m| m.content.as_str()),
             )
             .collect();
         if !system.is_empty() {
@@ -603,11 +790,14 @@ mod anthropic {
 
     /// Frames in one event payload. Input tokens arrive on `message_start`,
     /// output tokens on `message_delta`; both are combined into the single
-    /// `Usage` frame emitted at `message_stop`.
+    /// `Usage` frame emitted at `message_stop`. A `tool_use` block starts
+    /// with its id and name, streams `input_json_delta` fragments, and is
+    /// emitted whole at `content_block_stop`.
     #[derive(Default)]
     pub struct State {
         input: u64,
         output: u64,
+        call: Option<ToolCall>,
     }
 
     pub fn frames(state: &mut State, data: &str) -> Vec<Frame> {
@@ -622,12 +812,46 @@ mod anthropic {
                     .unwrap_or(0);
                 Vec::new()
             }
-            Some("content_block_delta") => v
-                .pointer("/delta/text")
-                .and_then(|t| t.as_str())
-                .filter(|t| !t.is_empty())
-                .map(|t| vec![Frame::Text(t.to_string())])
-                .unwrap_or_default(),
+            Some("content_block_start") => {
+                if v.pointer("/content_block/type").and_then(|t| t.as_str()) == Some("tool_use") {
+                    state.call = Some(ToolCall {
+                        id: v
+                            .pointer("/content_block/id")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        name: v
+                            .pointer("/content_block/name")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        arguments: String::new(),
+                    });
+                }
+                Vec::new()
+            }
+            Some("content_block_delta") => {
+                if let Some(json) = v.pointer("/delta/partial_json").and_then(|t| t.as_str()) {
+                    if let Some(call) = state.call.as_mut() {
+                        call.arguments.push_str(json);
+                    }
+                    return Vec::new();
+                }
+                v.pointer("/delta/text")
+                    .and_then(|t| t.as_str())
+                    .filter(|t| !t.is_empty())
+                    .map(|t| vec![Frame::Text(t.to_string())])
+                    .unwrap_or_default()
+            }
+            Some("content_block_stop") => match state.call.take() {
+                Some(mut call) => {
+                    if call.arguments.is_empty() {
+                        call.arguments = "{}".to_string();
+                    }
+                    vec![Frame::ToolCall(call)]
+                }
+                None => Vec::new(),
+            },
             Some("message_delta") => {
                 if let Some(n) = v.pointer("/usage/output_tokens").and_then(|n| n.as_u64()) {
                     state.output = n;
@@ -702,27 +926,91 @@ mod tests {
 
     #[test]
     fn openai_frames_carry_text_and_usage() {
+        let mut st = openai::State::default();
         let delta = r#"{"choices":[{"delta":{"content":"Hel"}}]}"#;
-        assert_eq!(openai::frames(delta), vec![Frame::Text("Hel".to_string())]);
+        assert_eq!(
+            openai::frames(&mut st, delta),
+            vec![Frame::Text("Hel".to_string())]
+        );
         let usage = r#"{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}"#;
         assert_eq!(
-            openai::frames(usage),
+            openai::frames(&mut st, usage),
             vec![Frame::Usage {
                 input_tokens: 7,
                 output_tokens: 3
             }]
         );
-        assert!(openai::frames("[DONE]").is_empty());
+        assert!(openai::frames(&mut st, "[DONE]").is_empty());
         let body = openai::body(&Request {
             model: "m".to_string(),
-            messages: vec![("user".to_string(), "hi".to_string())],
+            messages: vec![Message::new("user", "hi")],
             max_tokens: 5,
-            temperature: None,
             system: Some("be brief".to_string()),
+            ..Default::default()
         });
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["max_tokens"], 5);
         assert_eq!(body["stream_options"]["include_usage"], true);
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn openai_tool_calls_accumulate_by_index_and_flush_on_finish() {
+        let mut st = openai::State::default();
+        let a = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"search","arguments":"{\"q\":"}}]}}]}"#;
+        assert!(openai::frames(&mut st, a).is_empty());
+        let b = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"x\"}"}}]}}]}"#;
+        assert!(openai::frames(&mut st, b).is_empty());
+        let fin = r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#;
+        assert_eq!(
+            openai::frames(&mut st, fin),
+            vec![Frame::ToolCall(ToolCall {
+                id: "c1".into(),
+                name: "search".into(),
+                arguments: r#"{"q":"x"}"#.into(),
+            })]
+        );
+        // The request side: tools, an assistant turn with calls, a tool answer.
+        let body = openai::body(&Request {
+            model: "m".to_string(),
+            tools: vec![Tool {
+                name: "search".into(),
+                description: "find".into(),
+                parameters: r#"{"type":"object","properties":{"q":{"type":"string"}}}"#.into(),
+            }],
+            messages: vec![
+                Message::new("user", "find x"),
+                Message {
+                    role: "assistant".into(),
+                    tool_calls: vec![ToolCall {
+                        id: "c1".into(),
+                        name: "search".into(),
+                        arguments: r#"{"q":"x"}"#.into(),
+                    }],
+                    ..Default::default()
+                },
+                Message {
+                    role: "tool".into(),
+                    content: "found".into(),
+                    tool_call_id: Some("c1".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        assert_eq!(body["tools"][0]["function"]["parameters"]["type"], "object");
+        assert_eq!(
+            body["messages"][1]["tool_calls"][0]["function"]["name"],
+            "search"
+        );
+        assert_eq!(body["messages"][2]["tool_call_id"], "c1");
+        let f = Frame::ToolCall(ToolCall {
+            id: "c1".into(),
+            name: "n".into(),
+            arguments: "{}".into(),
+        })
+        .encode();
+        assert_eq!(f[0], 3);
     }
 
     #[test]
@@ -754,17 +1042,65 @@ mod tests {
         );
         let body = anthropic::body(&Request {
             model: "m".to_string(),
-            messages: vec![
-                ("system".to_string(), "rules".to_string()),
-                ("user".to_string(), "hi".to_string()),
-            ],
+            messages: vec![Message::new("system", "rules"), Message::new("user", "hi")],
             max_tokens: 0,
             temperature: Some(0.2),
-            system: None,
+            ..Default::default()
         });
         assert_eq!(body["max_tokens"], 1024);
         assert_eq!(body["system"], "rules");
         assert_eq!(body["messages"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn anthropic_tool_use_blocks_become_tool_call_frames_and_turns() {
+        let mut st = anthropic::State::default();
+        let start = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu1","name":"search","input":{}}}"#;
+        assert!(anthropic::frames(&mut st, start).is_empty());
+        let d1 = r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\"q\""}}"#;
+        let d2 = r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":":\"x\"}"}}"#;
+        assert!(anthropic::frames(&mut st, d1).is_empty());
+        assert!(anthropic::frames(&mut st, d2).is_empty());
+        assert_eq!(
+            anthropic::frames(&mut st, r#"{"type":"content_block_stop","index":1}"#),
+            vec![Frame::ToolCall(ToolCall {
+                id: "tu1".into(),
+                name: "search".into(),
+                arguments: r#"{"q":"x"}"#.into(),
+            })]
+        );
+        let body = anthropic::body(&Request {
+            model: "m".to_string(),
+            tools: vec![Tool {
+                name: "search".into(),
+                description: "find".into(),
+                parameters: r#"{"type":"object"}"#.into(),
+            }],
+            messages: vec![
+                Message::new("user", "find x"),
+                Message {
+                    role: "assistant".into(),
+                    tool_calls: vec![ToolCall {
+                        id: "tu1".into(),
+                        name: "search".into(),
+                        arguments: r#"{"q":"x"}"#.into(),
+                    }],
+                    ..Default::default()
+                },
+                Message {
+                    role: "tool".into(),
+                    content: "found".into(),
+                    tool_call_id: Some("tu1".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        assert_eq!(body["messages"][1]["content"][0]["type"], "tool_use");
+        assert_eq!(body["messages"][1]["content"][0]["input"]["q"], "x");
+        assert_eq!(body["messages"][2]["role"], "user");
+        assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "tu1");
     }
 
     #[test]
@@ -800,12 +1136,13 @@ mod tests {
                 Request {
                     model: "echo".to_string(),
                     messages: vec![
-                        ("user".to_string(), "first".to_string()),
-                        ("user".to_string(), "two words".to_string()),
+                        Message::new("user", "first"),
+                        Message::new("user", "two words"),
                     ],
                     max_tokens: 0,
                     temperature: None,
                     system: None,
+                    ..Default::default()
                 },
             )
             .collect()

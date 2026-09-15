@@ -126,7 +126,9 @@ async fn main() -> anyhow::Result<()> {
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label,
-        iroh: std::env::var("ICANHAZ_IROH").map(|v| v != "0").unwrap_or(true),
+        iroh: std::env::var("ICANHAZ_IROH")
+            .map(|v| v != "0")
+            .unwrap_or(true),
     };
     let services = Services::open().await;
     run(config, grants, pairings, hosts, consent, services).await

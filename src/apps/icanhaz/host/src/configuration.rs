@@ -173,13 +173,21 @@ impl Declared {
 
     /// Validate `inputs` against the schema, filling defaults and keeping a
     /// stored secret the form left blank. Returns the full row set to write.
-    fn resolve(&self, inputs: &[UserInput], existing: &[(String, Value)]) -> Result<Vec<(String, Value)>> {
+    fn resolve(
+        &self,
+        inputs: &[UserInput],
+        existing: &[(String, Value)],
+    ) -> Result<Vec<(String, Value)>> {
         for input in inputs {
             let Some(field) = self.field(&input.name) else {
                 bail!("`{}` is not a declared input", input.name);
             };
             if !input.value.fits(&field.input_type) {
-                bail!("`{}` is not a valid value for `{}`", describe(&input.value), field.name);
+                bail!(
+                    "`{}` is not a valid value for `{}`",
+                    describe(&input.value),
+                    field.name
+                );
             }
         }
         let mut rows = Vec::with_capacity(self.fields.len());
@@ -315,7 +323,11 @@ mod tests {
             "demo",
             "thing",
             vec![
-                Field::new("kind", InputType::Select(vec!["a".into(), "b".into()]), "which"),
+                Field::new(
+                    "kind",
+                    InputType::Select(vec!["a".into(), "b".into()]),
+                    "which",
+                ),
                 Field::new("url", InputType::Str, "where"),
                 Field::new("key", InputType::Secret, "auth").optional(),
                 Field::new("on", InputType::Boolean, "flag").default(Value::Boolean(true)),
@@ -345,7 +357,10 @@ mod tests {
         assert_eq!(v, serde_json::json!({"secret": "k"}));
         let t = serde_json::to_value(InputType::Select(vec!["x".into()])).unwrap();
         assert_eq!(t, serde_json::json!({"select": ["x"]}));
-        assert_eq!(serde_json::to_value(InputType::Str).unwrap(), serde_json::json!("str"));
+        assert_eq!(
+            serde_json::to_value(InputType::Str).unwrap(),
+            serde_json::json!("str")
+        );
         let back: Value = serde_json::from_value(serde_json::json!({"boolean": true})).unwrap();
         assert_eq!(back, Value::Boolean(true));
     }

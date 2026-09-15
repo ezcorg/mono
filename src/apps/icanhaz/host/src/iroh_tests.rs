@@ -9,9 +9,9 @@ use iroh::endpoint::presets::Minimal;
 use iroh::Endpoint;
 use wrpc_transport_iroh::Client;
 
-use crate::broker::client::Audience;
 use crate::broker::bindings::ezco::ezcap::types::Scope as ScopeWire;
 use crate::broker::bindings::icanhaz::nocap::types::Denied;
+use crate::broker::client::Audience;
 use crate::broker::{
     client, serve_iroh, BrokerProvider, CapabilityKind, Consent, GrantStore, Pairings,
     ProcessRequest, IROH_ALPN,
@@ -59,7 +59,10 @@ async fn iroh_peer_redeems_a_certificate_bound_to_its_key() {
         let (bob_ep, bob) = peer(&server_addr).await;
 
         // The broker names itself by the same key the handshake proved.
-        assert_eq!(client::identity(&alice, ()).await.expect("identity"), key.public().to_string());
+        assert_eq!(
+            client::identity(&alice, ()).await.expect("identity"),
+            key.public().to_string()
+        );
 
         // Alice is granted (auto consent) as the peer the transport identified.
         let want = CapabilityKind::Process(ProcessRequest {
@@ -74,7 +77,8 @@ async fn iroh_peer_redeems_a_certificate_bound_to_its_key() {
             .token;
         let mine = client::granted(&alice, ()).await.expect("granted list");
         assert!(
-            mine.iter().any(|g| g.holder.id == ezkey(alice_ep.id()).to_string()),
+            mine.iter()
+                .any(|g| g.holder.id == ezkey(alice_ep.id()).to_string()),
             "{mine:?}"
         );
 
@@ -102,8 +106,9 @@ async fn iroh_peer_redeems_a_certificate_bound_to_its_key() {
         // Bob holds a grant narrowed by the chain, in his own name.
         let bobs = client::granted(&bob, ()).await.expect("granted list");
         assert!(
-            bobs.iter().any(|g| g.holder.id == ezkey(bob_ep.id()).to_string()
-                && g.summary.contains("allow:")),
+            bobs.iter()
+                .any(|g| g.holder.id == ezkey(bob_ep.id()).to_string()
+                    && g.summary.contains("allow:")),
             "{bobs:?}"
         );
         let ok = crate::broker::AdmitCall::new("spawn").arg("args", vec!["x".to_string()]);
