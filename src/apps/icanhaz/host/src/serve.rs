@@ -376,6 +376,37 @@ pub async fn serve_websocket_all(
     res
 }
 
+/// Serve every capability over wRPC/iroh on `endpoint`: the peer path, where
+/// the QUIC handshake authenticates the caller's endpoint id and every
+/// invocation carries it as its context (a certificate's `peer` audience is
+/// checked against exactly that).
+pub async fn serve_iroh_all(
+    endpoint: iroh::Endpoint,
+    broker_p: BrokerProvider,
+    term_p: TerminalProvider,
+    proc_p: ProcessProvider,
+    ws_p: WorkspaceProvider,
+    watch_p: WatchProvider,
+    inf_p: InferenceProvider,
+    fs_serve: FsServe,
+) -> anyhow::Result<()> {
+    let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
+    let accept = tokio::spawn(crate::broker::accept_iroh::<()>(endpoint, Arc::clone(&srv)));
+    let res = drive(
+        srv.as_ref(),
+        broker_p,
+        term_p,
+        proc_p,
+        ws_p,
+        watch_p,
+        inf_p,
+        fs_serve,
+    )
+    .await;
+    accept.abort();
+    res
+}
+
 /// Serve every capability over wRPC/WebTransport bound at `bind` with `identity`.
 pub async fn serve_webtransport_all(
     bind: SocketAddr,

@@ -33,6 +33,10 @@ wrpc-wasmtime = { path = "../../../../src/rust/wrpc/crates/wasmtime" }
 wrpc-websockets = { path = "../../../../src/rust/wrpc/crates/websockets", features = ["ring", "rand"] }
 wit-bindgen-wrpc = { path = "../../../../src/rust/wrpc/crates/wit-bindgen" }
 wrpc-webtransport = { path = "../../../../src/rust/wrpc/crates/webtransport" }
+# The peer path: wRPC over iroh QUIC, the remote endpoint id authenticated by
+# the handshake and handed to every invocation as its context.
+wrpc-transport-iroh = { path = "../../../rust/wrpc-transport-iroh" }
+iroh = "1"
 wtransport = { version = "0.7.0", features = ["self-signed"] }
 portable-pty = "0.8"
 tokio-stream = "0.1"

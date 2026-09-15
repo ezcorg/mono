@@ -75,6 +75,7 @@ fn daemon_config() -> DaemonConfig {
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label: "native consent window".to_string(),
+        iroh: std::env::var("ICANHAZ_IROH").map(|v| v != "0").unwrap_or(true),
     }
 }
 

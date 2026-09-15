@@ -85,6 +85,9 @@ export default async function setup({ provide }: GlobalSetupContext) {
             // A loopback inference provider, so the inference capability can be
             // exercised end to end without any API key.
             ICANHAZ_ECHO: "1",
+            // No iroh endpoint: with auto consent, the peer path would otherwise
+            // listen on every interface. The host suite covers iroh in-process.
+            ICANHAZ_IROH: "0",
         },
         stdio: "inherit",
     });

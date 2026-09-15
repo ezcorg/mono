@@ -20,7 +20,7 @@ use crate::configuration::{self, Declared, Instance, UserInput};
 use crate::providers::Providers;
 use crate::store::Store;
 use crate::process::ProcessProvider;
-use crate::serve::{serve_websocket_all, serve_webtransport_all, FsServe};
+use crate::serve::{serve_iroh_all, serve_websocket_all, serve_webtransport_all, FsServe};
 use crate::terminal::TerminalProvider;
 use crate::watch::WatchProvider;
 use crate::workspace::WorkspaceProvider;
@@ -41,6 +41,10 @@ pub struct DaemonConfig {
     pub key: Option<String>,
     /// Human-legible consent mode, for the startup banner.
     pub consent_label: String,
+    /// Also serve over iroh (the peer path). The endpoint's id *is* the
+    /// broker's identity: the same key signs certificates and authenticates
+    /// the QUIC handshake, so a certificate's issuer is its locator.
+    pub iroh: bool,
 }
 
 /// Seed the demo tree under `root`: one file inside the jail, one outside, plus a
@@ -212,9 +216,28 @@ pub async fn run(
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
     let Services {
-        providers, identity, ..
+        providers,
+        identity: broker_key,
+        ..
     } = services;
-    grants.lock().unwrap().set_identity(identity);
+    grants.lock().unwrap().set_identity(broker_key.clone());
+    let iroh_ep = if config.iroh {
+        let secret = iroh::SecretKey::from_bytes(&broker_key.to_bytes());
+        match iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .secret_key(secret)
+            .alpns(vec![crate::broker::IROH_ALPN.to_vec()])
+            .bind()
+            .await
+        {
+            Ok(ep) => Some(ep),
+            Err(e) => {
+                tracing::warn!(error = %e, "iroh endpoint unavailable; serving WebSocket + WebTransport only");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
     let fs_serve = FsServe {
         component_path: config.fs_component.clone(),
@@ -247,6 +270,14 @@ pub async fn run(
     eprintln!("  WebTransport : https://{}", config.wt_bind);
     eprintln!("  cert hashes  : {cert_hashes}");
     eprintln!("                 ^ paste into the browser demo (serverCertificateHashes)");
+    eprintln!("  identity     : {}", broker_key.public());
+    match &iroh_ep {
+        Some(ep) => {
+            let addrs: Vec<String> = ep.addr().ip_addrs().map(ToString::to_string).collect();
+            eprintln!("  iroh         : {} [{}]", ep.id(), addrs.join(", "));
+        }
+        None => eprintln!("  iroh         : off"),
+    }
     eprintln!("  consent      : {}", config.consent_label);
     eprintln!("  root (jail)  : {}", config.root.display());
 
@@ -266,14 +297,25 @@ pub async fn run(
         serve_webtransport_all(
             config.wt_bind,
             identity,
-            broker,
-            terminal,
-            process,
-            workspace,
-            watch,
-            inference,
-            fs_serve
+            broker.clone(),
+            terminal.clone(),
+            process.clone(),
+            workspace.clone(),
+            watch.clone(),
+            inference.clone(),
+            fs_serve.clone()
         ),
+        async {
+            match iroh_ep {
+                Some(ep) => {
+                    serve_iroh_all(
+                        ep, broker, terminal, process, workspace, watch, inference, fs_serve,
+                    )
+                    .await
+                }
+                None => std::future::pending().await,
+            }
+        },
     )?;
     Ok(())
 }

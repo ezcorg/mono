@@ -1287,6 +1287,20 @@ fn principal_from_origin(origin: Option<&str>) -> Principal {
     }
 }
 
+/// The principal a transport context proves: a browser-attested origin, a
+/// QUIC-authenticated peer key, or — with neither — the anonymous local peer.
+fn principal_of(cx: &impl AsOrigin) -> Principal {
+    match (cx.origin(), cx.peer()) {
+        (Some(o), _) => principal_from_origin(Some(o)),
+        (None, Some(peer)) => Principal {
+            kind: PrincipalKind::Peer,
+            id: peer.to_string(),
+            display_name: Some(format!("peer {}", &peer.to_string()[..8])),
+        },
+        (None, None) => anonymous_principal(),
+    }
+}
+
 /// The stand-in principal for a peer the transport didn't (yet) identify.
 pub fn anonymous_principal() -> Principal {
     Principal {
@@ -1352,17 +1366,21 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         // the caller hands us. `None` ⇒ a non-browser / loopback peer.
         let origin = cx.origin();
         let kind = kind_tag(&want);
-        let principal = principal_from_origin(origin);
+        let principal = principal_of(&cx);
         let summary = summarize_scoped(&want, &scope);
 
-        // Host allowlist: an unapproved origin is refused *before* the consent surface,
-        // so no prompt or OS notification fires — it's only recorded for the app's
-        // review list, where the user can approve the host (see `Hosts`).
-        if let Some(o) = origin {
+        // Host allowlist: an unapproved requester — a web origin, or a peer the
+        // transport identified by key — is refused *before* the consent surface,
+        // so no prompt or OS notification fires; it's only recorded for the app's
+        // review list, where the user can approve it (see `Hosts`). The
+        // anonymous local peer (loopback, no identity) is not gated here.
+        if matches!(principal.kind, PrincipalKind::WebOrigin | PrincipalKind::Peer)
+            && principal.id != "local"
+        {
             let mut hosts = self.hosts.lock().unwrap();
-            if !hosts.is_allowed(o) {
-                hosts.record_seen(o, kind);
-                tracing::info!(origin = %o, kind, "request from an unapproved host — recorded, not prompted");
+            if !hosts.is_allowed(&principal.id) {
+                hosts.record_seen(&principal.id, kind);
+                tracing::info!(requester = %principal.id, kind, "request from an unapproved host — recorded, not prompted");
                 return Ok(Err(Denied::NotAuthorized));
             }
         }
@@ -1463,7 +1481,7 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         // The redeemer is whoever the transport proved: the certificate's
         // audience is checked against exactly that, and the grant binds to it.
         let presented = cx.presented();
-        let holder = principal_from_origin(cx.origin());
+        let holder = principal_of(&cx);
         let issued = self.store.lock().unwrap().redeem(&cert, &presented, holder);
         Ok(issued.map(|token| GrantReply {
             token,
@@ -1512,29 +1530,13 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
     }
 }
 
-/// Serve the broker over wRPC/TCP on `listener` until cancelled — the minimal
-/// serve used by the roundtrip test. (The daemon serves it over WebSocket +
-/// WebTransport beside the capabilities; see [`crate::serve`].)
-pub async fn serve_tcp(listener: TcpListener, provider: BrokerProvider) -> anyhow::Result<()> {
-    let srv = Arc::new(wrpc_transport::Server::default());
-    let accept = tokio::spawn({
-        let srv = Arc::clone(&srv);
-        async move {
-            loop {
-                match listener.accept().await {
-                    Ok((stream, _addr)) => {
-                        let (rx, tx) = stream.into_split();
-                        if let Err(err) = srv.accept((), tx, rx).await {
-                            tracing::error!(?err, "failed to serve TCP connection");
-                        }
-                    }
-                    Err(err) => tracing::error!(?err, "failed to accept TCP connection"),
-                }
-            }
-        }
-    });
-
-    let invocations = bindings::serve(srv.as_ref(), provider)
+/// Drive every broker invocation arriving at `srv` until the stream ends.
+async fn drive_broker<C, S>(srv: &S, provider: BrokerProvider) -> anyhow::Result<()>
+where
+    C: AsOrigin + Send + Sync + 'static,
+    S: wrpc_transport::Serve<Context = C>,
+{
+    let invocations = bindings::serve(srv, provider)
         .await
         .context("failed to serve broker")?;
     let mut invocations = select_all(
@@ -1554,8 +1556,83 @@ pub async fn serve_tcp(listener: TcpListener, provider: BrokerProvider) -> anyho
             Err(err) => tracing::warn!(?err, instance, name, "failed to accept invocation"),
         }
     }
-    accept.abort();
     Ok(())
+}
+
+/// Serve the broker over wRPC/TCP on `listener` until cancelled — the minimal
+/// serve used by the roundtrip test. (The daemon serves it over WebSocket +
+/// WebTransport + iroh beside the capabilities; see [`crate::serve`].)
+pub async fn serve_tcp(listener: TcpListener, provider: BrokerProvider) -> anyhow::Result<()> {
+    let srv = Arc::new(wrpc_transport::Server::default());
+    let accept = tokio::spawn({
+        let srv = Arc::clone(&srv);
+        async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _addr)) => {
+                        let (rx, tx) = stream.into_split();
+                        if let Err(err) = srv.accept((), tx, rx).await {
+                            tracing::error!(?err, "failed to serve TCP connection");
+                        }
+                    }
+                    Err(err) => tracing::error!(?err, "failed to accept TCP connection"),
+                }
+            }
+        }
+    });
+    let res = drive_broker(srv.as_ref(), provider).await;
+    accept.abort();
+    res
+}
+
+/// The ALPN icanhaz serves wRPC under on iroh.
+pub const IROH_ALPN: &[u8] = b"icanhaz/0";
+
+/// The context an iroh connection proves: the remote endpoint id the QUIC
+/// handshake authenticated, as the caller's peer key. No origin: a peer is
+/// not a browser page.
+pub fn iroh_ctx(conn: &iroh::endpoint::Connection) -> crate::ReqCtx {
+    crate::ReqCtx {
+        origin: None,
+        peer: Some(ezcap::PublicKey::from_bytes(*conn.remote_id().as_bytes())),
+    }
+}
+
+/// Accept iroh connections on `endpoint` and serve every wRPC stream on them
+/// against `srv`, each invocation carrying [`iroh_ctx`]. Runs until the
+/// endpoint closes.
+pub async fn accept_iroh<C>(
+    endpoint: iroh::Endpoint,
+    srv: Arc<wrpc_transport_iroh::Server<crate::ReqCtx>>,
+) where
+    C: Send,
+{
+    while let Some(incoming) = endpoint.accept().await {
+        let conn = match incoming.await {
+            Ok(conn) => conn,
+            Err(err) => {
+                tracing::debug!(?err, "iroh connection failed to establish");
+                continue;
+            }
+        };
+        let srv = Arc::clone(&srv);
+        tokio::spawn(async move {
+            let cx = iroh_ctx(&conn);
+            tracing::info!(peer = %cx.peer.map(|p| p.to_string()).unwrap_or_default(), "iroh peer connected");
+            if let Err(err) = wrpc_transport_iroh::serve_connection_with(&srv, &conn, cx).await {
+                tracing::debug!(?err, "iroh connection ended");
+            }
+        });
+    }
+}
+
+/// Serve the broker alone over iroh (tests; the daemon uses [`crate::serve`]).
+pub async fn serve_iroh(endpoint: iroh::Endpoint, provider: BrokerProvider) -> anyhow::Result<()> {
+    let srv = Arc::new(wrpc_transport_iroh::Server::<crate::ReqCtx>::new());
+    let accept = tokio::spawn(accept_iroh::<()>(endpoint, Arc::clone(&srv)));
+    let res = drive_broker(srv.as_ref(), provider).await;
+    accept.abort();
+    res
 }
 
 #[cfg(test)]

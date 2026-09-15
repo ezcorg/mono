@@ -15,6 +15,7 @@ members = [
     "src/apps/icanhaz/app/src-tauri",
     "src/rust/ezcap",
     "src/rust/ezdb",
+    "src/rust/wrpc-transport-iroh",
 ]
 exclude = [
     # Vendored upstream workspace (bytecodealliance/wrpc). It defines its own

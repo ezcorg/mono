@@ -54,6 +54,8 @@ pub mod session;
 pub mod broker;
 #[cfg(test)]
 mod scoped_tests;
+#[cfg(test)]
+mod iroh_tests;
 
 /// The registry of installed host capabilities (id · emoji · localizable description).
 pub mod capabilities;
