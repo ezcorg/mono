@@ -123,7 +123,7 @@ impl PluginRegistry {
             db,
             runtime,
             env,
-            membranes: Arc::new(crate::plugins::membranes::Membranes::builtin()?),
+            membranes: Arc::new(crate::plugins::membranes::builtin()?),
             local_storage: Mutex::new(HashMap::new()),
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),

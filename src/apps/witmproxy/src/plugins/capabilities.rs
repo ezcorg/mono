@@ -33,7 +33,7 @@ impl Capability {
         env: &Env<'static>,
         membranes: &Membranes,
     ) -> Result<()> {
-        match Membranes::tag_of(&self.inner.kind) {
+        match crate::plugins::membranes::tag_of(&self.inner.kind) {
             None => {
                 self.when = Some(env.compile(&self.inner.scope.when)?);
             }

@@ -152,5 +152,3 @@ workspace = true
 [build-dependencies]
 # build.rs generates the ezcap CEL environments for the provider resources from ./wit.
 ezcap = { path = "../../rust/ezcap" }
-wit-parser = "0.254"
-serde_json = "1.0"

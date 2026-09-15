@@ -177,7 +177,11 @@ impl CapabilityProvider {
                 continue;
             }
             let adm =
-                match (admission, Membranes::tag_of(&cap.inner.kind), &cap.instance) {
+                match (
+                    admission,
+                    crate::plugins::membranes::tag_of(&cap.inner.kind),
+                    &cap.instance,
+                ) {
                     (Some((membranes, plugin_id)), Some(tag), Some(instance)) => Some(
                         Admission::new(Arc::clone(membranes), tag, instance.clone(), plugin_id),
                     ),
@@ -1443,7 +1447,7 @@ mod admission_tests {
     use crate::plugins::membranes::Membranes;
 
     fn scoped(tag: &'static str, allow: &str) -> (Arc<Membranes>, Admission) {
-        let membranes = Arc::new(Membranes::builtin().expect("environments"));
+        let membranes = Arc::new(crate::plugins::membranes::builtin().expect("environments"));
         let instance = membranes
             .mint(tag, &ezcap::Scope::allow(allow))
             .expect("scope compiles");

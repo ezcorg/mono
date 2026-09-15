@@ -11519,7 +11519,6 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wit-bindgen 0.61.1",
- "wit-parser 0.254.0",
  "x509-parser",
  "zeroize",
 ]
