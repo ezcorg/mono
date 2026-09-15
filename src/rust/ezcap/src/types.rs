@@ -61,6 +61,28 @@ impl Narrowing {
             allow: None,
         }
     }
+
+    /// Nothing added.
+    pub fn is_empty(&self) -> bool {
+        self.when.as_deref().is_none_or(|s| s.trim().is_empty())
+            && self.allow.as_deref().is_none_or(|s| s.trim().is_empty())
+    }
+
+    /// Both narrowings, in order: what a chain of appended clauses adds up to.
+    pub fn and(&self, other: &Narrowing) -> Narrowing {
+        let both = |a: Option<&str>, b: Option<&str>| -> Option<String> {
+            match (a.map(str::trim).filter(|s| !s.is_empty()), b.map(str::trim).filter(|s| !s.is_empty())) {
+                (None, None) => None,
+                (Some(a), None) => Some(a.to_string()),
+                (None, Some(b)) => Some(b.to_string()),
+                (Some(a), Some(b)) => Some(conjoin(a, Some(b))),
+            }
+        };
+        Narrowing {
+            when: both(self.when.as_deref(), other.when.as_deref()),
+            allow: both(self.allow.as_deref(), other.allow.as_deref()),
+        }
+    }
 }
 
 fn conjoin(base: &str, extra: Option<&str>) -> String {

@@ -301,6 +301,7 @@ async fn serve_ws_mux(
                     let srv = Arc::clone(&srv);
                     let cx = ReqCtx {
                         origin: origin.clone(),
+                        peer: None,
                     };
                     tokio::spawn(async move {
                         if let Err(err) = srv.accept(cx, tx, rx).await {
@@ -426,6 +427,7 @@ pub async fn serve_webtransport_all(
                             srv.accept(
                                 ReqCtx {
                                     origin: origin.clone(),
+                                    peer: None,
                                 },
                                 tx,
                                 rx,

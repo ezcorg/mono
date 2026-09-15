@@ -61,7 +61,8 @@ pub use bindings::icanhaz::nocap::types::{
 use bindings::icanhaz::nocap::types::{Denied, GrantInfo, Principal, PrincipalKind};
 /// The call a native handler submits for admission (`ezcap::Call`).
 pub(crate) use ezcap::Call as AdmitCall;
-use ezcap::{Membranes, Narrowing, Scope as EzScope};
+use ezcap::{Audience, Certificate, Keypair, Membranes, Narrowing, Presented, Scope as EzScope};
+use bindings::exports::icanhaz::nocap::broker::Audience as AudienceWire;
 
 /// The outcome of asking a human (or a stand-in) for consent.
 pub enum Decision {
@@ -346,6 +347,13 @@ pub(crate) fn denied_text(denied: &Denied) -> String {
 pub struct GrantStore {
     grants: HashMap<String, Grant>,
     membranes: Membranes,
+    /// Sturdy references: the unguessable id a certificate names → the grant
+    /// it was issued on. A certificate never carries the bearer token.
+    sturdy: HashMap<String, String>,
+    /// This broker's signing key: certificates are issued under it and only
+    /// ones it issued are redeemed here. Ephemeral until the daemon installs
+    /// the persisted one ([`GrantStore::set_identity`]).
+    identity: Keypair,
 }
 
 impl Default for GrantStore {
@@ -353,6 +361,8 @@ impl Default for GrantStore {
         Self {
             grants: HashMap::new(),
             membranes: builtin_membranes(),
+            sturdy: HashMap::new(),
+            identity: Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}")),
         }
     }
 }
@@ -495,6 +505,18 @@ impl GrantStore {
     /// with `extra`. Revoking the parent revokes the child (its cancellation is
     /// a child token of the parent's), and the membrane cascades likewise.
     pub fn narrow_grant(&mut self, token: &str, extra: Narrowing) -> Result<String, Denied> {
+        self.narrow_grant_as(token, extra, None, None)
+    }
+
+    /// [`GrantStore::narrow_grant`] for a different holder and a shorter life:
+    /// what redeeming a certificate does. `None` keeps the parent's.
+    fn narrow_grant_as(
+        &mut self,
+        token: &str,
+        extra: Narrowing,
+        holder: Option<Principal>,
+        until: Option<Instant>,
+    ) -> Result<String, Denied> {
         let (kind, scope, instance, principal, expires, cancel) = {
             let parent = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
             if parent.expires <= Instant::now() || parent.cancel.is_cancelled() {
@@ -504,8 +526,8 @@ impl GrantStore {
                 parent.kind.clone(),
                 parent.scope.narrowed(&extra),
                 parent.instance.clone(),
-                parent.principal.clone(),
-                parent.expires,
+                holder.unwrap_or_else(|| parent.principal.clone()),
+                until.map_or(parent.expires, |u| u.min(parent.expires)),
                 parent.cancel.child_token(),
             )
         };
@@ -539,6 +561,83 @@ impl GrantStore {
             },
         );
         Ok(child)
+    }
+
+    /// This broker's public key.
+    pub fn identity(&self) -> ezcap::PublicKey {
+        self.identity.public()
+    }
+
+    /// Install the daemon's persisted signing key (certificates issued before
+    /// this call were signed by the ephemeral one and will not redeem).
+    pub fn set_identity(&mut self, identity: Keypair) {
+        self.identity = identity;
+    }
+
+    /// Issue a certificate on `token`: a sturdy reference bound to `audience`,
+    /// good for `ttl` (capped at the grant's remaining life), narrowed by
+    /// `extra`, signed by this broker. See `broker.wit`.
+    pub fn certify(
+        &mut self,
+        token: &str,
+        audience: Audience,
+        ttl: Duration,
+        extra: Narrowing,
+    ) -> Result<String, Denied> {
+        let (kind, scope, remaining) = {
+            let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
+            let now = Instant::now();
+            if grant.expires <= now || grant.cancel.is_cancelled() {
+                return Err(Denied::Revoked);
+            }
+            (grant.kind.clone(), grant.scope.clone(), grant.expires - now)
+        };
+        // The chain's clauses must compile against the kind now, so a holder
+        // learns of a bad clause when sharing rather than the recipient when
+        // redeeming.
+        self.check_scope(&kind, &scope.narrowed(&extra))
+            .map_err(Denied::InvalidScope)?;
+        let ttl = ttl.min(remaining);
+        let expires = unix_now().saturating_add(ttl.as_secs().max(1));
+        let sturdy = mint_token();
+        self.sturdy.insert(sturdy.clone(), token.to_string());
+        Ok(Certificate::issue(&self.identity, sturdy, audience, expires, extra).encode())
+    }
+
+    /// Redeem a certificate presented by `presented` (what the transport
+    /// proved) for `holder`: a grant narrowed by the chain, living no longer
+    /// than the certificate or its source grant.
+    pub fn redeem(
+        &mut self,
+        cert: &str,
+        presented: &Presented,
+        holder: Principal,
+    ) -> Result<String, Denied> {
+        let cert = Certificate::decode(cert).map_err(|e| {
+            tracing::info!(error = %e, "certificate refused");
+            Denied::NotAuthorized
+        })?;
+        let verified = cert.verify(unix_now()).map_err(|e| {
+            tracing::info!(error = %e, "certificate refused");
+            match e {
+                ezcap::CertError::Expired => Denied::Revoked,
+                _ => Denied::NotAuthorized,
+            }
+        })?;
+        verified
+            .admits(&self.identity.public(), presented)
+            .map_err(|e| {
+                tracing::info!(error = %e, "certificate refused");
+                Denied::NotAuthorized
+            })?;
+        let token = self
+            .sturdy
+            .get(&verified.instance)
+            .cloned()
+            .ok_or(Denied::Revoked)?;
+        let until = Instant::now()
+            + Duration::from_secs(verified.expires.saturating_sub(unix_now()));
+        self.narrow_grant_as(&token, verified.narrowing, Some(holder), Some(until))
     }
 
     /// The capability gate: confirm a presented `token` is live and authorises
@@ -662,6 +761,9 @@ impl GrantStore {
                         gone.push(child);
                     }
                 }
+                // Certificates on a revoked grant are void: forget their references.
+                let grants = &self.grants;
+                self.sturdy.retain(|_, token| grants.contains_key(token));
                 true
             }
             None => false,
@@ -1157,6 +1259,14 @@ fn narrow(original: &CapabilityKind, requested: &CapabilityKind) -> CapabilityKi
     }
 }
 
+/// Wall-clock seconds, for certificate expiries (which travel).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// An unforgeable bearer token. 122 bits of randomness — you can't guess one,
 /// only be issued it; presenting it *is* the authority.
 fn mint_token() -> String {
@@ -1324,6 +1434,47 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         }
     }
 
+    async fn certify(
+        &self,
+        _cx: C,
+        token: String,
+        audience: AudienceWire,
+        ttl_secs: u64,
+        extra: ScopeWire,
+    ) -> anyhow::Result<Result<String, Denied>> {
+        let audience = match audience {
+            AudienceWire::Any => Audience::Any,
+            AudienceWire::Origin(o) => Audience::Origin(o),
+            AudienceWire::Peer(key) => match key.parse() {
+                Ok(key) => Audience::Peer(key),
+                Err(e) => return Ok(Err(Denied::Unsupported(format!("peer audience: {e}")))),
+            },
+        };
+        let extra = narrowing_from_wire(&extra);
+        Ok(self.store.lock().unwrap().certify(
+            &token,
+            audience,
+            Duration::from_secs(ttl_secs),
+            extra,
+        ))
+    }
+
+    async fn redeem(&self, cx: C, cert: String) -> anyhow::Result<Result<GrantReply, Denied>> {
+        // The redeemer is whoever the transport proved: the certificate's
+        // audience is checked against exactly that, and the grant binds to it.
+        let presented = cx.presented();
+        let holder = principal_from_origin(cx.origin());
+        let issued = self.store.lock().unwrap().redeem(&cert, &presented, holder);
+        Ok(issued.map(|token| GrantReply {
+            token,
+            pairing: None,
+        }))
+    }
+
+    async fn identity(&self, _cx: C) -> anyhow::Result<String> {
+        Ok(self.store.lock().unwrap().identity().to_string())
+    }
+
     async fn granted(&self, _cx: C) -> anyhow::Result<Vec<GrantInfo>> {
         let store = self.store.lock().unwrap();
         let now = Instant::now();
@@ -1427,6 +1578,7 @@ mod tests {
         // A request arriving with a browser-attested origin → a web-origin grant.
         let ctx = crate::ReqCtx {
             origin: Some("https://notes.example.com".to_string()),
+            peer: None,
         };
         provider
             .request(ctx, terminal_want(), "open a shell".to_string(), None)
@@ -1463,6 +1615,7 @@ mod tests {
         let pairings = Pairings::shared();
         let origin = crate::ReqCtx {
             origin: Some("https://notes.example.com".to_string()),
+            peer: None,
         };
 
         // Approve once to pair the origin for `terminal`; a fresh secret comes back.
@@ -1506,6 +1659,7 @@ mod tests {
         // Wrong origin with the secret: pairing is origin-bound ⇒ denied.
         let other = crate::ReqCtx {
             origin: Some("https://evil.example.com".to_string()),
+            peer: None,
         };
         assert!(denier
             .request(other, terminal_want(), "n".to_string(), Some(secret))
@@ -1603,6 +1757,7 @@ mod tests {
             .with_hosts(hosts.clone());
         let ctx = crate::ReqCtx {
             origin: Some("https://site.example".to_string()),
+            peer: None,
         };
 
         // Unapproved: refused *before* consent (even AutoApprove can't grant), and recorded.

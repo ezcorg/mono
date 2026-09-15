@@ -196,6 +196,7 @@ async fn caller_origin_is_bound_from_the_transport() {
     let (provider, store) = provider().await;
     let cx = ReqCtx {
         origin: Some("https://notes.example".to_string()),
+        peer: None,
     };
     let token = provider
         .request_scoped(
@@ -213,6 +214,7 @@ async fn caller_origin_is_bound_from_the_transport() {
         .arg("args", Vec::<String>::new())
         .caller(crate::broker::caller_of(&ReqCtx {
             origin: Some("https://notes.example".to_string()),
+            peer: None,
         }));
     assert!((store.lock().unwrap().admit(&token, from_origin)).is_ok());
     let anonymous = AdmitCall::new("spawn").arg("args", Vec::<String>::new());
@@ -288,4 +290,125 @@ async fn surface_narrowing_conjoins_onto_the_requested_scope() {
         }
         other => panic!("expected out-of-scope, got {other:?}"),
     }
+}
+
+/// Certificates: a grant travels as a signed sturdy reference, redeemed by
+/// its audience for a narrowed grant; wrong audience, tampering, expiry and
+/// revocation of the source all refuse.
+#[tokio::test]
+async fn certificates_redeem_for_their_audience_only() {
+    use crate::broker::bindings::exports::icanhaz::nocap::broker::Audience;
+
+    let (provider, store) = provider().await;
+    let token = grant(&provider, echo_want(), r#""hello" in call.args.args"#)
+        .await
+        .expect("granted");
+    let notes = crate::ReqCtx {
+        origin: Some("https://notes.example".to_string()),
+        peer: None,
+    };
+    let other = crate::ReqCtx {
+        origin: Some("https://evil.example".to_string()),
+        peer: None,
+    };
+
+    // A clause that does not compile is refused at certify time.
+    let bad = provider
+        .certify(
+            notes.clone(),
+            token.clone(),
+            Audience::Origin("https://notes.example".to_string()),
+            60,
+            scope("call.args.nope == 1"),
+        )
+        .await
+        .expect("wrpc ok");
+    assert!(matches!(bad, Err(Denied::InvalidScope(_))), "{bad:?}");
+
+    let cert = provider
+        .certify(
+            notes.clone(),
+            token.clone(),
+            Audience::Origin("https://notes.example".to_string()),
+            60,
+            scope("size(call.args.args) < 3"),
+        )
+        .await
+        .expect("wrpc ok")
+        .expect("certified");
+    assert!(cert.starts_with("ezcap1."));
+    // Anyone can read the chain: it names the instance, not the bearer token.
+    let parsed = ezcap::Certificate::decode(&cert).expect("decodes");
+    assert_ne!(parsed.instance(), token);
+    assert_eq!(
+        parsed.issuer().to_string(),
+        provider.identity(notes.clone()).await.expect("wrpc ok")
+    );
+
+    // The wrong origin, and no origin at all, are refused.
+    let refused = provider
+        .redeem(other.clone(), cert.clone())
+        .await
+        .expect("wrpc ok");
+    assert!(matches!(refused, Err(Denied::NotAuthorized)), "{refused:?}");
+    let refused = provider
+        .redeem(ReqCtx::default(), cert.clone())
+        .await
+        .expect("wrpc ok");
+    assert!(matches!(refused, Err(Denied::NotAuthorized)), "{refused:?}");
+
+    // The audience redeems: a grant narrowed by the chain, bound to it.
+    let redeemed = provider
+        .redeem(notes.clone(), cert.clone())
+        .await
+        .expect("wrpc ok")
+        .expect("redeemed")
+        .token;
+    let short = AdmitCall::new("spawn").arg("args", vec!["hello".to_string()]);
+    assert!(store.lock().unwrap().admit(&redeemed, short).is_ok());
+    let long = AdmitCall::new("spawn").arg(
+        "args",
+        vec!["hello".to_string(), "a".to_string(), "b".to_string()],
+    );
+    let outcome = store.lock().unwrap().admit(&redeemed, long);
+    assert!(matches!(outcome, Err(Denied::OutOfScope(_))), "{outcome:?}");
+    let infos = provider.granted(ReqCtx::default()).await.expect("wrpc ok");
+    assert!(
+        infos.iter().any(|i| i.holder.id == "https://notes.example"),
+        "{infos:?}"
+    );
+
+    // A holder may append clauses offline; a tampered chain is refused.
+    let holder = ezcap::Keypair::generate().expect("key");
+    let tighter = parsed
+        .attenuate(&holder, ezcap::Narrowing::allow("size(call.args.args) < 2"))
+        .encode();
+    let redeemed2 = provider
+        .redeem(notes.clone(), tighter)
+        .await
+        .expect("wrpc ok")
+        .expect("redeemed");
+    let two = AdmitCall::new("spawn").arg("args", vec!["hello".to_string(), "x".to_string()]);
+    let outcome = store.lock().unwrap().admit(&redeemed2.token, two);
+    assert!(matches!(outcome, Err(Denied::OutOfScope(_))), "{outcome:?}");
+    let mut tampered = cert.clone();
+    tampered.replace_range(cert.len() - 4.., "AAAA");
+    let refused = provider.redeem(notes.clone(), tampered).await.expect("wrpc ok");
+    assert!(matches!(refused, Err(Denied::NotAuthorized)), "{refused:?}");
+
+    // An expired certificate is `revoked`; so is one whose source was revoked.
+    let expired = ezcap::Certificate::issue(
+        &holder,
+        parsed.instance(),
+        ezcap::Audience::Any,
+        1,
+        ezcap::Narrowing::default(),
+    )
+    .encode();
+    let refused = provider.redeem(notes.clone(), expired).await.expect("wrpc ok");
+    // (Also the wrong issuer, but expiry is checked first.)
+    assert!(matches!(refused, Err(Denied::Revoked)), "{refused:?}");
+    provider.revoke(ReqCtx::default(), token).await.expect("wrpc ok");
+    let refused = provider.redeem(notes, cert).await.expect("wrpc ok");
+    assert!(matches!(refused, Err(Denied::Revoked)), "{refused:?}");
 }

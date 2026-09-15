@@ -72,13 +72,29 @@ pub mod approve;
 #[derive(Clone, Debug, Default)]
 pub struct ReqCtx {
     pub origin: Option<String>,
+    /// The peer's Ed25519 key when the transport authenticated one (the iroh
+    /// path: the QUIC handshake proves the remote endpoint id). `None` on
+    /// WebSocket and WebTransport.
+    pub peer: Option<ezcap::PublicKey>,
 }
 
-/// Lets a handler read the requesting origin out of whatever context a given
-/// transport supplies — `ReqCtx` on the origin-bearing WebSocket path, `()`
-/// elsewhere (the loopback test serves, and WebTransport until it carries one).
+/// Lets a handler read what the transport proved about the caller out of
+/// whatever context it supplies — `ReqCtx` on the origin-bearing WebSocket
+/// path and the peer-authenticated iroh path, `()` elsewhere (the loopback
+/// test serves, and WebTransport until it carries one).
 pub trait AsOrigin {
     fn origin(&self) -> Option<&str>;
+    /// The transport-authenticated peer key, if any.
+    fn peer(&self) -> Option<&ezcap::PublicKey> {
+        None
+    }
+    /// Both, as a certificate's audience is checked against them.
+    fn presented(&self) -> ezcap::Presented {
+        ezcap::Presented {
+            origin: self.origin().map(str::to_string),
+            peer: self.peer().copied(),
+        }
+    }
 }
 impl AsOrigin for () {
     fn origin(&self) -> Option<&str> {
@@ -88,5 +104,8 @@ impl AsOrigin for () {
 impl AsOrigin for ReqCtx {
     fn origin(&self) -> Option<&str> {
         self.origin.as_deref()
+    }
+    fn peer(&self) -> Option<&ezcap::PublicKey> {
+        self.peer.as_ref()
     }
 }

@@ -73,6 +73,9 @@ pub struct Services {
     /// providers from the environment only and no persisted budgets.
     pub store: Option<Store>,
     pub providers: Arc<Providers>,
+    /// The broker's signing key: persisted in the store (`broker/identity`)
+    /// so certificates outlive a restart; ephemeral without one.
+    pub identity: ezcap::Keypair,
 }
 
 impl Services {
@@ -91,7 +94,19 @@ impl Services {
 
     pub async fn with_store(store: Option<Store>) -> Self {
         let providers = Arc::new(Providers::load(store.clone()).await);
-        Self { store, providers }
+        let identity = match &store {
+            Some(store) => load_identity(store).await,
+            None => None,
+        };
+        let identity = identity.unwrap_or_else(|| {
+            tracing::warn!("broker identity is ephemeral: certificates will not survive a restart");
+            ezcap::Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}"))
+        });
+        Self {
+            store,
+            providers,
+            identity,
+        }
     }
 
     /// Every declared configuration with its configured instances (secrets
@@ -151,6 +166,32 @@ impl Services {
     }
 }
 
+/// The broker's persisted signing key, generated on first run. Lives in the
+/// generic state table under the `broker` owner, like any other capability's
+/// durable state.
+async fn load_identity(store: &Store) -> Option<ezcap::Keypair> {
+    match store.state_get("broker", "identity").await {
+        Ok(Some(bytes)) => {
+            let seed: Option<[u8; 32]> = bytes.try_into().ok();
+            match seed {
+                Some(seed) => return Some(ezcap::Keypair::from_bytes(&seed)),
+                None => tracing::warn!("stored broker identity is malformed; regenerating"),
+            }
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the broker identity");
+            return None;
+        }
+    }
+    let key = ezcap::Keypair::generate().ok()?;
+    if let Err(e) = store.state_set("broker", "identity", &key.to_bytes()).await {
+        tracing::warn!(error = %e, "could not persist the broker identity");
+        return None;
+    }
+    Some(key)
+}
+
 /// Bring the whole NoCap surface up and serve it until a transport errors. `grants`,
 /// `pairings`, `consent` and `services` are supplied by the caller (see the module docs).
 pub async fn run(
@@ -170,7 +211,10 @@ pub async fn run(
     let process = ProcessProvider::new(grants.clone());
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
-    let Services { providers, .. } = services;
+    let Services {
+        providers, identity, ..
+    } = services;
+    grants.lock().unwrap().set_identity(identity);
     let inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
     let fs_serve = FsServe {
         component_path: config.fs_component.clone(),

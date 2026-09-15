@@ -16,10 +16,15 @@
 //!   `allow` per call, keeps per-instance counters, and produces
 //!   `capability-error::denied(sentence)` when a call falls outside scope.
 //!
+//! - [`cert`]: certificates: a sturdy reference to a minted instance plus an
+//!   audience, an expiry and a signed chain of appended clauses, so a grant can
+//!   travel in a share bundle and be redeemed at the issuing broker.
+//!
 //! The WIT package itself is at `wit/ezcap.wit`; [`types`] mirrors it.
 
 pub mod bind;
 pub mod build;
+pub mod cert;
 pub mod env;
 pub mod membrane;
 pub mod profile;
@@ -28,6 +33,7 @@ pub mod shape;
 pub mod types;
 
 pub use bind::Val;
+pub use cert::{Audience, CertError, Certificate, Keypair, Presented, PublicKey};
 pub use env::CallEnv;
 pub use membrane::{Call, Caller, Instance, InstanceId, Membrane};
 pub use profile::{Sentence, render};

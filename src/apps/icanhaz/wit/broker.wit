@@ -43,6 +43,39 @@ interface broker {
   /// always give authority away.
   narrow: func(token: string, extra: scope) -> result<grant, denied>;
 
+  /// Who may redeem a certificate. Checked at `redeem` against what the
+  /// transport proved about the presenter: a browser's attested origin, or
+  /// the peer key a QUIC handshake authenticated.
+  variant audience {
+    /// Anyone holding it: a bearer.
+    any,
+    origin(string),
+    /// A peer's Ed25519 public key, base64url.
+    peer(string),
+  }
+
+  /// Turn a grant the caller holds into a **certificate**: a sturdy reference
+  /// to it, bound to `audience`, valid for `ttl-secs`, narrowed by `extra`
+  /// (`"true"` fields add nothing), signed by this broker. The certificate is
+  /// a string that travels: in a share bundle, a link, a message. It carries
+  /// no bearer secret; redeeming it at this broker yields a fresh grant.
+  /// Holders may append clauses offline (an `ezco:ezcap` link chain);
+  /// nothing can be removed. Revoking the source grant voids every
+  /// certificate on it.
+  certify: func(token: string, audience: audience, ttl-secs: u64, extra: scope) -> result<string, denied>;
+
+  /// Present a certificate. The broker verifies it was issued here, that the
+  /// chain's signatures hold, that it has not expired, and that the caller
+  /// is its audience; it then issues the caller a grant narrowed by every
+  /// clause in the chain, whose lifetime is the shorter of the source grant's
+  /// and the certificate's. No consent is raised: the human consented when
+  /// the source grant was issued, and the holder chose to share it.
+  redeem: func(cert: string) -> result<grant, denied>;
+
+  /// This broker's public key (base64url Ed25519): what a certificate's
+  /// issuer field must match, and how a peer audience names itself.
+  identity: func() -> string;
+
   /// What the caller currently holds — for the audit view.
   granted: func() -> list<grant-info>;
 

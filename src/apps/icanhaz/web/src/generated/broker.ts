@@ -15,6 +15,7 @@ export type ProcessRequest = { image: string; args: string[]; guestChoosesArgv: 
 export type TerminalRequest = { shell: string | undefined; jailed: boolean };
 export type InferenceRequest = { models: string[] };
 export type Scope = { when: string; allow: string };
+export type Audience = { tag: "any" } | { tag: "origin"; val: string } | { tag: "peer"; val: string };
 export type Grant = { token: string; pairing: string | undefined };
 export type Denied = { tag: "user-rejected" } | { tag: "not-authorized" } | { tag: "no-provider" } | { tag: "unsupported"; val: string } | { tag: "quota" } | { tag: "revoked" } | { tag: "invalid-scope"; val: string } | { tag: "out-of-scope"; val: string };
 export type GrantInfo = { id: string; holder: Principal; summary: string };
@@ -77,8 +78,14 @@ function encInferenceRequest(v: InferenceRequest): number[] {
 function encScope(v: Scope): number[] {
     return [...encodeString(v.when), ...encodeString(v.allow)];
 }
+function encAudience(v: Audience): number[] {
+    if (v.tag === "any") return leb128(0);
+    if (v.tag === "origin") return [...leb128(1), ...encodeString(v.val)];
+    if (v.tag === "peer") return [...leb128(2), ...encodeString(v.val)];
+    throw new Error("bad variant: " + (v as { tag: string }).tag);
+}
 
-function dec_71(b: Uint8Array, o0: number): [{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }, number] {
+function dec_72(b: Uint8Array, o0: number): [{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) { const [val, o2] = decGrant(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = decDenied(b, o1); return [{ tag: "err", val }, o2];
@@ -105,7 +112,12 @@ function decDenied(b: Uint8Array, o0: number): [Denied, number] {
     if (d === 7) { const [val, o2] = readString(b, o1); return [{ tag: "out-of-scope", val }, o2]; }
     throw new Error("bad disc: " + d);
 }
-function dec_72(b: Uint8Array, o0: number): [GrantInfo[], number] {
+function dec_73(b: Uint8Array, o0: number): [{ tag: "ok"; val: string } | { tag: "err"; val: Denied }, number] {
+    const [d, o1] = readLeb128(b, o0);
+    if (d === 0) { const [val, o2] = readString(b, o1); return [{ tag: "ok", val }, o2]; }
+    const [val, o2] = decDenied(b, o1); return [{ tag: "err", val }, o2];
+}
+function dec_74(b: Uint8Array, o0: number): [GrantInfo[], number] {
     return readList(b, o0, decGrantInfo);
 }
 function decGrantInfo(b: Uint8Array, o0: number): [GrantInfo, number] {
@@ -127,22 +139,37 @@ function decPrincipalKind(b: Uint8Array, o0: number): [PrincipalKind, number] {
 
 export async function request(t: WrpcTransport, want: CapabilityKind, reason: string, pairing: string | undefined): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "request", [...encCapabilityKind(want), ...encodeString(reason), ...enc_40(pairing)]);
-    return dec_71(resultValue(resp), 0)[0];
+    return dec_72(resultValue(resp), 0)[0];
 }
 
 export async function requestScoped(t: WrpcTransport, want: CapabilityKind, scope: Scope, reason: string, pairing: string | undefined): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "request-scoped", [...encCapabilityKind(want), ...encScope(scope), ...encodeString(reason), ...enc_40(pairing)]);
-    return dec_71(resultValue(resp), 0)[0];
+    return dec_72(resultValue(resp), 0)[0];
 }
 
 export async function narrow(t: WrpcTransport, token: string, extra: Scope): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "narrow", [...encodeString(token), ...encScope(extra)]);
-    return dec_71(resultValue(resp), 0)[0];
+    return dec_72(resultValue(resp), 0)[0];
+}
+
+export async function certify(t: WrpcTransport, token: string, audience: Audience, ttlSecs: bigint, extra: Scope): Promise<{ tag: "ok"; val: string } | { tag: "err"; val: Denied }> {
+    const resp = await invoke(t, INSTANCE, "certify", [...encodeString(token), ...encAudience(audience), ...leb128(ttlSecs), ...encScope(extra)]);
+    return dec_73(resultValue(resp), 0)[0];
+}
+
+export async function redeem(t: WrpcTransport, cert: string): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
+    const resp = await invoke(t, INSTANCE, "redeem", [...encodeString(cert)]);
+    return dec_72(resultValue(resp), 0)[0];
+}
+
+export async function identity(t: WrpcTransport): Promise<string> {
+    const resp = await invoke(t, INSTANCE, "identity", []);
+    return readString(resultValue(resp), 0)[0];
 }
 
 export async function granted(t: WrpcTransport): Promise<GrantInfo[]> {
     const resp = await invoke(t, INSTANCE, "granted", []);
-    return dec_72(resultValue(resp), 0)[0];
+    return dec_74(resultValue(resp), 0)[0];
 }
 
 export async function revoke(t: WrpcTransport, token: string): Promise<void> {
