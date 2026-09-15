@@ -63,9 +63,14 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
     // Create runtime to check plugins
     let runtime = Runtime::try_default().unwrap();
     let env = create_static_cel_env()?;
-    let plugins = WitmPlugin::all(&mut db, &runtime.engine, env)
-        .await
-        .unwrap();
+    let plugins = WitmPlugin::all(
+        &mut db,
+        &runtime.engine,
+        env,
+        &crate::plugins::membranes::Membranes::builtin()?,
+    )
+    .await
+    .unwrap();
     assert!(
         !plugins.is_empty(),
         "No plugins found in database after adding"
@@ -176,9 +181,14 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
 
     let runtime = Runtime::try_default().unwrap();
     let env = create_static_cel_env()?;
-    let plugins_before = WitmPlugin::all(&mut db, &runtime.engine, env)
-        .await
-        .unwrap();
+    let plugins_before = WitmPlugin::all(
+        &mut db,
+        &runtime.engine,
+        env,
+        &crate::plugins::membranes::Membranes::builtin()?,
+    )
+    .await
+    .unwrap();
     assert!(!plugins_before.is_empty(), "No plugins found after adding");
 
     let test_plugin = &plugins_before[0];
@@ -195,9 +205,14 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
         .await?;
 
     // Verify plugin was removed
-    let plugins_after = WitmPlugin::all(&mut db, &runtime.engine, env)
-        .await
-        .unwrap();
+    let plugins_after = WitmPlugin::all(
+        &mut db,
+        &runtime.engine,
+        env,
+        &crate::plugins::membranes::Membranes::builtin()?,
+    )
+    .await
+    .unwrap();
     assert!(
         plugins_after.is_empty(),
         "Plugin was not removed from database"
@@ -233,9 +248,14 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
 
     let runtime = Runtime::try_default().unwrap();
     let env = create_static_cel_env()?;
-    let plugins_before = WitmPlugin::all(&mut db, &runtime.engine, env)
-        .await
-        .unwrap();
+    let plugins_before = WitmPlugin::all(
+        &mut db,
+        &runtime.engine,
+        env,
+        &crate::plugins::membranes::Membranes::builtin()?,
+    )
+    .await
+    .unwrap();
     assert!(!plugins_before.is_empty(), "No plugins found after adding");
 
     let test_plugin = &plugins_before[0];
@@ -252,9 +272,14 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
         .await?;
 
     // Verify plugin was removed
-    let plugins_after = WitmPlugin::all(&mut db, &runtime.engine, env)
-        .await
-        .unwrap();
+    let plugins_after = WitmPlugin::all(
+        &mut db,
+        &runtime.engine,
+        env,
+        &crate::plugins::membranes::Membranes::builtin()?,
+    )
+    .await
+    .unwrap();
     assert!(
         plugins_after.is_empty(),
         "Plugin was not removed from database"

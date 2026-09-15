@@ -35,10 +35,16 @@ witm plugin add target/wasm32-wasip2/release/{{crate_name}}.signed.wasm
   narrow any scope, so treat every capability as optional.
 * `handle()` in `src/lib.rs` is the event handler.
 
-Each requested capability carries a CEL `scope` expression that the host
-evaluates *before* instantiating this component. Narrow scopes are not just a
-permissions story -- they let the host skip instantiation entirely for events
-you do not care about, which is the cheapest performance win available to you.
+Each requested capability carries a `scope` of two CEL expressions
+(`ezco:ezcap/types.scope`). `when` is evaluated by the host *before*
+instantiating this component, with the event bound: narrow `when` clauses are
+not just a permissions story -- they let the host skip instantiation entirely
+for events you do not care about, which is the cheapest performance win
+available to you. `allow` is evaluated on every call of a provider resource
+(logger, local storage, clock) with `call.method`, `call.args.*` and
+`caller.plugin` bound; a refused call returns `Err(capability-error::denied)`
+carrying the scope as a sentence. The user may narrow either clause, and a
+narrowing only ever appends.
 
 ## WIT
 

@@ -38,6 +38,9 @@ pub struct PluginRegistry {
     pub db: Db,
     pub runtime: Runtime,
     env: &'static Env<'static>,
+    /// Per-kind admission membranes for the provider capabilities (see
+    /// [`crate::plugins::membranes`]).
+    membranes: Arc<crate::plugins::membranes::Membranes>,
     /// One persistent local-storage client per plugin id, so `set` survives
     /// across events (a fresh `Store` is created per event for isolation).
     /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
@@ -120,6 +123,7 @@ impl PluginRegistry {
             db,
             runtime,
             env,
+            membranes: Arc::new(crate::plugins::membranes::Membranes::builtin()?),
             local_storage: Mutex::new(HashMap::new()),
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),
@@ -232,7 +236,8 @@ impl PluginRegistry {
     pub async fn load_plugins(&self) -> Result<()> {
         // `WitmPlugin::all` takes `&mut Db` but only needs the (Clone) pool.
         let mut db = self.db.clone();
-        let plugins = WitmPlugin::all(&mut db, &self.runtime.engine, self.env).await?;
+        let plugins =
+            WitmPlugin::all(&mut db, &self.runtime.engine, self.env, &self.membranes).await?;
         self.mutate_plugins(|map| {
             for plugin in plugins.into_iter() {
                 map.insert(plugin.id(), Arc::new(plugin));
@@ -331,7 +336,7 @@ impl PluginRegistry {
 
         let plugin = WitmPlugin::from(guest_result)
             .with_component(component, component_bytes)
-            .compile_capability_scope_expressions(self.env)?;
+            .compile_capability_scope_expressions(self.env, &self.membranes)?;
         Ok(plugin)
     }
 
@@ -345,7 +350,7 @@ impl PluginRegistry {
     /// thinks it is testing.
     #[cfg(test)]
     pub(crate) async fn register_plugin_for_test(&self, plugin: WitmPlugin) -> Result<()> {
-        let plugin = plugin.compile_capability_scope_expressions(self.env)?;
+        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.membranes)?;
         self.register_plugin(plugin).await
     }
 
@@ -354,7 +359,7 @@ impl PluginRegistry {
         // edited a scope after `plugin_from_component` compiled the
         // manifest's version; without this the stale program would keep
         // deciding which events the plugin sees.
-        let plugin = plugin.compile_capability_scope_expressions(self.env)?;
+        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.membranes)?;
         // Upsert the given plugin into the database (`Insert` takes `&mut Db`
         // but only needs the Clone pool).
         let mut db = self.db.clone();
@@ -396,7 +401,8 @@ impl PluginRegistry {
                 .fetch_one(&self.db.pool)
                 .await?;
         let mut db = self.db.clone();
-        let plugin = WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env).await?;
+        let plugin =
+            WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env, &self.membranes).await?;
         // The cached InstancePre (if any) stays valid: it was resolved from a
         // component compiled from the same bytes on the same engine.
         self.mutate_plugins(|map| {
@@ -875,6 +881,7 @@ impl PluginRegistry {
                 Some(storage),
                 &plugin_limits,
                 self.breaches_for(&plugin_id),
+                Some((&self.membranes, plugin_id.as_str())),
             );
             let cap_resource = store.data_mut().table.push(provider)?;
             let config = plugin.configuration.clone();
@@ -921,9 +928,8 @@ impl PluginRegistry {
 mod tests {
     use super::*;
     use crate::test_utils::{create_plugin_registry, test_component_path};
-    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-        CapabilityKind, CapabilityScope, EventKind,
-    };
+    use crate::wasm::bindgen::ezco::ezcap::types::Scope;
+    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{CapabilityKind, EventKind};
     use crate::{
         plugins::{WitmPlugin, capabilities::Capability},
         wasm::bindgen::witmproxy::plugin::capabilities::Capability as WitCapability,
@@ -951,31 +957,37 @@ mod tests {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: cel_expression.into(),
+                    scope: Scope {
+                        when: cel_expression.into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: cel_expression.into(),
+                    scope: Scope {
+                        when: cel_expression.into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: cel_expression.into(),
+                    scope: Scope {
+                        when: cel_expression.into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
         ];
 
@@ -997,7 +1009,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(registry.env)?;
+        .compile_capability_scope_expressions(registry.env, &registry.membranes)?;
         registry.register_plugin(plugin).await
     }
 
@@ -1147,21 +1159,25 @@ mod tests {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: "true".to_string(),
+                    scope: Scope {
+                        when: "true".to_string(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
         ];
 
@@ -1225,31 +1241,37 @@ mod tests {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: "true".to_string(),
+                    scope: Scope {
+                        when: "true".to_string(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: "true".to_string(),
+                    scope: Scope {
+                        when: "true".to_string(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                instance: None,
             },
         ];
 
@@ -1271,7 +1293,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(registry.env)?;
+        .compile_capability_scope_expressions(registry.env, &registry.membranes)?;
         registry.register_plugin(plugin2).await?;
 
         // Test with a request that should match both plugins initially
@@ -1366,21 +1388,25 @@ mod tests {
                     granted: true,
                     inner: WitCapability {
                         kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                        scope: CapabilityScope {
-                            expression: "true".into(),
+                        scope: Scope {
+                            when: "true".into(),
+                            allow: "true".into(),
                         },
                     },
-                    cel: None,
+                    when: None,
+                    instance: None,
                 },
                 Capability {
                     granted: true,
                     inner: WitCapability {
                         kind: CapabilityKind::HandleEvent(EventKind::Request),
-                        scope: CapabilityScope {
-                            expression: "true".into(),
+                        scope: Scope {
+                            when: "true".into(),
+                            allow: "true".into(),
                         },
                     },
-                    cel: None,
+                    when: None,
+                    instance: None,
                 },
             ];
 

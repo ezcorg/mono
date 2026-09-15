@@ -11450,7 +11450,7 @@ dependencies = [
 
 [[package]]
 name = "witmproxy"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "argon2",
@@ -11466,6 +11466,7 @@ dependencies = [
  "conf",
  "cron",
  "dirs 6.0.0",
+ "ezcap",
  "futures",
  "hex",
  "http-body 1.0.1",
@@ -11518,6 +11519,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wit-bindgen 0.61.1",
+ "wit-parser 0.254.0",
  "x509-parser",
  "zeroize",
 ]

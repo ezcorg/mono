@@ -113,7 +113,7 @@ pub async fn register_noshorts_plugin(registry: &PluginRegistry) -> Result<(), a
     let mut plugin = registry.plugin_from_component(component_bytes).await?;
     for cap in plugin.capabilities.iter_mut() {
         if cap.inner.kind == CapabilityKind::HandleEvent(EventKind::InboundContent) {
-            cap.inner.scope.expression =
+            cap.inner.scope.when =
                 "content.content_type().startsWith('text/html') && !request.path().startsWith('/__witm/')"
                     .to_string();
         }
@@ -655,7 +655,10 @@ fn build_component(package: &str, artifact: &str) -> Result<PathBuf> {
         ));
     }
 
-    let component = root.join(format!("target/wasm32-wasip2/release/{artifact}.wasm"));
+    // Ask cargo where it put the artifact: a machine-local `[build] target-dir`
+    // (or CARGO_TARGET_DIR) moves it out of `<workspace>/target`, and reading
+    // from there would silently keep a stale component from an earlier build.
+    let component = cargo_target_dir(&root).join(format!("wasm32-wasip2/release/{artifact}.wasm"));
     if !component.exists() {
         return Err(anyhow::anyhow!(
             "building {package} succeeded but {} is missing",
@@ -664,6 +667,26 @@ fn build_component(package: &str, artifact: &str) -> Result<PathBuf> {
     }
 
     Ok(component)
+}
+
+/// The target directory the tests' cargo actually writes to.
+fn cargo_target_dir(root: &Path) -> PathBuf {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let fallback = root.join("target");
+    let Ok(output) = Command::new(cargo)
+        .current_dir(root)
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()
+    else {
+        return fallback;
+    };
+    if !output.status.success() {
+        return fallback;
+    }
+    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .ok()
+        .and_then(|v| v.get("target_directory")?.as_str().map(PathBuf::from))
+        .unwrap_or(fallback)
 }
 
 /// Builds `package` and returns the path to its signed component.

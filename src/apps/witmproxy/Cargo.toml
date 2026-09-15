@@ -1,6 +1,6 @@
 [package]
 name = "witmproxy"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A WASM-in-the-middle proxy"
@@ -63,6 +63,8 @@ reqwest = { version = "0.13.2", default-features = false, features = ["json", "r
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# The shared capability scope model (ezco:ezcap): per-call admission membranes.
+ezcap = { path = "../../rust/ezcap" }
 toml = "0.9.8"
 
 # Auth
@@ -146,3 +148,9 @@ otel = [
 
 [lints]
 workspace = true
+
+[build-dependencies]
+# build.rs generates the ezcap CEL environments for the provider resources from ./wit.
+ezcap = { path = "../../rust/ezcap" }
+wit-parser = "0.254"
+serde_json = "1.0"

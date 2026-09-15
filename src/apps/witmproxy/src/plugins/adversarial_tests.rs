@@ -28,8 +28,9 @@ use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, Res
 use crate::plugins::{WitmPlugin, capabilities::Capability};
 use crate::test_utils::{adversarial_component_path, create_plugin_registry};
 use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{ActualInput, UserInput};
+use crate::wasm::bindgen::ezco::ezcap::types::Scope;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-    Capability as WitCapability, CapabilityKind, CapabilityScope, EventKind,
+    Capability as WitCapability, CapabilityKind, EventKind,
 };
 use crate::wasm::{LocalStorageClient, Logger, body_chunk_admitted};
 
@@ -256,11 +257,13 @@ async fn register_adversarial_for(
         granted: true,
         inner: WitCapability {
             kind,
-            scope: CapabilityScope {
-                expression: "true".into(),
+            scope: Scope {
+                when: "true".into(),
+                allow: "true".into(),
             },
         },
-        cel: None,
+        when: None,
+        instance: None,
     };
 
     let plugin = WitmPlugin {

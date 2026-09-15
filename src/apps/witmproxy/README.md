@@ -72,7 +72,7 @@ The witmproxy plugin WIT interface is automatically published to [GitHub Contain
 
 ```sh
 # Fetch the WIT interface for plugin development
-wkg get --format wit witmproxy:plugin@0.0.7 --output plugin.wit
+wkg get --format wit witmproxy:plugin@0.0.8 --output plugin.wit
 ```
 
 ###
@@ -106,7 +106,7 @@ A not-entirely-accurate but pretty LLM-generated diagram:
 
 1. **Certificate Trust**: Installing the root certificate allows the proxy to decrypt all HTTPS traffic.
 2. **Plugin capabilities**: Plugins only have the permissions you give them, but you are responsible for verifying those permissions are restricted appropriately.
-    * Plugin execution can be limited using [CEL expressions](#todo), restricting when they're allowed to run. While plugins come with their own recommended defaults, users always have the ability to restrict them as they see fit.
+    * Plugin execution can be limited using [CEL expressions](#todo): a `when` clause restricts which events a plugin runs for, and an `allow` clause restricts every call it makes on a granted capability (which storage keys, how many log lines). While plugins come with their own recommended defaults, users always have the ability to restrict them as they see fit.
     * Plugins may request [host capabilities](#todo), which you are responsible to decide whether or not to provide. `future work:` While `witmproxy` provides default implementations of capabilities we expect to be useful to plugin authors, as a user you may replace the implementation of capabilities granted to plugins.
 
 ## Supporting the project

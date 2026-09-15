@@ -21,6 +21,7 @@ use crate::{
 pub mod capabilities;
 pub mod cel;
 pub mod limits;
+pub mod membranes;
 pub mod registry;
 
 #[cfg(test)]
@@ -85,13 +86,18 @@ impl WitmPlugin {
         self
     }
 
+    /// Compile every capability's scope: event capabilities get their `when`
+    /// program (against the event environment), provider capabilities are
+    /// minted as membrane instances (type-checking `allow` against their
+    /// interface). A scope that does not compile refuses the whole plugin.
     pub fn compile_capability_scope_expressions(
         mut self,
         env: &'static cel_cxx::Env,
+        membranes: &membranes::Membranes,
     ) -> Result<Self> {
         self.capabilities
             .iter_mut()
-            .try_for_each(|c| c.compile_scope_expression(env))?;
+            .try_for_each(|c| c.compile_scope_expression(env, membranes))?;
         Ok(self)
     }
 
@@ -104,6 +110,7 @@ impl WitmPlugin {
         db: &mut Db,
         runtime: &Runtime,
         env: &'static cel_cxx::Env<'static>,
+        membranes: &membranes::Membranes,
     ) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
@@ -171,7 +178,8 @@ impl WitmPlugin {
             let capability = Capability {
                 inner: config,
                 granted: granted_flag,
-                cel: None,
+                when: None,
+                instance: None,
             };
             plugin.capabilities.push(capability);
         }
@@ -198,7 +206,7 @@ impl WitmPlugin {
             });
         }
 
-        plugin = plugin.compile_capability_scope_expressions(env)?;
+        plugin = plugin.compile_capability_scope_expressions(env, membranes)?;
         Ok(plugin)
     }
 
@@ -206,6 +214,7 @@ impl WitmPlugin {
         db: &mut Db,
         engine: &wasmtime::Engine,
         env: &'static cel_cxx::Env<'static>,
+        membranes: &membranes::Membranes,
     ) -> Result<Vec<Self>> {
         let rows = query(
             "
@@ -223,7 +232,7 @@ impl WitmPlugin {
 
         let mut plugins = Vec::new();
         for row in rows {
-            match WitmPlugin::from_db_row(row, db, &runtime, env).await {
+            match WitmPlugin::from_db_row(row, db, &runtime, env, membranes).await {
                 Ok(plugin) => plugins.push(plugin),
                 Err(e) => {
                     error!(
@@ -260,7 +269,7 @@ impl WitmPlugin {
             .filter(|cap| cap.inner.kind == event.capability())
             .filter(|cap| cap.granted)
             .filter_map(|cap| {
-                let program: &cel_cxx::Program<'_> = cap.cel.as_ref()?;
+                let program: &cel_cxx::Program<'_> = cap.when.as_ref()?;
                 Some(program)
             })
             // Are we interested in and permitted to handle this event?
@@ -298,7 +307,8 @@ impl From<PluginManifest> for WitmPlugin {
             .map(|c| Capability {
                 inner: c,
                 granted: true,
-                cel: None,
+                when: None,
+                instance: None,
             })
             .collect::<Vec<Capability>>();
 

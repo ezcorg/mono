@@ -110,19 +110,23 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::Capability {
     }
 }
 
-impl Serialize for witmproxy::plugin::capabilities::CapabilityScope {
+impl Serialize for ezco::ezcap::types::Scope {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("CapabilityScope", 1)?;
-        state.serialize_field("expression", &self.expression)?;
+        let mut state = serializer.serialize_struct("Scope", 2)?;
+        state.serialize_field("when", &self.when)?;
+        state.serialize_field("allow", &self.allow)?;
         state.end()
     }
 }
 
-impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityScope {
+/// Accepts the current `{when, allow}` shape and the pre-0.0.8 `{expression}`
+/// shape still present in stored `plugin_capabilities` rows: `expression` is
+/// `when`, and a missing `allow` is `"true"`.
+impl<'de> Deserialize<'de> for ezco::ezcap::types::Scope {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -133,51 +137,63 @@ impl<'de> Deserialize<'de> for witmproxy::plugin::capabilities::CapabilityScope 
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
         enum Field {
+            When,
+            Allow,
             Expression,
         }
 
-        struct CapabilityScopeVisitor;
+        struct ScopeVisitor;
 
-        impl<'de> Visitor<'de> for CapabilityScopeVisitor {
-            type Value = witmproxy::plugin::capabilities::CapabilityScope;
+        impl<'de> Visitor<'de> for ScopeVisitor {
+            type Value = ezco::ezcap::types::Scope;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("struct CapabilityScope")
+                formatter.write_str("struct Scope")
             }
 
             fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
             where
                 V: SeqAccess<'de>,
             {
-                let expression = seq
+                let when = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                Ok(witmproxy::plugin::capabilities::CapabilityScope { expression })
+                let allow = seq.next_element()?.unwrap_or_else(|| "true".to_string());
+                Ok(ezco::ezcap::types::Scope { when, allow })
             }
 
             fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
             where
                 V: MapAccess<'de>,
             {
-                let mut expression = None;
+                let mut when: Option<String> = None;
+                let mut allow: Option<String> = None;
                 while let Some(key) = map.next_key()? {
                     match key {
-                        Field::Expression => {
-                            if expression.is_some() {
-                                return Err(de::Error::duplicate_field("expression"));
+                        Field::When | Field::Expression => {
+                            if when.is_some() {
+                                return Err(de::Error::duplicate_field("when"));
                             }
-                            expression = Some(map.next_value()?);
+                            when = Some(map.next_value()?);
+                        }
+                        Field::Allow => {
+                            if allow.is_some() {
+                                return Err(de::Error::duplicate_field("allow"));
+                            }
+                            allow = Some(map.next_value()?);
                         }
                     }
                 }
-                let expression =
-                    expression.ok_or_else(|| de::Error::missing_field("expression"))?;
-                Ok(witmproxy::plugin::capabilities::CapabilityScope { expression })
+                let when = when.ok_or_else(|| de::Error::missing_field("when"))?;
+                Ok(ezco::ezcap::types::Scope {
+                    when,
+                    allow: allow.unwrap_or_else(|| "true".to_string()),
+                })
             }
         }
 
-        const FIELDS: &[&str] = &["expression"];
-        deserializer.deserialize_struct("CapabilityScope", FIELDS, CapabilityScopeVisitor)
+        const FIELDS: &[&str] = &["when", "allow", "expression"];
+        deserializer.deserialize_struct("Scope", FIELDS, ScopeVisitor)
     }
 }
 

@@ -348,7 +348,10 @@ struct PluginSummary {
 #[derive(serde::Serialize)]
 struct PluginCapSummary {
     kind: String,
-    scope: String,
+    /// The scope's event clause (`ezco:ezcap/types.scope.when`).
+    when: String,
+    /// The scope's per-call clause (`ezco:ezcap/types.scope.allow`).
+    allow: String,
     granted: bool,
 }
 
@@ -381,7 +384,8 @@ async fn list_plugins(depot: &mut Depot, res: &mut salvo::Response) {
                     .iter()
                     .map(|c| PluginCapSummary {
                         kind: c.inner.kind.to_string(),
-                        scope: c.inner.scope.expression.clone(),
+                        when: c.inner.scope.when.clone(),
+                        allow: c.inner.scope.allow.clone(),
                         granted: c.granted,
                     })
                     .collect(),

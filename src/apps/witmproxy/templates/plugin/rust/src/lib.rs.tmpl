@@ -2,12 +2,14 @@ use crate::exports::witmproxy::plugin::witm_plugin::{
     Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
     Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
-use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, EventKind};
+use crate::witmproxy::plugin::capabilities::{CapabilityKind, EventKind};
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
     generate_all
 });
+
+use crate::ezco::ezcap::types::Scope;
 
 /// The host verifies the component's signature against this key before loading
 /// it. `make` generates the keypair; `key.secret` must never be committed.
@@ -34,16 +36,21 @@ impl Guest for Component {
             // granted, and may narrow any scope below -- so always handle the
             // case where a capability comes back as `None`.
             //
-            // `scope.expression` is a CEL expression evaluated by the host
-            // BEFORE this component is instantiated. Keep it as narrow as you
-            // can: a tight scope means the host can skip instantiating the
-            // plugin entirely for events you do not care about, which is the
-            // single biggest thing you can do for proxy throughput.
+            // A scope is two CEL expressions (`ezco:ezcap/types.scope`).
+            // `when` is evaluated by the host BEFORE this component is
+            // instantiated, with the event bound: keep it as narrow as you
+            // can, since a tight `when` lets the host skip instantiating the
+            // plugin for events you do not care about — the single biggest
+            // thing you can do for proxy throughput. `allow` is evaluated on
+            // every call of a provider resource (logger, storage, clock) with
+            // `call.method` and `call.args.*` bound; the user may narrow it,
+            // and a refused call returns `Err(capability-error::denied)`.
             capabilities: vec![
                 Capability {
                     kind: CapabilityKind::Logger,
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
@@ -51,8 +58,9 @@ impl Guest for Component {
                     // Replace `"true"` with something specific, e.g.
                     //   "request.host() == 'example.com'"
                     //   "request.path().startsWith('/api/')"
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
             ],
@@ -102,9 +110,12 @@ impl GuestPlugin for PluginInstance {
                 let Some(logger) = cap.logger().await else {
                     return Err(PluginError::CapabilityUnavailable(CapabilityKind::Logger));
                 };
+                // Every provider call is admitted against the capability's
+                // `allow` scope; a refusal is an error value, never a trap.
                 logger
                     .info("[{{plugin-name}}] saw a request".to_string())
-                    .await;
+                    .await
+                    .map_err(|_| PluginError::CapabilityUnavailable(CapabilityKind::Logger))?;
 
                 Ok(Some(Event::Request(request)))
             }

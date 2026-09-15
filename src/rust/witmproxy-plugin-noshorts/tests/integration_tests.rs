@@ -43,7 +43,7 @@ async fn start(config: &[(&str, &str)]) -> Result<Env> {
     let bytes = std::fs::read(noshorts_plugin_path()?)?;
     let mut plugin = registry.plugin_from_component(bytes).await?;
     for cap in plugin.capabilities.iter_mut() {
-        let expr = &mut cap.inner.scope.expression;
+        let expr = &mut cap.inner.scope.when;
         match cap.inner.kind {
             CapabilityKind::HandleEvent(EventKind::Connect | EventKind::Request) => {
                 *expr = "true".to_string();

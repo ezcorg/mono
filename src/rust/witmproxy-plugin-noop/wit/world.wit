@@ -1,7 +1,12 @@
-package witmproxy:plugin@0.0.7;
+package witmproxy:plugin@0.0.8;
 
 interface capabilities {
     use wasi:http/types@0.3.0.{request, response};
+    /// The shared capability scope model. `scope.when` gates whether a plugin
+    /// runs for an event; `scope.allow` gates every call on a granted
+    /// resource. `capability-error` is what a resource method returns when the
+    /// capability was never granted or the call fell outside `allow`.
+    use ezco:ezcap/types@0.1.0.{scope, capability-error};
 
     // TODO:
     // resource http-client {} <- an HTTP client for making outbound requests
@@ -13,36 +18,36 @@ interface capabilities {
     /// A dumb and simple logging resource (for writing to stdout/stderr)
     /// TODO: replace with official wasi-logging when available
     resource logger {
-        info: async func(message: string);
-        warn: async func(message: string);
-        error: async func(message: string);
-        debug: async func(message: string);
+        info: async func(message: string) -> result<_, capability-error>;
+        warn: async func(message: string) -> result<_, capability-error>;
+        error: async func(message: string) -> result<_, capability-error>;
+        debug: async func(message: string) -> result<_, capability-error>;
     }
 
     /// A resource for annotating/labeling content
     resource annotator-client {
         /// Annotate the provided content (extract and store features + metadata)
-        annotate: async func(content: content);
+        annotate: async func(content: content) -> result<_, capability-error>;
     }
 
     /// A resource for storing key-value pairs local to the plugin (sandboxed and inaccessible elsewhere)
     resource local-storage-client {
-        set: async func(key: string, value: list<u8>);
-        get: async func(key: string) -> option<list<u8>>;
-        delete: async func(key: string);
+        set: async func(key: string, value: list<u8>) -> result<_, capability-error>;
+        get: async func(key: string) -> result<option<list<u8>>, capability-error>;
+        delete: async func(key: string) -> result<_, capability-error>;
     }
 
     /// A resource for accessing the current system time (wasi:clocks)
     resource clock-client {
         /// Returns the current time as a Unix timestamp in seconds
-        now-seconds: async func() -> u64;
+        now-seconds: async func() -> result<u64, capability-error>;
         /// Returns the current time as a Unix timestamp in milliseconds
-        now-millis: async func() -> u64;
+        now-millis: async func() -> result<u64, capability-error>;
         /// Returns the host's local time zone offset from UTC, in seconds
         /// (east of UTC is positive). Combine with `now-seconds` to reason
         /// about the user's local wall-clock time (working hours, day
         /// boundaries) without shipping a time zone database in the guest.
-        utc-offset-seconds: async func() -> s32;
+        utc-offset-seconds: async func() -> result<s32, capability-error>;
     }
 
     /// A capability provider, which only returns capabilities that have been granted by the user
@@ -57,26 +62,23 @@ interface capabilities {
         clock: async func() -> option<clock-client>;
     }
 
-    /// A type used to limit the scope in which granted capabilities can be used.
-    /// Used primarily to filter events before more expensive processing and overhead 
-    /// (such as instantiating and executing WASM components), but can also be used to limit
-    /// the context in which certain capabilities (like local storage) can be used.
-    /// 
-    /// Capability scopes can be configured by the user and may not necessarily match
-    /// the requested scope from the plugin.
-    record capability-scope {
-        /// A CEL expression, evaluating to `true` or `false` (whether or not a given capability should be granted), matching against the context provided to the capability,
-        /// determining whether the capability applies.
-        /// 
-        /// See [CelRequest], [CelResponse], and [CelContent] for the context available to each expression.
-        /// 
-        /// ```rs
-        /// fn evaluate(request: CelRequest) -> bool { request.path() == "/example" } // for request events
-        /// fn evaluate(response: CelResponse, request: CelRequest) -> bool { response.status() == 200 && request.path() == "/example" } // for response events
-        /// fn evaluate(content: CelContent, request: CelRequest) -> bool { content.content_type() == "text/html" && request.host() == "example.com" } // for inbound-content events
-        /// ```
-        expression: string,
-    }
+    /// How a granted capability may be used, as CEL (see `ezco:ezcap/types.scope`).
+    ///
+    /// For `handle-event` capabilities `when` is evaluated once per event, with
+    /// the event bound (`request`, `response`, `content`, `connect`, `time`), to
+    /// decide whether the plugin runs at all — the cheap pre-instantiation
+    /// filter. For provider capabilities (logger, annotator, local storage,
+    /// clock) `allow` is evaluated before every call on the resource, with
+    /// `call.method`, `call.args.*` (typed from this interface), `caller.plugin`
+    /// and `state.*` bound; a refused call returns `denied(sentence)`.
+    ///
+    /// ```text
+    /// logger:        allow: "state.calls < 100"
+    /// local-storage: allow: "call.args.key.startsWith('seen/')"
+    /// ```
+    ///
+    /// Scopes are configured by the user and may be narrower than requested; a
+    /// narrowing only ever appends clauses.
 
     /// The different kinds of events that can be handled by plugins
     variant event-kind {
@@ -114,8 +116,8 @@ interface capabilities {
     record capability {
         /// The kind of capability being requested
         kind: capability-kind,
-        /// The scope in which the capability applies (may be modified by the user)
-        scope: capability-scope,
+        /// The scope in which the capability applies (may be narrowed by the user)
+        scope: scope,
     }
 
     type keyed-values = tuple<string, list<string>>;
