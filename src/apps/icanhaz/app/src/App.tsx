@@ -14,6 +14,29 @@ type Pending = { id: string; requester: string; summary: string; reason: string;
 // Mirror the Rust command DTOs.
 type GrantView = { id: string; holder: string; summary: string; icon: string; expires_in_secs: number };
 type CapabilityView = { id: string; icon: string; description: string };
+// Mirrors `icanhaz_host::configuration` (ezco:ezcap/forms as JSON): a unit input
+// type is its name, `select` carries its options; values are externally tagged.
+type InputType = "str" | "boolean" | "number" | "datetime" | "daterange" | "file" | "binary" | "secret" | { select: string[] };
+type Value =
+  | { str: string }
+  | { boolean: boolean }
+  | { number: number }
+  | { select: string }
+  | { datetime: string }
+  | { daterange: [string, string] }
+  | { secret: string };
+type Field = { name: string; input_type: InputType; optional: boolean; default: Value | null; description: string | null };
+type Configured = { name: string; value: Value | null; set: boolean };
+type Instance = { name: string; owner: string; values: Configured[] };
+type ConfigurationView = {
+  capability: string;
+  instance_noun: string;
+  owner_prefix: string;
+  fields: Field[];
+  icon: string;
+  instances: Instance[];
+  writable: boolean;
+};
 type SiteView = { origin: string; kinds: string[] };
 
 type ErrorEntry = { id: number; message: string };
@@ -50,6 +73,7 @@ export function App() {
   const [pending, setPending] = createSignal<Pending[]>([]);
   const [grants, setGrants] = createSignal<GrantView[]>([]);
   const [caps, setCaps] = createSignal<CapabilityView[]>([]);
+  const [config, setConfig] = createSignal<ConfigurationView[]>([]);
   const [sites, setSites] = createSignal<SiteView[]>([]);
   const [approvedHosts, setApprovedHosts] = createSignal<string[]>([]);
   const [unknownHosts, setUnknownHosts] = createSignal<SiteView[]>([]);
@@ -63,7 +87,7 @@ export function App() {
 
   const refresh = async () => {
     try {
-      const [p, g, c, s, ah, uh, er] = await Promise.all([
+      const [p, g, c, s, ah, uh, er, cf] = await Promise.all([
         invoke<Pending[]>("list_pending"),
         invoke<GrantView[]>("list_grants"),
         invoke<CapabilityView[]>("list_capabilities", { lang: null }),
@@ -71,6 +95,7 @@ export function App() {
         invoke<string[]>("list_hosts"),
         invoke<SiteView[]>("list_unknown_hosts"),
         invoke<ErrorEntry[]>("list_errors"),
+        invoke<ConfigurationView[]>("list_configuration"),
       ]);
       // Preserve object identity for pending ids so an in-progress card keeps its edits.
       setPending((prev) => {
@@ -83,6 +108,8 @@ export function App() {
       setApprovedHosts(ah);
       setUnknownHosts(uh);
       setErrors(er);
+      // Keep a panel's rows stable while its form is open: replace only on change.
+      setConfig((prev) => (JSON.stringify(prev) === JSON.stringify(cf) ? prev : cf));
     } catch {
       /* transient — the backend may still be starting */
     }
@@ -170,16 +197,21 @@ export function App() {
       </nav>
 
       <Show when={tab() === "capabilities"}>
-        <p class="dim intro">// capabilities installed on this host</p>
+        <p class="dim intro">// capabilities installed on this host. Those that need setup take it here; keys never leave this machine.</p>
         <For each={caps()} fallback={<p class="empty">No capabilities installed.</p>}>
           {(c) => (
-            <div class="row">
-              <span class="ico">{c.icon}</span>
-              <div class="grow">
-                <div class="row-title">{c.id}</div>
-                <div class="desc dim">{c.description}</div>
+            <>
+              <div class="row">
+                <span class="ico">{c.icon}</span>
+                <div class="grow">
+                  <div class="row-title">{c.id}</div>
+                  <div class="desc dim">{c.description}</div>
+                </div>
               </div>
-            </div>
+              <Show when={config().find((cfg) => cfg.capability === c.id)}>
+                {(cfg) => <ConfigurationPanel cfg={cfg()} onChanged={refresh} />}
+              </Show>
+            </>
           )}
         </For>
       </Show>
@@ -288,6 +320,177 @@ export function App() {
         </Show>
       </Show>
     </main>
+  );
+}
+
+// One declared configuration: its configured instances as rows, and a form
+// (generated from the `forms` schema) to add one or edit one in place.
+function ConfigurationPanel(props: { cfg: ConfigurationView; onChanged: () => void }) {
+  type Draft = Record<string, string | boolean>;
+  const [editing, setEditing] = createSignal<string | null>(null); // instance name, "" = new
+  const [name, setName] = createSignal("");
+  const [draft, setDraft] = createSignal<Draft>({});
+  const [error, setError] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false);
+
+  const isSelect = (t: InputType): t is { select: string[] } => typeof t === "object" && "select" in t;
+  const text = (v: Value | null): string => {
+    if (!v) return "";
+    if ("str" in v) return v.str;
+    if ("select" in v) return v.select;
+    if ("datetime" in v) return v.datetime;
+    if ("number" in v) return String(v.number);
+    if ("boolean" in v) return v.boolean ? "yes" : "no";
+    return "";
+  };
+  const blank = (): Draft => {
+    const d: Draft = {};
+    for (const f of props.cfg.fields) {
+      if (f.input_type === "boolean") d[f.name] = f.default && "boolean" in f.default ? f.default.boolean : false;
+      else if (isSelect(f.input_type)) d[f.name] = text(f.default) || f.input_type.select[0] || "";
+      else d[f.name] = f.input_type === "secret" ? "" : text(f.default);
+    }
+    return d;
+  };
+  const open = (inst: Instance | null) => {
+    setError(null);
+    setName(inst?.name ?? "");
+    const d = blank();
+    for (const v of inst?.values ?? []) {
+      const f = props.cfg.fields.find((f) => f.name === v.name);
+      if (!f || f.input_type === "secret") continue;
+      d[v.name] = f.input_type === "boolean" ? (v.value && "boolean" in v.value ? v.value.boolean : false) : text(v.value);
+    }
+    setDraft(d);
+    setEditing(inst?.name ?? "");
+  };
+  const secretSet = (field: string) =>
+    props.cfg.instances.find((i) => i.name === editing())?.values.find((v) => v.name === field)?.set ?? false;
+  const value = (f: Field): Value | null => {
+    const raw = draft()[f.name];
+    if (f.input_type === "boolean") return { boolean: raw === true };
+    const s = typeof raw === "string" ? raw.trim() : "";
+    if (isSelect(f.input_type)) return { select: s };
+    if (f.input_type === "number") return s === "" ? null : { number: Number(s) };
+    if (f.input_type === "secret") return { secret: s }; // blank keeps the stored secret
+    if (f.input_type === "datetime") return { datetime: s };
+    return { str: s };
+  };
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const inputs = props.cfg.fields
+        .map((f) => ({ name: f.name, value: value(f) }))
+        .filter((i): i is { name: string; value: Value } => i.value !== null);
+      await invoke("set_configuration", { capability: props.cfg.capability, instance: name(), inputs });
+      setEditing(null);
+      props.onChanged();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (instance: string) => {
+    if (!confirm(`Remove ${props.cfg.instance_noun} "${instance}"?`)) return;
+    try {
+      await invoke("remove_configuration", { capability: props.cfg.capability, instance });
+      if (editing() === instance) setEditing(null);
+      props.onChanged();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const summary = (inst: Instance) =>
+    inst.values
+      .filter((v) => v.value !== null && !(v.value && "boolean" in v.value) && text(v.value) !== "")
+      .map((v) => text(v.value))
+      .join(" · ");
+
+  return (
+    <div class="config">
+      <div class="config-head">
+        <span class="section-label">{props.cfg.instance_noun}s</span>
+        <Show when={props.cfg.writable} fallback={<span class="dim">store unavailable — read-only</span>}>
+          <button class="mini" disabled={editing() === ""} onClick={() => open(null)}>
+            add {props.cfg.instance_noun}
+          </button>
+        </Show>
+      </div>
+      <For each={props.cfg.instances} fallback={<p class="empty small">No {props.cfg.instance_noun} configured.</p>}>
+        {(inst) => (
+          <div class="row sub" classList={{ active: editing() === inst.name }}>
+            <div class="grow">
+              <b>{inst.name}</b> <span class="dim">{summary(inst)}</span>
+            </div>
+            <div class="row-meta">
+              <button class="mini" disabled={!props.cfg.writable} onClick={() => open(inst)}>edit</button>
+              <button class="mini danger" disabled={!props.cfg.writable} onClick={() => remove(inst.name)}>remove</button>
+            </div>
+          </div>
+        )}
+      </For>
+      <Show when={editing() !== null}>
+        <form class="form" onSubmit={(e) => { e.preventDefault(); save(); }}>
+          <label class="field">
+            <span class="field-name">name</span>
+            <input
+              id={`cfg-${props.cfg.capability}-name`}
+              value={name()}
+              disabled={editing() !== ""}
+              placeholder={`e.g. local`}
+              onInput={(e) => setName(e.currentTarget.value)}
+            />
+            <span class="field-desc dim">how this {props.cfg.instance_noun} is referred to here</span>
+          </label>
+          <For each={props.cfg.fields}>
+            {(f) => (
+              <label class="field" classList={{ check: f.input_type === "boolean" }}>
+                <span class="field-name">{f.name}{f.optional ? <span class="dim"> (optional)</span> : ""}</span>
+                <Show when={isSelect(f.input_type)}>
+                  <select
+                    id={`cfg-${props.cfg.capability}-${f.name}`}
+                    value={String(draft()[f.name] ?? "")}
+                    onChange={(e) => setDraft({ ...draft(), [f.name]: e.currentTarget.value })}
+                  >
+                    <For each={isSelect(f.input_type) ? f.input_type.select : []}>
+                      {(o) => <option value={o} selected={draft()[f.name] === o}>{o}</option>}
+                    </For>
+                  </select>
+                </Show>
+                <Show when={f.input_type === "boolean"}>
+                  <input
+                    id={`cfg-${props.cfg.capability}-${f.name}`}
+                    type="checkbox"
+                    checked={draft()[f.name] === true}
+                    onChange={(e) => setDraft({ ...draft(), [f.name]: e.currentTarget.checked })}
+                  />
+                </Show>
+                <Show when={!isSelect(f.input_type) && f.input_type !== "boolean"}>
+                  <input
+                    id={`cfg-${props.cfg.capability}-${f.name}`}
+                    type={f.input_type === "secret" ? "password" : f.input_type === "number" ? "number" : "text"}
+                    autocomplete={f.input_type === "secret" ? "off" : undefined}
+                    value={String(draft()[f.name] ?? "")}
+                    placeholder={f.input_type === "secret" && secretSet(f.name) ? "unchanged — leave blank to keep" : ""}
+                    onInput={(e) => setDraft({ ...draft(), [f.name]: e.currentTarget.value })}
+                  />
+                </Show>
+                <Show when={f.description}>{(d) => <span class="field-desc dim">{d()}</span>}</Show>
+              </label>
+            )}
+          </For>
+          <Show when={error()}>{(e) => <div class="form-err">{e()}</div>}</Show>
+          <div class="actions">
+            <button type="submit" class="approve" disabled={busy()}>
+              {editing() === "" ? "Add" : "Save"}
+            </button>
+            <button type="button" disabled={busy()} onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </form>
+      </Show>
+    </div>
   );
 }
 
@@ -505,6 +708,22 @@ button:disabled { opacity: .5; cursor: default; }
 .about { font-size: .9em; }
 .about > div { padding: .12rem 0; overflow-wrap: anywhere; }
 .about .dim { display: inline-block; min-width: 6.5rem; }
+.config { margin: -.1rem 0 .9rem .9rem; padding-left: .8rem; border-left: 2px solid var(--border); }
+.config-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.config-head .section-label { margin: .4rem 0 .2rem; }
+.row.sub { padding: .35rem .6rem; margin: .3rem 0; }
+.row.sub.active { border-color: var(--accent); }
+.empty.small { padding: .5rem .7rem; margin: .3rem 0; font-size: .9em; }
+.form { display: flex; flex-direction: column; gap: .55rem; border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem; margin: .4rem 0; background: var(--panel); }
+.field { display: grid; grid-template-columns: 7rem 1fr; gap: .15rem .6rem; align-items: center; }
+.field.check { grid-template-columns: 7rem auto; justify-content: start; }
+.field-name { font-weight: 700; }
+.field-desc { grid-column: 2; font-size: .85em; }
+.field input:not([type=checkbox]), .field select { width: 100%; font: inherit; padding: .3rem .45rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+.field input[type=checkbox] { accent-color: var(--accent); justify-self: start; }
+.form-err { color: var(--danger); font-size: .9em; }
+.form .actions { margin-top: .2rem; }
+@media (max-width: 30rem) { .field, .field.check { grid-template-columns: 1fr; } .field-desc { grid-column: 1; } }
 .add-host { display: flex; gap: .5rem; margin: .5rem 0; }
 .add-host input { flex: 1; min-width: 0; font: inherit; padding: .35rem .5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: inherit; }
 `;

@@ -35,6 +35,9 @@ pub mod inference;
 pub mod providers;
 /// The daemon's durable store (encrypted SQLite): declared configuration + per-owner state.
 pub mod store;
+/// Declared configuration: `forms`-typed schemas capabilities register, and the
+/// generic list/set/remove operations over the store's `configuration` table.
+pub mod configuration;
 
 /// The daemon's serving layer — every capability on one wRPC server per transport.
 pub mod serve;

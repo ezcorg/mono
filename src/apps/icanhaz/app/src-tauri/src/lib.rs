@@ -20,7 +20,7 @@ use tauri_plugin_notification::NotificationExt as _;
 
 use icanhaz_host::approve::{PendingConsent, PendingRequest};
 use icanhaz_host::broker::{Consent, GrantStore, Hosts, Pairings};
-use icanhaz_host::daemon::DaemonConfig;
+use icanhaz_host::daemon::{DaemonConfig, Services};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -98,7 +98,10 @@ pub fn run() {
             consent::dismiss_error,
             consent::app_info,
             consent::clear_pairings,
-            consent::clear_hosts
+            consent::clear_hosts,
+            consent::list_configuration,
+            consent::set_configuration,
+            consent::remove_configuration
         ])
         .setup(|app| {
             // Tray: left-click summons the window; the menu offers Show + Quit.
@@ -158,9 +161,16 @@ pub fn run() {
             // port already in use) is visible instead of vanishing to stderr.
             let errors = consent::AppErrors::new();
             app.manage(errors.clone());
+            let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // The store + configured capabilities: opened here so the
+                // settings surface (list/set/remove configuration) shares them
+                // with the daemon.
+                let services = Services::open().await;
+                handle.manage(services.clone());
                 if let Err(err) =
-                    icanhaz_host::daemon::run(config, grants, pairings, hosts, consent).await
+                    icanhaz_host::daemon::run(config, grants, pairings, hosts, consent, services)
+                        .await
                 {
                     errors.push(format!("daemon stopped: {err}"));
                 }

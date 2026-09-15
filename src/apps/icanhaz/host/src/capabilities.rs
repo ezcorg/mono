@@ -16,6 +16,9 @@ pub struct Capability {
     pub icon: &'static str,
     /// `locale -> description`. Always includes `en`. Ordered; first is the default.
     pub descriptions: &'static [(&'static str, &'static str)],
+    /// The configuration this capability asks the user for, if any: a `forms`
+    /// schema whose instances live in the store under `<id>/<instance>`.
+    pub configuration: Option<fn() -> crate::configuration::Declared>,
 }
 
 impl Capability {
@@ -57,31 +60,37 @@ static DEFAULTS: &[Capability] = &[
         id: "filesystem",
         icon: "📁",
         descriptions: &[("en", "Read and write files and folders you allow — scoped to the exact paths and rights you grant.")],
+        configuration: None,
     },
     Capability {
         id: "terminal",
         icon: "🖥️",
         descriptions: &[("en", "Open an interactive shell on this machine, optionally sandboxed to a jail.")],
+        configuration: None,
     },
     Capability {
         id: "process",
         icon: "⚙️",
         descriptions: &[("en", "Run one pinned program (e.g. a language server) with its exact, pre-approved arguments.")],
+        configuration: None,
     },
     Capability {
         id: "watch",
         icon: "👁️",
         descriptions: &[("en", "Get notified when files change under a folder you've granted.")],
+        configuration: None,
     },
     Capability {
         id: "inference",
         icon: "🧠",
         descriptions: &[("en", "Ask a language model through this machine's configured providers, within the models and token budget you grant. Keys stay here.")],
+        configuration: Some(crate::providers::Providers::declared),
     },
     Capability {
         id: "workspace",
         icon: "🗂️",
         descriptions: &[("en", "Read the host path of a granted folder, so a site can form real file:// URIs.")],
+        configuration: None,
     },
 ];
 

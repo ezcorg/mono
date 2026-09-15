@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use icanhaz_host::approve::{open_approval_page, serve_approval, PendingConsent};
 use icanhaz_host::broker::{Consent, GrantStore, Hosts, Pairings};
-use icanhaz_host::daemon::{run, DaemonConfig};
+use icanhaz_host::daemon::{run, DaemonConfig, Services};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -125,5 +125,6 @@ async fn main() -> anyhow::Result<()> {
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label,
     };
-    run(config, grants, pairings, hosts, consent).await
+    let services = Services::open().await;
+    run(config, grants, pairings, hosts, consent, services).await
 }

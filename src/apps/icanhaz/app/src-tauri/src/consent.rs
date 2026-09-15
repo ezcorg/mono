@@ -10,9 +10,11 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager as _, State};
 
 use icanhaz_host::approve::{Approval, PendingConsent};
+use icanhaz_host::configuration::{Declared, Instance, UserInput};
+use icanhaz_host::daemon::Services;
 use icanhaz_host::broker::{
     CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, InferenceRequest, Pairings,
     PathGrant, ProcessRequest, TerminalRequest,
@@ -369,6 +371,71 @@ pub fn app_info() -> AppInfo {
                 .to_string()
         }),
     }
+}
+
+/// One declared configuration and what is configured against it, for the
+/// capabilities tab: the schema renders as a form, the instances as rows.
+#[derive(Serialize)]
+pub struct ConfigurationView {
+    #[serde(flatten)]
+    pub declared: Declared,
+    pub icon: String,
+    pub instances: Vec<Instance>,
+    /// Whether writes can persist (false while the store is unavailable).
+    pub writable: bool,
+}
+
+/// Every declared configuration with its instances (secrets masked). Empty
+/// until the daemon's services are up.
+#[tauri::command]
+pub async fn list_configuration(app: AppHandle) -> Result<Vec<ConfigurationView>, String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Ok(Vec::new());
+    };
+    let writable = services.store.is_some();
+    let all = services.configuration().await.map_err(|e| e.to_string())?;
+    Ok(all
+        .into_iter()
+        .map(|(declared, instances)| ConfigurationView {
+            icon: icanhaz_host::capabilities::icon_for(&declared.capability).to_string(),
+            declared,
+            instances,
+            writable,
+        })
+        .collect())
+}
+
+/// Create or update one configured instance from the form's inputs.
+#[tauri::command]
+pub async fn set_configuration(
+    app: AppHandle,
+    capability: String,
+    instance: String,
+    inputs: Vec<UserInput>,
+) -> Result<(), String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Err("the daemon is still starting".to_string());
+    };
+    services
+        .configure(&capability, &instance, &inputs)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Remove one configured instance.
+#[tauri::command]
+pub async fn remove_configuration(
+    app: AppHandle,
+    capability: String,
+    instance: String,
+) -> Result<bool, String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Err("the daemon is still starting".to_string());
+    };
+    services
+        .unconfigure(&capability, &instance)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Forget every remembered site (durable pairings).

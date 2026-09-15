@@ -16,6 +16,9 @@ use anyhow::Context as _;
 use tokio::net::TcpListener;
 
 use crate::broker::{BrokerProvider, Consent, GrantStore, Hosts, Pairings};
+use crate::configuration::{self, Declared, Instance, UserInput};
+use crate::providers::Providers;
+use crate::store::Store;
 use crate::process::ProcessProvider;
 use crate::serve::{serve_websocket_all, serve_webtransport_all, FsServe};
 use crate::terminal::TerminalProvider;
@@ -60,14 +63,103 @@ fn seed_jail(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The daemon's durable services: the store (declared configuration + per-owner
+/// state) and everything configured through it. Built by the caller with
+/// [`Services::open`] so the native app can hold it too: its settings surface
+/// lists and edits the same configuration the capabilities read.
+#[derive(Clone)]
+pub struct Services {
+    /// `None` when the store could not be opened: the daemon still runs, with
+    /// providers from the environment only and no persisted budgets.
+    pub store: Option<Store>,
+    pub providers: Arc<Providers>,
+}
+
+impl Services {
+    /// Open the default store (warning, not failing, when it cannot be) and
+    /// load everything configured through it.
+    pub async fn open() -> Self {
+        let store = match Store::open(Store::default_path()).await {
+            Ok(store) => Some(store),
+            Err(e) => {
+                tracing::warn!(error = %e, "store unavailable; running without persistence");
+                None
+            }
+        };
+        Self::with_store(store).await
+    }
+
+    pub async fn with_store(store: Option<Store>) -> Self {
+        let providers = Arc::new(Providers::load(store.clone()).await);
+        Self { store, providers }
+    }
+
+    /// Every declared configuration with its configured instances (secrets
+    /// masked). Without a store, each schema lists no instances.
+    pub async fn configuration(&self) -> anyhow::Result<Vec<(Declared, Vec<Instance>)>> {
+        let mut out = Vec::new();
+        for declared in configuration::declared() {
+            let instances = match &self.store {
+                Some(store) => declared.instances(store).await?,
+                None => Vec::new(),
+            };
+            out.push((declared, instances));
+        }
+        Ok(out)
+    }
+
+    /// Create or update one configured instance of `capability`'s schema, then
+    /// let that capability pick the change up.
+    pub async fn configure(
+        &self,
+        capability: &str,
+        instance: &str,
+        inputs: &[UserInput],
+    ) -> anyhow::Result<()> {
+        let (declared, store) = self.target(capability)?;
+        declared.set(store, instance, inputs).await?;
+        self.reload(capability).await;
+        Ok(())
+    }
+
+    /// Remove one configured instance. `Ok(false)` if there was none.
+    pub async fn unconfigure(&self, capability: &str, instance: &str) -> anyhow::Result<bool> {
+        let (declared, store) = self.target(capability)?;
+        let removed = declared.remove(store, instance).await?;
+        self.reload(capability).await;
+        Ok(removed)
+    }
+
+    fn target(&self, capability: &str) -> anyhow::Result<(Declared, &Store)> {
+        let Some(declared) = configuration::declared()
+            .into_iter()
+            .find(|d| d.capability == capability)
+        else {
+            anyhow::bail!("`{capability}` declares no configuration");
+        };
+        let Some(store) = &self.store else {
+            anyhow::bail!("the store is unavailable, so configuration cannot be saved");
+        };
+        Ok((declared, store))
+    }
+
+    /// The capabilities that cache their configuration re-read it here.
+    async fn reload(&self, capability: &str) {
+        if capability == "inference" {
+            self.providers.reload().await;
+        }
+    }
+}
+
 /// Bring the whole NoCap surface up and serve it until a transport errors. `grants`,
-/// `pairings`, and `consent` are supplied by the caller (see the module docs).
+/// `pairings`, `consent` and `services` are supplied by the caller (see the module docs).
 pub async fn run(
     config: DaemonConfig,
     grants: Arc<Mutex<GrantStore>>,
     pairings: Arc<Mutex<Pairings>>,
     hosts: Arc<Mutex<Hosts>>,
     consent: Consent,
+    services: Services,
 ) -> anyhow::Result<()> {
     seed_jail(&config.root)?;
 
@@ -78,17 +170,7 @@ pub async fn run(
     let process = ProcessProvider::new(grants.clone());
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
-    // The durable store (declared configuration + per-owner state). A daemon
-    // that cannot open it still runs: providers then come from the environment
-    // only and token budgets do not persist.
-    let store = match crate::store::Store::open(crate::store::Store::default_path()).await {
-        Ok(store) => Some(store),
-        Err(e) => {
-            tracing::warn!(error = %e, "store unavailable; running without persistence");
-            None
-        }
-    };
-    let providers = Arc::new(crate::providers::Providers::load(store).await);
+    let Services { providers, .. } = services;
     let inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
     let fs_serve = FsServe {
         component_path: config.fs_component.clone(),

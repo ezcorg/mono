@@ -10,7 +10,8 @@
 //! - `echo`: streams the last user message back, with a usage record sized to
 //!   it. For demos without keys, and for tests.
 //!
-//! Configuration comes from the store (`providers` table) and from the
+//! Configuration comes from the store (`inference/<name>` owners in the
+//! generic `configuration` table, declared by [`Providers::declared`]) and from the
 //! environment (`ICANHAZ_ANTHROPIC_API_KEY`, `ICANHAZ_OPENAI_API_KEY` with
 //! `ICANHAZ_OPENAI_BASE_URL` and `ICANHAZ_OPENAI_MODELS`, `ICANHAZ_ECHO=1`);
 //! environment entries let a headless daemon serve inference with no store.
@@ -22,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use wit_bindgen_wrpc::bytes::Bytes;
 
+use crate::configuration::{Declared, Field, InputType, UserInput, Value};
 use crate::store::Store;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,44 +134,6 @@ impl Frame {
     }
 }
 
-/// One declared configuration field: the host-side shape of
-/// `ezco:ezcap/forms.input-schema`, for the consent app's provider form.
-#[derive(Debug, Clone, Serialize)]
-pub struct ConfigField {
-    pub name: String,
-    /// `str`, `secret`, or `select`.
-    pub input_type: String,
-    pub options: Vec<String>,
-    pub description: String,
-}
-
-impl ConfigField {
-    fn str(name: &str, description: &str) -> Self {
-        Self {
-            name: name.into(),
-            input_type: "str".into(),
-            options: Vec::new(),
-            description: description.into(),
-        }
-    }
-    fn secret(name: &str, description: &str) -> Self {
-        Self {
-            name: name.into(),
-            input_type: "secret".into(),
-            options: Vec::new(),
-            description: description.into(),
-        }
-    }
-    fn select(name: &str, options: &[&str], description: &str) -> Self {
-        Self {
-            name: name.into(),
-            input_type: "select".into(),
-            options: options.iter().map(|o| o.to_string()).collect(),
-            description: description.into(),
-        }
-    }
-}
-
 /// The configured providers and an HTTP client.
 pub struct Providers {
     configs: RwLock<Vec<ProviderConfig>>,
@@ -191,22 +155,42 @@ impl Providers {
     /// `models` rows, as `forms.actual-input` values.
     pub const OWNER_PREFIX: &'static str = "inference/";
 
-    /// The declared configuration for one provider, as a `forms` schema the
-    /// consent app renders: what a user fills in to add a backend.
-    pub fn schema() -> Vec<ConfigField> {
-        vec![
-            ConfigField::select("kind", &["openai", "anthropic", "echo"], "Backend API: OpenAI-compatible (Ollama, LM Studio, OpenRouter, vLLM), Anthropic, or a loopback for demos."),
-            ConfigField::str("base_url", "Base URL, e.g. http://127.0.0.1:11434/v1 or https://api.anthropic.com"),
-            ConfigField::secret("api_key", "API key, if the backend needs one"),
-            ConfigField::str("models", "Comma-separated model names this backend serves"),
-        ]
+    /// The configuration one backend is filled in against: the `forms` schema
+    /// the consent app renders, registered in the capability registry.
+    pub fn declared() -> Declared {
+        Declared::new(
+            "inference",
+            "backend",
+            vec![
+                Field::new(
+                    "kind",
+                    InputType::Select(vec!["openai".into(), "anthropic".into(), "echo".into()]),
+                    "Backend API: OpenAI-compatible (Ollama, LM Studio, OpenRouter, vLLM), Anthropic, or a loopback for demos.",
+                ),
+                Field::new(
+                    "base_url",
+                    InputType::Str,
+                    "Base URL, e.g. http://127.0.0.1:11434/v1 or https://api.anthropic.com",
+                )
+                .optional(),
+                Field::new("api_key", InputType::Secret, "API key, if the backend needs one").optional(),
+                Field::new("models", InputType::Str, "Comma-separated model names this backend serves"),
+            ],
+        )
     }
 
     /// Environment entries plus the store's configured providers (the store
     /// wins on a name clash).
     pub async fn load(store: Option<Store>) -> Self {
+        let providers = Self::new(Vec::new(), store);
+        providers.reload().await;
+        providers
+    }
+
+    /// Re-read the environment and the store, after configuration changed.
+    pub async fn reload(&self) {
         let mut configs = Self::from_env();
-        if let Some(store) = &store {
+        if let Some(store) = &self.store {
             match Self::from_store(store).await {
                 Ok(rows) => {
                     for row in rows {
@@ -217,7 +201,7 @@ impl Providers {
                 Err(e) => tracing::warn!(error = %e, "could not read providers from the store"),
             }
         }
-        Self::new(configs, store)
+        self.set(configs);
     }
 
     /// Providers from the store's `inference/<name>` configuration owners.
@@ -231,11 +215,9 @@ impl Providers {
             let rows = store.configuration(&owner).await?;
             let get = |field: &str| -> Option<String> {
                 rows.iter().find(|(n, _)| n == field).and_then(|(_, v)| {
-                    v.get("str")
-                        .or_else(|| v.get("secret"))
-                        .or_else(|| v.get("select"))
-                        .and_then(|s| s.as_str())
-                        .map(str::to_string)
+                    serde_json::from_value::<Value>(v.clone())
+                        .ok()
+                        .and_then(|v| v.text().map(str::to_string))
                 })
             };
             let Some(kind) = get("kind").and_then(|k| ProviderKind::parse(&k)) else {
@@ -259,30 +241,25 @@ impl Providers {
         Ok(out)
     }
 
-    /// Write one provider's configuration to the store.
+    /// Write one provider's configuration to the store, through the declared
+    /// schema (so it is validated exactly as the consent app's form is).
     pub async fn save(store: &Store, p: &ProviderConfig) -> anyhow::Result<()> {
-        let owner = format!("{}{}", Self::OWNER_PREFIX, p.name);
-        store
-            .set_configuration(
-                &owner,
-                "kind",
-                &serde_json::json!({"select": p.kind.as_str()}),
+        let input = |name: &str, value: Value| UserInput {
+            name: name.to_string(),
+            value,
+        };
+        Self::declared()
+            .set(
+                store,
+                &p.name,
+                &[
+                    input("kind", Value::Select(p.kind.as_str().to_string())),
+                    input("base_url", Value::Str(p.base_url.clone())),
+                    input("api_key", Value::Secret(p.api_key.clone())),
+                    input("models", Value::Str(p.models.join(","))),
+                ],
             )
-            .await?;
-        store
-            .set_configuration(&owner, "base_url", &serde_json::json!({"str": p.base_url}))
-            .await?;
-        store
-            .set_configuration(&owner, "api_key", &serde_json::json!({"secret": p.api_key}))
-            .await?;
-        store
-            .set_configuration(
-                &owner,
-                "models",
-                &serde_json::json!({"str": p.models.join(",")}),
-            )
-            .await?;
-        Ok(())
+            .await
     }
 
     /// Today's token spend through `provider`, from the state store.
