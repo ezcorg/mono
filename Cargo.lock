@@ -2525,6 +2525,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ezcap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cel-cxx",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "wit-parser 0.254.0",
+]
+
+[[package]]
 name = "ezfilter"
 version = "0.1.0"
 dependencies = [
