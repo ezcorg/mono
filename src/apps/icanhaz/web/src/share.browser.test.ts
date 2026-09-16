@@ -38,6 +38,7 @@ describe("share bundles (browser ↔ host)", () => {
         expect(text.startsWith("ezbundle1.")).toBe(true);
         const bundle = decodeBundle(text);
         expect(bundle.document).toBe("notes/plan.md");
+        expect(bundle.locator?.startsWith(`iroh:${bundle.issuer}`)).toBe(true);
         expect(bundle.grants).toHaveLength(2);
         // The bundle is readable without any key, and holds no bearer token.
         expect(text).not.toContain(token);
@@ -80,5 +81,15 @@ describe("share bundles (browser ↔ host)", () => {
         await expect(openBundle(t, "nonsense")).rejects.toThrow(/not a share bundle/);
         const foreign = "ezbundle1." + btoa(JSON.stringify({ v: 1, issuer: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", grants: [] }));
         await expect(openBundle(t, foreign)).rejects.toThrow(/another broker/);
+        // With a locator, each certificate is redeemed there through the daemon;
+        // the harness daemon has no peer transport, so each is refused, not thrown.
+        const located = "ezbundle1." + btoa(JSON.stringify({
+            v: 1,
+            issuer: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            locator: "iroh:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA?addr=127.0.0.1:1",
+            grants: [{ cert: "ezcap1.AAAA", summary: "x" }],
+        }));
+        const opened = await openBundle(t, located);
+        expect(opened.grants).toEqual([{ summary: "x", refused: "unsupported" }]);
     });
 });

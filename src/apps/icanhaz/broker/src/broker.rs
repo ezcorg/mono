@@ -334,6 +334,38 @@ struct Grant<K> {
     /// watch) await this (via [`Revocation`]) to tear their live session down; the
     /// filesystem re-validates per op. Both observe the same grant lifetime.
     cancel: CancellationToken,
+    /// Set when this grant proxies one held at another broker: calls on it
+    /// are forwarded there with the remote token.
+    remote: Option<Remote>,
+}
+
+/// A grant held at another broker on this daemon's behalf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Remote {
+    /// `iroh:<identity>?addr=…`, as the issuer's `locator()` gave it.
+    pub locator: String,
+    /// The token the remote broker issued to this daemon.
+    pub token: String,
+}
+
+/// What a remote broker says a token is (`grant-detail` on the wire).
+#[derive(Debug, Clone)]
+pub struct RemoteDetail {
+    pub kind: CapabilityKind,
+    pub scope: EzScope,
+    pub expires_in: Duration,
+    pub summary: String,
+}
+
+/// How the daemon reaches other brokers: the host supplies this over its
+/// peer transport, the broker crate stays transport-free.
+pub trait RemoteBroker: Send + Sync {
+    /// Redeem `cert` at `locator` as this daemon and describe the result.
+    fn redeem_at(
+        &self,
+        locator: String,
+        cert: String,
+    ) -> futures::future::BoxFuture<'static, anyhow::Result<Result<(String, RemoteDetail), Denied>>>;
 }
 
 /// A signal that fires when a grant becomes invalid — explicitly **revoked**, or
@@ -430,6 +462,8 @@ pub struct GrantStore<K: GrantKind = CapabilityKind> {
     /// Where certified grants persist (`broker/grant:<token>` rows), so the
     /// certificates on them survive a daemon restart. `None` = in memory.
     persist: Option<crate::store::Store>,
+    /// Where peers reach this broker, once the daemon knows.
+    locator: Option<String>,
 }
 
 /// A certified grant's durable form. Bearer tokens are the row key; the
@@ -646,6 +680,7 @@ impl<K: GrantKind> GrantStore<K> {
             sturdy: HashMap::new(),
             identity: Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}")),
             persist: None,
+            locator: None,
         }
     }
 
@@ -721,6 +756,7 @@ impl<K: GrantKind> GrantStore<K> {
                 expires: Instant::now() + ttl,
                 principal,
                 cancel: CancellationToken::new(),
+                remote: None,
             },
         );
         Ok(token)
@@ -789,6 +825,7 @@ impl<K: GrantKind> GrantStore<K> {
                             display_name,
                         },
                         cancel: CancellationToken::new(),
+                        remote: None,
                     },
                 );
                 for sturdy in row.sturdy {
@@ -951,6 +988,7 @@ impl<K: GrantKind> GrantStore<K> {
                 expires,
                 principal,
                 cancel,
+                remote: None,
             },
         );
         Ok(child)
@@ -1048,6 +1086,58 @@ impl<K: GrantKind> GrantStore<K> {
             return Err(Denied::NotAuthorized);
         }
         Ok(())
+    }
+
+    /// Hold a grant another broker issued to this daemon, on `holder`'s
+    /// behalf: a local token whose calls the providers forward to `remote`.
+    /// The remote's scope is minted locally too, so admission here mirrors
+    /// what the issuer will enforce.
+    pub fn adopt_remote(
+        &mut self,
+        kind: K,
+        scope: EzScope,
+        summary: String,
+        ttl: Duration,
+        holder: Principal,
+        remote: Remote,
+    ) -> Result<String, Denied> {
+        let token = self.issue_scoped(kind, scope, summary, ttl, holder)?;
+        if let Some(grant) = self.grants.get_mut(&token) {
+            grant.remote = Some(remote);
+        }
+        Ok(token)
+    }
+
+    /// Where a token's calls go, if it proxies a remote grant.
+    pub fn remote_of(&self, token: &str) -> Option<Remote> {
+        self.grants.get(token).and_then(|g| g.remote.clone())
+    }
+
+    /// What a live token is: its kind, scope, remaining life and summary.
+    pub fn inspect(&self, token: &str) -> Result<(K, EzScope, Duration, String), Denied> {
+        let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
+        let now = Instant::now();
+        if grant.expires <= now || grant.cancel.is_cancelled() {
+            return Err(Denied::Revoked);
+        }
+        Ok((
+            grant.kind.clone(),
+            grant.scope.clone(),
+            grant.expires.saturating_duration_since(now),
+            grant.summary.clone(),
+        ))
+    }
+
+    /// Where peers reach this broker (`iroh:<identity>?addr=…`), set by the
+    /// daemon once its peer transport is up.
+    pub fn locator(&self) -> String {
+        self.locator
+            .clone()
+            .unwrap_or_else(|| format!("iroh:{}", self.identity.public()))
+    }
+
+    pub fn set_locator(&mut self, locator: String) {
+        self.locator = Some(locator);
     }
 
     /// Advance a host-defined counter (`tokens`, `day_tokens`) on a grant's
@@ -1590,6 +1680,8 @@ pub struct BrokerProvider {
     consent: Consent,
     pairings: Arc<Mutex<Pairings>>,
     hosts: Arc<Mutex<Hosts>>,
+    /// The peer transport, for `redeem-at`; `None` = no peers reachable.
+    remote: Option<Arc<dyn RemoteBroker>>,
 }
 
 impl BrokerProvider {
@@ -1604,7 +1696,14 @@ impl BrokerProvider {
             consent,
             pairings,
             hosts: Hosts::shared(),
+            remote: None,
         }
+    }
+
+    /// Reach other brokers over the daemon's peer transport (`redeem-at`).
+    pub fn with_remote(mut self, remote: Arc<dyn RemoteBroker>) -> Self {
+        self.remote = Some(remote);
+        self
     }
 
     /// Gate which origins may initiate requests at all (see [`Hosts`]).
@@ -2040,6 +2139,65 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                 }))
             }
         }
+    }
+
+    async fn inspect(
+        &self,
+        _cx: C,
+        token: String,
+    ) -> anyhow::Result<Result<bindings::exports::icanhaz::nocap::broker::GrantDetail, Denied>>
+    {
+        let inspected = self.store.lock().unwrap().inspect(&token);
+        Ok(inspected.map(|(kind, scope, expires_in, summary)| {
+            bindings::exports::icanhaz::nocap::broker::GrantDetail {
+                kind,
+                scope: ScopeWire {
+                    when: scope.when,
+                    allow: scope.allow,
+                },
+                expires_in_secs: expires_in.as_secs(),
+                summary,
+            }
+        }))
+    }
+
+    async fn locator(&self, _cx: C) -> anyhow::Result<String> {
+        Ok(self.store.lock().unwrap().locator())
+    }
+
+    async fn redeem_at(
+        &self,
+        cx: C,
+        locator: String,
+        cert: String,
+    ) -> anyhow::Result<Result<GrantReply, Denied>> {
+        let Some(remote) = &self.remote else {
+            return Ok(Err(Denied::Unsupported(
+                "no peer transport: this daemon cannot reach other brokers".to_string(),
+            )));
+        };
+        let holder = principal_of(&cx);
+        let (token, detail) = match remote.redeem_at(locator.clone(), cert).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(denied)) => return Ok(Err(denied)),
+            Err(err) => {
+                tracing::info!(%locator, error = %err, "remote redemption failed");
+                return Ok(Err(Denied::Unsupported(format!("{locator}: {err:#}"))));
+            }
+        };
+        let summary = format!("{} @ {}", detail.summary, locator);
+        let adopted = self.store.lock().unwrap().adopt_remote(
+            detail.kind,
+            detail.scope,
+            summary,
+            detail.expires_in,
+            holder,
+            Remote { locator, token },
+        );
+        Ok(adopted.map(|token| GrantReply {
+            token,
+            pairing: None,
+        }))
     }
 
     async fn identity(&self, _cx: C) -> anyhow::Result<String> {

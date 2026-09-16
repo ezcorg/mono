@@ -38,11 +38,88 @@ pub use bindings::icanhaz::nocap::inference as client;
 pub struct InferenceProvider {
     store: Arc<Mutex<GrantStore>>,
     providers: Arc<Providers>,
+    /// Other brokers, for grants that proxy a remote one.
+    remotes: Option<crate::remote::Remotes>,
 }
 
 impl InferenceProvider {
     pub fn new(store: Arc<Mutex<GrantStore>>, providers: Arc<Providers>) -> Self {
-        Self { store, providers }
+        Self {
+            store,
+            providers,
+            remotes: None,
+        }
+    }
+
+    pub fn with_remotes(mut self, remotes: crate::remote::Remotes) -> Self {
+        self.remotes = Some(remotes);
+        self
+    }
+
+    /// Forward a completion to the broker that holds the real grant. The
+    /// remote enforces its scope; the frames come back as they are, and the
+    /// usage frame is charged here too so local budget clauses see it.
+    async fn complete_remote(
+        &self,
+        grant: &str,
+        remote: crate::broker::Remote,
+        request: CompletionRequest,
+    ) -> anyhow::Result<Result<crate::session::ByteStream, String>> {
+        let Some(remotes) = &self.remotes else {
+            return Ok(Err(
+                "inference: no peer transport for a remote grant".to_string()
+            ));
+        };
+        let client = match remotes.client(&remote.locator).await {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(format!("inference: {}: {e:#}", remote.locator))),
+        };
+        let request = to_client(request);
+        let (res, io) = match bindings::icanhaz::nocap::inference::complete(
+            &client,
+            (),
+            &remote.token,
+            &request,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => return Ok(Err(format!("inference: {}: {e:#}", remote.locator))),
+        };
+        if let Some(io) = io {
+            tokio::spawn(async move {
+                if let Err(err) = io.await {
+                    tracing::debug!(?err, "remote inference io driver ended");
+                }
+            });
+        }
+        let upstream = match res {
+            Ok(stream) => stream,
+            Err(e) => return Ok(Err(e)),
+        };
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+        let grants = self.store.clone();
+        let token = grant.to_string();
+        tokio::spawn(async move {
+            let mut upstream = upstream;
+            let mut decoder = FrameDecoder::default();
+            while let Some(chunk) = upstream.next().await {
+                for tokens in decoder.usage_in(&chunk) {
+                    let mut g = grants.lock().unwrap();
+                    g.charge(&token, "tokens", tokens);
+                    g.charge(&token, "day_tokens", tokens);
+                }
+                if tx.send(chunk).is_err() {
+                    break;
+                }
+            }
+        });
+        let revocation = self.store.lock().unwrap().revocation(grant);
+        Ok(Ok(crate::session::grant_scoped(
+            Box::pin(UnboundedReceiverStream::new(rx)),
+            revocation,
+            (),
+        )))
     }
 
     /// Bring `state.day_tokens` on the grant's instance up to today's persisted
@@ -80,6 +157,18 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inf
                 allowed.models.join(", "),
                 request.model
             )));
+        }
+        // A grant held at another broker: admit here as the issuer will, then forward.
+        let remote = self.store.lock().unwrap().remote_of(&grant);
+        if let Some(remote) = remote {
+            let admit = AdmitCall::new("complete")
+                .arg("request.model", request.model.clone())
+                .arg("request.max_tokens", i64::from(request.max_tokens))
+                .caller(caller_of(&cx));
+            if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
+                return Ok(Err(format!("inference denied: {}", denied_text(&denied))));
+            }
+            return self.complete_remote(&grant, remote, request).await;
         }
         let Some(provider) = self.providers.resolve(&request.model) else {
             return Ok(Err(format!(
@@ -182,6 +271,30 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inf
         if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
             return Ok(Err(format!("inference denied: {}", denied_text(&denied))));
         }
+        let remote = self.store.lock().unwrap().remote_of(&grant);
+        if let Some(remote) = remote {
+            let Some(remotes) = &self.remotes else {
+                return Ok(Err(
+                    "inference: no peer transport for a remote grant".to_string()
+                ));
+            };
+            let client = match remotes.client(&remote.locator).await {
+                Ok(c) => c,
+                Err(e) => return Ok(Err(format!("inference: {}: {e:#}", remote.locator))),
+            };
+            return bindings::icanhaz::nocap::inference::models(&client, (), &remote.token)
+                .await
+                .map(|r| {
+                    r.map(|list| {
+                        list.into_iter()
+                            .map(|m| ModelInfo {
+                                provider: m.provider,
+                                model: m.model,
+                            })
+                            .collect()
+                    })
+                });
+        }
         Ok(Ok(self
             .providers
             .models()
@@ -189,6 +302,80 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inf
             .filter(|(_, model)| allowed.models.is_empty() || allowed.models.contains(model))
             .map(|(provider, model)| ModelInfo { provider, model })
             .collect()))
+    }
+}
+
+/// The export-side request as the import-side (client) type, for forwarding.
+fn to_client(r: CompletionRequest) -> bindings::icanhaz::nocap::inference::CompletionRequest {
+    use bindings::icanhaz::nocap::inference as c;
+    c::CompletionRequest {
+        model: r.model,
+        messages: r
+            .messages
+            .into_iter()
+            .map(|m| c::Message {
+                role: m.role,
+                content: m.content,
+                tool_calls: m
+                    .tool_calls
+                    .into_iter()
+                    .map(|t| c::ToolCall {
+                        id: t.id,
+                        name: t.name,
+                        arguments: t.arguments,
+                    })
+                    .collect(),
+                tool_call_id: m.tool_call_id,
+            })
+            .collect(),
+        tools: r
+            .tools
+            .into_iter()
+            .map(|t| c::Tool {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+            })
+            .collect(),
+        max_tokens: r.max_tokens,
+        temperature: r.temperature,
+        system: r.system,
+    }
+}
+
+/// Finds usage frames (`[1][len u32 BE][json]`) in a byte stream that may
+/// split frames across chunks, and yields the tokens they report.
+#[derive(Default)]
+struct FrameDecoder {
+    buf: Vec<u8>,
+}
+
+impl FrameDecoder {
+    fn usage_in(&mut self, chunk: &[u8]) -> Vec<i64> {
+        self.buf.extend_from_slice(chunk);
+        let mut out = Vec::new();
+        loop {
+            if self.buf.len() < 5 {
+                break;
+            }
+            let kind = self.buf[0];
+            let len =
+                u32::from_be_bytes([self.buf[1], self.buf[2], self.buf[3], self.buf[4]]) as usize;
+            if self.buf.len() < 5 + len {
+                break;
+            }
+            if kind == 1 {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&self.buf[5..5 + len]) {
+                    let n = v.get("input_tokens").and_then(|n| n.as_i64()).unwrap_or(0)
+                        + v.get("output_tokens").and_then(|n| n.as_i64()).unwrap_or(0);
+                    if n > 0 {
+                        out.push(n);
+                    }
+                }
+            }
+            self.buf.drain(..5 + len);
+        }
+        out
     }
 }
 

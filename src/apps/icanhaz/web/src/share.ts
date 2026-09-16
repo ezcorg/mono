@@ -8,13 +8,13 @@
 // bearer secret; the recipient redeems it at the issuing broker for a grant
 // of their own, narrowed by every clause in the chain (see broker.wit).
 //
-// Today a bundle redeems at the broker this client is connected to (the
-// recipient shares the owner's daemon, e.g. another origin or a peer of it);
-// redemption at a remote broker over iroh, with the local daemon proxying
-// the grant, is the M5 remote-provider work.
+// A bundle from the broker this client is connected to redeems there; one
+// from another machine's broker carries that broker's locator, and the local
+// daemon redeems it over iroh as itself and proxies the grant (so the
+// certificates should be issued for the recipient daemon's identity).
 
 import type { Transport } from "./wrpc";
-import { certify, identity, redeem, type Audience, type Scope } from "./generated/broker";
+import { certify, identity, locator, redeem, redeemAt, type Audience, type Scope } from "./generated/broker";
 
 const PREFIX = "ezbundle1.";
 
@@ -37,6 +37,8 @@ export interface Bundle {
     document?: string;
     /** The issuing broker's public key (base64url Ed25519); its iroh endpoint id. */
     issuer: string;
+    /** Where peers reach the issuing broker (`iroh:<issuer>?addr=…`). */
+    locator?: string;
     grants: { cert: string; summary?: string }[];
 }
 
@@ -86,13 +88,14 @@ export function certificateRoot(cert: string): CertificateRoot {
  */
 export async function createBundle(t: Transport, document: string | undefined, shares: Share[]): Promise<string> {
     const issuer = await identity(t);
+    const where = await locator(t);
     const grants: Bundle["grants"] = [];
     for (const s of shares) {
         const res = await certify(t, s.token, s.audience, BigInt(s.ttlSecs), s.extra ?? { when: "true", allow: "true" });
         if (res.tag !== "ok") throw new Error(`could not certify a grant: ${JSON.stringify(res.val)}`);
         grants.push({ cert: res.val, summary: s.summary });
     }
-    return encodeBundle({ v: 1, document, issuer, grants });
+    return encodeBundle({ v: 1, document, issuer, locator: where, grants });
 }
 
 export interface OpenedBundle {
@@ -102,20 +105,23 @@ export interface OpenedBundle {
 }
 
 /**
- * Redeem every certificate in `text` at the connected broker. Refuses
- * outright when the bundle was issued by another broker: this client cannot
- * reach it (M5). Individual certificates may still be refused (wrong
- * audience, expired, source revoked); each entry says so.
+ * Redeem every certificate in `text`: at the connected broker when it issued
+ * the bundle, else at the issuer over iroh through the connected daemon,
+ * which then holds the grant and proxies calls on the returned token. A
+ * bundle from elsewhere without a locator cannot be reached. Individual
+ * certificates may still be refused (wrong audience, expired, source
+ * revoked, no peer transport); each entry says so.
  */
 export async function openBundle(t: Transport, text: string): Promise<OpenedBundle> {
     const bundle = decodeBundle(text);
     const here = await identity(t);
-    if (bundle.issuer !== here) {
-        throw new Error(`bundle was issued by another broker (${bundle.issuer.slice(0, 8)}…); this client is connected to ${here.slice(0, 8)}…`);
+    const remote = bundle.issuer !== here;
+    if (remote && !bundle.locator) {
+        throw new Error(`bundle was issued by another broker (${bundle.issuer.slice(0, 8)}…) and carries no locator to reach it`);
     }
     const grants: OpenedBundle["grants"] = [];
     for (const g of bundle.grants) {
-        const res = await redeem(t, g.cert);
+        const res = remote ? await redeemAt(t, bundle.locator!, g.cert) : await redeem(t, g.cert);
         if (res.tag === "ok") grants.push({ summary: g.summary, token: res.val.token });
         else grants.push({ summary: g.summary, refused: res.val.tag });
     }

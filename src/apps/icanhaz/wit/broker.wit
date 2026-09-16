@@ -90,6 +90,27 @@ interface broker {
   /// caller's one-liner for the prompt; `requester` who is asking.
   consent: func(capability: capability, summary: string, reason: string, requester: string) -> result<approval, denied>;
 
+  /// What a token the caller holds is: for a peer daemon that redeemed a
+  /// certificate here and proxies the grant to its own caller.
+  record grant-detail {
+    kind: capability-kind,
+    scope: scope,
+    expires-in-secs: u64,
+    summary: string,
+  }
+  inspect: func(token: string) -> result<grant-detail, denied>;
+
+  /// Where this broker can be reached by peers: `iroh:<identity>?addr=…`.
+  /// A share bundle carries it so a recipient's daemon can redeem here.
+  locator: func() -> string;
+
+  /// Redeem a certificate at another broker, named by locator, and hold the
+  /// resulting grant on the caller's behalf: the caller gets a token of this
+  /// broker's whose calls are forwarded to the issuer over the peer
+  /// transport. The certificate's audience must be this daemon's identity
+  /// (or anyone). Requires the peer transport to be up.
+  redeem-at: func(locator: string, cert: string) -> result<grant, denied>;
+
   /// This broker's public key (base64url Ed25519): what a certificate's
   /// issuer field must match, and how a peer audience names itself.
   identity: func() -> string;

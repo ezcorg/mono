@@ -47,11 +47,59 @@ pub use bindings::icanhaz::nocap::process as client;
 #[derive(Clone)]
 pub struct ProcessProvider {
     store: Arc<Mutex<GrantStore>>,
+    /// Other brokers, for grants that proxy a remote one.
+    remotes: Option<crate::remote::Remotes>,
 }
 
 impl ProcessProvider {
     pub fn new(store: Arc<Mutex<GrantStore>>) -> Self {
-        Self { store }
+        Self {
+            store,
+            remotes: None,
+        }
+    }
+
+    pub fn with_remotes(mut self, remotes: crate::remote::Remotes) -> Self {
+        self.remotes = Some(remotes);
+        self
+    }
+
+    /// Spawn at the broker that holds the real grant: stdin is forwarded
+    /// there, its stdout comes back, and the session ends with this grant.
+    async fn spawn_remote(
+        &self,
+        grant: &str,
+        remote: crate::broker::Remote,
+        args: Vec<String>,
+        stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+    ) -> anyhow::Result<Result<Pin<Box<dyn Stream<Item = Bytes> + Send>>, String>> {
+        let Some(remotes) = &self.remotes else {
+            return Ok(Err(
+                "process: no peer transport for a remote grant".to_string()
+            ));
+        };
+        let client = match remotes.client(&remote.locator).await {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(format!("process: {}: {e:#}", remote.locator))),
+        };
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (res, io) = match client::spawn(&client, (), &remote.token, &argv, stdin).await {
+            Ok(v) => v,
+            Err(e) => return Ok(Err(format!("process: {}: {e:#}", remote.locator))),
+        };
+        if let Some(io) = io {
+            tokio::spawn(async move {
+                if let Err(err) = io.await {
+                    tracing::debug!(?err, "remote process io driver ended");
+                }
+            });
+        }
+        let output = match res {
+            Ok(stream) => stream,
+            Err(e) => return Ok(Err(e)),
+        };
+        let revocation = self.store.lock().unwrap().revocation(grant);
+        Ok(Ok(crate::session::grant_scoped(output, revocation, ())))
     }
 }
 
@@ -110,6 +158,14 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::pro
             .caller(caller_of(&cx));
         if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
             return Ok(Err(format!("process denied: {}", denied_text(&denied))));
+        }
+
+        // A grant held at another broker: the program runs there.
+        let remote = self.store.lock().unwrap().remote_of(&grant);
+        if let Some(remote) = remote {
+            return self
+                .spawn_remote(&grant, remote, effective_args, stdin)
+                .await;
         }
 
         let mut child = match Command::new(&req.image)

@@ -245,7 +245,17 @@ pub async fn run(
     } else {
         None
     };
-    let inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
+    let mut broker = broker;
+    let mut process = process;
+    let mut inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
+    if let Some(ep) = &iroh_ep {
+        let remotes = crate::remote::Remotes::new(ep.clone());
+        let locator = crate::remote::locator_of(ep, &broker_key.public());
+        grants.lock().unwrap().set_locator(locator);
+        broker = broker.with_remote(Arc::new(remotes.clone()));
+        process = process.with_remotes(remotes.clone());
+        inference = inference.with_remotes(remotes);
+    }
     let fs_serve = FsServe {
         component_path: config.fs_component.clone(),
         root: config.root.clone(),

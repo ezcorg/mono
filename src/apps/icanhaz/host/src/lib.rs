@@ -46,6 +46,8 @@ pub mod session;
 
 #[cfg(test)]
 mod iroh_tests;
+#[cfg(test)]
+mod remote_tests;
 
 // The broker itself is a library (`icanhaz-broker`), re-exported here so the
 // daemon, the tray app and tests address it as they always did.
@@ -55,3 +57,5 @@ pub use icanhaz_broker::{
 
 /// The peer path: serving over iroh.
 pub mod iroh;
+/// Other brokers over iroh: locators, connections, remote redemption.
+pub mod remote;
