@@ -104,6 +104,7 @@ pub fn run() {
             consent::clear_pairings,
             consent::clear_hosts,
             consent::list_configuration,
+            consent::list_components,
             consent::set_configuration,
             consent::remove_configuration
         ])

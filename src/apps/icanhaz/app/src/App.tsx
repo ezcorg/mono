@@ -51,6 +51,7 @@ type ConfigurationView = {
 };
 type SiteView = { origin: string; kinds: string[] };
 
+type ComponentInfo = { hash: string; name: string | null; size: number; imports: string[]; exports: string[]; added: number };
 type ErrorEntry = { id: number; message: string };
 type AppInfo = { version: string; ws: string; wt: string; root: string };
 
@@ -86,6 +87,7 @@ export function App() {
   const [grants, setGrants] = createSignal<GrantView[]>([]);
   const [caps, setCaps] = createSignal<CapabilityView[]>([]);
   const [config, setConfig] = createSignal<ConfigurationView[]>([]);
+  const [components, setComponents] = createSignal<ComponentInfo[]>([]);
   const [sites, setSites] = createSignal<SiteView[]>([]);
   const [approvedHosts, setApprovedHosts] = createSignal<string[]>([]);
   const [unknownHosts, setUnknownHosts] = createSignal<SiteView[]>([]);
@@ -99,7 +101,7 @@ export function App() {
 
   const refresh = async () => {
     try {
-      const [p, g, c, s, ah, uh, er, cf] = await Promise.all([
+      const [p, g, c, s, ah, uh, er, cf, cm] = await Promise.all([
         invoke<Pending[]>("list_pending"),
         invoke<GrantView[]>("list_grants"),
         invoke<CapabilityView[]>("list_capabilities", { lang: null }),
@@ -108,6 +110,7 @@ export function App() {
         invoke<SiteView[]>("list_unknown_hosts"),
         invoke<ErrorEntry[]>("list_errors"),
         invoke<ConfigurationView[]>("list_configuration"),
+        invoke<ComponentInfo[]>("list_components"),
       ]);
       // Preserve object identity for pending ids so an in-progress card keeps its edits.
       setPending((prev) => {
@@ -122,6 +125,7 @@ export function App() {
       setErrors(er);
       // Keep a panel's rows stable while its form is open: replace only on change.
       setConfig((prev) => (JSON.stringify(prev) === JSON.stringify(cf) ? prev : cf));
+      setComponents((prev) => (JSON.stringify(prev) === JSON.stringify(cm) ? prev : cm));
     } catch {
       /* transient — the backend may still be starting */
     }
@@ -224,6 +228,21 @@ export function App() {
                 {(cfg) => <ConfigurationPanel cfg={cfg()} onChanged={refresh} />}
               </Show>
             </>
+          )}
+        </For>
+        <div class="section-label">capability components</div>
+        <p class="dim intro">// code the daemon can link as a capability, kept by hash. Adding one grants nothing; linking it to a provider is a grant like any other.</p>
+        <For each={components()} fallback={<p class="empty">No components in the store.</p>}>
+          {(c) => (
+            <div class="row">
+              <span class="ico">🧩</span>
+              <div class="grow">
+                <div class="row-title">{c.name ?? c.hash.slice(7, 19)}</div>
+                <div class="desc dim">
+                  <code>{c.hash.slice(0, 23)}…</code> · {Math.round(c.size / 1024)} KB · exports {c.exports.map((e) => e.replace(/@.*$/, "")).join(", ")}
+                </div>
+              </div>
+            </div>
           )}
         </For>
         <Show when={config().some((cfg) => !caps().some((c) => c.id === cfg.capability))}>

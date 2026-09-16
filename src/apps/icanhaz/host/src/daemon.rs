@@ -84,6 +84,8 @@ pub struct Services {
     /// Everything declared on this machine: the daemon's own schemas and the
     /// ones other local hosts registered over `icanhaz:nocap/configuration`.
     pub registry: Arc<Registry>,
+    /// Capability components by hash (`<store dir>/components/`).
+    pub components: Arc<crate::components::ComponentStore>,
 }
 
 impl Services {
@@ -111,11 +113,21 @@ impl Services {
             ezcap::Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}"))
         });
         let registry = Arc::new(Registry::new(store.clone(), Self::declared()));
+        let components_dir = Store::default_path()
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+            .join("components");
+        let components = Arc::new(crate::components::ComponentStore::new(
+            components_dir,
+            store.clone(),
+        ));
         Self {
             store,
             providers,
             identity,
             registry,
+            components,
         }
     }
 
@@ -127,6 +139,11 @@ impl Services {
     /// The wRPC provider other local hosts declare through.
     pub fn configuration_provider(&self) -> ConfigurationProvider {
         ConfigurationProvider::new(Arc::clone(&self.registry))
+    }
+
+    /// The wRPC provider components are added and fetched through.
+    pub fn components_provider(&self) -> crate::components::ComponentsProvider {
+        crate::components::ComponentsProvider::new(Arc::clone(&self.components))
     }
 
     /// Every declared configuration (the daemon's and other hosts') with its
@@ -213,6 +230,20 @@ pub async fn run(
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
     let configuration = services.configuration_provider();
+    let components = services.components_provider();
+    // The shipped passthrough is the store's first component, so what the
+    // daemon links today is addressable by hash like anything a user brings.
+    match std::fs::read(&config.fs_component) {
+        Ok(bytes) => match services.components.add(&bytes).await {
+            Ok(info) => {
+                tracing::info!(hash = %info.hash, "fs-passthrough registered in the component store")
+            }
+            Err(e) => tracing::warn!(error = %e, "shipped fs-passthrough did not validate"),
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, path = %config.fs_component.display(), "fs-passthrough component not readable")
+        }
+    }
     let Services {
         providers,
         identity: broker_key,
@@ -310,6 +341,7 @@ pub async fn run(
             watch.clone(),
             inference.clone(),
             configuration.clone(),
+            components.clone(),
             fs_serve.clone()
         ),
         serve_webtransport_all(
@@ -322,6 +354,7 @@ pub async fn run(
             watch.clone(),
             inference.clone(),
             configuration.clone(),
+            components.clone(),
             fs_serve.clone()
         ),
         async {
@@ -336,6 +369,7 @@ pub async fn run(
                         watch,
                         inference,
                         configuration,
+                        components,
                         fs_serve,
                     )
                     .await

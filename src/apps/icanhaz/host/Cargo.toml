@@ -52,7 +52,9 @@ ezcap = { path = "../../../rust/ezcap" }
 ezdb = { path = "../../../rust/ezdb" }
 # Inference providers over HTTP (OpenAI-compatible, Anthropic).
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
-wit-parser = "0.254"
+# Component inspection (the Tier 3 validator) and the content-addressed store.
+wit-parser = { version = "0.244", features = ["decoding"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

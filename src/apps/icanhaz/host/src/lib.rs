@@ -55,6 +55,8 @@ pub use icanhaz_broker::{
     approve, broker, capabilities, configuration, configuration_serve, store, AsOrigin, ReqCtx,
 };
 
+/// The component store: capability components a user brings, validated and kept by hash.
+pub mod components;
 /// The peer path: serving over iroh.
 pub mod iroh;
 /// Other brokers over iroh: locators, connections, remote redemption.

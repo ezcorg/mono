@@ -1,0 +1,34 @@
+package icanhaz:nocap@0.1.0;
+
+/// The component store: capability components, content-addressed. A
+/// component is code, not authority: anyone may add one (it is validated,
+/// hashed and kept), and linking it to a provider is a grant decided
+/// elsewhere. Validation is the Tier 3 rule: every import must be a
+/// capability interface (`wasi:*`, `icanhaz:nocap/*`, `icanhaz:fspass/*`,
+/// `ezco:ezcap/*`); a library import is refused with the hint to compose it
+/// in at build time; the exports must satisfy a capability interface too.
+interface components {
+  record component-info {
+    /// `sha256:<hex>` of the bytes: the name everything refers to it by.
+    hash: string,
+    /// The world or package name the component declares, if any.
+    name: option<string>,
+    size: u64,
+    /// Qualified interface names (`wasi:filesystem/types@0.2.12`).
+    imports: list<string>,
+    exports: list<string>,
+    /// Unix seconds.
+    added: u64,
+  }
+
+  add: func(bytes: list<u8>) -> result<component-info, string>;
+  all: func() -> list<component-info>;
+  get: func(hash: string) -> result<list<u8>, string>;
+  /// Local hosts only.
+  remove: func(hash: string) -> result<bool, string>;
+}
+
+world components-wrpc {
+  import components;
+  export components;
+}

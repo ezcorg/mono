@@ -457,6 +457,17 @@ pub async fn list_configuration(app: AppHandle) -> Result<Vec<ConfigurationView>
         .collect())
 }
 
+/// The capability components in the store, by hash (the Capabilities tab).
+#[tauri::command]
+pub async fn list_components(
+    app: AppHandle,
+) -> Result<Vec<icanhaz_host::components::ComponentInfo>, String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Ok(Vec::new());
+    };
+    Ok(services.components.list().await)
+}
+
 /// Create or update one configured instance from the form's inputs.
 #[tauri::command]
 pub async fn set_configuration(
