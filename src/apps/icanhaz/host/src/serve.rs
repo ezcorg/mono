@@ -391,7 +391,7 @@ pub async fn serve_iroh_all(
     fs_serve: FsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
-    let accept = tokio::spawn(crate::broker::accept_iroh::<()>(endpoint, Arc::clone(&srv)));
+    let accept = tokio::spawn(crate::iroh::accept_iroh::<()>(endpoint, Arc::clone(&srv)));
     let res = drive(
         srv.as_ref(),
         broker_p,

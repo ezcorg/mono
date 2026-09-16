@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::AsOrigin;
 
-pub(crate) mod bindings {
+pub mod bindings {
     wit_bindgen_wrpc::generate!({
         world: "broker-wrpc",
         path: "../wit",
@@ -62,7 +62,7 @@ pub use bindings::icanhaz::nocap::types::{
 use bindings::icanhaz::nocap::types::{Denied, GrantInfo, Principal, PrincipalKind};
 use bindings::icanhaz::nocap::types::{Endpoint, SocketRequest, Transport};
 /// The call a native handler submits for admission (`ezcap::Call`).
-pub(crate) use ezcap::Call as AdmitCall;
+pub use ezcap::Call as AdmitCall;
 use ezcap::{Audience, Certificate, Keypair, Membranes, Narrowing, Presented, Scope as EzScope};
 
 /// The outcome of asking a human (or a stand-in) for consent.
@@ -303,7 +303,7 @@ fn is_unrestricted(scope: &EzScope) -> bool {
 }
 
 /// `ezco:ezcap/types.scope` off the wire.
-pub(crate) fn scope_from_wire(s: &ScopeWire) -> EzScope {
+pub fn scope_from_wire(s: &ScopeWire) -> EzScope {
     EzScope {
         when: s.when.clone(),
         allow: s.allow.clone(),
@@ -325,7 +325,7 @@ fn narrowing_from_wire(s: &ScopeWire) -> Narrowing {
 
 /// The caller a native handler binds for `caller.*` clauses: today only the
 /// transport-attested origin; the peer key joins when the iroh transport does.
-pub(crate) fn caller_of(cx: &impl AsOrigin) -> ezcap::Caller {
+pub fn caller_of(cx: &impl AsOrigin) -> ezcap::Caller {
     ezcap::Caller {
         origin: cx.origin().map(str::to_string),
         ..Default::default()
@@ -334,7 +334,7 @@ pub(crate) fn caller_of(cx: &impl AsOrigin) -> ezcap::Caller {
 
 /// A denial as the string the capability interfaces return. An out-of-scope
 /// denial carries the scope as sentences, which is what the guest should show.
-pub(crate) fn denied_text(denied: &Denied) -> String {
+pub fn denied_text(denied: &Denied) -> String {
     match denied {
         Denied::OutOfScope(sentences) => format!("out of scope: {sentences}"),
         Denied::InvalidScope(msg) => format!("invalid scope: {msg}"),
@@ -1936,7 +1936,7 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
 }
 
 /// Drive every broker invocation arriving at `srv` until the stream ends.
-async fn drive_broker<C, S>(srv: &S, provider: BrokerProvider) -> anyhow::Result<()>
+pub async fn drive_broker<C, S>(srv: &S, provider: BrokerProvider) -> anyhow::Result<()>
 where
     C: AsOrigin + Send + Sync + 'static,
     S: wrpc_transport::Serve<Context = C>,
@@ -1985,56 +1985,6 @@ pub async fn serve_tcp(listener: TcpListener, provider: BrokerProvider) -> anyho
             }
         }
     });
-    let res = drive_broker(srv.as_ref(), provider).await;
-    accept.abort();
-    res
-}
-
-/// The ALPN icanhaz serves wRPC under on iroh.
-pub const IROH_ALPN: &[u8] = b"icanhaz/0";
-
-/// The context an iroh connection proves: the remote endpoint id the QUIC
-/// handshake authenticated, as the caller's peer key. No origin: a peer is
-/// not a browser page.
-pub fn iroh_ctx(conn: &iroh::endpoint::Connection) -> crate::ReqCtx {
-    crate::ReqCtx {
-        origin: None,
-        peer: Some(ezcap::PublicKey::from_bytes(*conn.remote_id().as_bytes())),
-    }
-}
-
-/// Accept iroh connections on `endpoint` and serve every wRPC stream on them
-/// against `srv`, each invocation carrying [`iroh_ctx`]. Runs until the
-/// endpoint closes.
-pub async fn accept_iroh<C>(
-    endpoint: iroh::Endpoint,
-    srv: Arc<wrpc_transport_iroh::Server<crate::ReqCtx>>,
-) where
-    C: Send,
-{
-    while let Some(incoming) = endpoint.accept().await {
-        let conn = match incoming.await {
-            Ok(conn) => conn,
-            Err(err) => {
-                tracing::debug!(?err, "iroh connection failed to establish");
-                continue;
-            }
-        };
-        let srv = Arc::clone(&srv);
-        tokio::spawn(async move {
-            let cx = iroh_ctx(&conn);
-            tracing::info!(peer = %cx.peer.map(|p| p.to_string()).unwrap_or_default(), "iroh peer connected");
-            if let Err(err) = wrpc_transport_iroh::serve_connection_with(&srv, &conn, cx).await {
-                tracing::debug!(?err, "iroh connection ended");
-            }
-        });
-    }
-}
-
-/// Serve the broker alone over iroh (tests; the daemon uses [`crate::serve`]).
-pub async fn serve_iroh(endpoint: iroh::Endpoint, provider: BrokerProvider) -> anyhow::Result<()> {
-    let srv = Arc::new(wrpc_transport_iroh::Server::<crate::ReqCtx>::new());
-    let accept = tokio::spawn(accept_iroh::<()>(endpoint, Arc::clone(&srv)));
     let res = drive_broker(srv.as_ref(), provider).await;
     accept.abort();
     res

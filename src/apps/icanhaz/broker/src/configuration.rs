@@ -294,14 +294,6 @@ pub struct Instance {
     pub values: Vec<Configured>,
 }
 
-/// Every configuration the installed capabilities declare.
-pub fn declared() -> Vec<Declared> {
-    crate::capabilities::registry()
-        .iter()
-        .filter_map(|c| c.configuration.map(|f| f()))
-        .collect()
-}
-
 fn describe(value: &Value) -> String {
     match value {
         Value::Str(s) | Value::Select(s) | Value::Datetime(s) => format!("\"{s}\""),

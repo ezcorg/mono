@@ -13,9 +13,9 @@ use crate::broker::bindings::ezco::ezcap::types::Scope as ScopeWire;
 use crate::broker::bindings::icanhaz::nocap::types::Denied;
 use crate::broker::client::Audience;
 use crate::broker::{
-    client, serve_iroh, BrokerProvider, CapabilityKind, Consent, GrantStore, Pairings,
-    ProcessRequest, IROH_ALPN,
+    client, BrokerProvider, CapabilityKind, Consent, GrantStore, Pairings, ProcessRequest,
 };
+use crate::iroh::{serve_iroh, IROH_ALPN};
 
 fn unrestricted() -> ScopeWire {
     ScopeWire {

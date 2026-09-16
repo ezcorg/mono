@@ -44,18 +44,15 @@ tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
+# The consent broker as a library: grant store, certificates, consent, store.
+icanhaz-broker = { path = "../broker" }
 # The shared capability scope model (ezco:ezcap): per-call admission membranes.
 ezcap = { path = "../../../rust/ezcap" }
-# The encrypted store (declared configuration + per-owner state).
+# The encrypted store's key sources (tests open temp stores).
 ezdb = { path = "../../../rust/ezdb" }
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 # Inference providers over HTTP (OpenAI-compatible, Anthropic).
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 wit-parser = "0.254"
-
-[build-dependencies]
-# build.rs generates the ezcap CEL environments from ../wit (see build.rs).
-ezcap = { path = "../../../rust/ezcap" }
 
 [dev-dependencies]
 tempfile = "3"

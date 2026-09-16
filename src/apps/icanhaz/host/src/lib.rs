@@ -29,16 +29,10 @@ pub mod workspace;
 /// a consented filesystem grant (`wasi:filesystem@0.2` has no change notifications).
 pub mod watch;
 
-/// Declared configuration: `forms`-typed schemas capabilities register, and the
-/// generic list/set/remove operations over the store's `configuration` table.
-pub mod configuration;
 /// LLM inference through the host's configured providers (`inference.wit`).
 pub mod inference;
 /// The inference backends and their streaming clients.
 pub mod providers;
-/// The daemon's durable store (encrypted SQLite): declared configuration + per-owner state.
-pub mod store;
-
 /// The daemon's serving layer — every capability on one wRPC server per transport.
 pub mod serve;
 
@@ -50,64 +44,12 @@ pub mod daemon;
 /// the grant is revoked or expires. Shared by terminal / process / watch.
 pub mod session;
 
-/// The consent broker — the NoCap gate (request → consent → scoped grant token).
-pub mod broker;
 #[cfg(test)]
 mod iroh_tests;
-#[cfg(test)]
-mod scoped_tests;
 
-/// The registry of installed host capabilities (id · emoji · localizable description).
-pub mod capabilities;
+// The broker itself is a library (`icanhaz-broker`), re-exported here so the
+// daemon, the tray app and tests address it as they always did.
+pub use icanhaz_broker::{approve, broker, capabilities, configuration, store, AsOrigin, ReqCtx};
 
-/// The consent **surface** — notification + the daemon's loopback approval page
-/// (how a backgrounded daemon collects a decision).
-pub mod approve;
-
-/// Per-connection request context the transports attach at accept time and every
-/// handler receives per invocation. Today it carries the browser-attested
-/// `Origin` (which web app is asking). **Trust caveat:** the `Origin` header is
-/// faithful *only because a browser sets it* (page JS can't forge it) — it labels
-/// the requester, it does not authenticate that the peer is a browser. It feeds
-/// the consent decision; it is not itself the gate. Grows a verified peer
-/// identity for the tailnet path later.
-#[derive(Clone, Debug, Default)]
-pub struct ReqCtx {
-    pub origin: Option<String>,
-    /// The peer's Ed25519 key when the transport authenticated one (the iroh
-    /// path: the QUIC handshake proves the remote endpoint id). `None` on
-    /// WebSocket and WebTransport.
-    pub peer: Option<ezcap::PublicKey>,
-}
-
-/// Lets a handler read what the transport proved about the caller out of
-/// whatever context it supplies — `ReqCtx` on the origin-bearing WebSocket
-/// path and the peer-authenticated iroh path, `()` elsewhere (the loopback
-/// test serves, and WebTransport until it carries one).
-pub trait AsOrigin {
-    fn origin(&self) -> Option<&str>;
-    /// The transport-authenticated peer key, if any.
-    fn peer(&self) -> Option<&ezcap::PublicKey> {
-        None
-    }
-    /// Both, as a certificate's audience is checked against them.
-    fn presented(&self) -> ezcap::Presented {
-        ezcap::Presented {
-            origin: self.origin().map(str::to_string),
-            peer: self.peer().copied(),
-        }
-    }
-}
-impl AsOrigin for () {
-    fn origin(&self) -> Option<&str> {
-        None
-    }
-}
-impl AsOrigin for ReqCtx {
-    fn origin(&self) -> Option<&str> {
-        self.origin.as_deref()
-    }
-    fn peer(&self) -> Option<&ezcap::PublicKey> {
-        self.peer.as_ref()
-    }
-}
+/// The peer path: serving over iroh.
+pub mod iroh;

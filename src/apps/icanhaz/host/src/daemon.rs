@@ -16,7 +16,7 @@ use anyhow::Context as _;
 use tokio::net::TcpListener;
 
 use crate::broker::{BrokerProvider, Consent, GrantStore, Hosts, Pairings};
-use crate::configuration::{self, Declared, Instance, UserInput};
+use crate::configuration::{Declared, Instance, UserInput};
 use crate::process::ProcessProvider;
 use crate::providers::Providers;
 use crate::serve::{serve_iroh_all, serve_websocket_all, serve_webtransport_all, FsServe};
@@ -113,11 +113,16 @@ impl Services {
         }
     }
 
+    /// Every configuration the daemon's capabilities declare.
+    pub fn declared() -> Vec<Declared> {
+        vec![Providers::declared()]
+    }
+
     /// Every declared configuration with its configured instances (secrets
     /// masked). Without a store, each schema lists no instances.
     pub async fn configuration(&self) -> anyhow::Result<Vec<(Declared, Vec<Instance>)>> {
         let mut out = Vec::new();
-        for declared in configuration::declared() {
+        for declared in Self::declared() {
             let instances = match &self.store {
                 Some(store) => declared.instances(store).await?,
                 None => Vec::new(),
@@ -150,7 +155,7 @@ impl Services {
     }
 
     fn target(&self, capability: &str) -> anyhow::Result<(Declared, &Store)> {
-        let Some(declared) = configuration::declared()
+        let Some(declared) = Self::declared()
             .into_iter()
             .find(|d| d.capability == capability)
         else {
@@ -234,7 +239,7 @@ pub async fn run(
         let secret = iroh::SecretKey::from_bytes(&broker_key.to_bytes());
         match iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
             .secret_key(secret)
-            .alpns(vec![crate::broker::IROH_ALPN.to_vec()])
+            .alpns(vec![crate::iroh::IROH_ALPN.to_vec()])
             .bind()
             .await
         {

@@ -11,6 +11,7 @@ members = [
     "src/rust/cicd",
     "src/apps/ezfilter/src-tauri",
     "src/apps/ezfilter/e2e",
+    "src/apps/icanhaz/broker",
     "src/apps/icanhaz/host",
     "src/apps/icanhaz/app/src-tauri",
     "src/rust/ezcap",
