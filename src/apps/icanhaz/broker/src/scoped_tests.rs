@@ -256,10 +256,9 @@ async fn surface_narrowing_conjoins_onto_the_requested_scope() {
             let bad = ezcap::Narrowing::allow("call.args.nope == 1");
             {
                 let s = store.lock().unwrap();
-                assert!(s.check_scope(&req.want, &req.scope.narrowed(&bad)).is_err());
-                assert!(s
-                    .check_scope(&req.want, &req.scope.narrowed(&extra))
-                    .is_ok());
+                let kind = req.want.native().expect("a native want");
+                assert!(s.check_scope(kind, &req.scope.narrowed(&bad)).is_err());
+                assert!(s.check_scope(kind, &req.scope.narrowed(&extra)).is_ok());
             }
             assert!(pending.resolve(
                 &req.id,
@@ -422,4 +421,98 @@ async fn certificates_redeem_for_their_audience_only() {
         .expect("wrpc ok");
     let refused = provider.redeem(notes, cert).await.expect("wrpc ok");
     assert!(matches!(refused, Err(Denied::Revoked)), "{refused:?}");
+}
+
+/// Another host asks on behalf of its caller: the human sees the kind by
+/// path and the scope as sentences, may append clauses, and the asker gets
+/// the conjoined scope back to enforce itself. Nothing is granted here.
+#[tokio::test]
+async fn foreign_consent_returns_the_conjoined_scope_and_issues_nothing() {
+    use crate::approve::{Approval, PendingConsent};
+    use crate::broker::bindings::ezco::ezcap::types::Capability as CapabilityWire;
+    use crate::broker::Want;
+
+    let store = GrantStore::shared();
+    let pending = PendingConsent::with_notifier(|_| {});
+    let provider = BrokerProvider::new(
+        store.clone(),
+        Consent::Surface(pending.clone()),
+        Pairings::shared(),
+    );
+    let surface = {
+        let pending = pending.clone();
+        tokio::spawn(async move {
+            let req = loop {
+                if let Some(r) = pending.list().pop() {
+                    break r;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            };
+            match &req.want {
+                Want::Foreign { kind, summary } => {
+                    assert_eq!(kind, "witmproxy:plugin/capabilities.local-storage-client");
+                    assert_eq!(summary, "local storage for @ezco/noshorts");
+                }
+                other => panic!("expected a foreign want, got {other:?}"),
+            }
+            assert_eq!(req.requester, "witmproxy");
+            assert!(pending.resolve(
+                &req.id,
+                Some(Approval {
+                    grant: None,
+                    narrowing: Some(ezcap::Narrowing::allow("size(call.args.key) < 64")),
+                    remember: false,
+                    ttl_secs: 3600,
+                })
+            ));
+        })
+    };
+    let approval = provider
+        .consent(
+            ReqCtx::default(),
+            CapabilityWire {
+                kind: "witmproxy:plugin/capabilities.local-storage-client".to_string(),
+                scope: scope(r#"call.args.key.startsWith("seen/")"#),
+            },
+            "local storage for @ezco/noshorts".to_string(),
+            "remember seen posts".to_string(),
+            "witmproxy".to_string(),
+        )
+        .await
+        .expect("wrpc ok")
+        .expect("approved");
+    surface.await.expect("surface task");
+    assert_eq!(
+        approval.scope.allow,
+        r#"(call.args.key.startsWith("seen/")) && (size(call.args.key) < 64)"#
+    );
+    assert_eq!(approval.ttl_secs, 3600);
+    // No grant was issued here: the asking host enforces the scope itself.
+    let infos = provider.granted(ReqCtx::default()).await.expect("wrpc ok");
+    assert!(infos.is_empty(), "{infos:?}");
+
+    // The auto-approving and auto-denying stand-ins behave as for native kinds.
+    let auto = BrokerProvider::new(store.clone(), Consent::AutoApprove, Pairings::shared());
+    let cap = CapabilityWire {
+        kind: "witmproxy:plugin/capabilities.logger".to_string(),
+        scope: scope("true"),
+    };
+    assert!(auto
+        .consent(
+            ReqCtx::default(),
+            cap.clone(),
+            "s".into(),
+            "r".into(),
+            "w".into()
+        )
+        .await
+        .expect("wrpc ok")
+        .is_ok());
+    let deny = BrokerProvider::new(store, Consent::AutoDeny, Pairings::shared());
+    assert!(matches!(
+        deny.consent(ReqCtx::default(), cap, "s".into(), "r".into(), "w".into())
+            .await
+            .expect("wrpc ok"),
+        Err(Denied::UserRejected)
+    ));
 }

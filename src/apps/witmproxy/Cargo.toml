@@ -67,6 +67,10 @@ serde_json = "1.0"
 ezcap = { path = "../../rust/ezcap" }
 # icanhaz's broker as a library: plugin capabilities are grants in its store.
 icanhaz-broker = { path = "../icanhaz/broker" }
+# Install-time consent asks the icanhaz tray app over wRPC (WebSocket; TCP in tests).
+wrpc-transport = { path = "../../rust/wrpc/crates/transport", features = ["net"] }
+wrpc-websockets = { path = "../../rust/wrpc/crates/websockets", features = ["ring", "rand"] }
+tokio-websockets = { version = "0.13", default-features = false, features = ["client"] }
 # The encrypted store (SQLCipher) with a keychain-first key source.
 ezdb = { path = "../../rust/ezdb" }
 toml = "0.9.8"

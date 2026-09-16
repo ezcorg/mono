@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager as _, State};
 use icanhaz_host::approve::{Approval, PendingConsent};
 use icanhaz_host::broker::{
     CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, InferenceRequest, Pairings,
-    PathGrant, ProcessRequest, ScopeText, TerminalRequest,
+    PathGrant, ProcessRequest, ScopeText, TerminalRequest, Want,
 };
 use icanhaz_host::configuration::{Declared, Instance, UserInput};
 use icanhaz_host::daemon::Services;
@@ -62,6 +62,12 @@ pub enum CapabilityDto {
     Inference {
         models: Vec<String>,
     },
+    /// A kind another host asked about on behalf of its caller (witmproxy's
+    /// plugin capabilities): known by path, narrowed only through the scope.
+    Foreign {
+        path: String,
+        summary: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -77,6 +83,18 @@ pub struct FsRightsDto {
     pub create: bool,
     pub delete: bool,
     pub watch: bool,
+}
+
+impl From<&Want> for CapabilityDto {
+    fn from(w: &Want) -> Self {
+        match w {
+            Want::Native(k) => CapabilityDto::from(k),
+            Want::Foreign { kind, summary } => CapabilityDto::Foreign {
+                path: kind.clone(),
+                summary: summary.clone(),
+            },
+        }
+    }
 }
 
 impl From<&CapabilityKind> for CapabilityDto {
@@ -169,7 +187,7 @@ impl CapabilityDto {
             CapabilityDto::Inference { models } => {
                 Some(CapabilityKind::Inference(InferenceRequest { models }))
             }
-            CapabilityDto::Sockets { .. } => None,
+            CapabilityDto::Sockets { .. } | CapabilityDto::Foreign { .. } => None,
         }
     }
 }
@@ -527,7 +545,11 @@ pub fn check_narrowing(
         Some(extra) => req.scope.narrowed(&extra),
         None => req.scope,
     };
-    grants.lock().unwrap().check_scope(&req.want, &scope)?;
+    // A foreign kind has no environment here: the asking host type-checks
+    // the scope when it enforces it; only the sentences can be shown.
+    if let Some(kind) = req.want.native() {
+        grants.lock().unwrap().check_scope(kind, &scope)?;
+    }
     Ok(ScopeText::of(&scope))
 }
 

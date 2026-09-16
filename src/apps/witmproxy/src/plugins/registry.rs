@@ -41,6 +41,9 @@ pub struct PluginRegistry {
     /// The grant store every plugin's provider capabilities are issued in (see
     /// [`crate::plugins::grants`]).
     grants: crate::plugins::grants::Grants,
+    /// Where install-time consent is decided (see [`crate::plugins::consent`]);
+    /// `None` grants every wanted capability as proposed.
+    consent: Option<crate::plugins::consent::IcanhazConsent>,
     /// One persistent local-storage client per plugin id, so `set` survives
     /// across events (a fresh `Store` is created per event for isolation).
     /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
@@ -124,6 +127,7 @@ impl PluginRegistry {
             runtime,
             env,
             grants: crate::plugins::grants::shared()?,
+            consent: None,
             local_storage: Mutex::new(HashMap::new()),
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),
@@ -352,6 +356,32 @@ impl PluginRegistry {
     pub(crate) async fn register_plugin_for_test(&self, plugin: WitmPlugin) -> Result<()> {
         let plugin = plugin.compile_capability_scope_expressions(self.env, &self.grants)?;
         self.register_plugin(plugin).await
+    }
+
+    /// Route install-time consent through an icanhaz broker.
+    pub fn set_consent(&mut self, consent: Option<crate::plugins::consent::IcanhazConsent>) {
+        self.consent = consent;
+    }
+
+    /// Decide what a freshly parsed plugin gets of what it wants: through the
+    /// configured broker (the human, at the tray app), else everything as
+    /// proposed. Call before [`PluginRegistry::register_plugin`].
+    pub async fn consent_for(&self, plugin: &mut WitmPlugin) -> Result<()> {
+        let id = plugin.id();
+        match &self.consent {
+            Some(consent) => {
+                consent
+                    .decide(&id, &plugin.description, &mut plugin.capabilities)
+                    .await
+            }
+            None => {
+                plugin
+                    .capabilities
+                    .iter_mut()
+                    .for_each(|cap| cap.granted = true);
+                Ok(())
+            }
+        }
     }
 
     pub async fn register_plugin(&self, plugin: WitmPlugin) -> Result<()> {

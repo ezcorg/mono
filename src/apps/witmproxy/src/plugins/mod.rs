@@ -20,6 +20,7 @@ use crate::{
 
 pub mod capabilities;
 pub mod cel;
+pub mod consent;
 pub mod grants;
 pub mod limits;
 pub mod registry;

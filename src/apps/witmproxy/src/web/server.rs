@@ -443,7 +443,7 @@ async fn upsert_plugin(
         }
     };
 
-    let plugin = match registry
+    let mut plugin = match registry
         .plugin_from_component_with_key(bytes, expected_key.as_deref())
         .await
     {
@@ -458,6 +458,17 @@ async fn upsert_plugin(
             return;
         }
     };
+    // What it gets of what it wants: the human's call at the icanhaz tray app
+    // when one is configured, everything as proposed otherwise.
+    if let Err(e) = registry.consent_for(&mut plugin).await {
+        warn!("Consent for plugin failed: {}", e);
+        res.status_code(salvo::http::StatusCode::BAD_GATEWAY);
+        res.render(salvo::writing::Text::Plain(format!(
+            "Could not decide the plugin's capabilities: {}",
+            e
+        )));
+        return;
+    }
 
     let result = registry.register_plugin(plugin).await;
     match result {

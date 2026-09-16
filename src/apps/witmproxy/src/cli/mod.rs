@@ -1201,6 +1201,9 @@ impl ResolvedCli {
         let plugin_registry = if self.config.plugins.enabled {
             let runtime = Runtime::try_default()?;
             let mut registry = PluginRegistry::new(db, runtime)?;
+            if let Some(url) = &self.config.plugins.icanhaz {
+                registry.set_consent(Some(crate::plugins::consent::IcanhazConsent::connect(url)?));
+            }
             // Activate the global baseline sandbox limits from config. A value
             // of 0 means "unlimited" for that dimension. Individual plugins may
             // carry overrides in the database, which are resolved against this

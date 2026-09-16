@@ -449,17 +449,18 @@ impl PluginHandler {
 
         // Create runtime and registry
         let runtime = Runtime::try_default()?;
-        let registry = PluginRegistry::new(db, runtime)?;
+        let mut registry = PluginRegistry::new(db, runtime)?;
+        if let Some(url) = &self.config.icanhaz {
+            registry.set_consent(Some(crate::plugins::consent::IcanhazConsent::connect(url)?));
+        }
 
         // Create plugin from component bytes (including signature verification)
         let mut plugin = registry
             .plugin_from_component_with_key(component_bytes, expected_key.as_deref())
             .await?;
-        // TODO: DON'T GRANT ALL THE THINGS ALWAYS
-        plugin
-            .capabilities
-            .iter_mut()
-            .for_each(|cap| cap.granted = true);
+        // What it gets of what it wants: the human's call at the icanhaz tray
+        // app when one is configured, everything as proposed otherwise.
+        registry.consent_for(&mut plugin).await?;
 
         debug!(
             "Received plugin: {}/{}:{}",

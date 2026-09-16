@@ -51,6 +51,7 @@ use bindings::exports::icanhaz::nocap::broker::Grant as GrantReply;
 // Re-exported for the capability gate: a provider names `CapabilityKind` to say
 // which kind a presented grant must authorise. `TerminalRequest` is re-exported
 // for constructing terminal wants (tests, the daemon).
+use bindings::exports::icanhaz::nocap::broker::Approval;
 use bindings::exports::icanhaz::nocap::broker::Audience as AudienceWire;
 /// The wire form of `ezco:ezcap/types.scope` (the generated record), distinct
 /// from [`ezcap::Scope`], which the store works with.
@@ -72,7 +73,9 @@ pub enum Decision {
     /// for `ttl`. `remember` ⇒ pair the origin (durable consent — skip the prompt next
     /// time); else a one-time grant.
     Approve {
-        grant: CapabilityKind,
+        /// For a native want: the possibly-narrowed provider parameters. For
+        /// a foreign one, `None`: the asking host owns those.
+        grant: Option<CapabilityKind>,
         /// Clauses the human added. Applied as `requested && extra`, so a
         /// surface can only ever tighten a scope, never rewrite it.
         narrowing: Option<Narrowing>,
@@ -81,6 +84,45 @@ pub enum Decision {
     },
     /// Refuse it, with the reason the requestor sees.
     Deny(Denied),
+}
+
+/// What a consent decision is about: one of this broker's own kinds (with
+/// its provider parameters, which a surface may narrow), or a kind another
+/// host asked about on behalf of its caller, known here only by path.
+#[derive(Debug, Clone)]
+pub enum Want {
+    Native(CapabilityKind),
+    Foreign {
+        /// The WIT path (`witmproxy:plugin/capabilities.logger`).
+        kind: String,
+        /// The asking host's one-liner for the prompt.
+        summary: String,
+    },
+}
+
+impl Want {
+    /// A human-legible one-liner.
+    pub fn summarize(&self) -> String {
+        match self {
+            Want::Native(k) => summarize(k),
+            Want::Foreign { summary, .. } => summary.clone(),
+        }
+    }
+
+    /// The kind tag (native) or path (foreign).
+    pub fn tag(&self) -> String {
+        match self {
+            Want::Native(k) => kind_tag(k).to_string(),
+            Want::Foreign { kind, .. } => kind.clone(),
+        }
+    }
+
+    pub fn native(&self) -> Option<&CapabilityKind> {
+        match self {
+            Want::Native(k) => Some(k),
+            Want::Foreign { .. } => None,
+        }
+    }
 }
 
 /// Default grant lifetime. (A richer consent UI would let the human choose.)
@@ -116,14 +158,14 @@ impl Consent {
 
     pub async fn decide(
         &self,
-        want: &CapabilityKind,
+        want: &Want,
         scope: &EzScope,
         reason: &str,
         requester: &str,
     ) -> Decision {
         match self {
             Consent::AutoApprove => Decision::Approve {
-                grant: want.clone(),
+                grant: want.native().cloned(),
                 narrowing: None,
                 ttl: GRANT_TTL,
                 remember: true,
@@ -139,10 +181,10 @@ impl Consent {
 
 /// Map a human's typed reply to a decision — **fail-closed**: only an explicit
 /// `y`/`yes` approves; everything else (incl. empty / EOF) denies.
-fn decision_from_reply(reply: &str, want: &CapabilityKind) -> Decision {
+fn decision_from_reply(reply: &str, want: &Want) -> Decision {
     match reply.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => Decision::Approve {
-            grant: want.clone(),
+            grant: want.native().cloned(),
             narrowing: None,
             ttl: GRANT_TTL,
             remember: true,
@@ -155,7 +197,7 @@ fn decision_from_reply(reply: &str, want: &CapabilityKind) -> Decision {
 /// on `lock` so concurrent requests queue rather than interleave on the tty.
 async fn cli_decide(
     lock: &Arc<tokio::sync::Mutex<()>>,
-    want: &CapabilityKind,
+    want: &Want,
     scope: &EzScope,
     reason: &str,
     requester: &str,
@@ -180,7 +222,7 @@ async fn cli_decide(
          │ reason    : {}\n\
          └ approve? [y/N] ",
         requester,
-        summarize(want),
+        want.summarize(),
         lines,
         reason,
     );
@@ -201,7 +243,7 @@ async fn cli_decide(
 /// when the human clicks Approve/Deny on the daemon's own loopback page.
 async fn surface_decide(
     pending: &crate::approve::PendingConsent,
-    want: &CapabilityKind,
+    want: &Want,
     scope: &EzScope,
     reason: &str,
     requester: &str,
@@ -210,7 +252,7 @@ async fn surface_decide(
     let req = crate::approve::PendingRequest {
         id: id.clone(),
         requester: requester.to_string(),
-        summary: summarize(want),
+        summary: want.summarize(),
         reason: reason.to_string(),
         want: want.clone(),
         scope: scope.clone(),
@@ -222,9 +264,10 @@ async fn surface_decide(
             // The surface may return an attenuated grant; `narrow` clamps it to a
             // subset of `want` regardless (a surface can only ever *narrow*). `None`
             // ⇒ approve as-requested (the loopback page does no attenuation).
-            let grant = match approval.grant {
-                Some(g) => narrow(want, &g),
-                None => want.clone(),
+            let grant = match (want, approval.grant) {
+                (Want::Native(orig), Some(g)) => Some(narrow(orig, &g)),
+                (Want::Native(orig), None) => Some(orig.clone()),
+                (Want::Foreign { .. }, _) => None,
             };
             Decision::Approve {
                 grant,
@@ -1843,9 +1886,10 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         }
 
         let requester = principal_label(&principal);
+        let asked = Want::Native(want.clone());
         match self
             .consent
-            .decide(&want, &scope, &reason, &requester)
+            .decide(&asked, &scope, &reason, &requester)
             .await
         {
             Decision::Deny(denied) => {
@@ -1879,6 +1923,7 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                 };
                 // Issue the (possibly attenuated) grant the human actually approved —
                 // its summary, not the original request's, is what the audit view shows.
+                let grant = grant.unwrap_or(want);
                 let granted_summary = summarize_scoped(&grant, &scope);
                 tracing::info!(%requester, summary = %granted_summary, %reason, remember, paired = new_secret.is_some(), "consent granted");
                 let issued = self.store.lock().unwrap().issue_scoped(
@@ -1931,6 +1976,70 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
             token,
             pairing: None,
         }))
+    }
+
+    async fn consent(
+        &self,
+        cx: C,
+        capability: bindings::ezco::ezcap::types::Capability,
+        summary: String,
+        reason: String,
+        requester: String,
+    ) -> anyhow::Result<Result<Approval, Denied>> {
+        // Another host asks on behalf of its caller; the human decides here,
+        // the asker enforces. The asker itself is gated like any requester.
+        let principal = principal_of(&cx);
+        if matches!(
+            principal.kind,
+            PrincipalKind::WebOrigin | PrincipalKind::Peer
+        ) && principal.id != "local"
+        {
+            let mut hosts = self.hosts.lock().unwrap();
+            if !hosts.is_allowed(&principal.id) {
+                hosts.record_seen(&principal.id, "consent");
+                return Ok(Err(Denied::NotAuthorized));
+            }
+        }
+        let scope = scope_from_wire(&capability.scope);
+        let want = Want::Foreign {
+            kind: capability.kind.clone(),
+            summary,
+        };
+        let requester = if requester.is_empty() {
+            principal_label(&principal)
+        } else {
+            requester
+        };
+        match self
+            .consent
+            .decide(&want, &scope, &reason, &requester)
+            .await
+        {
+            Decision::Deny(denied) => {
+                tracing::info!(%requester, kind = %capability.kind, %reason, "consent denied (foreign)");
+                Ok(Err(denied))
+            }
+            Decision::Approve {
+                narrowing,
+                ttl,
+                remember,
+                ..
+            } => {
+                let scope = match narrowing {
+                    Some(extra) => scope.narrowed(&extra),
+                    None => scope,
+                };
+                tracing::info!(%requester, kind = %capability.kind, %reason, "consent granted (foreign)");
+                Ok(Ok(Approval {
+                    scope: ScopeWire {
+                        when: scope.when,
+                        allow: scope.allow,
+                    },
+                    ttl_secs: ttl.as_secs(),
+                    remember,
+                }))
+            }
+        }
     }
 
     async fn identity(&self, _cx: C) -> anyhow::Result<String> {
@@ -2285,13 +2394,19 @@ mod tests {
         let want = terminal_want();
         for yes in ["y", "yes", "  Y \n", "YES"] {
             assert!(
-                matches!(decision_from_reply(yes, &want), Decision::Approve { .. }),
+                matches!(
+                    decision_from_reply(yes, &Want::Native(want.clone())),
+                    Decision::Approve { .. }
+                ),
                 "{yes:?} should approve"
             );
         }
         for no in ["n", "no", "", "\n", "nope", "yeah", "1", "sure"] {
             assert!(
-                matches!(decision_from_reply(no, &want), Decision::Deny(_)),
+                matches!(
+                    decision_from_reply(no, &Want::Native(want.clone())),
+                    Decision::Deny(_)
+                ),
                 "{no:?} must deny"
             );
         }

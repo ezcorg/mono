@@ -9,7 +9,8 @@ type Capability =
   | { kind: "process"; image: string; args: string[]; guest_chooses_argv: boolean }
   | { kind: "terminal"; shell: string | null; jailed: boolean }
   | { kind: "sockets"; endpoints: string[]; may_listen: boolean }
-  | { kind: "inference"; models: string[] };
+  | { kind: "inference"; models: string[] }
+  | { kind: "foreign"; path: string; summary: string };
 type ScopeText = { when: string[]; allow: string[] };
 type Pending = {
   id: string;
@@ -696,6 +697,14 @@ function CapabilityEditor(props: { orig: Capability; cap: () => Capability; setC
       <Show when={props.cap().kind === "sockets"}>
         <div class="cap-title">network{sock().may_listen ? " — may listen" : ""}</div>
         <For each={sock().endpoints}>{(e) => <div class="root"><span class="path">{e}</span></div>}</For>
+      </Show>
+
+      <Show when={props.cap().kind === "foreign"}>
+        <div class="cap-title">on behalf of another host</div>
+        <div class="root">
+          <span class="path">{(props.cap() as Extract<Capability, { kind: "foreign" }>).path}</span>
+        </div>
+        <div class="dim">{(props.cap() as Extract<Capability, { kind: "foreign" }>).summary}</div>
       </Show>
 
       <Show when={props.cap().kind === "inference"}>

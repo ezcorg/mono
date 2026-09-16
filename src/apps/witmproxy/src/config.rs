@@ -305,6 +305,14 @@ pub struct PluginConfig {
     )]
     pub enabled: bool,
 
+    /// An icanhaz broker (`ws://127.0.0.1:7777`, the tray app) that decides,
+    /// at install time, which of the capabilities a plugin wants it gets. The
+    /// human sees each one there, may narrow its scope, and witmproxy
+    /// enforces the result. Unset: every wanted capability is granted as
+    /// proposed.
+    #[arg(long = "plugins-icanhaz", env = "PLUGINS_ICANHAZ")]
+    pub icanhaz: Option<String>,
+
     /// Plugin execution timeout in milliseconds (default: 10000). Set to 0 for no timeout.
     #[arg(
         long = "timeout-ms",
@@ -844,6 +852,12 @@ pub struct PluginScopedConfig {
 
     #[arg(flatten)]
     pub tls: TlsConfig,
+
+    /// An icanhaz broker (`ws://127.0.0.1:7777`, the tray app) that decides
+    /// which of the capabilities a plugin wants it gets (see
+    /// `PluginConfig::icanhaz`). Unset: everything as proposed.
+    #[arg(long = "plugins-icanhaz", env = "PLUGINS_ICANHAZ")]
+    pub icanhaz: Option<String>,
 }
 
 impl PluginScopedConfig {

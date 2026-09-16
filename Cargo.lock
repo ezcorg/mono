@@ -13025,6 +13025,7 @@ dependencies = [
  "tokio-stream",
  "tokio-test",
  "tokio-util",
+ "tokio-websockets",
  "toml 0.9.8",
  "tower",
  "tower-http",
@@ -13039,6 +13040,8 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wit-bindgen 0.61.1",
+ "wrpc-transport",
+ "wrpc-websockets",
  "x509-parser",
  "zeroize",
 ]

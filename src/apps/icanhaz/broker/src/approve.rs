@@ -40,9 +40,10 @@ pub struct PendingRequest {
     pub summary: String,
     /// The requestor's stated reason (website-supplied — untrusted text).
     pub reason: String,
-    /// The structured capability requested — what a rich (native) surface renders as
-    /// editable controls and attenuates. The loopback page ignores it (approve-as-is).
-    pub want: crate::broker::CapabilityKind,
+    /// What is asked: one of this broker's kinds (which a rich surface renders as
+    /// editable controls and attenuates), or a foreign kind known by path. The
+    /// loopback page ignores it (approve-as-is).
+    pub want: crate::broker::Want,
     /// The requested scope (`ezco:ezcap` CEL). A surface shows it as sentences
     /// ([`crate::broker::ScopeText`]) and may append clauses in its approval.
     pub scope: ezcap::Scope,
@@ -486,10 +487,12 @@ mod tests {
             requester: "https://notes.example.com".to_string(),
             summary: "terminal (your login shell)".to_string(),
             reason: "open a \"shell\"".to_string(),
-            want: crate::broker::CapabilityKind::Terminal(crate::broker::TerminalRequest {
-                shell: None,
-                jailed: false,
-            }),
+            want: crate::broker::Want::Native(crate::broker::CapabilityKind::Terminal(
+                crate::broker::TerminalRequest {
+                    shell: None,
+                    jailed: false,
+                },
+            )),
             scope: ezcap::Scope::unrestricted(),
         });
 

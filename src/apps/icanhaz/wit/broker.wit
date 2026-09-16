@@ -8,7 +8,7 @@ package icanhaz:nocap@0.1.0;
 /// policy components (the membrane) narrow what a grant actually permits.
 interface broker {
   use types.{ capability-kind, denied, grant-info };
-  use ezco:ezcap/types@0.1.0.{ scope };
+  use ezco:ezcap/types@0.1.0.{ scope, capability };
 
   /// A successful grant. `token` is the bearer to present when claiming/using the
   /// capability. `pairing` is set only when the host *first* pairs this origin: a
@@ -71,6 +71,24 @@ interface broker {
   /// and the certificate's. No consent is raised: the human consented when
   /// the source grant was issued, and the holder chose to share it.
   redeem: func(cert: string) -> result<grant, denied>;
+
+  /// What the human decided about a capability another host asked on behalf
+  /// of its own caller (see `consent`).
+  record approval {
+    /// The requested scope conjoined with whatever the human appended.
+    scope: scope,
+    ttl-secs: u64,
+    remember: bool,
+  }
+
+  /// Ask the human on behalf of another host. `capability.kind` names a kind
+  /// this broker does not provide (`witmproxy:plugin/capabilities.logger`):
+  /// the human sees the kind, the scope as sentences and the reason, and may
+  /// append clauses. No grant is issued here; the caller enforces the
+  /// returned scope in its own store (and type-checks it there, since this
+  /// broker has no environment for a foreign kind). `summary` is the
+  /// caller's one-liner for the prompt; `requester` who is asking.
+  consent: func(capability: capability, summary: string, reason: string, requester: string) -> result<approval, denied>;
 
   /// This broker's public key (base64url Ed25519): what a certificate's
   /// issuer field must match, and how a peer audience names itself.
