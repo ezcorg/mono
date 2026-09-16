@@ -567,6 +567,17 @@ impl PluginRegistry {
                 cache.remove(plugin_id);
             }
         }
+        // Withdraw its settings form from the tray app. The saved values stay
+        // in the daemon's store until removed there: they may hold a key the
+        // user wants back on reinstall.
+        if let Some(icanhaz) = &self.icanhaz {
+            for plugin_id in &removed_plugin_ids {
+                Self::lock_seen(&self.settings_seen).remove(plugin_id);
+                if let Err(err) = icanhaz.undeclare(plugin_id).await {
+                    warn!("could not withdraw {plugin_id}'s configuration at icanhaz: {err:#}");
+                }
+            }
+        }
 
         Ok(removed_plugin_ids)
     }
