@@ -20,8 +20,8 @@ use crate::{
 
 pub mod capabilities;
 pub mod cel;
+pub mod grants;
 pub mod limits;
-pub mod membranes;
 pub mod registry;
 
 #[cfg(test)]
@@ -93,11 +93,12 @@ impl WitmPlugin {
     pub fn compile_capability_scope_expressions(
         mut self,
         env: &'static cel_cxx::Env,
-        membranes: &membranes::Membranes,
+        grants: &grants::Grants,
     ) -> Result<Self> {
+        let id = self.id();
         self.capabilities
             .iter_mut()
-            .try_for_each(|c| c.compile_scope_expression(env, membranes))?;
+            .try_for_each(|c| c.compile_scope_expression(env, grants, &id))?;
         Ok(self)
     }
 
@@ -110,7 +111,7 @@ impl WitmPlugin {
         db: &mut Db,
         runtime: &Runtime,
         env: &'static cel_cxx::Env<'static>,
-        membranes: &membranes::Membranes,
+        grants: &grants::Grants,
     ) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
@@ -179,7 +180,7 @@ impl WitmPlugin {
                 inner: config,
                 granted: granted_flag,
                 when: None,
-                instance: None,
+                token: None,
             };
             plugin.capabilities.push(capability);
         }
@@ -206,7 +207,7 @@ impl WitmPlugin {
             });
         }
 
-        plugin = plugin.compile_capability_scope_expressions(env, membranes)?;
+        plugin = plugin.compile_capability_scope_expressions(env, grants)?;
         Ok(plugin)
     }
 
@@ -214,7 +215,7 @@ impl WitmPlugin {
         db: &mut Db,
         engine: &wasmtime::Engine,
         env: &'static cel_cxx::Env<'static>,
-        membranes: &membranes::Membranes,
+        grants: &grants::Grants,
     ) -> Result<Vec<Self>> {
         let rows = query(
             "
@@ -232,7 +233,7 @@ impl WitmPlugin {
 
         let mut plugins = Vec::new();
         for row in rows {
-            match WitmPlugin::from_db_row(row, db, &runtime, env, membranes).await {
+            match WitmPlugin::from_db_row(row, db, &runtime, env, grants).await {
                 Ok(plugin) => plugins.push(plugin),
                 Err(e) => {
                     error!(
@@ -308,7 +309,7 @@ impl From<PluginManifest> for WitmPlugin {
                 inner: c,
                 granted: true,
                 when: None,
-                instance: None,
+                token: None,
             })
             .collect::<Vec<Capability>>();
 

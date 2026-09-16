@@ -263,7 +263,7 @@ async fn register_adversarial_for(
             },
         },
         when: None,
-        instance: None,
+        token: None,
     };
 
     let plugin = WitmPlugin {

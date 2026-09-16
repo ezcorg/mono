@@ -579,7 +579,7 @@ impl GrantStore<CapabilityKind> {
 
 /// A live grant projected for the app's audit/management view — serde-friendly
 /// (unlike the wRPC `grant-info`), with a countdown to expiry.
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GrantView {
     pub id: String,
     pub holder: String,
@@ -996,11 +996,7 @@ impl<K: GrantKind> GrantStore<K> {
     /// The capability gate: confirm a presented `token` is live and authorises
     /// `kind_ok`. Unknown ⇒ `not-authorized`; lapsed ⇒ `revoked`; wrong kind ⇒
     /// `not-authorized`. A capability calls this before doing anything.
-    pub fn validate(
-        &self,
-        token: &str,
-        kind_ok: impl Fn(&K) -> bool,
-    ) -> Result<(), Denied> {
+    pub fn validate(&self, token: &str, kind_ok: impl Fn(&K) -> bool) -> Result<(), Denied> {
         let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
         if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
             return Err(Denied::Revoked);
@@ -1016,8 +1012,7 @@ impl<K: GrantKind> GrantStore<K> {
     pub fn charge(&mut self, token: &str, counter: &str, amount: i64) {
         if let Some(grant) = self.grants.get(token) {
             if let Some(id) = &grant.instance {
-                self.membranes
-                    .charge(grant.kind.tag(), id, counter, amount);
+                self.membranes.charge(grant.kind.tag(), id, counter, amount);
             }
         }
     }

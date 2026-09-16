@@ -38,9 +38,9 @@ pub struct PluginRegistry {
     pub db: Db,
     pub runtime: Runtime,
     env: &'static Env<'static>,
-    /// Per-kind admission membranes for the provider capabilities (see
-    /// [`crate::plugins::membranes`]).
-    membranes: Arc<crate::plugins::membranes::Membranes>,
+    /// The grant store every plugin's provider capabilities are issued in (see
+    /// [`crate::plugins::grants`]).
+    grants: crate::plugins::grants::Grants,
     /// One persistent local-storage client per plugin id, so `set` survives
     /// across events (a fresh `Store` is created per event for isolation).
     /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
@@ -123,7 +123,7 @@ impl PluginRegistry {
             db,
             runtime,
             env,
-            membranes: Arc::new(crate::plugins::membranes::builtin()?),
+            grants: crate::plugins::grants::shared()?,
             local_storage: Mutex::new(HashMap::new()),
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),
@@ -237,7 +237,7 @@ impl PluginRegistry {
         // `WitmPlugin::all` takes `&mut Db` but only needs the (Clone) pool.
         let mut db = self.db.clone();
         let plugins =
-            WitmPlugin::all(&mut db, &self.runtime.engine, self.env, &self.membranes).await?;
+            WitmPlugin::all(&mut db, &self.runtime.engine, self.env, &self.grants).await?;
         self.mutate_plugins(|map| {
             for plugin in plugins.into_iter() {
                 map.insert(plugin.id(), Arc::new(plugin));
@@ -336,7 +336,7 @@ impl PluginRegistry {
 
         let plugin = WitmPlugin::from(guest_result)
             .with_component(component, component_bytes)
-            .compile_capability_scope_expressions(self.env, &self.membranes)?;
+            .compile_capability_scope_expressions(self.env, &self.grants)?;
         Ok(plugin)
     }
 
@@ -350,7 +350,7 @@ impl PluginRegistry {
     /// thinks it is testing.
     #[cfg(test)]
     pub(crate) async fn register_plugin_for_test(&self, plugin: WitmPlugin) -> Result<()> {
-        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.membranes)?;
+        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.grants)?;
         self.register_plugin(plugin).await
     }
 
@@ -359,7 +359,7 @@ impl PluginRegistry {
         // edited a scope after `plugin_from_component` compiled the
         // manifest's version; without this the stale program would keep
         // deciding which events the plugin sees.
-        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.membranes)?;
+        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.grants)?;
         // Upsert the given plugin into the database (`Insert` takes `&mut Db`
         // but only needs the Clone pool).
         let mut db = self.db.clone();
@@ -402,7 +402,7 @@ impl PluginRegistry {
                 .await?;
         let mut db = self.db.clone();
         let plugin =
-            WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env, &self.membranes).await?;
+            WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env, &self.grants).await?;
         // The cached InstancePre (if any) stays valid: it was resolved from a
         // component compiled from the same bytes on the same engine.
         self.mutate_plugins(|map| {
@@ -881,7 +881,7 @@ impl PluginRegistry {
                 Some(storage),
                 &plugin_limits,
                 self.breaches_for(&plugin_id),
-                Some((&self.membranes, plugin_id.as_str())),
+                Some((&self.grants, plugin_id.as_str())),
             );
             let cap_resource = store.data_mut().table.push(provider)?;
             let config = plugin.configuration.clone();
@@ -963,7 +963,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
             Capability {
                 granted: true,
@@ -975,7 +975,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
             Capability {
                 granted: true,
@@ -987,7 +987,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
         ];
 
@@ -1009,7 +1009,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(registry.env, &registry.membranes)?;
+        .compile_capability_scope_expressions(registry.env, &registry.grants)?;
         registry.register_plugin(plugin).await
     }
 
@@ -1165,7 +1165,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
             Capability {
                 granted: true,
@@ -1177,7 +1177,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
         ];
 
@@ -1247,7 +1247,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
             Capability {
                 granted: true,
@@ -1259,7 +1259,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
             Capability {
                 granted: true,
@@ -1271,7 +1271,7 @@ mod tests {
                     },
                 },
                 when: None,
-                instance: None,
+                token: None,
             },
         ];
 
@@ -1293,7 +1293,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(registry.env, &registry.membranes)?;
+        .compile_capability_scope_expressions(registry.env, &registry.grants)?;
         registry.register_plugin(plugin2).await?;
 
         // Test with a request that should match both plugins initially
@@ -1394,7 +1394,7 @@ mod tests {
                         },
                     },
                     when: None,
-                    instance: None,
+                    token: None,
                 },
                 Capability {
                     granted: true,
@@ -1406,7 +1406,7 @@ mod tests {
                         },
                     },
                     when: None,
-                    instance: None,
+                    token: None,
                 },
             ];
 

@@ -25,8 +25,8 @@ mod runtime;
 
 use crate::events::content::InboundContent;
 use crate::plugins::capabilities::Capability;
+use crate::plugins::grants::{self, Grants};
 use crate::plugins::limits::{BreachRecorder, LimitKind, ResolvedLimits};
-use crate::plugins::membranes::Membranes;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     CapabilityKind, HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
     HostCapabilityProviderWithStore, HostClockClient, HostClockClientWithStore, HostContent,
@@ -34,33 +34,27 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     HostLoggerWithStore,
 };
 use bindgen::ezco::ezcap::types::CapabilityError;
+use icanhaz_broker::broker::bindings::icanhaz::nocap::types::Denied;
 pub use runtime::Runtime;
 
 pub mod bindgen;
 
-/// The per-call admission handle a minted provider resource carries: which
-/// membrane instance decides, under which capability tag, and who the caller
-/// is (`caller.plugin` = the plugin id). `None` on a resource means no scope
-/// was minted for it (test-built providers), and every call is admitted.
+/// The per-call admission handle a minted provider resource carries: the
+/// grant that decides and who the caller is (`caller.plugin` = the plugin
+/// id). `None` on a resource means no grant was issued for it (test-built
+/// providers), and every call is admitted.
 #[derive(Clone)]
 pub struct Admission {
-    membranes: Arc<Membranes>,
-    tag: &'static str,
-    instance: ezcap::InstanceId,
+    grants: Grants,
+    token: String,
     caller: ezcap::Caller,
 }
 
 impl Admission {
-    pub fn new(
-        membranes: Arc<Membranes>,
-        tag: &'static str,
-        instance: ezcap::InstanceId,
-        plugin_id: &str,
-    ) -> Self {
+    pub fn new(grants: Grants, token: String, plugin_id: &str) -> Self {
         Self {
-            membranes,
-            tag,
-            instance,
+            grants,
+            token,
             caller: ezcap::Caller {
                 plugin: Some(plugin_id.to_string()),
                 ..Default::default()
@@ -85,10 +79,10 @@ fn admit(
     for (name, val) in args {
         call = call.arg(name, val);
     }
-    match a.membranes.admit(a.tag, &a.instance, &call) {
+    match grants::lock(&a.grants).admit(&a.token, call) {
         Ok(()) => Ok(()),
-        Err(ezcap::CapabilityError::Denied(sentences)) => Err(CapabilityError::Denied(sentences)),
-        Err(ezcap::CapabilityError::Unavailable) => Err(CapabilityError::Unavailable),
+        Err(Denied::OutOfScope(sentences)) => Err(CapabilityError::Denied(sentences)),
+        Err(_) => Err(CapabilityError::Unavailable),
     }
 }
 
@@ -166,27 +160,22 @@ impl CapabilityProvider {
         local_storage: Option<LocalStorageClient>,
         limits: &ResolvedLimits,
         breaches: Arc<BreachRecorder>,
-        // The registry's membranes and the plugin id, so each minted resource
-        // admits its calls through the capability's instance. `None` (tests)
+        // The registry's grant store and the plugin id, so each minted resource
+        // admits its calls through the capability's grant. `None` (tests)
         // admits everything.
-        admission: Option<(&Arc<Membranes>, &str)>,
+        admission: Option<(&Grants, &str)>,
     ) -> Self {
         let mut provider = CapabilityProvider::new();
         for cap in capabilities {
             if !cap.granted {
                 continue;
             }
-            let adm =
-                match (
-                    admission,
-                    crate::plugins::membranes::tag_of(&cap.inner.kind),
-                    &cap.instance,
-                ) {
-                    (Some((membranes, plugin_id)), Some(tag), Some(instance)) => Some(
-                        Admission::new(Arc::clone(membranes), tag, instance.clone(), plugin_id),
-                    ),
-                    _ => None,
-                };
+            let adm = match (admission, grants::tag_of(&cap.inner.kind), &cap.token) {
+                (Some((grants, plugin_id)), Some(_), Some(token)) => {
+                    Some(Admission::new(Arc::clone(grants), token.clone(), plugin_id))
+                }
+                _ => None,
+            };
             match &cap.inner.kind {
                 CapabilityKind::Logger => {
                     // A fresh logger per provider, i.e. per event: the budget is
@@ -1444,15 +1433,28 @@ impl HasData for WitmProxy {
 #[cfg(test)]
 mod admission_tests {
     use super::*;
-    use crate::plugins::membranes::Membranes;
+    use crate::plugins::grants::PluginKind;
+    use icanhaz_broker::broker::GrantStore;
 
-    fn scoped(tag: &'static str, allow: &str) -> (Arc<Membranes>, Admission) {
-        let membranes = Arc::new(crate::plugins::membranes::builtin().expect("environments"));
-        let instance = membranes
-            .mint(tag, &ezcap::Scope::allow(allow))
+    fn scoped(tag: &'static str, allow: &str) -> (Grants, Admission) {
+        let grants = grants::shared().expect("environments");
+        let kind = match tag {
+            "logger" => CapabilityKind::Logger,
+            "local_storage" => CapabilityKind::LocalStorage,
+            "clock" => CapabilityKind::Clock,
+            _ => CapabilityKind::Annotator,
+        };
+        let token = grants::lock(&grants)
+            .issue_scoped(
+                PluginKind(kind),
+                ezcap::Scope::allow(allow),
+                tag.to_string(),
+                GrantStore::<PluginKind>::FOREVER,
+                grants::principal("ezco/test"),
+            )
             .expect("scope compiles");
-        let admission = Admission::new(Arc::clone(&membranes), tag, instance, "ezco/test");
-        (membranes, admission)
+        let admission = Admission::new(Arc::clone(&grants), token, "ezco/test");
+        (grants, admission)
     }
 
     #[test]

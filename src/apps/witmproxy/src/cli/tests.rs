@@ -68,7 +68,7 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
         &mut db,
         &runtime.engine,
         env,
-        &crate::plugins::membranes::builtin()?,
+        &crate::plugins::grants::shared()?,
     )
     .await
     .unwrap();
@@ -186,7 +186,7 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
         &mut db,
         &runtime.engine,
         env,
-        &crate::plugins::membranes::builtin()?,
+        &crate::plugins::grants::shared()?,
     )
     .await
     .unwrap();
@@ -210,7 +210,7 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
         &mut db,
         &runtime.engine,
         env,
-        &crate::plugins::membranes::builtin()?,
+        &crate::plugins::grants::shared()?,
     )
     .await
     .unwrap();
@@ -253,7 +253,7 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
         &mut db,
         &runtime.engine,
         env,
-        &crate::plugins::membranes::builtin()?,
+        &crate::plugins::grants::shared()?,
     )
     .await
     .unwrap();
@@ -277,7 +277,7 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
         &mut db,
         &runtime.engine,
         env,
-        &crate::plugins::membranes::builtin()?,
+        &crate::plugins::grants::shared()?,
     )
     .await
     .unwrap();

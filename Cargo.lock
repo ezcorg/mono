@@ -4224,6 +4224,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "icanhaz-broker"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "ezcap",
+ "ezdb",
+ "futures",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wit-bindgen-wrpc",
+ "wrpc-transport",
+]
+
+[[package]]
 name = "icanhaz-host"
 version = "0.0.0"
 dependencies = [
@@ -4232,6 +4252,7 @@ dependencies = [
  "ezcap",
  "ezdb",
  "futures",
+ "icanhaz-broker",
  "iroh",
  "notify 6.1.1",
  "portable-pty",
@@ -4239,7 +4260,6 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sqlx",
  "tempfile",
  "tokio",
  "tokio-stream",
@@ -12973,6 +12993,7 @@ dependencies = [
  "hyper 1.11.1",
  "hyper-rustls",
  "hyper-util",
+ "icanhaz-broker",
  "jsonwebtoken",
  "libsqlite3-sys",
  "notify 8.2.0",
