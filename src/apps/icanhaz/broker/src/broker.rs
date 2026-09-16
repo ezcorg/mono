@@ -242,8 +242,37 @@ async fn surface_decide(
 }
 
 /// The authority behind a token: what was granted, to whom, and when it lapses.
-struct Grant {
-    kind: CapabilityKind,
+/// What a grant is *of*: the host's capability kinds. icanhaz's are the
+/// `nocap` variants; witmproxy's are its plugin capability kinds. The store
+/// needs only a membrane tag, a one-liner and a durable form.
+pub trait GrantKind: Clone + Send + Sync + 'static {
+    /// The membrane tag (`filesystem`, `logger`, …): which environment
+    /// admits calls on grants of this kind.
+    fn tag(&self) -> &'static str;
+    /// A human-legible one-liner for consent prompts and the audit view.
+    fn summarize(&self) -> String;
+    /// The durable form, for certified grants that persist.
+    fn to_json(&self) -> serde_json::Value;
+    fn from_json(v: &serde_json::Value) -> Option<Self>;
+}
+
+impl GrantKind for CapabilityKind {
+    fn tag(&self) -> &'static str {
+        kind_tag(self)
+    }
+    fn summarize(&self) -> String {
+        summarize(self)
+    }
+    fn to_json(&self) -> serde_json::Value {
+        kind_to_json(self)
+    }
+    fn from_json(v: &serde_json::Value) -> Option<Self> {
+        kind_from_json(v)
+    }
+}
+
+struct Grant<K> {
+    kind: K,
     /// How calls on this grant may be used (`ezco:ezcap/types.scope`). The
     /// provider parameters in `kind` say what was instantiated; this says how
     /// it may be called. Narrowing only ever conjoins clauses.
@@ -345,8 +374,8 @@ pub fn denied_text(denied: &Denied) -> String {
 /// The live set of issued grants, keyed by their (secret) token. Shared between
 /// the broker (which mints into it) and the capabilities (which `validate`
 /// against it, and `admit` each call through the grant's membrane instance).
-pub struct GrantStore {
-    grants: HashMap<String, Grant>,
+pub struct GrantStore<K: GrantKind = CapabilityKind> {
+    grants: HashMap<String, Grant<K>>,
     membranes: Membranes,
     /// Sturdy references: the unguessable id a certificate names → the grant
     /// it was issued on. A certificate never carries the bearer token.
@@ -492,14 +521,58 @@ fn principal_kind_parse(s: &str) -> PrincipalKind {
     }
 }
 
-impl Default for GrantStore {
+impl Default for GrantStore<CapabilityKind> {
     fn default() -> Self {
-        Self {
-            grants: HashMap::new(),
-            membranes: builtin_membranes(),
-            sturdy: HashMap::new(),
-            identity: Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}")),
-            persist: None,
+        Self::with_membranes(builtin_membranes())
+    }
+}
+
+impl GrantStore<CapabilityKind> {
+    pub fn shared() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self::default()))
+    }
+    /// Validate a token is a live **filesystem** grant and return the path
+    /// prefixes it negotiated (its `fs-request` roots) — the caveats the membrane
+    /// jails to. Unknown/expired ⇒ the matching denial; wrong kind ⇒ not-authorized.
+    pub fn validate_filesystem(&self, token: &str) -> Result<Vec<String>, Denied> {
+        let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
+        if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
+            return Err(Denied::Revoked);
+        }
+        match &grant.kind {
+            CapabilityKind::Filesystem(req) => {
+                Ok(req.roots.iter().map(|r| r.path.clone()).collect())
+            }
+            _ => Err(Denied::NotAuthorized),
+        }
+    }
+
+    /// Validate a token is a live **process** grant and return its `process-request`
+    /// — the `image` the grant pinned at consent time plus whether the caller may
+    /// choose argv. The provider spawns *that* image (never a caller-named one), so
+    /// a grant for `rust-analyzer` can't be turned into `rm`. Unknown/expired ⇒ the
+    /// matching denial; wrong kind ⇒ not-authorized.
+    pub fn validate_process(&self, token: &str) -> Result<ProcessRequest, Denied> {
+        let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
+        if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
+            return Err(Denied::Revoked);
+        }
+        match &grant.kind {
+            CapabilityKind::Process(req) => Ok(req.clone()),
+            _ => Err(Denied::NotAuthorized),
+        }
+    }
+
+    /// Validate a token is a live **inference** grant and return its
+    /// `inference-request` (the models it may use; empty = any configured).
+    pub fn validate_inference(&self, token: &str) -> Result<InferenceRequest, Denied> {
+        let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
+        if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
+            return Err(Denied::Revoked);
+        }
+        match &grant.kind {
+            CapabilityKind::Inference(req) => Ok(req.clone()),
+            _ => Err(Denied::NotAuthorized),
         }
     }
 }
@@ -516,9 +589,25 @@ pub struct GrantView {
     pub expires_in_secs: u64,
 }
 
-impl GrantStore {
-    pub fn shared() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self::default()))
+impl<K: GrantKind> GrantStore<K> {
+    /// A grant that does not lapse on its own (a plugin's, for as long as it
+    /// is installed): a century.
+    pub const FOREVER: Duration = Duration::from_secs(100 * 365 * 24 * 60 * 60);
+
+    /// A store over `membranes`: one environment per kind tag, generated from
+    /// the host's WIT by its build script (see `ezcap::build::write_envs`).
+    pub fn with_membranes(membranes: Membranes) -> Self {
+        Self {
+            grants: HashMap::new(),
+            membranes,
+            sturdy: HashMap::new(),
+            identity: Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}")),
+            persist: None,
+        }
+    }
+
+    pub fn shared_with(membranes: Membranes) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self::with_membranes(membranes)))
     }
 
     /// Mint a fresh grant for `principal` over `kind` (valid for `ttl`) and return
@@ -526,7 +615,7 @@ impl GrantStore {
     /// it to stand in for a prior consented request.
     pub fn issue(
         &mut self,
-        kind: CapabilityKind,
+        kind: K,
         summary: String,
         ttl: Duration,
         principal: Principal,
@@ -544,8 +633,8 @@ impl GrantStore {
     /// kind's interface (a clause naming an argument it lacks, or a type
     /// error, is refused) without minting anything. For consent surfaces to
     /// validate a human's narrowing before it is applied.
-    pub fn check_scope(&self, kind: &CapabilityKind, scope: &EzScope) -> Result<(), String> {
-        let tag = kind_tag(kind);
+    pub fn check_scope(&self, kind: &K, scope: &EzScope) -> Result<(), String> {
+        let tag = kind.tag();
         if self.membranes.has(tag) {
             self.membranes.check(tag, scope).map_err(|e| e.to_string())
         } else if is_unrestricted(scope) {
@@ -557,13 +646,13 @@ impl GrantStore {
 
     pub fn issue_scoped(
         &mut self,
-        kind: CapabilityKind,
+        kind: K,
         scope: EzScope,
         summary: String,
         ttl: Duration,
         principal: Principal,
     ) -> Result<String, Denied> {
-        let tag = kind_tag(&kind);
+        let tag = kind.tag();
         let instance = if self.membranes.has(tag) {
             Some(
                 self.membranes
@@ -620,11 +709,11 @@ impl GrantStore {
                     stale.push(key);
                     continue;
                 }
-                let Some(kind) = kind_from_json(&row.kind) else {
+                let Some(kind) = K::from_json(&row.kind) else {
                     stale.push(key);
                     continue;
                 };
-                let tag = kind_tag(&kind);
+                let tag = kind.tag();
                 let instance = if me.membranes.has(tag) {
                     match me.membranes.mint(tag, &row.scope) {
                         Ok(id) => Some(id),
@@ -678,7 +767,7 @@ impl GrantStore {
         };
         let remaining = grant.expires.saturating_duration_since(Instant::now());
         let row = DurableGrant {
-            kind: kind_to_json(&grant.kind),
+            kind: grant.kind.to_json(),
             scope: grant.scope.clone(),
             parent: grant.parent.clone(),
             summary: grant.summary.clone(),
@@ -730,7 +819,7 @@ impl GrantStore {
             if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
                 return Err(Denied::Revoked);
             }
-            (kind_tag(&grant.kind), grant.instance.clone())
+            (grant.kind.tag(), grant.instance.clone())
         };
         // No environment for this kind ⇒ the scope was unrestricted by construction.
         let Some(id) = instance else { return Ok(()) };
@@ -752,7 +841,7 @@ impl GrantStore {
         let Some(id) = &grant.instance else {
             return Ok(());
         };
-        if self.membranes.admit_event(kind_tag(&grant.kind), id) {
+        if self.membranes.admit_event(grant.kind.tag(), id) {
             Ok(())
         } else {
             Err(Denied::OutOfScope(ezcap::profile::render_line(
@@ -792,7 +881,7 @@ impl GrantStore {
                 parent.cancel.child_token(),
             )
         };
-        let tag = kind_tag(&kind);
+        let tag = kind.tag();
         let instance = match instance {
             Some(parent_id) => Some(
                 self.membranes
@@ -910,7 +999,7 @@ impl GrantStore {
     pub fn validate(
         &self,
         token: &str,
-        kind_ok: impl Fn(&CapabilityKind) -> bool,
+        kind_ok: impl Fn(&K) -> bool,
     ) -> Result<(), Denied> {
         let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
         if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
@@ -922,58 +1011,13 @@ impl GrantStore {
         Ok(())
     }
 
-    /// Validate a token is a live **filesystem** grant and return the path
-    /// prefixes it negotiated (its `fs-request` roots) — the caveats the membrane
-    /// jails to. Unknown/expired ⇒ the matching denial; wrong kind ⇒ not-authorized.
-    pub fn validate_filesystem(&self, token: &str) -> Result<Vec<String>, Denied> {
-        let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
-        if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
-            return Err(Denied::Revoked);
-        }
-        match &grant.kind {
-            CapabilityKind::Filesystem(req) => {
-                Ok(req.roots.iter().map(|r| r.path.clone()).collect())
-            }
-            _ => Err(Denied::NotAuthorized),
-        }
-    }
-
-    /// Validate a token is a live **process** grant and return its `process-request`
-    /// — the `image` the grant pinned at consent time plus whether the caller may
-    /// choose argv. The provider spawns *that* image (never a caller-named one), so
-    /// a grant for `rust-analyzer` can't be turned into `rm`. Unknown/expired ⇒ the
-    /// matching denial; wrong kind ⇒ not-authorized.
-    pub fn validate_process(&self, token: &str) -> Result<ProcessRequest, Denied> {
-        let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
-        if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
-            return Err(Denied::Revoked);
-        }
-        match &grant.kind {
-            CapabilityKind::Process(req) => Ok(req.clone()),
-            _ => Err(Denied::NotAuthorized),
-        }
-    }
-
-    /// Validate a token is a live **inference** grant and return its
-    /// `inference-request` (the models it may use; empty = any configured).
-    pub fn validate_inference(&self, token: &str) -> Result<InferenceRequest, Denied> {
-        let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
-        if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
-            return Err(Denied::Revoked);
-        }
-        match &grant.kind {
-            CapabilityKind::Inference(req) => Ok(req.clone()),
-            _ => Err(Denied::NotAuthorized),
-        }
-    }
-
     /// Advance a host-defined counter (`tokens`, `day_tokens`) on a grant's
     /// membrane instance after a call, so later `allow` evaluations see it.
     pub fn charge(&mut self, token: &str, counter: &str, amount: i64) {
         if let Some(grant) = self.grants.get(token) {
             if let Some(id) = &grant.instance {
                 self.membranes
-                    .charge(kind_tag(&grant.kind), id, counter, amount);
+                    .charge(grant.kind.tag(), id, counter, amount);
             }
         }
     }
@@ -982,7 +1026,7 @@ impl GrantStore {
     pub fn counter(&self, token: &str, counter: &str) -> Option<i64> {
         let grant = self.grants.get(token)?;
         let id = grant.instance.as_ref()?;
-        self.membranes.counter(kind_tag(&grant.kind), id, counter)
+        self.membranes.counter(grant.kind.tag(), id, counter)
     }
 
     /// Every live grant, projected for the app's audit view (the native tray/window).
@@ -995,7 +1039,7 @@ impl GrantStore {
                 id: id.clone(),
                 holder: principal_label(&g.principal),
                 summary: g.summary.clone(),
-                icon: crate::capabilities::icon_for(kind_tag(&g.kind)).to_string(),
+                icon: crate::capabilities::icon_for(g.kind.tag()).to_string(),
                 expires_in_secs: g.expires.saturating_duration_since(now).as_secs(),
             })
             .collect()
@@ -1008,7 +1052,7 @@ impl GrantStore {
             Some(grant) => {
                 grant.cancel.cancel();
                 if let Some(instance) = &grant.instance {
-                    self.membranes.revoke(kind_tag(&grant.kind), instance);
+                    self.membranes.revoke(grant.kind.tag(), instance);
                 }
                 // Everything narrowed from it goes too (their cancel tokens are
                 // children of this one and have already fired).
@@ -1055,7 +1099,7 @@ impl GrantStore {
                 PrincipalKind::WebOrigin => Some(g.principal.id.clone()),
                 _ => None,
             };
-            (origin, kind_tag(&g.kind))
+            (origin, g.kind.tag())
         })
     }
 }
@@ -1065,8 +1109,8 @@ impl GrantStore {
 /// what the consent app's "Revoke" button should do — otherwise revocation only drops
 /// the live token and a remembered site re-acquires the grant on the next page load.
 /// Returns whether a grant was live.
-pub fn revoke_and_unpair(
-    grants: &Arc<Mutex<GrantStore>>,
+pub fn revoke_and_unpair<K: GrantKind>(
+    grants: &Arc<Mutex<GrantStore<K>>>,
     pairings: &Arc<Mutex<Pairings>>,
     id: &str,
 ) -> bool {
@@ -1583,8 +1627,8 @@ impl ScopeText {
 }
 
 /// [`summarize`] plus the scope as sentences, when it restricts anything.
-fn summarize_scoped(want: &CapabilityKind, scope: &EzScope) -> String {
-    let mut s = summarize(want);
+fn summarize_scoped<K: GrantKind>(want: &K, scope: &EzScope) -> String {
+    let mut s = want.summarize();
     if scope.when.trim() != "true" {
         s.push_str(" · when: ");
         s.push_str(&ezcap::profile::render_line(&scope.when));
