@@ -42,7 +42,9 @@ type ConfigurationView = {
   capability: string;
   instance_noun: string;
   owner_prefix: string;
+  single: boolean;
   fields: Field[];
+  description: string | null;
   icon: string;
   instances: Instance[];
   writable: boolean;
@@ -224,6 +226,24 @@ export function App() {
             </>
           )}
         </For>
+        <Show when={config().some((cfg) => !caps().some((c) => c.id === cfg.capability))}>
+          <div class="section-label">from other hosts on this machine</div>
+          <p class="dim intro">// settings other programs declared here (witmproxy's plugins). They read the values back; keys stay in the store.</p>
+          <For each={config().filter((cfg) => !caps().some((c) => c.id === cfg.capability))}>
+            {(cfg) => (
+              <>
+                <div class="row">
+                  <span class="ico">{cfg.icon}</span>
+                  <div class="grow">
+                    <div class="row-title">{cfg.capability}</div>
+                    <Show when={cfg.description}>{(d) => <div class="desc dim">{d()}</div>}</Show>
+                  </div>
+                </div>
+                <ConfigurationPanel cfg={cfg} onChanged={refresh} />
+              </>
+            )}
+          </For>
+        </Show>
       </Show>
 
       <Show when={tab() === "grants"}>
@@ -393,7 +413,7 @@ function ConfigurationPanel(props: { cfg: ConfigurationView; onChanged: () => vo
       const inputs = props.cfg.fields
         .map((f) => ({ name: f.name, value: value(f) }))
         .filter((i): i is { name: string; value: Value } => i.value !== null);
-      await invoke("set_configuration", { capability: props.cfg.capability, instance: name(), inputs });
+      await invoke("set_configuration", { capability: props.cfg.capability, instance: props.cfg.single ? "default" : name(), inputs });
       setEditing(null);
       props.onChanged();
     } catch (e) {
@@ -421,11 +441,13 @@ function ConfigurationPanel(props: { cfg: ConfigurationView; onChanged: () => vo
   return (
     <div class="config">
       <div class="config-head">
-        <span class="section-label">{props.cfg.instance_noun}s</span>
+        <span class="section-label">{props.cfg.single ? props.cfg.instance_noun : `${props.cfg.instance_noun}s`}</span>
         <Show when={props.cfg.writable} fallback={<span class="dim">store unavailable — read-only</span>}>
-          <button class="mini" disabled={editing() === ""} onClick={() => open(null)}>
-            add {props.cfg.instance_noun}
-          </button>
+          <Show when={!props.cfg.single || props.cfg.instances.length === 0}>
+            <button class="mini" disabled={editing() === ""} onClick={() => open(null)}>
+              {props.cfg.single ? "set up" : `add ${props.cfg.instance_noun}`}
+            </button>
+          </Show>
         </Show>
       </div>
       <For each={props.cfg.instances} fallback={<p class="empty small">No {props.cfg.instance_noun} configured.</p>}>
@@ -443,17 +465,19 @@ function ConfigurationPanel(props: { cfg: ConfigurationView; onChanged: () => vo
       </For>
       <Show when={editing() !== null}>
         <form class="form" onSubmit={(e) => { e.preventDefault(); save(); }}>
-          <label class="field">
-            <span class="field-name">name</span>
-            <input
-              id={`cfg-${props.cfg.capability}-name`}
-              value={name()}
-              disabled={editing() !== ""}
-              placeholder={`e.g. local`}
-              onInput={(e) => setName(e.currentTarget.value)}
-            />
-            <span class="field-desc dim">how this {props.cfg.instance_noun} is referred to here</span>
-          </label>
+          <Show when={!props.cfg.single}>
+            <label class="field">
+              <span class="field-name">name</span>
+              <input
+                id={`cfg-${props.cfg.capability}-name`}
+                value={name()}
+                disabled={editing() !== ""}
+                placeholder={`e.g. local`}
+                onInput={(e) => setName(e.currentTarget.value)}
+              />
+              <span class="field-desc dim">how this {props.cfg.instance_noun} is referred to here</span>
+            </label>
+          </Show>
           <For each={props.cfg.fields}>
             {(f) => (
               <label class="field" classList={{ check: f.input_type === "boolean" }}>

@@ -41,9 +41,13 @@ pub struct PluginRegistry {
     /// The grant store every plugin's provider capabilities are issued in (see
     /// [`crate::plugins::grants`]).
     grants: crate::plugins::grants::Grants,
-    /// Where install-time consent is decided (see [`crate::plugins::consent`]);
-    /// `None` grants every wanted capability as proposed.
-    consent: Option<crate::plugins::consent::IcanhazConsent>,
+    /// The icanhaz daemon (see [`crate::plugins::icanhaz`]): install-time
+    /// consent and plugin settings are decided and edited at its tray app.
+    /// `None` grants every wanted capability as proposed and reads settings
+    /// from witmproxy's own database.
+    icanhaz: Option<Arc<crate::plugins::icanhaz::Icanhaz>>,
+    /// The settings revision last applied per plugin id, for the poll.
+    settings_seen: Mutex<HashMap<String, u64>>,
     /// One persistent local-storage client per plugin id, so `set` survives
     /// across events (a fresh `Store` is created per event for isolation).
     /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
@@ -127,7 +131,8 @@ impl PluginRegistry {
             runtime,
             env,
             grants: crate::plugins::grants::shared()?,
-            consent: None,
+            icanhaz: None,
+            settings_seen: Mutex::new(HashMap::new()),
             local_storage: Mutex::new(HashMap::new()),
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),
@@ -240,8 +245,16 @@ impl PluginRegistry {
     pub async fn load_plugins(&self) -> Result<()> {
         // `WitmPlugin::all` takes `&mut Db` but only needs the (Clone) pool.
         let mut db = self.db.clone();
-        let plugins =
+        let mut plugins =
             WitmPlugin::all(&mut db, &self.runtime.engine, self.env, &self.grants).await?;
+        for plugin in plugins.iter_mut() {
+            if let Err(err) = self.sync_settings(plugin).await {
+                warn!(
+                    "could not sync settings for {} from icanhaz: {err:#}",
+                    plugin.id()
+                );
+            }
+        }
         self.mutate_plugins(|map| {
             for plugin in plugins.into_iter() {
                 map.insert(plugin.id(), Arc::new(plugin));
@@ -358,19 +371,19 @@ impl PluginRegistry {
         self.register_plugin(plugin).await
     }
 
-    /// Route install-time consent through an icanhaz broker.
-    pub fn set_consent(&mut self, consent: Option<crate::plugins::consent::IcanhazConsent>) {
-        self.consent = consent;
+    /// Route install-time consent and plugin settings through an icanhaz daemon.
+    pub fn set_icanhaz(&mut self, icanhaz: Option<crate::plugins::icanhaz::Icanhaz>) {
+        self.icanhaz = icanhaz.map(Arc::new);
     }
 
     /// Decide what a freshly parsed plugin gets of what it wants: through the
-    /// configured broker (the human, at the tray app), else everything as
+    /// configured daemon (the human, at the tray app), else everything as
     /// proposed. Call before [`PluginRegistry::register_plugin`].
     pub async fn consent_for(&self, plugin: &mut WitmPlugin) -> Result<()> {
         let id = plugin.id();
-        match &self.consent {
-            Some(consent) => {
-                consent
+        match &self.icanhaz {
+            Some(icanhaz) => {
+                icanhaz
                     .decide(&id, &plugin.description, &mut plugin.capabilities)
                     .await
             }
@@ -384,7 +397,83 @@ impl PluginRegistry {
         }
     }
 
-    pub async fn register_plugin(&self, plugin: WitmPlugin) -> Result<()> {
+    /// Declare the plugin's settings schema at the daemon and take whatever
+    /// the user has saved there over witmproxy's own stored values. A
+    /// plugin without declared inputs declares nothing. With no daemon
+    /// configured this is a no-op.
+    pub async fn sync_settings(&self, plugin: &mut WitmPlugin) -> Result<()> {
+        let Some(icanhaz) = &self.icanhaz else {
+            return Ok(());
+        };
+        if plugin.input_schema.is_empty() {
+            return Ok(());
+        }
+        let id = plugin.id();
+        icanhaz
+            .declare(&id, &plugin.description, &plugin.input_schema)
+            .await?;
+        let settings = icanhaz.settings(&id).await?;
+        if let Some(values) = settings.values {
+            plugin.configuration = values;
+        }
+        Self::lock_seen(&self.settings_seen).insert(id, settings.revision);
+        Ok(())
+    }
+
+    fn lock_seen(
+        seen: &Mutex<HashMap<String, u64>>,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, u64>> {
+        seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Pick up settings the user edited at the tray app: every `interval`,
+    /// each plugin whose revision moved gets its configuration replaced (a
+    /// copy-on-write swap; in-flight events keep their snapshot). Returns
+    /// immediately with no daemon configured.
+    pub fn spawn_settings_sync(self: Arc<Self>, interval: std::time::Duration) {
+        if self.icanhaz.is_none() {
+            return;
+        }
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                let Some(icanhaz) = &self.icanhaz else { return };
+                let plugins = self.plugins();
+                for (id, plugin) in plugins.iter() {
+                    if plugin.input_schema.is_empty() {
+                        continue;
+                    }
+                    let settings = match icanhaz.settings(id).await {
+                        Ok(s) => s,
+                        Err(err) => {
+                            debug!("settings poll for {id} failed: {err:#}");
+                            continue;
+                        }
+                    };
+                    let seen = Self::lock_seen(&self.settings_seen).get(id).copied();
+                    if seen == Some(settings.revision) {
+                        continue;
+                    }
+                    if let Some(values) = settings.values {
+                        info!(
+                            "settings for {id} changed at icanhaz (revision {}); applying",
+                            settings.revision
+                        );
+                        let mut updated = (**plugin).clone();
+                        updated.configuration = values;
+                        self.mutate_plugins(|map| {
+                            map.insert(id.clone(), Arc::new(updated));
+                        });
+                    }
+                    Self::lock_seen(&self.settings_seen).insert(id.clone(), settings.revision);
+                }
+            }
+        });
+    }
+
+    pub async fn register_plugin(&self, mut plugin: WitmPlugin) -> Result<()> {
+        // Its settings live at the daemon when one is configured.
+        self.sync_settings(&mut plugin).await?;
         // Compile the scope expressions as they are now. A caller may have
         // edited a scope after `plugin_from_component` compiled the
         // manifest's version; without this the stale program would keep

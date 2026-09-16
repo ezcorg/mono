@@ -21,6 +21,8 @@ pub mod approve;
 pub mod broker;
 pub mod capabilities;
 pub mod configuration;
+/// `icanhaz:nocap/configuration` over wRPC: other local hosts declare and read back.
+pub mod configuration_serve;
 #[cfg(test)]
 mod scoped_tests;
 pub mod store;

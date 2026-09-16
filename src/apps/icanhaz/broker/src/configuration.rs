@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::store::Store;
 
+/// The state owner under which declarations and revisions live.
+const OWNER: &str = "configuration";
+
 /// The host form of `forms.input-type`. Serialises externally tagged, so a
 /// unit variant is its name (`"str"`) and `select` carries its options
 /// (`{"select": ["a", "b"]}`).
@@ -129,16 +132,26 @@ pub struct UserInput {
 
 /// A capability's declared configuration: the schema one instance is filled
 /// in against, and where instances live in the store.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Declared {
-    /// The capability's registry id (`inference`).
+    /// The capability's registry id (`inference`), or another host's name
+    /// for its part (`witmproxy:@ezco/noshorts`).
     pub capability: String,
     /// What an instance is, for the form's heading (`backend`).
     pub instance_noun: String,
     /// The store owner prefix instances are keyed under (`inference/`).
     pub owner_prefix: String,
+    /// Exactly one instance (a plugin's settings) rather than a named set.
+    #[serde(default)]
+    pub single: bool,
     pub fields: Vec<Field>,
+    /// Shown with the form.
+    #[serde(default)]
+    pub description: Option<String>,
 }
+
+/// The instance name a `single` declaration's one instance has.
+pub const SINGLE: &str = "default";
 
 impl Declared {
     pub fn new(capability: &str, instance_noun: &str, fields: Vec<Field>) -> Self {
@@ -146,8 +159,43 @@ impl Declared {
             capability: capability.to_string(),
             instance_noun: instance_noun.to_string(),
             owner_prefix: format!("{capability}/"),
+            single: false,
             fields,
+            description: None,
         }
+    }
+
+    pub fn single(mut self) -> Self {
+        self.single = true;
+        self
+    }
+
+    pub fn describe(mut self, description: &str) -> Self {
+        self.description = Some(description.to_string());
+        self
+    }
+
+    /// Every instance's values, unmasked: what the declaring host consumes.
+    pub async fn values(&self, store: &Store) -> Result<Vec<(String, Vec<UserInput>)>> {
+        let mut out = Vec::new();
+        for owner in store.owners(&self.owner_prefix).await? {
+            let name = owner
+                .strip_prefix(&self.owner_prefix)
+                .unwrap_or(&owner)
+                .to_string();
+            let values = store
+                .configuration(&owner)
+                .await?
+                .into_iter()
+                .filter_map(|(name, v)| {
+                    serde_json::from_value::<Value>(v)
+                        .ok()
+                        .map(|value| UserInput { name, value })
+                })
+                .collect();
+            out.push((name, values));
+        }
+        Ok(out)
     }
 
     fn field(&self, name: &str) -> Option<&Field> {
@@ -294,6 +342,181 @@ pub struct Instance {
     pub values: Vec<Configured>,
 }
 
+/// Everything declared on this machine: a host's built-in schemas plus the
+/// ones other local hosts registered through the store (`declared:*` state
+/// rows), with the generic operations over both. Every write under a prefix
+/// bumps that prefix's revision, so a declaring host can poll for edits.
+#[derive(Clone)]
+pub struct Registry {
+    store: Option<Store>,
+    builtin: Vec<Declared>,
+}
+
+/// What a declaring host reads back: the prefix's revision and every
+/// instance's values, unmasked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snapshot {
+    pub revision: u64,
+    pub instances: Vec<(String, Vec<UserInput>)>,
+}
+
+impl Registry {
+    pub fn new(store: Option<Store>, builtin: Vec<Declared>) -> Self {
+        Self { store, builtin }
+    }
+
+    pub fn store(&self) -> Option<&Store> {
+        self.store.as_ref()
+    }
+
+    /// Built-in declarations first, then the stored ones.
+    pub async fn declared(&self) -> Vec<Declared> {
+        let mut out = self.builtin.clone();
+        if let Some(store) = &self.store {
+            match store.state_list(OWNER, "declared:").await {
+                Ok(rows) => {
+                    for (_, bytes) in rows {
+                        match serde_json::from_slice::<Declared>(&bytes) {
+                            Ok(d) if !out.iter().any(|b| b.capability == d.capability) => {
+                                out.push(d)
+                            }
+                            Ok(_) => {}
+                            Err(err) => tracing::warn!(?err, "stored declaration is malformed"),
+                        }
+                    }
+                }
+                Err(err) => tracing::warn!(?err, "could not read declarations"),
+            }
+        }
+        out
+    }
+
+    pub async fn find(&self, capability: &str) -> Option<Declared> {
+        self.declared()
+            .await
+            .into_iter()
+            .find(|d| d.capability == capability)
+    }
+
+    /// Register or refresh another host's schema.
+    pub async fn declare(&self, declared: &Declared) -> Result<()> {
+        if self
+            .builtin
+            .iter()
+            .any(|b| b.capability == declared.capability)
+        {
+            bail!("`{}` is this host's own", declared.capability);
+        }
+        if declared.capability.trim().is_empty() || declared.owner_prefix.trim().is_empty() {
+            bail!("a declaration needs a capability and an owner prefix");
+        }
+        let store = self.writable()?;
+        store
+            .state_set(
+                OWNER,
+                &format!("declared:{}", declared.capability),
+                &serde_json::to_vec(declared)?,
+            )
+            .await
+    }
+
+    pub async fn undeclare(&self, capability: &str) -> Result<bool> {
+        let store = self.writable()?;
+        store
+            .state_delete(OWNER, &format!("declared:{capability}"))
+            .await
+    }
+
+    /// Every declaration with its configured instances, secrets masked (the
+    /// consent app's view).
+    pub async fn configuration(&self) -> Result<Vec<(Declared, Vec<Instance>)>> {
+        let mut out = Vec::new();
+        for declared in self.declared().await {
+            let instances = match &self.store {
+                Some(store) => declared.instances(store).await?,
+                None => Vec::new(),
+            };
+            out.push((declared, instances));
+        }
+        Ok(out)
+    }
+
+    /// Create or update one instance; returns its declaration so the host can
+    /// let the capability pick the change up.
+    pub async fn configure(
+        &self,
+        capability: &str,
+        instance: &str,
+        inputs: &[UserInput],
+    ) -> Result<Declared> {
+        let (declared, store) = self.target(capability).await?;
+        let instance = if declared.single { SINGLE } else { instance };
+        declared.set(store, instance, inputs).await?;
+        self.bump(&declared.owner_prefix).await;
+        Ok(declared)
+    }
+
+    pub async fn unconfigure(&self, capability: &str, instance: &str) -> Result<(Declared, bool)> {
+        let (declared, store) = self.target(capability).await?;
+        let instance = if declared.single { SINGLE } else { instance };
+        let removed = declared.remove(store, instance).await?;
+        self.bump(&declared.owner_prefix).await;
+        Ok((declared, removed))
+    }
+
+    /// What a declaring host reads back for its prefix.
+    pub async fn configured(&self, owner_prefix: &str) -> Result<Snapshot> {
+        let store = self.writable()?;
+        let Some(declared) = self
+            .declared()
+            .await
+            .into_iter()
+            .find(|d| d.owner_prefix == owner_prefix)
+        else {
+            bail!("nothing is declared under `{owner_prefix}`");
+        };
+        Ok(Snapshot {
+            revision: self.revision(owner_prefix).await,
+            instances: declared.values(store).await?,
+        })
+    }
+
+    pub async fn revision(&self, owner_prefix: &str) -> u64 {
+        match &self.store {
+            Some(store) => store
+                .state_counter(OWNER, &format!("revision:{owner_prefix}"))
+                .await
+                .unwrap_or(0)
+                .max(0) as u64,
+            None => 0,
+        }
+    }
+
+    async fn bump(&self, owner_prefix: &str) {
+        if let Some(store) = &self.store {
+            if let Err(err) = store
+                .state_add(OWNER, &format!("revision:{owner_prefix}"), 1)
+                .await
+            {
+                tracing::warn!(?err, owner_prefix, "could not bump the revision");
+            }
+        }
+    }
+
+    async fn target(&self, capability: &str) -> Result<(Declared, &Store)> {
+        let Some(declared) = self.find(capability).await else {
+            bail!("`{capability}` declares no configuration");
+        };
+        Ok((declared, self.writable()?))
+    }
+
+    fn writable(&self) -> Result<&Store> {
+        self.store.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("the store is unavailable, so configuration cannot be saved")
+        })
+    }
+}
+
 fn describe(value: &Value) -> String {
     match value {
         Value::Str(s) | Value::Select(s) | Value::Datetime(s) => format!("\"{s}\""),
@@ -386,6 +609,76 @@ mod tests {
         assert!(s.owner("").is_err());
         assert!(s.owner("a/b").is_err());
         assert_eq!(s.owner("local-1").unwrap(), "demo/local-1");
+    }
+
+    #[tokio::test]
+    async fn another_host_declares_and_reads_back_with_a_revision() {
+        let (_dir, store) = store().await;
+        let registry = Registry::new(Some(store), vec![schema()]);
+        // The host's own declaration cannot be shadowed.
+        assert!(registry.declare(&schema()).await.is_err());
+        let plugin = Declared {
+            capability: "witmproxy:@ezco/noshorts".into(),
+            instance_noun: "configuration".into(),
+            owner_prefix: "witmproxy/@ezco/noshorts/".into(),
+            single: true,
+            fields: vec![
+                Field::new("limit", InputType::Number, "how many"),
+                Field::new("token", InputType::Secret, "auth").optional(),
+            ],
+            description: Some("Hides shorts".into()),
+        };
+        registry.declare(&plugin).await.unwrap();
+        let listed = registry.declared().await;
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[1], plugin);
+        let before = registry
+            .configured("witmproxy/@ezco/noshorts/")
+            .await
+            .unwrap();
+        assert_eq!(before.revision, 0);
+        assert!(before.instances.is_empty());
+
+        // The tray writes (a single declaration ignores the instance name).
+        registry
+            .configure(
+                "witmproxy:@ezco/noshorts",
+                "whatever",
+                &[
+                    input("limit", Value::Number(3.0)),
+                    input("token", Value::Secret("t".into())),
+                ],
+            )
+            .await
+            .unwrap();
+        let after = registry
+            .configured("witmproxy/@ezco/noshorts/")
+            .await
+            .unwrap();
+        assert_eq!(after.revision, 1);
+        assert_eq!(after.instances.len(), 1);
+        assert_eq!(after.instances[0].0, SINGLE);
+        // Unmasked for the declaring host…
+        assert!(after.instances[0]
+            .1
+            .contains(&input("token", Value::Secret("t".into()))));
+        // …masked for the tray.
+        let view = registry.configuration().await.unwrap();
+        let (_, instances) = &view[1];
+        assert!(instances[0]
+            .values
+            .iter()
+            .any(|v| v.name == "token" && v.value.is_none() && v.set));
+
+        assert!(registry
+            .undeclare("witmproxy:@ezco/noshorts")
+            .await
+            .unwrap());
+        assert_eq!(registry.declared().await.len(), 1);
+        assert!(registry
+            .configured("witmproxy/@ezco/noshorts/")
+            .await
+            .is_err());
     }
 
     #[tokio::test]

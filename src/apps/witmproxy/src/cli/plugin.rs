@@ -451,7 +451,7 @@ impl PluginHandler {
         let runtime = Runtime::try_default()?;
         let mut registry = PluginRegistry::new(db, runtime)?;
         if let Some(url) = &self.config.icanhaz {
-            registry.set_consent(Some(crate::plugins::consent::IcanhazConsent::connect(url)?));
+            registry.set_icanhaz(Some(crate::plugins::icanhaz::Icanhaz::connect(url)?));
         }
 
         // Create plugin from component bytes (including signature verification)

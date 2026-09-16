@@ -1202,7 +1202,7 @@ impl ResolvedCli {
             let runtime = Runtime::try_default()?;
             let mut registry = PluginRegistry::new(db, runtime)?;
             if let Some(url) = &self.config.plugins.icanhaz {
-                registry.set_consent(Some(crate::plugins::consent::IcanhazConsent::connect(url)?));
+                registry.set_icanhaz(Some(crate::plugins::icanhaz::Icanhaz::connect(url)?));
             }
             // Activate the global baseline sandbox limits from config. A value
             // of 0 means "unlimited" for that dimension. Individual plugins may
@@ -1211,7 +1211,10 @@ impl ResolvedCli {
             registry.set_limits(self.config.plugins.resolved_limits());
             registry.load_plugins().await?;
             info!("Number of plugins loaded: {}", registry.plugins().len());
-            Some(Arc::new(registry))
+            let registry = Arc::new(registry);
+            // Settings edited at the tray app reach plugins within a few seconds.
+            Arc::clone(&registry).spawn_settings_sync(std::time::Duration::from_secs(3));
+            Some(registry)
         } else {
             None
         };

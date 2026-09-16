@@ -16,7 +16,8 @@ use anyhow::Context as _;
 use tokio::net::TcpListener;
 
 use crate::broker::{BrokerProvider, Consent, GrantStore, Hosts, Pairings};
-use crate::configuration::{Declared, Instance, UserInput};
+use crate::configuration::{Declared, Instance, Registry, UserInput};
+use crate::configuration_serve::ConfigurationProvider;
 use crate::process::ProcessProvider;
 use crate::providers::Providers;
 use crate::serve::{serve_iroh_all, serve_websocket_all, serve_webtransport_all, FsServe};
@@ -80,6 +81,9 @@ pub struct Services {
     /// The broker's signing key: persisted in the store (`broker/identity`)
     /// so certificates outlive a restart; ephemeral without one.
     pub identity: ezcap::Keypair,
+    /// Everything declared on this machine: the daemon's own schemas and the
+    /// ones other local hosts registered over `icanhaz:nocap/configuration`.
+    pub registry: Arc<Registry>,
 }
 
 impl Services {
@@ -106,30 +110,30 @@ impl Services {
             tracing::warn!("broker identity is ephemeral: certificates will not survive a restart");
             ezcap::Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}"))
         });
+        let registry = Arc::new(Registry::new(store.clone(), Self::declared()));
         Self {
             store,
             providers,
             identity,
+            registry,
         }
     }
 
-    /// Every configuration the daemon's capabilities declare.
+    /// Every configuration the daemon's own capabilities declare.
     pub fn declared() -> Vec<Declared> {
         vec![Providers::declared()]
     }
 
-    /// Every declared configuration with its configured instances (secrets
-    /// masked). Without a store, each schema lists no instances.
+    /// The wRPC provider other local hosts declare through.
+    pub fn configuration_provider(&self) -> ConfigurationProvider {
+        ConfigurationProvider::new(Arc::clone(&self.registry))
+    }
+
+    /// Every declared configuration (the daemon's and other hosts') with its
+    /// configured instances, secrets masked. Without a store, each schema
+    /// lists no instances.
     pub async fn configuration(&self) -> anyhow::Result<Vec<(Declared, Vec<Instance>)>> {
-        let mut out = Vec::new();
-        for declared in Self::declared() {
-            let instances = match &self.store {
-                Some(store) => declared.instances(store).await?,
-                None => Vec::new(),
-            };
-            out.push((declared, instances));
-        }
-        Ok(out)
+        self.registry.configuration().await
     }
 
     /// Create or update one configured instance of `capability`'s schema, then
@@ -140,31 +144,18 @@ impl Services {
         instance: &str,
         inputs: &[UserInput],
     ) -> anyhow::Result<()> {
-        let (declared, store) = self.target(capability)?;
-        declared.set(store, instance, inputs).await?;
+        self.registry
+            .configure(capability, instance, inputs)
+            .await?;
         self.reload(capability).await;
         Ok(())
     }
 
     /// Remove one configured instance. `Ok(false)` if there was none.
     pub async fn unconfigure(&self, capability: &str, instance: &str) -> anyhow::Result<bool> {
-        let (declared, store) = self.target(capability)?;
-        let removed = declared.remove(store, instance).await?;
+        let (_, removed) = self.registry.unconfigure(capability, instance).await?;
         self.reload(capability).await;
         Ok(removed)
-    }
-
-    fn target(&self, capability: &str) -> anyhow::Result<(Declared, &Store)> {
-        let Some(declared) = Self::declared()
-            .into_iter()
-            .find(|d| d.capability == capability)
-        else {
-            anyhow::bail!("`{capability}` declares no configuration");
-        };
-        let Some(store) = &self.store else {
-            anyhow::bail!("the store is unavailable, so configuration cannot be saved");
-        };
-        Ok((declared, store))
     }
 
     /// The capabilities that cache their configuration re-read it here.
@@ -221,10 +212,12 @@ pub async fn run(
     let process = ProcessProvider::new(grants.clone());
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
+    let configuration = services.configuration_provider();
     let Services {
         providers,
         identity: broker_key,
         store,
+        ..
     } = services;
     grants.lock().unwrap().set_identity(broker_key.clone());
     // Pairings and the hosts allowlist live in the store from here on (their
@@ -306,6 +299,7 @@ pub async fn run(
             workspace.clone(),
             watch.clone(),
             inference.clone(),
+            configuration.clone(),
             fs_serve.clone()
         ),
         serve_webtransport_all(
@@ -317,13 +311,22 @@ pub async fn run(
             workspace.clone(),
             watch.clone(),
             inference.clone(),
+            configuration.clone(),
             fs_serve.clone()
         ),
         async {
             match iroh_ep {
                 Some(ep) => {
                     serve_iroh_all(
-                        ep, broker, terminal, process, workspace, watch, inference, fs_serve,
+                        ep,
+                        broker,
+                        terminal,
+                        process,
+                        workspace,
+                        watch,
+                        inference,
+                        configuration,
+                        fs_serve,
                     )
                     .await
                 }

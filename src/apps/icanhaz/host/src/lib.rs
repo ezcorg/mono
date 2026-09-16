@@ -49,7 +49,9 @@ mod iroh_tests;
 
 // The broker itself is a library (`icanhaz-broker`), re-exported here so the
 // daemon, the tray app and tests address it as they always did.
-pub use icanhaz_broker::{approve, broker, capabilities, configuration, store, AsOrigin, ReqCtx};
+pub use icanhaz_broker::{
+    approve, broker, capabilities, configuration, configuration_serve, store, AsOrigin, ReqCtx,
+};
 
 /// The peer path: serving over iroh.
 pub mod iroh;

@@ -20,8 +20,8 @@ use crate::{
 
 pub mod capabilities;
 pub mod cel;
-pub mod consent;
 pub mod grants;
+pub mod icanhaz;
 pub mod limits;
 pub mod registry;
 
@@ -36,7 +36,7 @@ mod perf_tests;
 #[cfg(test)]
 mod adversarial_tests;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WitmPlugin {
     pub namespace: String,
     pub name: String,
