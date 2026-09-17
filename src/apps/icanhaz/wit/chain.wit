@@ -18,3 +18,13 @@ world inference-chain {
   import inference;
   export inference;
 }
+
+world terminal-chain {
+  import terminal;
+  export terminal;
+}
+
+world watch-chain {
+  import watch;
+  export watch;
+}

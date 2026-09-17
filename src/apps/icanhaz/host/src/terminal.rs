@@ -40,11 +40,18 @@ pub use bindings::icanhaz::nocap::terminal as client;
 #[derive(Clone)]
 pub struct TerminalProvider {
     store: Arc<Mutex<GrantStore>>,
+    /// Runs the wrappers a grant is provided through (see [`crate::chain`]).
+    chain: Option<Arc<crate::chain::Chain>>,
 }
 
 impl TerminalProvider {
     pub fn new(store: Arc<Mutex<GrantStore>>) -> Self {
-        Self { store }
+        Self { store, chain: None }
+    }
+
+    pub fn with_chain(mut self, chain: Arc<crate::chain::Chain>) -> Self {
+        self.chain = Some(chain);
+        self
     }
 }
 
@@ -200,63 +207,113 @@ impl<C: crate::AsOrigin + Send + Sync + 'static>
             )));
         }
 
-        // The shell is the host's, not the requestor's: a terminal grant means
-        // "a shell as *you* are configured", never "run a program the caller
-        // names" (that is a broader, separately-consented capability).
-        let shell = default_shell();
-        let pty = match spawn_pty(&shell, cols.max(1), rows.max(1)) {
-            Ok(p) => p,
-            Err(e) => return Ok(Err(format!("failed to spawn `{shell}`: {e}"))),
-        };
-        let PtyIo {
-            stdin: pty_stdin,
-            output,
-            resize,
-            killer,
-        } = pty;
-
-        // Forward the wRPC stdin stream → the PTY until the client closes it.
-        let stdin_h = tokio::spawn(async move {
-            let mut stdin = stdin;
-            while let Some(chunk) = stdin.next().await {
-                if pty_stdin.send(chunk.to_vec()).is_err() {
-                    break;
-                }
-            }
-        });
-
-        // Control sub-channel: each 4-byte frame `[cols u16 BE][rows u16 BE]`
-        // reshapes the tty (the kernel then SIGWINCHes the shell).
-        let control_h = tokio::spawn(async move {
-            let mut control = control;
-            let mut buf: Vec<u8> = Vec::new();
-            while let Some(chunk) = control.next().await {
-                buf.extend_from_slice(&chunk);
-                while buf.len() >= 4 {
-                    let cols = u16::from_be_bytes([buf[0], buf[1]]);
-                    let rows = u16::from_be_bytes([buf[2], buf[3]]);
-                    buf.drain(..4);
-                    if resize.send((cols.max(1), rows.max(1))).is_err() {
-                        return;
-                    }
-                }
-            }
-        });
-
-        // The PTY's output becomes the returned wRPC stream; it ends when the shell
-        // exits — or, bound to the grant, when it's revoked/expires (the guard then
-        // kills the shell and aborts the pumps).
-        let revocation = self.store.lock().unwrap().revocation(&grant);
-        let out = UnboundedReceiverStream::new(output).map(Bytes::from);
-        Ok(Ok(crate::session::grant_scoped(
-            Box::pin(out),
-            revocation,
-            PtyGuard {
-                killer,
-                handles: vec![stdin_h, control_h],
-            },
-        )))
+        // Provided through a chain: the wrapper sees the call first and the
+        // native PTY answers its import.
+        let via = self.store.lock().unwrap().via_of(&grant);
+        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
+            let store = self.store.clone();
+            let native: crate::chain::NativeTerminal =
+                Arc::new(move |grant, stdin, control, cols, rows| {
+                    open_native(&store, &grant, stdin, control, cols, rows)
+                });
+            return match chain
+                .terminal_open(&via, &grant, stdin, control, cols, rows, native)
+                .await
+            {
+                Ok(Some(out)) => Ok(out),
+                Ok(None) => Ok(Err(
+                    "terminal: the chosen chain provides nothing for terminal".to_string(),
+                )),
+                Err(e) => Ok(Err(format!("terminal: chain failed: {e:#}"))),
+            };
+        }
+        Ok(open_native(&self.store, &grant, stdin, control, cols, rows))
     }
+}
+
+/// Spawn the host's login shell in a PTY for a live `terminal` grant, wire
+/// `stdin` and `control` to it, and return its output bound to the grant's
+/// life. Re-checks the grant and re-admits the window so a wrapper's rewrite
+/// still meets the grant's clauses.
+fn open_native(
+    store: &Arc<Mutex<GrantStore>>,
+    grant: &str,
+    stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+    control: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+    cols: u16,
+    rows: u16,
+) -> Result<Pin<Box<dyn Stream<Item = Bytes> + Send>>, String> {
+    {
+        let mut g = store.lock().unwrap();
+        if let Err(denied) = g.validate(grant, |k| matches!(k, CapabilityKind::Terminal(_))) {
+            return Err(format!("terminal denied: {denied:?}"));
+        }
+        let admit = crate::broker::AdmitCall::new("open")
+            .arg("cols", i64::from(cols))
+            .arg("rows", i64::from(rows));
+        if let Err(denied) = g.admit(grant, admit) {
+            return Err(format!(
+                "terminal denied: {}",
+                crate::broker::denied_text(&denied)
+            ));
+        }
+    }
+    // The shell is the host's, not the requestor's: a terminal grant means
+    // "a shell as *you* are configured", never "run a program the caller
+    // names" (that is a broader, separately-consented capability).
+    let shell = default_shell();
+    let pty = match spawn_pty(&shell, cols.max(1), rows.max(1)) {
+        Ok(p) => p,
+        Err(e) => return Err(format!("failed to spawn `{shell}`: {e}")),
+    };
+    let PtyIo {
+        stdin: pty_stdin,
+        output,
+        resize,
+        killer,
+    } = pty;
+
+    // Forward the wRPC stdin stream → the PTY until the client closes it.
+    let stdin_h = tokio::spawn(async move {
+        let mut stdin = stdin;
+        while let Some(chunk) = stdin.next().await {
+            if pty_stdin.send(chunk.to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+
+    // Control sub-channel: each 4-byte frame `[cols u16 BE][rows u16 BE]`
+    // reshapes the tty (the kernel then SIGWINCHes the shell).
+    let control_h = tokio::spawn(async move {
+        let mut control = control;
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = control.next().await {
+            buf.extend_from_slice(&chunk);
+            while buf.len() >= 4 {
+                let cols = u16::from_be_bytes([buf[0], buf[1]]);
+                let rows = u16::from_be_bytes([buf[2], buf[3]]);
+                buf.drain(..4);
+                if resize.send((cols.max(1), rows.max(1))).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+
+    // The PTY's output becomes the returned wRPC stream; it ends when the shell
+    // exits — or, bound to the grant, when it's revoked/expires (the guard then
+    // kills the shell and aborts the pumps).
+    let revocation = store.lock().unwrap().revocation(grant);
+    let out = UnboundedReceiverStream::new(output).map(Bytes::from);
+    Ok(crate::session::grant_scoped(
+        Box::pin(out),
+        revocation,
+        PtyGuard {
+            killer,
+            handles: vec![stdin_h, control_h],
+        },
+    ))
 }
 
 /// Serve the terminal over wRPC/TCP on `listener` until cancelled. (The daemon

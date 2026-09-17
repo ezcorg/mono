@@ -43,6 +43,24 @@ mod inference_chain {
     });
 }
 
+mod terminal_chain {
+    wasmtime::component::bindgen!({
+        world: "terminal-chain",
+        path: "../wit",
+        imports: { default: async | store | trappable },
+        exports: { default: async | store },
+    });
+}
+
+mod watch_chain {
+    wasmtime::component::bindgen!({
+        world: "watch-chain",
+        path: "../wit",
+        imports: { default: async | store | trappable },
+        exports: { default: async | store },
+    });
+}
+
 /// A byte stream as wRPC carries it.
 pub type BoxStream = std::pin::Pin<Box<dyn futures::Stream<Item = bytes::Bytes> + Send>>;
 
@@ -56,6 +74,11 @@ pub type NativeSpawn =
 pub type NativeComplete =
     Arc<dyn Fn(String, ClientRequest) -> Result<BoxStream, String> + Send + Sync>;
 pub type NativeModels = Arc<dyn Fn(String) -> Result<Vec<(String, String)>, String> + Send + Sync>;
+/// `terminal.open`: (grant, stdin, control, cols, rows) → output.
+pub type NativeTerminal =
+    Arc<dyn Fn(String, BoxStream, BoxStream, u16, u16) -> Result<BoxStream, String> + Send + Sync>;
+/// `watch.open`: (grant, path, recursive) → events.
+pub type NativeWatch = Arc<dyn Fn(String, String, bool) -> Result<BoxStream, String> + Send + Sync>;
 /// The inference request as the chain's import side sees it.
 pub use inference_chain::icanhaz::nocap::inference::CompletionRequest as ClientRequest;
 
@@ -294,6 +317,108 @@ impl<T> process_chain::icanhaz::nocap::process::HostWithStore<T> for ProcessData
                         access.as_context_mut(),
                         BytesProducer {
                             stream: stdout,
+                            pending: None,
+                        },
+                    )?;
+                    Ok(Ok(reader))
+                }
+                Err(e) => Ok(Err(e)),
+            }
+        })
+    }
+}
+
+/// Store state for a terminal chain: WASI plus the native open.
+struct TerminalState {
+    table: ResourceTable,
+    wasi: WasiCtx,
+    native: NativeTerminal,
+}
+
+impl WasiView for TerminalState {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
+}
+
+struct TerminalData;
+impl wasmtime::component::HasData for TerminalData {
+    type Data<'a> = &'a mut TerminalState;
+}
+
+impl terminal_chain::icanhaz::nocap::terminal::Host for &mut TerminalState {}
+
+impl<T> terminal_chain::icanhaz::nocap::terminal::HostWithStore<T> for TerminalData {
+    async fn open(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        grant: String,
+        stdin: wasmtime::component::StreamReader<u8>,
+        control: wasmtime::component::StreamReader<u8>,
+        cols: u16,
+        rows: u16,
+    ) -> wasmtime::Result<Result<wasmtime::component::StreamReader<u8>, String>> {
+        accessor.with(|mut access| {
+            let native = access.get().native.clone();
+            let (stdin_stream, _stdin_done) = drain(access.as_context_mut(), stdin)?;
+            let (control_stream, _control_done) = drain(access.as_context_mut(), control)?;
+            match native(grant, stdin_stream, control_stream, cols, rows) {
+                Ok(output) => {
+                    let reader = wasmtime::component::StreamReader::new(
+                        access.as_context_mut(),
+                        BytesProducer {
+                            stream: output,
+                            pending: None,
+                        },
+                    )?;
+                    Ok(Ok(reader))
+                }
+                Err(e) => Ok(Err(e)),
+            }
+        })
+    }
+}
+
+/// Store state for a watch chain: WASI plus the native open.
+struct WatchState {
+    table: ResourceTable,
+    wasi: WasiCtx,
+    native: NativeWatch,
+}
+
+impl WasiView for WatchState {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
+}
+
+struct WatchData;
+impl wasmtime::component::HasData for WatchData {
+    type Data<'a> = &'a mut WatchState;
+}
+
+impl watch_chain::icanhaz::nocap::watch::Host for &mut WatchState {}
+
+impl<T> watch_chain::icanhaz::nocap::watch::HostWithStore<T> for WatchData {
+    async fn open(
+        accessor: &wasmtime::component::Accessor<T, Self>,
+        grant: String,
+        path: String,
+        recursive: bool,
+    ) -> wasmtime::Result<Result<wasmtime::component::StreamReader<u8>, String>> {
+        accessor.with(|mut access| {
+            let native = access.get().native.clone();
+            match native(grant, path, recursive) {
+                Ok(events) => {
+                    let reader = wasmtime::component::StreamReader::new(
+                        access.as_context_mut(),
+                        BytesProducer {
+                            stream: events,
                             pending: None,
                         },
                     )?;
@@ -647,6 +772,160 @@ impl Chain {
         }
     }
 
+    /// `terminal.open` through the grant's chain (see `process_spawn`): the
+    /// caller's stdin and control go in, the wrapper calls its import, the
+    /// native PTY answers, and the wrapper's output comes back.
+    pub async fn terminal_open(
+        &self,
+        via: &[String],
+        grant: &str,
+        stdin: BoxStream,
+        control: BoxStream,
+        cols: u16,
+        rows: u16,
+        native: NativeTerminal,
+    ) -> anyhow::Result<Option<Result<BoxStream, String>>> {
+        let Some(component) = self.composed(via, "icanhaz:nocap/terminal@").await? else {
+            return Ok(None);
+        };
+        let mut linker = Linker::<TerminalState>::new(&self.engine);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(anyhow::Error::from)
+            .context("link WASI")?;
+        terminal_chain::TerminalChain::add_to_linker::<_, TerminalData>(&mut linker, |s| s)
+            .map_err(anyhow::Error::from)
+            .context("link terminal import")?;
+        let mut store = Store::new(
+            &self.engine,
+            TerminalState {
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+                native,
+            },
+        );
+        let bindings =
+            terminal_chain::TerminalChain::instantiate_async(&mut store, &component, &linker)
+                .await
+                .map_err(anyhow::Error::from)
+                .context("instantiate chain")?;
+        let (result_tx, result_rx) =
+            tokio::sync::oneshot::channel::<anyhow::Result<Result<BoxStream, String>>>();
+        let grant = grant.to_string();
+        tokio::spawn(async move {
+            let outcome = store
+                .run_concurrent(async move |acc| {
+                    let (stdin_reader, control_reader) = acc.with(|mut a| {
+                        let stdin = wasmtime::component::StreamReader::new(
+                            a.as_context_mut(),
+                            BytesProducer {
+                                stream: stdin,
+                                pending: None,
+                            },
+                        )?;
+                        let control = wasmtime::component::StreamReader::new(
+                            a.as_context_mut(),
+                            BytesProducer {
+                                stream: control,
+                                pending: None,
+                            },
+                        )?;
+                        Ok::<_, wasmtime::Error>((stdin, control))
+                    })?;
+                    let out = bindings
+                        .icanhaz_nocap_terminal()
+                        .call_open(acc, grant, stdin_reader, control_reader, cols, rows)
+                        .await?;
+                    match out {
+                        Ok(reader) => {
+                            let (stream, done) =
+                                acc.with(|mut a| drain(a.as_context_mut(), reader))?;
+                            let _ = result_tx.send(Ok(Ok(stream)));
+                            let _ = done.await;
+                        }
+                        Err(e) => {
+                            let _ = result_tx.send(Ok(Err(e)));
+                        }
+                    }
+                    Ok::<(), wasmtime::Error>(())
+                })
+                .await;
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) | Err(err) => tracing::debug!(?err, "terminal chain ended"),
+            }
+        });
+        match result_rx.await {
+            Ok(r) => r.map(Some),
+            Err(_) => anyhow::bail!("terminal chain ended before answering"),
+        }
+    }
+
+    /// `watch.open` through the grant's chain (see `process_spawn`).
+    pub async fn watch_open(
+        &self,
+        via: &[String],
+        grant: &str,
+        path: String,
+        recursive: bool,
+        native: NativeWatch,
+    ) -> anyhow::Result<Option<Result<BoxStream, String>>> {
+        let Some(component) = self.composed(via, "icanhaz:nocap/watch@").await? else {
+            return Ok(None);
+        };
+        let mut linker = Linker::<WatchState>::new(&self.engine);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(anyhow::Error::from)
+            .context("link WASI")?;
+        watch_chain::WatchChain::add_to_linker::<_, WatchData>(&mut linker, |s| s)
+            .map_err(anyhow::Error::from)
+            .context("link watch import")?;
+        let mut store = Store::new(
+            &self.engine,
+            WatchState {
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+                native,
+            },
+        );
+        let bindings = watch_chain::WatchChain::instantiate_async(&mut store, &component, &linker)
+            .await
+            .map_err(anyhow::Error::from)
+            .context("instantiate chain")?;
+        let (result_tx, result_rx) =
+            tokio::sync::oneshot::channel::<anyhow::Result<Result<BoxStream, String>>>();
+        let grant = grant.to_string();
+        tokio::spawn(async move {
+            let outcome = store
+                .run_concurrent(async move |acc| {
+                    let out = bindings
+                        .icanhaz_nocap_watch()
+                        .call_open(acc, grant, path, recursive)
+                        .await?;
+                    match out {
+                        Ok(reader) => {
+                            let (stream, done) =
+                                acc.with(|mut a| drain(a.as_context_mut(), reader))?;
+                            let _ = result_tx.send(Ok(Ok(stream)));
+                            let _ = done.await;
+                        }
+                        Err(e) => {
+                            let _ = result_tx.send(Ok(Err(e)));
+                        }
+                    }
+                    Ok::<(), wasmtime::Error>(())
+                })
+                .await;
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) | Err(err) => tracing::debug!(?err, "watch chain ended"),
+            }
+        });
+        match result_rx.await {
+            Ok(r) => r.map(Some),
+            Err(_) => anyhow::bail!("watch chain ended before answering"),
+        }
+    }
+
     /// `inference.complete` through the grant's chain (see `process_spawn`).
     pub async fn inference_complete(
         &self,
@@ -935,6 +1214,162 @@ mod tests {
             Some("proc-guard: `--forbidden` is refused by the wrapper")
         );
         assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_terminal_wrapper_guards_the_window_and_proxies_streams() {
+        use futures::StreamExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Db::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let components = Arc::new(ComponentStore::new(dir.path().join("components"), Some(db)));
+        let guard = components
+            .add(&fixture("term_guard.wasm"), None)
+            .await
+            .unwrap()
+            .hash;
+        let chain = Chain::new(components).unwrap();
+
+        // The native side: report the window it was asked for, then echo stdin
+        // and every control frame it receives.
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<(u16, u16)>::new()));
+        let seen_c = seen.clone();
+        let native: NativeTerminal = Arc::new(move |_grant, stdin, control, cols, rows| {
+            seen_c.lock().unwrap().push((cols, rows));
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<bytes::Bytes>();
+            tokio::spawn(async move {
+                let mut stdin = stdin;
+                let mut control = control;
+                let _ = tx.send(bytes::Bytes::from(format!("{cols}x{rows} ")));
+                while let Some(chunk) = stdin.next().await {
+                    if tx.send(chunk).is_err() {
+                        return;
+                    }
+                }
+                while let Some(frame) = control.next().await {
+                    let _ = tx.send(bytes::Bytes::from(format!(" resize:{}", frame.len())));
+                }
+            });
+            Ok(Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)) as BoxStream)
+        });
+
+        let stdin: BoxStream = Box::pin(futures::stream::iter(vec![
+            bytes::Bytes::from_static(b"ls"),
+            bytes::Bytes::from_static(b"\n"),
+        ]));
+        let control: BoxStream =
+            Box::pin(futures::stream::iter(vec![bytes::Bytes::from_static(&[
+                0, 80, 0, 24,
+            ])]));
+        let out = chain
+            .terminal_open(
+                std::slice::from_ref(&guard),
+                "g",
+                stdin,
+                control,
+                500,
+                24,
+                native.clone(),
+            )
+            .await
+            .unwrap()
+            .expect("the wrapper exports terminal")
+            .expect("opened");
+        let bytes: Vec<bytes::Bytes> = out.collect().await;
+        // The wrapper capped the width at 200 before the host saw it.
+        assert_eq!(
+            String::from_utf8_lossy(&bytes.concat()),
+            "200x24 ls\n resize:4"
+        );
+        assert_eq!(seen.lock().unwrap().as_slice(), &[(200, 24)]);
+
+        // Too few rows: refused by the wrapper, the host never opens a PTY.
+        let stdin: BoxStream = Box::pin(futures::stream::empty());
+        let control: BoxStream = Box::pin(futures::stream::empty());
+        let refused = chain
+            .terminal_open(
+                std::slice::from_ref(&guard),
+                "g",
+                stdin,
+                control,
+                80,
+                1,
+                native,
+            )
+            .await
+            .unwrap()
+            .expect("the wrapper exports terminal");
+        assert_eq!(
+            refused.err().as_deref(),
+            Some("term-guard: a terminal needs at least two rows")
+        );
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_watch_wrapper_refuses_paths_before_the_host() {
+        use futures::StreamExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Db::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let components = Arc::new(ComponentStore::new(dir.path().join("components"), Some(db)));
+        let guard = components
+            .add(&fixture("watch_guard.wasm"), None)
+            .await
+            .unwrap()
+            .hash;
+        let chain = Chain::new(components).unwrap();
+
+        let opened = Arc::new(std::sync::Mutex::new(Vec::<(String, bool)>::new()));
+        let opened_c = opened.clone();
+        let native: NativeWatch = Arc::new(move |_grant, path, recursive| {
+            opened_c.lock().unwrap().push((path.clone(), recursive));
+            Ok(
+                Box::pin(futures::stream::iter(vec![bytes::Bytes::from(format!(
+                    "event:{path}"
+                ))])) as BoxStream,
+            )
+        });
+
+        let out = chain
+            .watch_open(
+                std::slice::from_ref(&guard),
+                "g",
+                "notes".to_string(),
+                true,
+                native.clone(),
+            )
+            .await
+            .unwrap()
+            .expect("the wrapper exports watch")
+            .expect("opened");
+        let bytes: Vec<bytes::Bytes> = out.collect().await;
+        assert_eq!(String::from_utf8_lossy(&bytes.concat()), "event:notes");
+        assert_eq!(
+            opened.lock().unwrap().as_slice(),
+            &[("notes".to_string(), true)]
+        );
+
+        let refused = chain
+            .watch_open(
+                std::slice::from_ref(&guard),
+                "g",
+                "forbidden/keys".to_string(),
+                false,
+                native,
+            )
+            .await
+            .unwrap()
+            .expect("the wrapper exports watch");
+        assert_eq!(
+            refused.err().as_deref(),
+            Some("watch-guard: that path is not watched")
+        );
+        assert_eq!(opened.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

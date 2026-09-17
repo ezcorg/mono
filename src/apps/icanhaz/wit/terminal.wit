@@ -19,7 +19,7 @@ interface terminal {
   /// before spawning anything. `control` carries window-resize events — each a
   /// 4-byte frame `[cols: u16 big-endian][rows: u16 big-endian]` — so the tty can
   /// be reshaped mid-session (curses apps, `$COLUMNS`/`$LINES`, `SIGWINCH`).
-  open: func(
+  open: async func(
     grant: string,
     stdin: stream<u8>,
     control: stream<u8>,

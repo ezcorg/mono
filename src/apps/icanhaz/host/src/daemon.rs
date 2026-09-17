@@ -243,6 +243,14 @@ pub async fn run(
         Some(c) => workspace.with_chain(Arc::clone(c)),
         None => workspace,
     };
+    let watch = match &chain {
+        Some(c) => watch.with_chain(Arc::clone(c)),
+        None => watch,
+    };
+    let terminal = match &chain {
+        Some(c) => terminal.with_chain(Arc::clone(c)),
+        None => terminal,
+    };
     // The shipped passthrough is the store's first component, so what the
     // daemon links today is addressable by hash like anything a user brings.
     match std::fs::read(&config.fs_component) {

@@ -41,11 +41,22 @@ pub use bindings::icanhaz::nocap::watch as client;
 pub struct WatchProvider {
     root: PathBuf,
     grants: Arc<Mutex<GrantStore>>,
+    /// Runs the wrappers a grant is provided through (see [`crate::chain`]).
+    chain: Option<Arc<crate::chain::Chain>>,
 }
 
 impl WatchProvider {
     pub fn new(root: PathBuf, grants: Arc<Mutex<GrantStore>>) -> Self {
-        Self { root, grants }
+        Self {
+            root,
+            grants,
+            chain: None,
+        }
+    }
+
+    pub fn with_chain(mut self, chain: Arc<crate::chain::Chain>) -> Self {
+        self.chain = Some(chain);
+        self
     }
 }
 
@@ -82,17 +93,11 @@ impl<C: crate::AsOrigin + Send + Sync + 'static>
         path: String,
         recursive: bool,
     ) -> anyhow::Result<Result<Pin<Box<dyn Stream<Item = Bytes> + Send>>, String>> {
-        // Consent gate: a live filesystem grant, whose jail we confine the watch to.
-        let scope = match self.grants.lock().unwrap().validate_filesystem(&grant) {
-            Ok(paths) => self.root.join(
-                paths
-                    .into_iter()
-                    .next()
-                    .unwrap_or_default()
-                    .trim_matches('/'),
-            ),
-            Err(denied) => return Ok(Err(format!("watch denied: {denied:?}"))),
-        };
+        // Consent gate: a live filesystem grant (the native open re-checks and
+        // confines to its jail).
+        if let Err(denied) = self.grants.lock().unwrap().validate_filesystem(&grant) {
+            return Ok(Err(format!("watch denied: {denied:?}")));
+        }
         // Admission: the grant's `allow` clause sees the requested path (as the
         // client named it, grant-relative) and whether the watch is recursive.
         let admit = crate::broker::AdmitCall::new("open")
@@ -105,57 +110,119 @@ impl<C: crate::AsOrigin + Send + Sync + 'static>
                 crate::broker::denied_text(&denied)
             )));
         }
-        // Canonicalise the jail + target; the target must stay under the jail (a
-        // canonicalised prefix check defeats `..` and symlink escapes).
-        let scope = match scope.canonicalize() {
-            Ok(s) => s,
-            Err(e) => return Ok(Err(format!("watch: jail unavailable: {e}"))),
-        };
-        let target = match scope.join(path.trim_start_matches('/')).canonicalize() {
-            Ok(t) if t.starts_with(&scope) => t,
-            Ok(_) => return Ok(Err("watch: path escapes the grant".to_string())),
-            Err(e) => return Ok(Err(format!("watch: path unavailable: {e}"))),
-        };
+        // Provided through a chain: the wrapper sees the call first and the
+        // native watcher answers its import.
+        let via = self.grants.lock().unwrap().via_of(&grant);
+        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
+            let root = self.root.clone();
+            let grants = self.grants.clone();
+            let native: crate::chain::NativeWatch = Arc::new(move |grant, path, recursive| {
+                open_native(&root, &grants, &grant, &path, recursive)
+            });
+            return match chain
+                .watch_open(&via, &grant, path, recursive, native)
+                .await
+            {
+                Ok(Some(out)) => Ok(out),
+                Ok(None) => Ok(Err(
+                    "watch: the chosen chain provides nothing for watch".to_string()
+                )),
+                Err(e) => Ok(Err(format!("watch: chain failed: {e:#}"))),
+            };
+        }
+        Ok(open_native(
+            &self.root,
+            &self.grants,
+            &grant,
+            &path,
+            recursive,
+        ))
+    }
+}
 
-        // notify → a tokio channel; the closure runs on notify's own thread. Paths are
-        // reported relative to the jail (the client's grant-relative coordinate space).
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
-        let strip = scope.clone();
-        let mut watcher =
-            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if let Ok(event) = res {
-                    if let Some(kind) = wire_kind(event.kind) {
-                        for p in event.paths {
-                            let rel = p.strip_prefix(&strip).unwrap_or(&p).to_string_lossy();
-                            if tx.send(frame_event(kind, &rel)).is_err() {
-                                break;
-                            }
+/// Watch `path` under the grant's jail for a live filesystem grant and return
+/// its events bound to the grant's life. Re-checks the grant and re-admits the
+/// path so a wrapper's rewrite still meets the grant's clauses.
+fn open_native(
+    root: &std::path::Path,
+    grants: &Arc<Mutex<GrantStore>>,
+    grant: &str,
+    path: &str,
+    recursive: bool,
+) -> Result<Pin<Box<dyn Stream<Item = Bytes> + Send>>, String> {
+    let scope = {
+        let mut g = grants.lock().unwrap();
+        let scope = match g.validate_filesystem(grant) {
+            Ok(paths) => root.join(
+                paths
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches('/'),
+            ),
+            Err(denied) => return Err(format!("watch denied: {denied:?}")),
+        };
+        let admit = crate::broker::AdmitCall::new("open")
+            .arg("path", path.to_string())
+            .arg("recursive", recursive);
+        if let Err(denied) = g.admit(grant, admit) {
+            return Err(format!(
+                "watch denied: {}",
+                crate::broker::denied_text(&denied)
+            ));
+        }
+        scope
+    };
+    // Canonicalise the jail + target; the target must stay under the jail (a
+    // canonicalised prefix check defeats `..` and symlink escapes).
+    let scope = match scope.canonicalize() {
+        Ok(s) => s,
+        Err(e) => return Err(format!("watch: jail unavailable: {e}")),
+    };
+    let target = match scope.join(path.trim_start_matches('/')).canonicalize() {
+        Ok(t) if t.starts_with(&scope) => t,
+        Ok(_) => return Err("watch: path escapes the grant".to_string()),
+        Err(e) => return Err(format!("watch: path unavailable: {e}")),
+    };
+
+    // notify → a tokio channel; the closure runs on notify's own thread. Paths are
+    // reported relative to the jail (the client's grant-relative coordinate space).
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    let strip = scope.clone();
+    let mut watcher =
+        match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                if let Some(kind) = wire_kind(event.kind) {
+                    for p in event.paths {
+                        let rel = p.strip_prefix(&strip).unwrap_or(&p).to_string_lossy();
+                        if tx.send(frame_event(kind, &rel)).is_err() {
+                            break;
                         }
                     }
                 }
-            }) {
-                Ok(w) => w,
-                Err(e) => return Ok(Err(format!("watch: {e}"))),
-            };
-        let mode = if recursive {
-            RecursiveMode::Recursive
-        } else {
-            RecursiveMode::NonRecursive
+            }
+        }) {
+            Ok(w) => w,
+            Err(e) => return Err(format!("watch: {e}")),
         };
-        if let Err(e) = watcher.watch(&target, mode) {
-            return Ok(Err(format!("watch: {e}")));
-        }
-
-        // Bound to the grant: on revoke/expiry the stream ends and the watcher (the
-        // guard) is dropped, so watching stops. Also stops on client disconnect.
-        let revocation = self.grants.lock().unwrap().revocation(&grant);
-        let out = UnboundedReceiverStream::new(rx);
-        Ok(Ok(crate::session::grant_scoped(
-            Box::pin(out),
-            revocation,
-            watcher,
-        )))
+    let mode = if recursive {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    };
+    if let Err(e) = watcher.watch(&target, mode) {
+        return Err(format!("watch: {e}"));
     }
+
+    // Bound to the grant: on revoke/expiry the stream ends and the watcher (the
+    // guard) is dropped, so watching stops. Also stops on client disconnect.
+    let revocation = grants.lock().unwrap().revocation(grant);
+    let out = UnboundedReceiverStream::new(rx);
+    Ok(crate::session::grant_scoped(
+        Box::pin(out),
+        revocation,
+        watcher,
+    ))
 }
 
 /// Serve the watch capability over wRPC/TCP on `listener` until cancelled. (The

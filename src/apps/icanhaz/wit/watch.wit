@@ -16,7 +16,7 @@ package icanhaz:nocap@0.1.0;
 /// is `[kind: u8 (0 = rename, 1 = change)] [path-len: u16 big-endian] [path: utf-8]`,
 /// where `path` is relative to the jail.
 interface watch {
-  open: func(grant: string, path: string, recursive: bool) -> result<stream<u8>, string>;
+  open: async func(grant: string, path: string, recursive: bool) -> result<stream<u8>, string>;
 }
 
 /// Loopback world for the native wRPC bridge.
