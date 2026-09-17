@@ -80,6 +80,102 @@ pub type NativeTerminal =
     Arc<dyn Fn(String, BoxStream, BoxStream, u16, u16) -> Result<BoxStream, String> + Send + Sync>;
 /// `watch.open`: (grant, path, recursive) → events.
 pub type NativeWatch = Arc<dyn Fn(String, String, bool) -> Result<BoxStream, String> + Send + Sync>;
+/// `workspace.root-path`: grant → the jail's host path.
+pub type NativeRoot = Arc<dyn Fn(String) -> Result<String, String> + Send + Sync>;
+
+/// The native implementations a component's imports are satisfied from: what
+/// a store component that builds on the daemon's own capabilities calls, each
+/// resolving the token it is handed (the component's grant, whose delegated
+/// grant of the right kind then applies).
+#[derive(Clone)]
+pub struct Natives {
+    pub spawn: NativeSpawn,
+    pub complete: NativeComplete,
+    pub models: NativeModels,
+    pub terminal: NativeTerminal,
+    pub watch: NativeWatch,
+    pub root: NativeRoot,
+}
+
+/// The import-side state of one store: every native interface linkable into
+/// a component, each backed by its native implementation.
+pub struct Imports {
+    process: ProcessState,
+    inference: InferenceState,
+    terminal: TerminalState,
+    watch: WatchState,
+    workspace: ChainState,
+}
+
+impl Natives {
+    /// Fresh import state for a store.
+    pub fn imports(&self) -> Imports {
+        Imports {
+            process: ProcessState {
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+                native: self.spawn.clone(),
+            },
+            inference: InferenceState {
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+                complete: self.complete.clone(),
+                models: self.models.clone(),
+            },
+            terminal: TerminalState {
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+                native: self.terminal.clone(),
+            },
+            watch: WatchState {
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+                native: self.watch.clone(),
+            },
+            workspace: ChainState {
+                table: ResourceTable::new(),
+                wasi: WasiCtxBuilder::new().build(),
+                native_root: self.root.clone(),
+            },
+        }
+    }
+}
+
+/// A store state that carries [`Imports`].
+pub trait HasImports {
+    fn imports(&mut self) -> &mut Imports;
+}
+
+/// Link every native capability interface into `linker`, so a component that
+/// imports any of them instantiates.
+pub fn link_imports<T: HasImports + Send + 'static>(linker: &mut Linker<T>) -> anyhow::Result<()> {
+    process_chain::ProcessChain::add_to_linker::<_, ProcessData>(linker, |s: &mut T| {
+        &mut s.imports().process
+    })
+    .map_err(anyhow::Error::from)
+    .context("link process import")?;
+    inference_chain::InferenceChain::add_to_linker::<_, InferenceData>(linker, |s: &mut T| {
+        &mut s.imports().inference
+    })
+    .map_err(anyhow::Error::from)
+    .context("link inference import")?;
+    terminal_chain::TerminalChain::add_to_linker::<_, TerminalData>(linker, |s: &mut T| {
+        &mut s.imports().terminal
+    })
+    .map_err(anyhow::Error::from)
+    .context("link terminal import")?;
+    watch_chain::WatchChain::add_to_linker::<_, WatchData>(linker, |s: &mut T| {
+        &mut s.imports().watch
+    })
+    .map_err(anyhow::Error::from)
+    .context("link watch import")?;
+    workspace_chain::WorkspaceChain::add_to_linker::<_, WorkspaceData>(linker, |s: &mut T| {
+        &mut s.imports().workspace
+    })
+    .map_err(anyhow::Error::from)
+    .context("link workspace import")?;
+    Ok(())
+}
 /// The inference request as the chain's import side sees it.
 pub use inference_chain::icanhaz::nocap::inference::CompletionRequest as ClientRequest;
 
@@ -266,7 +362,13 @@ pub fn offers(kind: &str, exports: &[String]) -> bool {
 struct ChainState {
     table: ResourceTable,
     wasi: WasiCtx,
-    native_root_path: Result<String, String>,
+    native_root: NativeRoot,
+}
+
+/// The `HasData` carrier for a workspace import: its data is the state.
+struct WorkspaceData;
+impl wasmtime::component::HasData for WorkspaceData {
+    type Data<'a> = &'a mut ChainState;
 }
 
 impl WasiView for ChainState {
@@ -278,9 +380,9 @@ impl WasiView for ChainState {
     }
 }
 
-impl workspace_chain::icanhaz::nocap::workspace::Host for ChainState {
-    async fn root_path(&mut self, _grant: String) -> wasmtime::Result<Result<String, String>> {
-        Ok(self.native_root_path.clone())
+impl workspace_chain::icanhaz::nocap::workspace::Host for &mut ChainState {
+    async fn root_path(&mut self, grant: String) -> wasmtime::Result<Result<String, String>> {
+        Ok((self.native_root)(grant))
     }
 }
 
@@ -673,18 +775,15 @@ impl Chain {
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
             .map_err(anyhow::Error::from)
             .context("link WASI")?;
-        workspace_chain::WorkspaceChain::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
-            &mut linker,
-            |s| s,
-        )
-        .map_err(anyhow::Error::from)
-        .context("link workspace import")?;
+        workspace_chain::WorkspaceChain::add_to_linker::<_, WorkspaceData>(&mut linker, |s| s)
+            .map_err(anyhow::Error::from)
+            .context("link workspace import")?;
         let mut store = Store::new(
             &self.engine,
             ChainState {
                 table: ResourceTable::new(),
                 wasi: WasiCtxBuilder::new().build(),
-                native_root_path: native,
+                native_root: Arc::new(move |_| native.clone()),
             },
         );
         let bindings =

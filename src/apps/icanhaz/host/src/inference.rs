@@ -64,6 +64,50 @@ impl InferenceProvider {
         self
     }
 
+    /// The native completion and model listing for any live `inference`
+    /// grant (or a component grant delegated one).
+    pub fn native_for_grants(&self) -> (crate::chain::NativeComplete, crate::chain::NativeModels) {
+        let me = self.clone();
+        let complete: crate::chain::NativeComplete = Arc::new(move |token, request| {
+            let (token, allowed) = {
+                let g = me.store.lock().unwrap();
+                let token = g.delegated_for(&token, "inference").ok_or_else(|| {
+                    "inference denied: no inference grant for this call".to_string()
+                })?;
+                let allowed = g
+                    .validate_inference(&token)
+                    .map_err(|d| format!("inference denied: {d:?}"))?;
+                (token, allowed)
+            };
+            let admit = AdmitCall::new("complete")
+                .arg("request.model", request.model.clone())
+                .arg("request.max_tokens", i64::from(request.max_tokens));
+            me.store
+                .lock()
+                .unwrap()
+                .admit(&token, admit)
+                .map_err(|d| format!("inference denied: {}", denied_text(&d)))?;
+            let (complete, _) = me.chain_natives(&token, &allowed.models);
+            complete(token, request)
+        });
+        let me = self.clone();
+        let models: crate::chain::NativeModels = Arc::new(move |token| {
+            let (token, allowed) = {
+                let g = me.store.lock().unwrap();
+                let token = g.delegated_for(&token, "inference").ok_or_else(|| {
+                    "inference denied: no inference grant for this call".to_string()
+                })?;
+                let allowed = g
+                    .validate_inference(&token)
+                    .map_err(|d| format!("inference denied: {d:?}"))?;
+                (token, allowed)
+            };
+            let (_, models) = me.chain_natives(&token, &allowed.models);
+            models(token)
+        });
+        (complete, models)
+    }
+
     /// Stream a completion from `provider`, charging the usage frame to the
     /// grant as it passes; the stream ends with the grant.
     fn native_complete(

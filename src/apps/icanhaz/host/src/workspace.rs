@@ -49,6 +49,27 @@ impl WorkspaceProvider {
         self.chain = Some(chain);
         self
     }
+
+    /// The native root path for any live filesystem grant (or a component
+    /// grant delegated one).
+    pub fn native_for_grants(&self) -> crate::chain::NativeRoot {
+        let root = self.root.clone();
+        let grants = self.grants.clone();
+        Arc::new(move |token| {
+            let g = grants.lock().unwrap();
+            let token = g
+                .delegated_for(&token, "filesystem")
+                .ok_or_else(|| "workspace denied: no filesystem grant for this call".to_string())?;
+            let paths = g
+                .validate_filesystem(&token)
+                .map_err(|d| format!("workspace denied: {d:?}"))?;
+            let scope = paths.into_iter().next().unwrap_or_default();
+            Ok(root
+                .join(scope.trim_matches('/'))
+                .to_string_lossy()
+                .into_owned())
+        })
+    }
 }
 
 impl<C: crate::AsOrigin + Send + Sync + 'static>

@@ -73,18 +73,22 @@ pub struct ComponentsServe {
     /// One per transport serving: called with every component added after
     /// the transport came up, so its new interfaces are served there too.
     sinks: Arc<std::sync::Mutex<Vec<crate::components::AfterAdd>>>,
+    /// The native capabilities a component may import.
+    natives: Option<crate::chain::Natives>,
 }
 
 impl ComponentsServe {
     pub fn new(
         components: Arc<crate::components::ComponentStore>,
         grants: Arc<std::sync::Mutex<GrantStore>>,
+        natives: Option<crate::chain::Natives>,
     ) -> Self {
         Self {
             components,
             grants,
             routers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             sinks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            natives,
         }
     }
 
@@ -125,6 +129,7 @@ impl ComponentsServe {
             (),
             wasi,
             Arc::clone(&self.grants),
+            self.natives.clone(),
         )?;
         routers.insert(interface.to_string(), Arc::clone(&router));
         Ok(router)

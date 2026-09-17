@@ -72,6 +72,38 @@ impl ProcessProvider {
         self
     }
 
+    /// The native spawn for any live `process` grant (or a component grant
+    /// delegated one): the token is resolved, the grant's pins applied.
+    pub fn native_for_grants(&self) -> crate::chain::NativeSpawn {
+        let grants = self.store.clone();
+        Arc::new(move |token, args, stdin| {
+            let (token, req) = {
+                let g = grants.lock().unwrap();
+                let token = g
+                    .delegated_for(&token, "process")
+                    .ok_or_else(|| "process denied: no process grant for this call".to_string())?;
+                let req = g
+                    .validate_process(&token)
+                    .map_err(|d| format!("process denied: {d:?}"))?;
+                (token, req)
+            };
+            let effective = if req.guest_chooses_argv {
+                args
+            } else if args.is_empty() || args == req.args {
+                req.args.clone()
+            } else {
+                return Err("process denied: this grant pins its arguments".to_string());
+            };
+            let admit = AdmitCall::new("spawn").arg("args", effective.clone());
+            grants
+                .lock()
+                .unwrap()
+                .admit(&token, admit)
+                .map_err(|d| format!("process denied: {}", denied_text(&d)))?;
+            spawn_native(&req, &effective, stdin, &grants, &token)
+        })
+    }
+
     /// Spawn at the broker that holds the real grant: stdin is forwarded
     /// there, its stdout comes back, and the session ends with this grant.
     async fn spawn_remote(

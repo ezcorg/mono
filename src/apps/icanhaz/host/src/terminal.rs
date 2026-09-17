@@ -53,6 +53,20 @@ impl TerminalProvider {
         self.chain = Some(chain);
         self
     }
+
+    /// The native open for any live `terminal` grant (or a component grant
+    /// delegated one).
+    pub fn native_for_grants(&self) -> crate::chain::NativeTerminal {
+        let store = self.store.clone();
+        Arc::new(move |token, stdin, control, cols, rows| {
+            let token = store
+                .lock()
+                .unwrap()
+                .delegated_for(&token, "terminal")
+                .ok_or_else(|| "terminal denied: no terminal grant for this call".to_string())?;
+            open_native(&store, &token, stdin, control, cols, rows)
+        })
+    }
 }
 
 /// The user's configured login shell. `$SHELL` reflects it on a normal login; a

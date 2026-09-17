@@ -11,7 +11,7 @@ type Capability =
   | { kind: "sockets"; endpoints: string[]; may_listen: boolean }
   | { kind: "inference"; models: string[] }
   | { kind: "foreign"; path: string; summary: string }
-  | { kind: "component"; provides: string; provider: string | null };
+  | { kind: "component"; provides: string; provider: string | null; delegated: string[] };
 type ScopeText = { when: string[]; allow: string[] };
 type Pending = {
   id: string;
@@ -787,6 +787,9 @@ function CapabilityEditor(props: { orig: Capability; cap: () => Capability; setC
           <span class="path">{(props.cap() as Extract<Capability, { kind: "component" }>).provides}</span>
         </div>
         <p class="dim small">// nothing native provides this; it runs from the component(s) ticked under "provide through"</p>
+        <Show when={(props.cap() as Extract<Capability, { kind: "component" }>).delegated.length > 0}>
+          <div class="dim">lent {(props.cap() as Extract<Capability, { kind: "component" }>).delegated.length} of the requester's grant(s) for what it imports</div>
+        </Show>
       </Show>
 
       <Show when={props.cap().kind === "inference"}>

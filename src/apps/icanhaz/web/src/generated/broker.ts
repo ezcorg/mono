@@ -14,7 +14,7 @@ export type Transport = "tcp" | "udp";
 export type ProcessRequest = { image: string; args: string[]; guestChoosesArgv: boolean };
 export type TerminalRequest = { shell: string | undefined; jailed: boolean };
 export type InferenceRequest = { models: string[] };
-export type ComponentRequest = { provides: string; provider: string | undefined };
+export type ComponentRequest = { provides: string; provider: string | undefined; delegated: string[] };
 export type Scope = { when: string; allow: string };
 export type Audience = { tag: "any" } | { tag: "origin"; val: string } | { tag: "peer"; val: string };
 export type Capability = { kind: string; scope: Scope };
@@ -81,7 +81,7 @@ function encInferenceRequest(v: InferenceRequest): number[] {
     return [...enc_39(v.models)];
 }
 function encComponentRequest(v: ComponentRequest): number[] {
-    return [...encodeString(v.provides), ...enc_37(v.provider)];
+    return [...encodeString(v.provides), ...enc_37(v.provider), ...enc_39(v.delegated)];
 }
 function encScope(v: Scope): number[] {
     return [...encodeString(v.when), ...encodeString(v.allow)];
@@ -221,7 +221,8 @@ function decInferenceRequest(b: Uint8Array, o0: number): [InferenceRequest, numb
 function decComponentRequest(b: Uint8Array, o0: number): [ComponentRequest, number] {
     const [_0, o1] = readString(b, o0);
     const [_1, o2] = dec_37(b, o1);
-    return [{ provides: _0, provider: _1 }, o2];
+    const [_2, o3] = dec_39(b, o2);
+    return [{ provides: _0, provider: _1, delegated: _2 }, o3];
 }
 function dec_102(b: Uint8Array, o0: number): [GrantInfo[], number] {
     return readList(b, o0, decGrantInfo);

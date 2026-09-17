@@ -519,7 +519,7 @@ fn kind_to_json(k: &CapabilityKind) -> serde_json::Value {
         CapabilityKind::Terminal(t) => json!({"terminal": {"shell": t.shell, "jailed": t.jailed}}),
         CapabilityKind::Inference(i) => json!({"inference": {"models": i.models}}),
         CapabilityKind::Component(c) => {
-            json!({"component": {"provides": c.provides, "provider": c.provider}})
+            json!({"component": {"provides": c.provides, "provider": c.provider, "delegated": c.delegated}})
         }
     }
 }
@@ -610,6 +610,7 @@ fn kind_from_json(v: &serde_json::Value) -> Option<CapabilityKind> {
         return Some(CapabilityKind::Component(ComponentRequest {
             provides: str_of(c, "provides")?,
             provider: str_of(c, "provider"),
+            delegated: strings(c, "delegated"),
         }));
     }
     None
@@ -662,6 +663,32 @@ impl GrantStore<CapabilityKind> {
     /// choose argv. The provider spawns *that* image (never a caller-named one), so
     /// a grant for `rust-analyzer` can't be turned into `rm`. Unknown/expired ⇒ the
     /// matching denial; wrong kind ⇒ not-authorized.
+    /// The grant a call from a component runs under: `token` itself when it is
+    /// a live grant of the `tag` kind, else the delegated grant of that kind
+    /// on the component grant `token` names. `None` when neither.
+    pub fn delegated_for(&self, token: &str, tag: &str) -> Option<String> {
+        let live = |t: &str| {
+            self.grants
+                .get(t)
+                .is_some_and(|g| g.expires > Instant::now() && !g.cancel.is_cancelled())
+        };
+        let grant = self.grants.get(token)?;
+        if !live(token) {
+            return None;
+        }
+        if grant.kind.tag() == tag {
+            return Some(token.to_string());
+        }
+        match &grant.kind {
+            CapabilityKind::Component(c) => c
+                .delegated
+                .iter()
+                .find(|d| live(d) && self.grants.get(*d).is_some_and(|g| g.kind.tag() == tag))
+                .cloned(),
+            _ => None,
+        }
+    }
+
     pub fn validate_process(&self, token: &str) -> Result<ProcessRequest, Denied> {
         let grant = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
         if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
@@ -1165,6 +1192,16 @@ impl<K: GrantKind> GrantStore<K> {
 
     /// The components a grant is provided through, outermost first; empty
     /// for the native implementation alone.
+    /// Whether `token` is a live grant held by `principal` (same kind and id).
+    pub fn held_by(&self, token: &str, principal: &Principal) -> bool {
+        self.grants.get(token).is_some_and(|g| {
+            g.expires > Instant::now()
+                && !g.cancel.is_cancelled()
+                && g.principal.id == principal.id
+                && principal_kind_str(g.principal.kind) == principal_kind_str(principal.kind)
+        })
+    }
+
     /// The kind a live grant was issued for.
     pub fn kind_of(&self, token: &str) -> Option<K>
     where
@@ -2036,11 +2073,23 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         // the browser-attested `Origin` (which page JS can't forge), never a value
         // the caller hands us. `None` ⇒ a non-browser / loopback peer.
         let origin = cx.origin();
+        let principal = principal_of(&cx);
+        // A component may be lent grants the requester holds, for what it
+        // imports: each must be live and the requester's own.
+        if let CapabilityKind::Component(c) = &want {
+            let store = self.store.lock().unwrap();
+            for token in &c.delegated {
+                if !store.held_by(token, &principal) {
+                    return Ok(Err(Denied::Unsupported(
+                        "a delegated grant is not one you hold".to_string(),
+                    )));
+                }
+            }
+        }
         // Pairings and the hosts list are keyed the way environments are: by
         // tag, or by interface for a component kind.
         let kind_key = want.env_key();
         let kind = kind_key.as_str();
-        let principal = principal_of(&cx);
         let summary = summarize_scoped(&want, &scope);
 
         // Host allowlist: an unapproved requester — a web origin, or a peer the

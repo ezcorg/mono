@@ -351,7 +351,20 @@ pub async fn run(
     // Novel interfaces store components provide: their admission environments
     // come from the components' own WIT, and the transports serve them
     // through shared routers.
-    let components_serve = ComponentsServe::new(Arc::clone(&services.components), grants.clone());
+    let (inference_complete, inference_models) = inference.native_for_grants();
+    let natives = crate::chain::Natives {
+        spawn: process.native_for_grants(),
+        complete: inference_complete,
+        models: inference_models,
+        terminal: terminal.native_for_grants(),
+        watch: watch.native_for_grants(),
+        root: workspace.native_for_grants(),
+    };
+    let components_serve = ComponentsServe::new(
+        Arc::clone(&services.components),
+        grants.clone(),
+        Some(natives),
+    );
     for info in services.components.list().await {
         crate::serve::register_component_envs_for(&services.components, &grants, &info);
     }

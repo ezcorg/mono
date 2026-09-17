@@ -58,6 +58,21 @@ impl WatchProvider {
         self.chain = Some(chain);
         self
     }
+
+    /// The native open for any live filesystem grant (or a component grant
+    /// delegated one).
+    pub fn native_for_grants(&self) -> crate::chain::NativeWatch {
+        let root = self.root.clone();
+        let grants = self.grants.clone();
+        Arc::new(move |token, path, recursive| {
+            let token = grants
+                .lock()
+                .unwrap()
+                .delegated_for(&token, "filesystem")
+                .ok_or_else(|| "watch denied: no filesystem grant for this call".to_string())?;
+            open_native(&root, &grants, &token, &path, recursive)
+        })
+    }
 }
 
 /// Map a `notify` event kind to our wire kind: `0` = rename (create/remove/move),

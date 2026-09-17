@@ -301,6 +301,17 @@ pub struct FsState<C: Invoke> {
     wasi: WasiCtx,
     rpc: Rpc<C>,
     grants: Arc<std::sync::Mutex<GrantStore>>,
+    /// The native capabilities a component may import, when this store runs
+    /// one that builds on them.
+    imports: Option<crate::chain::Imports>,
+}
+
+impl<C: Invoke + 'static> crate::chain::HasImports for FsState<C> {
+    fn imports(&mut self) -> &mut crate::chain::Imports {
+        self.imports
+            .as_mut()
+            .expect("a store linked with native imports carries them")
+    }
 }
 
 impl<C: Invoke> WasiView for FsState<C> {
@@ -382,14 +393,102 @@ pub type TokenCalls = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 /// and admission the kind requires.
 pub type ResolveToken = Arc<dyn Fn(&str, &str, &str) -> anyhow::Result<Vec<String>> + Send + Sync>;
 
+/// Admit a decoded call: `(interface, function, parameter names, values)`,
+/// the first value being the token. Refusing fails the call before the
+/// component runs.
+pub type Admit = Arc<
+    dyn Fn(&str, &str, &[String], &[wasmtime::component::Val]) -> anyhow::Result<()> + Send + Sync,
+>;
+
 /// What a [`Router`] routes: the linker its chains instantiate with, where
-/// chain bytes come from, which calls carry a token and how a token names a
-/// chain.
+/// chain bytes come from, which calls carry a token, how a token names a
+/// chain, and how a decoded call is admitted (if the chain does not gate its
+/// own calls, as the filesystem passthrough does).
 pub struct RouterSpec<C: Invoke + 'static> {
     pub linker: Linker<FsState<C>>,
     pub source: Option<ChainSource>,
     pub token_calls: TokenCalls,
     pub resolve_token: ResolveToken,
+    pub admit: Option<Admit>,
+}
+
+/// Flatten a decoded value into the clause environment's dotted names, the
+/// way `ezcap::shape` declares them: records become `a.b`, string-keyed
+/// tuple lists become maps, options and lists carry through, enums and
+/// variants bind their case name.
+pub fn flatten_val(
+    prefix: &str,
+    val: &wasmtime::component::Val,
+    out: &mut Vec<(String, ezcap::Val)>,
+) {
+    use wasmtime::component::Val as W;
+    let leaf = |v: &W| -> Option<ezcap::Val> {
+        Some(match v {
+            W::Bool(b) => ezcap::Val::Bool(*b),
+            W::S8(n) => ezcap::Val::Int(i64::from(*n)),
+            W::U8(n) => ezcap::Val::Int(i64::from(*n)),
+            W::S16(n) => ezcap::Val::Int(i64::from(*n)),
+            W::U16(n) => ezcap::Val::Int(i64::from(*n)),
+            W::S32(n) => ezcap::Val::Int(i64::from(*n)),
+            W::U32(n) => ezcap::Val::Int(i64::from(*n)),
+            W::S64(n) => ezcap::Val::Int(*n),
+            W::U64(n) => ezcap::Val::uint(*n),
+            W::Float32(f) => ezcap::Val::Double(f64::from(*f)),
+            W::Float64(f) => ezcap::Val::Double(*f),
+            W::Char(c) => ezcap::Val::Str(c.to_string()),
+            W::String(s) => ezcap::Val::Str(s.clone()),
+            W::Enum(name) => ezcap::Val::Str(name.clone()),
+            W::Variant(name, _) => ezcap::Val::Str(name.clone()),
+            _ => return None,
+        })
+    };
+    match val {
+        W::Record(fields) => {
+            for (name, v) in fields {
+                flatten_val(
+                    &format!("{prefix}.{}", ezcap::shape::cel_ident(name)),
+                    v,
+                    out,
+                );
+            }
+        }
+        W::Option(inner) => {
+            let inner = inner.as_ref().and_then(|v| leaf(v)).map(Box::new);
+            out.push((prefix.to_string(), ezcap::Val::Opt(inner)));
+        }
+        W::List(items) => {
+            if items.iter().all(|i| matches!(i, W::U8(_))) {
+                let bytes = items
+                    .iter()
+                    .filter_map(|i| if let W::U8(b) = i { Some(*b) } else { None })
+                    .collect();
+                out.push((prefix.to_string(), ezcap::Val::Bytes(bytes)));
+            } else if items
+                .iter()
+                .all(|i| matches!(i, W::Tuple(t) if t.len() == 2 && matches!(t[0], W::String(_))))
+            {
+                let entries = items
+                    .iter()
+                    .filter_map(|i| match i {
+                        W::Tuple(t) => match (&t[0], leaf(&t[1])) {
+                            (W::String(k), Some(v)) => Some((k.clone(), v)),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect();
+                out.push((prefix.to_string(), ezcap::Val::Map(entries)));
+            } else {
+                let vals: Vec<ezcap::Val> = items.iter().filter_map(leaf).collect();
+                out.push((prefix.to_string(), ezcap::Val::List(vals)));
+            }
+        }
+        other => {
+            if let Some(v) = leaf(other) {
+                out.push((prefix.to_string(), v));
+            }
+        }
+    }
 }
 
 /// The chains one served interface set fronts, each in its own store. Calls
@@ -429,6 +528,7 @@ where
         cx: C::Context,
         wasi: WasiRecipe,
         grants: Arc<std::sync::Mutex<GrantStore>>,
+        natives: Option<crate::chain::Natives>,
     ) -> anyhow::Result<Arc<Self>> {
         let engine = spec.linker.engine().clone();
         let state = {
@@ -443,6 +543,7 @@ where
                         shared: SharedResourceTable::with_capacity(max_fs_handles()),
                     },
                     grants: Arc::clone(&grants),
+                    imports: natives.as_ref().map(|n| n.imports()),
                 })
             })
         };
@@ -855,8 +956,10 @@ where
                     .via_of(token))
             })
         },
+        // The passthrough gates each descriptor operation itself.
+        admit: None,
     };
-    let router = Router::new(spec, client, cx, wasi, grants)?;
+    let router = Router::new(spec, client, cx, wasi, grants, None)?;
     router
         .add_chain(String::new(), &component)
         .await
@@ -886,6 +989,7 @@ pub fn component_router<C>(
     cx: C::Context,
     wasi: WasiRecipe,
     grants: Arc<std::sync::Mutex<GrantStore>>,
+    natives: Option<crate::chain::Natives>,
 ) -> anyhow::Result<Arc<Router<C>>>
 where
     C: Invoke + Clone + 'static,
@@ -896,6 +1000,12 @@ where
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(anyhow::Error::from)
         .context("link WASI")?;
+    // A component may build on the daemon's own capabilities: its imports of
+    // them are satisfied natively, each call running under the grant its
+    // token resolves to (the component grant's delegated grant of that kind).
+    if natives.is_some() {
+        crate::chain::link_imports(&mut linker)?;
+    }
     let provides = interface.to_string();
     let source: ChainSource = {
         let provides = provides.clone();
@@ -937,19 +1047,12 @@ where
         resolve_token: {
             let grants = Arc::clone(&grants);
             let provides = provides.clone();
-            Arc::new(move |_iface, name, token| {
-                let mut g = grants.lock().unwrap_or_else(|e| e.into_inner());
+            Arc::new(move |_iface, _name, token| {
+                let g = grants.lock().unwrap_or_else(|e| e.into_inner());
                 g.validate(token, |k| {
                     matches!(k, crate::broker::CapabilityKind::Component(c) if c.provides == provides)
                 })
                 .map_err(|d| anyhow::anyhow!("{provides} denied: {d:?}"))?;
-                // Admitted by method name: the call's other arguments are not
-                // decoded at routing time, so a clause over `call.args.*`
-                // fails closed here.
-                g.admit(token, crate::broker::AdmitCall::new(name))
-                    .map_err(|d| {
-                        anyhow::anyhow!("{provides} denied: {}", crate::broker::denied_text(&d))
-                    })?;
                 let via = g.via_of(token);
                 if !via.is_empty() {
                     return Ok(via);
@@ -963,8 +1066,35 @@ where
                 }
             })
         },
+        // Admitted against the decoded call: the method and every argument
+        // after the token, flattened the way the interface's environment
+        // declares them.
+        admit: Some({
+            let grants = Arc::clone(&grants);
+            let provides = provides.clone();
+            Arc::new(move |_iface, name, names, vals| {
+                let Some(wasmtime::component::Val::String(token)) = vals.first() else {
+                    anyhow::bail!("{provides}: the first argument is not a grant token");
+                };
+                let mut call = crate::broker::AdmitCall::new(name);
+                for (n, v) in names.iter().zip(vals.iter()).skip(1) {
+                    let mut flat = Vec::new();
+                    flatten_val(&ezcap::shape::cel_ident(n), v, &mut flat);
+                    for (path, val) in flat {
+                        call = call.arg(&path, val);
+                    }
+                }
+                grants
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .admit(token, call)
+                    .map_err(|d| {
+                        anyhow::anyhow!("{provides} denied: {}", crate::broker::denied_text(&d))
+                    })
+            })
+        }),
     };
-    Router::new(spec, client, cx, wasi, grants)
+    Router::new(spec, client, cx, wasi, grants, natives)
 }
 
 /// Serve `interface` on `srv` through `router`: the functions the component
@@ -1020,6 +1150,7 @@ where
             let types::ComponentItem::ComponentFunc(func_ty) = fitem else {
                 continue;
             };
+            let param_names: Arc<[String]> = func_ty.params().map(|(n, _)| n.to_string()).collect();
             let params_ty: Arc<[types::Type]> = func_ty.params().map(|(_, t)| t).collect();
             let results_ty: Arc<[types::Type]> = func_ty.results().collect();
             let paths = wrpc_wasmtime::paths::params_async_paths(params_ty.iter(), &io_streams);
@@ -1047,6 +1178,7 @@ where
                         &router,
                         &iface,
                         &name,
+                        &param_names,
                         &params_ty,
                         &results_ty,
                         &host_resources,
@@ -1058,6 +1190,8 @@ where
                     .await;
                     if let Err(err) = res {
                         let chain: Vec<String> = err.chain().map(|e| e.to_string()).collect();
+                        #[cfg(test)]
+                        eprintln!("invocation {iface}#{name} failed: {}", chain.join(" <- "));
                         tracing::warn!(
                             iface = %iface, func = %name, conn,
                             "invocation failed: {}", chain.join(" <- ")
@@ -1078,6 +1212,7 @@ async fn serve_one<C>(
     router: &Arc<Router<C>>,
     iface: &str,
     name: &str,
+    param_names: &[String],
     params_ty: &[types::Type],
     results_ty: &[types::Type],
     host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
@@ -1095,7 +1230,8 @@ where
     let union = router.union();
     let mut store = chain.store.lock().await;
     store.data_mut().rpc.shared.set_scope(conn);
-    let res = wrpc_wasmtime::call(
+    let admit = router.spec.admit.clone();
+    let res = wrpc_wasmtime::call_observed(
         &mut *store,
         rx,
         tx,
@@ -1105,10 +1241,19 @@ where
         params_ty.iter(),
         results_ty,
         func,
+        |vals| match &admit {
+            Some(admit) => admit(iface, name, param_names, vals)
+                .map_err(|e| wasmtime::Error::msg(format!("{e:#}"))),
+            None => Ok(()),
+        },
     )
     .await;
     // Whatever the call minted (even on a failed encode) belongs to this chain.
     router.minted(chain.id, store.data_mut().rpc.shared.take_minted());
+    #[cfg(test)]
+    if let Err(err) = &res {
+        eprintln!("call error detail: {err:?}");
+    }
     res.map_err(anyhow::Error::from)
 }
 
@@ -1681,6 +1826,7 @@ mod tests {
             CapabilityKind::Component(ComponentRequest {
                 provides: IFACE.to_string(),
                 provider: Some(info.hash.clone()),
+                delegated: Vec::new(),
             })
         };
         let (token, scoped, wrong) = {
@@ -1743,6 +1889,7 @@ mod tests {
             (),
             wasi,
             grants.clone(),
+            None,
         )
         .unwrap();
         let ty = Component::new(router.engine(), &greeter)
@@ -1779,10 +1926,208 @@ mod tests {
         assert_eq!(refused.unwrap_err(), "greeter: who?");
         // The scoped grant admits `greet` too.
         assert!(greet(scoped, "again").await.expect("served").is_ok());
+        // A clause over the call's own arguments: admitted against the
+        // decoded values, before the component runs.
+        let named = grants
+            .lock()
+            .unwrap()
+            .issue_scoped(
+                kind(),
+                ezcap::Scope::allow("call.args.name.startsWith(\"w\")"),
+                "greeter, w-names only".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            )
+            .unwrap();
+        assert!(greet(named.clone(), "world").await.expect("served").is_ok());
+        assert!(
+            greet(named, "bob").await.is_err(),
+            "refused by the grant's clause, not by the component"
+        );
         // Not a grant for this interface, and not a grant at all: refused
         // before the component runs (the invocation fails).
         assert!(greet(wrong, "x").await.is_err());
         assert!(greet("bogus".to_string(), "x").await.is_err());
+        accept.abort();
+    }
+
+    /// A novel component built on a native capability: the oracle imports
+    /// `inference`, calls it with its own token, and the daemon runs the call
+    /// under the inference grant the requester delegated to the component
+    /// grant. Without a delegated grant the import refuses; with one, the
+    /// model's answer comes back through the oracle.
+    #[tokio::test]
+    async fn a_component_builds_on_a_native_capability_through_delegated_grants() {
+        use crate::broker::{CapabilityKind, ComponentRequest, InferenceRequest};
+        use crate::chain::Natives;
+        use crate::store::Store as Db;
+        use wrpc_transport::InvokeExt as _;
+
+        const IFACE: &str = "example:oracle/oracle@0.1.0";
+        let oracle = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/oracle.wasm"))
+            .expect("oracle.wasm fixture");
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Db::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let components = Arc::new(crate::components::ComponentStore::new(
+            dir.path().join("components"),
+            Some(db),
+        ));
+        let info = components.add(&oracle, None).await.expect("stored");
+        assert!(
+            info.imports
+                .iter()
+                .any(|i| i.starts_with("icanhaz:nocap/inference@")),
+            "{:?}",
+            info.imports
+        );
+
+        // The real inference provider over the echo backend: what the oracle's
+        // import runs against, each call resolving the token it is handed to
+        // the delegated inference grant.
+        let grants = GrantStore::shared();
+        let providers = Arc::new(crate::providers::Providers::new(
+            vec![crate::providers::ProviderConfig {
+                name: "echo".to_string(),
+                kind: crate::providers::ProviderKind::Echo,
+                base_url: String::new(),
+                api_key: String::new(),
+                models: vec!["echo".to_string()],
+            }],
+            None,
+        ));
+        let inference_provider =
+            crate::inference::InferenceProvider::new(grants.clone(), providers);
+        let (complete, models) = inference_provider.native_for_grants();
+        let natives = {
+            let refuse = "not in this test";
+            Natives {
+                spawn: Arc::new(move |_, _, _| Err(refuse.to_string())),
+                complete,
+                models,
+                terminal: Arc::new(move |_, _, _, _, _| Err(refuse.to_string())),
+                watch: Arc::new(move |_, _, _| Err(refuse.to_string())),
+                root: Arc::new(move |_| Err(refuse.to_string())),
+            }
+        };
+
+        let (lent, inference) = {
+            let mut g = grants.lock().unwrap();
+            let inference = g.issue(
+                CapabilityKind::Inference(InferenceRequest { models: vec![] }),
+                "inference".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            let lent = g.issue(
+                CapabilityKind::Component(ComponentRequest {
+                    provides: IFACE.to_string(),
+                    provider: Some(info.hash.clone()),
+                    delegated: vec![inference.clone()],
+                }),
+                "oracle".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            (lent, inference)
+        };
+        let bare = grants.lock().unwrap().issue(
+            CapabilityKind::Component(ComponentRequest {
+                provides: IFACE.to_string(),
+                provider: Some(info.hash.clone()),
+                delegated: vec![],
+            }),
+            "oracle, nothing lent".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+        // The token resolves through the component grant to the delegated one.
+        assert_eq!(
+            grants
+                .lock()
+                .unwrap()
+                .delegated_for(&lent, "inference")
+                .as_deref(),
+            Some(inference.as_str())
+        );
+        assert_eq!(
+            grants.lock().unwrap().delegated_for(&bare, "inference"),
+            None
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
+        let router = component_router(
+            IFACE,
+            Arc::clone(&components),
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+            Some(natives),
+        )
+        .unwrap();
+        let ty = Component::new(router.engine(), &oracle)
+            .unwrap()
+            .component_type();
+        let _handlers = serve_interface(srv.as_ref(), &router, &ty, IFACE)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+        let no_paths: [&[Option<usize>]; 0] = [];
+        let ask = |token: String, q: &'static str| {
+            let wrpc = wrpc.clone();
+            async move {
+                wrpc.invoke_values::<_, (String, String), (Result<String, String>,), _>(
+                    (),
+                    IFACE,
+                    "ask",
+                    (token, q.to_string()),
+                    no_paths,
+                )
+                .await
+                .map(|((r,), _)| r)
+            }
+        };
+        let answer = ask(lent.clone(), "why?").await.expect("served").unwrap();
+        assert!(
+            answer.contains("why?"),
+            "the echo model answered: {answer:?}"
+        );
+        // The inference grant paid for the call, not the component's.
+        assert!(
+            grants
+                .lock()
+                .unwrap()
+                .counter(&inference, "tokens")
+                .unwrap_or(0)
+                > 0,
+            "usage charged to the delegated grant"
+        );
+        // Nothing lent: the import refuses, and the oracle reports it.
+        let refused = ask(bare, "why?").await.expect("served");
+        assert_eq!(
+            refused.unwrap_err(),
+            "inference denied: no inference grant for this call"
+        );
+        // Revoking the lent grant takes the ability with it.
+        assert!(grants.lock().unwrap().revoke(&inference));
+        let gone = ask(lent, "still?").await.expect("served");
+        assert!(gone.is_err(), "{gone:?}");
         accept.abort();
     }
 

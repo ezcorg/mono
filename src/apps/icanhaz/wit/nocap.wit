@@ -38,7 +38,11 @@ interface types {
   /// in mind, if any. Every function of such an interface takes the grant
   /// token as its first argument; the daemon validates it before the call
   /// reaches the component.
-  record component-request { provides: string, provider: option<string> }
+  /// `delegated` are grant tokens the requester holds and lends the component
+  /// for what it imports: when the component calls an imported capability
+  /// with its own token, the daemon substitutes the delegated grant of that
+  /// kind. Each must be live and held by the requester.
+  record component-request { provides: string, provider: option<string>, delegated: list<string> }
 
   /// LLM inference through the host's configured providers. `models` lists the
   /// models the grant may use (empty = any the host has configured); budgets and
