@@ -1,0 +1,8 @@
+package example:greeter@0.1.0;
+
+/// A novel capability nothing native provides: it lives in the store.
+/// Every function takes the grant token first; the daemon validates it
+/// before the call reaches the component.
+interface greeter {
+  greet: func(grant: string, name: string) -> result<string, string>;
+}

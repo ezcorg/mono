@@ -1,0 +1,8 @@
+package example:oracle@0.1.0;
+
+/// A novel capability built on a native one: it answers questions by
+/// asking the host's language model, through an inference grant the
+/// requester delegated to it.
+interface oracle {
+  ask: async func(grant: string, question: string) -> result<string, string>;
+}

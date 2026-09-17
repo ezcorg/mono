@@ -1,0 +1,5 @@
+package ezco:pipe@0.1.0;
+
+world capability {
+  export example:pipe/pipe@0.1.0;
+}

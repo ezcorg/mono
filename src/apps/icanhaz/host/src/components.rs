@@ -489,7 +489,6 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::com
     }
 }
 
-
 /// The gate interface a component imports to consume a grant of `kind`
 /// (`icanhaz:nocap/gate-<kind>@…`): how a component names the kind it serves.
 fn gate_for(kind: &str) -> String {

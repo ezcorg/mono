@@ -1,11 +1,12 @@
-//! The daemon's serving layer — one wRPC `Server` per transport, serving **every**
-//! capability (broker + terminal + process + workspace + watch + real wasi:filesystem)
-//! on it. wRPC routes by the instance
-//! name in each invocation header (`icanhaz:nocap/broker` vs `…/terminal` vs
-//! `…/terminal`), so one WebSocket port (and one WebTransport port) covers all of
-//! them: we register each interface's handler on the shared server and drive
-//! their invocation streams together. The broker and the terminal share a grant
-//! store, so a grant minted by `broker.request` is the one `terminal.open` checks.
+//! The daemon's serving layer: one wRPC `Server` per transport (WebSocket,
+//! WebTransport, iroh), serving everything on it. wRPC routes by the instance
+//! name in each invocation header, so one port covers the control plane (the
+//! broker, configuration and the component store, served by the daemon's own
+//! handlers) and every capability (the shipped components and the store's
+//! novel components, served through `component_serve`), with one
+//! resource-drop op beside them. They share one grant store and one handle
+//! registry, so a grant minted by `broker.request` is the one a capability's
+//! `open` checks, whichever transport either arrived on.
 
 use core::net::SocketAddr;
 use std::sync::Arc;

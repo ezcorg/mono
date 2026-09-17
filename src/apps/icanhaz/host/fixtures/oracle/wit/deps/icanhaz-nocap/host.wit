@@ -1,0 +1,93 @@
+package icanhaz:nocap@0.1.0;
+
+/// The daemon's own capability implementations, as the interfaces a shipped
+/// capability component imports. These are host functions the daemon links
+/// into every capability store; they are never served on the wire. Every
+/// operation takes the grant token it runs under and validates it itself,
+/// resolving a component grant to the grant of the right kind that was lent
+/// to it (`component-request.delegated`), so importing them is safe for any
+/// component: nothing here can be reached without a live grant.
+
+/// The consent gate, one interface per grant kind. A component imports the
+/// gate of the kind of grant it consumes, which is how the daemon knows which
+/// grants a component can provide: nothing else names the kind. `validate`
+/// fails at acquisition, so a bogus token is refused at `open` rather than at
+/// the first method; `admit` is per-operation admission against the grant's
+/// `allow` clause, with `call.method` and the string arguments bound.
+interface gate-filesystem {
+  /// A live filesystem grant: its first root, relative to the served preopen
+  /// (`""`/`"/"` is the whole preopen), which the descriptor is scoped to.
+  validate: func(grant: string) -> result<string, string>;
+  admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
+}
+
+interface gate-process {
+  use types.{process-request};
+  /// A live process grant: the program and argv it pins.
+  validate: func(grant: string) -> result<process-request, string>;
+  admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
+}
+
+interface gate-terminal {
+  use types.{terminal-request};
+  validate: func(grant: string) -> result<terminal-request, string>;
+  admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
+}
+
+interface gate-inference {
+  use types.{inference-request};
+  /// A live inference grant: the models it allows (empty = any configured).
+  validate: func(grant: string) -> result<inference-request, string>;
+  admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
+}
+
+/// Spawn the program a process grant pins, with piped stdio and no tty. The
+/// program is never named here: it is the grant's `image`; `args` are
+/// honoured only when the grant negotiated `guest-chooses-argv`, otherwise
+/// they must be empty or exactly the pinned ones. Admitted against the argv
+/// that will run; the stdout stream ends with the child or the grant.
+interface process-raw {
+  spawn: async func(grant: string, args: list<string>, stdin: stream<u8>) -> result<stream<u8>, string>;
+}
+
+/// Open a PTY to the host's login shell for a terminal grant: `stdin` carries
+/// keystrokes, `control` 4-byte resize frames (`[cols u16 BE][rows u16 BE]`),
+/// the result the merged stdout and stderr. Admitted with `cols`/`rows`.
+interface pty {
+  open: async func(grant: string, stdin: stream<u8>, control: stream<u8>, cols: u16, rows: u16) -> result<stream<u8>, string>;
+}
+
+/// Filesystem change events for a path under a filesystem grant's jail
+/// (`path` grant-relative, no escape). Frames `[kind u8][len u16 BE][path]`,
+/// kind 0 rename, 1 change. The stream ends with the grant.
+interface notify {
+  watch: async func(grant: string, path: string, recursive: bool) -> result<stream<u8>, string>;
+}
+
+/// The host's configured inference providers, for an inference grant: which
+/// models it may use, and a completion streamed as frames (see `inference`),
+/// its usage charged to the grant.
+interface providers {
+  use inference.{completion-request, model-info};
+  complete: async func(grant: string, request: completion-request) -> result<stream<u8>, string>;
+  models: async func(grant: string) -> result<list<model-info>, string>;
+}
+
+/// The host absolute path a filesystem grant is jailed to.
+interface jail {
+  root: func(grant: string) -> result<string, string>;
+}
+
+/// The world a shipped capability component is linked against: every raw
+/// interface the daemon provides. A component imports what it uses.
+world capability-host {
+  import gate-filesystem;
+  import gate-process;
+  import gate-terminal;
+  import gate-inference;
+  import process-raw;
+  import pty;
+  import notify;
+  import providers;
+  import jail;
+}

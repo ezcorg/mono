@@ -1,0 +1,19 @@
+[package]
+name = "pipe"
+version = "0.1.0"
+edition = "2024"
+description = "An icanhaz capability fixture: upper-cases a stream"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.54", features = ["async-spawn"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+# A fixture crate: a wasm32-wasip2 guest built on its own, outside the mono workspace.
+[workspace]

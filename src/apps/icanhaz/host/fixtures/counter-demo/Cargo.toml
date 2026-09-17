@@ -15,3 +15,6 @@ wit-bindgen = "0.58"
 opt-level = "s"
 lto = true
 strip = true
+
+# A fixture crate: a wasm32-wasip2 guest built on its own, outside the mono workspace.
+[workspace]

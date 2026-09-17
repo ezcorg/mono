@@ -1,18 +1,18 @@
-//! Serve a wasmtime **component's exports** over wRPC — resources and all.
+//! Serve a wasmtime **component's exports** over wRPC: resources, streams
+//! and async exports included. This is the daemon's one serving path: every
+//! shipped capability (`capabilities/`) and every novel component from the
+//! store goes through a [`Router`], which owns the component's chains (one
+//! instantiated composition per `via` a grant names, each in its own store
+//! with a long-lived concurrent driver), routes each call by what is on the
+//! wire before decoding it (a served handle names the chain that minted it;
+//! a grant token names the chain the grant is provided through), and records
+//! every handle a reply carries in the daemon-wide [`Handles`] registry, under
+//! the grant it was acquired with. Components see only WASI and the raw host
+//! layer (`crate::raw`); the consent gate is one of its interfaces.
 //!
-//! Unlike [`provider`](crate::provider) (a hand-written `wit-bindgen-wrpc` server
-//! for the flat `fs` interface), this drives `wrpc-wasmtime`'s generic
-//! [`ServeExt::serve_function_shared`]: it introspects the component type and
-//! wires *every* exported function to wRPC, bridging guest-exported resources
-//! (e.g. a `wasi:filesystem` descriptor) through a [`SharedResourceTable`] and
-//! `wasi:io` streams to native wRPC streams. The component is instantiated **once**
-//! into a shared `Store`, so resource handles persist across calls.
-//!
-//! This is the serving path for real `wasi:filesystem@0.2`. It's proven first on
-//! the tiny `counter` component (a 3-method resource), then reused for the
-//! filesystem passthrough.
-//!
-//! Modeled on `wrpc-wasmtime-cli`'s `serve_shared`.
+//! Built on the wrpc fork's `wrpc-wasmtime`: its codec bridges guest-exported
+//! resources through a [`SharedResourceTable`] scoped to the connection that
+//! minted each handle, and component-model `stream<u8>` to wRPC streams.
 
 use core::future::Future;
 use core::ops::Bound;
@@ -299,7 +299,7 @@ where
 
 /// Store state for the **gated** filesystem serving: like [`CompState`] plus the
 /// grant store the consent `gate` host import validates against.
-pub struct FsState<C: Invoke> {
+pub struct CapabilityState<C: Invoke> {
     table: ResourceTable,
     wasi: WasiCtx,
     rpc: Rpc<C>,
@@ -308,13 +308,13 @@ pub struct FsState<C: Invoke> {
     raw: crate::raw::RawState,
 }
 
-impl<C: Invoke + 'static> crate::raw::HasRaw for FsState<C> {
+impl<C: Invoke + 'static> crate::raw::HasRaw for CapabilityState<C> {
     fn raw(&mut self) -> &mut crate::raw::RawState {
         &mut self.raw
     }
 }
 
-impl<C: Invoke> WasiView for FsState<C> {
+impl<C: Invoke> WasiView for CapabilityState<C> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi,
@@ -323,7 +323,7 @@ impl<C: Invoke> WasiView for FsState<C> {
     }
 }
 
-impl<C: Invoke> WrpcView for FsState<C>
+impl<C: Invoke> WrpcView for CapabilityState<C>
 where
     C::Context: Clone,
 {
@@ -414,14 +414,14 @@ struct CallJob<C: Invoke + 'static> {
     rx: wrpc_transport::frame::Incoming,
 }
 
-impl<C> wasmtime::component::AccessorTask<FsState<C>> for CallJob<C>
+impl<C> wasmtime::component::AccessorTask<CapabilityState<C>> for CallJob<C>
 where
     C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
     async fn run(
         self,
-        accessor: &wasmtime::component::Accessor<FsState<C>>,
+        accessor: &wasmtime::component::Accessor<CapabilityState<C>>,
     ) -> wasmtime::Result<()> {
         let admit = self.router.spec.admit.clone();
         let (iface, name, param_names) = (self.iface, self.name, self.param_names);
@@ -483,7 +483,9 @@ struct DropJob {
 /// scope for it: `run_concurrent` returns as soon as its future does and keeps
 /// every pending task in the store, the drop runs with the store in hand, and
 /// the driver steps back in.
-fn spawn_driver<C>(mut store: Store<FsState<C>>) -> tokio::sync::mpsc::UnboundedSender<Job<C>>
+fn spawn_driver<C>(
+    mut store: Store<CapabilityState<C>>,
+) -> tokio::sync::mpsc::UnboundedSender<Job<C>>
 where
     C: Invoke + Clone + 'static,
     C::Context: Clone,
@@ -656,7 +658,7 @@ impl Handles {
 /// chain, and how a decoded call is admitted (if the chain does not gate its
 /// own calls, as the filesystem passthrough does).
 pub struct RouterSpec<C: Invoke + 'static> {
-    pub linker: Linker<FsState<C>>,
+    pub linker: Linker<CapabilityState<C>>,
     pub source: Option<ChainSource>,
     pub token_calls: TokenCalls,
     pub resolve_token: ResolveToken,
@@ -753,7 +755,7 @@ pub fn flatten_val(
 pub struct Router<C: Invoke + 'static> {
     engine: Engine,
     spec: RouterSpec<C>,
-    state: Box<dyn Fn() -> anyhow::Result<FsState<C>> + Send + Sync>,
+    state: Box<dyn Fn() -> anyhow::Result<CapabilityState<C>> + Send + Sync>,
     grants: Arc<std::sync::Mutex<GrantStore>>,
     chains: std::sync::RwLock<Vec<Arc<Chain<C>>>>,
     /// The resource types the served surface declares: a compiled component
@@ -789,7 +791,7 @@ where
         let engine = spec.linker.engine().clone();
         let state = {
             Box::new(move || {
-                Ok(FsState {
+                Ok(CapabilityState {
                     table: ResourceTable::new(),
                     wasi: wasi()?,
                     rpc: Rpc {
@@ -1129,12 +1131,12 @@ async fn peek_string(rx: &mut wrpc_transport::frame::Incoming) -> anyhow::Result
 
 /// A linker for a capability store: WASI, the raw host layer every shipped
 /// component imports, and the filesystem passthrough's own `gate`.
-pub fn capability_linker<C>(engine: &Engine) -> anyhow::Result<Linker<FsState<C>>>
+pub fn capability_linker<C>(engine: &Engine) -> anyhow::Result<Linker<CapabilityState<C>>>
 where
     C: Invoke + 'static,
     C::Context: Clone,
 {
-    let mut linker = Linker::<FsState<C>>::new(engine);
+    let mut linker = Linker::<CapabilityState<C>>::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(anyhow::Error::from)
         .context("link WASI")?;
@@ -1212,8 +1214,10 @@ where
     Ok(handlers)
 }
 
-/// The filesystem passthrough alone on a server, with the resource-drop
-/// meta-op beside it (see [`serve_capability`] and [`serve_resource_drop`]).
+/// The filesystem capability alone on a server, with the resource-drop
+/// meta-op beside it (see [`serve_capability`] and [`serve_resource_drop`]):
+/// what the filesystem tests stand up.
+#[cfg(test)]
 pub async fn serve_filesystem<C, S>(
     srv: &S,
     component_bytes: &[u8],
@@ -1596,14 +1600,13 @@ mod tests {
     mod counter_client {
         wit_bindgen_wrpc::generate!({
             world: "counter-client",
-            path: "../policies/counter-demo/wit",
+            path: "fixtures/counter-demo/wit",
         });
     }
     use counter_client::demo::res::counter::Counter;
 
     fn counter_wasm() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../policies/counter-demo/target/wasm32-wasip2/debug/counter_demo.wasm")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/counter_demo.wasm")
     }
 
     /// The whole resource-serving vertical on a 3-method surface: serve a
@@ -1612,10 +1615,7 @@ mod tests {
     /// proving `SharedResourceTable` round-trips a real guest resource.
     #[tokio::test]
     async fn serves_a_guest_resource_over_wrpc() {
-        let wasm = std::fs::read(counter_wasm()).expect(
-            "build counter-demo first: cargo build --target wasm32-wasip2 \
-             --manifest-path src/apps/icanhaz/policies/counter-demo/Cargo.toml",
-        );
+        let wasm = std::fs::read(counter_wasm()).expect("counter_demo.wasm fixture");
 
         let srv = Arc::new(wrpc_transport::Server::default());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2349,7 +2349,7 @@ mod tests {
     // The wRPC client of the stream-shaped fixture (its `pipe-client` world).
     mod pipe_client {
         wit_bindgen_wrpc::generate!({
-            world: "pipe-client",
+            world: "example:pipe/pipe-client",
             path: "fixtures/pipe/wit",
             with: {
                 "example:pipe/pipe@0.1.0": generate,

@@ -392,7 +392,7 @@ pub async fn run(
         .await
         .with_context(|| format!("failed to bind WebSocket on {}", config.ws_bind))?;
 
-    eprintln!("icanhaz — broker (consent gate) + terminal + process + real wasi:filesystem + workspace + watch + inference:");
+    eprintln!("icanhaz — broker (consent gate) + the shipped capabilities (filesystem, process, terminal, watch, workspace, inference) + the component store:");
     eprintln!(
         "  inference    : {} model(s) configured",
         providers.models().len()

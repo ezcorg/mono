@@ -1,0 +1,6 @@
+package ezco:greeter@0.1.0;
+
+/// An icanhaz capability
+world capability {
+  export example:greeter/greeter@0.1.0;
+}

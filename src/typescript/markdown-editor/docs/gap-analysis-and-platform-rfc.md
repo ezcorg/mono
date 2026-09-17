@@ -158,7 +158,7 @@ The quick brown fox jumps over the [lazy dog]{#c-01J9K}.
 
 The question was whether the editor should copy files into a sandboxed documents filesystem attached to the agent, ideally copy-on-write, or whether agents operate on handles to host resources directly. The answer is that these are the same design once icanhaz is the layer that decides what a handle resolves to.
 
-**A grant is satisfied by a resolver chosen by policy, invisible to the requester.** A `fs(scope)` grant today is satisfied by the `fs-passthrough` component. The same grant can be satisfied by:
+**A grant is satisfied by a resolver chosen by policy, invisible to the requester.** A `fs(scope)` grant today is satisfied by the shipped filesystem component (`capabilities/filesystem`). The same grant can be satisfied by:
 
 | Resolver | Mechanism | Use |
 |---|---|---|
@@ -412,7 +412,7 @@ A Rust crate `ezcap` beside the WIT package, used by both hosts: the WIT-to-CEL 
 
 ## 14. Authoring capabilities in icanhaz
 
-A capability is a component whose imports the host satisfies and whose exports satisfy a plugin's imports; `fs-passthrough` is one. Users author them as **WebAssembly components**, in whatever language has a component toolchain, and wrap existing capabilities by **composition** (wac). There is no in-app scripting tier: the interpreter would have been cheap (QuickJS-ng's WASI reactor build is about a megabyte) but the typed adapter between real WIT interfaces, resource handles included, and a generic `dispatch` is a second binding generator to keep alive for every interface, and Tier 1 narrowing already covers most of what a non-programmer would have edited a script for. What remains is three tiers, because toolchain cost jumps between them:
+A capability is a component whose imports the host satisfies and whose exports satisfy a plugin's imports; the shipped filesystem component is one. Users author them as **WebAssembly components**, in whatever language has a component toolchain, and wrap existing capabilities by **composition** (wac). There is no in-app scripting tier: the interpreter would have been cheap (QuickJS-ng's WASI reactor build is about a megabyte) but the typed adapter between real WIT interfaces, resource handles included, and a generic `dispatch` is a second binding generator to keep alive for every interface, and Tier 1 narrowing already covers most of what a non-programmer would have edited a script for. What remains is three tiers, because toolchain cost jumps between them:
 
 | Tier | What the user does | Runtime | Cost |
 |---|---|---|---|

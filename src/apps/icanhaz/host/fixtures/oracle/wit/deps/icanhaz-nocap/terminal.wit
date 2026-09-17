@@ -1,0 +1,29 @@
+package icanhaz:nocap@0.1.0;
+
+/// An interactive PTY to **your login shell**, as wRPC **streams**: `stdin`
+/// carries keystrokes (client→host); the returned stream carries the merged
+/// stdout+stderr (host→client); `control` carries window-resize events, each
+/// a 4-byte frame `[cols: u16 big-endian][rows: u16 big-endian]`. The session
+/// ends when the shell exits, either stream closes, or the grant ends.
+///
+/// The shell is the *host's*, never named by the requestor: a terminal grant
+/// is "a shell as you", not "run a program I choose" (that is the broader,
+/// separately-consented `process` capability). A real native PTY (resize,
+/// job control, `isatty`, curses apps), reachable over the network with
+/// consent. Resource-shaped: the token once, at `open`.
+interface terminal {
+  resource terminal {
+    attach: async func(stdin: stream<u8>, control: stream<u8>, cols: u16, rows: u16) -> result<stream<u8>, string>;
+  }
+  open: func(grant: string) -> result<terminal, string>;
+}
+
+world terminal-client {
+  import terminal;
+}
+
+world terminal-capability {
+  import gate-terminal;
+  import pty;
+  export terminal;
+}
