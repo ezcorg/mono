@@ -13,7 +13,7 @@ function decodeFrames(bytes: Uint8Array): { kind: number; payload: string }[] {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     let i = 0;
     while (i + 5 <= bytes.length) {
-        const kind = bytes[i];
+        const kind = bytes[i] ?? 0;
         const len = view.getUint32(i + 1);
         out.push({ kind, payload: new TextDecoder().decode(bytes.subarray(i + 5, i + 5 + len)) });
         i += 5 + len;

@@ -10,7 +10,8 @@ type Capability =
   | { kind: "terminal"; shell: string | null; jailed: boolean }
   | { kind: "sockets"; endpoints: string[]; may_listen: boolean }
   | { kind: "inference"; models: string[] }
-  | { kind: "foreign"; path: string; summary: string };
+  | { kind: "foreign"; path: string; summary: string }
+  | { kind: "component"; provides: string; provider: string | null };
 type ScopeText = { when: string[]; allow: string[] };
 type Pending = {
   id: string;
@@ -568,7 +569,13 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
   // interface, and shown back as sentences before it is applied.
   const [extra, setExtra] = createSignal("");
   // Store components the human chose to provide the grant through, outermost first.
-  const [via, setVia] = createSignal<string[]>([]);
+  // A component kind starts with the requester's suggested provider ticked:
+  // without a component to run it, there is nothing to grant.
+  const [via, setVia] = createSignal<string[]>(
+    props.req.capability.kind === "component" && props.req.capability.provider
+      ? [props.req.capability.provider]
+      : [],
+  );
   const toggleVia = (hash: string, on: boolean) =>
     setVia((v) => (on ? [...v.filter((h) => h !== hash), hash] : v.filter((h) => h !== hash)));
   const [extraText, setExtraText] = createSignal<ScopeText | null>(null);
@@ -772,6 +779,14 @@ function CapabilityEditor(props: { orig: Capability; cap: () => Capability; setC
           <span class="path">{(props.cap() as Extract<Capability, { kind: "foreign" }>).path}</span>
         </div>
         <div class="dim">{(props.cap() as Extract<Capability, { kind: "foreign" }>).summary}</div>
+      </Show>
+
+      <Show when={props.cap().kind === "component"}>
+        <div class="cap-title">a capability from the store</div>
+        <div class="root">
+          <span class="path">{(props.cap() as Extract<Capability, { kind: "component" }>).provides}</span>
+        </div>
+        <p class="dim small">// nothing native provides this; it runs from the component(s) ticked under "provide through"</p>
       </Show>
 
       <Show when={props.cap().kind === "inference"}>

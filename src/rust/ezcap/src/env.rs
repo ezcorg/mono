@@ -324,6 +324,18 @@ pub fn declare<'f, Fm: FnMarker, Rm: RuntimeMarker>(
     }
 }
 
+/// The WIT a WebAssembly component carries, resolved: what a host uses to
+/// build an environment for an interface it first meets in a component it
+/// did not compile against.
+pub fn resolve_component(bytes: &[u8]) -> Result<Resolve, String> {
+    match wit_parser::decoding::decode(bytes).map_err(|e| format!("{e:#}"))? {
+        wit_parser::decoding::DecodedWasm::Component(resolve, _) => Ok(resolve),
+        wit_parser::decoding::DecodedWasm::WitPackage(..) => {
+            Err("a WIT package, not a component".to_string())
+        }
+    }
+}
+
 /// Find an interface by `ns:pkg`, name and optional version.
 pub fn find_interface(
     resolve: &Resolve,

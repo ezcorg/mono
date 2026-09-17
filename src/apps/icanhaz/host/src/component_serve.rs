@@ -30,6 +30,7 @@ use wasmtime::component::{types, Component, Func, Instance, Linker, ResourceTabl
 use wasmtime::{Engine, Store};
 
 use crate::broker::GrantStore;
+use crate::components::ComponentStore;
 use crate::AsOrigin;
 use wasmtime_wasi::p2::bindings::io;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
@@ -348,51 +349,63 @@ pub type ChainSource = Arc<
 /// Each chain gets its own, built from the same recipe.
 pub type WasiRecipe = Arc<dyn Fn() -> anyhow::Result<WasiCtx> + Send + Sync>;
 
-/// One instantiated filesystem chain: its own store (so its own lock, host
-/// tables, limits and lifetime), the resource types it exports, its exports.
-struct FsChain<C: Invoke + 'static> {
+/// One instantiated chain: its own store (so its own lock, host tables,
+/// limits and lifetime), the resource types it exports, its exports.
+struct Chain<C: Invoke + 'static> {
     id: u64,
     /// The chain's component ids joined by `,`; empty for the default chain.
     key: String,
     store: Mutex<Store<FsState<C>>>,
-    /// The live grants mounted on this chain. When the last ends (revoked or
-    /// expired) the chain is dropped, store and all; the default chain stays.
-    grants: std::sync::Mutex<HashSet<String>>,
     /// The resource types this chain's instance exports, in both identities
     /// (declared by the component type, minted by the live instance).
     resources: Vec<ResourceType>,
     /// Its exported functions by `(interface, function)`.
     funcs: HashMap<(Box<str>, Box<str>), Func>,
+    /// The live grants mounted on this chain. When the last ends (revoked or
+    /// expired) the chain is dropped, store and all; the default chain stays.
+    grants: std::sync::Mutex<HashSet<String>>,
 }
 
-impl<C: Invoke + 'static> FsChain<C> {
+impl<C: Invoke + 'static> Chain<C> {
     fn func(&self, iface: &str, name: &str) -> anyhow::Result<Func> {
         self.funcs
             .get(&(Box::from(iface), Box::from(name)))
             .copied()
-            .with_context(|| {
-                format!(
-                    "filesystem chain [{}] does not export `{iface}#{name}`",
-                    self.key
-                )
-            })
+            .with_context(|| format!("chain [{}] does not export `{iface}#{name}`", self.key))
     }
 }
 
-/// The chains a filesystem serving fronts, each in its own store. Calls are
-/// routed here before anything is decoded: a method to the chain that minted
-/// its handle (a registry from handle to chain, fed by what each store mints),
-/// `mount.open-root` to the chain the grant names (composed and instantiated on
-/// first use, outside every store's lock), anything else to the default chain.
-/// A chain lives while a live grant names it: each grant mounted on it is
-/// watched, and when the last is revoked or expires the chain is dropped.
-struct FsRouter<C: Invoke + 'static> {
+/// Is `(interface, function)` a call whose first argument is a grant token?
+pub type TokenCalls = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
+/// Given `(interface, function, token)`, the chain the call runs on (component
+/// ids, outermost first; empty for the default), after whatever validation
+/// and admission the kind requires.
+pub type ResolveToken = Arc<dyn Fn(&str, &str, &str) -> anyhow::Result<Vec<String>> + Send + Sync>;
+
+/// What a [`Router`] routes: the linker its chains instantiate with, where
+/// chain bytes come from, which calls carry a token and how a token names a
+/// chain.
+pub struct RouterSpec<C: Invoke + 'static> {
+    pub linker: Linker<FsState<C>>,
+    pub source: Option<ChainSource>,
+    pub token_calls: TokenCalls,
+    pub resolve_token: ResolveToken,
+}
+
+/// The chains one served interface set fronts, each in its own store. Calls
+/// are routed here before anything is decoded: a method to the chain that
+/// minted its handle (a registry from handle to chain, fed by what each store
+/// mints), a token-carrying call to the chain the grant names (composed and
+/// instantiated on first use, outside every store's lock), anything else to
+/// the default chain when there is one. A chain lives while a live grant
+/// names it: each grant mounted on it is watched, and when the last is
+/// revoked or expires the chain is dropped.
+pub struct Router<C: Invoke + 'static> {
     engine: Engine,
-    linker: Linker<FsState<C>>,
-    source: Option<ChainSource>,
+    spec: RouterSpec<C>,
     state: Box<dyn Fn() -> anyhow::Result<FsState<C>> + Send + Sync>,
     grants: Arc<std::sync::Mutex<GrantStore>>,
-    chains: std::sync::RwLock<Vec<Arc<FsChain<C>>>>,
+    chains: std::sync::RwLock<Vec<Arc<Chain<C>>>>,
     next_id: std::sync::atomic::AtomicU64,
     /// Handle → id of the chain whose store holds it.
     handles: std::sync::Mutex<HashMap<Uuid, u64>>,
@@ -403,16 +416,59 @@ struct FsRouter<C: Invoke + 'static> {
     building: Mutex<()>,
 }
 
-impl<C> FsRouter<C>
+impl<C> Router<C>
 where
-    C: Invoke + 'static,
+    C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
+    /// A router whose chains' stores hold `wasi` (built fresh per chain) and
+    /// see `grants` through the gate.
+    pub fn new(
+        spec: RouterSpec<C>,
+        client: C,
+        cx: C::Context,
+        wasi: WasiRecipe,
+        grants: Arc<std::sync::Mutex<GrantStore>>,
+    ) -> anyhow::Result<Arc<Self>> {
+        let engine = spec.linker.engine().clone();
+        let state = {
+            let grants = Arc::clone(&grants);
+            Box::new(move || {
+                Ok(FsState {
+                    table: ResourceTable::new(),
+                    wasi: wasi()?,
+                    rpc: Rpc {
+                        client: client.clone(),
+                        cx: cx.clone(),
+                        shared: SharedResourceTable::with_capacity(max_fs_handles()),
+                    },
+                    grants: Arc::clone(&grants),
+                })
+            })
+        };
+        Ok(Arc::new(Self {
+            engine,
+            spec,
+            state,
+            grants,
+            chains: std::sync::RwLock::new(Vec::new()),
+            next_id: std::sync::atomic::AtomicU64::new(0),
+            handles: std::sync::Mutex::new(HashMap::new()),
+            union: std::sync::Mutex::new(Arc::from(Vec::new())),
+            building: Mutex::new(()),
+        }))
+    }
+
+    /// The engine this router's chains compile for.
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
     fn union(&self) -> Arc<[ResourceType]> {
         Arc::clone(&self.union.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
-    fn chain_by_id(&self, id: u64) -> Option<Arc<FsChain<C>>> {
+    fn chain_by_id(&self, id: u64) -> Option<Arc<Chain<C>>> {
         self.chains
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -421,12 +477,7 @@ where
             .cloned()
     }
 
-    /// The default chain: the passthrough alone, never dropped.
-    fn default_chain(&self) -> Option<Arc<FsChain<C>>> {
-        self.chain_by_id(0)
-    }
-
-    fn chain_by_key(&self, key: &str) -> Option<Arc<FsChain<C>>> {
+    fn chain_by_key(&self, key: &str) -> Option<Arc<Chain<C>>> {
         self.chains
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -435,12 +486,14 @@ where
             .cloned()
     }
 
-    /// Instantiate `component` into a fresh store and register it as a chain.
-    async fn add_chain(
-        &self,
-        key: String,
-        component: &Component,
-    ) -> anyhow::Result<Arc<FsChain<C>>> {
+    /// The default chain (key empty), never dropped, if this router has one.
+    fn default_chain(&self) -> Option<Arc<Chain<C>>> {
+        self.chain_by_key("")
+    }
+
+    /// Instantiate `component` into a fresh store and register it as a chain;
+    /// an empty `key` makes it the default.
+    async fn add_chain(&self, key: String, component: &Component) -> anyhow::Result<Arc<Chain<C>>> {
         let ty = component.component_type();
         // A resource type has two identities: the one the component type
         // declares (what a function's parameter and result types name) and the
@@ -450,6 +503,7 @@ where
         collect_component_resource_exports(&self.engine, &ty, &mut resources);
         let mut store = Store::new(&self.engine, (self.state)()?);
         let instance = self
+            .spec
             .linker
             .instantiate_pre(component)
             .map_err(anyhow::Error::from)?
@@ -484,7 +538,7 @@ where
                 }
             }
         }
-        let chain = Arc::new(FsChain {
+        let chain = Arc::new(Chain {
             id: self
                 .next_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -494,14 +548,13 @@ where
             funcs,
             grants: std::sync::Mutex::new(HashSet::new()),
         });
-        chain.func(MOUNT_INSTANCE, "open-root")?;
         let mut chains = self.chains.write().unwrap_or_else(|e| e.into_inner());
         chains.push(Arc::clone(&chain));
         Self::recompute_union(&chains, &self.union);
         Ok(chain)
     }
 
-    fn recompute_union(chains: &[Arc<FsChain<C>>], union: &std::sync::Mutex<Arc<[ResourceType]>>) {
+    fn recompute_union(chains: &[Arc<Chain<C>>], union: &std::sync::Mutex<Arc<[ResourceType]>>) {
         let all: Vec<ResourceType> = chains
             .iter()
             .flat_map(|c| c.resources.iter().copied())
@@ -513,7 +566,7 @@ where
     /// under the chains lock that the chain is still registered, so a mount
     /// cannot land on a chain a concurrent release just dropped: when it did,
     /// the caller mounts again.
-    fn track(self: &Arc<Self>, chain: &Arc<FsChain<C>>, token: &str) -> bool {
+    fn track(self: &Arc<Self>, chain: &Arc<Chain<C>>, token: &str) -> bool {
         if chain.key.is_empty() {
             return true;
         }
@@ -523,7 +576,7 @@ where
             .unwrap_or_else(|e| e.into_inner())
             .revocation(token)
         else {
-            // Not a live grant: the gate refuses the mount, nothing to watch.
+            // Not a live grant: the gate refuses the call, nothing to watch.
             return true;
         };
         let chains = self.chains.read().unwrap_or_else(|e| e.into_inner());
@@ -573,49 +626,50 @@ where
             .unwrap_or_else(|e| e.into_inner())
             .retain(|_, id| *id != chain_id);
         Self::recompute_union(&chains, &self.union);
-        tracing::info!(chain = %chain.key, "filesystem chain dropped: no live grant names it");
+        tracing::info!(chain = %chain.key, "chain dropped: no live grant names it");
     }
 
     /// The chain for `via` (outermost first): the default when empty, an
     /// existing one by key, else composed through the source, compiled and
     /// instantiated, all without holding any chain's store.
-    async fn chain_for(&self, via: Vec<String>) -> anyhow::Result<Arc<FsChain<C>>> {
+    async fn chain_for(&self, via: Vec<String>) -> anyhow::Result<Arc<Chain<C>>> {
         let key = via.join(",");
         if let Some(chain) = self.chain_by_key(&key) {
             return Ok(chain);
+        }
+        if key.is_empty() {
+            anyhow::bail!("nothing provides this call: the grant names no chain");
         }
         let _building = self.building.lock().await;
         if let Some(chain) = self.chain_by_key(&key) {
             return Ok(chain);
         }
-        let Some(source) = &self.source else {
-            anyhow::bail!(
-                "the grant names a filesystem chain [{key}] but this serving has no chain source"
-            );
+        let Some(source) = &self.spec.source else {
+            anyhow::bail!("the grant names a chain [{key}] but this serving has no chain source");
         };
         let bytes = source(via)
             .await
-            .with_context(|| format!("compose filesystem chain [{key}]"))?;
+            .with_context(|| format!("compose chain [{key}]"))?;
         let engine = self.engine.clone();
         let component = tokio::task::spawn_blocking(move || Component::new(&engine, &bytes))
             .await
-            .context("compile filesystem chain")?
+            .context("compile chain")?
             .map_err(anyhow::Error::from)?;
         let chain = self.add_chain(key.clone(), &component).await?;
-        tracing::info!(chain = %key, "filesystem chain instantiated");
+        tracing::info!(chain = %key, "chain instantiated");
         Ok(chain)
     }
 
     /// Route one call before it is decoded, by looking at its first argument
-    /// on the wire: a guest resource handle names the chain that minted it; the
-    /// `open-root` token names the grant, whose `via` names the chain.
+    /// on the wire: a guest resource handle names the chain that minted it; a
+    /// token names the grant, whose chain the spec resolves.
     async fn route(
         self: &Arc<Self>,
         iface: &str,
         name: &str,
         params_ty: &[types::Type],
         rx: &mut wrpc_transport::frame::Incoming,
-    ) -> anyhow::Result<Arc<FsChain<C>>> {
+    ) -> anyhow::Result<Arc<Chain<C>>> {
         match params_ty.first() {
             Some(types::Type::Own(ty) | types::Type::Borrow(ty)) if self.union().contains(ty) => {
                 // `own`/`borrow` of a guest resource: a 16-byte handle, length-prefixed.
@@ -632,13 +686,9 @@ where
                 self.chain_by_id(chain_id)
                     .context("handle names a chain that is gone")
             }
-            Some(types::Type::String) if iface == MOUNT_INSTANCE && name == "open-root" => {
+            Some(types::Type::String) if (self.spec.token_calls)(iface, name) => {
                 let token = peek_string(rx).await.context("peek grant token")?;
-                let via = self
-                    .grants
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .via_of(&token);
+                let via = (self.spec.resolve_token)(iface, name, &token)?;
                 loop {
                     let chain = self.chain_for(via.clone()).await?;
                     if self.track(&chain, &token) {
@@ -646,9 +696,7 @@ where
                     }
                 }
             }
-            _ => self
-                .default_chain()
-                .context("no filesystem chain is served"),
+            _ => self.default_chain().context("nothing provides this call"),
         }
     }
 
@@ -772,13 +820,7 @@ where
 ///
 /// A grant provided through a chain (`via`, chosen at consent) mounts on that
 /// chain instead: `chains` composes it, and it is instantiated into its own
-/// store the first time a grant names it, so a slow, leaky or trapping wrapper
-/// has its own lock, host tables and limits and cannot stall or exhaust the
-/// others. Every call is routed to the chain that minted the handle it names,
-/// before anything is decoded, so descriptors from different chains coexist on
-/// one connection. Handles are bound to the connection that minted them: they
-/// are looked up in the scope the invocation's context identifies, and nowhere
-/// else.
+/// store the first time a grant names it (see [`Router`]).
 pub async fn serve_filesystem<C, S>(
     srv: &S,
     component_bytes: &[u8],
@@ -798,52 +840,179 @@ where
     let component = Component::new(&engine, component_bytes)
         .map_err(anyhow::Error::from)
         .context("compile component")?;
-    let linker = fs_linker::<C>(&engine)?;
-
-    let ty = component.component_type();
-    let mut imports = BTreeMap::default();
-    collect_component_resource_imports(&engine, &ty, &mut imports);
-    let host_resources = map_host_resources(imports);
-    let io_streams: Arc<[ResourceType]> =
-        wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &ty).into();
-
-    let state = {
-        let grants = Arc::clone(&grants);
-        Box::new(move || {
-            Ok(FsState {
-                table: ResourceTable::new(),
-                wasi: wasi()?,
-                rpc: Rpc {
-                    client: client.clone(),
-                    cx: cx.clone(),
-                    shared: SharedResourceTable::with_capacity(max_fs_handles()),
-                },
-                grants: Arc::clone(&grants),
-            })
-        })
-    };
-    let router = Arc::new(FsRouter {
-        engine: engine.clone(),
-        linker,
+    let spec = RouterSpec {
+        linker: fs_linker::<C>(&engine)?,
         source: chains,
-        state,
-        grants,
-        chains: std::sync::RwLock::new(Vec::new()),
-        next_id: std::sync::atomic::AtomicU64::new(0),
-        handles: std::sync::Mutex::new(HashMap::new()),
-        union: std::sync::Mutex::new(Arc::from(Vec::new())),
-        building: Mutex::new(()),
-    });
+        // Only the mount carries a token; the passthrough's own gate validates
+        // it, so resolving is just reading the grant's chain.
+        token_calls: Arc::new(|iface, name| iface == MOUNT_INSTANCE && name == "open-root"),
+        resolve_token: {
+            let grants = Arc::clone(&grants);
+            Arc::new(move |_, _, token| {
+                Ok(grants
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .via_of(token))
+            })
+        },
+    };
+    let router = Router::new(spec, client, cx, wasi, grants)?;
     router
         .add_chain(String::new(), &component)
         .await
         .context("instantiate the default filesystem chain")?;
-
-    // Every exported function of the default chain is served by name; the router
-    // picks the chain per call. Chains are compositions in front of the default,
-    // so they export the same surface (checked when composed).
     let mut handlers = JoinSet::new();
+    register_exports(
+        srv,
+        &router,
+        &component.component_type(),
+        None,
+        &mut handlers,
+    )
+    .await?;
+    serve_resource_drop(srv, router, &mut handlers).await?;
+    Ok(handlers)
+}
+
+/// A router for a novel interface a store component provides. Its chains are
+/// compositions of store components alone (no native base): the grant's
+/// `via`, or the `provider` the requester suggested. Every function's first
+/// argument is the grant token: it must be a live `component` grant for this
+/// interface, and the call is admitted by name against the grant's scope.
+pub fn component_router<C>(
+    interface: &str,
+    components: Arc<ComponentStore>,
+    client: C,
+    cx: C::Context,
+    wasi: WasiRecipe,
+    grants: Arc<std::sync::Mutex<GrantStore>>,
+) -> anyhow::Result<Arc<Router<C>>>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone,
+{
+    let engine = engine()?;
+    let mut linker = Linker::<FsState<C>>::new(&engine);
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+        .map_err(anyhow::Error::from)
+        .context("link WASI")?;
+    let provides = interface.to_string();
+    let source: ChainSource = {
+        let provides = provides.clone();
+        Arc::new(move |via: Vec<String>| {
+            let components = Arc::clone(&components);
+            let provides = provides.clone();
+            Box::pin(async move {
+                tokio::task::spawn_blocking(move || {
+                    let mut parts = Vec::new();
+                    for hash in via.iter().rev() {
+                        parts.push(
+                            components
+                                .get(hash)
+                                .with_context(|| format!("chain component {hash}"))?,
+                        );
+                    }
+                    let bytes = if parts.len() == 1 {
+                        parts.remove(0)
+                    } else {
+                        crate::components::compose(&parts)?
+                    };
+                    let info = crate::components::validate(&bytes)?;
+                    anyhow::ensure!(
+                        info.exports.contains(&provides),
+                        "the chain must export {provides}; it exports {:?}",
+                        info.exports
+                    );
+                    Ok(bytes)
+                })
+                .await
+                .context("compose chain")?
+            })
+        })
+    };
+    let spec = RouterSpec {
+        linker,
+        source: Some(source),
+        token_calls: Arc::new(|_, _| true),
+        resolve_token: {
+            let grants = Arc::clone(&grants);
+            let provides = provides.clone();
+            Arc::new(move |_iface, name, token| {
+                let mut g = grants.lock().unwrap_or_else(|e| e.into_inner());
+                g.validate(token, |k| {
+                    matches!(k, crate::broker::CapabilityKind::Component(c) if c.provides == provides)
+                })
+                .map_err(|d| anyhow::anyhow!("{provides} denied: {d:?}"))?;
+                // Admitted by method name: the call's other arguments are not
+                // decoded at routing time, so a clause over `call.args.*`
+                // fails closed here.
+                g.admit(token, crate::broker::AdmitCall::new(name))
+                    .map_err(|d| {
+                        anyhow::anyhow!("{provides} denied: {}", crate::broker::denied_text(&d))
+                    })?;
+                let via = g.via_of(token);
+                if !via.is_empty() {
+                    return Ok(via);
+                }
+                match g.kind_of(token) {
+                    Some(crate::broker::CapabilityKind::Component(c)) => c
+                        .provider
+                        .map(|p| vec![p])
+                        .context("the grant names no component to provide it"),
+                    _ => anyhow::bail!("not a component grant"),
+                }
+            })
+        },
+    };
+    Router::new(spec, client, cx, wasi, grants)
+}
+
+/// Serve `interface` on `srv` through `router`: the functions the component
+/// type `ty` exports under that interface, each routed per call, plus the
+/// resource-drop meta-op. `ty` may be any component exporting the interface;
+/// every chain must export the same surface (checked when composed).
+pub async fn serve_interface<C, S>(
+    srv: &S,
+    router: &Arc<Router<C>>,
+    ty: &types::Component,
+    interface: &str,
+) -> anyhow::Result<JoinSet<()>>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone,
+    S: Serve,
+    S::Context: AsOrigin,
+{
+    let mut handlers = JoinSet::new();
+    register_exports(srv, router, ty, Some(interface), &mut handlers).await?;
+    Ok(handlers)
+}
+
+/// Register every exported function of `ty` (or only `only`'s) on `srv`, each
+/// invocation routed through `router`.
+async fn register_exports<C, S>(
+    srv: &S,
+    router: &Arc<Router<C>>,
+    ty: &types::Component,
+    only: Option<&str>,
+    handlers: &mut JoinSet<()>,
+) -> anyhow::Result<()>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone,
+    S: Serve,
+    S::Context: AsOrigin,
+{
+    let engine = router.engine().clone();
+    let mut imports = BTreeMap::default();
+    collect_component_resource_imports(&engine, ty, &mut imports);
+    let host_resources = map_host_resources(imports);
+    let io_streams: Arc<[ResourceType]> =
+        wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, ty).into();
     for (instance_name, types::ComponentExtern { ty: item, .. }) in ty.exports(&engine) {
+        if only.is_some_and(|o| o != instance_name) {
+            continue;
+        }
         let types::ComponentItem::ComponentInstance(inst_ty) = item else {
             continue;
         };
@@ -860,7 +1029,7 @@ where
                 .with_context(|| format!("failed to serve `{instance_name}#{name}`"))?;
             let iface: Arc<str> = Arc::from(instance_name);
             let name: Arc<str> = Arc::from(name);
-            let router = Arc::clone(&router);
+            let router = Arc::clone(router);
             let host_resources = Arc::clone(&host_resources);
             let io_streams = Arc::clone(&io_streams);
             handlers.spawn(async move {
@@ -898,10 +1067,7 @@ where
             });
         }
     }
-    // Serve the resource-drop meta-op alongside the component's exports so a client
-    // can release descriptors / dir-streams it's finished with instead of leaking them.
-    serve_resource_drop(srv, router, &mut handlers).await?;
-    Ok(handlers)
+    Ok(())
 }
 
 /// One routed invocation: pick the chain from the wire, lock only its store,
@@ -909,7 +1075,7 @@ where
 /// minted.
 #[allow(clippy::too_many_arguments)]
 async fn serve_one<C>(
-    router: &Arc<FsRouter<C>>,
+    router: &Arc<Router<C>>,
     iface: &str,
     name: &str,
     params_ty: &[types::Type],
@@ -921,7 +1087,7 @@ async fn serve_one<C>(
     mut rx: wrpc_transport::frame::Incoming,
 ) -> anyhow::Result<()>
 where
-    C: Invoke + 'static,
+    C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
     let chain = router.route(iface, name, params_ty, &mut rx).await?;
@@ -963,13 +1129,13 @@ const RESOURCES_INSTANCE: &str = "icanhaz:fspass/resources@0.1.0";
 /// whole connection (the capacity cap is only a backstop). Framing the handle as a plain
 /// `list<u8>` (not `own<descriptor>`) keeps it a single uniform op over *any* shared
 /// handle and sidesteps the resource codec entirely.
-async fn serve_resource_drop<C, S>(
+pub async fn serve_resource_drop<C, S>(
     srv: &S,
-    router: Arc<FsRouter<C>>,
+    router: Arc<Router<C>>,
     handlers: &mut JoinSet<()>,
 ) -> anyhow::Result<()>
 where
-    C: Invoke + 'static,
+    C: Invoke + Clone + 'static,
     C::Context: Clone,
     S: Serve,
     S::Context: AsOrigin,
@@ -1014,12 +1180,12 @@ where
 /// gone (double-drop, never ours, or minted on another connection) returns
 /// `Ok(false)`, so dropping is idempotent.
 async fn drop_shared_handle<C>(
-    router: &FsRouter<C>,
+    router: &Router<C>,
     handle: &[u8],
     conn: Option<u64>,
 ) -> anyhow::Result<bool>
 where
-    C: Invoke + 'static,
+    C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
     // Handles are minted little-endian on the wire (`codec.rs` `id.to_bytes_le()` /
@@ -1464,6 +1630,159 @@ mod tests {
         assert!(Descriptor::read_directory(&wrpc, (), &root_d.as_borrow())
             .await
             .is_ok());
+        accept.abort();
+    }
+
+    /// A novel capability: nothing native provides `example:greeter/greeter`;
+    /// the store does. A `component` grant naming the greeter as provider is
+    /// served through a router of its own: the token is validated and the call
+    /// admitted before the component runs, and scopes over the interface type-
+    /// check against the environment built from the component's own WIT.
+    #[tokio::test]
+    async fn a_store_component_provides_a_novel_capability() {
+        use crate::broker::{
+            AdmitCall, CapabilityKind, ComponentRequest, FsRequest, FsRights, PathGrant,
+        };
+        use crate::store::Store as Db;
+        use wrpc_transport::InvokeExt as _;
+
+        const IFACE: &str = "example:greeter/greeter@0.1.0";
+        let greeter = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/greeter.wasm"
+        ))
+        .expect("greeter.wasm fixture");
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Db::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let components = Arc::new(crate::components::ComponentStore::new(
+            dir.path().join("components"),
+            Some(db),
+        ));
+        let info = components
+            .add(&greeter, None)
+            .await
+            .expect("a novel export is a capability");
+        assert!(
+            info.exports.iter().any(|e| e == IFACE),
+            "{:?}",
+            info.exports
+        );
+        assert!(!crate::components::is_native_interface(IFACE));
+
+        // The interface's environment comes from the component itself.
+        let grants = GrantStore::shared();
+        let env =
+            crate::components::env_for(&greeter, IFACE).expect("env from the component's WIT");
+        grants.lock().unwrap().add_environment(IFACE, env).unwrap();
+        let kind = || {
+            CapabilityKind::Component(ComponentRequest {
+                provides: IFACE.to_string(),
+                provider: Some(info.hash.clone()),
+            })
+        };
+        let (token, scoped, wrong) = {
+            let mut g = grants.lock().unwrap();
+            let token = g.issue(
+                kind(),
+                "greeter".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            // A clause over the novel interface type-checks and admits by method.
+            assert!(g
+                .check_scope(&kind(), &ezcap::Scope::allow("call.args.name != \"\""))
+                .is_ok());
+            assert!(g
+                .check_scope(&kind(), &ezcap::Scope::allow("call.args.nope == 1"))
+                .is_err());
+            let scoped = g
+                .issue_scoped(
+                    kind(),
+                    ezcap::Scope::allow("call.method == \"greet\""),
+                    "greeter, greet only".to_string(),
+                    Duration::from_secs(60),
+                    crate::broker::anonymous_principal(),
+                )
+                .unwrap();
+            assert!(g.admit(&scoped, AdmitCall::new("greet")).is_ok());
+            assert!(g.admit(&scoped, AdmitCall::new("other")).is_err());
+            let wrong = g.issue(
+                CapabilityKind::Filesystem(FsRequest {
+                    roots: vec![PathGrant {
+                        path: "/".to_string(),
+                        rights: FsRights::READ,
+                    }],
+                }),
+                "filesystem".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            (token, scoped, wrong)
+        };
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
+        let router = component_router(
+            IFACE,
+            Arc::clone(&components),
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+        )
+        .unwrap();
+        let ty = Component::new(router.engine(), &greeter)
+            .unwrap()
+            .component_type();
+        let _handlers = serve_interface(srv.as_ref(), &router, &ty, IFACE)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+        let no_paths: [&[Option<usize>]; 0] = [];
+        let greet = |token: String, name: &'static str| {
+            let wrpc = wrpc.clone();
+            async move {
+                wrpc.invoke_values::<_, (String, String), (Result<String, String>,), _>(
+                    (),
+                    IFACE,
+                    "greet",
+                    (token, name.to_string()),
+                    no_paths,
+                )
+                .await
+                .map(|((r,), _)| r)
+            }
+        };
+
+        let reply = greet(token.clone(), "world").await.expect("served");
+        assert_eq!(
+            reply.unwrap(),
+            format!("hello, world (grant {}…)", &token[..4])
+        );
+        // The component's own refusal comes through as its error.
+        let refused = greet(token.clone(), "").await.expect("served");
+        assert_eq!(refused.unwrap_err(), "greeter: who?");
+        // The scoped grant admits `greet` too.
+        assert!(greet(scoped, "again").await.expect("served").is_ok());
+        // Not a grant for this interface, and not a grant at all: refused
+        // before the component runs (the invocation fails).
+        assert!(greet(wrong, "x").await.is_err());
+        assert!(greet("bogus".to_string(), "x").await.is_err());
         accept.abort();
     }
 

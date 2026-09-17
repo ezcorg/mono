@@ -14,6 +14,7 @@ use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{AsContextMut as _, Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
+use crate::broker::GrantKind as _;
 use crate::components::ComponentStore;
 
 mod workspace_chain {
@@ -240,6 +241,16 @@ pub fn interfaces_of(kind: &str) -> &'static [&'static str] {
         "terminal" => &["icanhaz:nocap/terminal@"],
         "inference" => &["icanhaz:nocap/inference@"],
         _ => &[],
+    }
+}
+
+/// Whether a component (by its exports) can provide a grant of `kind`: for a
+/// native kind, sit in front of an interface it is used through; for a
+/// component kind, export the interface itself.
+pub fn offers_kind(kind: &crate::broker::CapabilityKind, exports: &[String]) -> bool {
+    match kind {
+        crate::broker::CapabilityKind::Component(c) => exports.contains(&c.provides),
+        other => offers(other.tag(), exports),
     }
 }
 

@@ -26,7 +26,19 @@ interface types {
     process(process-request),
     terminal(terminal-request),
     inference(inference-request),
+    /// A capability a store component provides: a novel interface no native
+    /// provider implements, served from the component(s) the grant is
+    /// provided through (`via`, chosen at consent; `provider` is the
+    /// requester's suggestion, a store hash, used when the human picks none).
+    component(component-request),
   }
+
+  /// `provides` is the interface a store component provides, qualified
+  /// (`example:greeter/greeter@0.1.0`); `provider` the component the requester has
+  /// in mind, if any. Every function of such an interface takes the grant
+  /// token as its first argument; the daemon validates it before the call
+  /// reaches the component.
+  record component-request { provides: string, provider: option<string> }
 
   /// LLM inference through the host's configured providers. `models` lists the
   /// models the grant may use (empty = any the host has configured); budgets and

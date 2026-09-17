@@ -22,7 +22,9 @@ use std::path::PathBuf;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::broker::{bindings as broker, BrokerProvider, GrantStore};
-use crate::component_serve::{serve_filesystem, ChainSource, WasiRecipe};
+use crate::component_serve::{
+    component_router, serve_filesystem, serve_interface, ChainSource, Router, WasiRecipe,
+};
 use crate::components::{bindings as components, ComponentsProvider};
 use crate::inference::{bindings as inference, InferenceProvider};
 use crate::process::{bindings as proc, ProcessProvider};
@@ -34,7 +36,7 @@ use icanhaz_broker::configuration_serve::{bindings as configuration, Configurati
 
 use core::pin::Pin;
 use core::task::{Context, Poll};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 
 use bytes::Bytes;
@@ -59,9 +61,148 @@ pub struct FsServe {
     pub chains: Option<ChainSource>,
 }
 
+/// The novel interfaces store components provide, served through routers
+/// shared by every transport: one [`Router`] per interface, created when the
+/// first transport serves it, chains keyed by the grants' `via`.
+#[derive(Clone)]
+pub struct ComponentsServe {
+    pub components: Arc<crate::components::ComponentStore>,
+    pub grants: Arc<std::sync::Mutex<GrantStore>>,
+    pub routers:
+        Arc<std::sync::Mutex<HashMap<String, Arc<Router<wrpc_transport::tcp::Client<String>>>>>>,
+    /// One per transport serving: called with every component added after
+    /// the transport came up, so its new interfaces are served there too.
+    sinks: Arc<std::sync::Mutex<Vec<crate::components::AfterAdd>>>,
+}
+
+impl ComponentsServe {
+    pub fn new(
+        components: Arc<crate::components::ComponentStore>,
+        grants: Arc<std::sync::Mutex<GrantStore>>,
+    ) -> Self {
+        Self {
+            components,
+            grants,
+            routers: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            sinks: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    /// A component landed: give its novel interfaces their admission
+    /// environments, then serve them on every transport, and only then return,
+    /// so the `add` that brought it replies once the component is usable.
+    pub async fn added(&self, info: crate::components::ComponentInfo) {
+        register_component_envs_for(&self.components, &self.grants, &info);
+        let sinks: Vec<crate::components::AfterAdd> =
+            self.sinks.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        for sink in sinks {
+            sink(info.clone()).await;
+        }
+    }
+
+    fn add_sink(&self, sink: crate::components::AfterAdd) {
+        self.sinks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(sink);
+    }
+
+    /// The router for `interface`, created on first use. A novel component
+    /// gets a bare WASI context: no preopens, nothing of the host's.
+    fn router_for(
+        &self,
+        interface: &str,
+    ) -> anyhow::Result<Arc<Router<wrpc_transport::tcp::Client<String>>>> {
+        let mut routers = self.routers.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(r) = routers.get(interface) {
+            return Ok(Arc::clone(r));
+        }
+        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
+        let router = component_router(
+            interface,
+            Arc::clone(&self.components),
+            wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
+            (),
+            wasi,
+            Arc::clone(&self.grants),
+        )?;
+        routers.insert(interface.to_string(), Arc::clone(&router));
+        Ok(router)
+    }
+
+    /// Serve every novel interface `info` exports on `srv` that `served` does
+    /// not yet list, and remember them there.
+    async fn serve_new<S>(
+        &self,
+        srv: &S,
+        info: &crate::components::ComponentInfo,
+        served: &mut HashSet<String>,
+        handlers: &mut tokio::task::JoinSet<()>,
+    ) -> anyhow::Result<()>
+    where
+        S: wrpc_transport::Serve,
+        S::Context: AsOrigin,
+    {
+        for iface in &info.exports {
+            if crate::components::is_native_interface(iface) || served.contains(iface) {
+                continue;
+            }
+            let router = self.router_for(iface)?;
+            let bytes = self.components.get(&info.hash)?;
+            let engine = router.engine().clone();
+            let component = tokio::task::spawn_blocking(move || {
+                wasmtime::component::Component::new(&engine, &bytes)
+            })
+            .await
+            .context("compile component")?
+            .map_err(anyhow::Error::from)?;
+            let mut set = serve_interface(srv, &router, &component.component_type(), iface).await?;
+            while let Some(task) = set.try_join_next() {
+                let _ = task;
+            }
+            // Move the serving tasks onto the caller's set.
+            handlers.spawn(async move {
+                let mut set = set;
+                while set.join_next().await.is_some() {}
+            });
+            served.insert(iface.clone());
+            tracing::info!(interface = %iface, hash = %info.hash, "novel capability served from the store");
+        }
+        Ok(())
+    }
+}
+
+/// Give every novel interface `info` exports an admission environment built
+/// from the component's own WIT, so scopes over it type-check and admit like
+/// a native kind's.
+pub fn register_component_envs_for(
+    components: &crate::components::ComponentStore,
+    grants: &Arc<std::sync::Mutex<GrantStore>>,
+    info: &crate::components::ComponentInfo,
+) {
+    for iface in &info.exports {
+        if crate::components::is_native_interface(iface) {
+            continue;
+        }
+        let env = match components
+            .get(&info.hash)
+            .and_then(|bytes| crate::components::env_for(&bytes, iface))
+        {
+            Ok(env) => env,
+            Err(e) => {
+                tracing::warn!(error = %e, interface = %iface, "no admission environment for a store interface");
+                continue;
+            }
+        };
+        if let Err(e) = grants.lock().unwrap().add_environment(iface, env) {
+            tracing::warn!(error = %e, interface = %iface, "admission environment rejected");
+        }
+    }
+}
+
 /// Register every capability on a shared server and drive them until idle.
 async fn drive<C, S>(
-    srv: &S,
+    srv: Arc<S>,
     broker_p: BrokerProvider,
     term_p: TerminalProvider,
     proc_p: ProcessProvider,
@@ -71,33 +212,35 @@ async fn drive<C, S>(
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
     fs_serve: FsServe,
+    components: ComponentsServe,
 ) -> anyhow::Result<()>
 where
     C: AsOrigin + Send + Sync + 'static,
-    S: wrpc_transport::Serve<Context = C>,
+    S: wrpc_transport::Serve<Context = C> + Send + Sync + 'static,
 {
-    let broker_invs = broker::serve(srv, broker_p)
+    let srv_ref: &S = srv.as_ref();
+    let broker_invs = broker::serve(srv_ref, broker_p)
         .await
         .context("failed to serve broker")?;
-    let term_invs = term::serve(srv, term_p)
+    let term_invs = term::serve(srv_ref, term_p)
         .await
         .context("failed to serve terminal")?;
-    let proc_invs = proc::serve(srv, proc_p)
+    let proc_invs = proc::serve(srv_ref, proc_p)
         .await
         .context("failed to serve process")?;
-    let ws_invs = ws::serve(srv, ws_p)
+    let ws_invs = ws::serve(srv_ref, ws_p)
         .await
         .context("failed to serve workspace")?;
-    let watch_invs = watch::serve(srv, watch_p)
+    let watch_invs = watch::serve(srv_ref, watch_p)
         .await
         .context("failed to serve watch")?;
-    let inf_invs = inference::serve(srv, inf_p)
+    let inf_invs = inference::serve(srv_ref, inf_p)
         .await
         .context("failed to serve inference")?;
-    let cfg_invs = configuration::serve(srv, cfg_p)
+    let cfg_invs = configuration::serve(srv_ref, cfg_p)
         .await
         .context("failed to serve configuration")?;
-    let cmp_invs = components::serve(srv, cmp_p)
+    let cmp_invs = components::serve(srv_ref, cmp_p)
         .await
         .context("failed to serve components")?;
     // Real wasi:filesystem (the gated passthrough) on the SAME server, via ServeExt.
@@ -120,7 +263,7 @@ where
         Ok(builder.build())
     });
     let _wasi_fs = serve_filesystem(
-        srv,
+        srv_ref,
         &fs_wasm,
         wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
         (),
@@ -130,6 +273,40 @@ where
     )
     .await
     .context("failed to serve wasi:filesystem")?;
+    // Novel interfaces the store provides: every one present now, and every
+    // one a component adds later, served on this transport through the
+    // shared routers.
+    let mut served: HashSet<String> = HashSet::new();
+    let mut _component_handlers = tokio::task::JoinSet::new();
+    for info in components.components.list().await {
+        if let Err(e) = components
+            .serve_new(srv_ref, &info, &mut served, &mut _component_handlers)
+            .await
+        {
+            tracing::warn!(error = %e, hash = %info.hash, "store component not served");
+        }
+    }
+    // Components added from now on are served here before their `add` replies.
+    let sink_state = Arc::new(tokio::sync::Mutex::new((served, _component_handlers)));
+    components.add_sink({
+        let srv = Arc::clone(&srv);
+        let components = components.clone();
+        Arc::new(move |info: crate::components::ComponentInfo| {
+            let srv = Arc::clone(&srv);
+            let components = components.clone();
+            let state = Arc::clone(&sink_state);
+            Box::pin(async move {
+                let mut state = state.lock().await;
+                let (served, handlers) = &mut *state;
+                if let Err(e) = components
+                    .serve_new(srv.as_ref(), &info, served, handlers)
+                    .await
+                {
+                    tracing::warn!(error = %e, hash = %info.hash, "store component not served");
+                }
+            })
+        })
+    });
     let mut broker_i = select_all(
         broker_invs
             .into_iter()
@@ -374,6 +551,7 @@ pub async fn serve_websocket_all(
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
     fs_serve: FsServe,
+    components: ComponentsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport::Server::<ReqCtx, MuxRx, MuxTx>::default());
     let accept = tokio::spawn({
@@ -406,7 +584,7 @@ pub async fn serve_websocket_all(
         }
     });
     let res = drive(
-        srv.as_ref(),
+        Arc::clone(&srv),
         broker_p,
         term_p,
         proc_p,
@@ -416,6 +594,7 @@ pub async fn serve_websocket_all(
         cfg_p,
         cmp_p,
         fs_serve,
+        components,
     )
     .await;
     accept.abort();
@@ -437,11 +616,12 @@ pub async fn serve_iroh_all(
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
     fs_serve: FsServe,
+    components: ComponentsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
     let accept = tokio::spawn(crate::iroh::accept_iroh::<()>(endpoint, Arc::clone(&srv)));
     let res = drive(
-        srv.as_ref(),
+        Arc::clone(&srv),
         broker_p,
         term_p,
         proc_p,
@@ -451,6 +631,7 @@ pub async fn serve_iroh_all(
         cfg_p,
         cmp_p,
         fs_serve,
+        components,
     )
     .await;
     accept.abort();
@@ -470,6 +651,7 @@ pub async fn serve_webtransport_all(
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
     fs_serve: FsServe,
+    components: ComponentsServe,
 ) -> anyhow::Result<()> {
     use core::time::Duration;
     use wtransport::{Endpoint, ServerConfig};
@@ -533,7 +715,7 @@ pub async fn serve_webtransport_all(
         }
     });
     let res = drive(
-        srv.as_ref(),
+        Arc::clone(&srv),
         broker_p,
         term_p,
         proc_p,
@@ -543,6 +725,7 @@ pub async fn serve_webtransport_all(
         cfg_p,
         cmp_p,
         fs_serve,
+        components,
     )
     .await;
     accept.abort();

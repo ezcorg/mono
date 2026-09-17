@@ -49,6 +49,22 @@ impl Membranes {
         })
     }
 
+    /// Add (or replace) the environment for `tag` at runtime: a kind the host
+    /// learned about after its build, such as an interface a component brought.
+    pub fn insert(
+        &self,
+        tag: impl Into<String>,
+        env: CallEnv,
+        extra_counters: &[&str],
+    ) -> Result<(), RegistryError> {
+        let membrane = Membrane::new(env, extra_counters)?;
+        self.by_tag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(tag.into(), membrane);
+        Ok(())
+    }
+
     fn with<T>(&self, tag: &str, f: impl FnOnce(&mut Membrane) -> T) -> Result<T, RegistryError> {
         let mut by_tag = self.by_tag.lock().unwrap_or_else(|e| e.into_inner());
         let membrane = by_tag

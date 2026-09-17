@@ -68,6 +68,12 @@ pub enum CapabilityDto {
         path: String,
         summary: String,
     },
+    /// A capability a store component provides: the interface, and the
+    /// component the requester suggested (a store hash), if any.
+    Component {
+        provides: String,
+        provider: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -136,6 +142,10 @@ impl From<&CapabilityKind> for CapabilityDto {
                     .collect(),
                 may_listen: s.may_listen,
             },
+            CapabilityKind::Component(c) => CapabilityDto::Component {
+                provides: c.provides.clone(),
+                provider: c.provider.clone(),
+            },
         }
     }
 }
@@ -187,6 +197,9 @@ impl CapabilityDto {
             CapabilityDto::Inference { models } => {
                 Some(CapabilityKind::Inference(InferenceRequest { models }))
             }
+            CapabilityDto::Component { provides, provider } => Some(CapabilityKind::Component(
+                icanhaz_host::broker::ComponentRequest { provides, provider },
+            )),
             CapabilityDto::Sockets { .. } | CapabilityDto::Foreign { .. } => None,
         }
     }
@@ -250,14 +263,13 @@ pub async fn list_pending(
         .into_iter()
         .map(|r| {
             let tag = r.want.tag();
-            let offers = if r.want.native().is_some() {
-                components
+            let offers = match r.want.native() {
+                Some(kind) => components
                     .iter()
-                    .filter(|c| icanhaz_host::chain::offers(&tag, &c.exports))
+                    .filter(|c| icanhaz_host::chain::offers_kind(kind, &c.exports))
                     .cloned()
-                    .collect()
-            } else {
-                Vec::new()
+                    .collect(),
+                None => Vec::new(),
             };
             PendingDto {
                 id: r.id,

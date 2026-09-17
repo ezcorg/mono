@@ -20,7 +20,9 @@ use crate::configuration::{Declared, Instance, Registry, UserInput};
 use crate::configuration_serve::ConfigurationProvider;
 use crate::process::ProcessProvider;
 use crate::providers::Providers;
-use crate::serve::{serve_iroh_all, serve_websocket_all, serve_webtransport_all, FsServe};
+use crate::serve::{
+    serve_iroh_all, serve_websocket_all, serve_webtransport_all, ComponentsServe, FsServe,
+};
 use crate::store::Store;
 use crate::terminal::TerminalProvider;
 use crate::watch::WatchProvider;
@@ -346,6 +348,22 @@ pub async fn run(
         grants: grants.clone(),
         chains,
     };
+    // Novel interfaces store components provide: their admission environments
+    // come from the components' own WIT, and the transports serve them
+    // through shared routers.
+    let components_serve = ComponentsServe::new(Arc::clone(&services.components), grants.clone());
+    for info in services.components.list().await {
+        crate::serve::register_component_envs_for(&services.components, &grants, &info);
+    }
+    // `components.add` replies only once the component's interfaces are
+    // served everywhere: a page can use what it added as soon as it hears back.
+    let components = components.with_after_add({
+        let components_serve = components_serve.clone();
+        Arc::new(move |info| {
+            let components_serve = components_serve.clone();
+            Box::pin(async move { components_serve.added(info).await })
+        })
+    });
 
     // TLS identity for WebTransport: user-supplied cert/key, else self-signed.
     let identity = match (&config.cert, &config.key) {
@@ -396,7 +414,8 @@ pub async fn run(
             inference.clone(),
             configuration.clone(),
             components.clone(),
-            fs_serve.clone()
+            fs_serve.clone(),
+            components_serve.clone()
         ),
         serve_webtransport_all(
             config.wt_bind,
@@ -409,7 +428,8 @@ pub async fn run(
             inference.clone(),
             configuration.clone(),
             components.clone(),
-            fs_serve.clone()
+            fs_serve.clone(),
+            components_serve.clone()
         ),
         async {
             match iroh_ep {
@@ -425,6 +445,7 @@ pub async fn run(
                         configuration,
                         components,
                         fs_serve,
+                        components_serve,
                     )
                     .await
                 }

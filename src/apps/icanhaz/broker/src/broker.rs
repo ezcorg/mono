@@ -57,8 +57,8 @@ use bindings::exports::icanhaz::nocap::broker::Audience as AudienceWire;
 /// from [`ezcap::Scope`], which the store works with.
 use bindings::ezco::ezcap::types::Scope as ScopeWire;
 pub use bindings::icanhaz::nocap::types::{
-    CapabilityKind, FsRequest, FsRights, InferenceRequest, PathGrant, ProcessRequest,
-    TerminalRequest,
+    CapabilityKind, ComponentRequest, FsRequest, FsRights, InferenceRequest, PathGrant,
+    ProcessRequest, TerminalRequest,
 };
 use bindings::icanhaz::nocap::types::{Denied, GrantInfo, Principal, PrincipalKind};
 use bindings::icanhaz::nocap::types::{Endpoint, SocketRequest, Transport};
@@ -298,6 +298,12 @@ pub trait GrantKind: Clone + Send + Sync + 'static {
     /// The membrane tag (`filesystem`, `logger`, …): which environment
     /// admits calls on grants of this kind.
     fn tag(&self) -> &'static str;
+    /// The key its admission environment and its pairings live under: the
+    /// tag, unless one tag covers many interfaces (a store component's kind
+    /// is keyed by the interface it provides).
+    fn env_key(&self) -> String {
+        self.tag().to_string()
+    }
     /// A human-legible one-liner for consent prompts and the audit view.
     fn summarize(&self) -> String;
     /// The durable form, for certified grants that persist.
@@ -308,6 +314,12 @@ pub trait GrantKind: Clone + Send + Sync + 'static {
 impl GrantKind for CapabilityKind {
     fn tag(&self) -> &'static str {
         kind_tag(self)
+    }
+    fn env_key(&self) -> String {
+        match self {
+            CapabilityKind::Component(c) => c.provides.clone(),
+            _ => self.tag().to_string(),
+        }
     }
     fn summarize(&self) -> String {
         summarize(self)
@@ -506,6 +518,9 @@ fn kind_to_json(k: &CapabilityKind) -> serde_json::Value {
         }
         CapabilityKind::Terminal(t) => json!({"terminal": {"shell": t.shell, "jailed": t.jailed}}),
         CapabilityKind::Inference(i) => json!({"inference": {"models": i.models}}),
+        CapabilityKind::Component(c) => {
+            json!({"component": {"provides": c.provides, "provider": c.provider}})
+        }
     }
 }
 
@@ -589,6 +604,12 @@ fn kind_from_json(v: &serde_json::Value) -> Option<CapabilityKind> {
     if let Some(i) = v.get("inference") {
         return Some(CapabilityKind::Inference(InferenceRequest {
             models: strings(i, "models"),
+        }));
+    }
+    if let Some(c) = v.get("component") {
+        return Some(CapabilityKind::Component(ComponentRequest {
+            provides: str_of(c, "provides")?,
+            provider: str_of(c, "provider"),
         }));
     }
     None
@@ -687,6 +708,15 @@ impl<K: GrantKind> GrantStore<K> {
 
     /// A store over `membranes`: one environment per kind tag, generated from
     /// the host's WIT by its build script (see `ezcap::build::write_envs`).
+    /// Add an admission environment at runtime, under `key` (a kind's
+    /// `env_key`): how a store component's interface gets scopes type-checked
+    /// and admitted like a native kind's.
+    pub fn add_environment(&self, key: &str, env: ezcap::CallEnv) -> Result<(), String> {
+        self.membranes
+            .insert(key, env, &["tokens", "day_tokens"])
+            .map_err(|e| e.to_string())
+    }
+
     pub fn with_membranes(membranes: Membranes) -> Self {
         Self {
             grants: HashMap::new(),
@@ -726,7 +756,8 @@ impl<K: GrantKind> GrantStore<K> {
     /// error, is refused) without minting anything. For consent surfaces to
     /// validate a human's narrowing before it is applied.
     pub fn check_scope(&self, kind: &K, scope: &EzScope) -> Result<(), String> {
-        let tag = kind.tag();
+        let tag = kind.env_key();
+        let tag = tag.as_str();
         if self.membranes.has(tag) {
             self.membranes.check(tag, scope).map_err(|e| e.to_string())
         } else if is_unrestricted(scope) {
@@ -744,7 +775,8 @@ impl<K: GrantKind> GrantStore<K> {
         ttl: Duration,
         principal: Principal,
     ) -> Result<String, Denied> {
-        let tag = kind.tag();
+        let tag = kind.env_key();
+        let tag = tag.as_str();
         let instance = if self.membranes.has(tag) {
             Some(
                 self.membranes
@@ -807,7 +839,8 @@ impl<K: GrantKind> GrantStore<K> {
                     stale.push(key);
                     continue;
                 };
-                let tag = kind.tag();
+                let tag = kind.env_key();
+                let tag = tag.as_str();
                 let instance = if me.membranes.has(tag) {
                     match me.membranes.mint(tag, &row.scope) {
                         Ok(id) => Some(id),
@@ -916,11 +949,11 @@ impl<K: GrantKind> GrantStore<K> {
             if grant.expires <= Instant::now() || grant.cancel.is_cancelled() {
                 return Err(Denied::Revoked);
             }
-            (grant.kind.tag(), grant.instance.clone())
+            (grant.kind.env_key(), grant.instance.clone())
         };
         // No environment for this kind ⇒ the scope was unrestricted by construction.
         let Some(id) = instance else { return Ok(()) };
-        match self.membranes.admit(tag, &id, &call) {
+        match self.membranes.admit(&tag, &id, &call) {
             Ok(()) => Ok(()),
             Err(ezcap::CapabilityError::Denied(sentences)) => Err(Denied::OutOfScope(sentences)),
             Err(ezcap::CapabilityError::Unavailable) => Err(Denied::Revoked),
@@ -938,7 +971,7 @@ impl<K: GrantKind> GrantStore<K> {
         let Some(id) = &grant.instance else {
             return Ok(());
         };
-        if self.membranes.admit_event(grant.kind.tag(), id) {
+        if self.membranes.admit_event(&grant.kind.env_key(), id) {
             Ok(())
         } else {
             Err(Denied::OutOfScope(ezcap::profile::render_line(
@@ -983,7 +1016,8 @@ impl<K: GrantKind> GrantStore<K> {
             .get(token)
             .map(|p| p.via.clone())
             .unwrap_or_default();
-        let tag = kind.tag();
+        let tag = kind.env_key();
+        let tag = tag.as_str();
         let instance = match instance {
             Some(parent_id) => Some(
                 self.membranes
@@ -1131,6 +1165,14 @@ impl<K: GrantKind> GrantStore<K> {
 
     /// The components a grant is provided through, outermost first; empty
     /// for the native implementation alone.
+    /// The kind a live grant was issued for.
+    pub fn kind_of(&self, token: &str) -> Option<K>
+    where
+        K: Clone,
+    {
+        self.grants.get(token).map(|g| g.kind.clone())
+    }
+
     pub fn via_of(&self, token: &str) -> Vec<String> {
         self.grants
             .get(token)
@@ -1195,7 +1237,8 @@ impl<K: GrantKind> GrantStore<K> {
     pub fn charge(&mut self, token: &str, counter: &str, amount: i64) {
         if let Some(grant) = self.grants.get(token) {
             if let Some(id) = &grant.instance {
-                self.membranes.charge(grant.kind.tag(), id, counter, amount);
+                self.membranes
+                    .charge(&grant.kind.env_key(), id, counter, amount);
             }
         }
     }
@@ -1204,7 +1247,7 @@ impl<K: GrantKind> GrantStore<K> {
     pub fn counter(&self, token: &str, counter: &str) -> Option<i64> {
         let grant = self.grants.get(token)?;
         let id = grant.instance.as_ref()?;
-        self.membranes.counter(grant.kind.tag(), id, counter)
+        self.membranes.counter(&grant.kind.env_key(), id, counter)
     }
 
     /// Every live grant, projected for the app's audit view (the native tray/window).
@@ -1231,7 +1274,7 @@ impl<K: GrantKind> GrantStore<K> {
             Some(grant) => {
                 grant.cancel.cancel();
                 if let Some(instance) = &grant.instance {
-                    self.membranes.revoke(grant.kind.tag(), instance);
+                    self.membranes.revoke(&grant.kind.env_key(), instance);
                 }
                 // Everything narrowed from it goes too (their cancel tokens are
                 // children of this one and have already fired).
@@ -1272,13 +1315,13 @@ impl<K: GrantKind> GrantStore<K> {
     /// The `(origin, kind)` a live grant is bound to — so revoking it can also forget
     /// the site's durable pairing for that capability. `origin` is `None` for a
     /// non-browser peer (no pairing to forget).
-    pub fn grant_target(&self, id: &str) -> Option<(Option<String>, &'static str)> {
+    pub fn grant_target(&self, id: &str) -> Option<(Option<String>, String)> {
         self.grants.get(id).map(|g| {
             let origin = match g.principal.kind {
                 PrincipalKind::WebOrigin => Some(g.principal.id.clone()),
                 _ => None,
             };
-            (origin, g.kind.tag())
+            (origin, g.kind.env_key())
         })
     }
 }
@@ -1296,7 +1339,7 @@ pub fn revoke_and_unpair<K: GrantKind>(
     let target = grants.lock().unwrap().grant_target(id);
     let revoked = grants.lock().unwrap().revoke(id);
     if let Some((Some(origin), kind)) = target {
-        pairings.lock().unwrap().revoke_kind(&origin, kind);
+        pairings.lock().unwrap().revoke_kind(&origin, &kind);
     }
     revoked
 }
@@ -1471,7 +1514,7 @@ impl Pairings {
     }
 
     /// Does `secret` pair `origin` for `kind`?
-    fn check(&self, secret: &str, origin: &str, kind: &'static str) -> bool {
+    fn check(&self, secret: &str, origin: &str, kind: &str) -> bool {
         self.by_secret
             .get(secret)
             .is_some_and(|p| p.origin == origin && p.kinds.contains(kind))
@@ -1480,12 +1523,7 @@ impl Pairings {
     /// Record that `origin` is trusted for `kind`. If they presented a secret we
     /// already issued for this origin, extend it (return `None`); otherwise mint a
     /// fresh secret for the client to store. Persists the change.
-    fn remember(
-        &mut self,
-        presented: Option<&str>,
-        origin: &str,
-        kind: &'static str,
-    ) -> Option<String> {
+    fn remember(&mut self, presented: Option<&str>, origin: &str, kind: &str) -> Option<String> {
         if let Some(s) = presented {
             let extended = self.by_secret.get_mut(s).is_some_and(|p| {
                 if p.origin == origin {
@@ -1720,6 +1758,7 @@ fn kind_tag(want: &CapabilityKind) -> &'static str {
         CapabilityKind::Process(_) => "process",
         CapabilityKind::Terminal(_) => "terminal",
         CapabilityKind::Inference(_) => "inference",
+        CapabilityKind::Component(_) => "component",
     }
 }
 
@@ -1784,6 +1823,7 @@ fn summarize(want: &CapabilityKind) -> String {
                 format!("inference ({})", i.models.join(", "))
             }
         }
+        CapabilityKind::Component(c) => format!("{} (a component from the store)", c.provides),
     }
 }
 
@@ -1996,7 +2036,10 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         // the browser-attested `Origin` (which page JS can't forge), never a value
         // the caller hands us. `None` ⇒ a non-browser / loopback peer.
         let origin = cx.origin();
-        let kind = kind_tag(&want);
+        // Pairings and the hosts list are keyed the way environments are: by
+        // tag, or by interface for a component kind.
+        let kind_key = want.env_key();
+        let kind = kind_key.as_str();
         let principal = principal_of(&cx);
         let summary = summarize_scoped(&want, &scope);
 

@@ -88,12 +88,36 @@ pub fn check_interfaces(imports: &[String], exports: &[String]) -> anyhow::Resul
     if exports.is_empty() {
         bail!("the component exports nothing a capability could be served from");
     }
-    for export in exports {
-        if !is_capability_package(export) {
-            bail!("export `{export}` is not a capability interface; a capability component exports the interface it provides");
-        }
+    // An export is a capability interface: one of the daemon's own, or a
+    // novel one an author brings. WASI's own interfaces are the host's to
+    // provide, not a component's to offer, except the filesystem the
+    // passthrough re-exports.
+    if !exports.iter().any(|e| is_servable_export(e)) {
+        bail!("the component exports only WASI interfaces; a capability component exports the interface it provides");
     }
     Ok(())
+}
+
+fn is_servable_export(interface: &str) -> bool {
+    let pkg = package_of(interface);
+    !pkg.starts_with("wasi:") || pkg.starts_with("wasi:filesystem")
+}
+
+/// Whether `interface` is one the daemon provides natively (served by its own
+/// providers), as opposed to a novel one only a store component can serve.
+pub fn is_native_interface(interface: &str) -> bool {
+    is_capability_package(interface)
+}
+
+/// The `ezco:ezcap` admission environment for `interface`, from the WIT the
+/// component itself carries: what lets a scope over a novel interface be
+/// type-checked and admitted like a native kind's.
+pub fn env_for(bytes: &[u8], interface: &str) -> anyhow::Result<ezcap::CallEnv> {
+    // ezcap resolves the WIT with its own wit-parser, so the environment is
+    // built against the version its evaluator was compiled with.
+    let resolve = ezcap::env::resolve_component(bytes).map_err(|e| anyhow::anyhow!(e))?;
+    ezcap::CallEnv::for_kind(&resolve, &ezcap::Kind::new(interface))
+        .map_err(|e| anyhow::anyhow!("environment for `{interface}`: {e}"))
 }
 
 /// Decode a component's world: its name and qualified import/export names.
@@ -327,14 +351,33 @@ pub fn provenance_from_wire(p: ProvenanceWire) -> Provenance {
     }
 }
 
+/// What runs once a component has landed, before `add` replies: the daemon
+/// registers the interfaces it brings (their admission environments, their
+/// serving on every transport), so a page that adds a component can use it
+/// the moment the call returns.
+pub type AfterAdd = Arc<
+    dyn Fn(ComponentInfo) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone)]
 pub struct ComponentsProvider {
     components: Arc<ComponentStore>,
+    after_add: Option<AfterAdd>,
 }
 
 impl ComponentsProvider {
     pub fn new(components: Arc<ComponentStore>) -> Self {
-        Self { components }
+        Self {
+            components,
+            after_add: None,
+        }
+    }
+
+    pub fn with_after_add(mut self, hook: AfterAdd) -> Self {
+        self.after_add = Some(hook);
+        self
     }
 }
 
@@ -347,12 +390,18 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::com
         bytes: Bytes,
         provenance: Option<ProvenanceWire>,
     ) -> anyhow::Result<Result<InfoWire, String>> {
-        Ok(self
+        let added = self
             .components
             .add(&bytes, provenance.map(provenance_from_wire))
-            .await
-            .map(to_wire)
-            .map_err(|e| format!("{e:#}")))
+            .await;
+        let info = match added {
+            Ok(info) => info,
+            Err(e) => return Ok(Err(format!("{e:#}"))),
+        };
+        if let Some(hook) = &self.after_add {
+            hook(info.clone()).await;
+        }
+        Ok(Ok(to_wire(info)))
     }
 
     async fn all(&self, _cx: C) -> anyhow::Result<Vec<InfoWire>> {
@@ -424,7 +473,11 @@ mod tests {
         assert!(err.contains("acme:regex/engine@1.0.0"), "{err}");
         assert!(err.contains("compose"), "{err}");
         assert!(check_interfaces(&[], &[]).is_err());
-        assert!(check_interfaces(&[], &["acme:thing/x".into()]).is_err());
+        // A novel interface is a capability an author brings; WASI alone is not.
+        assert!(check_interfaces(&[], &["acme:thing/x".into()]).is_ok());
+        assert!(check_interfaces(&[], &["wasi:cli/run@0.2.12".into()]).is_err());
+        assert!(!is_native_interface("acme:thing/x@1.0.0"));
+        assert!(is_native_interface("icanhaz:nocap/process@0.1.0"));
         assert!(!is_capability_package("acme:regex/engine@1.0.0"));
         assert!(is_capability_package("wasi:clocks/wall-clock@0.2.0"));
     }
