@@ -1668,7 +1668,7 @@ mod tests {
     }
 
     /// A WASI recipe that preopens `dir` at `/` with `perms`, one fresh context per chain.
-    fn jail(dir: &std::path::Path, perms: wasmtime_wasi::FsPerms) -> WasiRecipe {
+    fn jail_recipe(dir: &std::path::Path, perms: wasmtime_wasi::FsPerms) -> WasiRecipe {
         let dir = dir.to_path_buf();
         Arc::new(move || {
             let mut builder = WasiCtxBuilder::new();
@@ -1729,7 +1729,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello\n").unwrap();
         std::fs::write(dir.path().join("forbidden.txt"), b"secret\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let kind = || {
             CapabilityKind::Filesystem(FsRequest {
@@ -1899,7 +1899,7 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let issue = |g: &mut GrantStore| {
             g.issue_scoped_via(
@@ -2346,6 +2346,160 @@ mod tests {
         accept.abort();
     }
 
+    // The wRPC client of the reader fixture (its `reader-client` world).
+    mod reader_client {
+        wit_bindgen_wrpc::generate!({
+            world: "example:reader/reader-client",
+            path: "fixtures/reader/wit",
+        });
+    }
+
+    /// A component builds on the filesystem through a delegated grant: the
+    /// shipped filesystem capability is composed in front of the reader, its
+    /// chain's store preopens the jail, and the reader's `open` presents the
+    /// component grant, which the gate resolves to the filesystem grant lent
+    /// to it. The descriptor it gets is scoped to that grant's root; the
+    /// component never sees the host's preopens.
+    #[tokio::test]
+    async fn a_component_reads_files_through_a_delegated_filesystem_grant() {
+        use crate::broker::{CapabilityKind, ComponentRequest, FsRequest, FsRights, PathGrant};
+        use crate::store::Store as Db;
+        use reader_client::example::reader::reader::{self as reader, Reader};
+        use wasmtime_wasi::FsPerms;
+
+        const IFACE: &str = "example:reader/reader@0.1.0";
+        let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/reader.wasm"))
+            .expect("reader.wasm fixture");
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Db::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let components = Arc::new(crate::components::ComponentStore::new(
+            dir.path().join("components"),
+            Some(db),
+        ));
+        let info = components.add(&bytes, None).await.expect("stored");
+        let filesystem =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
+        let shipped_info = components
+            .add(&filesystem, None)
+            .await
+            .expect("shipped filesystem");
+        components.register_shipped(&shipped_info);
+        // The shipped capability itself is the one component allowed the
+        // host's preopens; a store component asking for them is refused.
+        let refused = components.provide_imports(filesystem.clone()).unwrap_err();
+        assert!(refused.to_string().contains("preopens"), "{refused:#}");
+
+        // The jail: a file under the granted subtree, and one outside it.
+        let jail = dir.path().join("jail");
+        std::fs::create_dir_all(jail.join("notes")).unwrap();
+        std::fs::write(
+            jail.join("notes/hello.txt"),
+            "read through a delegated grant\n",
+        )
+        .unwrap();
+        std::fs::write(jail.join("secret.txt"), "not yours\n").unwrap();
+
+        let grants = GrantStore::shared();
+        let (lent, fs_grant) = {
+            let mut g = grants.lock().unwrap();
+            let fs_grant = g.issue(
+                CapabilityKind::Filesystem(FsRequest {
+                    roots: vec![PathGrant {
+                        path: "/notes".to_string(),
+                        rights: FsRights::READ,
+                    }],
+                }),
+                "filesystem (/notes)".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            let lent = g.issue(
+                CapabilityKind::Component(ComponentRequest {
+                    provides: IFACE.to_string(),
+                    provider: Some(info.hash.clone()),
+                    delegated: vec![fs_grant.clone()],
+                }),
+                "reader".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            (lent, fs_grant)
+        };
+        let bare = grants.lock().unwrap().issue(
+            CapabilityKind::Component(ComponentRequest {
+                provides: IFACE.to_string(),
+                provider: Some(info.hash.clone()),
+                delegated: vec![],
+            }),
+            "reader, nothing lent".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let router = component_router(
+            IFACE,
+            Arc::clone(&components),
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            jail_recipe(&jail, FsPerms::ReadWrite),
+            grants.clone(),
+            Arc::new(crate::raw::Raw::new(grants.clone())),
+            Handles::new(),
+        )
+        .unwrap();
+        let ty = Component::new(router.engine(), &bytes)
+            .unwrap()
+            .component_type();
+        let _handlers = serve_interface(srv.as_ref(), &router, &ty, IFACE)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        let opened = reader::open(&wrpc, (), &lent)
+            .await
+            .unwrap()
+            .expect("opened");
+        let text = Reader::read(&wrpc, (), &opened.as_borrow(), "hello.txt")
+            .await
+            .unwrap()
+            .expect("read under the grant");
+        assert_eq!(text, "read through a delegated grant\n");
+        // The descriptor is the grant's subtree: nothing above it resolves.
+        let outside = Reader::read(&wrpc, (), &opened.as_borrow(), "../secret.txt")
+            .await
+            .unwrap();
+        assert!(outside.is_err(), "{outside:?}");
+        // Nothing lent: the filesystem import refuses at `open`.
+        let refused = reader::open(&wrpc, (), &bare).await.unwrap();
+        assert_eq!(
+            refused.unwrap_err(),
+            "filesystem grant denied: not authorized"
+        );
+        // Revoking the lent grant takes the files with it.
+        assert!(grants.lock().unwrap().revoke(&fs_grant));
+        let gone = Reader::read(&wrpc, (), &opened.as_borrow(), "hello.txt")
+            .await
+            .unwrap();
+        assert!(gone.is_err(), "{gone:?}");
+        accept.abort();
+    }
+
     // The wRPC client of the stream-shaped fixture (its `pipe-client` world).
     mod pipe_client {
         wit_bindgen_wrpc::generate!({
@@ -2465,7 +2619,7 @@ mod tests {
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"mine\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
@@ -2590,7 +2744,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"through the chain\n").unwrap();
         std::fs::write(dir.path().join("forbidden.txt"), b"never\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
@@ -2692,7 +2846,7 @@ mod tests {
         // A temp dir with one file is the (preopen-jailed) raw authority.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello from real wasi-fs\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         // A live filesystem grant, as the broker would mint after consent.
         let grants = GrantStore::shared();
@@ -2788,7 +2942,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("notes")).unwrap();
         std::fs::write(dir.path().join("notes/ok.txt"), b"inside the grant\n").unwrap();
         std::fs::write(dir.path().join("secret.txt"), b"OUTSIDE the grant\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         // A grant scoped to /notes/ — NOT the whole preopen.
         let grants = GrantStore::shared();
@@ -2890,7 +3044,7 @@ mod tests {
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"live\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
@@ -3007,7 +3161,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("ok.txt"), b"in scope\n").unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"out of scope\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants
@@ -3110,7 +3264,7 @@ mod tests {
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"drop me\n").unwrap();
-        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(

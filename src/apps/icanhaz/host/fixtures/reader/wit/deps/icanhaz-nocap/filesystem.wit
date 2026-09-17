@@ -1,0 +1,44 @@
+package icanhaz:nocap@0.1.0;
+
+/// The **filesystem** capability: real `wasi:filesystem@0.2` over wRPC
+/// (descriptors and streams), jailed to the daemon's root and scoped to the
+/// grant. Resource-shaped like every capability: the grant token is
+/// presented once, at `open`, and the **descriptor** it returns *is* the
+/// capability; every descriptor opened from it is too, and each carries the
+/// grant it was opened under, so revocation and the grant's `allow` clause
+/// apply on every operation. `preopens` is never exported: `open` is the only
+/// way to a descriptor, so an ungated peer has no handle and no access.
+///
+/// Provided by the shipped component over the daemon's WASI preopen and
+/// `gate-filesystem`; a wrapper chain sits in front of it like any other.
+interface filesystem {
+  use wasi:filesystem/types@0.2.12.{descriptor};
+  /// The root descriptor for a consented `filesystem` grant, scoped to the
+  /// grant's root path; refuses an unknown, expired or wrong-kind token.
+  open: func(grant: string) -> result<descriptor, string>;
+}
+
+/// Import-only world: the single shared home of the value types a
+/// passthrough or wrapper uses on both sides (see the shipped component).
+world filesystem-raw {
+  import wasi:filesystem/types@0.2.12;
+  import wasi:filesystem/preopens@0.2.12;
+}
+
+/// What a wRPC client generates against: it opens (with a grant), then
+/// drives the returned descriptor.
+world filesystem-client {
+  import wasi:filesystem/types@0.2.12;
+  import filesystem;
+}
+
+/// The shipped component: the raw host `wasi:filesystem` (preopen-jailed)
+/// and the consent gate in; the filesystem (descriptor methods) and the
+/// gated `open` out.
+world filesystem-capability {
+  import wasi:filesystem/types@0.2.12;
+  import wasi:filesystem/preopens@0.2.12;
+  import gate-filesystem;
+  export wasi:filesystem/types@0.2.12;
+  export filesystem;
+}

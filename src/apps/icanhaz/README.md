@@ -79,12 +79,11 @@ src/apps/icanhaz/
 
 ## Running it
 
-Build the shipped capabilities once (each is its own crate):
+Build the wasm guests once (the shipped capabilities and the test fixtures,
+from the daemon's WIT; needs `wkg` and the `wasm32-wasip2` target):
 
 ```sh
-for c in filesystem process terminal watch workspace inference; do
-  (cd src/apps/icanhaz/capabilities/$c && cargo build --release --target wasm32-wasip2 --target-dir target)
-done
+src/apps/icanhaz/scripts/build-wasm.sh
 ```
 
 Then either the tray app (`cd src/apps/icanhaz/app && pnpm tauri dev`) or the
@@ -104,14 +103,15 @@ the peer endpoint), `ICANHAZ_CERT` and `ICANHAZ_KEY` for WebTransport TLS, and
 ## Tests
 
 ```sh
-cargo test -p icanhaz-host -p icanhaz-broker     # host: routing, chains, handles, iroh, scaffold
+src/scripts/check-icanhaz.sh                      # what CI runs: lint, the wasm guests, host + broker tests
+cargo test -p icanhaz-host -p icanhaz-broker     # host: each capability, routing, chains, handles, iroh, scaffold
 cd src/apps/icanhaz/web && pnpm test:browser      # browser: starts its own daemon on free ports
 ```
 
 The browser suite builds `icanhazd`, launches it with auto consent, a
 throwaway jail and the echo model, and exercises every capability end to end
 from a real page. Fixture components under `host/fixtures/` are committed;
-see the README there to rebuild one.
+see the README there.
 
 ## Authoring a capability
 

@@ -357,11 +357,23 @@ pub async fn run(
     // Novel interfaces store components provide: their admission environments
     // come from the components' own WIT, and the transports serve them
     // through shared routers.
+    let jail: crate::component_serve::WasiRecipe = {
+        let root = config.root.clone();
+        Arc::new(move || {
+            let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
+            builder
+                .preopened_dir(&root, "/", wasmtime_wasi::FsPerms::ReadWrite)
+                .map_err(anyhow::Error::from)
+                .context("preopen wasi:filesystem root")?;
+            Ok(builder.build())
+        })
+    };
     let components_serve = ComponentsServe::new(
         Arc::clone(&services.components),
         grants.clone(),
         Arc::clone(&raw),
         handles,
+        jail,
     );
     for info in services.components.list().await {
         crate::serve::register_component_envs_for(&services.components, &grants, &info);

@@ -79,6 +79,11 @@ pub struct ComponentsServe {
     raw: Arc<crate::raw::Raw>,
     /// The daemon's handle registry.
     handles: Arc<Handles>,
+    /// The WASI context a novel component's chain gets: the daemon's jail
+    /// preopened, which only the shipped filesystem capability composed in
+    /// front of the component may see (a component importing `preopens`
+    /// itself is refused, see `ComponentStore::provide_imports`).
+    wasi: WasiRecipe,
 }
 
 impl ComponentsServe {
@@ -87,6 +92,7 @@ impl ComponentsServe {
         grants: Arc<std::sync::Mutex<GrantStore>>,
         raw: Arc<crate::raw::Raw>,
         handles: Arc<Handles>,
+        wasi: WasiRecipe,
     ) -> Self {
         Self {
             components,
@@ -95,6 +101,7 @@ impl ComponentsServe {
             sinks: Arc::new(std::sync::Mutex::new(Vec::new())),
             raw,
             handles,
+            wasi,
         }
     }
 
@@ -117,8 +124,10 @@ impl ComponentsServe {
             .push(sink);
     }
 
-    /// The router for `interface`, created on first use. A novel component
-    /// gets a bare WASI context: no preopens, nothing of the host's.
+    /// The router for `interface`, created on first use. Its chains get the
+    /// jail as their WASI context, for the shipped filesystem capability a
+    /// component's filesystem import composes in; the component itself sees
+    /// files only through the descriptor `open` yields for its delegated grant.
     fn router_for(
         &self,
         interface: &str,
@@ -127,13 +136,12 @@ impl ComponentsServe {
         if let Some(r) = routers.get(interface) {
             return Ok(Arc::clone(r));
         }
-        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
         let router = component_router(
             interface,
             Arc::clone(&self.components),
             wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
             (),
-            wasi,
+            Arc::clone(&self.wasi),
             Arc::clone(&self.grants),
             Arc::clone(&self.raw),
             Arc::clone(&self.handles),

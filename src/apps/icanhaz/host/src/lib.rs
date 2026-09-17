@@ -45,6 +45,8 @@ pub mod daemon;
 pub mod session;
 
 #[cfg(test)]
+mod capability_tests;
+#[cfg(test)]
 mod iroh_tests;
 #[cfg(test)]
 #[cfg(test)]

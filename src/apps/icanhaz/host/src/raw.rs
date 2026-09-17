@@ -128,9 +128,14 @@ fn missing(what: &str) -> String {
     format!("{what}: this daemon has no native provider for it")
 }
 
+/// Admit one operation under the grant of kind `tag` that `grant` resolves
+/// to: itself when it is of that kind, else the grant of that kind delegated
+/// to it (a component's). The delegated grant's scope and life decide, so a
+/// clause on it holds per operation and revoking it stops the component.
 fn admit_under(
     grants: &Arc<Mutex<GrantStore>>,
     grant: &str,
+    tag: &str,
     method: &str,
     args: Vec<(String, String)>,
 ) -> Result<(), String> {
@@ -138,11 +143,12 @@ fn admit_under(
     for (name, value) in args {
         call = call.arg(&ezcap::shape::cel_ident(&name), value);
     }
-    grants
-        .lock()
-        .unwrap()
-        .admit(grant, call)
-        .map_err(|d| format!("denied: {}", denied_text(&d)))
+    let mut g = grants.lock().unwrap();
+    let under = g
+        .delegated_for(grant, tag)
+        .ok_or_else(|| format!("{tag} denied: not authorized"))?;
+    g.admit(&under, call)
+        .map_err(|d| format!("{tag} denied: {}", denied_text(&d)))
 }
 
 impl bindings::icanhaz::nocap::gate_filesystem::Host for &mut RawState {}
@@ -174,7 +180,13 @@ impl<T> bindings::icanhaz::nocap::gate_filesystem::HostWithStore<T> for RawData 
         args: Vec<(String, String)>,
     ) -> impl Future<Output = wasmtime::Result<Result<(), String>>> + Send {
         let grants = access.get().raw.grants.clone();
-        std::future::ready(Ok(admit_under(&grants, &grant, &method, args)))
+        std::future::ready(Ok(admit_under(
+            &grants,
+            &grant,
+            "filesystem",
+            &method,
+            args,
+        )))
     }
 }
 
@@ -210,7 +222,7 @@ impl<T> bindings::icanhaz::nocap::gate_process::HostWithStore<T> for RawData {
         args: Vec<(String, String)>,
     ) -> impl Future<Output = wasmtime::Result<Result<(), String>>> + Send {
         let grants = access.get().raw.grants.clone();
-        std::future::ready(Ok(admit_under(&grants, &grant, &method, args)))
+        std::future::ready(Ok(admit_under(&grants, &grant, "process", &method, args)))
     }
 }
 
@@ -248,7 +260,7 @@ impl<T> bindings::icanhaz::nocap::gate_terminal::HostWithStore<T> for RawData {
         args: Vec<(String, String)>,
     ) -> impl Future<Output = wasmtime::Result<Result<(), String>>> + Send {
         let grants = access.get().raw.grants.clone();
-        std::future::ready(Ok(admit_under(&grants, &grant, &method, args)))
+        std::future::ready(Ok(admit_under(&grants, &grant, "terminal", &method, args)))
     }
 }
 
@@ -280,7 +292,7 @@ impl<T> bindings::icanhaz::nocap::gate_inference::HostWithStore<T> for RawData {
         args: Vec<(String, String)>,
     ) -> impl Future<Output = wasmtime::Result<Result<(), String>>> + Send {
         let grants = access.get().raw.grants.clone();
-        std::future::ready(Ok(admit_under(&grants, &grant, &method, args)))
+        std::future::ready(Ok(admit_under(&grants, &grant, "inference", &method, args)))
     }
 }
 

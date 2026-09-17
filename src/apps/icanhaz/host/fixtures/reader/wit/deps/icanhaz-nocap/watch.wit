@@ -1,0 +1,30 @@
+package icanhaz:nocap@0.1.0;
+
+/// The **watch** capability: stream filesystem change events for a path
+/// under a consented filesystem grant, natively (FSEvents / inotify / … via
+/// the `notify` crate). `wasi:filesystem@0.2` has no change-notification
+/// interface, so this stands beside it: the efficient alternative to polling
+/// `stat` / `read-directory`.
+///
+/// The grant gates and scopes the watch: a live **filesystem** grant, the
+/// watch confined to its jail (no `..` escape). `path` is relative to the
+/// jail; `recursive` also watches subdirectories. Events are framed
+/// `[kind: u8 (0 = rename, 1 = change)] [path-len: u16 big-endian] [path]`,
+/// `path` relative to the jail. The stream ends when the client drops it or
+/// the grant ends. Resource-shaped: the token once, at `open`.
+interface watch {
+  resource watcher {
+    watch: async func(path: string, recursive: bool) -> result<stream<u8>, string>;
+  }
+  open: func(grant: string) -> result<watcher, string>;
+}
+
+world watch-client {
+  import watch;
+}
+
+world watch-capability {
+  import gate-filesystem;
+  import notify;
+  export watch;
+}

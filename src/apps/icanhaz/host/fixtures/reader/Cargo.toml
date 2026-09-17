@@ -1,0 +1,19 @@
+[package]
+name = "reader"
+version = "0.1.0"
+edition = "2024"
+description = "reads files through a delegated filesystem grant"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.54"
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+# A fixture crate: a wasm32-wasip2 guest built on its own, outside the mono workspace.
+[workspace]

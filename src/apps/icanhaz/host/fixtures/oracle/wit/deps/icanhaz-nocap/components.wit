@@ -4,8 +4,7 @@ package icanhaz:nocap@0.1.0;
 /// component is code, not authority: anyone may add one (it is validated,
 /// hashed and kept), and linking it to a provider is a grant decided
 /// elsewhere. Validation is the Tier 3 rule: every import must be a
-/// capability interface (`wasi:*`, `icanhaz:nocap/*`, `icanhaz:fspass/*`,
-/// `ezco:ezcap/*`); a library import is refused with the hint to compose it
+/// capability interface (`wasi:*`, `icanhaz:nocap/*`, `ezco:ezcap/*`); a library import is refused with the hint to compose it
 /// in at build time; the exports must satisfy a capability interface too.
 interface components {
   /// Where a component came from, as its author states it. Recorded when
