@@ -17,7 +17,7 @@
 use core::future::Future;
 use core::ops::Bound;
 use core::pin::{pin, Pin};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -351,9 +351,13 @@ pub type WasiRecipe = Arc<dyn Fn() -> anyhow::Result<WasiCtx> + Send + Sync>;
 /// One instantiated filesystem chain: its own store (so its own lock, host
 /// tables, limits and lifetime), the resource types it exports, its exports.
 struct FsChain<C: Invoke + 'static> {
+    id: u64,
     /// The chain's component ids joined by `,`; empty for the default chain.
     key: String,
     store: Mutex<Store<FsState<C>>>,
+    /// The live grants mounted on this chain. When the last ends (revoked or
+    /// expired) the chain is dropped, store and all; the default chain stays.
+    grants: std::sync::Mutex<HashSet<String>>,
     /// The resource types this chain's instance exports, in both identities
     /// (declared by the component type, minted by the live instance).
     resources: Vec<ResourceType>,
@@ -380,6 +384,8 @@ impl<C: Invoke + 'static> FsChain<C> {
 /// its handle (a registry from handle to chain, fed by what each store mints),
 /// `mount.open-root` to the chain the grant names (composed and instantiated on
 /// first use, outside every store's lock), anything else to the default chain.
+/// A chain lives while a live grant names it: each grant mounted on it is
+/// watched, and when the last is revoked or expires the chain is dropped.
 struct FsRouter<C: Invoke + 'static> {
     engine: Engine,
     linker: Linker<FsState<C>>,
@@ -387,8 +393,9 @@ struct FsRouter<C: Invoke + 'static> {
     state: Box<dyn Fn() -> anyhow::Result<FsState<C>> + Send + Sync>,
     grants: Arc<std::sync::Mutex<GrantStore>>,
     chains: std::sync::RwLock<Vec<Arc<FsChain<C>>>>,
-    /// Handle → index of the chain whose store holds it.
-    handles: std::sync::Mutex<HashMap<Uuid, usize>>,
+    next_id: std::sync::atomic::AtomicU64,
+    /// Handle → id of the chain whose store holds it.
+    handles: std::sync::Mutex<HashMap<Uuid, u64>>,
     /// Every chain's resource types: what the codec checks a declared
     /// parameter or result type against before it reads or mints a handle.
     union: std::sync::Mutex<Arc<[ResourceType]>>,
@@ -405,12 +412,18 @@ where
         Arc::clone(&self.union.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
-    fn chain(&self, index: usize) -> Option<Arc<FsChain<C>>> {
+    fn chain_by_id(&self, id: u64) -> Option<Arc<FsChain<C>>> {
         self.chains
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .get(index)
+            .iter()
+            .find(|c| c.id == id)
             .cloned()
+    }
+
+    /// The default chain: the passthrough alone, never dropped.
+    fn default_chain(&self) -> Option<Arc<FsChain<C>>> {
+        self.chain_by_id(0)
     }
 
     fn chain_by_key(&self, key: &str) -> Option<Arc<FsChain<C>>> {
@@ -423,7 +436,11 @@ where
     }
 
     /// Instantiate `component` into a fresh store and register it as a chain.
-    async fn add_chain(&self, key: String, component: &Component) -> anyhow::Result<()> {
+    async fn add_chain(
+        &self,
+        key: String,
+        component: &Component,
+    ) -> anyhow::Result<Arc<FsChain<C>>> {
         let ty = component.component_type();
         // A resource type has two identities: the one the component type
         // declares (what a function's parameter and result types name) and the
@@ -467,21 +484,96 @@ where
                 }
             }
         }
-        let chain = FsChain {
+        let chain = Arc::new(FsChain {
+            id: self
+                .next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             key,
             store: Mutex::new(store),
             resources,
             funcs,
-        };
+            grants: std::sync::Mutex::new(HashSet::new()),
+        });
         chain.func(MOUNT_INSTANCE, "open-root")?;
         let mut chains = self.chains.write().unwrap_or_else(|e| e.into_inner());
-        chains.push(Arc::new(chain));
-        let union: Vec<ResourceType> = chains
+        chains.push(Arc::clone(&chain));
+        Self::recompute_union(&chains, &self.union);
+        Ok(chain)
+    }
+
+    fn recompute_union(chains: &[Arc<FsChain<C>>], union: &std::sync::Mutex<Arc<[ResourceType]>>) {
+        let all: Vec<ResourceType> = chains
             .iter()
             .flat_map(|c| c.resources.iter().copied())
             .collect();
-        *self.union.lock().unwrap_or_else(|e| e.into_inner()) = Arc::from(union);
-        Ok(())
+        *union.lock().unwrap_or_else(|e| e.into_inner()) = Arc::from(all);
+    }
+
+    /// Count `token` among `chain`'s live grants and watch for its end. Checks
+    /// under the chains lock that the chain is still registered, so a mount
+    /// cannot land on a chain a concurrent release just dropped: when it did,
+    /// the caller mounts again.
+    fn track(self: &Arc<Self>, chain: &Arc<FsChain<C>>, token: &str) -> bool {
+        if chain.key.is_empty() {
+            return true;
+        }
+        let Some(revocation) = self
+            .grants
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .revocation(token)
+        else {
+            // Not a live grant: the gate refuses the mount, nothing to watch.
+            return true;
+        };
+        let chains = self.chains.read().unwrap_or_else(|e| e.into_inner());
+        if !chains.iter().any(|c| c.id == chain.id) {
+            return false;
+        }
+        let fresh = chain
+            .grants
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(token.to_string());
+        drop(chains);
+        if fresh {
+            let router = Arc::downgrade(self);
+            let chain_id = chain.id;
+            let token = token.to_string();
+            tokio::spawn(async move {
+                revocation.cancelled().await;
+                if let Some(router) = router.upgrade() {
+                    router.release(chain_id, &token);
+                }
+            });
+        }
+        true
+    }
+
+    /// A grant mounted on chain `chain_id` has ended. When it was the last, the
+    /// chain goes: out of the registry, its handles forgotten, its store dropped
+    /// once no call still holds it. Its descriptors all belonged to grants that
+    /// are gone, so nothing live is lost.
+    fn release(&self, chain_id: u64, token: &str) {
+        let mut chains = self.chains.write().unwrap_or_else(|e| e.into_inner());
+        let Some(pos) = chains.iter().position(|c| c.id == chain_id) else {
+            return;
+        };
+        let remaining = {
+            let mut grants = chains[pos].grants.lock().unwrap_or_else(|e| e.into_inner());
+            grants.remove(token);
+            grants.len()
+        };
+        if remaining > 0 || chains[pos].key.is_empty() {
+            return;
+        }
+        let chain = chains.remove(pos);
+        self.handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, id| *id != chain_id);
+        Self::recompute_union(&chains, &self.union);
+        tracing::info!(chain = %chain.key, "filesystem chain dropped: no live grant names it");
     }
 
     /// The chain for `via` (outermost first): the default when empty, an
@@ -509,17 +601,16 @@ where
             .await
             .context("compile filesystem chain")?
             .map_err(anyhow::Error::from)?;
-        self.add_chain(key.clone(), &component).await?;
+        let chain = self.add_chain(key.clone(), &component).await?;
         tracing::info!(chain = %key, "filesystem chain instantiated");
-        self.chain_by_key(&key)
-            .context("chain vanished after instantiation")
+        Ok(chain)
     }
 
     /// Route one call before it is decoded, by looking at its first argument
     /// on the wire: a guest resource handle names the chain that minted it; the
     /// `open-root` token names the grant, whose `via` names the chain.
     async fn route(
-        &self,
+        self: &Arc<Self>,
         iface: &str,
         name: &str,
         params_ty: &[types::Type],
@@ -531,14 +622,14 @@ where
                 let head = rx.peek(17).await.context("peek resource handle")?;
                 anyhow::ensure!(head[0] == 16, "resource handle is not 16 bytes");
                 let id = Uuid::from_bytes_le(head[1..17].try_into()?);
-                let index = self
+                let chain_id = self
                     .handles
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .get(&id)
                     .copied()
                     .context("unknown resource handle")?;
-                self.chain(index)
+                self.chain_by_id(chain_id)
                     .context("handle names a chain that is gone")
             }
             Some(types::Type::String) if iface == MOUNT_INSTANCE && name == "open-root" => {
@@ -548,14 +639,21 @@ where
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .via_of(&token);
-                self.chain_for(via).await
+                loop {
+                    let chain = self.chain_for(via.clone()).await?;
+                    if self.track(&chain, &token) {
+                        return Ok(chain);
+                    }
+                }
             }
-            _ => self.chain(0).context("no filesystem chain is served"),
+            _ => self
+                .default_chain()
+                .context("no filesystem chain is served"),
         }
     }
 
     /// Record which chain minted `ids`.
-    fn minted(&self, chain: usize, ids: Vec<Uuid>) {
+    fn minted(&self, chain: u64, ids: Vec<Uuid>) {
         if ids.is_empty() {
             return;
         }
@@ -731,6 +829,7 @@ where
         state,
         grants,
         chains: std::sync::RwLock::new(Vec::new()),
+        next_id: std::sync::atomic::AtomicU64::new(0),
         handles: std::sync::Mutex::new(HashMap::new()),
         union: std::sync::Mutex::new(Arc::from(Vec::new())),
         building: Mutex::new(()),
@@ -810,7 +909,7 @@ where
 /// minted.
 #[allow(clippy::too_many_arguments)]
 async fn serve_one<C>(
-    router: &FsRouter<C>,
+    router: &Arc<FsRouter<C>>,
     iface: &str,
     name: &str,
     params_ty: &[types::Type],
@@ -828,13 +927,6 @@ where
     let chain = router.route(iface, name, params_ty, &mut rx).await?;
     let func = chain.func(iface, name)?;
     let union = router.union();
-    let index = router
-        .chains
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .position(|c| Arc::ptr_eq(c, &chain))
-        .context("chain is not registered")?;
     let mut store = chain.store.lock().await;
     store.data_mut().rpc.shared.set_scope(conn);
     let res = wrpc_wasmtime::call(
@@ -850,7 +942,7 @@ where
     )
     .await;
     // Whatever the call minted (even on a failed encode) belongs to this chain.
-    router.minted(index, store.data_mut().rpc.shared.take_minted());
+    router.minted(chain.id, store.data_mut().rpc.shared.take_minted());
     res.map_err(anyhow::Error::from)
 }
 
@@ -937,13 +1029,13 @@ where
         .try_into()
         .context("resource handle is not 16 bytes")?;
     let id = Uuid::from_bytes_le(bytes);
-    let index = router
+    let chain_id = router
         .handles
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(&id)
         .copied();
-    let Some(chain) = index.and_then(|i| router.chain(i)) else {
+    let Some(chain) = chain_id.and_then(|i| router.chain_by_id(i)) else {
         tracing::debug!(%id, "resource-drop: handle already released");
         return Ok(false);
     };
@@ -1253,6 +1345,125 @@ mod tests {
             Err(ErrorCode::Access)
         ));
         assert_eq!(composed.load(std::sync::atomic::Ordering::SeqCst), 1);
+        accept.abort();
+    }
+
+    /// A chain lives while a live grant names it. Two grants share one
+    /// instance (composed once); revoking one keeps it for the other; once
+    /// every grant on it is gone the chain is dropped, its handles with it, and
+    /// the next grant naming the chain builds it again (composed twice).
+    #[tokio::test]
+    async fn a_chain_is_dropped_with_its_last_grant() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use fs_client::icanhaz::fspass::mount;
+        use fs_client::wasi::filesystem::types::Descriptor;
+        use wasmtime_wasi::FsPerms;
+
+        let passthrough = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wrapper = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/fs_wrap.wasm"
+        ))
+        .expect("fs_wrap.wasm fixture");
+        let composed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let source: ChainSource = {
+            let passthrough = passthrough.clone();
+            let composed = Arc::clone(&composed);
+            Arc::new(move |_via: Vec<String>| {
+                let passthrough = passthrough.clone();
+                let wrapper = wrapper.clone();
+                let composed = Arc::clone(&composed);
+                Box::pin(async move {
+                    composed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    crate::components::compose(&[passthrough, wrapper])
+                })
+            })
+        };
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"hello\n").unwrap();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
+        let grants = GrantStore::shared();
+        let issue = |g: &mut GrantStore| {
+            g.issue_scoped_via(
+                CapabilityKind::Filesystem(FsRequest {
+                    roots: vec![PathGrant {
+                        path: "/".to_string(),
+                        rights: FsRights::READ,
+                    }],
+                }),
+                ezcap::Scope::unrestricted(),
+                "filesystem (/) via wrap".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+                vec!["wrap".to_string()],
+            )
+            .unwrap()
+        };
+        let (a, b) = {
+            let mut g = grants.lock().unwrap();
+            (issue(&mut g), issue(&mut g))
+        };
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let _handlers = serve_filesystem(
+            srv.as_ref(),
+            &passthrough,
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+            Some(source),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+        let count = || composed.load(std::sync::atomic::Ordering::SeqCst);
+
+        let root_a = mount::open_root(&wrpc, (), &a).await.unwrap().unwrap();
+        let root_b = mount::open_root(&wrpc, (), &b).await.unwrap().unwrap();
+        assert_eq!(count(), 1, "both grants share one instance");
+
+        // One grant gone: the other keeps the chain, and its handle still works.
+        assert!(grants.lock().unwrap().revoke(&a));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(Descriptor::read_directory(&wrpc, (), &root_b.as_borrow())
+            .await
+            .is_ok());
+        let c = issue(&mut grants.lock().unwrap());
+        let _root_c = mount::open_root(&wrpc, (), &c).await.unwrap().unwrap();
+        assert_eq!(count(), 1, "a live grant kept the chain");
+
+        // The last grants gone: the chain is dropped, its handles unknown.
+        assert!(grants.lock().unwrap().revoke(&b));
+        assert!(grants.lock().unwrap().revoke(&c));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            Descriptor::read_directory(&wrpc, (), &root_b.as_borrow())
+                .await
+                .is_err(),
+            "a dropped chain's handle resolves nowhere"
+        );
+        let _ = root_a;
+
+        // A new grant naming the chain builds it again.
+        let d = issue(&mut grants.lock().unwrap());
+        let root_d = mount::open_root(&wrpc, (), &d).await.unwrap().unwrap();
+        assert_eq!(count(), 2, "the chain was rebuilt");
+        assert!(Descriptor::read_directory(&wrpc, (), &root_d.as_borrow())
+            .await
+            .is_ok());
         accept.abort();
     }
 
