@@ -78,6 +78,16 @@ fn daemon_config() -> DaemonConfig {
         iroh: std::env::var("ICANHAZ_IROH")
             .map(|v| v != "0")
             .unwrap_or(true),
+        fs_via: std::env::var("ICANHAZ_FS_VIA")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

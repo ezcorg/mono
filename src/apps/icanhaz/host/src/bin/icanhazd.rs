@@ -31,6 +31,20 @@ use icanhaz_host::broker::{Consent, GrantStore, Hosts, Pairings};
 use icanhaz_host::daemon::{run, DaemonConfig, Services};
 use tokio::net::TcpListener;
 
+/// `ICANHAZ_FS_VIA`: comma-separated component hashes, outermost first.
+fn fs_via_from_env() -> Vec<String> {
+    std::env::var("ICANHAZ_FS_VIA")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Tracing off unless RUST_LOG is set (e.g. `wrpc_transport::frame::conn=trace`).
@@ -129,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         iroh: std::env::var("ICANHAZ_IROH")
             .map(|v| v != "0")
             .unwrap_or(true),
+        fs_via: fs_via_from_env(),
     };
     let services = Services::open().await;
     run(config, grants, pairings, hosts, consent, services).await

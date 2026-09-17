@@ -46,6 +46,14 @@ pub struct DaemonConfig {
     /// broker's identity: the same key signs certificates and authenticates
     /// the QUIC handshake, so a certificate's issuer is its locator.
     pub iroh: bool,
+    /// Store components to serve the filesystem through, outermost first,
+    /// for every filesystem grant. The filesystem is one shared instance
+    /// whose `mount` hands out per-grant descriptors, so its chain is
+    /// daemon-wide rather than per grant: each component must import and
+    /// export `wasi:filesystem/types` and export `icanhaz:fspass/mount`
+    /// (wrapping the inner mount's descriptor in its own). Composed with wac
+    /// at startup in front of the shipped passthrough.
+    pub fs_via: Vec<String>,
 }
 
 /// Seed the demo tree under `root`: one file inside the jail, one outside, plus a
@@ -209,6 +217,34 @@ async fn load_identity(store: &Store) -> Option<ezcap::Keypair> {
     Some(key)
 }
 
+/// Compose the shipped passthrough with the configured filesystem wrappers
+/// (`config.fs_via`, outermost first) and check the result still serves the
+/// filesystem: it must export both `wasi:filesystem/types` and `mount`.
+async fn compose_fs_chain(
+    config: &DaemonConfig,
+    components: &crate::components::ComponentStore,
+) -> anyhow::Result<Vec<u8>> {
+    let mut parts = vec![std::fs::read(&config.fs_component)
+        .with_context(|| format!("read {}", config.fs_component.display()))?];
+    for hash in config.fs_via.iter().rev() {
+        parts.push(
+            components
+                .get(hash)
+                .with_context(|| format!("filesystem chain component {hash}"))?,
+        );
+    }
+    let bytes = crate::components::compose(&parts)?;
+    let info = crate::components::validate(&bytes)?;
+    let exports = |prefix: &str| info.exports.iter().any(|e| e.starts_with(prefix));
+    anyhow::ensure!(
+        exports("wasi:filesystem/types@") && exports("icanhaz:fspass/mount@"),
+        "the composed filesystem chain must export wasi:filesystem/types and icanhaz:fspass/mount; it exports {:?}",
+        info.exports
+    );
+    tracing::info!(hash = %info.hash, via = ?config.fs_via, "filesystem served through a chain");
+    Ok(bytes)
+}
+
 /// Bring the whole NoCap surface up and serve it until a transport errors. `grants`,
 /// `pairings`, `consent` and `services` are supplied by the caller (see the module docs).
 pub async fn run(
@@ -303,8 +339,22 @@ pub async fn run(
         process = process.with_remotes(remotes.clone());
         inference = inference.with_remotes(remotes);
     }
+    // The daemon-wide filesystem chain, if configured: the passthrough
+    // innermost, then each chosen component, composed into one.
+    let fs_chain = if config.fs_via.is_empty() {
+        None
+    } else {
+        match compose_fs_chain(&config, &services.components).await {
+            Ok(bytes) => Some(Arc::new(bytes)),
+            Err(e) => {
+                tracing::warn!(error = %e, "filesystem chain not applied; serving the passthrough alone");
+                None
+            }
+        }
+    };
     let fs_serve = FsServe {
         component_path: config.fs_component.clone(),
+        component_bytes: fs_chain,
         root: config.root.clone(),
         grants: grants.clone(),
     };

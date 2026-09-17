@@ -659,6 +659,112 @@ mod tests {
             .join("../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm")
     }
 
+    /// The daemon-wide filesystem chain end to end: the `fs_wrap` fixture
+    /// composed in front of the passthrough, served like the passthrough, so
+    /// every operation passes the wrapper first: it refuses paths naming
+    /// `forbidden`, everything else reaches the real filesystem.
+    #[tokio::test]
+    async fn a_filesystem_chain_interposes_on_every_operation() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use fs_client::icanhaz::fspass::mount;
+        use fs_client::wasi::filesystem::types::{
+            Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
+        };
+        use wasmtime_wasi::FsPerms;
+
+        let passthrough = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wrapper = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/fs_wrap.wasm"
+        ))
+        .expect("fs_wrap.wasm fixture");
+        let chain = crate::components::compose(&[passthrough, wrapper]).expect("composes");
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"through the chain\n").unwrap();
+        std::fs::write(dir.path().join("forbidden.txt"), b"never\n").unwrap();
+        let mut builder = WasiCtxBuilder::new();
+        builder
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
+            .unwrap();
+        let wasi = builder.build();
+        let grants = GrantStore::shared();
+        let grant = grants.lock().unwrap().issue(
+            CapabilityKind::Filesystem(FsRequest {
+                roots: vec![PathGrant {
+                    path: "/".to_string(),
+                    rights: FsRights::READ | FsRights::WRITE,
+                }],
+            }),
+            "filesystem (/)".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let _handlers = serve_filesystem(
+            srv.as_ref(),
+            &chain,
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        // The passthrough behind the wrapper still gates: a bogus token is refused.
+        assert!(mount::open_root(&wrpc, (), "bogus").await.unwrap().is_err());
+        let root = mount::open_root(&wrpc, (), &grant)
+            .await
+            .unwrap()
+            .expect("mount through the chain");
+        let file = Descriptor::open_at(
+            &wrpc,
+            (),
+            &root.as_borrow(),
+            &PathFlags::empty(),
+            "hello.txt",
+            &OpenFlags::empty(),
+            &DescriptorFlags::READ,
+        )
+        .await
+        .unwrap()
+        .expect("open hello.txt through the chain");
+        let (bytes, _eof) = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0)
+            .await
+            .unwrap()
+            .expect("read through the chain");
+        assert_eq!(&bytes[..], &b"through the chain\n"[..]);
+        // The wrapper's rule, before the passthrough ever sees the path.
+        let refused = Descriptor::open_at(
+            &wrpc,
+            (),
+            &root.as_borrow(),
+            &PathFlags::empty(),
+            "forbidden.txt",
+            &OpenFlags::empty(),
+            &DescriptorFlags::READ,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(refused, Err(ErrorCode::Access)), "{refused:?}");
+        accept.abort();
+    }
+
     /// Serve REAL `wasi:filesystem@0.2` over wRPC, **grant-gated**: a bogus token is
     /// refused by the consent gate; a live filesystem grant exchanges (via
     /// `mount.open-root`) for the root descriptor, which then drives native

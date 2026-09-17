@@ -51,6 +51,9 @@ use wrpc_websockets::tokio_websockets::{Message, WebSocketStream};
 #[derive(Clone)]
 pub struct FsServe {
     pub component_path: PathBuf,
+    /// The component to serve instead of the file at `component_path`: the
+    /// daemon-wide filesystem chain, composed at startup (see `daemon`).
+    pub component_bytes: Option<Arc<Vec<u8>>>,
     pub root: PathBuf,
     pub grants: Arc<std::sync::Mutex<GrantStore>>,
 }
@@ -99,12 +102,15 @@ where
     // Real wasi:filesystem (the gated passthrough) on the SAME server, via ServeExt.
     // Its descriptor invocations drain on the returned JoinSet (held for the
     // server's lifetime); the placeholder client is never invoked (no polyfill).
-    let fs_wasm = std::fs::read(&fs_serve.component_path).with_context(|| {
-        format!(
-            "read fs-passthrough component {}",
-            fs_serve.component_path.display()
-        )
-    })?;
+    let fs_wasm = match &fs_serve.component_bytes {
+        Some(bytes) => bytes.as_ref().clone(),
+        None => std::fs::read(&fs_serve.component_path).with_context(|| {
+            format!(
+                "read fs-passthrough component {}",
+                fs_serve.component_path.display()
+            )
+        })?,
+    };
     let mut wasi_builder = WasiCtxBuilder::new();
     wasi_builder
         .preopened_dir(&fs_serve.root, "/", FsPerms::ReadWrite)

@@ -1,0 +1,46 @@
+package icanhaz:fspass@0.1.0;
+
+// No local wasi deps would let wit-bindgen fall back to its bundled 0.2.6 while
+// wasmtime-wasi 46 provides 0.2.12 — a version skew that makes wrpc-wasmtime see
+// two distinct `descriptor` resource types. So the full 0.2.12 set is vendored in
+// deps/ and referenced explicitly; imports == exports == 0.2.12.
+
+/// Host-provided consent gate: the host validates the bearer token against its
+/// grant store (a live `filesystem` grant) and returns the granted **root path**
+/// (relative to the served preopen) the descriptor should be scoped to, else a
+/// denial. `""`/`"/"` ⇒ the whole preopen.
+interface gate {
+  authorize: func(grant: string) -> result<string, string>;
+  /// Per-operation admission. `method` is the `wasi:filesystem` descriptor
+  /// method being invoked (kebab-case, e.g. `open-at`); `args` are the
+  /// string-valued arguments the host may bind for the grant's scope (`path`,
+  /// `old-path`, `new-path`). The host evaluates the grant's `allow` clause
+  /// (`ezco:ezcap`) with `call.method` and `call.args.*` bound. `Err` ⇒ the
+  /// operation fails with `access`.
+  admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
+}
+
+/// The gated entry point. Exchange a consented grant for the **root descriptor**;
+/// thereafter that descriptor (and any it opens) IS the capability — every
+/// `wasi:filesystem/types` method works on it. `preopens` is deliberately NOT
+/// exported, so `open-root` is the only way to obtain a descriptor: an ungated
+/// peer has no handle and no access.
+interface mount {
+  use wasi:filesystem/types@0.2.12.{descriptor};
+  open-root: func(grant: string) -> result<descriptor, string>;
+}
+
+/// Import-only world — the single shared home of the value types (see lib.rs).
+world fs-raw {
+  import wasi:filesystem/types@0.2.12;
+}
+
+/// The wrapper: import the filesystem and the gated mount from the component
+/// in front of it, re-export both. Composition (wac) wires these imports to
+/// the passthrough's exports; the daemon serves the wrapper's exports.
+world fs-wrap {
+  import wasi:filesystem/types@0.2.12;
+  import mount;
+  export wasi:filesystem/types@0.2.12;
+  export mount;
+}

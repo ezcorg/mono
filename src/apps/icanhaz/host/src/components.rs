@@ -400,6 +400,59 @@ mod tests {
     }
 
     #[test]
+    fn a_filesystem_wrapper_composes_in_front_of_the_passthrough() {
+        let Some(bytes) = passthrough() else {
+            eprintln!("fs_passthrough.wasm not built; skipping");
+            return;
+        };
+        let wrapper = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/fs_wrap.wasm"
+        ))
+        .expect("fs_wrap.wasm fixture");
+        // The wrapper imports types and mount from the passthrough and
+        // re-exports both; the passthrough's own roots stay the composition's.
+        let composed = compose(&[bytes, wrapper]).expect("composes");
+        let info = validate(&composed).expect("a capability component");
+        assert!(
+            info.exports
+                .iter()
+                .any(|e| e.starts_with("wasi:filesystem/types@")),
+            "{:?}",
+            info.exports
+        );
+        assert!(
+            info.exports
+                .iter()
+                .any(|e| e.starts_with("icanhaz:fspass/mount@")),
+            "{:?}",
+            info.exports
+        );
+        assert!(
+            info.imports
+                .iter()
+                .any(|i| i.starts_with("icanhaz:fspass/gate@")),
+            "{:?}",
+            info.imports
+        );
+        assert!(
+            info.imports
+                .iter()
+                .any(|i| i.starts_with("wasi:filesystem/preopens@")),
+            "{:?}",
+            info.imports
+        );
+        assert!(
+            !info
+                .imports
+                .iter()
+                .any(|i| i.starts_with("icanhaz:fspass/mount@")),
+            "the inner mount is wired, not imported: {:?}",
+            info.imports
+        );
+    }
+
+    #[test]
     fn garbage_is_not_a_component() {
         assert!(validate(b"not wasm").is_err());
     }
