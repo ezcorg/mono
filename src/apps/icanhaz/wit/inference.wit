@@ -62,7 +62,7 @@ interface inference {
   /// grant's `state.tokens`), kind `2` is an error message and ends the stream,
   /// kind `3` is a `tool-call` as JSON `{"id", "name", "arguments"}` (the
   /// model stopped to call a tool; the usage frame still follows).
-  complete: func(grant: string, request: completion-request) -> result<stream<u8>, string>;
+  complete: async func(grant: string, request: completion-request) -> result<stream<u8>, string>;
 
   /// The models this grant may use, of those the host has configured.
   models: func(grant: string) -> result<list<model-info>, string>;

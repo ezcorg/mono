@@ -21,7 +21,7 @@ futures = "0.3"
 # in the vendored wrpc workspace) — a version/source mismatch across the
 # path-dep boundary yields two incompatible `wasmtime` crates and the
 # component-model types won't unify.
-wasmtime = { version = "48", features = ["async", "component-model", "cranelift", "runtime"] }
+wasmtime = { version = "48", features = ["async", "component-model", "component-model-async", "component-model-bytes", "cranelift", "runtime"] }
 wasmtime-wasi = { version = "48", features = ["p2"] }
 
 # Vendored wrpc (submodule at src/rust/wrpc), referenced by path. Its own

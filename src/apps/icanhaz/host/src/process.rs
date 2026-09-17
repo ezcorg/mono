@@ -49,6 +49,8 @@ pub struct ProcessProvider {
     store: Arc<Mutex<GrantStore>>,
     /// Other brokers, for grants that proxy a remote one.
     remotes: Option<crate::remote::Remotes>,
+    /// Runs the wrappers a grant is provided through (see [`crate::chain`]).
+    chain: Option<Arc<crate::chain::Chain>>,
 }
 
 impl ProcessProvider {
@@ -56,11 +58,17 @@ impl ProcessProvider {
         Self {
             store,
             remotes: None,
+            chain: None,
         }
     }
 
     pub fn with_remotes(mut self, remotes: crate::remote::Remotes) -> Self {
         self.remotes = Some(remotes);
+        self
+    }
+
+    pub fn with_chain(mut self, chain: Arc<crate::chain::Chain>) -> Self {
+        self.chain = Some(chain);
         self
     }
 
@@ -168,93 +176,144 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::pro
                 .await;
         }
 
-        let mut child = match Command::new(&req.image)
-            .args(&effective_args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(e) => return Ok(Err(format!("failed to spawn `{}`: {e}", req.image))),
-        };
-
-        let mut child_stdin = child.stdin.take().expect("piped stdin");
-        let mut child_stdout = child.stdout.take().expect("piped stdout");
-        let mut child_stderr = child.stderr.take().expect("piped stderr");
-        // Telemetry: makes a "spawned but silent / crashed" child visible in the log
-        // (`RUST_LOG=icanhaz_host=info`). Pairs with the browser's setLspTrace to place
-        // the break — no `first stdout` here + no `recv` in the browser ⇒ the child never
-        // produced output (crashed / wrong PATH); `exited` right after ⇒ startup failure.
-        tracing::info!(image = %req.image, pid = ?child.id(), args = ?effective_args, "process spawned");
-
-        // Forward the wRPC stdin stream → the child until the client closes it;
-        // dropping `child_stdin` then sends EOF (the LSP `exit` convention).
-        let stdin_h = tokio::spawn(async move {
-            let mut stdin = stdin;
-            while let Some(chunk) = stdin.next().await {
-                if child_stdin.write_all(&chunk).await.is_err() {
-                    break;
-                }
-                let _ = child_stdin.flush().await;
-            }
-        });
-
-        // The child's stderr is logged, never streamed: folding it into stdout would
-        // corrupt a length-framed protocol on the wire (LSP, DAP, …).
-        let image = req.image.clone();
-        let stderr_h = tokio::spawn(async move {
-            let mut buf = [0u8; 4096];
-            loop {
-                match child_stderr.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        tracing::debug!(image = %image, "process stderr: {}", String::from_utf8_lossy(&buf[..n]))
-                    }
-                }
-            }
-        });
-
-        // The child's stdout becomes the returned wRPC stream; it ends when the
-        // child closes stdout (it has exited or is exiting). Drain to EOF *then*
-        // reap, so a full pipe buffer can never deadlock `wait()`.
-        let (out_tx, output) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
-        let image_out = req.image.clone();
-        let stdout_h = tokio::spawn(async move {
-            let mut buf = [0u8; 8192];
-            let mut total = 0usize;
-            loop {
-                match child_stdout.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if total == 0 {
-                            tracing::info!(image = %image_out, bytes = n, "process: first stdout");
-                        }
-                        total += n;
-                        if out_tx.send(Bytes::copy_from_slice(&buf[..n])).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-            let status = child.wait().await;
-            tracing::info!(image = %image_out, total_stdout = total, ?status, "process exited");
-        });
-
-        // Bind the session to the grant: on revoke/expiry the output stream ends and
-        // the guard aborts the pump tasks — dropping `child`, which `kill_on_drop`
-        // then kills. Also releases on client disconnect / natural exit.
-        let revocation = self.store.lock().unwrap().revocation(&grant);
-        let out = UnboundedReceiverStream::new(output);
-        Ok(Ok(crate::session::grant_scoped(
-            Box::pin(out),
-            revocation,
-            ProcGuard {
-                handles: vec![stdin_h, stderr_h, stdout_h],
-            },
-        )))
+        // Provided through store components: the chosen wrappers run in front of
+        // the native spawn, seeing the caller's stdin and returning its stdout.
+        let via = self.store.lock().unwrap().via_of(&grant);
+        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
+            let grants = self.store.clone();
+            let pinned = req.clone();
+            let native: crate::chain::NativeSpawn = Arc::new(move |grant, args, stdin| {
+                // The wrapper may rewrite argv; the grant's pins still hold.
+                let args = if pinned.guest_chooses_argv {
+                    args
+                } else if args.is_empty() || args == pinned.args {
+                    pinned.args.clone()
+                } else {
+                    return Err(
+                        "process denied: the wrapper's argv is outside the grant's pins"
+                            .to_string(),
+                    );
+                };
+                spawn_native(&pinned, &args, stdin, &grants, &grant)
+            });
+            return match chain
+                .process_spawn(&via, &grant, effective_args, stdin, native)
+                .await
+            {
+                Ok(Some(out)) => Ok(out),
+                // Only when nothing in the chain exports process, which
+                // `via_of` plus `offers` rule out at consent time.
+                Ok(None) => Ok(Err(
+                    "process: the chosen chain provides nothing for process".to_string(),
+                )),
+                Err(e) => Ok(Err(format!("process: chain failed: {e:#}"))),
+            };
+        }
+        Ok(spawn_native(
+            &req,
+            &effective_args,
+            stdin,
+            &self.store,
+            &grant,
+        ))
     }
+}
+
+/// Spawn the grant's pinned image with `args`, feeding it `stdin` and
+/// returning its stdout as a stream bound to the grant's life.
+fn spawn_native(
+    req: &crate::broker::ProcessRequest,
+    effective_args: &[String],
+    stdin: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+    store: &Arc<Mutex<GrantStore>>,
+    grant: &str,
+) -> Result<Pin<Box<dyn Stream<Item = Bytes> + Send>>, String> {
+    let mut child = match Command::new(&req.image)
+        .args(effective_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => return Err(format!("failed to spawn `{}`: {e}", req.image)),
+    };
+
+    let mut child_stdin = child.stdin.take().expect("piped stdin");
+    let mut child_stdout = child.stdout.take().expect("piped stdout");
+    let mut child_stderr = child.stderr.take().expect("piped stderr");
+    // Telemetry: makes a "spawned but silent / crashed" child visible in the log
+    // (`RUST_LOG=icanhaz_host=info`). Pairs with the browser's setLspTrace to place
+    // the break — no `first stdout` here + no `recv` in the browser ⇒ the child never
+    // produced output (crashed / wrong PATH); `exited` right after ⇒ startup failure.
+    tracing::info!(image = %req.image, pid = ?child.id(), args = ?effective_args, "process spawned");
+
+    // Forward the wRPC stdin stream → the child until the client closes it;
+    // dropping `child_stdin` then sends EOF (the LSP `exit` convention).
+    let stdin_h = tokio::spawn(async move {
+        let mut stdin = stdin;
+        while let Some(chunk) = stdin.next().await {
+            if child_stdin.write_all(&chunk).await.is_err() {
+                break;
+            }
+            let _ = child_stdin.flush().await;
+        }
+    });
+
+    // The child's stderr is logged, never streamed: folding it into stdout would
+    // corrupt a length-framed protocol on the wire (LSP, DAP, …).
+    let image = req.image.clone();
+    let stderr_h = tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        loop {
+            match child_stderr.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    tracing::debug!(image = %image, "process stderr: {}", String::from_utf8_lossy(&buf[..n]))
+                }
+            }
+        }
+    });
+
+    // The child's stdout becomes the returned wRPC stream; it ends when the
+    // child closes stdout (it has exited or is exiting). Drain to EOF *then*
+    // reap, so a full pipe buffer can never deadlock `wait()`.
+    let (out_tx, output) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    let image_out = req.image.clone();
+    let stdout_h = tokio::spawn(async move {
+        let mut buf = [0u8; 8192];
+        let mut total = 0usize;
+        loop {
+            match child_stdout.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if total == 0 {
+                        tracing::info!(image = %image_out, bytes = n, "process: first stdout");
+                    }
+                    total += n;
+                    if out_tx.send(Bytes::copy_from_slice(&buf[..n])).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        let status = child.wait().await;
+        tracing::info!(image = %image_out, total_stdout = total, ?status, "process exited");
+    });
+
+    // Bind the session to the grant: on revoke/expiry the output stream ends and
+    // the guard aborts the pump tasks — dropping `child`, which `kill_on_drop`
+    // then kills. Also releases on client disconnect / natural exit.
+    let revocation = store.lock().unwrap().revocation(grant);
+    let out = UnboundedReceiverStream::new(output);
+    Ok(crate::session::grant_scoped(
+        Box::pin(out),
+        revocation,
+        ProcGuard {
+            handles: vec![stdin_h, stderr_h, stdout_h],
+        },
+    ))
 }
 
 /// Serve the process capability over wRPC/TCP on `listener` until cancelled. (The

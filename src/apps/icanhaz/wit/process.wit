@@ -20,7 +20,7 @@ interface process {
   /// otherwise a non-empty `args` is refused. `stdin` streams bytes to the child;
   /// closing it sends EOF (the LSP `exit` convention). The result streams the
   /// child's stdout until it exits or the stream is dropped.
-  spawn: func(
+  spawn: async func(
     grant: string,
     args: list<string>,
     stdin: stream<u8>,

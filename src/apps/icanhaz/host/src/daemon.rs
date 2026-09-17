@@ -232,12 +232,16 @@ pub async fn run(
     let configuration = services.configuration_provider();
     let components = services.components_provider();
     // Grants provided through store components run them here.
-    let workspace = match crate::chain::Chain::new(Arc::clone(&services.components)) {
-        Ok(chain) => workspace.with_chain(chain),
+    let chain = match crate::chain::Chain::new(Arc::clone(&services.components)) {
+        Ok(chain) => Some(chain),
         Err(e) => {
             tracing::warn!(error = %e, "wrapper chains unavailable");
-            workspace
+            None
         }
+    };
+    let workspace = match &chain {
+        Some(c) => workspace.with_chain(Arc::clone(c)),
+        None => workspace,
     };
     // The shipped passthrough is the store's first component, so what the
     // daemon links today is addressable by hash like anything a user brings.
@@ -287,6 +291,10 @@ pub async fn run(
     let mut broker = broker;
     let mut process = process;
     let mut inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
+    if let Some(c) = &chain {
+        process = process.with_chain(Arc::clone(c));
+        inference = inference.with_chain(Arc::clone(c));
+    }
     if let Some(ep) = &iroh_ep {
         let remotes = crate::remote::Remotes::new(ep.clone());
         let locator = crate::remote::locator_of(ep, &broker_key.public());

@@ -40,6 +40,8 @@ pub struct InferenceProvider {
     providers: Arc<Providers>,
     /// Other brokers, for grants that proxy a remote one.
     remotes: Option<crate::remote::Remotes>,
+    /// Runs the wrappers a grant is provided through (see [`crate::chain`]).
+    chain: Option<Arc<crate::chain::Chain>>,
 }
 
 impl InferenceProvider {
@@ -48,12 +50,98 @@ impl InferenceProvider {
             store,
             providers,
             remotes: None,
+            chain: None,
         }
     }
 
     pub fn with_remotes(mut self, remotes: crate::remote::Remotes) -> Self {
         self.remotes = Some(remotes);
         self
+    }
+
+    pub fn with_chain(mut self, chain: Arc<crate::chain::Chain>) -> Self {
+        self.chain = Some(chain);
+        self
+    }
+
+    /// Stream a completion from `provider`, charging the usage frame to the
+    /// grant as it passes; the stream ends with the grant.
+    fn native_complete(
+        &self,
+        grant: &str,
+        provider: &crate::providers::ProviderConfig,
+        req: Request,
+    ) -> crate::session::ByteStream {
+        let mut frames = self.providers.complete(provider, req);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+        let grants = self.store.clone();
+        let providers = self.providers.clone();
+        let provider_name = provider.name.clone();
+        let token = grant.to_string();
+        tokio::spawn(async move {
+            while let Some(frame) = frames.next().await {
+                let tokens = frame.tokens();
+                if tokens > 0 {
+                    {
+                        let mut g = grants.lock().unwrap();
+                        g.charge(&token, "tokens", tokens);
+                        g.charge(&token, "day_tokens", tokens);
+                    }
+                    if let Some(store) = providers.store() {
+                        if let Err(e) =
+                            Providers::add_day_tokens(store, &provider_name, today(), tokens).await
+                        {
+                            tracing::warn!(error = %e, provider = %provider_name, "could not persist token spend");
+                        }
+                    }
+                }
+                let done = matches!(frame, Frame::Usage { .. } | Frame::Error(_));
+                if tx.send(frame.encode()).is_err() || done {
+                    break;
+                }
+            }
+        });
+        let revocation = self.store.lock().unwrap().revocation(grant);
+        crate::session::grant_scoped(Box::pin(UnboundedReceiverStream::new(rx)), revocation, ())
+    }
+
+    /// The native calls a chain's wrapper imports: completion (re-checking
+    /// the grant's model list, since a wrapper may rewrite the model) and
+    /// the model listing.
+    fn chain_natives(
+        &self,
+        _grant: &str,
+        allowed: &[String],
+    ) -> (crate::chain::NativeComplete, crate::chain::NativeModels) {
+        let me = self.clone();
+        let allowed_c = allowed.to_vec();
+        let complete: crate::chain::NativeComplete = Arc::new(move |grant, request| {
+            if !allowed_c.is_empty() && !allowed_c.contains(&request.model) {
+                return Err(format!(
+                    "inference denied: this grant covers {}, not `{}`",
+                    allowed_c.join(", "),
+                    request.model
+                ));
+            }
+            let Some(provider) = me.providers.resolve(&request.model) else {
+                return Err(format!(
+                    "inference: no configured provider serves `{}`",
+                    request.model
+                ));
+            };
+            Ok(me.native_complete(&grant, &provider, from_chain_request(request)))
+        });
+        let me = self.clone();
+        let allowed_m = allowed.to_vec();
+        let models: crate::chain::NativeModels = Arc::new(move |_grant| {
+            Ok(me
+                .providers
+                .models()
+                .into_iter()
+                .filter(|(_, model)| allowed_m.is_empty() || allowed_m.contains(model))
+                .collect())
+        });
+        (complete, models)
     }
 
     /// Forward a completion to the broker that holds the real grant. The
@@ -188,6 +276,7 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inf
             return Ok(Err(format!("inference denied: {}", denied_text(&denied))));
         }
 
+        let request_for_chain = request.clone();
         let req = Request {
             model: request.model,
             messages: request
@@ -221,45 +310,27 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inf
             temperature: request.temperature,
             system: request.system,
         };
-        let mut frames = self.providers.complete(&provider, req);
-
-        // Relay frames onto the wire; charge the usage when it arrives.
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
-        let grants = self.store.clone();
-        let providers = self.providers.clone();
-        let provider_name = provider.name.clone();
-        let token = grant.clone();
-        tokio::spawn(async move {
-            while let Some(frame) = frames.next().await {
-                let tokens = frame.tokens();
-                if tokens > 0 {
-                    {
-                        let mut g = grants.lock().unwrap();
-                        g.charge(&token, "tokens", tokens);
-                        g.charge(&token, "day_tokens", tokens);
-                    }
-                    if let Some(store) = providers.store() {
-                        if let Err(e) =
-                            Providers::add_day_tokens(store, &provider_name, today(), tokens).await
-                        {
-                            tracing::warn!(error = %e, provider = %provider_name, "could not persist token spend");
-                        }
-                    }
-                }
-                let done = matches!(frame, Frame::Usage { .. } | Frame::Error(_));
-                if tx.send(frame.encode()).is_err() || done {
-                    break;
-                }
-            }
-        });
-
-        let revocation = self.store.lock().unwrap().revocation(&grant);
-        let out = UnboundedReceiverStream::new(rx);
-        Ok(Ok(crate::session::grant_scoped(
-            Box::pin(out),
-            revocation,
-            (),
-        )))
+        // Provided through store components: the chosen wrappers run in front
+        // of the native completion.
+        let via = self.store.lock().unwrap().via_of(&grant);
+        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
+            let (complete, models) = self.chain_natives(&grant, &allowed.models);
+            return match chain
+                .inference_complete(
+                    &via,
+                    &grant,
+                    to_chain_request(request_for_chain),
+                    complete,
+                    models,
+                )
+                .await
+            {
+                Ok(Some(out)) => Ok(out),
+                Ok(None) => Ok(Ok(self.native_complete(&grant, &provider, req))),
+                Err(e) => Ok(Err(format!("inference: chain failed: {e:#}"))),
+            };
+        }
+        Ok(Ok(self.native_complete(&grant, &provider, req)))
     }
 
     async fn models(&self, cx: C, grant: String) -> anyhow::Result<Result<Vec<ModelInfo>, String>> {
@@ -294,6 +365,21 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inf
                             .collect()
                     })
                 });
+        }
+        let via = self.store.lock().unwrap().via_of(&grant);
+        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
+            let (complete, models) = self.chain_natives(&grant, &allowed.models);
+            match chain.inference_models(&via, &grant, complete, models).await {
+                Ok(Some(out)) => {
+                    return Ok(out.map(|list| {
+                        list.into_iter()
+                            .map(|(provider, model)| ModelInfo { provider, model })
+                            .collect()
+                    }))
+                }
+                Ok(None) => {}
+                Err(e) => return Ok(Err(format!("inference: chain failed: {e:#}"))),
+            }
         }
         Ok(Ok(self
             .providers
@@ -332,6 +418,71 @@ fn to_client(r: CompletionRequest) -> bindings::icanhaz::nocap::inference::Compl
             .tools
             .into_iter()
             .map(|t| c::Tool {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+            })
+            .collect(),
+        max_tokens: r.max_tokens,
+        temperature: r.temperature,
+        system: r.system,
+    }
+}
+
+/// The wRPC export request as the chain's export-side type.
+fn to_chain_request(r: CompletionRequest) -> crate::chain::ExportRequest {
+    crate::chain::export_to_client_request_from_wire(
+        r.model,
+        r.messages
+            .into_iter()
+            .map(|m| {
+                (
+                    m.role,
+                    m.content,
+                    m.tool_calls
+                        .into_iter()
+                        .map(|t| (t.id, t.name, t.arguments))
+                        .collect(),
+                    m.tool_call_id,
+                )
+            })
+            .collect(),
+        r.tools
+            .into_iter()
+            .map(|t| (t.name, t.description, t.parameters))
+            .collect(),
+        r.max_tokens,
+        r.temperature,
+        r.system,
+    )
+}
+
+/// The chain's import-side request (what a wrapper forwarded) as a provider request.
+fn from_chain_request(r: crate::chain::ClientRequest) -> Request {
+    Request {
+        model: r.model,
+        messages: r
+            .messages
+            .into_iter()
+            .map(|m| crate::providers::Message {
+                role: m.role,
+                content: m.content,
+                tool_calls: m
+                    .tool_calls
+                    .into_iter()
+                    .map(|c| crate::providers::ToolCall {
+                        id: c.id,
+                        name: c.name,
+                        arguments: c.arguments,
+                    })
+                    .collect(),
+                tool_call_id: m.tool_call_id,
+            })
+            .collect(),
+        tools: r
+            .tools
+            .into_iter()
+            .map(|t| crate::providers::Tool {
                 name: t.name,
                 description: t.description,
                 parameters: t.parameters,

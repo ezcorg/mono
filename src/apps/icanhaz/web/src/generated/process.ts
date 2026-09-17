@@ -6,7 +6,7 @@ const INSTANCE = "icanhaz:nocap/process@0.1.0";
 
 
 
-function enc_74(v: string[]): number[] {
+function enc_39(v: string[]): number[] {
     return [...leb128(v.length), ...v.flatMap((x) => encodeString(x))];
 }
 
@@ -20,7 +20,7 @@ export interface SpawnSession {
     close(): void;
 }
 export async function spawn(t: WrpcTransport, grant: string, args: string[]): Promise<SpawnSession> {
-    const call = await streamingCall(t, INSTANCE, "spawn", [...encodeString(grant), ...enc_74(args), 0]);
+    const call = await streamingCall(t, INSTANCE, "spawn", [...encodeString(grant), ...enc_39(args), 0]);
     let errCb: ((e: string) => void) | undefined;
     call.onResult((v) => { if (v[0] === 1) { const [e] = readString(v, 1); errCb?.(e); } });
     let dataCb: ((c: Uint8Array | null) => void) | undefined;

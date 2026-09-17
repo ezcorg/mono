@@ -8,3 +8,13 @@ world workspace-chain {
   import workspace;
   export workspace;
 }
+
+world process-chain {
+  import process;
+  export process;
+}
+
+world inference-chain {
+  import inference;
+  export inference;
+}

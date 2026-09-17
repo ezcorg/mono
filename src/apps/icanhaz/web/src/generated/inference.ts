@@ -11,39 +11,39 @@ export type Tool = { name: string; description: string; parameters: string };
 export type ModelInfo = { provider: string; model: string };
 
 function encCompletionRequest(v: CompletionRequest): number[] {
-    return [...encodeString(v.model), ...enc_42(v.messages), ...enc_43(v.tools), ...leb128(v.maxTokens), ...enc_44(v.temperature), ...enc_40(v.system)];
+    return [...encodeString(v.model), ...enc_61(v.messages), ...enc_62(v.tools), ...leb128(v.maxTokens), ...enc_63(v.temperature), ...enc_37(v.system)];
 }
-function enc_42(v: Message[]): number[] {
+function enc_61(v: Message[]): number[] {
     return [...leb128(v.length), ...v.flatMap((x) => encMessage(x))];
 }
 function encMessage(v: Message): number[] {
-    return [...encodeString(v.role), ...encodeString(v.content), ...enc_39(v.toolCalls), ...enc_40(v.toolCallId)];
+    return [...encodeString(v.role), ...encodeString(v.content), ...enc_59(v.toolCalls), ...enc_37(v.toolCallId)];
 }
-function enc_39(v: ToolCall[]): number[] {
+function enc_59(v: ToolCall[]): number[] {
     return [...leb128(v.length), ...v.flatMap((x) => encToolCall(x))];
 }
 function encToolCall(v: ToolCall): number[] {
     return [...encodeString(v.id), ...encodeString(v.name), ...encodeString(v.arguments)];
 }
-function enc_40(v: string | undefined): number[] {
+function enc_37(v: string | undefined): number[] {
     return v === undefined ? [0] : [1, ...encodeString(v)];
 }
-function enc_43(v: Tool[]): number[] {
+function enc_62(v: Tool[]): number[] {
     return [...leb128(v.length), ...v.flatMap((x) => encTool(x))];
 }
 function encTool(v: Tool): number[] {
     return [...encodeString(v.name), ...encodeString(v.description), ...encodeString(v.parameters)];
 }
-function enc_44(v: number | undefined): number[] {
+function enc_63(v: number | undefined): number[] {
     return v === undefined ? [0] : [1, ...encF32(v)];
 }
 
-function dec_50(b: Uint8Array, o0: number): [{ tag: "ok"; val: ModelInfo[] } | { tag: "err"; val: string }, number] {
+function dec_69(b: Uint8Array, o0: number): [{ tag: "ok"; val: ModelInfo[] } | { tag: "err"; val: string }, number] {
     const [d, o1] = readLeb128(b, o0);
-    if (d === 0) { const [val, o2] = dec_49(b, o1); return [{ tag: "ok", val }, o2]; }
+    if (d === 0) { const [val, o2] = dec_68(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = readString(b, o1); return [{ tag: "err", val }, o2];
 }
-function dec_49(b: Uint8Array, o0: number): [ModelInfo[], number] {
+function dec_68(b: Uint8Array, o0: number): [ModelInfo[], number] {
     return readList(b, o0, decModelInfo);
 }
 function decModelInfo(b: Uint8Array, o0: number): [ModelInfo, number] {
@@ -54,7 +54,7 @@ function decModelInfo(b: Uint8Array, o0: number): [ModelInfo, number] {
 
 export async function models(t: WrpcTransport, grant: string): Promise<{ tag: "ok"; val: ModelInfo[] } | { tag: "err"; val: string }> {
     const resp = await invoke(t, INSTANCE, "models", [...encodeString(grant)]);
-    return dec_50(resultValue(resp), 0)[0];
+    return dec_69(resultValue(resp), 0)[0];
 }
 
 export interface CompleteSession {
