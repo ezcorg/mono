@@ -61,3 +61,5 @@ pub mod components;
 pub mod iroh;
 /// Other brokers over iroh: locators, connections, remote redemption.
 pub mod remote;
+/// Scaffolds for authoring capabilities (`icanhaz capability new|wrap`).
+pub mod scaffold;

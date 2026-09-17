@@ -22,11 +22,11 @@ describe("component store over wRPC (browser → host)", () => {
 
         // Adding what is there is idempotent; garbage is refused with a reason.
         if (bytes.tag === "ok") {
-            const again = await add(t, bytes.val);
+            const again = await add(t, bytes.val, undefined);
             expect(again.tag).toBe("ok");
             if (again.tag === "ok") expect(again.val.hash).toBe(passthrough.hash);
         }
-        const junk = await add(t, new TextEncoder().encode("not wasm"));
+        const junk = await add(t, new TextEncoder().encode("not wasm"), undefined);
         expect(junk.tag).toBe("err");
         if (junk.tag === "err") expect(junk.val).toMatch(/not a WebAssembly component/);
 

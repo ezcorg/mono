@@ -234,7 +234,7 @@ pub async fn run(
     // The shipped passthrough is the store's first component, so what the
     // daemon links today is addressable by hash like anything a user brings.
     match std::fs::read(&config.fs_component) {
-        Ok(bytes) => match services.components.add(&bytes).await {
+        Ok(bytes) => match services.components.add(&bytes, None).await {
             Ok(info) => {
                 tracing::info!(hash = %info.hash, "fs-passthrough registered in the component store")
             }

@@ -8,6 +8,21 @@ package icanhaz:nocap@0.1.0;
 /// `ezco:ezcap/*`); a library import is refused with the hint to compose it
 /// in at build time; the exports must satisfy a capability interface too.
 interface components {
+  /// Where a component came from, as its author states it. Recorded when
+  /// supplied; `reproducible` becomes true only once a rebuild from it
+  /// matched the hash. Local work may add components without it; publishing
+  /// or vetting is where it becomes a requirement.
+  record provenance {
+    /// A repository or URL.
+    source: string,
+    /// A commit, tag or content hash within it.
+    revision: option<string>,
+    /// The command that produced the bytes.
+    build: option<string>,
+    /// The toolchain or container image, by name or hash.
+    builder: option<string>,
+  }
+
   record component-info {
     /// `sha256:<hex>` of the bytes: the name everything refers to it by.
     hash: string,
@@ -19,9 +34,11 @@ interface components {
     exports: list<string>,
     /// Unix seconds.
     added: u64,
+    provenance: option<provenance>,
+    reproducible: bool,
   }
 
-  add: func(bytes: list<u8>) -> result<component-info, string>;
+  add: func(bytes: list<u8>, provenance: option<provenance>) -> result<component-info, string>;
   all: func() -> list<component-info>;
   get: func(hash: string) -> result<list<u8>, string>;
   /// Local hosts only.

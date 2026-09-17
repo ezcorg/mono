@@ -24,7 +24,9 @@ pub mod bindings {
     });
 }
 
-use bindings::exports::icanhaz::nocap::components::ComponentInfo as InfoWire;
+use bindings::exports::icanhaz::nocap::components::{
+    ComponentInfo as InfoWire, Provenance as ProvenanceWire,
+};
 pub use bindings::icanhaz::nocap::components as client;
 
 /// The packages whose interfaces a capability component may import or
@@ -40,6 +42,15 @@ pub const CAPABILITY_PACKAGES: &[&str] = &[
     "ezco:ezcap",
 ];
 
+/// Where a component came from, as its author states it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Provenance {
+    pub source: String,
+    pub revision: Option<String>,
+    pub build: Option<String>,
+    pub builder: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ComponentInfo {
     pub hash: String,
@@ -48,6 +59,11 @@ pub struct ComponentInfo {
     pub imports: Vec<String>,
     pub exports: Vec<String>,
     pub added: u64,
+    #[serde(default)]
+    pub provenance: Option<Provenance>,
+    /// True only once a rebuild from `provenance` matched `hash`.
+    #[serde(default)]
+    pub reproducible: bool,
 }
 
 fn package_of(interface: &str) -> &str {
@@ -117,6 +133,8 @@ pub fn validate(bytes: &[u8]) -> anyhow::Result<ComponentInfo> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0),
+        provenance: None,
+        reproducible: false,
     })
 }
 
@@ -139,10 +157,21 @@ impl ComponentStore {
             .with_extension("wasm")
     }
 
-    /// Validate, hash and keep `bytes`. Adding what is already there returns
-    /// the same info.
-    pub async fn add(&self, bytes: &[u8]) -> anyhow::Result<ComponentInfo> {
-        let info = validate(bytes)?;
+    /// Validate, hash and keep `bytes`. Adding what is already there keeps
+    /// its info, taking a newly supplied provenance over none.
+    pub async fn add(
+        &self,
+        bytes: &[u8],
+        provenance: Option<Provenance>,
+    ) -> anyhow::Result<ComponentInfo> {
+        let mut info = validate(bytes)?;
+        if let Some(existing) = self.find(&info.hash).await {
+            info.added = existing.added;
+            info.reproducible = existing.reproducible;
+            info.provenance = provenance.or(existing.provenance);
+        } else {
+            info.provenance = provenance;
+        }
         std::fs::create_dir_all(&self.dir)
             .with_context(|| format!("create {}", self.dir.display()))?;
         let path = self.path(&info.hash);
@@ -155,6 +184,10 @@ impl ComponentStore {
                 .await?;
         }
         Ok(info)
+    }
+
+    pub async fn find(&self, hash: &str) -> Option<ComponentInfo> {
+        self.list().await.into_iter().find(|c| c.hash == hash)
     }
 
     pub async fn list(&self) -> Vec<ComponentInfo> {
@@ -199,6 +232,22 @@ fn to_wire(i: ComponentInfo) -> InfoWire {
         imports: i.imports,
         exports: i.exports,
         added: i.added,
+        provenance: i.provenance.map(|p| ProvenanceWire {
+            source: p.source,
+            revision: p.revision,
+            build: p.build,
+            builder: p.builder,
+        }),
+        reproducible: i.reproducible,
+    }
+}
+
+pub fn provenance_from_wire(p: ProvenanceWire) -> Provenance {
+    Provenance {
+        source: p.source,
+        revision: p.revision,
+        build: p.build,
+        builder: p.builder,
     }
 }
 
@@ -216,10 +265,15 @@ impl ComponentsProvider {
 impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::components::Handler<C>
     for ComponentsProvider
 {
-    async fn add(&self, _cx: C, bytes: Bytes) -> anyhow::Result<Result<InfoWire, String>> {
+    async fn add(
+        &self,
+        _cx: C,
+        bytes: Bytes,
+        provenance: Option<ProvenanceWire>,
+    ) -> anyhow::Result<Result<InfoWire, String>> {
         Ok(self
             .components
-            .add(&bytes)
+            .add(&bytes, provenance.map(provenance_from_wire))
             .await
             .map(to_wire)
             .map_err(|e| format!("{e:#}")))
@@ -333,12 +387,32 @@ mod tests {
             .await
             .unwrap();
         let components = ComponentStore::new(dir.path().join("components"), Some(store));
-        let added = components.add(&bytes).await.unwrap();
+        let added = components.add(&bytes, None).await.unwrap();
         assert_eq!(added.hash, info.hash);
         assert_eq!(components.list().await.len(), 1);
         assert_eq!(components.get(&info.hash).unwrap().len(), bytes.len());
-        // Adding again is idempotent.
-        components.add(&bytes).await.unwrap();
+        // Adding again is idempotent; provenance is kept once supplied.
+        components.add(&bytes, None).await.unwrap();
+        assert_eq!(components.list().await.len(), 1);
+        let with = components
+            .add(
+                &bytes,
+                Some(Provenance {
+                    source: "https://github.com/ezco/mono".into(),
+                    revision: Some("abc123".into()),
+                    build: Some("cargo build --target wasm32-wasip2".into()),
+                    builder: None,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            with.provenance.as_ref().map(|p| p.source.as_str()),
+            Some("https://github.com/ezco/mono")
+        );
+        assert!(!with.reproducible);
+        let again = components.add(&bytes, None).await.unwrap();
+        assert_eq!(again.provenance, with.provenance);
         assert_eq!(components.list().await.len(), 1);
         assert!(components.remove(&info.hash).await.unwrap());
         assert!(components.get(&info.hash).is_err());

@@ -1,0 +1,45 @@
+# {{name}}
+
+An icanhaz **capability**: a WebAssembly component the daemon links between a
+caller and a provider. This one {{what}}.
+
+## The rules
+
+- **Imports are capabilities, never libraries.** The daemon links only
+  capability interfaces (`wasi:*`, `icanhaz:nocap/*`, `icanhaz:fspass/*`,
+  `ezco:ezcap/*`). A regex engine, a parser, anything else, is compiled into
+  this crate or composed in at build time with `wac`. `icanhaz capability
+  inspect` names any import that breaks this rule.
+- **The world is `wit/world.wit`.** Everything it imports and exports is
+  vendored under `wit/deps/`; do not edit those copies. Change the world when
+  the capability's shape changes, then rebuild.
+- **Authority comes from the grant, not from here.** A caller presents a grant
+  token to the interface you export; forward it to the interface you import.
+  Narrowing what a grant may do is done with the `ezco:ezcap` scope on the
+  grant (CEL), or by what this component refuses or rewrites.
+
+## Build, check, add
+
+```sh
+cargo build --release --target wasm32-wasip2
+icanhaz capability inspect target/wasm32-wasip2/release/{{crate}}.wasm
+icanhaz capability add     target/wasm32-wasip2/release/{{crate}}.wasm
+```
+
+`inspect` validates the component (imports and exports against the rule
+above) and prints its world; `add` stores it in the daemon by hash. The
+daemon links it at grant time when the human chooses it in the consent window.
+
+## Test
+
+Tests are ordinary Rust tests in this crate. Unit-test the logic that decides
+what to forward, refuse or rewrite; for the wasm build itself, `inspect` is
+the check that matters. `nix develop` (or the container fallback) gives you
+the toolchain.
+
+## Layout
+
+- `src/lib.rs`: the component. `wit_bindgen::generate!` makes the imported
+  interfaces available as modules and the exported ones as `Guest` traits;
+  `export!(Component)` wires the implementation in.
+- `wit/world.wit`: the world; `wit/deps/`: vendored packages.

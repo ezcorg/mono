@@ -55,6 +55,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 # Component inspection (the Tier 3 validator) and the content-addressed store.
 wit-parser = { version = "0.244", features = ["decoding"] }
 sha2 = "0.10"
+# The `icanhaz` CLI (capability authoring) and composition with wac.
+clap = { version = "4.5", features = ["derive", "env"] }
+wac-graph = "0.8"
+wac-types = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
