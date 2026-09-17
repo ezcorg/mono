@@ -63,7 +63,7 @@ mod watch_chain {
 }
 
 /// A byte stream as wRPC carries it.
-pub type BoxStream = std::pin::Pin<Box<dyn futures::Stream<Item = bytes::Bytes> + Send>>;
+pub use wrpc_wasmtime::stream::BoxStream;
 
 /// What a provider hands the chain to run in front of: the native
 /// implementation of one call, as a closure.
@@ -179,150 +179,7 @@ pub fn link_imports<T: HasImports + Send + 'static>(linker: &mut Linker<T>) -> a
 /// The inference request as the chain's import side sees it.
 pub use inference_chain::icanhaz::nocap::inference::CompletionRequest as ClientRequest;
 
-/// A wRPC byte stream as a wasmtime stream producer: what the guest reads.
-struct BytesProducer {
-    stream: BoxStream,
-    pending: Option<bytes::Bytes>,
-}
-
-impl BytesProducer {
-    fn emit<D>(
-        &mut self,
-        store: wasmtime::StoreContextMut<'_, D>,
-        dst: wasmtime::component::Destination<'_, u8, bytes::Bytes>,
-        mut data: bytes::Bytes,
-        cap: usize,
-    ) {
-        let n = data.len().min(cap);
-        if data.len() > n {
-            self.pending = Some(data.split_off(n));
-        }
-        let mut direct = dst.as_direct(store, n);
-        if let Some(slice) = direct.remaining().get_mut(..n) {
-            slice.copy_from_slice(&data);
-        }
-        direct.mark_written(n);
-    }
-}
-
-impl<D: 'static> wasmtime::component::StreamProducer<D> for BytesProducer {
-    type Item = u8;
-    type Buffer = bytes::Bytes;
-
-    fn poll_produce<'a>(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        mut store: wasmtime::StoreContextMut<'a, D>,
-        mut dst: wasmtime::component::Destination<'a, u8, bytes::Bytes>,
-        finish: bool,
-    ) -> std::task::Poll<wasmtime::Result<wasmtime::component::StreamResult>> {
-        use std::task::Poll;
-        use wasmtime::component::StreamResult;
-        let cap = dst.remaining(&mut store);
-        if let Some(pending) = self.pending.take() {
-            match cap {
-                Some(0) => {
-                    self.pending = Some(pending);
-                    return Poll::Ready(Ok(StreamResult::Completed));
-                }
-                Some(cap) => {
-                    self.emit(store, dst, pending, cap);
-                    return Poll::Ready(Ok(StreamResult::Completed));
-                }
-                None => {
-                    dst.set_buffer(pending);
-                    return Poll::Ready(Ok(StreamResult::Completed));
-                }
-            }
-        }
-        match self.stream.as_mut().poll_next(cx) {
-            Poll::Ready(Some(chunk)) => {
-                match cap {
-                    Some(0) => {
-                        self.pending = Some(chunk);
-                    }
-                    Some(cap) => self.emit(store, dst, chunk, cap),
-                    None => dst.set_buffer(chunk),
-                }
-                Poll::Ready(Ok(StreamResult::Completed))
-            }
-            Poll::Ready(None) => Poll::Ready(Ok(StreamResult::Dropped)),
-            Poll::Pending if finish => Poll::Ready(Ok(StreamResult::Cancelled)),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-/// A wasmtime stream consumer that forwards to a channel: what the host reads
-/// from a guest-produced stream, ending the channel when the guest drops it.
-struct ChannelConsumer {
-    tx: Option<tokio::sync::mpsc::UnboundedSender<bytes::Bytes>>,
-    /// Fired when the guest's end is gone (the consumer is dropped), so the
-    /// session driving the store knows the output is complete.
-    done: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-impl Drop for ChannelConsumer {
-    fn drop(&mut self) {
-        if let Some(done) = self.done.take() {
-            let _ = done.send(());
-        }
-    }
-}
-
-impl<D> wasmtime::component::StreamConsumer<D> for ChannelConsumer {
-    type Item = u8;
-
-    fn poll_consume(
-        mut self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        store: wasmtime::StoreContextMut<D>,
-        source: wasmtime::component::Source<u8>,
-        _finish: bool,
-    ) -> std::task::Poll<wasmtime::Result<wasmtime::component::StreamResult>> {
-        use std::task::Poll;
-        use wasmtime::component::StreamResult;
-        let mut src = source.as_direct(store);
-        let buf = src.remaining();
-        let n = buf.len();
-        if n > 0 {
-            let chunk = bytes::Bytes::copy_from_slice(buf);
-            src.mark_read(n);
-            if let Some(tx) = &self.tx {
-                if tx.send(chunk).is_err() {
-                    self.tx = None;
-                    return Poll::Ready(Ok(StreamResult::Dropped));
-                }
-            }
-        } else if _finish {
-            // Nothing left and the stream is closing: the channel ends with us.
-            self.tx = None;
-            return Poll::Ready(Ok(StreamResult::Dropped));
-        }
-        Poll::Ready(Ok(StreamResult::Completed))
-    }
-}
-
-/// Turn a guest stream into a wRPC byte stream: piped through a channel
-/// that closes when the guest's side does.
-fn drain(
-    store: impl wasmtime::AsContextMut,
-    reader: wasmtime::component::StreamReader<u8>,
-) -> wasmtime::Result<(BoxStream, tokio::sync::oneshot::Receiver<()>)> {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<bytes::Bytes>();
-    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-    reader.pipe(
-        store,
-        ChannelConsumer {
-            tx: Some(tx),
-            done: Some(done_tx),
-        },
-    )?;
-    Ok((
-        Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx)),
-        done_rx,
-    ))
-}
+pub use wrpc_wasmtime::stream::{drain, BytesProducer};
 
 /// The interfaces a grant of `kind` is used through, as prefixes of the
 /// qualified names a component exports (`icanhaz:nocap/workspace@0.1.0`).
@@ -428,10 +285,7 @@ impl<T> process_chain::icanhaz::nocap::process::HostWithStore<T> for ProcessData
                 Ok(stdout) => {
                     let reader = wasmtime::component::StreamReader::new(
                         access.as_context_mut(),
-                        BytesProducer {
-                            stream: stdout,
-                            pending: None,
-                        },
+                        BytesProducer::new(stdout),
                     )?;
                     Ok(Ok(reader))
                 }
@@ -481,10 +335,7 @@ impl<T> terminal_chain::icanhaz::nocap::terminal::HostWithStore<T> for TerminalD
                 Ok(output) => {
                     let reader = wasmtime::component::StreamReader::new(
                         access.as_context_mut(),
-                        BytesProducer {
-                            stream: output,
-                            pending: None,
-                        },
+                        BytesProducer::new(output),
                     )?;
                     Ok(Ok(reader))
                 }
@@ -530,10 +381,7 @@ impl<T> watch_chain::icanhaz::nocap::watch::HostWithStore<T> for WatchData {
                 Ok(events) => {
                     let reader = wasmtime::component::StreamReader::new(
                         access.as_context_mut(),
-                        BytesProducer {
-                            stream: events,
-                            pending: None,
-                        },
+                        BytesProducer::new(events),
                     )?;
                     Ok(Ok(reader))
                 }
@@ -579,10 +427,7 @@ impl<T> inference_chain::icanhaz::nocap::inference::HostWithStore<T> for Inferen
                 Ok(frames) => {
                     let reader = wasmtime::component::StreamReader::new(
                         access.as_context_mut(),
-                        BytesProducer {
-                            stream: frames,
-                            pending: None,
-                        },
+                        BytesProducer::new(frames),
                     )?;
                     Ok(Ok(reader))
                 }
@@ -846,10 +691,7 @@ impl Chain {
                     let stdin_reader = acc.with(|mut a| {
                         wasmtime::component::StreamReader::new(
                             a.as_context_mut(),
-                            BytesProducer {
-                                stream: stdin,
-                                pending: None,
-                            },
+                            BytesProducer::new(stdin),
                         )
                     })?;
                     let out = bindings
@@ -927,17 +769,11 @@ impl Chain {
                     let (stdin_reader, control_reader) = acc.with(|mut a| {
                         let stdin = wasmtime::component::StreamReader::new(
                             a.as_context_mut(),
-                            BytesProducer {
-                                stream: stdin,
-                                pending: None,
-                            },
+                            BytesProducer::new(stdin),
                         )?;
                         let control = wasmtime::component::StreamReader::new(
                             a.as_context_mut(),
-                            BytesProducer {
-                                stream: control,
-                                pending: None,
-                            },
+                            BytesProducer::new(control),
                         )?;
                         Ok::<_, wasmtime::Error>((stdin, control))
                     })?;

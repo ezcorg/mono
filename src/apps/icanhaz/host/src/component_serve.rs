@@ -160,6 +160,9 @@ fn map_host_resources(
 fn engine() -> anyhow::Result<Engine> {
     let mut config = wasmtime::Config::new();
     config.wasm_component_model(true);
+    // Streams, async exports and concurrent calls: every chain's store runs
+    // its invocations as concurrent tasks (see `Chain::jobs`).
+    config.wasm_component_model_async(true);
     Engine::new(&config).map_err(anyhow::Error::from)
 }
 
@@ -366,7 +369,12 @@ struct Chain<C: Invoke + 'static> {
     id: u64,
     /// The chain's component ids joined by `,`; empty for the default chain.
     key: String,
-    store: Mutex<Store<FsState<C>>>,
+    /// Work for the store's driver: a task that owns the store inside
+    /// `run_concurrent` for the chain's life and spawns every call and drop
+    /// as a concurrent task in it, so sessions on one chain never queue
+    /// behind each other. Dropping the chain closes the channel, which ends
+    /// the driver and drops the store.
+    jobs: tokio::sync::mpsc::UnboundedSender<Job<C>>,
     /// The resource types this chain's instance exports, in both identities
     /// (declared by the component type, minted by the live instance).
     resources: Vec<ResourceType>,
@@ -375,6 +383,156 @@ struct Chain<C: Invoke + 'static> {
     /// The live grants mounted on this chain. When the last ends (revoked or
     /// expired) the chain is dropped, store and all; the default chain stays.
     grants: std::sync::Mutex<HashSet<String>>,
+}
+
+/// One unit of work for a chain's store.
+enum Job<C: Invoke + 'static> {
+    Call(Box<CallJob<C>>),
+    Drop(DropJob),
+}
+
+/// An invocation, routed to this chain, ready to run as a concurrent task.
+struct CallJob<C: Invoke + 'static> {
+    router: Arc<Router<C>>,
+    chain_id: u64,
+    iface: Arc<str>,
+    name: Arc<str>,
+    param_names: Arc<[String]>,
+    params_ty: Arc<[types::Type]>,
+    results_ty: Arc<[types::Type]>,
+    host_resources: Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
+    io_streams: Arc<[ResourceType]>,
+    union: Arc<[ResourceType]>,
+    func: Func,
+    scope: Option<u64>,
+    /// The grant this call runs under (see [`Admit`]).
+    grant: Option<String>,
+    tx: wrpc_transport::frame::Outgoing,
+    rx: wrpc_transport::frame::Incoming,
+}
+
+impl<C> wasmtime::component::AccessorTask<FsState<C>> for CallJob<C>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone,
+{
+    async fn run(
+        self,
+        accessor: &wasmtime::component::Accessor<FsState<C>>,
+    ) -> wasmtime::Result<()> {
+        let admit = self.router.spec.admit.clone();
+        let (iface, name, param_names) = (self.iface, self.name, self.param_names);
+        let (router, chain_id) = (Arc::clone(&self.router), self.chain_id);
+        let grant = self.grant;
+        let res = wrpc_wasmtime::call_concurrent_observed(
+            accessor,
+            self.scope,
+            self.rx,
+            self.tx,
+            &self.union,
+            &self.host_resources,
+            &self.io_streams,
+            self.params_ty.iter(),
+            &self.results_ty,
+            self.func,
+            |vals| match &admit {
+                Some(admit) => admit(&iface, &name, &param_names, vals, grant.as_deref())
+                    .map_err(|e| wasmtime::Error::msg(format!("{e:#}"))),
+                None => Ok(()),
+            },
+            // The handles a reply carries are registered to this chain, under
+            // this call's grant, before the reply leaves, so a drop or a
+            // method on them cannot outrun it.
+            |acc| {
+                let minted = acc.with(|mut a| a.get().rpc.shared.take_minted());
+                router.minted(chain_id, grant.as_deref(), minted);
+            },
+        )
+        .await;
+        // Whatever a failed encode minted belongs here too.
+        let minted = accessor.with(|mut a| a.get().rpc.shared.take_minted());
+        self.router.minted(self.chain_id, grant.as_deref(), minted);
+        if let Err(err) = res {
+            #[cfg(test)]
+            eprintln!("invocation {iface}#{name} failed: {err:?}");
+            let err = anyhow::Error::from(err);
+            let chain: Vec<String> = err.chain().map(|e| e.to_string()).collect();
+            tracing::warn!(
+                iface = %iface, func = %name, conn = self.scope,
+                "invocation failed: {}", chain.join(" <- ")
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Release the shared resource `id` in `scope` and run its guest destructor.
+struct DropJob {
+    id: Uuid,
+    scope: Option<u64>,
+    reply: tokio::sync::oneshot::Sender<anyhow::Result<bool>>,
+}
+
+/// Own `store` for its life: spawn every call sent as a concurrent task in
+/// it. A drop cannot run inside the concurrent scope (the destructor is an
+/// asynchronous call on the store, and a store whose host functions are
+/// asynchronous refuses the synchronous one), so the driver steps out of the
+/// scope for it: `run_concurrent` returns as soon as its future does and keeps
+/// every pending task in the store, the drop runs with the store in hand, and
+/// the driver steps back in.
+fn spawn_driver<C>(mut store: Store<FsState<C>>) -> tokio::sync::mpsc::UnboundedSender<Job<C>>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone,
+{
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Job<C>>();
+    tokio::spawn(async move {
+        loop {
+            let scope = store
+                .run_concurrent(async |acc| {
+                    while let Some(job) = rx.recv().await {
+                        match job {
+                            Job::Call(job) => {
+                                if let Err(err) = acc.spawn(*job) {
+                                    tracing::warn!(
+                                        ?err,
+                                        "could not spawn a call in the chain's store"
+                                    );
+                                }
+                            }
+                            Job::Drop(job) => return Some(job),
+                        }
+                    }
+                    None
+                })
+                .await;
+            match scope {
+                Ok(Some(drop)) => {
+                    let removed = store.data_mut().rpc.shared.remove(drop.scope, &drop.id);
+                    let outcome = match removed {
+                        // Runs the guest resource destructor (the fs-passthrough
+                        // `Desc`/`DirStream` Drop), which closes the underlying fd.
+                        Some(resource) => resource
+                            .resource_drop_async(&mut store)
+                            .await
+                            .map(|()| true)
+                            .map_err(|e| anyhow::anyhow!("resource_drop_async failed: {e}")),
+                        None => Ok(false),
+                    };
+                    let _ = drop.reply.send(outcome);
+                }
+                Ok(None) => {
+                    tracing::debug!("chain store driver ended");
+                    break;
+                }
+                Err(err) => {
+                    tracing::warn!(?err, "chain store driver failed");
+                    break;
+                }
+            }
+        }
+    });
+    tx
 }
 
 impl<C: Invoke + 'static> Chain<C> {
@@ -393,12 +551,24 @@ pub type TokenCalls = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 /// and admission the kind requires.
 pub type ResolveToken = Arc<dyn Fn(&str, &str, &str) -> anyhow::Result<Vec<String>> + Send + Sync>;
 
-/// Admit a decoded call: `(interface, function, parameter names, values)`,
-/// the first value being the token. Refusing fails the call before the
-/// component runs.
+/// Admit a decoded call: `(interface, function, parameter names, values,
+/// grant)`. The grant is the token a token-carrying call presented, or the
+/// one the resource a method is called on was acquired under; `None` when
+/// the call names neither. Refusing fails the call before the component runs.
 pub type Admit = Arc<
-    dyn Fn(&str, &str, &[String], &[wasmtime::component::Val]) -> anyhow::Result<()> + Send + Sync,
+    dyn Fn(&str, &str, &[String], &[wasmtime::component::Val], Option<&str>) -> anyhow::Result<()>
+        + Send
+        + Sync,
 >;
+
+/// What the registry knows about a served handle: the chain whose store
+/// holds it, and the grant it was acquired under (a capability object carries
+/// its grant: minted by a token call, or by a method on such an object).
+#[derive(Clone)]
+struct HandleEntry {
+    chain: u64,
+    grant: Option<String>,
+}
 
 /// What a [`Router`] routes: the linker its chains instantiate with, where
 /// chain bytes come from, which calls carry a token, how a token names a
@@ -505,9 +675,13 @@ pub struct Router<C: Invoke + 'static> {
     state: Box<dyn Fn() -> anyhow::Result<FsState<C>> + Send + Sync>,
     grants: Arc<std::sync::Mutex<GrantStore>>,
     chains: std::sync::RwLock<Vec<Arc<Chain<C>>>>,
+    /// The resource types the served surface declares: a compiled component
+    /// has its own identities for them, and the served function types come
+    /// from the compilation `register_exports` was given, not from a chain's.
+    declared: std::sync::Mutex<Vec<ResourceType>>,
     next_id: std::sync::atomic::AtomicU64,
-    /// Handle → id of the chain whose store holds it.
-    handles: std::sync::Mutex<HashMap<Uuid, u64>>,
+    /// Handle → the chain whose store holds it and the grant behind it.
+    handles: std::sync::Mutex<HashMap<Uuid, HandleEntry>>,
     /// Every chain's resource types: what the codec checks a declared
     /// parameter or result type against before it reads or mints a handle.
     union: std::sync::Mutex<Arc<[ResourceType]>>,
@@ -553,6 +727,7 @@ where
             state,
             grants,
             chains: std::sync::RwLock::new(Vec::new()),
+            declared: std::sync::Mutex::new(Vec::new()),
             next_id: std::sync::atomic::AtomicU64::new(0),
             handles: std::sync::Mutex::new(HashMap::new()),
             union: std::sync::Mutex::new(Arc::from(Vec::new())),
@@ -644,23 +819,38 @@ where
                 .next_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             key,
-            store: Mutex::new(store),
+            jobs: spawn_driver(store),
             resources,
             funcs,
             grants: std::sync::Mutex::new(HashSet::new()),
         });
         let mut chains = self.chains.write().unwrap_or_else(|e| e.into_inner());
         chains.push(Arc::clone(&chain));
-        Self::recompute_union(&chains, &self.union);
+        self.recompute_union(&chains);
         Ok(chain)
     }
 
-    fn recompute_union(chains: &[Arc<Chain<C>>], union: &std::sync::Mutex<Arc<[ResourceType]>>) {
-        let all: Vec<ResourceType> = chains
-            .iter()
-            .flat_map(|c| c.resources.iter().copied())
-            .collect();
-        *union.lock().unwrap_or_else(|e| e.into_inner()) = Arc::from(all);
+    /// Note the resource types the served surface `ty` declares (see
+    /// `declared`), so the codec treats them as guest resources.
+    fn declare(&self, ty: &types::Component) {
+        let mut declared = Vec::new();
+        collect_component_resource_exports(&self.engine, ty, &mut declared);
+        self.declared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend(declared);
+        let chains = self.chains.read().unwrap_or_else(|e| e.into_inner());
+        self.recompute_union(&chains);
+    }
+
+    fn recompute_union(&self, chains: &[Arc<Chain<C>>]) {
+        let mut all: Vec<ResourceType> = self
+            .declared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        all.extend(chains.iter().flat_map(|c| c.resources.iter().copied()));
+        *self.union.lock().unwrap_or_else(|e| e.into_inner()) = Arc::from(all);
     }
 
     /// Count `token` among `chain`'s live grants and watch for its end. Checks
@@ -725,8 +915,8 @@ where
         self.handles
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, id| *id != chain_id);
-        Self::recompute_union(&chains, &self.union);
+            .retain(|_, entry| entry.chain != chain_id);
+        self.recompute_union(&chains);
         tracing::info!(chain = %chain.key, "chain dropped: no live grant names it");
     }
 
@@ -770,22 +960,24 @@ where
         name: &str,
         params_ty: &[types::Type],
         rx: &mut wrpc_transport::frame::Incoming,
-    ) -> anyhow::Result<Arc<Chain<C>>> {
+    ) -> anyhow::Result<(Arc<Chain<C>>, Option<String>)> {
         match params_ty.first() {
             Some(types::Type::Own(ty) | types::Type::Borrow(ty)) if self.union().contains(ty) => {
                 // `own`/`borrow` of a guest resource: a 16-byte handle, length-prefixed.
                 let head = rx.peek(17).await.context("peek resource handle")?;
                 anyhow::ensure!(head[0] == 16, "resource handle is not 16 bytes");
                 let id = Uuid::from_bytes_le(head[1..17].try_into()?);
-                let chain_id = self
+                let entry = self
                     .handles
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .get(&id)
-                    .copied()
+                    .cloned()
                     .context("unknown resource handle")?;
-                self.chain_by_id(chain_id)
-                    .context("handle names a chain that is gone")
+                let chain = self
+                    .chain_by_id(entry.chain)
+                    .context("handle names a chain that is gone")?;
+                Ok((chain, entry.grant))
             }
             Some(types::Type::String) if (self.spec.token_calls)(iface, name) => {
                 let token = peek_string(rx).await.context("peek grant token")?;
@@ -793,22 +985,31 @@ where
                 loop {
                     let chain = self.chain_for(via.clone()).await?;
                     if self.track(&chain, &token) {
-                        return Ok(chain);
+                        return Ok((chain, Some(token)));
                     }
                 }
             }
-            _ => self.default_chain().context("nothing provides this call"),
+            _ => Ok((
+                self.default_chain().context("nothing provides this call")?,
+                None,
+            )),
         }
     }
 
-    /// Record which chain minted `ids`.
-    fn minted(&self, chain: u64, ids: Vec<Uuid>) {
+    /// Record which chain minted `ids`, and under which grant.
+    fn minted(&self, chain: u64, grant: Option<&str>, ids: Vec<Uuid>) {
         if ids.is_empty() {
             return;
         }
         let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
         for id in ids {
-            handles.insert(id, chain);
+            handles.insert(
+                id,
+                HandleEntry {
+                    chain,
+                    grant: grant.map(str::to_string),
+                },
+            );
         }
     }
 }
@@ -1072,9 +1273,11 @@ where
         admit: Some({
             let grants = Arc::clone(&grants);
             let provides = provides.clone();
-            Arc::new(move |_iface, name, names, vals| {
-                let Some(wasmtime::component::Val::String(token)) = vals.first() else {
-                    anyhow::bail!("{provides}: the first argument is not a grant token");
+            Arc::new(move |_iface, name, names, vals, grant| {
+                // The token a call presented, or the grant the object it is
+                // called on was acquired under.
+                let Some(token) = grant else {
+                    anyhow::bail!("{provides}: no grant for this call");
                 };
                 let mut call = crate::broker::AdmitCall::new(name);
                 for (n, v) in names.iter().zip(vals.iter()).skip(1) {
@@ -1114,6 +1317,7 @@ where
     S::Context: AsOrigin,
 {
     let mut handlers = JoinSet::new();
+    router.declare(ty);
     register_exports(srv, router, ty, Some(interface), &mut handlers).await?;
     Ok(handlers)
 }
@@ -1191,10 +1395,10 @@ where
                     if let Err(err) = res {
                         let chain: Vec<String> = err.chain().map(|e| e.to_string()).collect();
                         #[cfg(test)]
-                        eprintln!("invocation {iface}#{name} failed: {}", chain.join(" <- "));
+                        eprintln!("invocation {iface}#{name} refused: {}", chain.join(" <- "));
                         tracing::warn!(
                             iface = %iface, func = %name, conn,
-                            "invocation failed: {}", chain.join(" <- ")
+                            "invocation refused: {}", chain.join(" <- ")
                         );
                     }
                 }
@@ -1204,19 +1408,19 @@ where
     Ok(())
 }
 
-/// One routed invocation: pick the chain from the wire, lock only its store,
-/// scope its handle table to the connection, run the call, and record what it
-/// minted.
+/// One routed invocation: pick the chain from the wire and hand the call to
+/// that chain's store as a concurrent task. Returns once the job is queued;
+/// the call itself runs, and reports, on its own.
 #[allow(clippy::too_many_arguments)]
 async fn serve_one<C>(
     router: &Arc<Router<C>>,
-    iface: &str,
-    name: &str,
-    param_names: &[String],
-    params_ty: &[types::Type],
-    results_ty: &[types::Type],
-    host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
-    io_streams: &[ResourceType],
+    iface: &Arc<str>,
+    name: &Arc<str>,
+    param_names: &Arc<[String]>,
+    params_ty: &Arc<[types::Type]>,
+    results_ty: &Arc<[types::Type]>,
+    host_resources: &Arc<HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>>,
+    io_streams: &Arc<[ResourceType]>,
     conn: Option<u64>,
     tx: wrpc_transport::frame::Outgoing,
     mut rx: wrpc_transport::frame::Incoming,
@@ -1225,36 +1429,29 @@ where
     C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
-    let chain = router.route(iface, name, params_ty, &mut rx).await?;
+    let (chain, grant) = router.route(iface, name, params_ty, &mut rx).await?;
     let func = chain.func(iface, name)?;
-    let union = router.union();
-    let mut store = chain.store.lock().await;
-    store.data_mut().rpc.shared.set_scope(conn);
-    let admit = router.spec.admit.clone();
-    let res = wrpc_wasmtime::call_observed(
-        &mut *store,
-        rx,
-        tx,
-        &union,
-        host_resources,
-        io_streams,
-        params_ty.iter(),
-        results_ty,
+    let job = CallJob {
+        router: Arc::clone(router),
+        chain_id: chain.id,
+        iface: Arc::clone(iface),
+        name: Arc::clone(name),
+        param_names: Arc::clone(param_names),
+        params_ty: Arc::clone(params_ty),
+        results_ty: Arc::clone(results_ty),
+        host_resources: Arc::clone(host_resources),
+        io_streams: Arc::clone(io_streams),
+        union: router.union(),
         func,
-        |vals| match &admit {
-            Some(admit) => admit(iface, name, param_names, vals)
-                .map_err(|e| wasmtime::Error::msg(format!("{e:#}"))),
-            None => Ok(()),
-        },
-    )
-    .await;
-    // Whatever the call minted (even on a failed encode) belongs to this chain.
-    router.minted(chain.id, store.data_mut().rpc.shared.take_minted());
-    #[cfg(test)]
-    if let Err(err) = &res {
-        eprintln!("call error detail: {err:?}");
-    }
-    res.map_err(anyhow::Error::from)
+        scope: conn,
+        grant,
+        tx,
+        rx,
+    };
+    chain
+        .jobs
+        .send(Job::Call(Box::new(job)))
+        .map_err(|_| anyhow::anyhow!("the chain's store is gone"))
 }
 
 /// The wRPC instance the resource-drop meta-op is served on. It is **not** a component
@@ -1306,6 +1503,8 @@ where
             let removed = match drop_shared_handle(&router, &handle, cx.connection()).await {
                 Ok(removed) => removed,
                 Err(err) => {
+                    #[cfg(test)]
+                    eprintln!("resource drop failed: {err:#}");
                     tracing::warn!(?err, "resource drop failed");
                     false
                 }
@@ -1320,10 +1519,10 @@ where
 }
 
 /// Evict the shared resource the 16-byte UUID `handle` names, in the scope of
-/// connection `conn`, and run its guest destructor. Returns whether a live handle
-/// was actually removed — a handle that isn't a valid UUID errors; one already
-/// gone (double-drop, never ours, or minted on another connection) returns
-/// `Ok(false)`, so dropping is idempotent.
+/// connection `conn`, and run its guest destructor, as a task in the owning
+/// chain's store. Returns whether a live handle was actually removed — a handle
+/// that isn't a valid UUID errors; one already gone (double-drop, never ours, or
+/// minted on another connection) returns `Ok(false)`, so dropping is idempotent.
 async fn drop_shared_handle<C>(
     router: &Router<C>,
     handle: &[u8],
@@ -1345,39 +1544,34 @@ where
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(&id)
-        .copied();
+        .map(|entry| entry.chain);
     let Some(chain) = chain_id.and_then(|i| router.chain_by_id(i)) else {
         tracing::debug!(%id, "resource-drop: handle already released");
         return Ok(false);
     };
-    let mut store = chain.store.lock().await;
-    // Mirror the codec's access path to the shared table, then release the entry.
-    let removed = {
-        let shared = store.data_mut().wrpc().ctx.shared_resources();
-        shared.set_scope(conn);
-        shared.remove(&id)
-    };
-    match removed {
-        Some(resource) => {
-            router
-                .handles
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
-            // Runs the guest resource destructor (the fs-passthrough `Desc`/`DirStream`
-            // Drop), which drops the inner host descriptor and closes the fd.
-            resource
-                .resource_drop_async(&mut *store)
-                .await
-                .map_err(|e| anyhow::anyhow!("resource_drop_async failed: {e}"))?;
-            tracing::debug!(%id, "dropped shared resource");
-            Ok(true)
-        }
-        None => {
-            tracing::debug!(%id, "resource-drop: handle not released (not this connection's)");
-            Ok(false)
-        }
+    let (reply, outcome) = tokio::sync::oneshot::channel();
+    chain
+        .jobs
+        .send(Job::Drop(DropJob {
+            id,
+            scope: conn,
+            reply,
+        }))
+        .map_err(|_| anyhow::anyhow!("the chain's store is gone"))?;
+    let removed = outcome
+        .await
+        .map_err(|_| anyhow::anyhow!("the drop task did not report"))??;
+    if removed {
+        router
+            .handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+        tracing::debug!(%id, "dropped shared resource");
+    } else {
+        tracing::debug!(%id, "resource-drop: handle not released (not this connection's)");
     }
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -2128,6 +2322,107 @@ mod tests {
         assert!(grants.lock().unwrap().revoke(&inference));
         let gone = ask(lent, "still?").await.expect("served");
         assert!(gone.is_err(), "{gone:?}");
+        accept.abort();
+    }
+
+    // The wRPC client of the stream-shaped fixture (its `pipe-client` world).
+    mod pipe_client {
+        wit_bindgen_wrpc::generate!({
+            world: "pipe-client",
+            path: "fixtures/pipe/wit",
+            with: {
+                "example:pipe/pipe@0.1.0": generate,
+            },
+        });
+    }
+
+    /// Streams and async exports through the generic serving path: the pipe
+    /// fixture is resource-shaped (the token once, at `open`), its `run` is an
+    /// `async func` carrying a byte stream each way, and it is served through
+    /// a chain store's concurrent driver like any other component. Bytes sent
+    /// come back upper-cased, and the reply stream ends when the input does.
+    #[tokio::test]
+    async fn a_stream_shaped_component_serves_through_the_generic_path() {
+        use crate::broker::{CapabilityKind, ComponentRequest};
+        use crate::store::Store as Db;
+        use futures::StreamExt as _;
+        use pipe_client::example::pipe::pipe::{open, Session};
+
+        const IFACE: &str = "example:pipe/pipe@0.1.0";
+        let pipe = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/pipe.wasm"))
+            .expect("pipe.wasm fixture");
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Db::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let components = Arc::new(crate::components::ComponentStore::new(
+            dir.path().join("components"),
+            Some(db),
+        ));
+        let info = components.add(&pipe, None).await.expect("stored");
+        let grants = GrantStore::shared();
+        let token = grants.lock().unwrap().issue(
+            CapabilityKind::Component(ComponentRequest {
+                provides: IFACE.to_string(),
+                provider: Some(info.hash.clone()),
+                delegated: vec![],
+            }),
+            "pipe".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
+        let router = component_router(
+            IFACE,
+            Arc::clone(&components),
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            wasi,
+            grants.clone(),
+            None,
+        )
+        .unwrap();
+        let ty = Component::new(router.engine(), &pipe)
+            .unwrap()
+            .component_type();
+        let _handlers = serve_interface(srv.as_ref(), &router, &ty, IFACE)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        // The token once, at open; a bogus one is refused before the guest runs.
+        assert!(open(&wrpc, (), "bogus").await.is_err());
+        let session = open(&wrpc, (), &token).await.unwrap().expect("opened");
+
+        let input: Pin<Box<dyn futures::Stream<Item = Bytes> + Send>> =
+            Box::pin(futures::stream::iter(vec![
+                Bytes::from_static(b"hello "),
+                Bytes::from_static(b"stream"),
+            ]));
+        let (out, io) = Session::run(&wrpc, (), &session.as_borrow(), input)
+            .await
+            .expect("run invocation");
+        if let Some(io) = io {
+            tokio::spawn(io);
+        }
+        let out = out.expect("a stream back");
+        let chunks: Vec<Bytes> = out.collect().await;
+        assert_eq!(String::from_utf8_lossy(&chunks.concat()), "HELLO STREAM");
         accept.abort();
     }
 
