@@ -282,21 +282,6 @@ impl ComponentStore {
     /// shipped inference component exports it and imports the raw layer.
     pub fn provide_imports(&self, bytes: Vec<u8>) -> anyhow::Result<Vec<u8>> {
         let info = validate(&bytes)?;
-        // A component reaches files through `icanhaz:nocap/filesystem.open`
-        // with its grant, never through the host's preopens: those are the
-        // jail the shipped filesystem capability sits on, and a composition
-        // merges same-named imports, so a component importing `preopens`
-        // beside it would share the ungated root.
-        if let Some(import) = info
-            .imports
-            .iter()
-            .find(|i| i.starts_with("wasi:filesystem/preopens@"))
-        {
-            anyhow::bail!(
-                "a component may not import `{import}`: open the filesystem with its grant \
-                 through `icanhaz:nocap/filesystem` instead (a delegated filesystem grant)"
-            );
-        }
         let mut providers = Vec::new();
         for import in &info.imports {
             if let Some(hash) = self.shipped(import) {
@@ -634,7 +619,7 @@ mod tests {
         assert!(
             info.imports
                 .iter()
-                .any(|i| i.starts_with("wasi:filesystem/preopens@")),
+                .any(|i| i.starts_with("icanhaz:nocap/jail@")),
             "{:?}",
             info.imports
         );

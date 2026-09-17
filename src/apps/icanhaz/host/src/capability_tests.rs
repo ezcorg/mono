@@ -11,13 +11,12 @@ use bytes::Bytes;
 use futures::StreamExt as _;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
-use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::broker::{
     anonymous_principal, CapabilityKind, FsRequest, FsRights, GrantStore, InferenceRequest,
     PathGrant, ProcessRequest, TerminalRequest,
 };
-use crate::component_serve::{serve_capability, serve_resource_drop, Handles, WasiRecipe};
+use crate::component_serve::{serve_capability, serve_resource_drop, Handles};
 use crate::raw::Raw;
 
 type Client = wrpc_transport::tcp::Client<String>;
@@ -31,14 +30,12 @@ fn shipped(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("build capabilities/{name} first ({path}): {e}"))
 }
 
-/// One capability on its own server: its component over `raw`, the jail at
-/// `root` preopened for its chain, the drop op beside it. Returns a client
-/// and what keeps the server alive.
+/// One capability on its own server: its component over `raw`, the drop op
+/// beside it. Returns a client and what keeps the server alive.
 async fn serve(
     name: &str,
     raw: Raw,
     grants: Arc<std::sync::Mutex<GrantStore>>,
-    root: &Path,
 ) -> (Client, Served) {
     let srv = Arc::new(wrpc_transport::Server::default());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -52,21 +49,12 @@ async fn serve(
             }
         })
     };
-    let root = root.to_path_buf();
-    let wasi: WasiRecipe = Arc::new(move || {
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(&root, "/", FsPerms::ReadWrite)
-            .map_err(anyhow::Error::from)?;
-        Ok(builder.build())
-    });
     let handles = Handles::new();
     let mut handlers = serve_capability(
         srv.as_ref(),
         &shipped(name),
         Client::from(addr.clone()),
         (),
-        wasi,
         grants,
         None,
         Arc::new(raw),
@@ -146,12 +134,11 @@ async fn read_until(
 async fn process_runs_the_pinned_program_with_piped_stdio() {
     use crate::process::client::{self as process, Process};
 
-    let dir = tempfile::tempdir().unwrap();
     let grants = GrantStore::shared();
     let provider = crate::process::ProcessProvider::new(grants.clone());
     let mut raw = Raw::new(grants.clone());
     raw.spawn = Some(provider.native_for_grants());
-    let (client, _served) = serve("process", raw, grants.clone(), dir.path()).await;
+    let (client, _served) = serve("process", raw, grants.clone()).await;
 
     let grant = grants.lock().unwrap().issue(
         CapabilityKind::Process(ProcessRequest {
@@ -201,12 +188,11 @@ async fn process_runs_the_pinned_program_with_piped_stdio() {
 async fn terminal_attaches_the_login_shell_in_a_pty() {
     use crate::terminal::client::{self as terminal, Terminal};
 
-    let dir = tempfile::tempdir().unwrap();
     let grants = GrantStore::shared();
     let provider = crate::terminal::TerminalProvider::new(grants.clone());
     let mut raw = Raw::new(grants.clone());
     raw.terminal = Some(provider.native_for_grants());
-    let (client, _served) = serve("terminal", raw, grants.clone(), dir.path()).await;
+    let (client, _served) = serve("terminal", raw, grants.clone()).await;
 
     let grant = grants.lock().unwrap().issue(
         CapabilityKind::Terminal(TerminalRequest {
@@ -277,7 +263,7 @@ async fn watch_streams_a_change_under_the_grant() {
     let provider = crate::watch::WatchProvider::new(dir.path().to_path_buf(), grants.clone());
     let mut raw = Raw::new(grants.clone());
     raw.watch = Some(provider.native_for_grants());
-    let (client, _served) = serve("watch", raw, grants.clone(), dir.path()).await;
+    let (client, _served) = serve("watch", raw, grants.clone()).await;
 
     let grant = filesystem_grant(&grants);
     let opened = watch::open(&client, (), &grant)
@@ -323,7 +309,7 @@ async fn workspace_reports_the_grant_root_on_the_host() {
         crate::workspace::WorkspaceProvider::new(dir.path().to_path_buf(), grants.clone());
     let mut raw = Raw::new(grants.clone());
     raw.root = Some(provider.native_for_grants());
-    let (client, _served) = serve("workspace", raw, grants.clone(), dir.path()).await;
+    let (client, _served) = serve("workspace", raw, grants.clone()).await;
 
     let grant = grants.lock().unwrap().issue(
         CapabilityKind::Filesystem(FsRequest {
@@ -373,7 +359,6 @@ async fn workspace_reports_the_grant_root_on_the_host() {
 async fn inference_lists_models_and_streams_a_completion() {
     use crate::inference::client::{self as inference, CompletionRequest, Message, Session};
 
-    let dir = tempfile::tempdir().unwrap();
     let grants = GrantStore::shared();
     let providers = Arc::new(crate::providers::Providers::new(
         vec![crate::providers::ProviderConfig {
@@ -390,7 +375,7 @@ async fn inference_lists_models_and_streams_a_completion() {
     let mut raw = Raw::new(grants.clone());
     raw.complete = Some(complete);
     raw.models = Some(models);
-    let (client, _served) = serve("inference", raw, grants.clone(), dir.path()).await;
+    let (client, _served) = serve("inference", raw, grants.clone()).await;
 
     let grant = grants.lock().unwrap().issue(
         CapabilityKind::Inference(InferenceRequest {

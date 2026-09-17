@@ -12,7 +12,6 @@ use futures::StreamExt as _;
 use iroh::endpoint::presets::Minimal;
 use iroh::Endpoint;
 use tokio::task::JoinSet;
-use wasmtime_wasi::WasiCtxBuilder;
 
 use crate::broker::bindings::exports::icanhaz::nocap::broker::Handler as _;
 use crate::broker::bindings::icanhaz::nocap::types::Denied;
@@ -20,7 +19,7 @@ use crate::broker::{
     anonymous_principal, BrokerProvider, CapabilityKind, Consent, GrantStore, InferenceRequest,
     Pairings, ProcessRequest,
 };
-use crate::component_serve::{serve_capability, serve_resource_drop, Handles, WasiRecipe};
+use crate::component_serve::{serve_capability, serve_resource_drop, Handles};
 use crate::inference::InferenceProvider;
 use crate::iroh::{accept_iroh, IROH_ALPN};
 use crate::process::ProcessProvider;
@@ -67,7 +66,6 @@ fn serve(
         let b = crate::broker::bindings::serve(srv.as_ref(), broker)
             .await
             .expect("serve broker");
-        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
         let handles = Handles::new();
         let mut capability_handlers = Vec::new();
         for name in ["process", "inference"] {
@@ -76,7 +74,6 @@ fn serve(
                 &shipped(name),
                 wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
                 (),
-                Arc::clone(&wasi),
                 Arc::clone(&store),
                 None,
                 Arc::clone(&raw),
@@ -179,6 +176,7 @@ async fn a_certificate_from_another_daemon_redeems_over_iroh_and_forwards_calls(
             terminal: None,
             watch: None,
             root: None,
+            open_root: None,
             complete: Some(complete_r),
             models: Some(models_r),
         });

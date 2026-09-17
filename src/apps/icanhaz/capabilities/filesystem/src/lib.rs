@@ -1,8 +1,10 @@
 //! The shipped `filesystem` capability: re-exports the host `wasi:filesystem`
 //! unchanged, so the daemon can serve real `wasi:filesystem@0.2` over wRPC
-//! (descriptors + streams) to a browser. The jail is the host's preopen; a
-//! wrapper composed in front of this component mediates (refuses, rewrites,
-//! audits) without touching it.
+//! (descriptors + streams) to a browser. The root comes from the raw
+//! `jail.open(grant)`: the daemon opens the grant's root under its jail with
+//! the grant's rights, so this component holds no ambient authority at all;
+//! a wrapper composed in front of it mediates (refuses, rewrites, audits)
+//! without touching it.
 //!
 //! **Revocation / expiry live here.** Every descriptor (and directory-entry stream)
 //! carries the `grant` it was opened under — the root gets it at `open`, and
@@ -253,29 +255,12 @@ impl ex_types::GuestDirectoryEntryStream for DirStream {
 
 impl exports::icanhaz::nocap::filesystem::Guest for Component {
     fn open(grant: String) -> Result<ex_types::Descriptor, String> {
-        // The consent gate: the host validates the bearer token AND returns the
-        // granted root path (relative to the preopen). A bad/absent grant errors
-        // here, so an ungated peer never gets a descriptor.
-        let scope = icanhaz::nocap::gate_filesystem::validate(&grant)?;
-        let dirs = wasi::filesystem::preopens::get_directories();
-        let (root, _path) = dirs.into_iter().next().ok_or_else(|| "no preopened directory".to_string())?;
-        let scope = scope.trim_matches('/');
-        if scope.is_empty() {
-            return Ok(ex_types::Descriptor::new(Desc { inner: root, grant }));
-        }
-        // Mediation: scope the capability to the grant's subtree by opening it as a
-        // directory. wasi:filesystem sandboxes the returned descriptor — every
-        // subsequent open-at is confined to this subtree (no `..` escape), so the
-        // grant's path is enforced without per-method path checks.
-        let sub = root
-            .open_at(
-                ty::PathFlags::empty(),
-                scope,
-                ty::OpenFlags::DIRECTORY,
-                ty::DescriptorFlags::READ | ty::DescriptorFlags::MUTATE_DIRECTORY,
-            )
-            .map_err(|e| format!("granted scope {scope:?} unavailable: {e:?}"))?;
-        Ok(ex_types::Descriptor::new(Desc { inner: sub, grant }))
+        // The consent gate: the daemon validates the bearer token and hands
+        // back the granted root, already scoped to the grant's path under the
+        // jail and sandboxed by wasi:filesystem (no `..` escape). A bad or
+        // absent grant errors here, so an ungated peer never gets a descriptor.
+        let root = icanhaz::nocap::jail::open(&grant)?;
+        Ok(ex_types::Descriptor::new(Desc { inner: root, grant }))
     }
 }
 

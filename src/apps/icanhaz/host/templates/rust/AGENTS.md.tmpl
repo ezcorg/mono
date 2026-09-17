@@ -22,8 +22,9 @@ caller and a provider. This one {{what}}.
 - **Files come through a grant.** To read or write files, import
   `icanhaz:nocap/filesystem` and `wasi:filesystem/types` and call `open` with
   the grant you were opened with: the filesystem grant delegated to you
-  yields a descriptor scoped to its root. Never import
-  `wasi:filesystem/preopens`; the daemon refuses a component that does.
+  yields a descriptor scoped to its root, with its rights. No store has
+  preopens, so `wasi:filesystem/preopens` (and `std::fs` on top of it) sees
+  nothing; there is no other way to a file.
 - **Keep the WIT's asyncness.** A function declared `async func` is `async fn`
   here and its forward is awaited; a synchronous export cannot block on an
   asynchronous import, so the shape of the interface you export must match

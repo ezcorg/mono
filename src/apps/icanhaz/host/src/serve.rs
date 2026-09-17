@@ -20,12 +20,10 @@ use tokio::task::JoinSet;
 
 use std::path::PathBuf;
 
-use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
-
 use crate::broker::{bindings as broker, BrokerProvider, GrantStore};
 use crate::component_serve::{
     component_router, serve_capability, serve_interface, serve_resource_drop, ChainSource, Handles,
-    Router, WasiRecipe,
+    Router,
 };
 use crate::components::{bindings as components, ComponentsProvider};
 use crate::{AsOrigin, ReqCtx};
@@ -45,14 +43,12 @@ use tokio_util::io::StreamReader;
 use wrpc_websockets::tokio_websockets::{Message, WebSocketStream};
 
 /// The shipped capability components the daemon serves over wRPC, each
-/// through a router over the raw host layer: the filesystem (preopen-jailed
-/// to `root`), process, terminal, watch, workspace and inference, gated by
-/// the shared `grants`.
+/// through a router over the raw host layer: the filesystem, process,
+/// terminal, watch, workspace and inference, gated by the shared `grants`.
 #[derive(Clone)]
 pub struct CapabilitiesServe {
     /// The shipped capability components, by name, and where their bytes are.
     pub components: Vec<(String, PathBuf)>,
-    pub root: PathBuf,
     pub grants: Arc<std::sync::Mutex<GrantStore>>,
     /// Composes the chain a grant names in front of the shipped component
     /// providing its interface (see `components::capability_chain`).
@@ -79,11 +75,6 @@ pub struct ComponentsServe {
     raw: Arc<crate::raw::Raw>,
     /// The daemon's handle registry.
     handles: Arc<Handles>,
-    /// The WASI context a novel component's chain gets: the daemon's jail
-    /// preopened, which only the shipped filesystem capability composed in
-    /// front of the component may see (a component importing `preopens`
-    /// itself is refused, see `ComponentStore::provide_imports`).
-    wasi: WasiRecipe,
 }
 
 impl ComponentsServe {
@@ -92,7 +83,6 @@ impl ComponentsServe {
         grants: Arc<std::sync::Mutex<GrantStore>>,
         raw: Arc<crate::raw::Raw>,
         handles: Arc<Handles>,
-        wasi: WasiRecipe,
     ) -> Self {
         Self {
             components,
@@ -101,7 +91,6 @@ impl ComponentsServe {
             sinks: Arc::new(std::sync::Mutex::new(Vec::new())),
             raw,
             handles,
-            wasi,
         }
     }
 
@@ -124,10 +113,10 @@ impl ComponentsServe {
             .push(sink);
     }
 
-    /// The router for `interface`, created on first use. Its chains get the
-    /// jail as their WASI context, for the shipped filesystem capability a
-    /// component's filesystem import composes in; the component itself sees
-    /// files only through the descriptor `open` yields for its delegated grant.
+    /// The router for `interface`, created on first use. Its chains have no
+    /// preopens; a component sees files only through the descriptor the
+    /// shipped filesystem capability composed in front of it yields for the
+    /// grant delegated to it.
     fn router_for(
         &self,
         interface: &str,
@@ -141,7 +130,6 @@ impl ComponentsServe {
             Arc::clone(&self.components),
             wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
             (),
-            Arc::clone(&self.wasi),
             Arc::clone(&self.grants),
             Arc::clone(&self.raw),
             Arc::clone(&self.handles),
@@ -245,20 +233,11 @@ where
         .await
         .context("failed to serve components")?;
     // Every capability is a shipped component served through a router: the
-    // filesystem passthrough and the process, terminal, watch, workspace and
-    // inference components alike, each over the raw host layer, each with
-    // its chains composed in front of it. One WASI context per chain's
-    // store, each preopening the same jail. The placeholder client is never
+    // filesystem and the process, terminal, watch, workspace and inference
+    // components alike, each over the raw host layer, each with its chains
+    // composed in front of it. No store has preopens: the filesystem's root
+    // comes from the raw `jail.open(grant)`. The placeholder client is never
     // invoked (no polyfill).
-    let root = capabilities.root.clone();
-    let wasi: WasiRecipe = Arc::new(move || {
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(&root, "/", FsPerms::ReadWrite)
-            .map_err(anyhow::Error::from)
-            .context("preopen wasi:filesystem root")?;
-        Ok(builder.build())
-    });
     // Every served handle, from any capability or store component, is
     // released through one drop service per server.
     let mut _capability_handlers = Vec::new();
@@ -279,7 +258,6 @@ where
             &bytes,
             wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
             (),
-            Arc::clone(&wasi),
             Arc::clone(&capabilities.grants),
             capabilities.chains.clone(),
             Arc::clone(&capabilities.raw),

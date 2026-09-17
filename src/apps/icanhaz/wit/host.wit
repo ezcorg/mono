@@ -15,8 +15,8 @@ package icanhaz:nocap@0.1.0;
 /// the first method; `admit` is per-operation admission against the grant's
 /// `allow` clause, with `call.method` and the string arguments bound.
 interface gate-filesystem {
-  /// A live filesystem grant: its first root, relative to the served preopen
-  /// (`""`/`"/"` is the whole preopen), which the descriptor is scoped to.
+  /// A live filesystem grant: its first root, relative to the jail
+  /// (`""`/`"/"` is the whole jail), which the descriptor is scoped to.
   validate: func(grant: string) -> result<string, string>;
   admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
 }
@@ -75,7 +75,14 @@ interface providers {
 
 /// The host absolute path a filesystem grant is jailed to.
 interface jail {
+  use wasi:filesystem/types@0.2.12.{descriptor};
   root: func(grant: string) -> result<string, string>;
+  /// The granted root as a descriptor: the grant's root path under the
+  /// daemon's jail, opened on the host with the grant's rights and
+  /// sandboxed by `wasi:filesystem`, so nothing above it resolves. This is
+  /// the only way file authority enters a store: no store has preopens, so
+  /// a component importing `wasi:filesystem/preopens` sees none.
+  open: func(grant: string) -> result<descriptor, string>;
 }
 
 /// The world a shipped capability component is linked against: every raw

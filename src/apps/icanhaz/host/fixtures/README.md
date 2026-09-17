@@ -21,4 +21,4 @@ wasm32-wasip2 guests) and each is a scaffold's output.
 | `greeter` | a novel capability with no imports, served from the store |
 | `oracle` | a component building on inference through a delegated grant |
 | `pipe` | a resource-shaped, streaming, async capability through the generic serving path |
-| `reader` | a component reading files through a delegated filesystem grant |
+| `reader` | a component reading files through a delegated filesystem grant (its store has no preopens) |

@@ -8,14 +8,19 @@
 //!
 //! The natives are asynchronous closures the providers supply (a grant held
 //! at another broker is forwarded there), and the raw functions bridge their
-//! streams into the guest's `stream<u8>`.
+//! streams into the guest's `stream<u8>`. File authority enters a store only
+//! here, through `jail.open(grant)`: no store has WASI preopens.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use futures::future::BoxFuture;
-use wasmtime::component::{Accessor, Linker, StreamReader};
+use std::path::PathBuf;
+
+use wasmtime::component::{Accessor, Linker, Resource, ResourceTable, StreamReader};
 use wasmtime::AsContextMut as _;
+use wasmtime_wasi::filesystem::{Descriptor, Dir};
+use wasmtime_wasi::{FsPerms, OpenMode};
 use wrpc_wasmtime::stream::{drain, BoxStream, BytesProducer};
 
 use crate::broker::{denied_text, AdmitCall, CapabilityKind, GrantStore};
@@ -25,6 +30,11 @@ mod bindings {
         world: "capability-host",
         path: "../wit",
         imports: { default: async | store | trappable },
+        with: {
+            // The descriptor `jail.open` mints is wasmtime-wasi's, so the
+            // guest drives it through the WASI it also imports.
+            "wasi": wasmtime_wasi::p2::bindings,
+        },
     });
 }
 
@@ -50,8 +60,11 @@ pub type NativeTerminal = Arc<
 pub type NativeWatch = Arc<
     dyn Fn(String, String, bool) -> BoxFuture<'static, Result<BoxStream, String>> + Send + Sync,
 >;
-/// `jail.root`: grant → the jail's host path.
+/// `jail.root`: grant → the granted root's host path.
 pub type NativeRoot = Arc<dyn Fn(String) -> Result<String, String> + Send + Sync>;
+/// `jail.open`: grant → the granted root's host path and the rights to open
+/// it with.
+pub type NativeOpenRoot = Arc<dyn Fn(String) -> Result<(PathBuf, FsPerms), String> + Send + Sync>;
 /// `providers.complete`: (grant, request) → frames.
 pub type NativeComplete = Arc<
     dyn Fn(String, ClientRequest) -> BoxFuture<'static, Result<BoxStream, String>> + Send + Sync,
@@ -68,6 +81,7 @@ pub struct Raw {
     pub terminal: Option<NativeTerminal>,
     pub watch: Option<NativeWatch>,
     pub root: Option<NativeRoot>,
+    pub open_root: Option<NativeOpenRoot>,
     pub complete: Option<NativeComplete>,
     pub models: Option<NativeModels>,
 }
@@ -81,25 +95,28 @@ impl Raw {
             terminal: None,
             watch: None,
             root: None,
+            open_root: None,
             complete: None,
             models: None,
         }
     }
 }
 
-/// The store data the raw layer reaches: its [`Raw`].
-pub struct RawState {
-    pub raw: Arc<Raw>,
+/// What a raw function sees of the store: the daemon's [`Raw`], and the
+/// store's resource table, for the descriptor `jail.open` mints.
+pub struct RawView<'a> {
+    pub raw: &'a Arc<Raw>,
+    pub table: &'a mut ResourceTable,
 }
 
-/// A store state carrying a [`RawState`].
+/// A store state the raw layer can be linked into.
 pub trait HasRaw {
-    fn raw(&mut self) -> &mut RawState;
+    fn raw_view(&mut self) -> RawView<'_>;
 }
 
 struct RawData;
 impl wasmtime::component::HasData for RawData {
-    type Data<'a> = &'a mut RawState;
+    type Data<'a> = RawView<'a>;
 }
 
 /// Link the whole raw layer into `linker`: each interface the daemon
@@ -107,8 +124,8 @@ impl wasmtime::component::HasData for RawData {
 /// raw ones `use`, and WASI's clock, which wasmtime-wasi provides).
 pub fn link<T: HasRaw + Send + 'static>(linker: &mut Linker<T>) -> anyhow::Result<()> {
     use bindings::icanhaz::nocap as n;
-    fn get<T: HasRaw>(s: &mut T) -> &mut RawState {
-        s.raw()
+    fn get<T: HasRaw>(s: &mut T) -> RawView<'_> {
+        s.raw_view()
     }
     n::gate_filesystem::add_to_linker::<_, RawData>(linker, get::<T>)
         .map_err(anyhow::Error::from)?;
@@ -151,7 +168,7 @@ fn admit_under(
         .map_err(|d| format!("{tag} denied: {}", denied_text(&d)))
 }
 
-impl bindings::icanhaz::nocap::gate_filesystem::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::gate_filesystem::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::gate_filesystem::HostWithStore<T> for RawData {
     fn validate(
@@ -190,7 +207,7 @@ impl<T> bindings::icanhaz::nocap::gate_filesystem::HostWithStore<T> for RawData 
     }
 }
 
-impl bindings::icanhaz::nocap::gate_process::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::gate_process::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::gate_process::HostWithStore<T> for RawData {
     fn validate(
@@ -226,7 +243,7 @@ impl<T> bindings::icanhaz::nocap::gate_process::HostWithStore<T> for RawData {
     }
 }
 
-impl bindings::icanhaz::nocap::gate_terminal::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::gate_terminal::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::gate_terminal::HostWithStore<T> for RawData {
     fn validate(
@@ -264,7 +281,7 @@ impl<T> bindings::icanhaz::nocap::gate_terminal::HostWithStore<T> for RawData {
     }
 }
 
-impl bindings::icanhaz::nocap::gate_inference::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::gate_inference::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::gate_inference::HostWithStore<T> for RawData {
     fn validate(
@@ -312,7 +329,7 @@ fn host_stream<T, D: wasmtime::component::HasData + ?Sized>(
     accessor.with(|mut a| StreamReader::new(a.as_context_mut(), BytesProducer::new(stream)))
 }
 
-impl bindings::icanhaz::nocap::process_raw::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::process_raw::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::process_raw::HostWithStore<T> for RawData {
     async fn spawn(
@@ -333,7 +350,7 @@ impl<T> bindings::icanhaz::nocap::process_raw::HostWithStore<T> for RawData {
     }
 }
 
-impl bindings::icanhaz::nocap::pty::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::pty::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::pty::HostWithStore<T> for RawData {
     async fn open(
@@ -357,7 +374,7 @@ impl<T> bindings::icanhaz::nocap::pty::HostWithStore<T> for RawData {
     }
 }
 
-impl bindings::icanhaz::nocap::notify::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::notify::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::notify::HostWithStore<T> for RawData {
     async fn watch(
@@ -377,7 +394,7 @@ impl<T> bindings::icanhaz::nocap::notify::HostWithStore<T> for RawData {
     }
 }
 
-impl bindings::icanhaz::nocap::providers::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::providers::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::providers::HostWithStore<T> for RawData {
     async fn complete(
@@ -407,7 +424,7 @@ impl<T> bindings::icanhaz::nocap::providers::HostWithStore<T> for RawData {
     }
 }
 
-impl bindings::icanhaz::nocap::jail::Host for &mut RawState {}
+impl bindings::icanhaz::nocap::jail::Host for RawView<'_> {}
 
 impl<T> bindings::icanhaz::nocap::jail::HostWithStore<T> for RawData {
     fn root(
@@ -419,6 +436,35 @@ impl<T> bindings::icanhaz::nocap::jail::HostWithStore<T> for RawData {
             Some(native) => native(grant),
             None => Err(missing("workspace")),
         };
+        std::future::ready(Ok(out))
+    }
+
+    /// The granted root, opened on the host with the grant's rights and
+    /// pushed into this store's table: the one entry of file authority.
+    fn open(
+        mut access: wasmtime::component::Access<'_, T, Self>,
+        grant: String,
+    ) -> impl Future<Output = wasmtime::Result<Result<Resource<Descriptor>, String>>> + Send {
+        let view = access.get();
+        let out = (|| {
+            let native = view
+                .raw
+                .open_root
+                .clone()
+                .ok_or_else(|| missing("filesystem"))?;
+            let (path, perms) = native(grant)?;
+            let dir =
+                cap_primitives::fs::open_ambient_dir(&path, cap_primitives::ambient_authority())
+                    .map_err(|e| format!("open the granted root {}: {e}", path.display()))?;
+            let open_mode = match perms {
+                FsPerms::ReadOnly => OpenMode::READ,
+                FsPerms::ReadWrite => OpenMode::READ | OpenMode::WRITE,
+            };
+            let dir = Dir::new(dir, perms, open_mode, false);
+            view.table
+                .push(Descriptor::Dir(dir))
+                .map_err(|e| format!("descriptor table: {e}"))
+        })();
         std::future::ready(Ok(out))
     }
 }

@@ -34,7 +34,7 @@ pub struct DaemonConfig {
     pub ws_bind: String,
     /// WebTransport bind, e.g. `127.0.0.1:7778`.
     pub wt_bind: SocketAddr,
-    /// The fs root the demo jail lives under (also the preopen for `wasi:filesystem`).
+    /// The jail: the directory filesystem grants are rooted under.
     pub root: std::path::PathBuf,
     /// Where the shipped capability components live: `<dir>/<name>/target/
     /// wasm32-wasip2/release/<name>_capability.wasm` for filesystem, process,
@@ -287,6 +287,7 @@ pub async fn run(
         terminal: Some(terminal.native_for_grants()),
         watch: Some(watch.native_for_grants()),
         root: Some(workspace.native_for_grants()),
+        open_root: Some(workspace.native_open_root()),
         complete: Some(inference_complete),
         models: Some(inference_models),
     });
@@ -348,7 +349,6 @@ pub async fn run(
     let handles = crate::component_serve::Handles::new();
     let capabilities = CapabilitiesServe {
         components: shipped,
-        root: config.root.clone(),
         grants: grants.clone(),
         chains,
         raw: Arc::clone(&raw),
@@ -357,23 +357,11 @@ pub async fn run(
     // Novel interfaces store components provide: their admission environments
     // come from the components' own WIT, and the transports serve them
     // through shared routers.
-    let jail: crate::component_serve::WasiRecipe = {
-        let root = config.root.clone();
-        Arc::new(move || {
-            let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
-            builder
-                .preopened_dir(&root, "/", wasmtime_wasi::FsPerms::ReadWrite)
-                .map_err(anyhow::Error::from)
-                .context("preopen wasi:filesystem root")?;
-            Ok(builder.build())
-        })
-    };
     let components_serve = ComponentsServe::new(
         Arc::clone(&services.components),
         grants.clone(),
         Arc::clone(&raw),
         handles,
-        jail,
     );
     for info in services.components.list().await {
         crate::serve::register_component_envs_for(&services.components, &grants, &info);

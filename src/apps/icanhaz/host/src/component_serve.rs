@@ -33,7 +33,7 @@ use crate::broker::GrantStore;
 use crate::components::ComponentStore;
 use crate::AsOrigin;
 use wasmtime_wasi::p2::bindings::io;
-use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wrpc_transport::{Invoke, Serve, ServeExt as _}; // ServeExt: serve_values (the drop meta-op)
 use wrpc_wasmtime::{
     collect_component_resource_exports, collect_component_resource_imports, RemoteResource,
@@ -66,8 +66,8 @@ where
     }
 }
 
-/// Store state for serving a component: a `WasiCtx` (its host-satisfied imports,
-/// incl. the preopened filesystem the grant scopes) plus the wRPC view.
+/// Store state for serving a component: a `WasiCtx` (its host-satisfied
+/// imports) plus the wRPC view.
 pub struct CompState<C: Invoke> {
     table: ResourceTable,
     wasi: WasiCtx,
@@ -304,13 +304,17 @@ pub struct CapabilityState<C: Invoke> {
     wasi: WasiCtx,
     rpc: Rpc<C>,
     /// The raw host layer a capability component imports (`icanhaz:nocap`
-    /// gates and raw operations; the gates reach the grant store through it).
-    raw: crate::raw::RawState,
+    /// gates and raw operations; the gates reach the grant store through it,
+    /// and `jail.open` mints descriptors into `table`).
+    raw: Arc<crate::raw::Raw>,
 }
 
 impl<C: Invoke + 'static> crate::raw::HasRaw for CapabilityState<C> {
-    fn raw(&mut self) -> &mut crate::raw::RawState {
-        &mut self.raw
+    fn raw_view(&mut self) -> crate::raw::RawView<'_> {
+        crate::raw::RawView {
+            raw: &self.raw,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -355,10 +359,6 @@ pub type ChainSource = Arc<
         + Send
         + Sync,
 >;
-
-/// A fresh WASI context for one chain's store: the preopened root (the jail).
-/// Each chain gets its own, built from the same recipe.
-pub type WasiRecipe = Arc<dyn Fn() -> anyhow::Result<WasiCtx> + Send + Sync>;
 
 /// One instantiated chain: its own store (so its own lock, host tables,
 /// limits and lifetime), the resource types it exports, its exports.
@@ -777,13 +777,13 @@ where
     C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
-    /// A router whose chains' stores hold `wasi` (built fresh per chain) and
-    /// see `grants` through the gate.
+    /// A router whose chains' stores see `grants` through the gate and the
+    /// daemon's natives through `raw`. Their WASI context is bare: file
+    /// authority enters only through the raw `jail.open(grant)`.
     pub fn new(
         spec: RouterSpec<C>,
         client: C,
         cx: C::Context,
-        wasi: WasiRecipe,
         grants: Arc<std::sync::Mutex<GrantStore>>,
         raw: Arc<crate::raw::Raw>,
         handles: Arc<Handles>,
@@ -793,15 +793,13 @@ where
             Box::new(move || {
                 Ok(CapabilityState {
                     table: ResourceTable::new(),
-                    wasi: wasi()?,
+                    wasi: WasiCtxBuilder::new().build(),
                     rpc: Rpc {
                         client: client.clone(),
                         cx: cx.clone(),
                         shared: SharedResourceTable::with_capacity(max_fs_handles()),
                     },
-                    raw: crate::raw::RawState {
-                        raw: Arc::clone(&raw),
-                    },
+                    raw: Arc::clone(&raw),
                 })
             })
         };
@@ -1149,8 +1147,8 @@ where
 /// instantiated once, its exports registered on `srv`. Its acquisition
 /// function (`open`, or the passthrough's `open-root`) takes the grant token
 /// once; the object it returns is the capability, and the component gates
-/// every operation itself through the raw layer. `wasi` builds the preopened
-/// root for each chain's store.
+/// every operation itself through the raw layer. No chain's store has
+/// preopens: file authority enters only through the raw `jail.open(grant)`.
 ///
 /// A grant provided through a chain (`via`, chosen at consent) is acquired on
 /// that chain instead: `chains` composes it in front of the default, and it is
@@ -1162,7 +1160,6 @@ pub async fn serve_capability<C, S>(
     component_bytes: &[u8],
     client: C,
     cx: C::Context,
-    wasi: WasiRecipe,
     grants: Arc<std::sync::Mutex<GrantStore>>,
     chains: Option<ChainSource>,
     raw: Arc<crate::raw::Raw>,
@@ -1196,7 +1193,7 @@ where
         // The component admits each operation itself, through the gate.
         admit: None,
     };
-    let router = Router::new(spec, client, cx, wasi, grants, raw, handles)?;
+    let router = Router::new(spec, client, cx, grants, raw, handles)?;
     router
         .add_chain(String::new(), &component)
         .await
@@ -1223,9 +1220,9 @@ pub async fn serve_filesystem<C, S>(
     component_bytes: &[u8],
     client: C,
     cx: C::Context,
-    wasi: WasiRecipe,
     grants: Arc<std::sync::Mutex<GrantStore>>,
     chains: Option<ChainSource>,
+    raw: Arc<crate::raw::Raw>,
 ) -> anyhow::Result<JoinSet<()>>
 where
     C: Invoke + Clone + 'static,
@@ -1233,14 +1230,12 @@ where
     S: Serve,
     S::Context: AsOrigin,
 {
-    let raw = Arc::new(crate::raw::Raw::new(Arc::clone(&grants)));
     let handles = Handles::new();
     let mut handlers = serve_capability(
         srv,
         component_bytes,
         client,
         cx,
-        wasi,
         grants,
         chains,
         raw,
@@ -1261,7 +1256,6 @@ pub fn component_router<C>(
     components: Arc<ComponentStore>,
     client: C,
     cx: C::Context,
-    wasi: WasiRecipe,
     grants: Arc<std::sync::Mutex<GrantStore>>,
     raw: Arc<crate::raw::Raw>,
     handles: Arc<Handles>,
@@ -1368,7 +1362,7 @@ where
             })
         }),
     };
-    Router::new(spec, client, cx, wasi, grants, raw, handles)
+    Router::new(spec, client, cx, grants, raw, handles)
 }
 
 /// Serve `interface` on `srv` through `router`: the functions the component
@@ -1667,16 +1661,17 @@ mod tests {
         });
     }
 
-    /// A WASI recipe that preopens `dir` at `/` with `perms`, one fresh context per chain.
-    fn jail_recipe(dir: &std::path::Path, perms: wasmtime_wasi::FsPerms) -> WasiRecipe {
-        let dir = dir.to_path_buf();
-        Arc::new(move || {
-            let mut builder = WasiCtxBuilder::new();
-            builder
-                .preopened_dir(&dir, "/", perms)
-                .map_err(anyhow::Error::from)?;
-            Ok(builder.build())
-        })
+    /// The raw layer for tests over a jail at `dir`: `jail.open` yields a
+    /// grant's root under it, with the grant's rights.
+    fn jail_raw(
+        grants: &Arc<std::sync::Mutex<GrantStore>>,
+        dir: &std::path::Path,
+    ) -> Arc<crate::raw::Raw> {
+        let jail = crate::workspace::WorkspaceProvider::new(dir.to_path_buf(), Arc::clone(grants));
+        let mut raw = crate::raw::Raw::new(Arc::clone(grants));
+        raw.root = Some(jail.native_for_grants());
+        raw.open_root = Some(jail.native_open_root());
+        Arc::new(raw)
     }
 
     fn fs_passthrough_wasm() -> PathBuf {
@@ -1698,7 +1693,6 @@ mod tests {
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
         };
-        use wasmtime_wasi::FsPerms;
 
         let passthrough =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
@@ -1729,7 +1723,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello\n").unwrap();
         std::fs::write(dir.path().join("forbidden.txt"), b"secret\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let kind = || {
             CapabilityKind::Filesystem(FsRequest {
@@ -1787,9 +1780,9 @@ mod tests {
             &passthrough,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             Some(source),
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -1874,7 +1867,6 @@ mod tests {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
         use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::Descriptor;
-        use wasmtime_wasi::FsPerms;
 
         let passthrough =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
@@ -1899,7 +1891,6 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let issue = |g: &mut GrantStore| {
             g.issue_scoped_via(
@@ -1939,9 +1930,9 @@ mod tests {
             &passthrough,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             Some(source),
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -2088,13 +2079,11 @@ mod tests {
                 }
             })
         };
-        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
         let router = component_router(
             IFACE,
             Arc::clone(&components),
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             Arc::new(crate::raw::Raw::new(grants.clone())),
             Handles::new(),
@@ -2215,6 +2204,7 @@ mod tests {
             terminal: None,
             watch: None,
             root: None,
+            open_root: None,
             complete: Some(complete),
             models: Some(models),
         });
@@ -2286,13 +2276,11 @@ mod tests {
                 }
             })
         };
-        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
         let router = component_router(
             IFACE,
             Arc::clone(&components),
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             raw,
             Handles::new(),
@@ -2355,17 +2343,16 @@ mod tests {
     }
 
     /// A component builds on the filesystem through a delegated grant: the
-    /// shipped filesystem capability is composed in front of the reader, its
-    /// chain's store preopens the jail, and the reader's `open` presents the
-    /// component grant, which the gate resolves to the filesystem grant lent
-    /// to it. The descriptor it gets is scoped to that grant's root; the
-    /// component never sees the host's preopens.
+    /// shipped filesystem capability is composed in front of the reader, and
+    /// the reader's `open` presents the component grant, which the raw jail
+    /// resolves to the filesystem grant lent to it and opens as a descriptor
+    /// scoped to that grant's root, with its rights. The chain's store has
+    /// no preopens, so that descriptor is the only file authority in it.
     #[tokio::test]
     async fn a_component_reads_files_through_a_delegated_filesystem_grant() {
         use crate::broker::{CapabilityKind, ComponentRequest, FsRequest, FsRights, PathGrant};
         use crate::store::Store as Db;
         use reader_client::example::reader::reader::{self as reader, Reader};
-        use wasmtime_wasi::FsPerms;
 
         const IFACE: &str = "example:reader/reader@0.1.0";
         let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/reader.wasm"))
@@ -2387,12 +2374,10 @@ mod tests {
             .await
             .expect("shipped filesystem");
         components.register_shipped(&shipped_info);
-        // The shipped capability itself is the one component allowed the
-        // host's preopens; a store component asking for them is refused.
-        let refused = components.provide_imports(filesystem.clone()).unwrap_err();
-        assert!(refused.to_string().contains("preopens"), "{refused:#}");
 
-        // The jail: a file under the granted subtree, and one outside it.
+        // The jail: a file under the granted subtree, and one outside it. The
+        // component's chain has no preopens; the shipped filesystem capability
+        // composed in front of it opens the granted root through the raw jail.
         let jail = dir.path().join("jail");
         std::fs::create_dir_all(jail.join("notes")).unwrap();
         std::fs::write(
@@ -2456,9 +2441,8 @@ mod tests {
             Arc::clone(&components),
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            jail_recipe(&jail, FsPerms::ReadWrite),
             grants.clone(),
-            Arc::new(crate::raw::Raw::new(grants.clone())),
+            jail_raw(&grants, &jail),
             Handles::new(),
         )
         .unwrap();
@@ -2489,7 +2473,7 @@ mod tests {
         let refused = reader::open(&wrpc, (), &bare).await.unwrap();
         assert_eq!(
             refused.unwrap_err(),
-            "filesystem grant denied: not authorized"
+            "filesystem denied: no filesystem grant for this call"
         );
         // Revoking the lent grant takes the files with it.
         assert!(grants.lock().unwrap().revoke(&fs_grant));
@@ -2560,13 +2544,11 @@ mod tests {
                 }
             })
         };
-        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
         let router = component_router(
             IFACE,
             Arc::clone(&components),
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             Arc::new(crate::raw::Raw::new(grants.clone())),
             Handles::new(),
@@ -2612,14 +2594,12 @@ mod tests {
         use crate::ReqCtx;
         use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::Descriptor;
-        use wasmtime_wasi::FsPerms;
         use wrpc_transport::InvokeExt as _;
 
         let wasm =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"mine\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
@@ -2663,9 +2643,9 @@ mod tests {
             &wasm,
             wrpc_transport::tcp::Client::from(addrs[0].clone()),
             (),
-            wasi,
             grants.clone(),
             None,
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -2730,7 +2710,6 @@ mod tests {
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
         };
-        use wasmtime_wasi::FsPerms;
 
         let passthrough =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
@@ -2744,7 +2723,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"through the chain\n").unwrap();
         std::fs::write(dir.path().join("forbidden.txt"), b"never\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
@@ -2775,9 +2753,9 @@ mod tests {
             &chain,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             None,
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -2826,7 +2804,7 @@ mod tests {
     /// Serve REAL `wasi:filesystem@0.2` over wRPC, **grant-gated**: a bogus token is
     /// refused by the consent gate; a live filesystem grant exchanges (via
     /// `mount.open-root`) for the root descriptor, which then drives native
-    /// `wasi:filesystem` (open-at, read) across the wire. `preopens` isn't served,
+    /// `wasi:filesystem` (open-at, read) across the wire. No preopens exist,
     /// so the descriptor is the only way in — the grant is the gate, the descriptor
     /// is the capability.
     #[tokio::test]
@@ -2836,17 +2814,15 @@ mod tests {
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
-        use wasmtime_wasi::FsPerms;
 
         let wasm = std::fs::read(fs_passthrough_wasm()).expect(
             "build the filesystem capability first: cargo build --release --target wasm32-wasip2 \
              --manifest-path src/apps/icanhaz/capabilities/filesystem/Cargo.toml",
         );
 
-        // A temp dir with one file is the (preopen-jailed) raw authority.
+        // A temp dir with one file is the jail: the raw authority behind the grant.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello from real wasi-fs\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         // A live filesystem grant, as the broker would mint after consent.
         let grants = GrantStore::shared();
@@ -2880,9 +2856,9 @@ mod tests {
             &wasm,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             None,
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -2934,7 +2910,6 @@ mod tests {
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
-        use wasmtime_wasi::FsPerms;
 
         let wasm =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
@@ -2942,9 +2917,8 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("notes")).unwrap();
         std::fs::write(dir.path().join("notes/ok.txt"), b"inside the grant\n").unwrap();
         std::fs::write(dir.path().join("secret.txt"), b"OUTSIDE the grant\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
-        // A grant scoped to /notes/ — NOT the whole preopen.
+        // A grant scoped to /notes/ — NOT the whole jail.
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
@@ -2975,9 +2949,9 @@ mod tests {
             &wasm,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             None,
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -3038,13 +3012,11 @@ mod tests {
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
-        use wasmtime_wasi::FsPerms;
 
         let wasm =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"live\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
@@ -3076,9 +3048,9 @@ mod tests {
             &wasm,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             None,
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -3154,14 +3126,12 @@ mod tests {
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
         };
-        use wasmtime_wasi::FsPerms;
 
         let wasm =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("ok.txt"), b"in scope\n").unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"out of scope\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants
@@ -3200,9 +3170,9 @@ mod tests {
             &wasm,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             None,
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
@@ -3257,14 +3227,12 @@ mod tests {
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
-        use wasmtime_wasi::FsPerms;
         use wrpc_transport::InvokeExt as _;
 
         let wasm =
             std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"drop me\n").unwrap();
-        let wasi = jail_recipe(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
@@ -3296,9 +3264,9 @@ mod tests {
             &wasm,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            wasi,
             grants.clone(),
             None,
+            jail_raw(&grants, dir.path()),
         )
         .await
         .unwrap();
