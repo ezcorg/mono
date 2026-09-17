@@ -7,7 +7,8 @@
  *
  *   node --experimental-strip-types test-terminal.ts
  */
-import { connect, openTerminal } from "./src/wrpc.ts";
+import { connect } from "./src/wrpc.ts";
+import { openTerminal } from "./src/terminal.ts";
 
 const url = process.env.ICANHAZ_TERM_URL ?? "ws://127.0.0.1:7777";
 

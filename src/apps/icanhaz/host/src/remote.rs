@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 use wrpc_transport_iroh::Client;
 
 use crate::broker::{self, scope_from_wire, RemoteBroker, RemoteDetail};
+use crate::component_serve::RESOURCES_INSTANCE;
 use crate::iroh::IROH_ALPN;
 use icanhaz_broker::broker::bindings::icanhaz::nocap::types::Denied;
 
@@ -93,6 +94,26 @@ impl Remotes {
         let client = Client::from(conn);
         conns.insert(locator.to_string(), client.clone());
         Ok(client)
+    }
+}
+
+/// Release a handle the peer serves (`icanhaz:nocap/resources.drop`): the
+/// object was opened for one call and is done with. Best effort: an
+/// unreleased object is reclaimed when the connection to the peer closes.
+pub async fn release(client: &Client, handle: bytes::Bytes) {
+    use wrpc_transport::InvokeExt as _;
+    let no_paths: [&[Option<usize>]; 0] = [];
+    if let Err(err) = client
+        .invoke_values::<_, (bytes::Bytes,), (bool,), _>(
+            (),
+            RESOURCES_INSTANCE,
+            "drop",
+            (handle,),
+            no_paths,
+        )
+        .await
+    {
+        tracing::debug!(?err, "releasing a remote handle failed");
     }
 }
 

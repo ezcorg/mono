@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
 import { createEditor, type FileSystemOptions } from "@joinezco/markdown-editor";
@@ -24,14 +24,13 @@ describe("rust-analyzer for a .rs file in the markdown-editor (end-to-end)", () 
         const fs = await wrpcFilesystem(t, grant);
 
         // Daemon-reported host path → the rust-analyzer workspace + file:// URIs.
-        const rp = await rootPath(t, grant);
-        if (rp.tag !== "ok") throw new Error(`no workspace path: ${rp.val}`);
+        const root = await workspaceRoot(t, grant);
         // Must be set BEFORE the editor opens the file, so the codeblock's handleOpen
         // finds the provider and requests the `process` grant for rust-analyzer.
         setRemoteLspProvider(
             createWrpcLspProvider({
                 transport: t,
-                workspaceRoot: rp.val,
+                workspaceRoot: root,
                 servers: { rust: { image: "rust-analyzer" } },
             }),
         );

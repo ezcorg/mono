@@ -265,38 +265,41 @@ pub async fn list_pending(
     app: AppHandle,
     pending: State<'_, PendingConsent>,
 ) -> Result<Vec<PendingDto>, ()> {
-    let components = match app.try_state::<Services>() {
-        Some(services) => services.components.list().await,
+    let store = app
+        .try_state::<Services>()
+        .map(|s| Arc::clone(&s.components));
+    let components = match &store {
+        Some(store) => store.list().await,
         None => Vec::new(),
     };
-    let out: Vec<PendingDto> = pending
-        .list()
-        .into_iter()
-        .map(|r| {
-            let tag = r.want.tag();
-            let offers = match r.want.native() {
-                Some(kind) => components
-                    .iter()
-                    .filter(|c| icanhaz_host::chain::offers_kind(kind, &c.exports))
-                    .cloned()
-                    .collect(),
-                None => Vec::new(),
-            };
-            PendingDto {
-                id: r.id,
-                requester: r.requester,
-                summary: r.summary,
-                reason: r.reason,
-                capability: (&r.want).into(),
-                text: ScopeText::of(&r.scope),
-                scope: ScopeDto {
-                    when: r.scope.when,
-                    allow: r.scope.allow,
-                },
-                offers,
+    let mut out: Vec<PendingDto> = Vec::new();
+    for r in pending.list() {
+        // Store components that can provide this grant: for a native kind,
+        // those exporting an interface the kind is used through (derived from
+        // the components consuming that kind's gate); for a component kind,
+        // those exporting the interface itself.
+        let mut offers = Vec::new();
+        if let (Some(kind), Some(store)) = (r.want.native(), &store) {
+            for c in &components {
+                if store.offers(kind, c).await {
+                    offers.push(c.clone());
+                }
             }
-        })
-        .collect();
+        }
+        out.push(PendingDto {
+            id: r.id,
+            requester: r.requester,
+            summary: r.summary,
+            reason: r.reason,
+            capability: (&r.want).into(),
+            text: ScopeText::of(&r.scope),
+            scope: ScopeDto {
+                when: r.scope.when,
+                allow: r.scope.allow,
+            },
+            offers,
+        });
+    }
     set_tray_badge(&app, out.len());
     Ok(out)
 }

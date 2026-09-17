@@ -18,7 +18,8 @@ fn main() {
             (
                 "filesystem",
                 &[
-                    "wasi:filesystem/types@0.2.0.descriptor",
+                    "wasi:filesystem/types@0.2.12.descriptor",
+                    "icanhaz:nocap/filesystem",
                     "icanhaz:nocap/watch",
                     "icanhaz:nocap/workspace",
                 ],

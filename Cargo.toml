@@ -27,6 +27,8 @@ exclude = [
     # Policy components are wasm32-wasip2 guests (cdylib); keep them out of the
     # host workspace so a host-target `cargo build` never tries to compile them.
     "src/apps/icanhaz/policies",
+    # Shipped capability components: wasm32-wasip2 guests too.
+    "src/apps/icanhaz/capabilities",
     # Vendored upstream workspace (cbeck88/conf-rs). Defines its own [workspace];
     # witmproxy depends on the `conf` crate by path. Excluded so Cargo doesn't
     # pull it (and its conf_derive/conf_extra members) into the mono workspace.

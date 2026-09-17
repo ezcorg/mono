@@ -20,7 +20,7 @@ import "./mac-window.css";
 
 import { connect, requestFilesystemGrant, type Transport } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
 import {
@@ -171,12 +171,12 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
         // Light up rust-analyzer (on the host) for code files when the grant's
         // jail is a Cargo project — a `process` grant is requested on first use.
         // No workspace path / non-Rust files → the codeblock's built-in behavior.
-        const rp = await rootPath(transport, grant);
-        if (rp.tag === "ok") {
+        const root = await workspaceRoot(transport, grant).catch(() => undefined);
+        if (root !== undefined) {
             setRemoteLspProvider(
                 createWrpcLspProvider({
                     transport,
-                    workspaceRoot: rp.val,
+                    workspaceRoot: root,
                     servers: { rust: { image: "rust-analyzer" } },
                 }),
             );

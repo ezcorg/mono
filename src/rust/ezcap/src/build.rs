@@ -8,7 +8,7 @@
 //!     &out_dir.join("ezcap-envs.json"),
 //!     &[
 //!         ("process", &["icanhaz:nocap/process"]),
-//!         ("filesystem", &["wasi:filesystem/types@0.2.0.descriptor", "icanhaz:nocap/watch"]),
+//!         ("filesystem", &["wasi:filesystem/types@0.2.12.descriptor", "icanhaz:nocap/watch"]),
 //!     ],
 //! );
 //! ```

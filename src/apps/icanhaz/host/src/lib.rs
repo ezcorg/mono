@@ -47,6 +47,7 @@ pub mod session;
 #[cfg(test)]
 mod iroh_tests;
 #[cfg(test)]
+#[cfg(test)]
 mod remote_tests;
 
 // The broker itself is a library (`icanhaz-broker`), re-exported here so the
@@ -56,12 +57,12 @@ pub use icanhaz_broker::{
     approve, broker, capabilities, configuration, configuration_serve, store, AsOrigin, ReqCtx,
 };
 
-/// The resolver's runtime: grants provided through store components (wac-composed wrappers).
-pub mod chain;
 /// The component store: capability components a user brings, validated and kept by hash.
 pub mod components;
 /// The peer path: serving over iroh.
 pub mod iroh;
+/// The resolver's runtime: grants provided through store components (wac-composed wrappers).
+pub mod raw;
 /// Other brokers over iroh: locators, connections, remote redemption.
 pub mod remote;
 /// Scaffolds for authoring capabilities (`icanhaz capability new|wrap`).

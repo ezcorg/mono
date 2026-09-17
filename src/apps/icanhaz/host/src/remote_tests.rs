@@ -1,14 +1,18 @@
 //! Sharing across machines: a certificate issued by one daemon is redeemed
-//! at it by another over iroh, which then holds the grant and proxies its
-//! caller's inference calls there.
+//! at it by another over iroh, which then holds the grant and forwards its
+//! caller's calls there. The remote serves its capabilities the way the
+//! daemon does: the shipped components over the raw layer; the local side
+//! is the raw layer's natives, which forward a grant held elsewhere.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use futures::StreamExt as _;
 use iroh::endpoint::presets::Minimal;
 use iroh::Endpoint;
-use wit_bindgen_wrpc::bytes::Bytes;
+use tokio::task::JoinSet;
+use wasmtime_wasi::WasiCtxBuilder;
 
 use crate::broker::bindings::exports::icanhaz::nocap::broker::Handler as _;
 use crate::broker::bindings::icanhaz::nocap::types::Denied;
@@ -16,14 +20,12 @@ use crate::broker::{
     anonymous_principal, BrokerProvider, CapabilityKind, Consent, GrantStore, InferenceRequest,
     Pairings, ProcessRequest,
 };
-use crate::inference::bindings::exports::icanhaz::nocap::inference::{
-    CompletionRequest, Handler as _, Message,
-};
+use crate::component_serve::{serve_capability, serve_resource_drop, Handles, WasiRecipe};
 use crate::inference::InferenceProvider;
 use crate::iroh::{accept_iroh, IROH_ALPN};
-use crate::process::bindings::exports::icanhaz::nocap::process::Handler as _;
 use crate::process::ProcessProvider;
 use crate::providers::{ProviderConfig, ProviderKind, Providers};
+use crate::raw::{ClientMessage, ClientRequest, Raw};
 use crate::remote::{locator_of, parse_locator, Remotes};
 use crate::ReqCtx;
 
@@ -40,13 +42,23 @@ fn echo() -> Arc<Providers> {
     ))
 }
 
-/// Serve broker + inference over `endpoint` (the remote daemon, minus the
-/// capabilities this test does not need).
+/// A shipped capability component, as the daemon finds it.
+fn shipped(name: &str) -> Vec<u8> {
+    let path = format!(
+        "{}/../capabilities/{name}/target/wasm32-wasip2/release/{name}_capability.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    std::fs::read(&path).unwrap_or_else(|e| panic!("build capabilities/{name} first ({path}): {e}"))
+}
+
+/// The remote daemon over `endpoint`: the broker, and the process and
+/// inference capabilities served as shipped components over `raw`, with the
+/// resource-drop op beside them.
 fn serve(
     endpoint: Endpoint,
     broker: BrokerProvider,
-    inference: InferenceProvider,
-    process: ProcessProvider,
+    store: Arc<std::sync::Mutex<GrantStore>>,
+    raw: Arc<Raw>,
 ) {
     use futures::FutureExt as _;
     tokio::spawn(async move {
@@ -55,23 +67,32 @@ fn serve(
         let b = crate::broker::bindings::serve(srv.as_ref(), broker)
             .await
             .expect("serve broker");
-        let i = crate::inference::bindings::serve(srv.as_ref(), inference)
+        let wasi: WasiRecipe = Arc::new(|| Ok(WasiCtxBuilder::new().build()));
+        let handles = Handles::new();
+        let mut capability_handlers = Vec::new();
+        for name in ["process", "inference"] {
+            let set = serve_capability(
+                srv.as_ref(),
+                &shipped(name),
+                wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
+                (),
+                Arc::clone(&wasi),
+                Arc::clone(&store),
+                None,
+                Arc::clone(&raw),
+                Arc::clone(&handles),
+            )
             .await
-            .expect("serve inference");
-        let p = crate::process::bindings::serve(srv.as_ref(), process)
+            .unwrap_or_else(|e| panic!("serve the {name} capability: {e:#}"));
+            capability_handlers.push(set);
+        }
+        let mut drops = JoinSet::new();
+        serve_resource_drop(srv.as_ref(), handles, &mut drops)
             .await
-            .expect("serve process");
+            .expect("serve resources.drop");
         let mut invs = futures::stream::select_all(
             b.into_iter()
-                .map(|(_, _, s)| s.map(|r| r.map(|f| f.boxed())).boxed())
-                .chain(
-                    i.into_iter()
-                        .map(|(_, _, s)| s.map(|r| r.map(|f| f.boxed())).boxed()),
-                )
-                .chain(
-                    p.into_iter()
-                        .map(|(_, _, s)| s.map(|r| r.map(|f| f.boxed())).boxed()),
-                ),
+                .map(|(_, _, s)| s.map(|r| r.map(|f| f.boxed())).boxed()),
         );
         while let Some(res) = invs.next().await {
             if let Ok(fut) = res {
@@ -81,13 +102,15 @@ fn serve(
             }
         }
         accept.abort();
+        drop(capability_handlers);
+        drop(drops);
     });
 }
 
-fn request(text: &str) -> CompletionRequest {
-    CompletionRequest {
+fn request(text: &str) -> ClientRequest {
+    ClientRequest {
         model: "echo".to_string(),
-        messages: vec![Message {
+        messages: vec![ClientMessage {
             role: "user".to_string(),
             content: text.to_string(),
             tool_calls: vec![],
@@ -131,8 +154,8 @@ fn locators_round_trip() {
 }
 
 #[tokio::test]
-async fn a_certificate_from_another_daemon_redeems_over_iroh_and_proxies_inference() {
-    tokio::time::timeout(Duration::from_secs(60), async {
+async fn a_certificate_from_another_daemon_redeems_over_iroh_and_forwards_calls() {
+    tokio::time::timeout(Duration::from_secs(90), async {
         // The owner's daemon: identity R, an echo model, serving over iroh.
         let r = ezcap::Keypair::generate().unwrap();
         let store_r = GrantStore::shared();
@@ -149,7 +172,17 @@ async fn a_certificate_from_another_daemon_redeems_over_iroh_and_proxies_inferen
             BrokerProvider::new(store_r.clone(), Consent::AutoApprove, Pairings::shared());
         let inference_r = InferenceProvider::new(store_r.clone(), echo());
         let process_r = ProcessProvider::new(store_r.clone());
-        serve(ep_r, broker_r, inference_r, process_r);
+        let (complete_r, models_r) = inference_r.native_for_grants();
+        let raw_r = Arc::new(Raw {
+            grants: store_r.clone(),
+            spawn: Some(process_r.native_for_grants()),
+            terminal: None,
+            watch: None,
+            root: None,
+            complete: Some(complete_r),
+            models: Some(models_r),
+        });
+        serve(ep_r, broker_r, store_r.clone(), raw_r);
 
         // The recipient's daemon: identity L, no models of its own, reaches peers.
         let l = ezcap::Keypair::generate().unwrap();
@@ -168,6 +201,9 @@ async fn a_certificate_from_another_daemon_redeems_over_iroh_and_proxies_inferen
             InferenceProvider::new(store_l.clone(), Arc::new(Providers::new(vec![], None)))
                 .with_remotes(remotes.clone());
         let process_l = ProcessProvider::new(store_l.clone()).with_remotes(remotes);
+        // What L's shipped components would call: the raw layer's natives.
+        let (complete_l, models_l) = inference_l.native_for_grants();
+        let spawn_l = process_l.native_for_grants();
 
         // The owner shares: a grant on R, certified for L's identity.
         let source = store_r.lock().unwrap().issue(
@@ -232,18 +268,13 @@ async fn a_certificate_from_another_daemon_redeems_over_iroh_and_proxies_inferen
         assert_eq!(scope.allow, "state.tokens < 100");
         assert!(summary.contains(&locator), "{summary}");
 
-        // Calls on it reach R's echo model.
-        let listed = inference_l
-            .models((), proxied.clone())
-            .await
-            .unwrap()
-            .expect("models");
+        // Calls on it reach R's echo model, through R's shipped inference
+        // component: a session is opened there with the grant R issued to L.
+        let listed = models_l(proxied.clone()).await.expect("models");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].model, "echo");
-        let stream = inference_l
-            .complete((), proxied.clone(), request("hello there"))
+        let stream = complete_l(proxied.clone(), request("hello there"))
             .await
-            .unwrap()
             .expect("admitted");
         let chunks: Vec<Bytes> = stream.collect().await;
         let frames = decode(&chunks.concat());
@@ -265,7 +296,7 @@ async fn a_certificate_from_another_daemon_redeems_over_iroh_and_proxies_inferen
         };
         assert_eq!(r_children, 4);
 
-        // A program pinned by a grant on R runs on R, its stdio proxied: `cat`.
+        // A program pinned by a grant on R runs on R, its stdio forwarded: `cat`.
         let cat = store_r.lock().unwrap().issue(
             CapabilityKind::Process(ProcessRequest {
                 image: "cat".into(),
@@ -296,20 +327,15 @@ async fn a_certificate_from_another_daemon_redeems_over_iroh_and_proxies_inferen
             Bytes::from_static(b"over "),
             Bytes::from_static(b"iroh\n"),
         ]);
-        let stdout = process_l
-            .spawn((), cat_l, vec![], Box::pin(stdin))
+        let stdout = spawn_l(cat_l, vec![], Box::pin(stdin))
             .await
-            .unwrap()
             .expect("spawned at R");
         let echoed: Vec<Bytes> = stdout.collect().await;
         assert_eq!(String::from_utf8_lossy(&echoed.concat()), "over iroh\n");
 
         // Revoking the source at R voids the proxy's calls.
         assert!(store_r.lock().unwrap().revoke(&source));
-        let dead = inference_l
-            .complete((), proxied, request("again"))
-            .await
-            .unwrap();
+        let dead = complete_l(proxied, request("again")).await;
         let refused = match dead {
             Err(e) => e,
             Ok(stream) => {

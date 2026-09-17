@@ -14,11 +14,8 @@ use core::pin::Pin;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Context as _;
-use futures::stream::select_all;
-use futures::{Stream, StreamExt as _};
+use futures::Stream;
 use notify::{EventKind, RecursiveMode, Watcher};
-use tokio::net::TcpListener;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use wit_bindgen_wrpc::bytes::Bytes;
 
@@ -26,7 +23,7 @@ use crate::broker::GrantStore;
 
 pub(crate) mod bindings {
     wit_bindgen_wrpc::generate!({
-        world: "watch-wrpc",
+        world: "watch-client",
         path: "../wit",
     });
 }
@@ -41,36 +38,29 @@ pub use bindings::icanhaz::nocap::watch as client;
 pub struct WatchProvider {
     root: PathBuf,
     grants: Arc<Mutex<GrantStore>>,
-    /// Runs the wrappers a grant is provided through (see [`crate::chain`]).
-    chain: Option<Arc<crate::chain::Chain>>,
 }
 
 impl WatchProvider {
     pub fn new(root: PathBuf, grants: Arc<Mutex<GrantStore>>) -> Self {
-        Self {
-            root,
-            grants,
-            chain: None,
-        }
+        Self { root, grants }
     }
 
-    pub fn with_chain(mut self, chain: Arc<crate::chain::Chain>) -> Self {
-        self.chain = Some(chain);
-        self
-    }
-
-    /// The native open for any live filesystem grant (or a component grant
-    /// delegated one).
-    pub fn native_for_grants(&self) -> crate::chain::NativeWatch {
+    /// The raw watch (`icanhaz:nocap/notify`): for any live filesystem grant,
+    /// or a component grant one was lent to.
+    pub fn native_for_grants(&self) -> crate::raw::NativeWatch {
         let root = self.root.clone();
         let grants = self.grants.clone();
         Arc::new(move |token, path, recursive| {
-            let token = grants
-                .lock()
-                .unwrap()
-                .delegated_for(&token, "filesystem")
-                .ok_or_else(|| "watch denied: no filesystem grant for this call".to_string())?;
-            open_native(&root, &grants, &token, &path, recursive)
+            let root = root.clone();
+            let grants = grants.clone();
+            Box::pin(async move {
+                let token = grants
+                    .lock()
+                    .unwrap()
+                    .delegated_for(&token, "filesystem")
+                    .ok_or_else(|| "watch denied: no filesystem grant for this call".to_string())?;
+                open_native(&root, &grants, &token, &path, recursive)
+            })
         })
     }
 }
@@ -96,63 +86,6 @@ fn frame_event(kind: u8, rel: &str) -> Bytes {
     buf.extend_from_slice(&(len as u16).to_be_bytes());
     buf.extend_from_slice(&path[..len]);
     Bytes::from(buf)
-}
-
-impl<C: crate::AsOrigin + Send + Sync + 'static>
-    bindings::exports::icanhaz::nocap::watch::Handler<C> for WatchProvider
-{
-    async fn open(
-        &self,
-        cx: C,
-        grant: String,
-        path: String,
-        recursive: bool,
-    ) -> anyhow::Result<Result<Pin<Box<dyn Stream<Item = Bytes> + Send>>, String>> {
-        // Consent gate: a live filesystem grant (the native open re-checks and
-        // confines to its jail).
-        if let Err(denied) = self.grants.lock().unwrap().validate_filesystem(&grant) {
-            return Ok(Err(format!("watch denied: {denied:?}")));
-        }
-        // Admission: the grant's `allow` clause sees the requested path (as the
-        // client named it, grant-relative) and whether the watch is recursive.
-        let admit = crate::broker::AdmitCall::new("open")
-            .arg("path", path.clone())
-            .arg("recursive", recursive)
-            .caller(crate::broker::caller_of(&cx));
-        if let Err(denied) = self.grants.lock().unwrap().admit(&grant, admit) {
-            return Ok(Err(format!(
-                "watch denied: {}",
-                crate::broker::denied_text(&denied)
-            )));
-        }
-        // Provided through a chain: the wrapper sees the call first and the
-        // native watcher answers its import.
-        let via = self.grants.lock().unwrap().via_of(&grant);
-        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
-            let root = self.root.clone();
-            let grants = self.grants.clone();
-            let native: crate::chain::NativeWatch = Arc::new(move |grant, path, recursive| {
-                open_native(&root, &grants, &grant, &path, recursive)
-            });
-            return match chain
-                .watch_open(&via, &grant, path, recursive, native)
-                .await
-            {
-                Ok(Some(out)) => Ok(out),
-                Ok(None) => Ok(Err(
-                    "watch: the chosen chain provides nothing for watch".to_string()
-                )),
-                Err(e) => Ok(Err(format!("watch: chain failed: {e:#}"))),
-            };
-        }
-        Ok(open_native(
-            &self.root,
-            &self.grants,
-            &grant,
-            &path,
-            recursive,
-        ))
-    }
 }
 
 /// Watch `path` under the grant's jail for a live filesystem grant and return
@@ -238,138 +171,4 @@ fn open_native(
         revocation,
         watcher,
     ))
-}
-
-/// Serve the watch capability over wRPC/TCP on `listener` until cancelled. (The
-/// daemon serves it over WebSocket + WebTransport beside the other capabilities;
-/// this is the minimal serve used by the roundtrip test.)
-pub async fn serve_tcp(listener: TcpListener, provider: WatchProvider) -> anyhow::Result<()> {
-    let srv = Arc::new(wrpc_transport::Server::default());
-    let accept = tokio::spawn({
-        let srv = Arc::clone(&srv);
-        async move {
-            loop {
-                match listener.accept().await {
-                    Ok((stream, _addr)) => {
-                        let (rx, tx) = stream.into_split();
-                        if let Err(err) = srv.accept((), tx, rx).await {
-                            tracing::error!(?err, "failed to serve TCP connection");
-                        }
-                    }
-                    Err(err) => tracing::error!(?err, "failed to accept TCP connection"),
-                }
-            }
-        }
-    });
-
-    let invocations = bindings::serve(srv.as_ref(), provider)
-        .await
-        .context("failed to serve watch")?;
-    let mut invocations = select_all(
-        invocations
-            .into_iter()
-            .map(|(instance, name, invocations)| invocations.map(move |res| (instance, name, res))),
-    );
-    while let Some((instance, name, res)) = invocations.next().await {
-        match res {
-            Ok(fut) => {
-                tokio::spawn(async move {
-                    if let Err(err) = fut.await {
-                        tracing::warn!(?err, instance, name, "invocation failed");
-                    }
-                });
-            }
-            Err(err) => tracing::warn!(?err, instance, name, "failed to accept invocation"),
-        }
-    }
-    accept.abort();
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::broker::{anonymous_principal, CapabilityKind, FsRequest, FsRights, PathGrant};
-    use core::time::Duration;
-
-    #[tokio::test]
-    async fn watch_streams_a_change_within_the_grant() {
-        // A throwaway dir stands in for the jail; the grant scopes to it.
-        let dir = std::env::temp_dir().join(format!("icanhaz-watch-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let root = dir.parent().unwrap().to_path_buf();
-        let jail = dir.file_name().unwrap().to_string_lossy().into_owned();
-
-        let store = GrantStore::shared();
-        let grant = store.lock().unwrap().issue(
-            CapabilityKind::Filesystem(FsRequest {
-                roots: vec![PathGrant {
-                    path: format!("/{jail}/"),
-                    rights: FsRights::empty(),
-                }],
-            }),
-            "filesystem".to_string(),
-            Duration::from_secs(60),
-            anonymous_principal(),
-        );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let server = tokio::spawn(serve_tcp(listener, WatchProvider::new(root, store)));
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        let wrpc = wrpc_transport::tcp::Client::from(&addr);
-
-        let (result, io) = client::open(&wrpc, (), &grant, "", true)
-            .await
-            .expect("invoke watch.open");
-        let mut output = result.expect("watch open");
-        if let Some(io) = io {
-            tokio::spawn(async move {
-                let _ = io.await;
-            });
-        }
-
-        // Give the watcher a moment to arm, then create a file under the jail.
-        let dir2 = dir.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(400)).await;
-            let _ = std::fs::write(dir2.join("new.txt"), b"hi");
-        });
-
-        let frame = tokio::time::timeout(Duration::from_secs(15), output.next())
-            .await
-            .expect("watch timed out")
-            .expect("stream ended without an event");
-
-        assert!(frame.len() >= 3, "short frame: {frame:?}");
-        let len = u16::from_be_bytes([frame[1], frame[2]]) as usize;
-        let path = String::from_utf8_lossy(&frame[3..3 + len]);
-        assert!(path.contains("new.txt"), "unexpected watched path: {path}");
-
-        server.abort();
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn watch_refused_without_grant() {
-        let store = GrantStore::shared();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap().to_string();
-        let server = tokio::spawn(serve_tcp(
-            listener,
-            WatchProvider::new(PathBuf::from("/tmp"), store),
-        ));
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        let wrpc = wrpc_transport::tcp::Client::from(&addr);
-
-        let (result, _io) = client::open(&wrpc, (), "bogus-token", "", true)
-            .await
-            .expect("invoke watch.open");
-        match result {
-            Err(msg) => assert!(msg.contains("denied"), "unexpected message: {msg}"),
-            Ok(_) => panic!("an ungranted watch must be refused"),
-        }
-
-        server.abort();
-    }
 }

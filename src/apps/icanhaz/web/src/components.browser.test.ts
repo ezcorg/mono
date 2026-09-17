@@ -10,11 +10,11 @@ describe("component store over wRPC (browser → host)", () => {
     it("lists the shipped passthrough, serves its bytes, and validates what is added", async () => {
         const t = await connect({ ws: WS });
         const listed = await all(t);
-        const passthrough = listed.find((c) => c.exports.some((e) => e.startsWith("icanhaz:fspass/mount")));
+        const passthrough = listed.find((c) => c.exports.some((e) => e.startsWith("icanhaz:nocap/filesystem")));
         expect(passthrough, listed.map((c) => c.hash).join(",")).toBeDefined();
         if (!passthrough) return;
         expect(passthrough.hash.startsWith("sha256:")).toBe(true);
-        expect(passthrough.imports.some((i) => i.startsWith("icanhaz:fspass/gate"))).toBe(true);
+        expect(passthrough.imports.some((i) => i.startsWith("icanhaz:nocap/gate-filesystem"))).toBe(true);
 
         const bytes = await get(t, passthrough.hash);
         expect(bytes.tag).toBe("ok");

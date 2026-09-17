@@ -3,6 +3,10 @@
 //
 //   wit-gen.mjs <wit-dir> <interface> <out.ts>
 //
+// `<interface>` is a bare name (`broker`) when it is unique in the resolved
+// packages, or qualified (`wasi:filesystem@0.2.12/types`) when several
+// packages define one by that name.
+//
 // Grounded in the two authoritative, open-source specs (so it doesn't drift from
 // what real wRPC clients do — see wit-gen.md for the reasoning):
 //
@@ -35,9 +39,20 @@ if (!witDir || !ifaceName || !outPath) {
 
 const ir = JSON.parse(execFileSync("wasm-tools", ["component", "wit", witDir, "--json"], { encoding: "utf8" }));
 const TYPES = ir.types;
-const iface = ir.interfaces.find((i) => i.name === ifaceName);
+const [ifacePkg, ifaceShort] = ifaceName.includes("/") ? ifaceName.split("/") : [null, ifaceName];
+const iface = ifacePkg
+    ? (() => {
+          const pkg = ir.packages.find((p) => p.name === ifacePkg);
+          const id = pkg?.interfaces?.[ifaceShort];
+          return id == null ? undefined : ir.interfaces[id];
+      })()
+    : ir.interfaces.find((i) => i.name === ifaceShort);
 if (!iface) {
     console.error(`interface '${ifaceName}' not found`);
+    process.exit(1);
+}
+if (!ifacePkg && ir.interfaces.filter((i) => i.name === ifaceShort).length > 1) {
+    console.error(`interface '${ifaceName}' is defined by several packages; qualify it (ns:pkg@ver/${ifaceShort})`);
     process.exit(1);
 }
 
@@ -425,7 +440,7 @@ export async function ${tsName}(${sigParams}): Promise<${P}Session> {
 }
 
 // ---- assemble ---------------------------------------------------------------
-const instance = ir.packages[iface.package].name.replace("@", `/${ifaceName}@`);
+const instance = ir.packages[iface.package].name.replace("@", `/${ifaceShort}@`);
 const named = (id) => def(id).name;
 
 const emittedNames = new Set();

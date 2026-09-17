@@ -4,9 +4,18 @@ version = 1
 
 [[packages]]
 name = "wasi:clocks"
-registry = "wasi.dev"
+registry = "wasi"
 
 [[packages.versions]]
-requirement = "=0.2.0"
-version = "0.2.0"
-digest = "sha256:51911098e929732f65d1d84f8dc393299f18a9e8de632d854714f37142efe97b"
+requirement = "=0.2.12"
+version = "0.2.12"
+digest = "sha256:29e94d379b2239df6bc23cdfc6232dc69ffeb7cc236349fab2244803c323d92b"
+
+[[packages]]
+name = "wasi:filesystem"
+registry = "wasi"
+
+[[packages.versions]]
+requirement = "=0.2.12"
+version = "0.2.12"
+digest = "sha256:7f78b3697aba67d1e91aa318e178cede137a1edddbf62e3b6f7e635d180dddce"

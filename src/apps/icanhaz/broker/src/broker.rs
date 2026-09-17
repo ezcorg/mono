@@ -33,7 +33,7 @@ pub mod bindings {
         // `types` references `wasi:clocks` (caveat::expires(datetime)); generate
         // those bindings inline rather than expecting them already in scope.
         with: {
-            "wasi:clocks/wall-clock@0.2.0": generate,
+            "wasi:clocks/wall-clock@0.2.12": generate,
             // The shared scope record (`ezco:ezcap/types.scope`) the scoped
             // request and `narrow` take.
             "ezco:ezcap/types@0.1.0": generate,

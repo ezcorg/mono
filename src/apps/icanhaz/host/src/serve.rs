@@ -23,14 +23,10 @@ use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::broker::{bindings as broker, BrokerProvider, GrantStore};
 use crate::component_serve::{
-    component_router, serve_filesystem, serve_interface, ChainSource, Router, WasiRecipe,
+    component_router, serve_capability, serve_interface, serve_resource_drop, ChainSource, Handles,
+    Router, WasiRecipe,
 };
 use crate::components::{bindings as components, ComponentsProvider};
-use crate::inference::{bindings as inference, InferenceProvider};
-use crate::process::{bindings as proc, ProcessProvider};
-use crate::terminal::{bindings as term, TerminalProvider};
-use crate::watch::{bindings as watch, WatchProvider};
-use crate::workspace::{bindings as ws, WorkspaceProvider};
 use crate::{AsOrigin, ReqCtx};
 use icanhaz_broker::configuration_serve::{bindings as configuration, ConfigurationProvider};
 
@@ -47,18 +43,23 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::io::StreamReader;
 use wrpc_websockets::tokio_websockets::{Message, WebSocketStream};
 
-/// The real-`wasi:filesystem` capability the daemon serves over wRPC: the gated
-/// passthrough component (`component_path`), preopen-jailed to `root`, gated by
-/// the shared `grants`. Served via `ServeExt` on the same server as broker/terminal.
+/// The shipped capability components the daemon serves over wRPC, each
+/// through a router over the raw host layer: the filesystem (preopen-jailed
+/// to `root`), process, terminal, watch, workspace and inference, gated by
+/// the shared `grants`.
 #[derive(Clone)]
-pub struct FsServe {
-    pub component_path: PathBuf,
+pub struct CapabilitiesServe {
+    /// The shipped capability components, by name, and where their bytes are.
+    pub components: Vec<(String, PathBuf)>,
     pub root: PathBuf,
     pub grants: Arc<std::sync::Mutex<GrantStore>>,
-    /// Composes the chain a grant names in front of the passthrough (see
-    /// `components::filesystem_chain`); `None` serves the passthrough alone
-    /// and refuses grants that name a chain.
+    /// Composes the chain a grant names in front of the shipped component
+    /// providing its interface (see `components::capability_chain`).
     pub chains: Option<ChainSource>,
+    /// The raw host layer the components import.
+    pub raw: Arc<crate::raw::Raw>,
+    /// The daemon's handle registry, shared with the store components' routers.
+    pub handles: Arc<Handles>,
 }
 
 /// The novel interfaces store components provide, served through routers
@@ -73,22 +74,26 @@ pub struct ComponentsServe {
     /// One per transport serving: called with every component added after
     /// the transport came up, so its new interfaces are served there too.
     sinks: Arc<std::sync::Mutex<Vec<crate::components::AfterAdd>>>,
-    /// The native capabilities a component may import.
-    natives: Option<crate::chain::Natives>,
+    /// The raw host layer the shipped components a novel component composes with import.
+    raw: Arc<crate::raw::Raw>,
+    /// The daemon's handle registry.
+    handles: Arc<Handles>,
 }
 
 impl ComponentsServe {
     pub fn new(
         components: Arc<crate::components::ComponentStore>,
         grants: Arc<std::sync::Mutex<GrantStore>>,
-        natives: Option<crate::chain::Natives>,
+        raw: Arc<crate::raw::Raw>,
+        handles: Arc<Handles>,
     ) -> Self {
         Self {
             components,
             grants,
             routers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             sinks: Arc::new(std::sync::Mutex::new(Vec::new())),
-            natives,
+            raw,
+            handles,
         }
     }
 
@@ -129,7 +134,8 @@ impl ComponentsServe {
             (),
             wasi,
             Arc::clone(&self.grants),
-            self.natives.clone(),
+            Arc::clone(&self.raw),
+            Arc::clone(&self.handles),
         )?;
         routers.insert(interface.to_string(), Arc::clone(&router));
         Ok(router)
@@ -209,14 +215,9 @@ pub fn register_component_envs_for(
 async fn drive<C, S>(
     srv: Arc<S>,
     broker_p: BrokerProvider,
-    term_p: TerminalProvider,
-    proc_p: ProcessProvider,
-    ws_p: WorkspaceProvider,
-    watch_p: WatchProvider,
-    inf_p: InferenceProvider,
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
-    fs_serve: FsServe,
+    capabilities: CapabilitiesServe,
     components: ComponentsServe,
 ) -> anyhow::Result<()>
 where
@@ -224,41 +225,23 @@ where
     S: wrpc_transport::Serve<Context = C> + Send + Sync + 'static,
 {
     let srv_ref: &S = srv.as_ref();
+    // The control plane: the daemon's own handlers.
     let broker_invs = broker::serve(srv_ref, broker_p)
         .await
         .context("failed to serve broker")?;
-    let term_invs = term::serve(srv_ref, term_p)
-        .await
-        .context("failed to serve terminal")?;
-    let proc_invs = proc::serve(srv_ref, proc_p)
-        .await
-        .context("failed to serve process")?;
-    let ws_invs = ws::serve(srv_ref, ws_p)
-        .await
-        .context("failed to serve workspace")?;
-    let watch_invs = watch::serve(srv_ref, watch_p)
-        .await
-        .context("failed to serve watch")?;
-    let inf_invs = inference::serve(srv_ref, inf_p)
-        .await
-        .context("failed to serve inference")?;
     let cfg_invs = configuration::serve(srv_ref, cfg_p)
         .await
         .context("failed to serve configuration")?;
     let cmp_invs = components::serve(srv_ref, cmp_p)
         .await
         .context("failed to serve components")?;
-    // Real wasi:filesystem (the gated passthrough) on the SAME server, via ServeExt.
-    // Its descriptor invocations drain on the returned JoinSet (held for the
-    // server's lifetime); the placeholder client is never invoked (no polyfill).
-    let fs_wasm = std::fs::read(&fs_serve.component_path).with_context(|| {
-        format!(
-            "read fs-passthrough component {}",
-            fs_serve.component_path.display()
-        )
-    })?;
-    // One WASI context per chain's store, each preopening the same jail.
-    let root = fs_serve.root.clone();
+    // Every capability is a shipped component served through a router: the
+    // filesystem passthrough and the process, terminal, watch, workspace and
+    // inference components alike, each over the raw host layer, each with
+    // its chains composed in front of it. One WASI context per chain's
+    // store, each preopening the same jail. The placeholder client is never
+    // invoked (no polyfill).
+    let root = capabilities.root.clone();
     let wasi: WasiRecipe = Arc::new(move || {
         let mut builder = WasiCtxBuilder::new();
         builder
@@ -267,17 +250,36 @@ where
             .context("preopen wasi:filesystem root")?;
         Ok(builder.build())
     });
-    let _wasi_fs = serve_filesystem(
+    // Every served handle, from any capability or store component, is
+    // released through one drop service per server.
+    let mut _capability_handlers = Vec::new();
+    let mut drop_handlers = JoinSet::new();
+    serve_resource_drop(
         srv_ref,
-        &fs_wasm,
-        wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
-        (),
-        wasi,
-        fs_serve.grants,
-        fs_serve.chains,
+        Arc::clone(&capabilities.handles),
+        &mut drop_handlers,
     )
     .await
-    .context("failed to serve wasi:filesystem")?;
+    .context("failed to serve the resource-drop op")?;
+    _capability_handlers.push(drop_handlers);
+    for (name, path) in &capabilities.components {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("read the {name} capability component {}", path.display()))?;
+        let handlers = serve_capability(
+            srv_ref,
+            &bytes,
+            wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
+            (),
+            Arc::clone(&wasi),
+            Arc::clone(&capabilities.grants),
+            capabilities.chains.clone(),
+            Arc::clone(&capabilities.raw),
+            Arc::clone(&capabilities.handles),
+        )
+        .await
+        .with_context(|| format!("failed to serve the {name} capability"))?;
+        _capability_handlers.push(handlers);
+    }
     // Novel interfaces the store provides: every one present now, and every
     // one a component adds later, served on this transport through the
     // shared routers.
@@ -317,31 +319,6 @@ where
             .into_iter()
             .map(|(i, n, s)| s.map(move |r| (i, n, r))),
     );
-    let mut term_i = select_all(
-        term_invs
-            .into_iter()
-            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
-    );
-    let mut proc_i = select_all(
-        proc_invs
-            .into_iter()
-            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
-    );
-    let mut ws_i = select_all(
-        ws_invs
-            .into_iter()
-            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
-    );
-    let mut watch_i = select_all(
-        watch_invs
-            .into_iter()
-            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
-    );
-    let mut inf_i = select_all(
-        inf_invs
-            .into_iter()
-            .map(|(i, n, s)| s.map(move |r| (i, n, r))),
-    );
     let mut cfg_i = select_all(
         cfg_invs
             .into_iter()
@@ -358,26 +335,6 @@ where
             Some((i, n, r)) = broker_i.next() => match r {
                 Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
                 Err(err) => tracing::warn!(?err, instance = i, name = n, "broker invocation"),
-            },
-            Some((i, n, r)) = term_i.next() => match r {
-                Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
-                Err(err) => tracing::warn!(?err, instance = i, name = n, "terminal invocation"),
-            },
-            Some((i, n, r)) = proc_i.next() => match r {
-                Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
-                Err(err) => tracing::warn!(?err, instance = i, name = n, "process invocation"),
-            },
-            Some((i, n, r)) = ws_i.next() => match r {
-                Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
-                Err(err) => tracing::warn!(?err, instance = i, name = n, "workspace invocation"),
-            },
-            Some((i, n, r)) = watch_i.next() => match r {
-                Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
-                Err(err) => tracing::warn!(?err, instance = i, name = n, "watch invocation"),
-            },
-            Some((i, n, r)) = inf_i.next() => match r {
-                Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
-                Err(err) => tracing::warn!(?err, instance = i, name = n, "inference invocation"),
             },
             Some((i, n, r)) = cfg_i.next() => match r {
                 Ok(fut) => { tasks.spawn(async move { let _ = fut.await; }); }
@@ -548,14 +505,9 @@ async fn serve_ws_mux(
 pub async fn serve_websocket_all(
     listener: TcpListener,
     broker_p: BrokerProvider,
-    term_p: TerminalProvider,
-    proc_p: ProcessProvider,
-    ws_p: WorkspaceProvider,
-    watch_p: WatchProvider,
-    inf_p: InferenceProvider,
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
-    fs_serve: FsServe,
+    capabilities: CapabilitiesServe,
     components: ComponentsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport::Server::<ReqCtx, MuxRx, MuxTx>::default());
@@ -591,14 +543,9 @@ pub async fn serve_websocket_all(
     let res = drive(
         Arc::clone(&srv),
         broker_p,
-        term_p,
-        proc_p,
-        ws_p,
-        watch_p,
-        inf_p,
         cfg_p,
         cmp_p,
-        fs_serve,
+        capabilities,
         components,
     )
     .await;
@@ -613,14 +560,9 @@ pub async fn serve_websocket_all(
 pub async fn serve_iroh_all(
     endpoint: iroh::Endpoint,
     broker_p: BrokerProvider,
-    term_p: TerminalProvider,
-    proc_p: ProcessProvider,
-    ws_p: WorkspaceProvider,
-    watch_p: WatchProvider,
-    inf_p: InferenceProvider,
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
-    fs_serve: FsServe,
+    capabilities: CapabilitiesServe,
     components: ComponentsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
@@ -628,14 +570,9 @@ pub async fn serve_iroh_all(
     let res = drive(
         Arc::clone(&srv),
         broker_p,
-        term_p,
-        proc_p,
-        ws_p,
-        watch_p,
-        inf_p,
         cfg_p,
         cmp_p,
-        fs_serve,
+        capabilities,
         components,
     )
     .await;
@@ -648,14 +585,9 @@ pub async fn serve_webtransport_all(
     bind: SocketAddr,
     identity: wtransport::Identity,
     broker_p: BrokerProvider,
-    term_p: TerminalProvider,
-    proc_p: ProcessProvider,
-    ws_p: WorkspaceProvider,
-    watch_p: WatchProvider,
-    inf_p: InferenceProvider,
     cfg_p: ConfigurationProvider,
     cmp_p: ComponentsProvider,
-    fs_serve: FsServe,
+    capabilities: CapabilitiesServe,
     components: ComponentsServe,
 ) -> anyhow::Result<()> {
     use core::time::Duration;
@@ -722,14 +654,9 @@ pub async fn serve_webtransport_all(
     let res = drive(
         Arc::clone(&srv),
         broker_p,
-        term_p,
-        proc_p,
-        ws_p,
-        watch_p,
-        inf_p,
         cfg_p,
         cmp_p,
-        fs_serve,
+        capabilities,
         components,
     )
     .await;

@@ -58,20 +58,15 @@ fn daemon_config() -> DaemonConfig {
     let root = std::env::var("ICANHAZ_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir().join("icanhaz-demo-root"));
-    let fs_component = std::env::var("ICANHAZ_FS_COMPONENT").unwrap_or_else(|_| {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm"
-        )
-        .to_string()
-    });
     DaemonConfig {
         ws_bind: env_or("ICANHAZ_WS_BIND", "127.0.0.1:7777"),
         wt_bind: env_or("ICANHAZ_WT_BIND", "127.0.0.1:7778")
             .parse()
             .expect("invalid ICANHAZ_WT_BIND"),
         root,
-        fs_component: PathBuf::from(fs_component),
+        capabilities_dir: std::env::var("ICANHAZ_CAPABILITIES_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../capabilities")),
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label: "native consent window".to_string(),

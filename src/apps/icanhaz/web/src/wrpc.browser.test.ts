@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { connect, requestTerminalGrant, requestFilesystemGrant, brokerGranted, openTerminal, getPairing, clearPairing } from "./wrpc";
+import { connect, requestTerminalGrant, requestFilesystemGrant, brokerGranted, getPairing, clearPairing } from "./wrpc";
+import { openTerminal } from "./terminal";
 import * as gen from "./generated/broker";
 import * as term from "./generated/terminal";
-import * as fsmount from "./generated/fs-mount";
+import * as filesystem from "./generated/filesystem";
 import * as wasifs from "./generated/wasi-filesystem";
 
 // A real browser webpage consuming the capability. Run against a daemon in
@@ -83,7 +84,10 @@ describe("icanhaz browser consumer", () => {
     it("GENERATED streaming terminal session opens + echoes", async () => {
         const t = await connect({ ws: WS });
         const grant = await requestTerminalGrant(t, "generated streaming");
-        const s = await term.open(t, grant, 80, 24); // generated session: input streams [1]/[2], output [0]
+        const opened = await term.open(t, grant); // the object is the capability
+        expect(opened.tag, opened.tag === "err" ? opened.val : "").toBe("ok");
+        if (opened.tag !== "ok") return;
+        const s = await term.terminalAttach(t, opened.val, 80, 24); // generated session: input streams [1]/[2], output [0]
         const dec = new TextDecoder();
         const enc = new TextEncoder();
         let out = "";
@@ -104,12 +108,12 @@ describe("icanhaz browser consumer", () => {
         const t = await connect({ ws: WS });
 
         // The gate: a bogus token gets no descriptor.
-        const denied = await fsmount.openRoot(t, "bogus-token");
+        const denied = await filesystem.open(t, "bogus-token");
         expect(denied.tag).toBe("err");
 
         // A consented filesystem grant exchanges for the root descriptor...
         const grant = await requestFilesystemGrant(t, "browser wasi:filesystem");
-        const mounted = await fsmount.openRoot(t, grant);
+        const mounted = await filesystem.open(t, grant);
         expect(mounted.tag, `mount denied: ${JSON.stringify(mounted)}`).toBe("ok");
         if (mounted.tag !== "ok") return;
         const root = mounted.val; // a wasi:filesystem descriptor (opaque handle)

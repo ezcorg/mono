@@ -303,17 +303,14 @@ pub struct FsState<C: Invoke> {
     table: ResourceTable,
     wasi: WasiCtx,
     rpc: Rpc<C>,
-    grants: Arc<std::sync::Mutex<GrantStore>>,
-    /// The native capabilities a component may import, when this store runs
-    /// one that builds on them.
-    imports: Option<crate::chain::Imports>,
+    /// The raw host layer a capability component imports (`icanhaz:nocap`
+    /// gates and raw operations; the gates reach the grant store through it).
+    raw: crate::raw::RawState,
 }
 
-impl<C: Invoke + 'static> crate::chain::HasImports for FsState<C> {
-    fn imports(&mut self) -> &mut crate::chain::Imports {
-        self.imports
-            .as_mut()
-            .expect("a store linked with native imports carries them")
+impl<C: Invoke + 'static> crate::raw::HasRaw for FsState<C> {
+    fn raw(&mut self) -> &mut crate::raw::RawState {
+        &mut self.raw
     }
 }
 
@@ -383,7 +380,13 @@ struct Chain<C: Invoke + 'static> {
     /// The live grants mounted on this chain. When the last ends (revoked or
     /// expired) the chain is dropped, store and all; the default chain stays.
     grants: std::sync::Mutex<HashSet<String>>,
+    /// Releases a handle this chain minted (see [`Handles`]).
+    release: Release,
 }
+
+/// Chain ids are daemon-wide: a handle names its chain in the shared
+/// [`Handles`] registry, whichever router the chain belongs to.
+static CHAIN_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// One unit of work for a chain's store.
 enum Job<C: Invoke + 'static> {
@@ -510,7 +513,7 @@ where
                 Ok(Some(drop)) => {
                     let removed = store.data_mut().rpc.shared.remove(drop.scope, &drop.id);
                     let outcome = match removed {
-                        // Runs the guest resource destructor (the fs-passthrough
+                        // Runs the guest resource destructor (the filesystem capability
                         // `Desc`/`DirStream` Drop), which closes the underlying fd.
                         Some(resource) => resource
                             .resource_drop_async(&mut store)
@@ -544,8 +547,16 @@ impl<C: Invoke + 'static> Chain<C> {
     }
 }
 
-/// Is `(interface, function)` a call whose first argument is a grant token?
-pub type TokenCalls = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
+/// Is `(interface, function, first parameter name)` a call whose first
+/// argument is a grant token? The convention across every capability: a
+/// `string` parameter named `grant` in first position, on the acquisition
+/// function (`open`, `open-root`).
+pub type TokenCalls = Arc<dyn Fn(&str, &str, &str) -> bool + Send + Sync>;
+
+/// The default rule: the first parameter is named `grant`.
+pub fn grant_first(_iface: &str, _name: &str, first_param: &str) -> bool {
+    first_param == "grant"
+}
 /// Given `(interface, function, token)`, the chain the call runs on (component
 /// ids, outermost first; empty for the default), after whatever validation
 /// and admission the kind requires.
@@ -561,13 +572,83 @@ pub type Admit = Arc<
         + Sync,
 >;
 
+/// Releases a served handle: a task in its chain's store that evicts it in
+/// the scope of one connection and runs its guest destructor, `true` when it
+/// was live there.
+type Release = Arc<
+    dyn Fn(Uuid, Option<u64>) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// What the registry knows about a served handle: the chain whose store
-/// holds it, and the grant it was acquired under (a capability object carries
-/// its grant: minted by a token call, or by a method on such an object).
+/// holds it, the grant it was acquired under (a capability object carries
+/// its grant: minted by a token call, or by a method on such an object), and
+/// how to release it.
 #[derive(Clone)]
 struct HandleEntry {
     chain: u64,
     grant: Option<String>,
+    release: Release,
+}
+
+/// Every handle a daemon serves, whichever router's chain minted it: what a
+/// method call resolves its object through, and what the resource-drop
+/// meta-op releases through. One per daemon, shared by every router on every
+/// transport: a handle is scoped to the connection that minted it, and
+/// connections are numbered daemon-wide, so one registry and one drop
+/// service cover them all.
+#[derive(Default)]
+pub struct Handles {
+    entries: std::sync::Mutex<HashMap<Uuid, HandleEntry>>,
+}
+
+impl Handles {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    fn entries(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, HandleEntry>> {
+        self.entries.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn get(&self, id: &Uuid) -> Option<HandleEntry> {
+        self.entries().get(id).cloned()
+    }
+
+    /// Forget every handle chain `chain` minted: its store is going.
+    fn forget_chain(&self, chain: u64) {
+        self.entries().retain(|_, entry| entry.chain != chain);
+    }
+
+    /// Release the handle the 16 bytes `handle` name, in the scope of
+    /// connection `conn`, running its guest destructor in the owning chain's
+    /// store. Returns whether a live handle was actually released: a handle
+    /// that is not a UUID errors; one already gone (double-drop, never ours,
+    /// or minted on another connection) is `Ok(false)`, so dropping is
+    /// idempotent.
+    pub async fn release(&self, handle: &[u8], conn: Option<u64>) -> anyhow::Result<bool> {
+        // Handles are minted little-endian on the wire (`codec.rs`
+        // `id.to_bytes_le()` / `Uuid::from_bytes_le`), so reconstruct the same
+        // way: a big-endian `from_slice` would yield a different UUID that
+        // never matches (a silent no-op).
+        let bytes: [u8; 16] = handle
+            .try_into()
+            .context("resource handle is not 16 bytes")?;
+        let id = Uuid::from_bytes_le(bytes);
+        let Some(entry) = self.get(&id) else {
+            tracing::debug!(%id, "resource-drop: handle already released");
+            return Ok(false);
+        };
+        let removed = (entry.release)(id, conn).await?;
+        if removed {
+            self.entries().remove(&id);
+            tracing::debug!(%id, "dropped shared resource");
+        } else {
+            tracing::debug!(%id, "resource-drop: handle not released (not this connection's)");
+        }
+        Ok(removed)
+    }
 }
 
 /// What a [`Router`] routes: the linker its chains instantiate with, where
@@ -679,9 +760,9 @@ pub struct Router<C: Invoke + 'static> {
     /// has its own identities for them, and the served function types come
     /// from the compilation `register_exports` was given, not from a chain's.
     declared: std::sync::Mutex<Vec<ResourceType>>,
-    next_id: std::sync::atomic::AtomicU64,
-    /// Handle → the chain whose store holds it and the grant behind it.
-    handles: std::sync::Mutex<HashMap<Uuid, HandleEntry>>,
+    /// The daemon's handle registry: every handle this router's chains mint
+    /// is recorded there, and a method call resolves its object through it.
+    handles: Arc<Handles>,
     /// Every chain's resource types: what the codec checks a declared
     /// parameter or result type against before it reads or mints a handle.
     union: std::sync::Mutex<Arc<[ResourceType]>>,
@@ -702,11 +783,11 @@ where
         cx: C::Context,
         wasi: WasiRecipe,
         grants: Arc<std::sync::Mutex<GrantStore>>,
-        natives: Option<crate::chain::Natives>,
+        raw: Arc<crate::raw::Raw>,
+        handles: Arc<Handles>,
     ) -> anyhow::Result<Arc<Self>> {
         let engine = spec.linker.engine().clone();
         let state = {
-            let grants = Arc::clone(&grants);
             Box::new(move || {
                 Ok(FsState {
                     table: ResourceTable::new(),
@@ -716,8 +797,9 @@ where
                         cx: cx.clone(),
                         shared: SharedResourceTable::with_capacity(max_fs_handles()),
                     },
-                    grants: Arc::clone(&grants),
-                    imports: natives.as_ref().map(|n| n.imports()),
+                    raw: crate::raw::RawState {
+                        raw: Arc::clone(&raw),
+                    },
                 })
             })
         };
@@ -728,8 +810,7 @@ where
             grants,
             chains: std::sync::RwLock::new(Vec::new()),
             declared: std::sync::Mutex::new(Vec::new()),
-            next_id: std::sync::atomic::AtomicU64::new(0),
-            handles: std::sync::Mutex::new(HashMap::new()),
+            handles,
             union: std::sync::Mutex::new(Arc::from(Vec::new())),
             building: Mutex::new(()),
         }))
@@ -814,15 +895,29 @@ where
                 }
             }
         }
+        let jobs = spawn_driver(store);
+        let release: Release = {
+            let jobs = jobs.clone();
+            Arc::new(move |id, scope| {
+                let jobs = jobs.clone();
+                Box::pin(async move {
+                    let (reply, outcome) = tokio::sync::oneshot::channel();
+                    jobs.send(Job::Drop(DropJob { id, scope, reply }))
+                        .map_err(|_| anyhow::anyhow!("the chain's store is gone"))?;
+                    outcome
+                        .await
+                        .map_err(|_| anyhow::anyhow!("the drop task did not report"))?
+                })
+            })
+        };
         let chain = Arc::new(Chain {
-            id: self
-                .next_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id: CHAIN_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             key,
-            jobs: spawn_driver(store),
+            jobs,
             resources,
             funcs,
             grants: std::sync::Mutex::new(HashSet::new()),
+            release,
         });
         let mut chains = self.chains.write().unwrap_or_else(|e| e.into_inner());
         chains.push(Arc::clone(&chain));
@@ -912,10 +1007,7 @@ where
             return;
         }
         let chain = chains.remove(pos);
-        self.handles
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, entry| entry.chain != chain_id);
+        self.handles.forget_chain(chain_id);
         self.recompute_union(&chains);
         tracing::info!(chain = %chain.key, "chain dropped: no live grant names it");
     }
@@ -958,28 +1050,24 @@ where
         self: &Arc<Self>,
         iface: &str,
         name: &str,
+        param_names: &[String],
         params_ty: &[types::Type],
         rx: &mut wrpc_transport::frame::Incoming,
     ) -> anyhow::Result<(Arc<Chain<C>>, Option<String>)> {
+        let first_param = param_names.first().map(String::as_str).unwrap_or("");
         match params_ty.first() {
             Some(types::Type::Own(ty) | types::Type::Borrow(ty)) if self.union().contains(ty) => {
                 // `own`/`borrow` of a guest resource: a 16-byte handle, length-prefixed.
                 let head = rx.peek(17).await.context("peek resource handle")?;
                 anyhow::ensure!(head[0] == 16, "resource handle is not 16 bytes");
                 let id = Uuid::from_bytes_le(head[1..17].try_into()?);
-                let entry = self
-                    .handles
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .get(&id)
-                    .cloned()
-                    .context("unknown resource handle")?;
+                let entry = self.handles.get(&id).context("unknown resource handle")?;
                 let chain = self
                     .chain_by_id(entry.chain)
-                    .context("handle names a chain that is gone")?;
+                    .context("the handle was not minted by a chain of this interface")?;
                 Ok((chain, entry.grant))
             }
-            Some(types::Type::String) if (self.spec.token_calls)(iface, name) => {
+            Some(types::Type::String) if (self.spec.token_calls)(iface, name, first_param) => {
                 let token = peek_string(rx).await.context("peek grant token")?;
                 let via = (self.spec.resolve_token)(iface, name, &token)?;
                 loop {
@@ -1001,13 +1089,17 @@ where
         if ids.is_empty() {
             return;
         }
-        let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(owner) = self.chain_by_id(chain) else {
+            return;
+        };
+        let mut handles = self.handles.entries();
         for id in ids {
             handles.insert(
                 id,
                 HandleEntry {
                     chain,
                     grant: grant.map(str::to_string),
+                    release: Arc::clone(&owner.release),
                 },
             );
         }
@@ -1035,12 +1127,9 @@ async fn peek_string(rx: &mut wrpc_transport::frame::Incoming) -> anyhow::Result
     Ok(String::from_utf8(all[prefix..].to_vec())?)
 }
 
-/// The interface `open-root` lives on; the token-carrying call routing keys on.
-const MOUNT_INSTANCE: &str = "icanhaz:fspass/mount@0.1.0";
-
-/// A linker for the gated filesystem: WASI plus the consent `gate` the
-/// passthrough imports, host-validated against the store's grants.
-fn fs_linker<C>(engine: &Engine) -> anyhow::Result<Linker<FsState<C>>>
+/// A linker for a capability store: WASI, the raw host layer every shipped
+/// component imports, and the filesystem passthrough's own `gate`.
+pub fn capability_linker<C>(engine: &Engine) -> anyhow::Result<Linker<FsState<C>>>
 where
     C: Invoke + 'static,
     C::Context: Clone,
@@ -1049,80 +1138,82 @@ where
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(anyhow::Error::from)
         .context("link WASI")?;
-    // Hand-wire the consent gate the component's `mount` imports.
-    linker
-        .instance("icanhaz:fspass/gate@0.1.0")
-        .map_err(anyhow::Error::from)
-        .context("gate instance")?
-        .func_wrap_async(
-            "authorize",
-            |store: wasmtime::StoreContextMut<'_, FsState<C>>, (grant,): (String,)| {
-                let grants = store.data().grants.clone();
-                Box::new(async move {
-                    // The gate carries only the token (not the method or path),
-                    // so admission here is grant-level: live, and the scope's
-                    // `when` holds. Per-op `allow` for descriptor methods lands
-                    // when `gate.authorize` gains (method, path) arguments.
-                    let res = {
-                        let store = grants.lock().unwrap();
-                        store
-                            .validate_filesystem(&grant)
-                            .and_then(|paths| store.admit_grant(&grant).map(|()| paths))
-                            // Hand the component the granted root path to scope the descriptor to.
-                            .map(|paths| paths.into_iter().next().unwrap_or_default())
-                            .map_err(|d| {
-                                format!(
-                                    "filesystem grant denied: {}",
-                                    crate::broker::denied_text(&d)
-                                )
-                            })
-                    };
-                    Ok((res,))
-                })
-            },
-        )
-        .map_err(anyhow::Error::from)
-        .context("link gate.authorize")?;
-    // Per-operation admission: the component reports the descriptor method and its
-    // string arguments; the grant's `allow` clause decides. Names arrive kebab-case
-    // as in WIT and bind as `call.args.<cel_ident>` (`old-path` → `old_path`).
-    linker
-        .instance("icanhaz:fspass/gate@0.1.0")
-        .map_err(anyhow::Error::from)
-        .context("gate instance")?
-        .func_wrap_async(
-            "admit",
-            |store: wasmtime::StoreContextMut<'_, FsState<C>>,
-             (grant, method, args): (String, String, Vec<(String, String)>)| {
-                let grants = store.data().grants.clone();
-                Box::new(async move {
-                    let mut call = crate::broker::AdmitCall::new(&method);
-                    for (name, value) in args {
-                        call = call.arg(&ezcap::shape::cel_ident(&name), value);
-                    }
-                    let res = grants.lock().unwrap().admit(&grant, call).map_err(|d| {
-                        format!("filesystem denied: {}", crate::broker::denied_text(&d))
-                    });
-                    Ok((res,))
-                })
-            },
-        )
-        .map_err(anyhow::Error::from)
-        .context("link gate.admit")?;
+    crate::raw::link(&mut linker).context("link the raw host layer")?;
     Ok(linker)
 }
 
-/// Serve the gated `wasi:filesystem` over wRPC. `component_bytes` is the default
-/// chain (the shipped passthrough): linked with WASI + the consent `gate`
-/// (host-validated against `grants`), instantiated once, its exports
-/// (`wasi:filesystem/types` + `mount`) registered on `srv`. `mount.open-root`
-/// calls the gate, so it refuses any token that isn't a live `filesystem` grant:
-/// an ungated peer never receives a descriptor. `wasi` builds the preopened
-/// root (the jail) for each chain's store.
+/// Serve a shipped capability component over wRPC: `component_bytes` is the
+/// default chain, linked with WASI and the raw host layer (`raw`),
+/// instantiated once, its exports registered on `srv`. Its acquisition
+/// function (`open`, or the passthrough's `open-root`) takes the grant token
+/// once; the object it returns is the capability, and the component gates
+/// every operation itself through the raw layer. `wasi` builds the preopened
+/// root for each chain's store.
 ///
-/// A grant provided through a chain (`via`, chosen at consent) mounts on that
-/// chain instead: `chains` composes it, and it is instantiated into its own
-/// store the first time a grant names it (see [`Router`]).
+/// A grant provided through a chain (`via`, chosen at consent) is acquired on
+/// that chain instead: `chains` composes it in front of the default, and it is
+/// instantiated into its own store the first time a grant names it (see
+/// [`Router`]).
+#[allow(clippy::too_many_arguments)]
+pub async fn serve_capability<C, S>(
+    srv: &S,
+    component_bytes: &[u8],
+    client: C,
+    cx: C::Context,
+    wasi: WasiRecipe,
+    grants: Arc<std::sync::Mutex<GrantStore>>,
+    chains: Option<ChainSource>,
+    raw: Arc<crate::raw::Raw>,
+    handles: Arc<Handles>,
+) -> anyhow::Result<JoinSet<()>>
+where
+    C: Invoke + Clone + 'static,
+    C::Context: Clone,
+    S: Serve,
+    S::Context: AsOrigin,
+{
+    let engine = engine()?;
+    let component = Component::new(&engine, component_bytes)
+        .map_err(anyhow::Error::from)
+        .context("compile component")?;
+    let spec = RouterSpec {
+        linker: capability_linker::<C>(&engine)?,
+        source: chains,
+        token_calls: Arc::new(grant_first),
+        // The component validates the token itself; resolving is just
+        // reading the grant's chain.
+        resolve_token: {
+            let grants = Arc::clone(&grants);
+            Arc::new(move |_, _, token| {
+                Ok(grants
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .via_of(token))
+            })
+        },
+        // The component admits each operation itself, through the gate.
+        admit: None,
+    };
+    let router = Router::new(spec, client, cx, wasi, grants, raw, handles)?;
+    router
+        .add_chain(String::new(), &component)
+        .await
+        .context("instantiate the default chain")?;
+    let mut handlers = JoinSet::new();
+    router.declare(&component.component_type());
+    register_exports(
+        srv,
+        &router,
+        &component.component_type(),
+        None,
+        &mut handlers,
+    )
+    .await?;
+    Ok(handlers)
+}
+
+/// The filesystem passthrough alone on a server, with the resource-drop
+/// meta-op beside it (see [`serve_capability`] and [`serve_resource_drop`]).
 pub async fn serve_filesystem<C, S>(
     srv: &S,
     component_bytes: &[u8],
@@ -1138,43 +1229,21 @@ where
     S: Serve,
     S::Context: AsOrigin,
 {
-    let engine = engine()?;
-    let component = Component::new(&engine, component_bytes)
-        .map_err(anyhow::Error::from)
-        .context("compile component")?;
-    let spec = RouterSpec {
-        linker: fs_linker::<C>(&engine)?,
-        source: chains,
-        // Only the mount carries a token; the passthrough's own gate validates
-        // it, so resolving is just reading the grant's chain.
-        token_calls: Arc::new(|iface, name| iface == MOUNT_INSTANCE && name == "open-root"),
-        resolve_token: {
-            let grants = Arc::clone(&grants);
-            Arc::new(move |_, _, token| {
-                Ok(grants
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .via_of(token))
-            })
-        },
-        // The passthrough gates each descriptor operation itself.
-        admit: None,
-    };
-    let router = Router::new(spec, client, cx, wasi, grants, None)?;
-    router
-        .add_chain(String::new(), &component)
-        .await
-        .context("instantiate the default filesystem chain")?;
-    let mut handlers = JoinSet::new();
-    register_exports(
+    let raw = Arc::new(crate::raw::Raw::new(Arc::clone(&grants)));
+    let handles = Handles::new();
+    let mut handlers = serve_capability(
         srv,
-        &router,
-        &component.component_type(),
-        None,
-        &mut handlers,
+        component_bytes,
+        client,
+        cx,
+        wasi,
+        grants,
+        chains,
+        raw,
+        Arc::clone(&handles),
     )
     .await?;
-    serve_resource_drop(srv, router, &mut handlers).await?;
+    serve_resource_drop(srv, handles, &mut handlers).await?;
     Ok(handlers)
 }
 
@@ -1190,23 +1259,20 @@ pub fn component_router<C>(
     cx: C::Context,
     wasi: WasiRecipe,
     grants: Arc<std::sync::Mutex<GrantStore>>,
-    natives: Option<crate::chain::Natives>,
+    raw: Arc<crate::raw::Raw>,
+    handles: Arc<Handles>,
 ) -> anyhow::Result<Arc<Router<C>>>
 where
     C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
     let engine = engine()?;
-    let mut linker = Linker::<FsState<C>>::new(&engine);
-    wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-        .map_err(anyhow::Error::from)
-        .context("link WASI")?;
     // A component may build on the daemon's own capabilities: its imports of
-    // them are satisfied natively, each call running under the grant its
-    // token resolves to (the component grant's delegated grant of that kind).
-    if natives.is_some() {
-        crate::chain::link_imports(&mut linker)?;
-    }
+    // them are satisfied by composing the shipped components in (see
+    // `ComponentStore::provide_imports`), whose own imports are the raw host
+    // layer linked here, each call running under the grant its token resolves
+    // to (the component grant's delegated grant of that kind).
+    let linker = capability_linker::<C>(&engine)?;
     let provides = interface.to_string();
     let source: ChainSource = {
         let provides = provides.clone();
@@ -1228,6 +1294,7 @@ where
                     } else {
                         crate::components::compose(&parts)?
                     };
+                    let bytes = components.provide_imports(bytes)?;
                     let info = crate::components::validate(&bytes)?;
                     anyhow::ensure!(
                         info.exports.contains(&provides),
@@ -1244,7 +1311,7 @@ where
     let spec = RouterSpec {
         linker,
         source: Some(source),
-        token_calls: Arc::new(|_, _| true),
+        token_calls: Arc::new(grant_first),
         resolve_token: {
             let grants = Arc::clone(&grants);
             let provides = provides.clone();
@@ -1297,7 +1364,7 @@ where
             })
         }),
     };
-    Router::new(spec, client, cx, wasi, grants, natives)
+    Router::new(spec, client, cx, wasi, grants, raw, handles)
 }
 
 /// Serve `interface` on `srv` through `router`: the functions the component
@@ -1429,7 +1496,9 @@ where
     C: Invoke + Clone + 'static,
     C::Context: Clone,
 {
-    let (chain, grant) = router.route(iface, name, params_ty, &mut rx).await?;
+    let (chain, grant) = router
+        .route(iface, name, param_names, params_ty, &mut rx)
+        .await?;
     let func = chain.func(iface, name)?;
     let job = CallJob {
         router: Arc::clone(router),
@@ -1454,37 +1523,34 @@ where
         .map_err(|_| anyhow::anyhow!("the chain's store is gone"))
 }
 
-/// The wRPC instance the resource-drop meta-op is served on. It is **not** a component
-/// export — the host handles it directly, the component never sees it — so it gets its
-/// own `icanhaz:fspass/resources` namespace next to the served filesystem.
-const RESOURCES_INSTANCE: &str = "icanhaz:fspass/resources@0.1.0";
+/// The wRPC instance the resource-drop meta-op is served on
+/// (`icanhaz:nocap/resources`, see `nocap.wit`). It is **not** a component
+/// export: the daemon handles it directly, no component sees it.
+pub const RESOURCES_INSTANCE: &str = "icanhaz:nocap/resources@0.1.0";
 
-/// Serve `drop(handle: list<u8>)` on [`RESOURCES_INSTANCE`], draining it on a task
-/// spawned into `handlers`. Each call evicts the guest-exported resource the opaque
-/// `handle` names from its chain's [`SharedResourceTable`] and runs its destructor —
-/// closing the underlying fd (or releasing the directory-entry stream). Only the
-/// connection that minted the handle can drop it.
+/// Serve `drop(handle: list<u8>) -> bool` on [`RESOURCES_INSTANCE`], once per
+/// server, draining it on a task spawned into `handlers`. Each call releases
+/// the served handle through the daemon's [`Handles`] registry: evicted from
+/// its chain's [`SharedResourceTable`], its destructor run (closing the fd,
+/// ending the session). Only the connection that minted a handle can drop it.
 ///
-/// This is the descriptor-drop wRPC can't relay on its own: `own<T>`/`borrow<T>` carry
-/// no lifetime over the wire, and the client's Component-Model handle-drop never reaches
-/// the host — so without this a client that keeps opening descriptors leaks them for the
-/// whole connection (the capacity cap is only a backstop). Framing the handle as a plain
-/// `list<u8>` (not `own<descriptor>`) keeps it a single uniform op over *any* shared
-/// handle and sidesteps the resource codec entirely.
-pub async fn serve_resource_drop<C, S>(
+/// This is the drop wRPC cannot relay on its own: `own<T>` and `borrow<T>`
+/// carry no lifetime over the wire, and a client's handle-drop never reaches
+/// the host, so without it a client that keeps acquiring objects holds them
+/// for the whole connection (the capacity cap is only a backstop). Framing the
+/// handle as a plain `list<u8>` keeps it one uniform op over any served handle.
+pub async fn serve_resource_drop<S>(
     srv: &S,
-    router: Arc<Router<C>>,
+    handles: Arc<Handles>,
     handlers: &mut JoinSet<()>,
 ) -> anyhow::Result<()>
 where
-    C: Invoke + Clone + 'static,
-    C::Context: Clone,
     S: Serve,
     S::Context: AsOrigin,
 {
-    // A flat `(list<u8>) -> bool` carries no async (stream) params, so no subscription
-    // paths. It returns whether a live handle was released, so a caller/test gets a
-    // definite acknowledgement (reading a released handle back gives no clean signal).
+    // A flat `(list<u8>) -> bool` carries no async (stream) params, so no
+    // subscription paths. It returns whether a live handle was released, so a
+    // caller gets a definite acknowledgement.
     let paths: Arc<[Box<[Option<usize>]>]> = Arc::from(Vec::new());
     let invocations = srv
         .serve_values::<(Bytes,), (bool,)>(RESOURCES_INSTANCE, "drop", paths)
@@ -1500,7 +1566,7 @@ where
                     continue;
                 }
             };
-            let removed = match drop_shared_handle(&router, &handle, cx.connection()).await {
+            let removed = match handles.release(&handle, cx.connection()).await {
                 Ok(removed) => removed,
                 Err(err) => {
                     #[cfg(test)]
@@ -1516,62 +1582,6 @@ where
         }
     });
     Ok(())
-}
-
-/// Evict the shared resource the 16-byte UUID `handle` names, in the scope of
-/// connection `conn`, and run its guest destructor, as a task in the owning
-/// chain's store. Returns whether a live handle was actually removed — a handle
-/// that isn't a valid UUID errors; one already gone (double-drop, never ours, or
-/// minted on another connection) returns `Ok(false)`, so dropping is idempotent.
-async fn drop_shared_handle<C>(
-    router: &Router<C>,
-    handle: &[u8],
-    conn: Option<u64>,
-) -> anyhow::Result<bool>
-where
-    C: Invoke + Clone + 'static,
-    C::Context: Clone,
-{
-    // Handles are minted little-endian on the wire (`codec.rs` `id.to_bytes_le()` /
-    // `Uuid::from_bytes_le`), so reconstruct the same way — a big-endian `from_slice`
-    // would yield a different UUID that never matches the table key (a silent no-op).
-    let bytes: [u8; 16] = handle
-        .try_into()
-        .context("resource handle is not 16 bytes")?;
-    let id = Uuid::from_bytes_le(bytes);
-    let chain_id = router
-        .handles
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&id)
-        .map(|entry| entry.chain);
-    let Some(chain) = chain_id.and_then(|i| router.chain_by_id(i)) else {
-        tracing::debug!(%id, "resource-drop: handle already released");
-        return Ok(false);
-    };
-    let (reply, outcome) = tokio::sync::oneshot::channel();
-    chain
-        .jobs
-        .send(Job::Drop(DropJob {
-            id,
-            scope: conn,
-            reply,
-        }))
-        .map_err(|_| anyhow::anyhow!("the chain's store is gone"))?;
-    let removed = outcome
-        .await
-        .map_err(|_| anyhow::anyhow!("the drop task did not report"))??;
-    if removed {
-        router
-            .handles
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&id);
-        tracing::debug!(%id, "dropped shared resource");
-    } else {
-        tracing::debug!(%id, "resource-drop: handle not released (not this connection's)");
-    }
-    Ok(removed)
 }
 
 #[cfg(test)]
@@ -1641,14 +1651,14 @@ mod tests {
         accept.abort();
     }
 
-    // A wRPC client for the served wasi:filesystem (the mirror `fs-client` world).
+    // A wRPC client for the served filesystem (the mirror `filesystem-client` world).
     mod fs_client {
         wit_bindgen_wrpc::generate!({
-            world: "fs-client",
-            path: "../policies/fs-passthrough/wit",
+            world: "filesystem-client",
+            path: "../wit",
             with: {
                 "wasi:filesystem/types@0.2.12": generate,
-                "icanhaz:fspass/mount@0.1.0": generate,
+                "icanhaz:nocap/filesystem@0.1.0": generate,
                 "wasi:io/error@0.2.12": generate,
                 "wasi:io/streams@0.2.12": generate,
                 "wasi:io/poll@0.2.12": generate,
@@ -1670,8 +1680,9 @@ mod tests {
     }
 
     fn fs_passthrough_wasm() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "../capabilities/filesystem/target/wasm32-wasip2/release/filesystem_capability.wasm",
+        )
     }
 
     /// Two grants on one connection, one provided through the `fs_wrap`
@@ -1683,13 +1694,14 @@ mod tests {
     #[tokio::test]
     async fn grants_on_one_connection_mount_on_their_own_chains() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
         };
         use wasmtime_wasi::FsPerms;
 
-        let passthrough = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let passthrough =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let wrapper = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/fixtures/fs_wrap.wasm"
@@ -1803,7 +1815,7 @@ mod tests {
         };
 
         // The wrapped grant mounts on the chain: its rule applies.
-        let wrapped_root = mount::open_root(&wrpc, (), &wrapped)
+        let wrapped_root = filesystem::open(&wrpc, (), &wrapped)
             .await
             .unwrap()
             .expect("mount through the chain");
@@ -1822,7 +1834,7 @@ mod tests {
 
         // The plain grant, on the same connection, mounts on the passthrough:
         // no rule, and its descriptors route to its own instance.
-        let plain_root = mount::open_root(&wrpc, (), &plain)
+        let plain_root = filesystem::open(&wrpc, (), &plain)
             .await
             .unwrap()
             .expect("mount on the passthrough");
@@ -1841,7 +1853,7 @@ mod tests {
             Err(ErrorCode::Access)
         ));
         // A second grant naming the same chain shares the instance: composed once.
-        let again = mount::open_root(&wrpc, (), &wrapped_again)
+        let again = filesystem::open(&wrpc, (), &wrapped_again)
             .await
             .unwrap()
             .expect("mount on the existing chain");
@@ -1860,11 +1872,12 @@ mod tests {
     #[tokio::test]
     async fn a_chain_is_dropped_with_its_last_grant() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::Descriptor;
         use wasmtime_wasi::FsPerms;
 
-        let passthrough = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let passthrough =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let wrapper = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/fixtures/fs_wrap.wasm"
@@ -1936,8 +1949,8 @@ mod tests {
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
         let count = || composed.load(std::sync::atomic::Ordering::SeqCst);
 
-        let root_a = mount::open_root(&wrpc, (), &a).await.unwrap().unwrap();
-        let root_b = mount::open_root(&wrpc, (), &b).await.unwrap().unwrap();
+        let root_a = filesystem::open(&wrpc, (), &a).await.unwrap().unwrap();
+        let root_b = filesystem::open(&wrpc, (), &b).await.unwrap().unwrap();
         assert_eq!(count(), 1, "both grants share one instance");
 
         // One grant gone: the other keeps the chain, and its handle still works.
@@ -1947,7 +1960,7 @@ mod tests {
             .await
             .is_ok());
         let c = issue(&mut grants.lock().unwrap());
-        let _root_c = mount::open_root(&wrpc, (), &c).await.unwrap().unwrap();
+        let _root_c = filesystem::open(&wrpc, (), &c).await.unwrap().unwrap();
         assert_eq!(count(), 1, "a live grant kept the chain");
 
         // The last grants gone: the chain is dropped, its handles unknown.
@@ -1964,7 +1977,7 @@ mod tests {
 
         // A new grant naming the chain builds it again.
         let d = issue(&mut grants.lock().unwrap());
-        let root_d = mount::open_root(&wrpc, (), &d).await.unwrap().unwrap();
+        let root_d = filesystem::open(&wrpc, (), &d).await.unwrap().unwrap();
         assert_eq!(count(), 2, "the chain was rebuilt");
         assert!(Descriptor::read_directory(&wrpc, (), &root_d.as_borrow())
             .await
@@ -2083,7 +2096,8 @@ mod tests {
             (),
             wasi,
             grants.clone(),
-            None,
+            Arc::new(crate::raw::Raw::new(grants.clone())),
+            Handles::new(),
         )
         .unwrap();
         let ty = Component::new(router.engine(), &greeter)
@@ -2153,7 +2167,6 @@ mod tests {
     #[tokio::test]
     async fn a_component_builds_on_a_native_capability_through_delegated_grants() {
         use crate::broker::{CapabilityKind, ComponentRequest, InferenceRequest};
-        use crate::chain::Natives;
         use crate::store::Store as Db;
         use wrpc_transport::InvokeExt as _;
 
@@ -2179,8 +2192,9 @@ mod tests {
         );
 
         // The real inference provider over the echo backend: what the oracle's
-        // import runs against, each call resolving the token it is handed to
-        // the delegated inference grant.
+        // import runs against, through the shipped inference component composed
+        // in front of it, each call resolving the token it is handed to the
+        // delegated inference grant.
         let grants = GrantStore::shared();
         let providers = Arc::new(crate::providers::Providers::new(
             vec![crate::providers::ProviderConfig {
@@ -2195,17 +2209,26 @@ mod tests {
         let inference_provider =
             crate::inference::InferenceProvider::new(grants.clone(), providers);
         let (complete, models) = inference_provider.native_for_grants();
-        let natives = {
-            let refuse = "not in this test";
-            Natives {
-                spawn: Arc::new(move |_, _, _| Err(refuse.to_string())),
-                complete,
-                models,
-                terminal: Arc::new(move |_, _, _, _, _| Err(refuse.to_string())),
-                watch: Arc::new(move |_, _, _| Err(refuse.to_string())),
-                root: Arc::new(move |_| Err(refuse.to_string())),
-            }
-        };
+        let raw = Arc::new(crate::raw::Raw {
+            grants: grants.clone(),
+            spawn: None,
+            terminal: None,
+            watch: None,
+            root: None,
+            complete: Some(complete),
+            models: Some(models),
+        });
+        // The shipped inference component provides the interface the oracle imports.
+        let shipped = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../capabilities/inference/target/wasm32-wasip2/release/inference_capability.wasm"
+        ))
+        .expect("build capabilities/inference first");
+        let shipped_info = components
+            .add(&shipped, None)
+            .await
+            .expect("shipped inference");
+        components.register_shipped(&shipped_info);
 
         let (lent, inference) = {
             let mut g = grants.lock().unwrap();
@@ -2271,7 +2294,8 @@ mod tests {
             (),
             wasi,
             grants.clone(),
-            Some(natives),
+            raw,
+            Handles::new(),
         )
         .unwrap();
         let ty = Component::new(router.engine(), &oracle)
@@ -2314,10 +2338,7 @@ mod tests {
         );
         // Nothing lent: the import refuses, and the oracle reports it.
         let refused = ask(bare, "why?").await.expect("served");
-        assert_eq!(
-            refused.unwrap_err(),
-            "inference denied: no inference grant for this call"
-        );
+        assert_eq!(refused.unwrap_err(), "inference denied: not authorized");
         // Revoking the lent grant takes the ability with it.
         assert!(grants.lock().unwrap().revoke(&inference));
         let gone = ask(lent, "still?").await.expect("served");
@@ -2393,7 +2414,8 @@ mod tests {
             (),
             wasi,
             grants.clone(),
-            None,
+            Arc::new(crate::raw::Raw::new(grants.clone())),
+            Handles::new(),
         )
         .unwrap();
         let ty = Component::new(router.engine(), &pipe)
@@ -2434,12 +2456,13 @@ mod tests {
     async fn handles_are_bound_to_the_connection_that_minted_them() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
         use crate::ReqCtx;
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::Descriptor;
         use wasmtime_wasi::FsPerms;
         use wrpc_transport::InvokeExt as _;
 
-        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wasm =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"mine\n").unwrap();
         let wasi = jail(dir.path(), FsPerms::ReadWrite);
@@ -2496,7 +2519,7 @@ mod tests {
         let first = wrpc_transport::tcp::Client::from(&addrs[0]);
         let second = wrpc_transport::tcp::Client::from(&addrs[1]);
 
-        let root = mount::open_root(&first, (), &grant)
+        let root = filesystem::open(&first, (), &grant)
             .await
             .unwrap()
             .expect("mount on the first connection");
@@ -2549,13 +2572,14 @@ mod tests {
     #[tokio::test]
     async fn a_filesystem_chain_interposes_on_every_operation() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
         };
         use wasmtime_wasi::FsPerms;
 
-        let passthrough = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let passthrough =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let wrapper = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/fixtures/fs_wrap.wasm"
@@ -2607,8 +2631,8 @@ mod tests {
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
         // The passthrough behind the wrapper still gates: a bogus token is refused.
-        assert!(mount::open_root(&wrpc, (), "bogus").await.unwrap().is_err());
-        let root = mount::open_root(&wrpc, (), &grant)
+        assert!(filesystem::open(&wrpc, (), "bogus").await.unwrap().is_err());
+        let root = filesystem::open(&wrpc, (), &grant)
             .await
             .unwrap()
             .expect("mount through the chain");
@@ -2654,15 +2678,15 @@ mod tests {
     #[tokio::test]
     async fn serves_grant_gated_wasi_filesystem_over_wrpc() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
         use wasmtime_wasi::FsPerms;
 
         let wasm = std::fs::read(fs_passthrough_wasm()).expect(
-            "build fs-passthrough first: cargo build --target wasm32-wasip2 \
-             --manifest-path src/apps/icanhaz/policies/fs-passthrough/Cargo.toml",
+            "build the filesystem capability first: cargo build --release --target wasm32-wasip2 \
+             --manifest-path src/apps/icanhaz/capabilities/filesystem/Cargo.toml",
         );
 
         // A temp dir with one file is the (preopen-jailed) raw authority.
@@ -2713,14 +2737,14 @@ mod tests {
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
         // The gate: a bogus token yields no descriptor.
-        let denied = mount::open_root(&wrpc, (), "bogus-token").await.unwrap();
+        let denied = filesystem::open(&wrpc, (), "bogus-token").await.unwrap();
         assert!(
             denied.is_err(),
             "ungated mount must be refused, got {denied:?}"
         );
 
         // A valid grant exchanges for the root descriptor; then it's native wasi:filesystem.
-        let root = mount::open_root(&wrpc, (), &grant)
+        let root = filesystem::open(&wrpc, (), &grant)
             .await
             .unwrap()
             .expect("mount with a valid grant");
@@ -2752,13 +2776,14 @@ mod tests {
     #[tokio::test]
     async fn mount_scopes_the_descriptor_to_the_grant_subtree() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
         use wasmtime_wasi::FsPerms;
 
-        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wasm =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("notes")).unwrap();
         std::fs::write(dir.path().join("notes/ok.txt"), b"inside the grant\n").unwrap();
@@ -2806,7 +2831,7 @@ mod tests {
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
         // mount → a descriptor confined to the /notes/ subtree.
-        let root = mount::open_root(&wrpc, (), &grant)
+        let root = filesystem::open(&wrpc, (), &grant)
             .await
             .unwrap()
             .expect("mount with the scoped grant");
@@ -2855,13 +2880,14 @@ mod tests {
     #[tokio::test]
     async fn revoking_a_grant_denies_further_filesystem_ops() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
         use wasmtime_wasi::FsPerms;
 
-        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wasm =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"live\n").unwrap();
         let wasi = jail(dir.path(), FsPerms::ReadWrite);
@@ -2906,7 +2932,7 @@ mod tests {
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
         // Mount, and confirm the held descriptor works while the grant is live.
-        let root = mount::open_root(&wrpc, (), &grant)
+        let root = filesystem::open(&wrpc, (), &grant)
             .await
             .unwrap()
             .expect("mount with a valid grant");
@@ -2950,7 +2976,7 @@ mod tests {
         );
         // And a fresh mount is refused too.
         assert!(
-            mount::open_root(&wrpc, (), &grant).await.unwrap().is_err(),
+            filesystem::open(&wrpc, (), &grant).await.unwrap().is_err(),
             "a revoked grant can't re-mount"
         );
 
@@ -2970,13 +2996,14 @@ mod tests {
     #[tokio::test]
     async fn scoped_grant_confines_descriptor_ops_by_path() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
         };
         use wasmtime_wasi::FsPerms;
 
-        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wasm =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("ok.txt"), b"in scope\n").unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"out of scope\n").unwrap();
@@ -3028,7 +3055,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let root = mount::open_root(&wrpc, (), &grant)
+        let root = filesystem::open(&wrpc, (), &grant)
             .await
             .unwrap()
             .expect("mount with a valid grant");
@@ -3072,14 +3099,15 @@ mod tests {
     #[tokio::test]
     async fn dropping_a_descriptor_releases_the_handle() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
-        use fs_client::icanhaz::fspass::mount;
+        use fs_client::icanhaz::nocap::filesystem;
         use fs_client::wasi::filesystem::types::{
             Descriptor, DescriptorFlags, OpenFlags, PathFlags,
         };
         use wasmtime_wasi::FsPerms;
         use wrpc_transport::InvokeExt as _;
 
-        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wasm =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"drop me\n").unwrap();
         let wasi = jail(dir.path(), FsPerms::ReadWrite);
@@ -3123,7 +3151,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         let wrpc = wrpc_transport::tcp::Client::from(&addr);
 
-        let root = mount::open_root(&wrpc, (), &grant)
+        let root = filesystem::open(&wrpc, (), &grant)
             .await
             .unwrap()
             .expect("mount with a valid grant");

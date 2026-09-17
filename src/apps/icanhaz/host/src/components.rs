@@ -6,6 +6,7 @@
 //! Bytes live on disk beside the daemon's database (`components/<hash>.wasm`);
 //! their metadata in the generic state table under the `components` owner.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use wit_bindgen_wrpc::bytes::Bytes;
 
+use crate::broker::GrantKind as _;
 use crate::store::Store;
 use crate::AsOrigin;
 
@@ -38,7 +40,6 @@ pub const CAPABILITY_PACKAGES: &[&str] = &[
     "wasi:random",
     "wasi:cli",
     "icanhaz:nocap",
-    "icanhaz:fspass",
     "ezco:ezcap",
 ];
 
@@ -208,34 +209,29 @@ pub fn compose(parts: &[Vec<u8>]) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// The composition a filesystem grant's chain names: `via` (outermost first)
-/// fetched from `components`, composed in front of `passthrough`, and checked
-/// to still serve the filesystem: it must export both `wasi:filesystem/types`
-/// and `icanhaz:fspass/mount`, so a wrapper has to import and export both,
-/// wrapping the inner mount's descriptor in its own.
-pub fn filesystem_chain(
-    components: &ComponentStore,
-    passthrough: &[u8],
-    via: &[String],
-) -> anyhow::Result<Vec<u8>> {
-    let mut parts = vec![passthrough.to_vec()];
-    for hash in via.iter().rev() {
-        parts.push(
-            components
-                .get(hash)
-                .with_context(|| format!("filesystem chain component {hash}"))?,
-        );
+/// The composition a grant's chain names: `via` (outermost first), composed
+/// in front of the shipped component providing the interface the outermost
+/// wrapper exports, with any native capability imports satisfied the same
+/// way (see [`ComponentStore::provide_imports`]).
+impl ComponentStore {
+    pub fn capability_chain(&self, via: &[String]) -> anyhow::Result<Vec<u8>> {
+        let mut parts = Vec::new();
+        for hash in via.iter().rev() {
+            parts.push(
+                self.get(hash)
+                    .with_context(|| format!("chain component {hash}"))?,
+            );
+        }
+        let bytes = if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            compose(&parts)?
+        };
+        let bytes = self.provide_imports(bytes)?;
+        let info = validate(&bytes)?;
+        tracing::info!(hash = %info.hash, ?via, "capability chain composed");
+        Ok(bytes)
     }
-    let bytes = compose(&parts)?;
-    let info = validate(&bytes)?;
-    let exports = |prefix: &str| info.exports.iter().any(|e| e.starts_with(prefix));
-    anyhow::ensure!(
-        exports("wasi:filesystem/types@") && exports("icanhaz:fspass/mount@"),
-        "the composed filesystem chain must export wasi:filesystem/types and icanhaz:fspass/mount; it exports {:?}",
-        info.exports
-    );
-    tracing::info!(hash = %info.hash, ?via, "filesystem chain composed");
-    Ok(bytes)
 }
 
 const OWNER: &str = "components";
@@ -244,11 +240,68 @@ const OWNER: &str = "components";
 pub struct ComponentStore {
     dir: PathBuf,
     store: Option<Store>,
+    /// The shipped component providing each native capability interface
+    /// (by qualified interface name → hash): what satisfies a component's
+    /// import of one.
+    shipped: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl ComponentStore {
     pub fn new(dir: PathBuf, store: Option<Store>) -> Self {
-        Self { dir, store }
+        Self {
+            dir,
+            store,
+            shipped: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Note that the component `hash` is the daemon's provider of every
+    /// capability interface it exports.
+    pub fn register_shipped(&self, info: &ComponentInfo) {
+        let mut shipped = self.shipped.lock().unwrap_or_else(|e| e.into_inner());
+        for e in &info.exports {
+            if is_native_interface(e) {
+                shipped.insert(e.clone(), info.hash.clone());
+            }
+        }
+    }
+
+    /// The shipped component providing `interface`, if any.
+    pub fn shipped(&self, interface: &str) -> Option<String> {
+        self.shipped
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(interface)
+            .cloned()
+    }
+
+    /// Satisfy a component's imports of native capability interfaces by
+    /// composing the shipped components providing them in front of it, so
+    /// what remains imported is only the raw host layer and WASI. A component
+    /// that builds on inference imports `icanhaz:nocap/inference`; the
+    /// shipped inference component exports it and imports the raw layer.
+    pub fn provide_imports(&self, bytes: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+        let info = validate(&bytes)?;
+        let mut providers = Vec::new();
+        for import in &info.imports {
+            if let Some(hash) = self.shipped(import) {
+                if !providers.contains(&hash) {
+                    providers.push(hash);
+                }
+            }
+        }
+        if providers.is_empty() {
+            return Ok(bytes);
+        }
+        let mut parts = Vec::new();
+        for hash in providers {
+            parts.push(
+                self.get(&hash)
+                    .with_context(|| format!("shipped provider {hash}"))?,
+            );
+        }
+        parts.push(bytes);
+        compose(&parts)
     }
 
     pub fn path(&self, hash: &str) -> PathBuf {
@@ -436,6 +489,51 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::com
     }
 }
 
+
+/// The gate interface a component imports to consume a grant of `kind`
+/// (`icanhaz:nocap/gate-<kind>@…`): how a component names the kind it serves.
+fn gate_for(kind: &str) -> String {
+    format!("icanhaz:nocap/gate-{kind}@")
+}
+
+impl ComponentStore {
+    /// The interfaces a grant of `kind` is used through: whatever the
+    /// registered components consuming that kind's gate export, wrappers
+    /// included (a wrapper exports the interface it wraps). Derived from the
+    /// store, so a capability's identity lives in its component, not here.
+    pub async fn interfaces_of(&self, kind: &str) -> Vec<String> {
+        let gate = gate_for(kind);
+        let mut out = Vec::new();
+        for info in self.list().await {
+            if info.imports.iter().any(|i| i.starts_with(&gate)) {
+                for e in &info.exports {
+                    if !out.contains(e) {
+                        out.push(e.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether `component` can provide a grant of `kind`: for a native kind,
+    /// it exports an interface the kind is used through; for a component
+    /// kind, it exports the interface itself.
+    pub async fn offers(
+        &self,
+        kind: &crate::broker::CapabilityKind,
+        component: &ComponentInfo,
+    ) -> bool {
+        match kind {
+            crate::broker::CapabilityKind::Component(c) => component.exports.contains(&c.provides),
+            other => {
+                let used_through = self.interfaces_of(other.tag()).await;
+                component.exports.iter().any(|e| used_through.contains(e))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,7 +541,7 @@ mod tests {
     fn passthrough() -> Option<Vec<u8>> {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm"
+            "/../capabilities/filesystem/target/wasm32-wasip2/release/filesystem_capability.wasm"
         );
         std::fs::read(path).ok()
     }
@@ -453,11 +551,11 @@ mod tests {
         let ok = check_interfaces(
             &[
                 "wasi:filesystem/types@0.2.12".into(),
-                "icanhaz:fspass/gate@0.1.0".into(),
+                "icanhaz:nocap/gate-filesystem@0.1.0".into(),
             ],
             &[
                 "wasi:filesystem/types@0.2.12".into(),
-                "icanhaz:fspass/mount@0.1.0".into(),
+                "icanhaz:nocap/filesystem@0.1.0".into(),
             ],
         );
         assert!(ok.is_ok());
@@ -485,7 +583,7 @@ mod tests {
     #[test]
     fn a_filesystem_wrapper_composes_in_front_of_the_passthrough() {
         let Some(bytes) = passthrough() else {
-            eprintln!("fs_passthrough.wasm not built; skipping");
+            eprintln!("filesystem_capability.wasm not built; skipping");
             return;
         };
         let wrapper = std::fs::read(concat!(
@@ -508,14 +606,14 @@ mod tests {
         assert!(
             info.exports
                 .iter()
-                .any(|e| e.starts_with("icanhaz:fspass/mount@")),
+                .any(|e| e.starts_with("icanhaz:nocap/filesystem@")),
             "{:?}",
             info.exports
         );
         assert!(
             info.imports
                 .iter()
-                .any(|i| i.starts_with("icanhaz:fspass/gate@")),
+                .any(|i| i.starts_with("icanhaz:nocap/gate-filesystem@")),
             "{:?}",
             info.imports
         );
@@ -530,7 +628,7 @@ mod tests {
             !info
                 .imports
                 .iter()
-                .any(|i| i.starts_with("icanhaz:fspass/mount@")),
+                .any(|i| i.starts_with("icanhaz:nocap/filesystem@")),
             "the inner mount is wired, not imported: {:?}",
             info.imports
         );
@@ -544,7 +642,7 @@ mod tests {
     #[tokio::test]
     async fn the_shipped_passthrough_validates_and_round_trips_through_the_store() {
         let Some(bytes) = passthrough() else {
-            eprintln!("fs_passthrough.wasm not built; skipping");
+            eprintln!("filesystem_capability.wasm not built; skipping");
             return;
         };
         let info = validate(&bytes).expect("a capability component");
@@ -552,14 +650,14 @@ mod tests {
         assert!(
             info.imports
                 .iter()
-                .any(|i| i.starts_with("icanhaz:fspass/gate")),
+                .any(|i| i.starts_with("icanhaz:nocap/gate-filesystem")),
             "{:?}",
             info.imports
         );
         assert!(
             info.exports
                 .iter()
-                .any(|e| e.starts_with("icanhaz:fspass/mount")),
+                .any(|e| e.starts_with("icanhaz:nocap/filesystem")),
             "{:?}",
             info.exports
         );

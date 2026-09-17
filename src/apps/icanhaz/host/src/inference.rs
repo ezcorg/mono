@@ -18,19 +18,17 @@ use futures::StreamExt as _;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use wit_bindgen_wrpc::bytes::Bytes;
 
-use crate::broker::{caller_of, denied_text, AdmitCall, GrantStore};
+use crate::broker::{denied_text, AdmitCall, GrantStore};
 use crate::providers::{Frame, Providers, Request};
 use crate::store::today;
-use crate::AsOrigin;
 
 pub(crate) mod bindings {
     wit_bindgen_wrpc::generate!({
-        world: "inference-wrpc",
+        world: "inference-client",
         path: "../wit",
     });
 }
 
-use bindings::exports::icanhaz::nocap::inference::{CompletionRequest, ModelInfo};
 /// The generated wRPC **client** stub for the inference capability.
 pub use bindings::icanhaz::nocap::inference as client;
 
@@ -40,8 +38,6 @@ pub struct InferenceProvider {
     providers: Arc<Providers>,
     /// Other brokers, for grants that proxy a remote one.
     remotes: Option<crate::remote::Remotes>,
-    /// Runs the wrappers a grant is provided through (see [`crate::chain`]).
-    chain: Option<Arc<crate::chain::Chain>>,
 }
 
 impl InferenceProvider {
@@ -50,62 +46,12 @@ impl InferenceProvider {
             store,
             providers,
             remotes: None,
-            chain: None,
         }
     }
 
     pub fn with_remotes(mut self, remotes: crate::remote::Remotes) -> Self {
         self.remotes = Some(remotes);
         self
-    }
-
-    pub fn with_chain(mut self, chain: Arc<crate::chain::Chain>) -> Self {
-        self.chain = Some(chain);
-        self
-    }
-
-    /// The native completion and model listing for any live `inference`
-    /// grant (or a component grant delegated one).
-    pub fn native_for_grants(&self) -> (crate::chain::NativeComplete, crate::chain::NativeModels) {
-        let me = self.clone();
-        let complete: crate::chain::NativeComplete = Arc::new(move |token, request| {
-            let (token, allowed) = {
-                let g = me.store.lock().unwrap();
-                let token = g.delegated_for(&token, "inference").ok_or_else(|| {
-                    "inference denied: no inference grant for this call".to_string()
-                })?;
-                let allowed = g
-                    .validate_inference(&token)
-                    .map_err(|d| format!("inference denied: {d:?}"))?;
-                (token, allowed)
-            };
-            let admit = AdmitCall::new("complete")
-                .arg("request.model", request.model.clone())
-                .arg("request.max_tokens", i64::from(request.max_tokens));
-            me.store
-                .lock()
-                .unwrap()
-                .admit(&token, admit)
-                .map_err(|d| format!("inference denied: {}", denied_text(&d)))?;
-            let (complete, _) = me.chain_natives(&token, &allowed.models);
-            complete(token, request)
-        });
-        let me = self.clone();
-        let models: crate::chain::NativeModels = Arc::new(move |token| {
-            let (token, allowed) = {
-                let g = me.store.lock().unwrap();
-                let token = g.delegated_for(&token, "inference").ok_or_else(|| {
-                    "inference denied: no inference grant for this call".to_string()
-                })?;
-                let allowed = g
-                    .validate_inference(&token)
-                    .map_err(|d| format!("inference denied: {d:?}"))?;
-                (token, allowed)
-            };
-            let (_, models) = me.chain_natives(&token, &allowed.models);
-            models(token)
-        });
-        (complete, models)
     }
 
     /// Stream a completion from `provider`, charging the usage frame to the
@@ -149,41 +95,92 @@ impl InferenceProvider {
         crate::session::grant_scoped(Box::pin(UnboundedReceiverStream::new(rx)), revocation, ())
     }
 
-    /// The native calls a chain's wrapper imports: completion (re-checking
-    /// the grant's model list, since a wrapper may rewrite the model) and
-    /// the model listing.
-    fn chain_natives(
-        &self,
-        _grant: &str,
-        allowed: &[String],
-    ) -> (crate::chain::NativeComplete, crate::chain::NativeModels) {
+    /// The raw completion and model listing (`icanhaz:nocap/providers`): for
+    /// any live `inference` grant, or a component grant one was lent to. The
+    /// token is resolved, the grant's model list and clauses applied
+    /// (`call.args.request.model`, `call.args.request.max_tokens`, today's
+    /// spend), and a grant held at another broker forwarded there.
+    pub fn native_for_grants(&self) -> (crate::raw::NativeComplete, crate::raw::NativeModels) {
         let me = self.clone();
-        let allowed_c = allowed.to_vec();
-        let complete: crate::chain::NativeComplete = Arc::new(move |grant, request| {
-            if !allowed_c.is_empty() && !allowed_c.contains(&request.model) {
-                return Err(format!(
-                    "inference denied: this grant covers {}, not `{}`",
-                    allowed_c.join(", "),
-                    request.model
-                ));
-            }
-            let Some(provider) = me.providers.resolve(&request.model) else {
-                return Err(format!(
-                    "inference: no configured provider serves `{}`",
-                    request.model
-                ));
-            };
-            Ok(me.native_complete(&grant, &provider, from_chain_request(request)))
+        let complete: crate::raw::NativeComplete = Arc::new(move |token, request| {
+            let me = me.clone();
+            Box::pin(async move {
+                let (token, allowed) = {
+                    let g = me.store.lock().unwrap();
+                    let token = g.delegated_for(&token, "inference").ok_or_else(|| {
+                        "inference denied: no inference grant for this call".to_string()
+                    })?;
+                    let allowed = g
+                        .validate_inference(&token)
+                        .map_err(|d| format!("inference denied: {d:?}"))?;
+                    (token, allowed)
+                };
+                if !allowed.models.is_empty() && !allowed.models.contains(&request.model) {
+                    return Err(format!(
+                        "inference denied: this grant covers {}, not `{}`",
+                        allowed.models.join(", "),
+                        request.model
+                    ));
+                }
+                let remote = me.store.lock().unwrap().remote_of(&token);
+                let provider = if remote.is_none() {
+                    Some(me.providers.resolve(&request.model).ok_or_else(|| {
+                        format!(
+                            "inference: no configured provider serves `{}`",
+                            request.model
+                        )
+                    })?)
+                } else {
+                    None
+                };
+                if let Some(provider) = &provider {
+                    me.sync_day_tokens(&token, &provider.name).await;
+                }
+                let admit = AdmitCall::new("complete")
+                    .arg("request.model", request.model.clone())
+                    .arg("request.max_tokens", i64::from(request.max_tokens));
+                me.store
+                    .lock()
+                    .unwrap()
+                    .admit(&token, admit)
+                    .map_err(|d| format!("inference denied: {}", denied_text(&d)))?;
+                match (remote, provider) {
+                    (Some(remote), _) => me.complete_remote(&token, remote, request).await,
+                    (None, Some(provider)) => {
+                        Ok(me.native_complete(&token, &provider, from_client_request(request)))
+                    }
+                    (None, None) => unreachable!("a local grant resolves its provider"),
+                }
+            })
         });
         let me = self.clone();
-        let allowed_m = allowed.to_vec();
-        let models: crate::chain::NativeModels = Arc::new(move |_grant| {
-            Ok(me
-                .providers
-                .models()
-                .into_iter()
-                .filter(|(_, model)| allowed_m.is_empty() || allowed_m.contains(model))
-                .collect())
+        let models: crate::raw::NativeModels = Arc::new(move |token| {
+            let me = me.clone();
+            Box::pin(async move {
+                let (token, allowed) = {
+                    let g = me.store.lock().unwrap();
+                    let token = g.delegated_for(&token, "inference").ok_or_else(|| {
+                        "inference denied: no inference grant for this call".to_string()
+                    })?;
+                    let allowed = g
+                        .validate_inference(&token)
+                        .map_err(|d| format!("inference denied: {d:?}"))?;
+                    (token, allowed)
+                };
+                let remote = me.store.lock().unwrap().remote_of(&token);
+                if let Some(remote) = remote {
+                    return me.models_remote(remote).await;
+                }
+                Ok(me
+                    .providers
+                    .models()
+                    .into_iter()
+                    .filter(|(_, model)| {
+                        allowed.models.is_empty() || allowed.models.contains(model)
+                    })
+                    .map(|(provider, model)| crate::raw::ModelInfo { provider, model })
+                    .collect())
+            })
         });
         (complete, models)
     }
@@ -195,29 +192,24 @@ impl InferenceProvider {
         &self,
         grant: &str,
         remote: crate::broker::Remote,
-        request: CompletionRequest,
-    ) -> anyhow::Result<Result<crate::session::ByteStream, String>> {
+        request: crate::raw::ClientRequest,
+    ) -> Result<crate::session::ByteStream, String> {
         let Some(remotes) = &self.remotes else {
-            return Ok(Err(
-                "inference: no peer transport for a remote grant".to_string()
-            ));
+            return Err("inference: no peer transport for a remote grant".to_string());
         };
-        let client = match remotes.client(&remote.locator).await {
-            Ok(c) => c,
-            Err(e) => return Ok(Err(format!("inference: {}: {e:#}", remote.locator))),
-        };
+        let client = remotes
+            .client(&remote.locator)
+            .await
+            .map_err(|e| format!("inference: {}: {e:#}", remote.locator))?;
+        let session = client::open(&client, (), &remote.token)
+            .await
+            .map_err(|e| format!("inference: {}: {e:#}", remote.locator))??;
         let request = to_client(request);
-        let (res, io) = match bindings::icanhaz::nocap::inference::complete(
-            &client,
-            (),
-            &remote.token,
-            &request,
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => return Ok(Err(format!("inference: {}: {e:#}", remote.locator))),
-        };
+        let (res, io) = client::Session::complete(&client, (), &session.as_borrow(), &request)
+            .await
+            .map_err(|e| format!("inference: {}: {e:#}", remote.locator))?;
+        // The session served one completion; the frames come on their own stream.
+        crate::remote::release(&client, AsRef::<Bytes>::as_ref(&session).clone()).await;
         if let Some(io) = io {
             tokio::spawn(async move {
                 if let Err(err) = io.await {
@@ -225,10 +217,7 @@ impl InferenceProvider {
                 }
             });
         }
-        let upstream = match res {
-            Ok(stream) => stream,
-            Err(e) => return Ok(Err(e)),
-        };
+        let upstream = res?;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
         let grants = self.store.clone();
         let token = grant.to_string();
@@ -247,11 +236,38 @@ impl InferenceProvider {
             }
         });
         let revocation = self.store.lock().unwrap().revocation(grant);
-        Ok(Ok(crate::session::grant_scoped(
+        Ok(crate::session::grant_scoped(
             Box::pin(UnboundedReceiverStream::new(rx)),
             revocation,
             (),
-        )))
+        ))
+    }
+
+    /// The models a grant held at another broker may use, as that broker lists them.
+    async fn models_remote(
+        &self,
+        remote: crate::broker::Remote,
+    ) -> Result<Vec<crate::raw::ModelInfo>, String> {
+        let Some(remotes) = &self.remotes else {
+            return Err("inference: no peer transport for a remote grant".to_string());
+        };
+        let client = remotes
+            .client(&remote.locator)
+            .await
+            .map_err(|e| format!("inference: {}: {e:#}", remote.locator))?;
+        let session = client::open(&client, (), &remote.token)
+            .await
+            .map_err(|e| format!("inference: {}: {e:#}", remote.locator))??;
+        let list = client::Session::models(&client, (), &session.as_borrow()).await;
+        crate::remote::release(&client, AsRef::<Bytes>::as_ref(&session).clone()).await;
+        let list = list.map_err(|e| format!("inference: {}: {e:#}", remote.locator))??;
+        Ok(list
+            .into_iter()
+            .map(|m| crate::raw::ModelInfo {
+                provider: m.provider,
+                model: m.model,
+            })
+            .collect())
     }
 
     /// Bring `state.day_tokens` on the grant's instance up to today's persisted
@@ -269,174 +285,10 @@ impl InferenceProvider {
     }
 }
 
-impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::inference::Handler<C>
-    for InferenceProvider
-{
-    async fn complete(
-        &self,
-        cx: C,
-        grant: String,
-        request: CompletionRequest,
-    ) -> anyhow::Result<Result<crate::session::ByteStream, String>> {
-        // Consent gate: a live inference grant that lists this model (or any).
-        let allowed = match self.store.lock().unwrap().validate_inference(&grant) {
-            Ok(req) => req,
-            Err(denied) => return Ok(Err(format!("inference denied: {}", denied_text(&denied)))),
-        };
-        if !allowed.models.is_empty() && !allowed.models.contains(&request.model) {
-            return Ok(Err(format!(
-                "inference denied: this grant covers {}, not `{}`",
-                allowed.models.join(", "),
-                request.model
-            )));
-        }
-        // A grant held at another broker: admit here as the issuer will, then forward.
-        let remote = self.store.lock().unwrap().remote_of(&grant);
-        if let Some(remote) = remote {
-            let admit = AdmitCall::new("complete")
-                .arg("request.model", request.model.clone())
-                .arg("request.max_tokens", i64::from(request.max_tokens))
-                .caller(caller_of(&cx));
-            if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
-                return Ok(Err(format!("inference denied: {}", denied_text(&denied))));
-            }
-            return self.complete_remote(&grant, remote, request).await;
-        }
-        let Some(provider) = self.providers.resolve(&request.model) else {
-            return Ok(Err(format!(
-                "inference: no configured provider serves `{}`",
-                request.model
-            )));
-        };
-
-        // Admission: the grant's `allow` clause sees the model, the requested
-        // bound, the caller, this grant's spend and today's spend.
-        self.sync_day_tokens(&grant, &provider.name).await;
-        let admit = AdmitCall::new("complete")
-            .arg("request.model", request.model.clone())
-            .arg("request.max_tokens", i64::from(request.max_tokens))
-            .caller(caller_of(&cx));
-        if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
-            return Ok(Err(format!("inference denied: {}", denied_text(&denied))));
-        }
-
-        let request_for_chain = request.clone();
-        let req = Request {
-            model: request.model,
-            messages: request
-                .messages
-                .into_iter()
-                .map(|m| crate::providers::Message {
-                    role: m.role,
-                    content: m.content,
-                    tool_calls: m
-                        .tool_calls
-                        .into_iter()
-                        .map(|c| crate::providers::ToolCall {
-                            id: c.id,
-                            name: c.name,
-                            arguments: c.arguments,
-                        })
-                        .collect(),
-                    tool_call_id: m.tool_call_id,
-                })
-                .collect(),
-            tools: request
-                .tools
-                .into_iter()
-                .map(|t| crate::providers::Tool {
-                    name: t.name,
-                    description: t.description,
-                    parameters: t.parameters,
-                })
-                .collect(),
-            max_tokens: request.max_tokens,
-            temperature: request.temperature,
-            system: request.system,
-        };
-        // Provided through store components: the chosen wrappers run in front
-        // of the native completion.
-        let via = self.store.lock().unwrap().via_of(&grant);
-        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
-            let (complete, models) = self.chain_natives(&grant, &allowed.models);
-            return match chain
-                .inference_complete(
-                    &via,
-                    &grant,
-                    to_chain_request(request_for_chain),
-                    complete,
-                    models,
-                )
-                .await
-            {
-                Ok(Some(out)) => Ok(out),
-                Ok(None) => Ok(Ok(self.native_complete(&grant, &provider, req))),
-                Err(e) => Ok(Err(format!("inference: chain failed: {e:#}"))),
-            };
-        }
-        Ok(Ok(self.native_complete(&grant, &provider, req)))
-    }
-
-    async fn models(&self, cx: C, grant: String) -> anyhow::Result<Result<Vec<ModelInfo>, String>> {
-        let allowed = match self.store.lock().unwrap().validate_inference(&grant) {
-            Ok(req) => req,
-            Err(denied) => return Ok(Err(format!("inference denied: {}", denied_text(&denied)))),
-        };
-        let admit = AdmitCall::new("models").caller(caller_of(&cx));
-        if let Err(denied) = self.store.lock().unwrap().admit(&grant, admit) {
-            return Ok(Err(format!("inference denied: {}", denied_text(&denied))));
-        }
-        let remote = self.store.lock().unwrap().remote_of(&grant);
-        if let Some(remote) = remote {
-            let Some(remotes) = &self.remotes else {
-                return Ok(Err(
-                    "inference: no peer transport for a remote grant".to_string()
-                ));
-            };
-            let client = match remotes.client(&remote.locator).await {
-                Ok(c) => c,
-                Err(e) => return Ok(Err(format!("inference: {}: {e:#}", remote.locator))),
-            };
-            return bindings::icanhaz::nocap::inference::models(&client, (), &remote.token)
-                .await
-                .map(|r| {
-                    r.map(|list| {
-                        list.into_iter()
-                            .map(|m| ModelInfo {
-                                provider: m.provider,
-                                model: m.model,
-                            })
-                            .collect()
-                    })
-                });
-        }
-        let via = self.store.lock().unwrap().via_of(&grant);
-        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
-            let (complete, models) = self.chain_natives(&grant, &allowed.models);
-            match chain.inference_models(&via, &grant, complete, models).await {
-                Ok(Some(out)) => {
-                    return Ok(out.map(|list| {
-                        list.into_iter()
-                            .map(|(provider, model)| ModelInfo { provider, model })
-                            .collect()
-                    }))
-                }
-                Ok(None) => {}
-                Err(e) => return Ok(Err(format!("inference: chain failed: {e:#}"))),
-            }
-        }
-        Ok(Ok(self
-            .providers
-            .models()
-            .into_iter()
-            .filter(|(_, model)| allowed.models.is_empty() || allowed.models.contains(model))
-            .map(|(provider, model)| ModelInfo { provider, model })
-            .collect()))
-    }
-}
-
-/// The export-side request as the import-side (client) type, for forwarding.
-fn to_client(r: CompletionRequest) -> bindings::icanhaz::nocap::inference::CompletionRequest {
+/// The raw-layer request as the wRPC client's type, for forwarding.
+fn to_client(
+    r: crate::raw::ClientRequest,
+) -> bindings::icanhaz::nocap::inference::CompletionRequest {
     use bindings::icanhaz::nocap::inference as c;
     c::CompletionRequest {
         model: r.model,
@@ -473,36 +325,8 @@ fn to_client(r: CompletionRequest) -> bindings::icanhaz::nocap::inference::Compl
     }
 }
 
-/// The wRPC export request as the chain's export-side type.
-fn to_chain_request(r: CompletionRequest) -> crate::chain::ExportRequest {
-    crate::chain::export_to_client_request_from_wire(
-        r.model,
-        r.messages
-            .into_iter()
-            .map(|m| {
-                (
-                    m.role,
-                    m.content,
-                    m.tool_calls
-                        .into_iter()
-                        .map(|t| (t.id, t.name, t.arguments))
-                        .collect(),
-                    m.tool_call_id,
-                )
-            })
-            .collect(),
-        r.tools
-            .into_iter()
-            .map(|t| (t.name, t.description, t.parameters))
-            .collect(),
-        r.max_tokens,
-        r.temperature,
-        r.system,
-    )
-}
-
-/// The chain's import-side request (what a wrapper forwarded) as a provider request.
-fn from_chain_request(r: crate::chain::ClientRequest) -> Request {
+/// The raw-layer request as a provider request.
+fn from_client_request(r: crate::raw::ClientRequest) -> Request {
     Request {
         model: r.model,
         messages: r
@@ -571,242 +395,5 @@ impl FrameDecoder {
             self.buf.drain(..5 + len);
         }
         out
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::bindings::exports::icanhaz::nocap::inference::{Handler as _, Message};
-    use super::*;
-    use crate::broker::{anonymous_principal, CapabilityKind, InferenceRequest};
-    use crate::providers::{ProviderConfig, ProviderKind};
-    use std::time::Duration;
-
-    fn echo_providers(store: Option<crate::store::Store>) -> Arc<Providers> {
-        Arc::new(Providers::new(
-            vec![ProviderConfig {
-                name: "echo".to_string(),
-                kind: ProviderKind::Echo,
-                base_url: String::new(),
-                api_key: String::new(),
-                models: vec!["echo".to_string(), "echo-large".to_string()],
-            }],
-            store,
-        ))
-    }
-
-    fn grant(store: &Arc<Mutex<GrantStore>>, models: &[&str], allow: &str) -> String {
-        store
-            .lock()
-            .unwrap()
-            .issue_scoped(
-                CapabilityKind::Inference(InferenceRequest {
-                    models: models.iter().map(|m| m.to_string()).collect(),
-                }),
-                ezcap::Scope::allow(allow),
-                "inference".to_string(),
-                Duration::from_secs(60),
-                anonymous_principal(),
-            )
-            .expect("scope compiles")
-    }
-
-    fn request(model: &str, text: &str, max_tokens: u32) -> CompletionRequest {
-        CompletionRequest {
-            model: model.to_string(),
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: text.to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            }],
-            tools: vec![],
-            max_tokens,
-            temperature: None,
-            system: None,
-        }
-    }
-
-    /// Decode `[kind][len u32][payload]` frames.
-    fn decode(bytes: &[u8]) -> Vec<(u8, String)> {
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i + 5 <= bytes.len() {
-            let kind = bytes[i];
-            let len = u32::from_be_bytes([bytes[i + 1], bytes[i + 2], bytes[i + 3], bytes[i + 4]])
-                as usize;
-            let payload = String::from_utf8_lossy(&bytes[i + 5..i + 5 + len]).into_owned();
-            out.push((kind, payload));
-            i += 5 + len;
-        }
-        out
-    }
-
-    async fn collect(stream: crate::session::ByteStream) -> Vec<(u8, String)> {
-        let chunks: Vec<Bytes> = stream.collect().await;
-        decode(&chunks.concat())
-    }
-
-    #[tokio::test]
-    async fn streams_text_then_usage_and_charges_the_grant() {
-        let store = GrantStore::shared();
-        let p = InferenceProvider::new(store.clone(), echo_providers(None));
-        let token = grant(&store, &["echo"], "true");
-        let stream = p
-            .complete((), token.clone(), request("echo", "hello there", 0))
-            .await
-            .unwrap()
-            .expect("admitted");
-        let frames = collect(stream).await;
-        assert_eq!(frames[0], (0, "hello ".to_string()));
-        assert_eq!(frames[1], (0, "there".to_string()));
-        assert_eq!(frames[2].0, 1);
-        assert!(frames[2].1.contains("\"output_tokens\":2"));
-        // input 2 + output 2 = 4 tokens charged to the grant.
-        assert_eq!(store.lock().unwrap().counter(&token, "tokens"), Some(4));
-    }
-
-    #[tokio::test]
-    async fn a_tool_call_frame_then_the_tool_turn_completes_the_loop() {
-        use super::bindings::exports::icanhaz::nocap::inference::{Tool, ToolCall};
-        let store = GrantStore::shared();
-        let p = InferenceProvider::new(store.clone(), echo_providers(None));
-        let token = grant(&store, &["echo"], "true");
-        let mut req = request("echo", "find x", 0);
-        req.tools.push(Tool {
-            name: "search".to_string(),
-            description: "find things".to_string(),
-            parameters: r#"{"type":"object"}"#.to_string(),
-        });
-        let frames = collect(
-            p.complete((), token.clone(), req.clone())
-                .await
-                .unwrap()
-                .expect("admitted"),
-        )
-        .await;
-        assert_eq!(frames[0].0, 3, "{frames:?}");
-        let call: serde_json::Value = serde_json::from_str(&frames[0].1).unwrap();
-        assert_eq!(call["name"], "search");
-        assert_eq!(call["arguments"], r#"{"input":"find x"}"#);
-        assert_eq!(frames[1].0, 1);
-
-        // The caller ran the tool; the assistant's call and the answer go back.
-        req.messages.push(Message {
-            role: "assistant".to_string(),
-            content: String::new(),
-            tool_calls: vec![ToolCall {
-                id: "call-1".to_string(),
-                name: "search".to_string(),
-                arguments: call["arguments"].as_str().unwrap().to_string(),
-            }],
-            tool_call_id: None,
-        });
-        req.messages.push(Message {
-            role: "tool".to_string(),
-            content: "found it".to_string(),
-            tool_calls: vec![],
-            tool_call_id: Some("call-1".to_string()),
-        });
-        let frames = collect(p.complete((), token, req).await.unwrap().expect("admitted")).await;
-        assert_eq!(frames[0], (0, "found ".to_string()));
-        assert_eq!(frames[1], (0, "it".to_string()));
-        assert_eq!(frames[2].0, 1);
-    }
-
-    #[tokio::test]
-    async fn the_grants_model_list_and_allow_clause_both_gate_the_model() {
-        let store = GrantStore::shared();
-        let p = InferenceProvider::new(store.clone(), echo_providers(None));
-        let token = grant(&store, &["echo"], r#"call.args.request.model == "echo""#);
-        assert!(p
-            .complete((), token.clone(), request("echo-large", "x", 0))
-            .await
-            .unwrap()
-            .is_err());
-        assert!(p
-            .complete((), token.clone(), request("echo", "x", 0))
-            .await
-            .unwrap()
-            .is_ok());
-        // Any model by the grant, but the clause narrows it.
-        let token = grant(&store, &[], r#"call.args.request.model == "echo""#);
-        let denied = p
-            .complete((), token.clone(), request("echo-large", "x", 0))
-            .await
-            .unwrap();
-        assert!(denied.err().expect("denied").contains("out of scope"));
-        // `models` lists only what the grant covers.
-        let listed = p
-            .models((), grant(&store, &["echo-large"], "true"))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].model, "echo-large");
-    }
-
-    #[tokio::test]
-    async fn a_budget_clause_denies_once_the_grant_has_spent_enough() {
-        let store = GrantStore::shared();
-        let p = InferenceProvider::new(store.clone(), echo_providers(None));
-        let token = grant(
-            &store,
-            &["echo"],
-            "state.tokens + call.args.request.max_tokens <= 6",
-        );
-        let s = p
-            .complete((), token.clone(), request("echo", "one two", 2))
-            .await
-            .unwrap()
-            .expect("first call fits");
-        let _ = collect(s).await; // charges 2 + 2 = 4
-                                  // 4 spent + 2 requested = 6: still allowed.
-        let s = p
-            .complete((), token.clone(), request("echo", "one two", 2))
-            .await
-            .unwrap()
-            .expect("second call fits");
-        let _ = collect(s).await; // 8 spent
-        let denied = p
-            .complete((), token.clone(), request("echo", "one", 1))
-            .await
-            .unwrap();
-        assert!(
-            denied.err().expect("denied").contains("out of scope"),
-            "budget exhausted"
-        );
-    }
-
-    #[tokio::test]
-    async fn day_tokens_persist_across_grants_through_the_store() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = ezdb::KeySource::File(dir.path().join("k"));
-        let db = crate::store::Store::open_with(dir.path().join("icanhaz.db"), &source)
-            .await
-            .unwrap();
-        let store = GrantStore::shared();
-        let p = InferenceProvider::new(store.clone(), echo_providers(Some(db.clone())));
-
-        let first = grant(&store, &["echo"], "state.day_tokens < 5");
-        let s = p
-            .complete((), first, request("echo", "a b c", 0))
-            .await
-            .unwrap()
-            .expect("day fresh");
-        let _ = collect(s).await; // 3 + 3 = 6 tokens today
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(
-            Providers::day_tokens(&db, "echo", today()).await.unwrap(),
-            6
-        );
-
-        // A brand-new grant sees today's spend and is refused.
-        let second = grant(&store, &["echo"], "state.day_tokens < 5");
-        let denied = p
-            .complete((), second, request("echo", "x", 0))
-            .await
-            .unwrap();
-        assert!(denied.err().expect("denied").contains("out of scope"));
     }
 }

@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
-import * as fsmount from "./generated/fs-mount";
+import * as filesystem from "./generated/filesystem";
 import * as wasifs from "./generated/wasi-filesystem";
-import { dropResource } from "./vfs";
+import { drop as dropResource } from "./generated/resources";
 
 // The descriptor-drop, end-to-end over the real WebSocket transport: a browser opens
 // a wasi:filesystem descriptor (a guest-exported resource the host holds in its shared
-// table), then releases it via the `icanhaz:fspass/resources@0.1.0#drop` meta-op — the
+// table), then releases it via the `icanhaz:nocap/resources@0.1.0#drop` meta-op — the
 // host evicts the handle + runs its guest destructor (closing the fd) and reports back
 // whether it released a live handle. This is what keeps a long-lived editor from leaking
 // a handle per fs op. (The host test `dropping_a_descriptor_releases_the_handle` proves
@@ -20,7 +20,7 @@ describe("descriptor drop over wRPC", () => {
     it("releases a descriptor the daemon holds, and is idempotent", async () => {
         const t = await connect({ ws: WS });
         const grant = await requestFilesystemGrant(t, "browser descriptor drop");
-        const mounted = await fsmount.openRoot(t, grant);
+        const mounted = await filesystem.open(t, grant);
         expect(mounted.tag, `mount denied: ${JSON.stringify(mounted)}`).toBe("ok");
         if (mounted.tag !== "ok") return;
 

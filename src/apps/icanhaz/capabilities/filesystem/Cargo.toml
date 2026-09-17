@@ -1,0 +1,17 @@
+[package]
+name = "filesystem-capability"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "The shipped `icanhaz:nocap/filesystem` capability: imports the raw host wasi:filesystem (preopen-jailed) and the consent gate, re-exports the filesystem and the gated `open`. Resource-shaped: the token once, at open."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.58"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

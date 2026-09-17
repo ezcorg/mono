@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { connect } from "./wrpc";
 import { requestScoped, revoke } from "./generated/broker";
-import { spawn } from "./generated/process";
+import { open, processSpawn, type ProcessSpawnSession } from "./generated/process";
+
+/** `open` the process capability for `token`, then spawn on it. */
+async function spawn(t: Awaited<ReturnType<typeof connect>>, token: string, args: string[]): Promise<ProcessSpawnSession> {
+    const proc = await open(t, token);
+    if (proc.tag !== "ok") throw new Error(`process refused: ${proc.val}`);
+    return processSpawn(t, proc.val, args);
+}
 import { certificateRoot, createBundle, decodeBundle, openBundle } from "./share";
 import { WS } from "./test-ws";
 

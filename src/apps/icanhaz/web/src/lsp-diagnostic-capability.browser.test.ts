@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 
 // ROOT CAUSE of "no diagnostics in the editor": @codemirror/lsp-client advertises
@@ -15,11 +15,10 @@ const INVALID_MAIN = 'fn main() {\n    let x: i32 = "nope";\n}\n'; // a type err
 async function pushesDiagnostics(withPullCapability: boolean, ms: number): Promise<boolean> {
     const t = await connect({ ws: WS });
     const grant = await requestFilesystemGrant(t, "diagnostic capability");
-    const rp = await rootPath(t, grant);
-    if (rp.tag !== "ok") throw new Error(`no workspace path: ${rp.val}`);
+    const root = await workspaceRoot(t, grant);
     const provider = createWrpcLspProvider({
         transport: t,
-        workspaceRoot: rp.val,
+        workspaceRoot: root,
         servers: { rust: { image: "rust-analyzer" } },
     });
     const conn = await provider.connect({ language: "rust", path: "src/main.rs", fs: undefined as any });

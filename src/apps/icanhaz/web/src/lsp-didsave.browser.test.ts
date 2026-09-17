@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 
 // Cargo-check errors (unresolved fn `a()`) show on load (flycheck) but never clear on edit,
@@ -18,9 +18,8 @@ describe("didSave triggers flycheck to clear a cargo-check error", () => {
         const grant = await requestFilesystemGrant(t, "didSave");
         const fs = await wrpcFilesystem(t, grant);
         await fs.writeFile("src/main.rs", BROKEN);
-        const rp = await rootPath(t, grant);
-        if (rp.tag !== "ok") throw new Error(`no workspace path: ${rp.val}`);
-        const provider = createWrpcLspProvider({ transport: t, workspaceRoot: rp.val, servers: { rust: { image: "rust-analyzer" } } });
+        const root = await workspaceRoot(t, grant);
+        const provider = createWrpcLspProvider({ transport: t, workspaceRoot: root, servers: { rust: { image: "rust-analyzer" } } });
         const conn = await provider.connect({ language: "rust", path: "src/main.rs", fs: undefined as any });
         const lsp = conn!.transport;
         const uri = conn!.uriForPath("src/main.rs");

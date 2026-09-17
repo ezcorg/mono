@@ -17,7 +17,7 @@
 //!
 //! Env: `ICANHAZ_WS_BIND` (default `127.0.0.1:7777`), `ICANHAZ_WT_BIND` (default
 //! `127.0.0.1:7778`), `ICANHAZ_ROOT` (the fs root the jail lives under),
-//! `ICANHAZ_FS_COMPONENT` (the wasi:filesystem passthrough `.wasm`), `ICANHAZ_CERT` +
+//! `ICANHAZ_CAPABILITIES_DIR` (the shipped capability components), `ICANHAZ_CERT` +
 //! `ICANHAZ_KEY` (PEM paths; a self-signed cert is generated if either is
 //! absent), `ICANHAZ_CONSENT` (`prompt` default · `surface` · `auto` · `deny`),
 //! and `ICANHAZ_APPROVE_BIND` (the approval page, default `127.0.0.1:7779`).
@@ -108,21 +108,13 @@ async fn main() -> anyhow::Result<()> {
         ),
     };
 
-    // Real wasi:filesystem@0.2 (the gated passthrough). Path overridable via
-    // ICANHAZ_FS_COMPONENT; default relative to this crate.
-    let fs_component = std::env::var("ICANHAZ_FS_COMPONENT").unwrap_or_else(|_| {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm"
-        )
-        .to_string()
-    });
-
     let config = DaemonConfig {
         ws_bind,
         wt_bind,
         root,
-        fs_component: PathBuf::from(fs_component),
+        capabilities_dir: std::env::var("ICANHAZ_CAPABILITIES_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../capabilities")),
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label,

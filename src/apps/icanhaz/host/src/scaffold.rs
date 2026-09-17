@@ -1,8 +1,10 @@
 //! Scaffolds for authoring capabilities (`icanhaz capability new|wrap`):
 //! a Rust component crate with the WIT vendored, a devShell, an agent
 //! instructions file, and a `src/lib.rs` generated from the WIT: a
-//! passthrough for function-only interfaces, typed stubs where resources or
-//! streams are involved.
+//! passthrough for the interfaces it wraps (freestanding functions forward
+//! to the same import; a resource becomes a wrapper type holding the
+//! upstream object and forwarding each method), typed stubs for a novel
+//! capability.
 
 use std::path::{Path, PathBuf};
 
@@ -145,8 +147,17 @@ fn rust_type(resolve: &Resolve, ty: &Type, module: &str) -> Option<String> {
                         rust_type(resolve, inner, module)?
                     )
                 }
-                TypeDefKind::Handle(_)
-                | TypeDefKind::Resource
+                TypeDefKind::Handle(wit_parser::Handle::Own(r)) => {
+                    format!(
+                        "{module}::{}",
+                        camel(resolve.types.get(*r)?.name.as_deref()?)
+                    )
+                }
+                TypeDefKind::Handle(wit_parser::Handle::Borrow(r)) => format!(
+                    "{module}::{}Borrow<'_>",
+                    camel(resolve.types.get(*r)?.name.as_deref()?)
+                ),
+                TypeDefKind::Resource
                 | TypeDefKind::Future(_)
                 | TypeDefKind::Stream(None)
                 | TypeDefKind::Unknown => return None,
@@ -226,6 +237,31 @@ fn convert(resolve: &Resolve, ty: &Type, expr: &str, dir: &str) -> String {
             Some(n) => format!("{dir}_{}({expr})", snake(n)),
             None => expr.to_string(),
         },
+        // A handle to one of this interface's resources: on the way up a
+        // wrapper object yields the upstream object it holds; on the way down
+        // an upstream object is wrapped.
+        TypeDefKind::Handle(wit_parser::Handle::Own(r)) => {
+            let Some(name) = resolve.types.get(*r).and_then(|d| d.name.as_deref()) else {
+                return expr.to_string();
+            };
+            let ty = camel(name);
+            if dir == "up" {
+                format!("{expr}.into_inner::<{ty}>().upstream")
+            } else {
+                format!("exported::{ty}::new({ty} {{ upstream: {expr} }})")
+            }
+        }
+        TypeDefKind::Handle(wit_parser::Handle::Borrow(r)) => {
+            let Some(name) = resolve.types.get(*r).and_then(|d| d.name.as_deref()) else {
+                return expr.to_string();
+            };
+            let ty = camel(name);
+            if dir == "up" {
+                format!("&{expr}.get::<{ty}>().upstream")
+            } else {
+                expr.to_string()
+            }
+        }
         TypeDefKind::Type(inner) => convert(resolve, inner, expr, dir),
         TypeDefKind::List(inner) => {
             let inner_expr = convert(resolve, inner, "x", dir);
@@ -362,6 +398,7 @@ fn rust_arg(resolve: &Resolve, ty: &Type, name: &str, owned: bool) -> String {
             Type::String => true,
             Type::Id(id) => match resolve.types.get(*id).map(|d| &d.kind) {
                 Some(TypeDefKind::Type(inner)) => borrowed(resolve, inner),
+                Some(TypeDefKind::Handle(_)) => false,
                 Some(
                     TypeDefKind::List(_)
                     | TypeDefKind::FixedSizeList(..)
@@ -408,35 +445,42 @@ fn rust_arg(resolve: &Resolve, ty: &Type, name: &str, owned: bool) -> String {
     }
 }
 
-/// The `impl Guest` body for one exported interface: forwards to the same
-/// import when the function's types allow, else a typed stub.
+/// The `impl Guest` body for one exported interface: freestanding functions
+/// forward to the same import when their types allow, else a typed stub;
+/// each resource becomes a type implementing its `Guest<Name>` trait, holding
+/// the upstream object when wrapping and forwarding every method to it.
 fn guest_impl(resolve: &Resolve, iface_name: &str, wrapping: bool) -> anyhow::Result<String> {
     let (ns, pkg, iface, ver) = split_interface(iface_name)?;
     let iface_id = crate_env_find(resolve, &format!("{ns}:{pkg}"), &iface, ver.as_deref())
         .with_context(|| format!("`{iface_name}` is not in the vendored WIT"))?;
     let interface = &resolve.interfaces[iface_id];
     let module = format!("{}::{}::{}", snake(&ns), snake(&pkg), snake(&iface));
+    let resources: Vec<(wit_parser::TypeId, String)> = interface
+        .types
+        .iter()
+        .filter(|(_, t)| {
+            matches!(
+                resolve.types.get(**t).map(|d| &d.kind),
+                Some(TypeDefKind::Resource)
+            )
+        })
+        .map(|(name, id)| (*id, camel(name)))
+        .collect();
     let mut out = String::new();
+    let mut traits = vec![format!("Guest as {}Guest", camel(&iface))];
+    traits.extend(resources.iter().map(|(_, r)| format!("Guest{r}")));
     out.push_str(&format!(
-        "use bindings::exports::{module}::Guest as {}Guest;\n",
-        camel(&iface)
+        "use bindings::exports::{module}::{{{}}};\n",
+        traits.join(", ")
     ));
     if wrapping {
         out.push_str(&format!("use bindings::{module} as upstream;\n"));
         out.push_str(&format!("use bindings::exports::{module} as exported;\n\n"));
     } else {
         out.push_str(&format!(
-            "#[allow(unused_imports)]\nuse bindings::exports::{module} as upstream;\n\n"
+            "#[allow(unused_imports)]\nuse bindings::exports::{module} as upstream;\n#[allow(unused_imports)]\nuse bindings::exports::{module} as exported;\n\n"
         ));
     }
-    let has_resources = interface.types.values().any(|t| {
-        matches!(
-            resolve.types.get(*t).map(|d| &d.kind),
-            Some(TypeDefKind::Resource)
-        )
-    });
-    // Any function carrying a stream makes the whole interface async in the
-    // guest (wit-bindgen's `async: true`), and every forward awaits.
     // wit-bindgen follows the WIT's own `async func` annotations, so only
     // those functions are async here (owned arguments, `.await`); a sync
     // function forwards synchronously, streams or not.
@@ -461,83 +505,152 @@ fn guest_impl(resolve: &Resolve, iface_name: &str, wrapping: bool) -> anyhow::Re
     for id in &named {
         out.push_str(&conversions_for(resolve, *id));
     }
+    // One type per resource: the object a caller holds after `open`.
+    for (_, r) in &resources {
+        if wrapping {
+            out.push_str(&format!(
+                "/// The wrapper's `{r}`: holds the upstream object and forwards each\n/// method to it. Keep state for what this wrapper refuses or rewrites here.\nstruct {r} {{\n    upstream: upstream::{r},\n}}\n\n"
+            ));
+        } else {
+            out.push_str(&format!(
+                "/// One open `{r}`: the state behind the object a caller holds.\nstruct {r};\n\n"
+            ));
+        }
+    }
     let sig_module = if wrapping { "exported" } else { "upstream" };
     out.push_str(&format!("impl {}Guest for Component {{\n", camel(&iface)));
-    if has_resources {
-        out.push_str("    // This interface has resources: each needs an associated type here\n    // (`type Descriptor = MyDescriptor;`) and a `Guest<Name>` impl. See the\n    // wit-bindgen guide for resources; the functions below are the free ones.\n");
+    for (_, r) in &resources {
+        out.push_str(&format!("    type {r} = {r};\n"));
     }
-    for (fname, func) in &interface.functions {
-        if !matches!(
-            func.kind,
-            wit_parser::FunctionKind::Freestanding | wit_parser::FunctionKind::AsyncFreestanding
-        ) {
-            continue;
+    if !resources.is_empty() {
+        out.push('\n');
+    }
+    for func in interface.functions.values() {
+        if func.kind.resource().is_none() {
+            out.push_str(&function_impl(resolve, func, sig_module, wrapping, None));
         }
-        let params: Vec<(String, Option<String>)> = func
-            .params
-            .iter()
-            .map(|(name, ty)| (snake(name), rust_type(resolve, ty, sig_module)))
-            .collect();
-        let ret = func
-            .result
-            .as_ref()
-            .map(|t| rust_type(resolve, t, sig_module));
-        let simple = params.iter().all(|(_, t)| t.is_some()) && !matches!(ret, Some(None));
-        let sig_params = params
-            .iter()
-            .map(|(n, t)| {
-                format!(
-                    "{n}: {}",
-                    t.clone()
-                        .unwrap_or_else(|| "/* resource or stream */ ()".into())
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sig_ret = match &ret {
-            None => String::new(),
-            Some(Some(t)) => format!(" -> {t}"),
-            Some(None) => " -> /* resource or stream */ ()".to_string(),
-        };
-        let is_async = matches!(func.kind, wit_parser::FunctionKind::AsyncFreestanding);
-        let asyncness = if is_async { "async " } else { "" };
-        let awaiting = if is_async { ".await" } else { "" };
-        out.push_str(&format!(
-            "    {asyncness}fn {}({sig_params}){sig_ret} {{\n",
-            snake(fname)
-        ));
-        if wrapping && simple {
-            // Convert record-typed arguments to the import side first, then
-            // apply the borrowing rule to the locals.
-            let mut lets = String::new();
-            let mut call_args = Vec::new();
-            for (name, ty) in &func.params {
-                let local = snake(name);
-                let converted = convert(resolve, ty, &local, "up");
-                if converted != local {
-                    lets.push_str(&format!("        let {local} = {converted};\n"));
-                }
-                call_args.push(rust_arg(resolve, ty, &local, is_async));
-            }
-            let call = format!(
-                "upstream::{}({}){awaiting}",
-                snake(fname),
-                call_args.join(", ")
-            );
-            let ret = match &func.result {
-                Some(t) => convert(resolve, t, &call, "down"),
-                None => call,
-            };
-            out.push_str(&format!("        // Passthrough: forward to the wrapped capability. Refuse or rewrite here.\n{lets}        {ret}\n"));
-        } else if wrapping {
-            out.push_str(&format!("        // `{fname}` carries a resource or a stream; forward it by hand.\n        todo!(\"forward {fname} to upstream::{}\")\n", snake(fname)));
-        } else {
-            out.push_str(&format!("        todo!(\"implement {fname}\")\n"));
-        }
-        out.push_str("    }\n");
     }
     out.push_str("}\n");
+    for (id, r) in &resources {
+        out.push_str(&format!("\nimpl Guest{r} for {r} {{\n"));
+        for func in interface.functions.values() {
+            if func.kind.resource() == Some(*id) {
+                out.push_str(&function_impl(resolve, func, sig_module, wrapping, Some(r)));
+            }
+        }
+        out.push_str("}\n");
+    }
     Ok(out)
+}
+
+/// One function of a `Guest` or `Guest<Resource>` impl. `resource` is the
+/// wrapper type's name when the function belongs to a resource.
+fn function_impl(
+    resolve: &Resolve,
+    func: &wit_parser::Function,
+    sig_module: &str,
+    wrapping: bool,
+    resource: Option<&str>,
+) -> String {
+    use wit_parser::FunctionKind;
+    let mut out = String::new();
+    let item = func.item_name();
+    let is_method = matches!(
+        func.kind,
+        FunctionKind::Method(_) | FunctionKind::AsyncMethod(_)
+    );
+    let is_constructor = matches!(func.kind, FunctionKind::Constructor(_));
+    let is_async = matches!(
+        func.kind,
+        FunctionKind::AsyncFreestanding
+            | FunctionKind::AsyncMethod(_)
+            | FunctionKind::AsyncStatic(_)
+    );
+    // A method's first parameter is `self`.
+    let params: Vec<&(String, Type)> = func.params.iter().skip(usize::from(is_method)).collect();
+    let typed: Vec<(String, Option<String>)> = params
+        .iter()
+        .map(|(name, ty)| (snake(name), rust_type(resolve, ty, sig_module)))
+        .collect();
+    let ret = if is_constructor {
+        Some(Some("Self".to_string()))
+    } else {
+        func.result
+            .as_ref()
+            .map(|t| rust_type(resolve, t, sig_module))
+    };
+    let simple = typed.iter().all(|(_, t)| t.is_some()) && !matches!(ret, Some(None));
+    let mut sig_params: Vec<String> = typed
+        .iter()
+        .map(|(n, t)| {
+            format!(
+                "{n}: {}",
+                t.clone()
+                    .unwrap_or_else(|| "/* resource or stream */ ()".into())
+            )
+        })
+        .collect();
+    if is_method {
+        sig_params.insert(0, "&self".to_string());
+    }
+    let sig_ret = match &ret {
+        None => String::new(),
+        Some(Some(t)) => format!(" -> {t}"),
+        Some(None) => " -> /* resource or stream */ ()".to_string(),
+    };
+    let fname = if is_constructor {
+        "new".to_string()
+    } else {
+        snake(item)
+    };
+    let asyncness = if is_async { "async " } else { "" };
+    let awaiting = if is_async { ".await" } else { "" };
+    out.push_str(&format!(
+        "    {asyncness}fn {fname}({}){sig_ret} {{\n",
+        sig_params.join(", ")
+    ));
+    if wrapping && simple {
+        // Convert arguments to the import side first, then apply the
+        // borrowing rule to the locals.
+        let mut lets = String::new();
+        let mut call_args = Vec::new();
+        for (name, ty) in &params {
+            let local = snake(name);
+            let converted = convert(resolve, ty, &local, "up");
+            if converted != local {
+                lets.push_str(&format!("        let {local} = {converted};\n"));
+            }
+            call_args.push(rust_arg(resolve, ty, &local, is_async));
+        }
+        let args = call_args.join(", ");
+        let call = match (resource, &func.kind) {
+            (_, FunctionKind::Constructor(_)) => {
+                format!("upstream::{}::new({args})", resource.unwrap_or(""))
+            }
+            (Some(r), FunctionKind::Static(_) | FunctionKind::AsyncStatic(_)) => {
+                format!("upstream::{r}::{fname}({args}){awaiting}")
+            }
+            (Some(_), _) => format!("self.upstream.{fname}({args}){awaiting}"),
+            (None, _) => format!("upstream::{fname}({args}){awaiting}"),
+        };
+        let ret = if is_constructor {
+            format!("Self {{ upstream: {call} }}")
+        } else {
+            match &func.result {
+                Some(t) => convert(resolve, t, &call, "down"),
+                None => call,
+            }
+        };
+        out.push_str(&format!("        // Passthrough: forward to the wrapped capability. Refuse or rewrite here.\n{lets}        {ret}\n"));
+    } else if wrapping {
+        out.push_str(&format!(
+            "        // `{item}` carries a foreign resource or a future; forward it by hand.\n        todo!(\"forward {item} upstream\")\n"
+        ));
+    } else {
+        out.push_str(&format!("        todo!(\"implement {item}\")\n"));
+    }
+    out.push_str("    }\n");
+    out
 }
 
 fn crate_env_find(
@@ -697,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn a_function_only_interface_becomes_a_passthrough_and_streams_become_stubs() {
+    fn a_wrapped_interface_forwards_open_and_every_method_of_its_resource() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("ws-wrap");
         rust_capability(
@@ -713,11 +826,21 @@ mod tests {
         )
         .unwrap();
         let lib = std::fs::read_to_string(out.join("src/lib.rs")).unwrap();
+        assert!(lib.contains("type Workspace = Workspace;"), "{lib}");
         assert!(
-            lib.contains("fn root_path(grant: String) -> Result<String, String> {"),
+            lib.contains("fn open(grant: String) -> Result<exported::Workspace, String> {"),
             "{lib}"
         );
-        assert!(lib.contains("upstream::root_path(&grant)"), "{lib}");
+        assert!(
+            lib.contains("upstream::open(&grant).map(|x| exported::Workspace::new(Workspace { upstream: x }))"),
+            "{lib}"
+        );
+        assert!(lib.contains("impl GuestWorkspace for Workspace {"), "{lib}");
+        assert!(
+            lib.contains("fn root_path(&self) -> Result<String, String> {"),
+            "{lib}"
+        );
+        assert!(lib.contains("self.upstream.root_path()"), "{lib}");
         assert!(out.join("wit/deps/icanhaz-nocap/workspace.wit").exists());
         assert!(out.join("wit/deps/ezco-ezcap-0.1.0/package.wit").exists());
         let world = std::fs::read_to_string(out.join("wit/world.wit")).unwrap();
@@ -727,7 +850,7 @@ mod tests {
             .unwrap()
             .contains("ws_wrap.wasm"));
 
-        // Streams: a typed stub, not a forward.
+        // An async method carrying streams forwards with `.await`.
         let out = dir.path().join("proc-wrap");
         rust_capability(
             &out,
@@ -742,9 +865,12 @@ mod tests {
         )
         .unwrap();
         let lib = std::fs::read_to_string(out.join("src/lib.rs")).unwrap();
-        assert!(lib.contains("async fn spawn("), "{lib}");
         assert!(
-            lib.contains("upstream::spawn(grant, args, stdin).await"),
+            lib.contains("async fn spawn(&self, args: Vec<String>, stdin: wit_bindgen::StreamReader<u8>) -> Result<wit_bindgen::StreamReader<u8>, String> {"),
+            "{lib}"
+        );
+        assert!(
+            lib.contains("self.upstream.spawn(args, stdin).await"),
             "{lib}"
         );
 
@@ -764,6 +890,8 @@ mod tests {
         .unwrap();
         let lib = std::fs::read_to_string(out.join("src/lib.rs")).unwrap();
         assert!(lib.contains("todo!(\"implement root-path\")"), "{lib}");
+        assert!(lib.contains("todo!(\"implement open\")"), "{lib}");
+        assert!(lib.contains("impl GuestWorkspace for Workspace {"), "{lib}");
         assert!(rust_capability(
             &out,
             "mine",

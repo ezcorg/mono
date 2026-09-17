@@ -1,0 +1,17 @@
+[package]
+name = "process-capability"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The shipped `icanhaz:nocap/process` capability: a thin component over the daemon's raw process layer. Resource-shaped: the token once, at open."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.54", features = ["async-spawn"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

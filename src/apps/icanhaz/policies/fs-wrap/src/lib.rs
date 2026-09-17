@@ -1,6 +1,6 @@
 //! A filesystem **wrapper**: the reference for sitting in front of the
 //! filesystem capability. It imports `wasi:filesystem/types` and
-//! `icanhaz:fspass/mount` from the component behind it (the passthrough, or
+//! `icanhaz:nocap/filesystem` from the component behind it (the shipped capability, or
 //! another wrapper) and re-exports both, wrapping every descriptor in its
 //! own so every operation passes through here first. This one refuses any
 //! operation naming a path that contains `forbidden`; a wrapper can just as
@@ -268,10 +268,10 @@ impl ex_types::GuestDirectoryEntryStream for DirStream {
     }
 }
 
-impl exports::icanhaz::fspass::mount::Guest for Component {
-    fn open_root(grant: String) -> Result<ex_types::Descriptor, String> {
+impl exports::icanhaz::nocap::filesystem::Guest for Component {
+    fn open(grant: String) -> Result<ex_types::Descriptor, String> {
         // The component behind us authorizes and scopes the root; we wrap it.
-        let inner = icanhaz::fspass::mount::open_root(&grant)?;
+        let inner = icanhaz::nocap::filesystem::open(&grant)?;
         Ok(ex_types::Descriptor::new(Desc { inner, grant }))
     }
 }

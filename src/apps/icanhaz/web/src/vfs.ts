@@ -14,15 +14,16 @@
 //! (and `readDir` a directory-entry-stream). These are guest-exported resources the
 //! host holds in its shared-resource table; without a drop they'd accumulate for the
 //! connection's life. So each of those ops **drops the handle it opened** when it's
-//! done, via `dropHandle` → the host's `icanhaz:fspass/resources@0.1.0#drop` (which
+//! done, via `dropHandle` → the host's `icanhaz:nocap/resources@0.1.0#drop` (which
 //! evicts the table entry and runs the guest destructor, closing the real fd). The
 //! long-lived mount `root` is kept. `watch` is a no-op (wasi:filesystem@0.2 has no
 //! change notifications).
 
-import { type Transport, invoke, encodeBytes, readBool, resultValue } from "./wrpc";
-import * as fsmount from "./generated/fs-mount";
+import type { Transport } from "./wrpc";
+import * as filesystem from "./generated/filesystem";
 import * as fs from "./generated/wasi-filesystem";
-import { open as watchOpen } from "./generated/watch";
+import { open as watchOpen, watcherWatch } from "./generated/watch";
+import { drop as dropResource } from "./generated/resources";
 
 /** `@volar/language-service` FileType values (Unknown/File/Directory/SymbolicLink). */
 export type FileType = 0 | 1 | 2 | 64;
@@ -62,21 +63,6 @@ function concat(chunks: Uint8Array[]): Uint8Array {
     return out;
 }
 
-// The host serves this alongside the filesystem: `drop(handle: list<u8>)` evicts a
-// guest-exported resource handle (descriptor / directory-entry-stream) from the
-// shared-resource table and runs its guest destructor (closing the fd).
-const RESOURCES_INSTANCE = "icanhaz:fspass/resources@0.1.0";
-
-/** Release a guest resource handle (descriptor / directory-entry-stream) the host
- *  holds for us. Resolves to whether a live handle was actually released (the host
- *  ran its destructor + evicted it); `false` if it was already gone. Throws on
- *  transport error. Exported so a caller/test that obtained a handle directly can
- *  release it. */
-export async function dropResource(t: Transport, handle: Uint8Array): Promise<boolean> {
-    const resp = await invoke(t, RESOURCES_INSTANCE, "drop", encodeBytes(handle));
-    return readBool(resultValue(resp), 0)[0];
-}
-
 /** Best-effort drop used internally: a failure is non-fatal — the handle would just
  *  linger until the transport closes (the old behavior) — so we never surface it. */
 async function dropHandle(t: Transport, handle: Uint8Array): Promise<void> {
@@ -92,7 +78,7 @@ async function dropHandle(t: Transport, handle: Uint8Array): Promise<void> {
  * grant is refused at the consent gate.
  */
 export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLike> {
-    const mounted = await fsmount.openRoot(t, grant);
+    const mounted = await filesystem.open(t, grant);
     if (mounted.tag !== "ok") throw new Error(`filesystem mount denied: ${mounted.val}`);
     const root = mounted.val; // the grant-scoped root descriptor (an opaque handle)
 
@@ -147,12 +133,15 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
         },
 
         // Native change events via the host `watch` capability (a `notify` watcher
-        // under the grant's jail). Events arrive framed as [kind u8][len u16 BE][path]
+        // under the grant's jail). A `watcher` object is opened for the grant,
+        // and one watch runs on it. Events arrive framed as [kind u8][len u16 BE][path]
         // and are decoded here into codeblock's {eventType, filename} stream. The
-        // watcher stops when this generator returns (abort → session close).
+        // watch stops and the object is released when this generator returns.
         async *watch(path, options) {
             const signal = options?.signal;
-            const session = await watchOpen(t, grant, rel(path), true);
+            const watcher = await watchOpen(t, grant);
+            if (watcher.tag !== "ok") throw new Error(`watch refused: ${watcher.val}`);
+            const session = await watcherWatch(t, watcher.val, rel(path), true);
             const events: Array<{ eventType: "rename" | "change"; filename: string }> = [];
             let buf: Uint8Array = new Uint8Array(0);
             let ended = false;
@@ -196,6 +185,7 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
             } finally {
                 signal?.removeEventListener("abort", onAbort);
                 session.close();
+                await dropHandle(t, watcher.val);
             }
         },
 

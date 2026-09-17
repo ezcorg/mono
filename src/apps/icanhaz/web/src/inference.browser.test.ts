@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { connect } from "./wrpc";
 import { requestScoped } from "./generated/broker";
-import { complete, models } from "./generated/inference";
+import { open, sessionComplete, sessionModels, type SessionCompleteSession } from "./generated/inference";
 import { WS } from "./test-ws";
 
 // Needs a running daemon with the loopback provider (`ICANHAZ_ECHO=1`, which the
@@ -33,7 +33,14 @@ async function grant(t: Awaited<ReturnType<typeof connect>>, allow: string, mode
     return res.val.token;
 }
 
-async function collect(session: Awaited<ReturnType<typeof complete>>): Promise<Uint8Array> {
+/** The token once: `open` yields the session object every call runs on. */
+async function session(t: Awaited<ReturnType<typeof connect>>, token: string): Promise<Uint8Array> {
+    const s = await open(t, token);
+    if (s.tag !== "ok") throw new Error(`inference refused: ${s.val}`);
+    return s.val;
+}
+
+async function collect(session: SessionCompleteSession): Promise<Uint8Array> {
     const chunks: Uint8Array[] = [];
     await new Promise<void>((resolve, reject) => {
         session.onError((e) => reject(new Error(e)));
@@ -56,14 +63,14 @@ async function collect(session: Awaited<ReturnType<typeof complete>>): Promise<U
 describe("inference capability over wRPC (browser → host)", () => {
     it("lists the models the grant covers and streams a completion with usage", async () => {
         const t = await connect({ ws: WS });
-        const token = await grant(t, "true", ["echo"]);
+        const s = await session(t, await grant(t, "true", ["echo"]));
 
-        const listed = await models(t, token);
+        const listed = await sessionModels(t, s);
         expect(listed.tag).toBe("ok");
         if (listed.tag !== "ok") return;
         expect(listed.val.map((m) => m.model)).toEqual(["echo"]);
 
-        const session = await complete(t, token, {
+        const call = await sessionComplete(t, s, {
             model: "echo",
             messages: [{ role: "user", content: "hello from the browser", toolCalls: [], toolCallId: undefined }],
             tools: [],
@@ -71,7 +78,7 @@ describe("inference capability over wRPC (browser → host)", () => {
             temperature: undefined,
             system: undefined,
         });
-        const frames = decodeFrames(await collect(session));
+        const frames = decodeFrames(await collect(call));
         const text = frames.filter((f) => f.kind === 0).map((f) => f.payload).join("");
         expect(text).toBe("hello from the browser");
         const usage = frames.find((f) => f.kind === 1);
@@ -81,8 +88,9 @@ describe("inference capability over wRPC (browser → host)", () => {
 
     it("refuses a model outside the grant's allow clause, with the scope as a sentence", async () => {
         const t = await connect({ ws: WS });
-        const token = await grant(t, 'call.args.request.model == "nope"', []);
-        const session = await complete(t, token, {
+        // The grant is live, so the session opens; the clause is applied per call.
+        const s = await session(t, await grant(t, 'call.args.request.model == "nope"', []));
+        const call = await sessionComplete(t, s, {
             model: "echo",
             messages: [{ role: "user", content: "x", toolCalls: [], toolCallId: undefined }],
             tools: [],
@@ -91,12 +99,12 @@ describe("inference capability over wRPC (browser → host)", () => {
             system: undefined,
         });
         const err = await new Promise<string>((resolve) => {
-            session.onError((e) => resolve(e));
-            session.onData((chunk) => {
+            call.onError((e) => resolve(e));
+            call.onData((chunk) => {
                 if (chunk === null) resolve("stream ended without an error");
             });
         });
-        session.close();
+        call.close();
         expect(err).toContain("out of scope");
         expect(err).toContain("request model is “nope”");
     });
@@ -115,9 +123,9 @@ describe("inference capability over wRPC (browser → host)", () => {
     });
     it("relays a tool call as a kind-3 frame and continues after the tool turn", async () => {
         const t = await connect({ ws: WS });
-        const token = await grant(t, "true", ["echo"]);
+        const s = await session(t, await grant(t, "true", ["echo"]));
         const tools = [{ name: "search", description: "find things", parameters: '{"type":"object"}' }];
-        const first = await complete(t, token, {
+        const first = await sessionComplete(t, s, {
             model: "echo",
             messages: [{ role: "user", content: "find x", toolCalls: [], toolCallId: undefined }],
             tools,
@@ -134,7 +142,7 @@ describe("inference capability over wRPC (browser → host)", () => {
         expect(next?.kind).toBe(1);
 
         // The page ran the tool with its own capabilities; hand the answer back.
-        const second = await complete(t, token, {
+        const second = await sessionComplete(t, s, {
             model: "echo",
             messages: [
                 { role: "user", content: "find x", toolCalls: [], toolCallId: undefined },

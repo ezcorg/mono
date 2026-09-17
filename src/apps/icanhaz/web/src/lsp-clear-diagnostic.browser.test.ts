@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider, createCodeblock } from "@joinezco/codeblock";
 
@@ -16,9 +16,8 @@ describe("removing an error clears the diagnostic without reload", () => {
         const t = await connect({ ws: WS });
         const grant = await requestFilesystemGrant(t, "clear diag");
         const fs = await wrpcFilesystem(t, grant);
-        const rp = await rootPath(t, grant);
-        if (rp.tag !== "ok") throw new Error(`no workspace path: ${rp.val}`);
-        setRemoteLspProvider(createWrpcLspProvider({ transport: t, workspaceRoot: rp.val, servers: { rust: { image: "rust-analyzer" } } }));
+        const root = await workspaceRoot(t, grant);
+        setRemoteLspProvider(createWrpcLspProvider({ transport: t, workspaceRoot: root, servers: { rust: { image: "rust-analyzer" } } }));
         await fs.writeFile("src/main.rs", BROKEN);
 
         const parent = document.createElement("div");

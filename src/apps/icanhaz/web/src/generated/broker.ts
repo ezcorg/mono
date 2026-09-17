@@ -36,9 +36,9 @@ function encCapabilityKind(v: CapabilityKind): number[] {
     throw new Error("bad variant: " + (v as { tag: string }).tag);
 }
 function encFsRequest(v: FsRequest): number[] {
-    return [...enc_77(v.roots)];
+    return [...enc_138(v.roots)];
 }
-function enc_77(v: PathGrant[]): number[] {
+function enc_138(v: PathGrant[]): number[] {
     return [...leb128(v.length), ...v.flatMap((x) => encPathGrant(x))];
 }
 function encPathGrant(v: PathGrant): number[] {
@@ -54,9 +54,9 @@ function encFsRights(v: FsRights): number[] {
     return bytes;
 }
 function encSocketRequest(v: SocketRequest): number[] {
-    return [...enc_81(v.allow), ...[v.mayListen ? 1 : 0]];
+    return [...enc_142(v.allow), ...[v.mayListen ? 1 : 0]];
 }
-function enc_81(v: Endpoint[]): number[] {
+function enc_142(v: Endpoint[]): number[] {
     return [...leb128(v.length), ...v.flatMap((x) => encEndpoint(x))];
 }
 function encEndpoint(v: Endpoint): number[] {
@@ -66,22 +66,22 @@ function encTransport(v: Transport): number[] {
     return leb128(["tcp", "udp"].indexOf(v));
 }
 function encProcessRequest(v: ProcessRequest): number[] {
-    return [...encodeString(v.image), ...enc_39(v.args), ...[v.guestChoosesArgv ? 1 : 0]];
+    return [...encodeString(v.image), ...enc_86(v.args), ...[v.guestChoosesArgv ? 1 : 0]];
 }
-function enc_39(v: string[]): number[] {
+function enc_86(v: string[]): number[] {
     return [...leb128(v.length), ...v.flatMap((x) => encodeString(x))];
 }
 function encTerminalRequest(v: TerminalRequest): number[] {
-    return [...enc_37(v.shell), ...[v.jailed ? 1 : 0]];
+    return [...enc_84(v.shell), ...[v.jailed ? 1 : 0]];
 }
-function enc_37(v: string | undefined): number[] {
+function enc_84(v: string | undefined): number[] {
     return v === undefined ? [0] : [1, ...encodeString(v)];
 }
 function encInferenceRequest(v: InferenceRequest): number[] {
-    return [...enc_39(v.models)];
+    return [...enc_86(v.models)];
 }
 function encComponentRequest(v: ComponentRequest): number[] {
-    return [...encodeString(v.provides), ...enc_37(v.provider), ...enc_39(v.delegated)];
+    return [...encodeString(v.provides), ...enc_84(v.provider), ...enc_86(v.delegated)];
 }
 function encScope(v: Scope): number[] {
     return [...encodeString(v.when), ...encodeString(v.allow)];
@@ -96,17 +96,17 @@ function encCapability(v: Capability): number[] {
     return [...encodeString(v.kind), ...encScope(v.scope)];
 }
 
-function dec_98(b: Uint8Array, o0: number): [{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }, number] {
+function dec_159(b: Uint8Array, o0: number): [{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) { const [val, o2] = decGrant(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = decDenied(b, o1); return [{ tag: "err", val }, o2];
 }
 function decGrant(b: Uint8Array, o0: number): [Grant, number] {
     const [_0, o1] = readString(b, o0);
-    const [_1, o2] = dec_37(b, o1);
+    const [_1, o2] = dec_84(b, o1);
     return [{ token: _0, pairing: _1 }, o2];
 }
-function dec_37(b: Uint8Array, o0: number): [string | undefined, number] {
+function dec_84(b: Uint8Array, o0: number): [string | undefined, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) return [undefined, o1];
     return readString(b, o1);
@@ -123,12 +123,12 @@ function decDenied(b: Uint8Array, o0: number): [Denied, number] {
     if (d === 7) { const [val, o2] = readString(b, o1); return [{ tag: "out-of-scope", val }, o2]; }
     throw new Error("bad disc: " + d);
 }
-function dec_99(b: Uint8Array, o0: number): [{ tag: "ok"; val: string } | { tag: "err"; val: Denied }, number] {
+function dec_160(b: Uint8Array, o0: number): [{ tag: "ok"; val: string } | { tag: "err"; val: Denied }, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) { const [val, o2] = readString(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = decDenied(b, o1); return [{ tag: "err", val }, o2];
 }
-function dec_100(b: Uint8Array, o0: number): [{ tag: "ok"; val: Approval } | { tag: "err"; val: Denied }, number] {
+function dec_161(b: Uint8Array, o0: number): [{ tag: "ok"; val: Approval } | { tag: "err"; val: Denied }, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) { const [val, o2] = decApproval(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = decDenied(b, o1); return [{ tag: "err", val }, o2];
@@ -144,7 +144,7 @@ function decScope(b: Uint8Array, o0: number): [Scope, number] {
     const [_1, o2] = readString(b, o1);
     return [{ when: _0, allow: _1 }, o2];
 }
-function dec_101(b: Uint8Array, o0: number): [{ tag: "ok"; val: GrantDetail } | { tag: "err"; val: Denied }, number] {
+function dec_162(b: Uint8Array, o0: number): [{ tag: "ok"; val: GrantDetail } | { tag: "err"; val: Denied }, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) { const [val, o2] = decGrantDetail(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = decDenied(b, o1); return [{ tag: "err", val }, o2];
@@ -167,10 +167,10 @@ function decCapabilityKind(b: Uint8Array, o0: number): [CapabilityKind, number] 
     throw new Error("bad disc: " + d);
 }
 function decFsRequest(b: Uint8Array, o0: number): [FsRequest, number] {
-    const [_0, o1] = dec_77(b, o0);
+    const [_0, o1] = dec_138(b, o0);
     return [{ roots: _0 }, o1];
 }
-function dec_77(b: Uint8Array, o0: number): [PathGrant[], number] {
+function dec_138(b: Uint8Array, o0: number): [PathGrant[], number] {
     return readList(b, o0, decPathGrant);
 }
 function decPathGrant(b: Uint8Array, o0: number): [PathGrant, number] {
@@ -182,11 +182,11 @@ function decFsRights(b: Uint8Array, o0: number): [FsRights, number] {
     return [{ read: !!(b[o0 + 0]! & 1), write: !!(b[o0 + 0]! & 2), create: !!(b[o0 + 0]! & 4), delete: !!(b[o0 + 0]! & 8), watch: !!(b[o0 + 0]! & 16) }, o0 + 1];
 }
 function decSocketRequest(b: Uint8Array, o0: number): [SocketRequest, number] {
-    const [_0, o1] = dec_81(b, o0);
+    const [_0, o1] = dec_142(b, o0);
     const [_1, o2] = readBool(b, o1);
     return [{ allow: _0, mayListen: _1 }, o2];
 }
-function dec_81(b: Uint8Array, o0: number): [Endpoint[], number] {
+function dec_142(b: Uint8Array, o0: number): [Endpoint[], number] {
     return readList(b, o0, decEndpoint);
 }
 function decEndpoint(b: Uint8Array, o0: number): [Endpoint, number] {
@@ -202,29 +202,29 @@ function decTransport(b: Uint8Array, o0: number): [Transport, number] {
 }
 function decProcessRequest(b: Uint8Array, o0: number): [ProcessRequest, number] {
     const [_0, o1] = readString(b, o0);
-    const [_1, o2] = dec_39(b, o1);
+    const [_1, o2] = dec_86(b, o1);
     const [_2, o3] = readBool(b, o2);
     return [{ image: _0, args: _1, guestChoosesArgv: _2 }, o3];
 }
-function dec_39(b: Uint8Array, o0: number): [string[], number] {
+function dec_86(b: Uint8Array, o0: number): [string[], number] {
     return readList(b, o0, readString);
 }
 function decTerminalRequest(b: Uint8Array, o0: number): [TerminalRequest, number] {
-    const [_0, o1] = dec_37(b, o0);
+    const [_0, o1] = dec_84(b, o0);
     const [_1, o2] = readBool(b, o1);
     return [{ shell: _0, jailed: _1 }, o2];
 }
 function decInferenceRequest(b: Uint8Array, o0: number): [InferenceRequest, number] {
-    const [_0, o1] = dec_39(b, o0);
+    const [_0, o1] = dec_86(b, o0);
     return [{ models: _0 }, o1];
 }
 function decComponentRequest(b: Uint8Array, o0: number): [ComponentRequest, number] {
     const [_0, o1] = readString(b, o0);
-    const [_1, o2] = dec_37(b, o1);
-    const [_2, o3] = dec_39(b, o2);
+    const [_1, o2] = dec_84(b, o1);
+    const [_2, o3] = dec_86(b, o2);
     return [{ provides: _0, provider: _1, delegated: _2 }, o3];
 }
-function dec_102(b: Uint8Array, o0: number): [GrantInfo[], number] {
+function dec_163(b: Uint8Array, o0: number): [GrantInfo[], number] {
     return readList(b, o0, decGrantInfo);
 }
 function decGrantInfo(b: Uint8Array, o0: number): [GrantInfo, number] {
@@ -236,7 +236,7 @@ function decGrantInfo(b: Uint8Array, o0: number): [GrantInfo, number] {
 function decPrincipal(b: Uint8Array, o0: number): [Principal, number] {
     const [_0, o1] = decPrincipalKind(b, o0);
     const [_1, o2] = readString(b, o1);
-    const [_2, o3] = dec_37(b, o2);
+    const [_2, o3] = dec_84(b, o2);
     return [{ kind: _0, id: _1, displayName: _2 }, o3];
 }
 function decPrincipalKind(b: Uint8Array, o0: number): [PrincipalKind, number] {
@@ -245,38 +245,38 @@ function decPrincipalKind(b: Uint8Array, o0: number): [PrincipalKind, number] {
 }
 
 export async function request(t: WrpcTransport, want: CapabilityKind, reason: string, pairing: string | undefined): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
-    const resp = await invoke(t, INSTANCE, "request", [...encCapabilityKind(want), ...encodeString(reason), ...enc_37(pairing)]);
-    return dec_98(resultValue(resp), 0)[0];
+    const resp = await invoke(t, INSTANCE, "request", [...encCapabilityKind(want), ...encodeString(reason), ...enc_84(pairing)]);
+    return dec_159(resultValue(resp), 0)[0];
 }
 
 export async function requestScoped(t: WrpcTransport, want: CapabilityKind, scope: Scope, reason: string, pairing: string | undefined): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
-    const resp = await invoke(t, INSTANCE, "request-scoped", [...encCapabilityKind(want), ...encScope(scope), ...encodeString(reason), ...enc_37(pairing)]);
-    return dec_98(resultValue(resp), 0)[0];
+    const resp = await invoke(t, INSTANCE, "request-scoped", [...encCapabilityKind(want), ...encScope(scope), ...encodeString(reason), ...enc_84(pairing)]);
+    return dec_159(resultValue(resp), 0)[0];
 }
 
 export async function narrow(t: WrpcTransport, token: string, extra: Scope): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "narrow", [...encodeString(token), ...encScope(extra)]);
-    return dec_98(resultValue(resp), 0)[0];
+    return dec_159(resultValue(resp), 0)[0];
 }
 
 export async function certify(t: WrpcTransport, token: string, audience: Audience, ttlSecs: bigint, extra: Scope): Promise<{ tag: "ok"; val: string } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "certify", [...encodeString(token), ...encAudience(audience), ...leb128(ttlSecs), ...encScope(extra)]);
-    return dec_99(resultValue(resp), 0)[0];
+    return dec_160(resultValue(resp), 0)[0];
 }
 
 export async function redeem(t: WrpcTransport, cert: string): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "redeem", [...encodeString(cert)]);
-    return dec_98(resultValue(resp), 0)[0];
+    return dec_159(resultValue(resp), 0)[0];
 }
 
 export async function consent(t: WrpcTransport, capability: Capability, summary: string, reason: string, requester: string): Promise<{ tag: "ok"; val: Approval } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "consent", [...encCapability(capability), ...encodeString(summary), ...encodeString(reason), ...encodeString(requester)]);
-    return dec_100(resultValue(resp), 0)[0];
+    return dec_161(resultValue(resp), 0)[0];
 }
 
 export async function inspect(t: WrpcTransport, token: string): Promise<{ tag: "ok"; val: GrantDetail } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "inspect", [...encodeString(token)]);
-    return dec_101(resultValue(resp), 0)[0];
+    return dec_162(resultValue(resp), 0)[0];
 }
 
 export async function locator(t: WrpcTransport): Promise<string> {
@@ -286,7 +286,7 @@ export async function locator(t: WrpcTransport): Promise<string> {
 
 export async function redeemAt(t: WrpcTransport, locator: string, cert: string): Promise<{ tag: "ok"; val: Grant } | { tag: "err"; val: Denied }> {
     const resp = await invoke(t, INSTANCE, "redeem-at", [...encodeString(locator), ...encodeString(cert)]);
-    return dec_98(resultValue(resp), 0)[0];
+    return dec_159(resultValue(resp), 0)[0];
 }
 
 export async function identity(t: WrpcTransport): Promise<string> {
@@ -296,7 +296,7 @@ export async function identity(t: WrpcTransport): Promise<string> {
 
 export async function granted(t: WrpcTransport): Promise<GrantInfo[]> {
     const resp = await invoke(t, INSTANCE, "granted", []);
-    return dec_102(resultValue(resp), 0)[0];
+    return dec_163(resultValue(resp), 0)[0];
 }
 
 export async function revoke(t: WrpcTransport, token: string): Promise<void> {

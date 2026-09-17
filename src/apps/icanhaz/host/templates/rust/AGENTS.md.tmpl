@@ -6,17 +6,23 @@ caller and a provider. This one {{what}}.
 ## The rules
 
 - **Imports are capabilities, never libraries.** The daemon links only
-  capability interfaces (`wasi:*`, `icanhaz:nocap/*`, `icanhaz:fspass/*`,
-  `ezco:ezcap/*`). A regex engine, a parser, anything else, is compiled into
+  capability interfaces (`wasi:*`, `icanhaz:nocap/*`, `ezco:ezcap/*`). A regex engine, a parser, anything else, is compiled into
   this crate or composed in at build time with `wac`. `icanhaz capability
   inspect` names any import that breaks this rule.
 - **The world is `wit/world.wit`.** Everything it imports and exports is
   vendored under `wit/deps/`; do not edit those copies. Change the world when
   the capability's shape changes, then rebuild.
-- **Authority comes from the grant, not from here.** A caller presents a grant
-  token to the interface you export; forward it to the interface you import.
-  Narrowing what a grant may do is done with the `ezco:ezcap` scope on the
-  grant (CEL), or by what this component refuses or rewrites.
+- **Authority comes from the grant, not from here.** A capability is
+  resource-shaped: a caller presents its grant token once, to `open` on the
+  interface you export, and the object `open` returns *is* the capability; its
+  methods carry no token. Forward `open` to the interface you import and keep
+  the upstream object; forward each method to it. Narrowing what a grant may
+  do is done with the `ezco:ezcap` scope on the grant (CEL), or by what this
+  component refuses or rewrites.
+- **Keep the WIT's asyncness.** A function declared `async func` is `async fn`
+  here and its forward is awaited; a synchronous export cannot block on an
+  asynchronous import, so the shape of the interface you export must match
+  the one you import method for method (a wrapper's does by construction).
 
 ## Build, check, add
 

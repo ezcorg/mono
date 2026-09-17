@@ -9,7 +9,7 @@
 //! `grants`, and the app injects its own native consent surface.
 
 use core::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
@@ -21,7 +21,7 @@ use crate::configuration_serve::ConfigurationProvider;
 use crate::process::ProcessProvider;
 use crate::providers::Providers;
 use crate::serve::{
-    serve_iroh_all, serve_websocket_all, serve_webtransport_all, ComponentsServe, FsServe,
+    serve_iroh_all, serve_websocket_all, serve_webtransport_all, CapabilitiesServe, ComponentsServe,
 };
 use crate::store::Store;
 use crate::terminal::TerminalProvider;
@@ -36,8 +36,10 @@ pub struct DaemonConfig {
     pub wt_bind: SocketAddr,
     /// The fs root the demo jail lives under (also the preopen for `wasi:filesystem`).
     pub root: std::path::PathBuf,
-    /// The `wasi:filesystem` passthrough component (`.wasm`).
-    pub fs_component: std::path::PathBuf,
+    /// Where the shipped capability components live: `<dir>/<name>/target/
+    /// wasm32-wasip2/release/<name>_capability.wasm` for filesystem, process,
+    /// terminal, watch, workspace and inference.
+    pub capabilities_dir: std::path::PathBuf,
     /// WebTransport TLS: PEM cert/key paths; a self-signed cert is generated if either
     /// is absent.
     pub cert: Option<String>,
@@ -233,39 +235,6 @@ pub async fn run(
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
     let configuration = services.configuration_provider();
     let components = services.components_provider();
-    // Grants provided through store components run them here.
-    let chain = match crate::chain::Chain::new(Arc::clone(&services.components)) {
-        Ok(chain) => Some(chain),
-        Err(e) => {
-            tracing::warn!(error = %e, "wrapper chains unavailable");
-            None
-        }
-    };
-    let workspace = match &chain {
-        Some(c) => workspace.with_chain(Arc::clone(c)),
-        None => workspace,
-    };
-    let watch = match &chain {
-        Some(c) => watch.with_chain(Arc::clone(c)),
-        None => watch,
-    };
-    let terminal = match &chain {
-        Some(c) => terminal.with_chain(Arc::clone(c)),
-        None => terminal,
-    };
-    // The shipped passthrough is the store's first component, so what the
-    // daemon links today is addressable by hash like anything a user brings.
-    match std::fs::read(&config.fs_component) {
-        Ok(bytes) => match services.components.add(&bytes, None).await {
-            Ok(info) => {
-                tracing::info!(hash = %info.hash, "fs-passthrough registered in the component store")
-            }
-            Err(e) => tracing::warn!(error = %e, "shipped fs-passthrough did not validate"),
-        },
-        Err(e) => {
-            tracing::warn!(error = %e, path = %config.fs_component.display(), "fs-passthrough component not readable")
-        }
-    }
     let Services {
         providers,
         identity: broker_key,
@@ -301,10 +270,6 @@ pub async fn run(
     let mut broker = broker;
     let mut process = process;
     let mut inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
-    if let Some(c) = &chain {
-        process = process.with_chain(Arc::clone(c));
-        inference = inference.with_chain(Arc::clone(c));
-    }
     if let Some(ep) = &iroh_ep {
         let remotes = crate::remote::Remotes::new(ep.clone());
         let locator = crate::remote::locator_of(ep, &broker_key.public());
@@ -313,57 +278,90 @@ pub async fn run(
         process = process.with_remotes(remotes.clone());
         inference = inference.with_remotes(remotes);
     }
-    // A filesystem grant provided through a chain (`via`, chosen at consent)
-    // mounts on that chain: composed here from the store, in front of the
-    // shipped passthrough, the first time a grant names it.
-    let chains: Option<crate::component_serve::ChainSource> = match std::fs::read(
-        &config.fs_component,
-    ) {
-        Ok(passthrough) => {
-            let components = Arc::clone(&services.components);
-            let passthrough = Arc::new(passthrough);
-            Some(Arc::new(move |via: Vec<String>| {
-                let components = Arc::clone(&components);
-                let passthrough = Arc::clone(&passthrough);
-                Box::pin(async move {
-                    tokio::task::spawn_blocking(move || {
-                        crate::components::filesystem_chain(&components, &passthrough, &via)
-                    })
+    // The raw host layer every shipped component imports: the gate over the
+    // grant store, and the providers' native implementations.
+    let (inference_complete, inference_models) = inference.native_for_grants();
+    let raw = Arc::new(crate::raw::Raw {
+        grants: grants.clone(),
+        spawn: Some(process.native_for_grants()),
+        terminal: Some(terminal.native_for_grants()),
+        watch: Some(watch.native_for_grants()),
+        root: Some(workspace.native_for_grants()),
+        complete: Some(inference_complete),
+        models: Some(inference_models),
+    });
+    // The shipped capability components: registered in the store (so a chain
+    // or a novel component can be composed with them by hash) and served.
+    let mut shipped: Vec<(String, PathBuf)> = Vec::new();
+    for name in [
+        "filesystem",
+        "process",
+        "terminal",
+        "watch",
+        "workspace",
+        "inference",
+    ] {
+        shipped.push((
+            name.to_string(),
+            config
+                .capabilities_dir
+                .join(name)
+                .join("target/wasm32-wasip2/release")
+                .join(format!("{name}_capability.wasm")),
+        ));
+    }
+    for (name, path) in &shipped {
+        match std::fs::read(path) {
+            Ok(bytes) => match services.components.add(&bytes, None).await {
+                Ok(info) => {
+                    services.components.register_shipped(&info);
+                    tracing::info!(hash = %info.hash, capability = %name, "shipped capability registered in the component store");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, capability = %name, "shipped capability did not validate")
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), capability = %name, "shipped capability not readable")
+            }
+        }
+    }
+    // A grant provided through a chain (`via`, chosen at consent) is acquired
+    // on that chain: composed here from the store, in front of the shipped
+    // component providing its interface, the first time a grant names it.
+    let chains: Option<crate::component_serve::ChainSource> = {
+        let components = Arc::clone(&services.components);
+        Some(Arc::new(move |via: Vec<String>| {
+            let components = Arc::clone(&components);
+            Box::pin(async move {
+                tokio::task::spawn_blocking(move || components.capability_chain(&via))
                     .await
-                    .context("compose filesystem chain")?
-                })
-                    as std::pin::Pin<
-                        Box<dyn std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send>,
-                    >
-            }))
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, path = %config.fs_component.display(), "fs-passthrough not readable; filesystem chains unavailable");
-            None
-        }
+                    .context("compose capability chain")?
+            })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send>,
+                >
+        }))
     };
-    let fs_serve = FsServe {
-        component_path: config.fs_component.clone(),
+    // One registry of served handles for the whole daemon: a handle is scoped
+    // to the connection that minted it, whichever transport and capability.
+    let handles = crate::component_serve::Handles::new();
+    let capabilities = CapabilitiesServe {
+        components: shipped,
         root: config.root.clone(),
         grants: grants.clone(),
         chains,
+        raw: Arc::clone(&raw),
+        handles: Arc::clone(&handles),
     };
     // Novel interfaces store components provide: their admission environments
     // come from the components' own WIT, and the transports serve them
     // through shared routers.
-    let (inference_complete, inference_models) = inference.native_for_grants();
-    let natives = crate::chain::Natives {
-        spawn: process.native_for_grants(),
-        complete: inference_complete,
-        models: inference_models,
-        terminal: terminal.native_for_grants(),
-        watch: watch.native_for_grants(),
-        root: workspace.native_for_grants(),
-    };
     let components_serve = ComponentsServe::new(
         Arc::clone(&services.components),
         grants.clone(),
-        Some(natives),
+        Arc::clone(&raw),
+        handles,
     );
     for info in services.components.list().await {
         crate::serve::register_component_envs_for(&services.components, &grants, &info);
@@ -420,28 +418,18 @@ pub async fn run(
         serve_websocket_all(
             ws_listener,
             broker.clone(),
-            terminal.clone(),
-            process.clone(),
-            workspace.clone(),
-            watch.clone(),
-            inference.clone(),
             configuration.clone(),
             components.clone(),
-            fs_serve.clone(),
+            capabilities.clone(),
             components_serve.clone()
         ),
         serve_webtransport_all(
             config.wt_bind,
             identity,
             broker.clone(),
-            terminal.clone(),
-            process.clone(),
-            workspace.clone(),
-            watch.clone(),
-            inference.clone(),
             configuration.clone(),
             components.clone(),
-            fs_serve.clone(),
+            capabilities.clone(),
             components_serve.clone()
         ),
         async {
@@ -450,14 +438,9 @@ pub async fn run(
                     serve_iroh_all(
                         ep,
                         broker,
-                        terminal,
-                        process,
-                        workspace,
-                        watch,
-                        inference,
                         configuration,
                         components,
-                        fs_serve,
+                        capabilities,
                         components_serve,
                     )
                     .await

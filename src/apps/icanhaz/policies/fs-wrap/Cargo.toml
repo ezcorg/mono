@@ -3,7 +3,7 @@ name = "fs-wrap"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "A filesystem *wrapper* (world fs-wrap): imports wasi:filesystem/types and icanhaz:fspass/mount from the component in front of it (the passthrough, or another wrapper) and re-exports both, wrapping every descriptor in its own. This one refuses any path containing `forbidden`. The reference for `icanhaz capability wrap` of the filesystem, and the daemon-wide chain fixture."
+description = "A filesystem *wrapper* (world fs-wrap): imports wasi:filesystem/types and icanhaz:nocap/filesystem from the component in front of it (the shipped filesystem capability, or another wrapper) and re-exports both, wrapping every descriptor in its own. This one refuses any path containing `forbidden`. The reference for `icanhaz capability wrap` of the filesystem, and the daemon-wide chain fixture."
 
 [lib]
 crate-type = ["cdylib"]
