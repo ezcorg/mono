@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::broker::{bindings as broker, BrokerProvider, GrantStore};
-use crate::component_serve::{serve_filesystem, ChainSource};
+use crate::component_serve::{serve_filesystem, ChainSource, WasiRecipe};
 use crate::components::{bindings as components, ComponentsProvider};
 use crate::inference::{bindings as inference, InferenceProvider};
 use crate::process::{bindings as proc, ProcessProvider};
@@ -109,17 +109,22 @@ where
             fs_serve.component_path.display()
         )
     })?;
-    let mut wasi_builder = WasiCtxBuilder::new();
-    wasi_builder
-        .preopened_dir(&fs_serve.root, "/", FsPerms::ReadWrite)
-        .map_err(anyhow::Error::from)
-        .context("preopen wasi:filesystem root")?;
+    // One WASI context per chain's store, each preopening the same jail.
+    let root = fs_serve.root.clone();
+    let wasi: WasiRecipe = Arc::new(move || {
+        let mut builder = WasiCtxBuilder::new();
+        builder
+            .preopened_dir(&root, "/", FsPerms::ReadWrite)
+            .map_err(anyhow::Error::from)
+            .context("preopen wasi:filesystem root")?;
+        Ok(builder.build())
+    });
     let _wasi_fs = serve_filesystem(
         srv,
         &fs_wasm,
         wrpc_transport::tcp::Client::from("127.0.0.1:1".to_string()),
         (),
-        wasi_builder.build(),
+        wasi,
         fs_serve.grants,
         fs_serve.chains,
     )

@@ -26,9 +26,7 @@ use futures::StreamExt as _;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use uuid::Uuid;
-use wasmtime::component::{
-    types, Component, Func, Instance, Linker, ResourceTable, ResourceType, Val,
-};
+use wasmtime::component::{types, Component, Func, Instance, Linker, ResourceTable, ResourceType};
 use wasmtime::{Engine, Store};
 
 use crate::broker::GrantStore;
@@ -37,7 +35,7 @@ use wasmtime_wasi::p2::bindings::io;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 use wrpc_transport::{Invoke, Serve, ServeExt as _}; // ServeExt: serve_values (the drop meta-op)
 use wrpc_wasmtime::{
-    collect_component_resource_exports, collect_component_resource_imports, Chosen, RemoteResource,
+    collect_component_resource_exports, collect_component_resource_imports, RemoteResource,
     ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
 }; // ServeExt: serve_function_shared (component exports)
 
@@ -346,44 +344,56 @@ pub type ChainSource = Arc<
         + Sync,
 >;
 
-/// One instantiated filesystem chain living in the shared store.
-struct FsChain {
+/// A fresh WASI context for one chain's store: the preopened root (the jail).
+/// Each chain gets its own, built from the same recipe.
+pub type WasiRecipe = Arc<dyn Fn() -> anyhow::Result<WasiCtx> + Send + Sync>;
+
+/// One instantiated filesystem chain: its own store (so its own lock, host
+/// tables, limits and lifetime), the resource types it exports, its exports.
+struct FsChain<C: Invoke + 'static> {
     /// The chain's component ids joined by `,`; empty for the default chain.
     key: String,
+    store: Mutex<Store<FsState<C>>>,
     /// The resource types this chain's instance exports, in both identities
-    /// (declared by the component type, minted by the live instance): the
-    /// live one is how a handle is traced back to the chain that owns it.
-    resources: Arc<[ResourceType]>,
+    /// (declared by the component type, minted by the live instance).
+    resources: Vec<ResourceType>,
     /// Its exported functions by `(interface, function)`.
     funcs: HashMap<(Box<str>, Box<str>), Func>,
 }
 
-impl FsChain {
-    fn func(&self, iface: &str, name: &str) -> wasmtime::Result<Func> {
+impl<C: Invoke + 'static> FsChain<C> {
+    fn func(&self, iface: &str, name: &str) -> anyhow::Result<Func> {
         self.funcs
             .get(&(Box::from(iface), Box::from(name)))
             .copied()
-            .ok_or_else(|| {
-                wasmtime::Error::msg(format!(
+            .with_context(|| {
+                format!(
                     "filesystem chain [{}] does not export `{iface}#{name}`",
                     self.key
-                ))
+                )
             })
     }
 }
 
-/// The chains a filesystem serving fronts, all instantiated into **one** store so
-/// their resources share one handle table. Calls are routed here: a method to the
-/// chain owning its resource, `mount.open-root` to the chain the grant names
-/// (instantiated on first use), anything else to the default chain.
+/// The chains a filesystem serving fronts, each in its own store. Calls are
+/// routed here before anything is decoded: a method to the chain that minted
+/// its handle (a registry from handle to chain, fed by what each store mints),
+/// `mount.open-root` to the chain the grant names (composed and instantiated on
+/// first use, outside every store's lock), anything else to the default chain.
 struct FsRouter<C: Invoke + 'static> {
     engine: Engine,
     linker: Linker<FsState<C>>,
     source: Option<ChainSource>,
-    chains: std::sync::Mutex<Vec<FsChain>>,
+    state: Box<dyn Fn() -> anyhow::Result<FsState<C>> + Send + Sync>,
+    grants: Arc<std::sync::Mutex<GrantStore>>,
+    chains: std::sync::RwLock<Vec<Arc<FsChain<C>>>>,
+    /// Handle → index of the chain whose store holds it.
+    handles: std::sync::Mutex<HashMap<Uuid, usize>>,
     /// Every chain's resource types: what the codec checks a declared
     /// parameter or result type against before it reads or mints a handle.
     union: std::sync::Mutex<Arc<[ResourceType]>>,
+    /// Serializes chain creation, so two first mounts of one chain build it once.
+    building: Mutex<()>,
 }
 
 impl<C> FsRouter<C>
@@ -395,47 +405,61 @@ where
         Arc::clone(&self.union.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
-    /// Instantiate `component` into `store` and register it as a chain.
-    async fn add_chain(
-        &self,
-        store: &mut Store<FsState<C>>,
-        key: String,
-        component: &Component,
-    ) -> wasmtime::Result<Func> {
+    fn chain(&self, index: usize) -> Option<Arc<FsChain<C>>> {
+        self.chains
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(index)
+            .cloned()
+    }
+
+    fn chain_by_key(&self, key: &str) -> Option<Arc<FsChain<C>>> {
+        self.chains
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|c| c.key == key)
+            .cloned()
+    }
+
+    /// Instantiate `component` into a fresh store and register it as a chain.
+    async fn add_chain(&self, key: String, component: &Component) -> anyhow::Result<()> {
         let ty = component.component_type();
         // A resource type has two identities: the one the component type
         // declares (what a function's parameter and result types name) and the
         // one the live instance mints (what a `ResourceAny` reports). The codec
-        // checks parameters against the first and results against the second,
-        // and routing sees the second, so a chain owns both.
+        // checks declared types, so the union carries both.
         let mut resources = Vec::new();
         collect_component_resource_exports(&self.engine, &ty, &mut resources);
+        let mut store = Store::new(&self.engine, (self.state)()?);
         let instance = self
             .linker
-            .instantiate_pre(component)?
-            .instantiate_async(&mut *store)
-            .await?;
+            .instantiate_pre(component)
+            .map_err(anyhow::Error::from)?
+            .instantiate_async(&mut store)
+            .await
+            .map_err(anyhow::Error::from)?;
         let mut funcs = HashMap::new();
         for (iface, types::ComponentExtern { ty: item, .. }) in ty.exports(&self.engine) {
             let types::ComponentItem::ComponentInstance(inst_ty) = item else {
                 continue;
             };
-            let Some(iface_idx) = instance.get_export_index(&mut *store, None, iface) else {
+            let Some(iface_idx) = instance.get_export_index(&mut store, None, iface) else {
                 continue;
             };
             for (name, types::ComponentExtern { ty: fitem, .. }) in inst_ty.exports(&self.engine) {
-                let Some(idx) = instance.get_export_index(&mut *store, Some(&iface_idx), name)
+                let Some(idx) = instance.get_export_index(&mut store, Some(&iface_idx), name)
                 else {
                     continue;
                 };
                 match fitem {
                     types::ComponentItem::ComponentFunc(_) => {
-                        if let Some(func) = instance.get_func(&mut *store, idx) {
+                        if let Some(func) = instance.get_func(&mut store, idx) {
                             funcs.insert((Box::from(iface), Box::from(name)), func);
                         }
                     }
                     types::ComponentItem::Resource(_) => {
-                        if let Some(live) = instance.get_resource(&mut *store, idx) {
+                        if let Some(live) = instance.get_resource(&mut store, idx) {
                             resources.push(live);
                         }
                     }
@@ -445,96 +469,122 @@ where
         }
         let chain = FsChain {
             key,
-            resources: Arc::from(resources),
+            store: Mutex::new(store),
+            resources,
             funcs,
         };
-        let open_root = chain.func(MOUNT_INSTANCE, "open-root")?;
-        let mut chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
-        chains.push(chain);
+        chain.func(MOUNT_INSTANCE, "open-root")?;
+        let mut chains = self.chains.write().unwrap_or_else(|e| e.into_inner());
+        chains.push(Arc::new(chain));
         let union: Vec<ResourceType> = chains
             .iter()
             .flat_map(|c| c.resources.iter().copied())
             .collect();
         *self.union.lock().unwrap_or_else(|e| e.into_inner()) = Arc::from(union);
-        Ok(open_root)
+        Ok(())
     }
 
     /// The chain for `via` (outermost first): the default when empty, an
-    /// existing one by key, else composed through the source and instantiated.
-    async fn open_root_of(
-        &self,
-        store: &mut Store<FsState<C>>,
-        via: Vec<String>,
-    ) -> wasmtime::Result<Chosen> {
+    /// existing one by key, else composed through the source, compiled and
+    /// instantiated, all without holding any chain's store.
+    async fn chain_for(&self, via: Vec<String>) -> anyhow::Result<Arc<FsChain<C>>> {
         let key = via.join(",");
-        {
-            let chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(chain) = chains.iter().find(|c| c.key == key) {
-                return Ok(Chosen {
-                    func: chain.func(MOUNT_INSTANCE, "open-root")?,
-                });
-            }
+        if let Some(chain) = self.chain_by_key(&key) {
+            return Ok(chain);
+        }
+        let _building = self.building.lock().await;
+        if let Some(chain) = self.chain_by_key(&key) {
+            return Ok(chain);
         }
         let Some(source) = &self.source else {
-            return Err(wasmtime::Error::msg(format!(
+            anyhow::bail!(
                 "the grant names a filesystem chain [{key}] but this serving has no chain source"
-            )));
+            );
         };
-        let bytes = source(via).await.map_err(|e| {
-            wasmtime::Error::msg(format!("compose filesystem chain [{key}]: {e:#}"))
-        })?;
+        let bytes = source(via)
+            .await
+            .with_context(|| format!("compose filesystem chain [{key}]"))?;
         let engine = self.engine.clone();
         let component = tokio::task::spawn_blocking(move || Component::new(&engine, &bytes))
             .await
-            .map_err(|e| wasmtime::Error::msg(format!("compile filesystem chain: {e}")))??;
+            .context("compile filesystem chain")?
+            .map_err(anyhow::Error::from)?;
+        self.add_chain(key.clone(), &component).await?;
         tracing::info!(chain = %key, "filesystem chain instantiated");
-        let func = self.add_chain(store, key, &component).await?;
-        Ok(Chosen { func })
+        self.chain_by_key(&key)
+            .context("chain vanished after instantiation")
     }
 
-    /// Route one decoded call.
-    async fn choose(
+    /// Route one call before it is decoded, by looking at its first argument
+    /// on the wire: a guest resource handle names the chain that minted it; the
+    /// `open-root` token names the grant, whose `via` names the chain.
+    async fn route(
         &self,
-        store: &mut Store<FsState<C>>,
         iface: &str,
         name: &str,
-        params: &[Val],
-    ) -> wasmtime::Result<Chosen> {
-        match params.first() {
-            // A method: the chain that minted the resource answers it.
-            Some(Val::Resource(resource)) => {
-                let ty = resource.ty();
-                let chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
-                let Some(chain) = chains.iter().find(|c| c.resources.contains(&ty)) else {
-                    return Err(wasmtime::Error::msg(
-                        "resource does not belong to any served filesystem chain",
-                    ));
-                };
-                Ok(Chosen {
-                    func: chain.func(iface, name)?,
-                })
+        params_ty: &[types::Type],
+        rx: &mut wrpc_transport::frame::Incoming,
+    ) -> anyhow::Result<Arc<FsChain<C>>> {
+        match params_ty.first() {
+            Some(types::Type::Own(ty) | types::Type::Borrow(ty)) if self.union().contains(ty) => {
+                // `own`/`borrow` of a guest resource: a 16-byte handle, length-prefixed.
+                let head = rx.peek(17).await.context("peek resource handle")?;
+                anyhow::ensure!(head[0] == 16, "resource handle is not 16 bytes");
+                let id = Uuid::from_bytes_le(head[1..17].try_into()?);
+                let index = self
+                    .handles
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&id)
+                    .copied()
+                    .context("unknown resource handle")?;
+                self.chain(index)
+                    .context("handle names a chain that is gone")
             }
-            // Mounting: the grant names its chain.
-            Some(Val::String(token)) if iface == MOUNT_INSTANCE && name == "open-root" => {
-                let via = store
-                    .data()
+            Some(types::Type::String) if iface == MOUNT_INSTANCE && name == "open-root" => {
+                let token = peek_string(rx).await.context("peek grant token")?;
+                let via = self
                     .grants
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .via_of(token);
-                self.open_root_of(store, via).await
+                    .via_of(&token);
+                self.chain_for(via).await
             }
-            _ => {
-                let chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
-                let Some(chain) = chains.first() else {
-                    return Err(wasmtime::Error::msg("no filesystem chain is served"));
-                };
-                Ok(Chosen {
-                    func: chain.func(iface, name)?,
-                })
-            }
+            _ => self.chain(0).context("no filesystem chain is served"),
         }
     }
+
+    /// Record which chain minted `ids`.
+    fn minted(&self, chain: usize, ids: Vec<Uuid>) {
+        if ids.is_empty() {
+            return;
+        }
+        let mut handles = self.handles.lock().unwrap_or_else(|e| e.into_inner());
+        for id in ids {
+            handles.insert(id, chain);
+        }
+    }
+}
+
+/// Peek a wRPC `string` at the head of `rx`: a LEB128 length then its bytes.
+async fn peek_string(rx: &mut wrpc_transport::frame::Incoming) -> anyhow::Result<String> {
+    let mut len: u32 = 0;
+    let mut shift = 0;
+    let mut prefix = 0;
+    loop {
+        let head = rx.peek(prefix + 1).await?;
+        let byte = head[prefix];
+        len |= u32::from(byte & 0x7f) << shift;
+        prefix += 1;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        shift += 7;
+        anyhow::ensure!(shift < 35, "string length prefix too long");
+    }
+    let len = usize::try_from(len)?;
+    let all = rx.peek(prefix + len).await?;
+    Ok(String::from_utf8(all[prefix..].to_vec())?)
 }
 
 /// The interface `open-root` lives on; the token-carrying call routing keys on.
@@ -619,26 +669,29 @@ where
 /// (host-validated against `grants`), instantiated once, its exports
 /// (`wasi:filesystem/types` + `mount`) registered on `srv`. `mount.open-root`
 /// calls the gate, so it refuses any token that isn't a live `filesystem` grant:
-/// an ungated peer never receives a descriptor. `wasi` carries the preopened
-/// root (the jail).
+/// an ungated peer never receives a descriptor. `wasi` builds the preopened
+/// root (the jail) for each chain's store.
 ///
 /// A grant provided through a chain (`via`, chosen at consent) mounts on that
-/// chain instead: `chains` composes it, and it is instantiated into the same
-/// store the first time a grant names it. Every call is then routed by the
-/// resource it names, so descriptors from different chains coexist on one
-/// connection. Handles are bound to the connection that minted them: they are
-/// looked up in the scope the invocation's context identifies, and nowhere else.
+/// chain instead: `chains` composes it, and it is instantiated into its own
+/// store the first time a grant names it, so a slow, leaky or trapping wrapper
+/// has its own lock, host tables and limits and cannot stall or exhaust the
+/// others. Every call is routed to the chain that minted the handle it names,
+/// before anything is decoded, so descriptors from different chains coexist on
+/// one connection. Handles are bound to the connection that minted them: they
+/// are looked up in the scope the invocation's context identifies, and nowhere
+/// else.
 pub async fn serve_filesystem<C, S>(
     srv: &S,
     component_bytes: &[u8],
     client: C,
     cx: C::Context,
-    wasi: WasiCtx,
+    wasi: WasiRecipe,
     grants: Arc<std::sync::Mutex<GrantStore>>,
     chains: Option<ChainSource>,
 ) -> anyhow::Result<JoinSet<()>>
 where
-    C: Invoke + 'static,
+    C: Invoke + Clone + 'static,
     C::Context: Clone,
     S: Serve,
     S::Context: AsOrigin,
@@ -656,32 +709,36 @@ where
     let io_streams: Arc<[ResourceType]> =
         wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &ty).into();
 
-    let mut store = Store::new(
-        &engine,
-        FsState {
-            table: ResourceTable::new(),
-            wasi,
-            rpc: Rpc {
-                client,
-                cx,
-                shared: SharedResourceTable::with_capacity(max_fs_handles()),
-            },
-            grants,
-        },
-    );
+    let state = {
+        let grants = Arc::clone(&grants);
+        Box::new(move || {
+            Ok(FsState {
+                table: ResourceTable::new(),
+                wasi: wasi()?,
+                rpc: Rpc {
+                    client: client.clone(),
+                    cx: cx.clone(),
+                    shared: SharedResourceTable::with_capacity(max_fs_handles()),
+                },
+                grants: Arc::clone(&grants),
+            })
+        })
+    };
     let router = Arc::new(FsRouter {
         engine: engine.clone(),
         linker,
         source: chains,
-        chains: std::sync::Mutex::new(Vec::new()),
+        state,
+        grants,
+        chains: std::sync::RwLock::new(Vec::new()),
+        handles: std::sync::Mutex::new(HashMap::new()),
         union: std::sync::Mutex::new(Arc::from(Vec::new())),
+        building: Mutex::new(()),
     });
     router
-        .add_chain(&mut store, String::new(), &component)
+        .add_chain(String::new(), &component)
         .await
-        .map_err(anyhow::Error::from)
         .context("instantiate the default filesystem chain")?;
-    let store = Arc::new(Mutex::new(store));
 
     // Every exported function of the default chain is served by name; the router
     // picks the chain per call. Chains are compositions in front of the default,
@@ -704,7 +761,6 @@ where
                 .with_context(|| format!("failed to serve `{instance_name}#{name}`"))?;
             let iface: Arc<str> = Arc::from(instance_name);
             let name: Arc<str> = Arc::from(name);
-            let store = Arc::clone(&store);
             let router = Arc::clone(&router);
             let host_resources = Arc::clone(&host_resources);
             let io_streams = Arc::clone(&io_streams);
@@ -719,25 +775,20 @@ where
                         }
                     };
                     let conn = cx.connection();
-                    let mut store = store.lock().await;
-                    store.data_mut().rpc.shared.set_scope(conn);
-                    let union = router.union();
-                    let res = wrpc_wasmtime::call_with(
-                        &mut *store,
-                        rx,
-                        tx,
-                        &union,
+                    let res = serve_one(
+                        &router,
+                        &iface,
+                        &name,
+                        &params_ty,
+                        &results_ty,
                         &host_resources,
                         &io_streams,
-                        params_ty.iter(),
-                        &results_ty,
-                        |store, params| Box::pin(router.choose(store, &iface, &name, params)),
+                        conn,
+                        tx,
+                        rx,
                     )
                     .await;
                     if let Err(err) = res {
-                        #[cfg(test)]
-                        eprintln!("invocation {iface}#{name} failed: {err:?}");
-                        let err = anyhow::Error::from(err);
                         let chain: Vec<String> = err.chain().map(|e| e.to_string()).collect();
                         tracing::warn!(
                             iface = %iface, func = %name, conn,
@@ -750,8 +801,57 @@ where
     }
     // Serve the resource-drop meta-op alongside the component's exports so a client
     // can release descriptors / dir-streams it's finished with instead of leaking them.
-    serve_resource_drop(srv, store, &mut handlers).await?;
+    serve_resource_drop(srv, router, &mut handlers).await?;
     Ok(handlers)
+}
+
+/// One routed invocation: pick the chain from the wire, lock only its store,
+/// scope its handle table to the connection, run the call, and record what it
+/// minted.
+#[allow(clippy::too_many_arguments)]
+async fn serve_one<C>(
+    router: &FsRouter<C>,
+    iface: &str,
+    name: &str,
+    params_ty: &[types::Type],
+    results_ty: &[types::Type],
+    host_resources: &HashMap<Box<str>, HashMap<Box<str>, (ResourceType, ResourceType)>>,
+    io_streams: &[ResourceType],
+    conn: Option<u64>,
+    tx: wrpc_transport::frame::Outgoing,
+    mut rx: wrpc_transport::frame::Incoming,
+) -> anyhow::Result<()>
+where
+    C: Invoke + 'static,
+    C::Context: Clone,
+{
+    let chain = router.route(iface, name, params_ty, &mut rx).await?;
+    let func = chain.func(iface, name)?;
+    let union = router.union();
+    let index = router
+        .chains
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .position(|c| Arc::ptr_eq(c, &chain))
+        .context("chain is not registered")?;
+    let mut store = chain.store.lock().await;
+    store.data_mut().rpc.shared.set_scope(conn);
+    let res = wrpc_wasmtime::call(
+        &mut *store,
+        rx,
+        tx,
+        &union,
+        host_resources,
+        io_streams,
+        params_ty.iter(),
+        results_ty,
+        func,
+    )
+    .await;
+    // Whatever the call minted (even on a failed encode) belongs to this chain.
+    router.minted(index, store.data_mut().rpc.shared.take_minted());
+    res.map_err(anyhow::Error::from)
 }
 
 /// The wRPC instance the resource-drop meta-op is served on. It is **not** a component
@@ -761,9 +861,9 @@ const RESOURCES_INSTANCE: &str = "icanhaz:fspass/resources@0.1.0";
 
 /// Serve `drop(handle: list<u8>)` on [`RESOURCES_INSTANCE`], draining it on a task
 /// spawned into `handlers`. Each call evicts the guest-exported resource the opaque
-/// `handle` names from the [`SharedResourceTable`] and runs its destructor — closing
-/// the underlying fd (or releasing the directory-entry stream). Only the connection
-/// that minted the handle can drop it.
+/// `handle` names from its chain's [`SharedResourceTable`] and runs its destructor —
+/// closing the underlying fd (or releasing the directory-entry stream). Only the
+/// connection that minted the handle can drop it.
 ///
 /// This is the descriptor-drop wRPC can't relay on its own: `own<T>`/`borrow<T>` carry
 /// no lifetime over the wire, and the client's Component-Model handle-drop never reaches
@@ -773,7 +873,7 @@ const RESOURCES_INSTANCE: &str = "icanhaz:fspass/resources@0.1.0";
 /// handle and sidesteps the resource codec entirely.
 async fn serve_resource_drop<C, S>(
     srv: &S,
-    store: Arc<Mutex<Store<FsState<C>>>>,
+    router: Arc<FsRouter<C>>,
     handlers: &mut JoinSet<()>,
 ) -> anyhow::Result<()>
 where
@@ -800,7 +900,7 @@ where
                     continue;
                 }
             };
-            let removed = match drop_shared_handle(&store, &handle, cx.connection()).await {
+            let removed = match drop_shared_handle(&router, &handle, cx.connection()).await {
                 Ok(removed) => removed,
                 Err(err) => {
                     tracing::warn!(?err, "resource drop failed");
@@ -822,7 +922,7 @@ where
 /// gone (double-drop, never ours, or minted on another connection) returns
 /// `Ok(false)`, so dropping is idempotent.
 async fn drop_shared_handle<C>(
-    store: &Arc<Mutex<Store<FsState<C>>>>,
+    router: &FsRouter<C>,
     handle: &[u8],
     conn: Option<u64>,
 ) -> anyhow::Result<bool>
@@ -837,7 +937,17 @@ where
         .try_into()
         .context("resource handle is not 16 bytes")?;
     let id = Uuid::from_bytes_le(bytes);
-    let mut store = store.lock().await;
+    let index = router
+        .handles
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&id)
+        .copied();
+    let Some(chain) = index.and_then(|i| router.chain(i)) else {
+        tracing::debug!(%id, "resource-drop: handle already released");
+        return Ok(false);
+    };
+    let mut store = chain.store.lock().await;
     // Mirror the codec's access path to the shared table, then release the entry.
     let removed = {
         let shared = store.data_mut().wrpc().ctx.shared_resources();
@@ -846,6 +956,11 @@ where
     };
     match removed {
         Some(resource) => {
+            router
+                .handles
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
             // Runs the guest resource destructor (the fs-passthrough `Desc`/`DirStream`
             // Drop), which drops the inner host descriptor and closes the fd.
             resource
@@ -856,7 +971,7 @@ where
             Ok(true)
         }
         None => {
-            tracing::debug!(%id, "resource-drop: handle already released");
+            tracing::debug!(%id, "resource-drop: handle not released (not this connection's)");
             Ok(false)
         }
     }
@@ -945,6 +1060,18 @@ mod tests {
         });
     }
 
+    /// A WASI recipe that preopens `dir` at `/` with `perms`, one fresh context per chain.
+    fn jail(dir: &std::path::Path, perms: wasmtime_wasi::FsPerms) -> WasiRecipe {
+        let dir = dir.to_path_buf();
+        Arc::new(move || {
+            let mut builder = WasiCtxBuilder::new();
+            builder
+                .preopened_dir(&dir, "/", perms)
+                .map_err(anyhow::Error::from)?;
+            Ok(builder.build())
+        })
+    }
+
     fn fs_passthrough_wasm() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm")
@@ -993,10 +1120,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello\n").unwrap();
         std::fs::write(dir.path().join("forbidden.txt"), b"secret\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let kind = || {
             CapabilityKind::Filesystem(FsRequest {
@@ -1054,7 +1178,7 @@ mod tests {
             &passthrough,
             wrpc_transport::tcp::Client::from(addr.clone()),
             (),
-            builder.build(),
+            wasi,
             grants.clone(),
             Some(source),
         )
@@ -1148,10 +1272,7 @@ mod tests {
         let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"mine\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
@@ -1195,7 +1316,7 @@ mod tests {
             &wasm,
             wrpc_transport::tcp::Client::from(addrs[0].clone()),
             (),
-            builder.build(),
+            wasi,
             grants.clone(),
             None,
         )
@@ -1275,11 +1396,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"through the chain\n").unwrap();
         std::fs::write(dir.path().join("forbidden.txt"), b"never\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
-        let wasi = builder.build();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
             CapabilityKind::Filesystem(FsRequest {
@@ -1381,11 +1498,7 @@ mod tests {
         // A temp dir with one file is the (preopen-jailed) raw authority.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"hello from real wasi-fs\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
-        let wasi = builder.build();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
 
         // A live filesystem grant, as the broker would mint after consent.
         let grants = GrantStore::shared();
@@ -1480,11 +1593,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("notes")).unwrap();
         std::fs::write(dir.path().join("notes/ok.txt"), b"inside the grant\n").unwrap();
         std::fs::write(dir.path().join("secret.txt"), b"OUTSIDE the grant\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
-        let wasi = builder.build();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
 
         // A grant scoped to /notes/ — NOT the whole preopen.
         let grants = GrantStore::shared();
@@ -1585,11 +1694,7 @@ mod tests {
         let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"live\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
-        let wasi = builder.build();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
@@ -1705,11 +1810,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("ok.txt"), b"in scope\n").unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"out of scope\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
-        let wasi = builder.build();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants
@@ -1811,11 +1912,7 @@ mod tests {
         let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), b"drop me\n").unwrap();
-        let mut builder = WasiCtxBuilder::new();
-        builder
-            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
-            .unwrap();
-        let wasi = builder.build();
+        let wasi = jail(dir.path(), FsPerms::ReadWrite);
 
         let grants = GrantStore::shared();
         let grant = grants.lock().unwrap().issue(
