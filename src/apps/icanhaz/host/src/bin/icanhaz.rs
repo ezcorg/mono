@@ -163,45 +163,12 @@ fn print_info(info: &components::ComponentInfo, json: bool) -> anyhow::Result<()
 }
 
 fn compose(paths: &[PathBuf], out: &PathBuf) -> anyhow::Result<()> {
-    use wac_graph::{CompositionGraph, EncodeOptions};
-    use wac_types::Package;
-    let mut graph = CompositionGraph::new();
-    let mut instances: Vec<(wac_graph::NodeId, Vec<String>)> = Vec::new();
-    for (i, path) in paths.iter().enumerate() {
-        let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
-        components::validate(&bytes)
-            .with_context(|| format!("{} is not a capability component", path.display()))?;
-        let package = Package::from_bytes(&format!("compose:c{i}"), None, bytes, graph.types_mut())
-            .with_context(|| format!("parse {}", path.display()))?;
-        let world = &graph.types()[package.ty()];
-        let imports: Vec<String> = world.imports.keys().cloned().collect();
-        let exports: Vec<String> = world.exports.keys().cloned().collect();
-        let pid = graph.register_package(package)?;
-        let inst = graph.instantiate(pid);
-        for import in &imports {
-            if let Some((src, _)) = instances.iter().rev().find(|(_, ex)| ex.contains(import)) {
-                let alias = graph.alias_instance_export(*src, import)?;
-                graph.set_instantiation_argument(inst, import, alias)?;
-                eprintln!(
-                    "  {} ← {} from {}",
-                    import,
-                    path.display(),
-                    paths[instances.iter().position(|(n, _)| n == src).unwrap_or(0)].display()
-                );
-            }
-        }
-        instances.push((inst, exports));
+    let mut parts = Vec::new();
+    for path in paths {
+        parts.push(std::fs::read(path).with_context(|| format!("read {}", path.display()))?);
     }
-    let Some((last, exports)) = instances.last() else {
-        bail!("nothing to compose");
-    };
-    for e in exports {
-        let alias = graph.alias_instance_export(*last, e)?;
-        graph.export(alias, e.as_str())?;
-    }
-    let bytes = graph.encode(EncodeOptions::default())?;
-    let info =
-        components::validate(&bytes).context("the composition is not a capability component")?;
+    let bytes = components::compose(&parts)?;
+    let info = components::validate(&bytes)?;
     std::fs::write(out, &bytes).with_context(|| format!("write {}", out.display()))?;
     print_info(&info, false)?;
     Ok(())

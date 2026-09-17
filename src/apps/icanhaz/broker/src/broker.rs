@@ -79,6 +79,9 @@ pub enum Decision {
         /// Clauses the human added. Applied as `requested && extra`, so a
         /// surface can only ever tighten a scope, never rewrite it.
         narrowing: Option<Narrowing>,
+        /// Store components the human chose to provide the grant through,
+        /// outermost first (`GrantStore::via_of`).
+        via: Vec<String>,
         ttl: Duration,
         remember: bool,
     },
@@ -167,6 +170,7 @@ impl Consent {
             Consent::AutoApprove => Decision::Approve {
                 grant: want.native().cloned(),
                 narrowing: None,
+                via: Vec::new(),
                 ttl: GRANT_TTL,
                 remember: true,
             },
@@ -186,6 +190,7 @@ fn decision_from_reply(reply: &str, want: &Want) -> Decision {
         "y" | "yes" => Decision::Approve {
             grant: want.native().cloned(),
             narrowing: None,
+            via: Vec::new(),
             ttl: GRANT_TTL,
             remember: true,
         },
@@ -272,6 +277,7 @@ async fn surface_decide(
             Decision::Approve {
                 grant,
                 narrowing: approval.narrowing,
+                via: approval.via,
                 ttl: Duration::from_secs(approval.ttl_secs),
                 remember: approval.remember,
             }
@@ -337,6 +343,10 @@ struct Grant<K> {
     /// Set when this grant proxies one held at another broker: calls on it
     /// are forwarded there with the remote token.
     remote: Option<Remote>,
+    /// Components from the store the human chose to provide this grant
+    /// through, outermost first: a provider whose interface one of them
+    /// exports runs it in front of the native implementation.
+    via: Vec<String>,
 }
 
 /// A grant held at another broker on this daemon's behalf.
@@ -478,6 +488,8 @@ struct DurableGrant {
     principal: (String, String, Option<String>),
     /// The sturdy ids certificates on this grant name.
     sturdy: Vec<String>,
+    #[serde(default)]
+    via: Vec<String>,
 }
 
 fn kind_to_json(k: &CapabilityKind) -> serde_json::Value {
@@ -661,6 +673,8 @@ pub struct GrantView {
     pub id: String,
     pub holder: String,
     pub summary: String,
+    /// Store components the grant is provided through, outermost first.
+    pub via: Vec<String>,
     /// The capability's emoji (from the registry), for the audit view.
     pub icon: String,
     pub expires_in_secs: u64,
@@ -757,6 +771,7 @@ impl<K: GrantKind> GrantStore<K> {
                 principal,
                 cancel: CancellationToken::new(),
                 remote: None,
+                via: Vec::new(),
             },
         );
         Ok(token)
@@ -826,6 +841,7 @@ impl<K: GrantKind> GrantStore<K> {
                         },
                         cancel: CancellationToken::new(),
                         remote: None,
+                        via: row.via,
                     },
                 );
                 for sturdy in row.sturdy {
@@ -863,6 +879,7 @@ impl<K: GrantKind> GrantStore<K> {
                 .filter(|(_, t)| t.as_str() == token)
                 .map(|(s, _)| s.clone())
                 .collect(),
+            via: grant.via.clone(),
         };
         let Ok(json) = serde_json::to_vec(&row) else {
             return;
@@ -961,6 +978,11 @@ impl<K: GrantKind> GrantStore<K> {
                 parent.cancel.child_token(),
             )
         };
+        let via = self
+            .grants
+            .get(token)
+            .map(|p| p.via.clone())
+            .unwrap_or_default();
         let tag = kind.tag();
         let instance = match instance {
             Some(parent_id) => Some(
@@ -989,6 +1011,7 @@ impl<K: GrantKind> GrantStore<K> {
                 principal,
                 cancel,
                 remote: None,
+                via,
             },
         );
         Ok(child)
@@ -1088,6 +1111,33 @@ impl<K: GrantKind> GrantStore<K> {
         Ok(())
     }
 
+    /// [`GrantStore::issue_scoped`] with the components the human chose to
+    /// provide the grant through, outermost first.
+    pub fn issue_scoped_via(
+        &mut self,
+        kind: K,
+        scope: EzScope,
+        summary: String,
+        ttl: Duration,
+        principal: Principal,
+        via: Vec<String>,
+    ) -> Result<String, Denied> {
+        let token = self.issue_scoped(kind, scope, summary, ttl, principal)?;
+        if let Some(grant) = self.grants.get_mut(&token) {
+            grant.via = via;
+        }
+        Ok(token)
+    }
+
+    /// The components a grant is provided through, outermost first; empty
+    /// for the native implementation alone.
+    pub fn via_of(&self, token: &str) -> Vec<String> {
+        self.grants
+            .get(token)
+            .map(|g| g.via.clone())
+            .unwrap_or_default()
+    }
+
     /// Hold a grant another broker issued to this daemon, on `holder`'s
     /// behalf: a local token whose calls the providers forward to `remote`.
     /// The remote's scope is minted locally too, so admission here mirrors
@@ -1167,6 +1217,7 @@ impl<K: GrantKind> GrantStore<K> {
                 id: id.clone(),
                 holder: principal_label(&g.principal),
                 summary: g.summary.clone(),
+                via: g.via.clone(),
                 icon: crate::capabilities::icon_for(g.kind.tag()).to_string(),
                 expires_in_secs: g.expires.saturating_duration_since(now).as_secs(),
             })
@@ -1998,6 +2049,7 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
             Decision::Approve {
                 grant,
                 narrowing,
+                via,
                 ttl,
                 remember,
             } => {
@@ -2025,12 +2077,13 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                 let grant = grant.unwrap_or(want);
                 let granted_summary = summarize_scoped(&grant, &scope);
                 tracing::info!(%requester, summary = %granted_summary, %reason, remember, paired = new_secret.is_some(), "consent granted");
-                let issued = self.store.lock().unwrap().issue_scoped(
+                let issued = self.store.lock().unwrap().issue_scoped_via(
                     grant,
                     scope,
                     granted_summary,
                     ttl,
                     principal,
+                    via,
                 );
                 Ok(issued.map(|token| GrantReply {
                     token,

@@ -55,6 +55,8 @@ pub use icanhaz_broker::{
     approve, broker, capabilities, configuration, configuration_serve, store, AsOrigin, ReqCtx,
 };
 
+/// The resolver's runtime: grants provided through store components (wac-composed wrappers).
+pub mod chain;
 /// The component store: capability components a user brings, validated and kept by hash.
 pub mod components;
 /// The peer path: serving over iroh.

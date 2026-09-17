@@ -57,6 +57,8 @@ pub struct Approval {
     pub grant: Option<crate::broker::CapabilityKind>,
     /// Clauses the human added to the requested scope (`requested && extra`).
     pub narrowing: Option<ezcap::Narrowing>,
+    /// Store components to provide the grant through, outermost first.
+    pub via: Vec<String>,
     pub remember: bool,
     pub ttl_secs: u64,
 }
@@ -309,6 +311,7 @@ fn decide(
         Some(Approval {
             grant: None,
             narrowing: None,
+            via: Vec::new(),
             remember,
             ttl_secs,
         })

@@ -229,30 +229,53 @@ pub struct PendingDto {
     pub scope: ScopeDto,
     /// The scope as sentences; both lists empty for an unrestricted request.
     pub text: ScopeText,
+    /// Store components that could provide this grant (their exports match
+    /// an interface the kind is used through); the human may pick some.
+    pub offers: Vec<icanhaz_host::components::ComponentInfo>,
 }
 
 /// The requests currently awaiting a decision (the window polls this). Also refreshes
 /// the tray badge, so the menubar count tracks the live poll.
 #[tauri::command]
-pub fn list_pending(app: AppHandle, pending: State<'_, PendingConsent>) -> Vec<PendingDto> {
+pub async fn list_pending(
+    app: AppHandle,
+    pending: State<'_, PendingConsent>,
+) -> Result<Vec<PendingDto>, ()> {
+    let components = match app.try_state::<Services>() {
+        Some(services) => services.components.list().await,
+        None => Vec::new(),
+    };
     let out: Vec<PendingDto> = pending
         .list()
         .into_iter()
-        .map(|r| PendingDto {
-            id: r.id,
-            requester: r.requester,
-            summary: r.summary,
-            reason: r.reason,
-            capability: (&r.want).into(),
-            text: ScopeText::of(&r.scope),
-            scope: ScopeDto {
-                when: r.scope.when,
-                allow: r.scope.allow,
-            },
+        .map(|r| {
+            let tag = r.want.tag();
+            let offers = if r.want.native().is_some() {
+                components
+                    .iter()
+                    .filter(|c| icanhaz_host::chain::offers(&tag, &c.exports))
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            PendingDto {
+                id: r.id,
+                requester: r.requester,
+                summary: r.summary,
+                reason: r.reason,
+                capability: (&r.want).into(),
+                text: ScopeText::of(&r.scope),
+                scope: ScopeDto {
+                    when: r.scope.when,
+                    allow: r.scope.allow,
+                },
+                offers,
+            }
         })
         .collect();
     set_tray_badge(&app, out.len());
-    out
+    Ok(out)
 }
 
 /// Every live grant, for the app's audit view.
@@ -523,6 +546,7 @@ pub fn decide(
     allow: bool,
     grant: Option<CapabilityDto>,
     narrowing: Option<NarrowingDto>,
+    via: Option<Vec<String>>,
     remember: bool,
     ttl_secs: u64,
 ) -> bool {
@@ -530,6 +554,7 @@ pub fn decide(
         Some(Approval {
             grant: grant.and_then(CapabilityDto::into_capability),
             narrowing: narrowing.and_then(NarrowingDto::into_narrowing),
+            via: via.unwrap_or_default(),
             remember,
             ttl_secs,
         })

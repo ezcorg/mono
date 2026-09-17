@@ -265,6 +265,7 @@ async fn surface_narrowing_conjoins_onto_the_requested_scope() {
                 Some(Approval {
                     grant: None,
                     narrowing: Some(extra),
+                    via: Vec::new(),
                     remember: false,
                     ttl_secs: 60,
                 })
@@ -461,6 +462,7 @@ async fn foreign_consent_returns_the_conjoined_scope_and_issues_nothing() {
                 Some(Approval {
                     grant: None,
                     narrowing: Some(ezcap::Narrowing::allow("size(call.args.key) < 64")),
+                    via: Vec::new(),
                     remember: false,
                     ttl_secs: 3600,
                 })

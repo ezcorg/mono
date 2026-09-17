@@ -138,6 +138,52 @@ pub fn validate(bytes: &[u8]) -> anyhow::Result<ComponentInfo> {
     })
 }
 
+/// Compose components with wac: each later component's imports are
+/// satisfied by earlier ones' exports (so `parts` runs inner to outer),
+/// what remains is imported, and the last component's exports are exported.
+/// Returns the composition's bytes.
+pub fn compose(parts: &[Vec<u8>]) -> anyhow::Result<Vec<u8>> {
+    use wac_graph::{CompositionGraph, EncodeOptions};
+    use wac_types::Package;
+    if parts.is_empty() {
+        bail!("nothing to compose");
+    }
+    let mut graph = CompositionGraph::new();
+    let mut instances: Vec<(wac_graph::NodeId, Vec<String>)> = Vec::new();
+    for (i, bytes) in parts.iter().enumerate() {
+        validate(bytes).with_context(|| format!("component {i} is not a capability component"))?;
+        let package = Package::from_bytes(
+            &format!("compose:c{i}"),
+            None,
+            bytes.clone(),
+            graph.types_mut(),
+        )
+        .with_context(|| format!("parse component {i}"))?;
+        let world = &graph.types()[package.ty()];
+        let imports: Vec<String> = world.imports.keys().cloned().collect();
+        let exports: Vec<String> = world.exports.keys().cloned().collect();
+        let pid = graph.register_package(package)?;
+        let inst = graph.instantiate(pid);
+        for import in &imports {
+            if let Some((src, _)) = instances.iter().rev().find(|(_, ex)| ex.contains(import)) {
+                let alias = graph.alias_instance_export(*src, import)?;
+                graph.set_instantiation_argument(inst, import, alias)?;
+            }
+        }
+        instances.push((inst, exports));
+    }
+    let Some((last, exports)) = instances.last() else {
+        bail!("nothing to compose");
+    };
+    for e in exports {
+        let alias = graph.alias_instance_export(*last, e)?;
+        graph.export(alias, e.as_str())?;
+    }
+    let bytes = graph.encode(EncodeOptions::default())?;
+    validate(&bytes).context("the composition is not a capability component")?;
+    Ok(bytes)
+}
+
 const OWNER: &str = "components";
 
 /// Components on disk, by hash, with metadata in the store.

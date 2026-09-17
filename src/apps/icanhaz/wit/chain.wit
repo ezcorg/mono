@@ -1,0 +1,10 @@
+package icanhaz:nocap@0.1.0;
+
+/// The worlds a wrapper chain is instantiated as: a composition of store
+/// components that imports a capability interface and exports the same one.
+/// The daemon supplies the import from its native provider and calls the
+/// export for the grant's calls, so the chain sits between caller and host.
+world workspace-chain {
+  import workspace;
+  export workspace;
+}

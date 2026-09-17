@@ -20,9 +20,10 @@ type Pending = {
   capability: Capability;
   scope: { when: string; allow: string };
   text: ScopeText;
+  offers: ComponentInfo[];
 };
 // Mirror the Rust command DTOs.
-type GrantView = { id: string; holder: string; summary: string; icon: string; expires_in_secs: number };
+type GrantView = { id: string; holder: string; summary: string; via: string[]; icon: string; expires_in_secs: number };
 type CapabilityView = { id: string; icon: string; description: string };
 // Mirrors `icanhaz_host::configuration` (ezco:ezcap/forms as JSON): a unit input
 // type is its name, `select` carries its options; values are externally tagged.
@@ -272,6 +273,9 @@ export function App() {
               <span class="ico">{g.icon}</span>
               <div class="grow">
                 <span class="chip">{g.summary}</span> <span class="dim">{g.holder}</span>
+                <Show when={g.via.length > 0}>
+                  <span class="dim"> via {g.via.map((h) => h.slice(7, 15)).join(" → ")}</span>
+                </Show>
               </div>
               <div class="row-meta">
                 <span class="dim">{fmtDur(g.expires_in_secs)}</span>
@@ -563,6 +567,10 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
   // An extra `allow` clause the human appends; checked live against the kind's
   // interface, and shown back as sentences before it is applied.
   const [extra, setExtra] = createSignal("");
+  // Store components the human chose to provide the grant through, outermost first.
+  const [via, setVia] = createSignal<string[]>([]);
+  const toggleVia = (hash: string, on: boolean) =>
+    setVia((v) => (on ? [...v.filter((h) => h !== hash), hash] : v.filter((h) => h !== hash)));
   const [extraText, setExtraText] = createSignal<ScopeText | null>(null);
   const [extraError, setExtraError] = createSignal<string | null>(null);
   let checkTimer: ReturnType<typeof setTimeout> | undefined;
@@ -597,6 +605,7 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
         allow,
         grant: allow ? cap() : null,
         narrowing: allow && extra().trim() ? { allow: extra() } : null,
+        via: allow ? via() : null,
         remember: remember(),
         ttlSecs: ttl(),
       });
@@ -637,6 +646,21 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
         />
         <Show when={extraError()}>{(e) => <div class="form-err">{e()}</div>}</Show>
       </div>
+      <Show when={props.req.offers.length > 0}>
+        <div class="cap">
+          <div class="cap-title">provide through</div>
+          <p class="dim small">// components from the store that can sit in front of this capability; the native provider is the default. Ticked ones run outermost first.</p>
+          <For each={props.req.offers}>
+            {(c) => (
+              <label class="toggle">
+                <input type="checkbox" checked={via().includes(c.hash)} onChange={(e) => toggleVia(c.hash, e.currentTarget.checked)} />
+                <span class="path">{c.name ?? c.hash.slice(7, 19)}</span>
+                <span class="dim">{c.exports.map((x) => x.replace(/@.*$/, "")).join(", ")}</span>
+              </label>
+            )}
+          </For>
+        </div>
+      </Show>
       <div class="controls">
         <label>
           expires{" "}
@@ -836,6 +860,7 @@ button:disabled { opacity: .5; cursor: default; }
 .row.sub { padding: .35rem .6rem; margin: .3rem 0; }
 .row.sub.active { border-color: var(--accent); }
 .empty.small { padding: .5rem .7rem; margin: .3rem 0; font-size: .9em; }
+p.small { font-size: .85em; margin: .2rem 0 .4rem; }
 .form { display: flex; flex-direction: column; gap: .55rem; border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem; margin: .4rem 0; background: var(--panel); }
 .field { display: grid; grid-template-columns: 7rem 1fr; gap: .15rem .6rem; align-items: center; }
 .field.check { grid-template-columns: 7rem auto; justify-content: start; }

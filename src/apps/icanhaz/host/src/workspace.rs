@@ -32,11 +32,22 @@ pub use bindings::icanhaz::nocap::workspace as client;
 pub struct WorkspaceProvider {
     root: PathBuf,
     grants: Arc<Mutex<GrantStore>>,
+    /// Runs the wrappers a grant is provided through (see [`crate::chain`]).
+    chain: Option<Arc<crate::chain::Chain>>,
 }
 
 impl WorkspaceProvider {
     pub fn new(root: PathBuf, grants: Arc<Mutex<GrantStore>>) -> Self {
-        Self { root, grants }
+        Self {
+            root,
+            grants,
+            chain: None,
+        }
+    }
+
+    pub fn with_chain(mut self, chain: Arc<crate::chain::Chain>) -> Self {
+        self.chain = Some(chain);
+        self
     }
 }
 
@@ -61,7 +72,21 @@ impl<C: crate::AsOrigin + Send + Sync + 'static>
         // host directory `mount.open-root` scopes the descriptor to.
         let scope = paths.into_iter().next().unwrap_or_default();
         let abs = self.root.join(scope.trim_matches('/'));
-        Ok(Ok(abs.to_string_lossy().into_owned()))
+        let native = Ok(abs.to_string_lossy().into_owned());
+        // Provided through store components: the chosen wrappers see the
+        // native answer as their import and may refuse or rewrite it.
+        let via = self.grants.lock().unwrap().via_of(&grant);
+        if let (Some(chain), false) = (&self.chain, via.is_empty()) {
+            return match chain
+                .workspace_root_path(&via, &grant, native.clone())
+                .await
+            {
+                Ok(Some(out)) => Ok(out),
+                Ok(None) => Ok(native),
+                Err(e) => Ok(Err(format!("workspace: chain failed: {e:#}"))),
+            };
+        }
+        Ok(native)
     }
 }
 
