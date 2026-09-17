@@ -2370,6 +2370,7 @@ mod tests {
         let ctx = crate::ReqCtx {
             origin: Some("https://notes.example.com".to_string()),
             peer: None,
+            conn: None,
         };
         provider
             .request(ctx, terminal_want(), "open a shell".to_string(), None)
@@ -2407,6 +2408,7 @@ mod tests {
         let origin = crate::ReqCtx {
             origin: Some("https://notes.example.com".to_string()),
             peer: None,
+            conn: None,
         };
 
         // Approve once to pair the origin for `terminal`; a fresh secret comes back.
@@ -2451,6 +2453,7 @@ mod tests {
         let other = crate::ReqCtx {
             origin: Some("https://evil.example.com".to_string()),
             peer: None,
+            conn: None,
         };
         assert!(denier
             .request(other, terminal_want(), "n".to_string(), Some(secret))
@@ -2549,6 +2552,7 @@ mod tests {
         let ctx = crate::ReqCtx {
             origin: Some("https://site.example".to_string()),
             peer: None,
+            conn: None,
         };
 
         // Unapproved: refused *before* consent (even AutoApprove can't grant), and recorded.

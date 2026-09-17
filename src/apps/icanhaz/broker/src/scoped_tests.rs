@@ -197,6 +197,7 @@ async fn caller_origin_is_bound_from_the_transport() {
     let cx = ReqCtx {
         origin: Some("https://notes.example".to_string()),
         peer: None,
+        conn: None,
     };
     let token = provider
         .request_scoped(
@@ -215,6 +216,7 @@ async fn caller_origin_is_bound_from_the_transport() {
         .caller(crate::broker::caller_of(&ReqCtx {
             origin: Some("https://notes.example".to_string()),
             peer: None,
+            conn: None,
         }));
     assert!((store.lock().unwrap().admit(&token, from_origin)).is_ok());
     let anonymous = AdmitCall::new("spawn").arg("args", Vec::<String>::new());
@@ -308,10 +310,12 @@ async fn certificates_redeem_for_their_audience_only() {
     let notes = crate::ReqCtx {
         origin: Some("https://notes.example".to_string()),
         peer: None,
+        conn: None,
     };
     let other = crate::ReqCtx {
         origin: Some("https://evil.example".to_string()),
         peer: None,
+        conn: None,
     };
 
     // A clause that does not compile is refused at certify time.

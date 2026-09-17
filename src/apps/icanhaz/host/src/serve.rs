@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 use crate::broker::{bindings as broker, BrokerProvider, GrantStore};
-use crate::component_serve::serve_filesystem;
+use crate::component_serve::{serve_filesystem, ChainSource};
 use crate::components::{bindings as components, ComponentsProvider};
 use crate::inference::{bindings as inference, InferenceProvider};
 use crate::process::{bindings as proc, ProcessProvider};
@@ -51,11 +51,12 @@ use wrpc_websockets::tokio_websockets::{Message, WebSocketStream};
 #[derive(Clone)]
 pub struct FsServe {
     pub component_path: PathBuf,
-    /// The component to serve instead of the file at `component_path`: the
-    /// daemon-wide filesystem chain, composed at startup (see `daemon`).
-    pub component_bytes: Option<Arc<Vec<u8>>>,
     pub root: PathBuf,
     pub grants: Arc<std::sync::Mutex<GrantStore>>,
+    /// Composes the chain a grant names in front of the passthrough (see
+    /// `components::filesystem_chain`); `None` serves the passthrough alone
+    /// and refuses grants that name a chain.
+    pub chains: Option<ChainSource>,
 }
 
 /// Register every capability on a shared server and drive them until idle.
@@ -102,15 +103,12 @@ where
     // Real wasi:filesystem (the gated passthrough) on the SAME server, via ServeExt.
     // Its descriptor invocations drain on the returned JoinSet (held for the
     // server's lifetime); the placeholder client is never invoked (no polyfill).
-    let fs_wasm = match &fs_serve.component_bytes {
-        Some(bytes) => bytes.as_ref().clone(),
-        None => std::fs::read(&fs_serve.component_path).with_context(|| {
-            format!(
-                "read fs-passthrough component {}",
-                fs_serve.component_path.display()
-            )
-        })?,
-    };
+    let fs_wasm = std::fs::read(&fs_serve.component_path).with_context(|| {
+        format!(
+            "read fs-passthrough component {}",
+            fs_serve.component_path.display()
+        )
+    })?;
     let mut wasi_builder = WasiCtxBuilder::new();
     wasi_builder
         .preopened_dir(&fs_serve.root, "/", FsPerms::ReadWrite)
@@ -123,6 +121,7 @@ where
         (),
         wasi_builder.build(),
         fs_serve.grants,
+        fs_serve.chains,
     )
     .await
     .context("failed to serve wasi:filesystem")?;
@@ -297,6 +296,9 @@ async fn serve_ws_mux(
         }
     });
 
+    // One connection id per socket: every invocation multiplexed over it shares
+    // it, and the resource handles served to it are bound to it.
+    let conn = Some(crate::next_connection());
     // id -> the sender feeding that invocation's read half.
     let mut feeders: HashMap<u32, mpsc::UnboundedSender<io::Result<Bytes>>> = HashMap::new();
     while let Some(msg) = stream.next().await {
@@ -336,6 +338,7 @@ async fn serve_ws_mux(
                     let cx = ReqCtx {
                         origin: origin.clone(),
                         peer: None,
+                        conn,
                     };
                     tokio::spawn(async move {
                         if let Err(err) = srv.accept(cx, tx, rx).await {
@@ -497,12 +500,15 @@ pub async fn serve_webtransport_all(
                         // every bidi stream on this session.
                         let origin = req.origin().map(str::to_string);
                         let conn = req.accept().await.context("establish WT session")?;
+                        // One connection id per session; its streams share it.
+                        let conn_id = Some(crate::next_connection());
                         loop {
                             let (tx, rx) = conn.accept_bi().await.context("accept bidi stream")?;
                             srv.accept(
                                 ReqCtx {
                                     origin: origin.clone(),
                                     peer: None,
+                                    conn: conn_id,
                                 },
                                 tx,
                                 rx,

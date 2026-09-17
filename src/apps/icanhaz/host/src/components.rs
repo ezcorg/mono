@@ -184,6 +184,36 @@ pub fn compose(parts: &[Vec<u8>]) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// The composition a filesystem grant's chain names: `via` (outermost first)
+/// fetched from `components`, composed in front of `passthrough`, and checked
+/// to still serve the filesystem: it must export both `wasi:filesystem/types`
+/// and `icanhaz:fspass/mount`, so a wrapper has to import and export both,
+/// wrapping the inner mount's descriptor in its own.
+pub fn filesystem_chain(
+    components: &ComponentStore,
+    passthrough: &[u8],
+    via: &[String],
+) -> anyhow::Result<Vec<u8>> {
+    let mut parts = vec![passthrough.to_vec()];
+    for hash in via.iter().rev() {
+        parts.push(
+            components
+                .get(hash)
+                .with_context(|| format!("filesystem chain component {hash}"))?,
+        );
+    }
+    let bytes = compose(&parts)?;
+    let info = validate(&bytes)?;
+    let exports = |prefix: &str| info.exports.iter().any(|e| e.starts_with(prefix));
+    anyhow::ensure!(
+        exports("wasi:filesystem/types@") && exports("icanhaz:fspass/mount@"),
+        "the composed filesystem chain must export wasi:filesystem/types and icanhaz:fspass/mount; it exports {:?}",
+        info.exports
+    );
+    tracing::info!(hash = %info.hash, ?via, "filesystem chain composed");
+    Ok(bytes)
+}
+
 const OWNER: &str = "components";
 
 /// Components on disk, by hash, with metadata in the store.
@@ -412,6 +442,7 @@ mod tests {
         .expect("fs_wrap.wasm fixture");
         // The wrapper imports types and mount from the passthrough and
         // re-exports both; the passthrough's own roots stay the composition's.
+        // This is what `filesystem_chain` builds for a grant naming the wrapper.
         let composed = compose(&[bytes, wrapper]).expect("composes");
         let info = validate(&composed).expect("a capability component");
         assert!(

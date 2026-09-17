@@ -14,8 +14,9 @@
 //!
 //! Modeled on `wrpc-wasmtime-cli`'s `serve_shared`.
 
+use core::future::Future;
 use core::ops::Bound;
-use core::pin::pin;
+use core::pin::{pin, Pin};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -25,15 +26,18 @@ use futures::StreamExt as _;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use uuid::Uuid;
-use wasmtime::component::{types, Component, Instance, Linker, ResourceTable, ResourceType};
+use wasmtime::component::{
+    types, Component, Func, Instance, Linker, ResourceTable, ResourceType, Val,
+};
 use wasmtime::{Engine, Store};
 
 use crate::broker::GrantStore;
+use crate::AsOrigin;
 use wasmtime_wasi::p2::bindings::io;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 use wrpc_transport::{Invoke, Serve, ServeExt as _}; // ServeExt: serve_values (the drop meta-op)
 use wrpc_wasmtime::{
-    collect_component_resource_exports, collect_component_resource_imports, RemoteResource,
+    collect_component_resource_exports, collect_component_resource_imports, Chosen, RemoteResource,
     ServeExt as _, SharedResourceTable, WrpcCtxView, WrpcView,
 }; // ServeExt: serve_function_shared (component exports)
 
@@ -322,12 +326,6 @@ where
     }
 }
 
-/// Serve the gated `wasi:filesystem` passthrough over wRPC: link WASI + the consent
-/// `gate` (host-validated against `grants`), instantiate the component once, and
-/// serve its exports (`wasi:filesystem/types` + `mount`). `mount.open-root` calls
-/// the gate, so it refuses any token that isn't a live `filesystem` grant — an
-/// ungated peer never receives a descriptor. `wasi` carries the preopened root
-/// (the jail).
 /// Max live `wasi:filesystem` handles the fs component holds before refusing new ones
 /// — a backstop against a client that opens descriptors without dropping them (this
 /// wRPC build doesn't relay handle-drops). Exhaustion surfaces as an op error, not an
@@ -339,24 +337,217 @@ fn max_fs_handles() -> usize {
         .unwrap_or(4096)
 }
 
-pub async fn serve_filesystem<C, S>(
-    srv: &S,
-    component_bytes: &[u8],
-    client: C,
-    cx: C::Context,
-    wasi: WasiCtx,
-    grants: Arc<std::sync::Mutex<GrantStore>>,
-) -> anyhow::Result<JoinSet<()>>
+/// Where the bytes of a grant's filesystem chain come from: given the chain's
+/// component ids (outermost first) it composes them in front of the shipped
+/// passthrough and returns the composition (see `components::filesystem_chain`).
+pub type ChainSource = Arc<
+    dyn Fn(Vec<String>) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<u8>>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// One instantiated filesystem chain living in the shared store.
+struct FsChain {
+    /// The chain's component ids joined by `,`; empty for the default chain.
+    key: String,
+    /// The resource types this chain's instance exports, in both identities
+    /// (declared by the component type, minted by the live instance): the
+    /// live one is how a handle is traced back to the chain that owns it.
+    resources: Arc<[ResourceType]>,
+    /// Its exported functions by `(interface, function)`.
+    funcs: HashMap<(Box<str>, Box<str>), Func>,
+}
+
+impl FsChain {
+    fn func(&self, iface: &str, name: &str) -> wasmtime::Result<Func> {
+        self.funcs
+            .get(&(Box::from(iface), Box::from(name)))
+            .copied()
+            .ok_or_else(|| {
+                wasmtime::Error::msg(format!(
+                    "filesystem chain [{}] does not export `{iface}#{name}`",
+                    self.key
+                ))
+            })
+    }
+}
+
+/// The chains a filesystem serving fronts, all instantiated into **one** store so
+/// their resources share one handle table. Calls are routed here: a method to the
+/// chain owning its resource, `mount.open-root` to the chain the grant names
+/// (instantiated on first use), anything else to the default chain.
+struct FsRouter<C: Invoke + 'static> {
+    engine: Engine,
+    linker: Linker<FsState<C>>,
+    source: Option<ChainSource>,
+    chains: std::sync::Mutex<Vec<FsChain>>,
+    /// Every chain's resource types: what the codec checks a declared
+    /// parameter or result type against before it reads or mints a handle.
+    union: std::sync::Mutex<Arc<[ResourceType]>>,
+}
+
+impl<C> FsRouter<C>
 where
     C: Invoke + 'static,
     C::Context: Clone,
-    S: Serve,
 {
-    let engine = engine()?;
-    let component = Component::new(&engine, component_bytes)
-        .map_err(anyhow::Error::from)
-        .context("compile component")?;
-    let mut linker = Linker::<FsState<C>>::new(&engine);
+    fn union(&self) -> Arc<[ResourceType]> {
+        Arc::clone(&self.union.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Instantiate `component` into `store` and register it as a chain.
+    async fn add_chain(
+        &self,
+        store: &mut Store<FsState<C>>,
+        key: String,
+        component: &Component,
+    ) -> wasmtime::Result<Func> {
+        let ty = component.component_type();
+        // A resource type has two identities: the one the component type
+        // declares (what a function's parameter and result types name) and the
+        // one the live instance mints (what a `ResourceAny` reports). The codec
+        // checks parameters against the first and results against the second,
+        // and routing sees the second, so a chain owns both.
+        let mut resources = Vec::new();
+        collect_component_resource_exports(&self.engine, &ty, &mut resources);
+        let instance = self
+            .linker
+            .instantiate_pre(component)?
+            .instantiate_async(&mut *store)
+            .await?;
+        let mut funcs = HashMap::new();
+        for (iface, types::ComponentExtern { ty: item, .. }) in ty.exports(&self.engine) {
+            let types::ComponentItem::ComponentInstance(inst_ty) = item else {
+                continue;
+            };
+            let Some(iface_idx) = instance.get_export_index(&mut *store, None, iface) else {
+                continue;
+            };
+            for (name, types::ComponentExtern { ty: fitem, .. }) in inst_ty.exports(&self.engine) {
+                let Some(idx) = instance.get_export_index(&mut *store, Some(&iface_idx), name)
+                else {
+                    continue;
+                };
+                match fitem {
+                    types::ComponentItem::ComponentFunc(_) => {
+                        if let Some(func) = instance.get_func(&mut *store, idx) {
+                            funcs.insert((Box::from(iface), Box::from(name)), func);
+                        }
+                    }
+                    types::ComponentItem::Resource(_) => {
+                        if let Some(live) = instance.get_resource(&mut *store, idx) {
+                            resources.push(live);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let chain = FsChain {
+            key,
+            resources: Arc::from(resources),
+            funcs,
+        };
+        let open_root = chain.func(MOUNT_INSTANCE, "open-root")?;
+        let mut chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
+        chains.push(chain);
+        let union: Vec<ResourceType> = chains
+            .iter()
+            .flat_map(|c| c.resources.iter().copied())
+            .collect();
+        *self.union.lock().unwrap_or_else(|e| e.into_inner()) = Arc::from(union);
+        Ok(open_root)
+    }
+
+    /// The chain for `via` (outermost first): the default when empty, an
+    /// existing one by key, else composed through the source and instantiated.
+    async fn open_root_of(
+        &self,
+        store: &mut Store<FsState<C>>,
+        via: Vec<String>,
+    ) -> wasmtime::Result<Chosen> {
+        let key = via.join(",");
+        {
+            let chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(chain) = chains.iter().find(|c| c.key == key) {
+                return Ok(Chosen {
+                    func: chain.func(MOUNT_INSTANCE, "open-root")?,
+                });
+            }
+        }
+        let Some(source) = &self.source else {
+            return Err(wasmtime::Error::msg(format!(
+                "the grant names a filesystem chain [{key}] but this serving has no chain source"
+            )));
+        };
+        let bytes = source(via).await.map_err(|e| {
+            wasmtime::Error::msg(format!("compose filesystem chain [{key}]: {e:#}"))
+        })?;
+        let engine = self.engine.clone();
+        let component = tokio::task::spawn_blocking(move || Component::new(&engine, &bytes))
+            .await
+            .map_err(|e| wasmtime::Error::msg(format!("compile filesystem chain: {e}")))??;
+        tracing::info!(chain = %key, "filesystem chain instantiated");
+        let func = self.add_chain(store, key, &component).await?;
+        Ok(Chosen { func })
+    }
+
+    /// Route one decoded call.
+    async fn choose(
+        &self,
+        store: &mut Store<FsState<C>>,
+        iface: &str,
+        name: &str,
+        params: &[Val],
+    ) -> wasmtime::Result<Chosen> {
+        match params.first() {
+            // A method: the chain that minted the resource answers it.
+            Some(Val::Resource(resource)) => {
+                let ty = resource.ty();
+                let chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(chain) = chains.iter().find(|c| c.resources.contains(&ty)) else {
+                    return Err(wasmtime::Error::msg(
+                        "resource does not belong to any served filesystem chain",
+                    ));
+                };
+                Ok(Chosen {
+                    func: chain.func(iface, name)?,
+                })
+            }
+            // Mounting: the grant names its chain.
+            Some(Val::String(token)) if iface == MOUNT_INSTANCE && name == "open-root" => {
+                let via = store
+                    .data()
+                    .grants
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .via_of(token);
+                self.open_root_of(store, via).await
+            }
+            _ => {
+                let chains = self.chains.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(chain) = chains.first() else {
+                    return Err(wasmtime::Error::msg("no filesystem chain is served"));
+                };
+                Ok(Chosen {
+                    func: chain.func(iface, name)?,
+                })
+            }
+        }
+    }
+}
+
+/// The interface `open-root` lives on; the token-carrying call routing keys on.
+const MOUNT_INSTANCE: &str = "icanhaz:fspass/mount@0.1.0";
+
+/// A linker for the gated filesystem: WASI plus the consent `gate` the
+/// passthrough imports, host-validated against the store's grants.
+fn fs_linker<C>(engine: &Engine) -> anyhow::Result<Linker<FsState<C>>>
+where
+    C: Invoke + 'static,
+    C::Context: Clone,
+{
+    let mut linker = Linker::<FsState<C>>::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(anyhow::Error::from)
         .context("link WASI")?;
@@ -420,19 +611,51 @@ where
         )
         .map_err(anyhow::Error::from)
         .context("link gate.admit")?;
+    Ok(linker)
+}
+
+/// Serve the gated `wasi:filesystem` over wRPC. `component_bytes` is the default
+/// chain (the shipped passthrough): linked with WASI + the consent `gate`
+/// (host-validated against `grants`), instantiated once, its exports
+/// (`wasi:filesystem/types` + `mount`) registered on `srv`. `mount.open-root`
+/// calls the gate, so it refuses any token that isn't a live `filesystem` grant:
+/// an ungated peer never receives a descriptor. `wasi` carries the preopened
+/// root (the jail).
+///
+/// A grant provided through a chain (`via`, chosen at consent) mounts on that
+/// chain instead: `chains` composes it, and it is instantiated into the same
+/// store the first time a grant names it. Every call is then routed by the
+/// resource it names, so descriptors from different chains coexist on one
+/// connection. Handles are bound to the connection that minted them: they are
+/// looked up in the scope the invocation's context identifies, and nowhere else.
+pub async fn serve_filesystem<C, S>(
+    srv: &S,
+    component_bytes: &[u8],
+    client: C,
+    cx: C::Context,
+    wasi: WasiCtx,
+    grants: Arc<std::sync::Mutex<GrantStore>>,
+    chains: Option<ChainSource>,
+) -> anyhow::Result<JoinSet<()>>
+where
+    C: Invoke + 'static,
+    C::Context: Clone,
+    S: Serve,
+    S::Context: AsOrigin,
+{
+    let engine = engine()?;
+    let component = Component::new(&engine, component_bytes)
+        .map_err(anyhow::Error::from)
+        .context("compile component")?;
+    let linker = fs_linker::<C>(&engine)?;
 
     let ty = component.component_type();
     let mut imports = BTreeMap::default();
-    let mut guest_resources = Vec::new();
     collect_component_resource_imports(&engine, &ty, &mut imports);
-    collect_component_resource_exports(&engine, &ty, &mut guest_resources);
     let host_resources = map_host_resources(imports);
-    let guest_resources: Arc<[ResourceType]> = Arc::from(guest_resources);
+    let io_streams: Arc<[ResourceType]> =
+        wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &ty).into();
 
-    let pre = linker
-        .instantiate_pre(&component)
-        .map_err(anyhow::Error::from)
-        .context("pre-instantiate component")?;
     let mut store = Store::new(
         &engine,
         FsState {
@@ -446,25 +669,85 @@ where
             grants,
         },
     );
-    let instance = pre
-        .instantiate_async(&mut store)
+    let router = Arc::new(FsRouter {
+        engine: engine.clone(),
+        linker,
+        source: chains,
+        chains: std::sync::Mutex::new(Vec::new()),
+        union: std::sync::Mutex::new(Arc::from(Vec::new())),
+    });
+    router
+        .add_chain(&mut store, String::new(), &component)
         .await
         .map_err(anyhow::Error::from)
-        .context("instantiate component")?;
-    let io_streams: Arc<[ResourceType]> =
-        wrpc_wasmtime::paths::wasi_io_stream_resources(&engine, &component.component_type()).into();
+        .context("instantiate the default filesystem chain")?;
     let store = Arc::new(Mutex::new(store));
-    let mut handlers = drive_exports(
-        srv,
-        Arc::clone(&store),
-        instance,
-        &component.component_type(),
-        &engine,
-        guest_resources,
-        host_resources,
-        io_streams,
-    )
-    .await?;
+
+    // Every exported function of the default chain is served by name; the router
+    // picks the chain per call. Chains are compositions in front of the default,
+    // so they export the same surface (checked when composed).
+    let mut handlers = JoinSet::new();
+    for (instance_name, types::ComponentExtern { ty: item, .. }) in ty.exports(&engine) {
+        let types::ComponentItem::ComponentInstance(inst_ty) = item else {
+            continue;
+        };
+        for (name, types::ComponentExtern { ty: fitem, .. }) in inst_ty.exports(&engine) {
+            let types::ComponentItem::ComponentFunc(func_ty) = fitem else {
+                continue;
+            };
+            let params_ty: Arc<[types::Type]> = func_ty.params().map(|(_, t)| t).collect();
+            let results_ty: Arc<[types::Type]> = func_ty.results().collect();
+            let paths = wrpc_wasmtime::paths::params_async_paths(params_ty.iter(), &io_streams);
+            let invocations = srv
+                .serve(instance_name, wrpc_wasmtime::rpc_func_name(name), paths)
+                .await
+                .with_context(|| format!("failed to serve `{instance_name}#{name}`"))?;
+            let iface: Arc<str> = Arc::from(instance_name);
+            let name: Arc<str> = Arc::from(name);
+            let store = Arc::clone(&store);
+            let router = Arc::clone(&router);
+            let host_resources = Arc::clone(&host_resources);
+            let io_streams = Arc::clone(&io_streams);
+            handlers.spawn(async move {
+                let mut invocations = pin!(invocations);
+                while let Some(inv) = invocations.next().await {
+                    let (cx, tx, rx) = match inv {
+                        Ok(inv) => inv,
+                        Err(err) => {
+                            tracing::warn!(?err, "failed to accept invocation");
+                            continue;
+                        }
+                    };
+                    let conn = cx.connection();
+                    let mut store = store.lock().await;
+                    store.data_mut().rpc.shared.set_scope(conn);
+                    let union = router.union();
+                    let res = wrpc_wasmtime::call_with(
+                        &mut *store,
+                        rx,
+                        tx,
+                        &union,
+                        &host_resources,
+                        &io_streams,
+                        params_ty.iter(),
+                        &results_ty,
+                        |store, params| Box::pin(router.choose(store, &iface, &name, params)),
+                    )
+                    .await;
+                    if let Err(err) = res {
+                        #[cfg(test)]
+                        eprintln!("invocation {iface}#{name} failed: {err:?}");
+                        let err = anyhow::Error::from(err);
+                        let chain: Vec<String> = err.chain().map(|e| e.to_string()).collect();
+                        tracing::warn!(
+                            iface = %iface, func = %name, conn,
+                            "invocation failed: {}", chain.join(" <- ")
+                        );
+                    }
+                }
+            });
+        }
+    }
     // Serve the resource-drop meta-op alongside the component's exports so a client
     // can release descriptors / dir-streams it's finished with instead of leaking them.
     serve_resource_drop(srv, store, &mut handlers).await?;
@@ -479,7 +762,8 @@ const RESOURCES_INSTANCE: &str = "icanhaz:fspass/resources@0.1.0";
 /// Serve `drop(handle: list<u8>)` on [`RESOURCES_INSTANCE`], draining it on a task
 /// spawned into `handlers`. Each call evicts the guest-exported resource the opaque
 /// `handle` names from the [`SharedResourceTable`] and runs its destructor — closing
-/// the underlying fd (or releasing the directory-entry stream).
+/// the underlying fd (or releasing the directory-entry stream). Only the connection
+/// that minted the handle can drop it.
 ///
 /// This is the descriptor-drop wRPC can't relay on its own: `own<T>`/`borrow<T>` carry
 /// no lifetime over the wire, and the client's Component-Model handle-drop never reaches
@@ -496,6 +780,7 @@ where
     C: Invoke + 'static,
     C::Context: Clone,
     S: Serve,
+    S::Context: AsOrigin,
 {
     // A flat `(list<u8>) -> bool` carries no async (stream) params, so no subscription
     // paths. It returns whether a live handle was released, so a caller/test gets a
@@ -508,14 +793,14 @@ where
     handlers.spawn(async move {
         let mut invocations = pin!(invocations);
         while let Some(inv) = invocations.next().await {
-            let (_cx, (handle,), _deferred, reply) = match inv {
+            let (cx, (handle,), _deferred, reply) = match inv {
                 Ok(inv) => inv,
                 Err(err) => {
                     tracing::warn!(?err, "failed to accept resource-drop invocation");
                     continue;
                 }
             };
-            let removed = match drop_shared_handle(&store, &handle).await {
+            let removed = match drop_shared_handle(&store, &handle, cx.connection()).await {
                 Ok(removed) => removed,
                 Err(err) => {
                     tracing::warn!(?err, "resource drop failed");
@@ -531,13 +816,15 @@ where
     Ok(())
 }
 
-/// Evict the shared resource the 16-byte UUID `handle` names and run its guest
-/// destructor. Returns whether a live handle was actually removed — a handle that
-/// isn't a valid UUID errors; one already gone (double-drop, or never ours) returns
+/// Evict the shared resource the 16-byte UUID `handle` names, in the scope of
+/// connection `conn`, and run its guest destructor. Returns whether a live handle
+/// was actually removed — a handle that isn't a valid UUID errors; one already
+/// gone (double-drop, never ours, or minted on another connection) returns
 /// `Ok(false)`, so dropping is idempotent.
 async fn drop_shared_handle<C>(
     store: &Arc<Mutex<Store<FsState<C>>>>,
     handle: &[u8],
+    conn: Option<u64>,
 ) -> anyhow::Result<bool>
 where
     C: Invoke + 'static,
@@ -552,7 +839,11 @@ where
     let id = Uuid::from_bytes_le(bytes);
     let mut store = store.lock().await;
     // Mirror the codec's access path to the shared table, then release the entry.
-    let removed = store.data_mut().wrpc().ctx.shared_resources().remove(&id);
+    let removed = {
+        let shared = store.data_mut().wrpc().ctx.shared_resources();
+        shared.set_scope(conn);
+        shared.remove(&id)
+    };
     match removed {
         Some(resource) => {
             // Runs the guest resource destructor (the fs-passthrough `Desc`/`DirStream`
@@ -659,10 +950,311 @@ mod tests {
             .join("../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm")
     }
 
-    /// The daemon-wide filesystem chain end to end: the `fs_wrap` fixture
-    /// composed in front of the passthrough, served like the passthrough, so
-    /// every operation passes the wrapper first: it refuses paths naming
-    /// `forbidden`, everything else reaches the real filesystem.
+    /// Two grants on one connection, one provided through the `fs_wrap`
+    /// chain and one through none: each mounts on its own chain, their
+    /// descriptors coexist in one handle table, and every later call is routed
+    /// by the descriptor it names, so the wrapped grant's rule holds only for
+    /// the wrapped grant. The chain is composed and instantiated the first
+    /// time a grant names it.
+    #[tokio::test]
+    async fn grants_on_one_connection_mount_on_their_own_chains() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use fs_client::icanhaz::fspass::mount;
+        use fs_client::wasi::filesystem::types::{
+            Descriptor, DescriptorFlags, ErrorCode, OpenFlags, PathFlags,
+        };
+        use wasmtime_wasi::FsPerms;
+
+        let passthrough = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let wrapper = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/fs_wrap.wasm"
+        ))
+        .expect("fs_wrap.wasm fixture");
+        // The source composes `wrap` in front of the passthrough; anything
+        // else is unknown, as an unregistered component would be.
+        let composed = std::sync::atomic::AtomicUsize::new(0);
+        let composed = Arc::new(composed);
+        let source: ChainSource = {
+            let passthrough = passthrough.clone();
+            let composed = Arc::clone(&composed);
+            Arc::new(move |via: Vec<String>| {
+                let passthrough = passthrough.clone();
+                let wrapper = wrapper.clone();
+                let composed = Arc::clone(&composed);
+                Box::pin(async move {
+                    anyhow::ensure!(via == ["wrap"], "unknown chain {via:?}");
+                    composed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    crate::components::compose(&[passthrough, wrapper])
+                })
+            })
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"hello\n").unwrap();
+        std::fs::write(dir.path().join("forbidden.txt"), b"secret\n").unwrap();
+        let mut builder = WasiCtxBuilder::new();
+        builder
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
+            .unwrap();
+        let grants = GrantStore::shared();
+        let kind = || {
+            CapabilityKind::Filesystem(FsRequest {
+                roots: vec![PathGrant {
+                    path: "/".to_string(),
+                    rights: FsRights::READ | FsRights::WRITE,
+                }],
+            })
+        };
+        let (wrapped, plain, wrapped_again) = {
+            let mut g = grants.lock().unwrap();
+            let wrapped = g
+                .issue_scoped_via(
+                    kind(),
+                    ezcap::Scope::unrestricted(),
+                    "filesystem (/) via wrap".to_string(),
+                    Duration::from_secs(60),
+                    crate::broker::anonymous_principal(),
+                    vec!["wrap".to_string()],
+                )
+                .unwrap();
+            let plain = g.issue(
+                kind(),
+                "filesystem (/)".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            let wrapped_again = g
+                .issue_scoped_via(
+                    kind(),
+                    ezcap::Scope::unrestricted(),
+                    "filesystem (/) via wrap, again".to_string(),
+                    Duration::from_secs(60),
+                    crate::broker::anonymous_principal(),
+                    vec!["wrap".to_string()],
+                )
+                .unwrap();
+            (wrapped, plain, wrapped_again)
+        };
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let _handlers = serve_filesystem(
+            srv.as_ref(),
+            &passthrough,
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            builder.build(),
+            grants.clone(),
+            Some(source),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        let open = |root: &wrpc_transport::ResourceOwn<Descriptor>, path: &'static str| {
+            let root = root.as_borrow();
+            let wrpc = wrpc.clone();
+            async move {
+                Descriptor::open_at(
+                    &wrpc,
+                    (),
+                    &root,
+                    &PathFlags::empty(),
+                    path,
+                    &OpenFlags::empty(),
+                    &DescriptorFlags::READ,
+                )
+                .await
+                .unwrap()
+            }
+        };
+
+        // The wrapped grant mounts on the chain: its rule applies.
+        let wrapped_root = mount::open_root(&wrpc, (), &wrapped)
+            .await
+            .unwrap()
+            .expect("mount through the chain");
+        assert!(matches!(
+            open(&wrapped_root, "forbidden.txt").await,
+            Err(ErrorCode::Access)
+        ));
+        let file = open(&wrapped_root, "hello.txt")
+            .await
+            .expect("hello through the chain");
+        let (bytes, _) = Descriptor::read(&wrpc, (), &file.as_borrow(), 1024, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&bytes[..], b"hello\n");
+
+        // The plain grant, on the same connection, mounts on the passthrough:
+        // no rule, and its descriptors route to its own instance.
+        let plain_root = mount::open_root(&wrpc, (), &plain)
+            .await
+            .unwrap()
+            .expect("mount on the passthrough");
+        let secret = open(&plain_root, "forbidden.txt")
+            .await
+            .expect("no rule on the plain grant");
+        let (bytes, _) = Descriptor::read(&wrpc, (), &secret.as_borrow(), 1024, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&bytes[..], b"secret\n");
+
+        // Interleaved: the wrapped root still answers, still refuses.
+        assert!(matches!(
+            open(&wrapped_root, "forbidden.txt").await,
+            Err(ErrorCode::Access)
+        ));
+        // A second grant naming the same chain shares the instance: composed once.
+        let again = mount::open_root(&wrpc, (), &wrapped_again)
+            .await
+            .unwrap()
+            .expect("mount on the existing chain");
+        assert!(matches!(
+            open(&again, "forbidden.txt").await,
+            Err(ErrorCode::Access)
+        ));
+        assert_eq!(composed.load(std::sync::atomic::Ordering::SeqCst), 1);
+        accept.abort();
+    }
+
+    /// A handle is bound to the connection that minted it. Two listeners feed
+    /// one server, each tagging its connections with its own id: a descriptor
+    /// mounted through the first is unknown on the second (its methods fail,
+    /// its drop reports nothing released) and still live on the first.
+    #[tokio::test]
+    async fn handles_are_bound_to_the_connection_that_minted_them() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use crate::ReqCtx;
+        use fs_client::icanhaz::fspass::mount;
+        use fs_client::wasi::filesystem::types::Descriptor;
+        use wasmtime_wasi::FsPerms;
+        use wrpc_transport::InvokeExt as _;
+
+        let wasm = std::fs::read(fs_passthrough_wasm()).expect("build fs-passthrough first");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"mine\n").unwrap();
+        let mut builder = WasiCtxBuilder::new();
+        builder
+            .preopened_dir(dir.path(), "/", FsPerms::ReadWrite)
+            .unwrap();
+        let grants = GrantStore::shared();
+        let grant = grants.lock().unwrap().issue(
+            CapabilityKind::Filesystem(FsRequest {
+                roots: vec![PathGrant {
+                    path: "/".to_string(),
+                    rights: FsRights::READ,
+                }],
+            }),
+            "filesystem (/)".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::<
+            ReqCtx,
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+        >::default());
+        // One listener per "connection": every stream accepted on it carries
+        // that connection's id, the way one WebSocket's mux frames do.
+        let mut addrs = Vec::new();
+        let mut accepts = Vec::new();
+        for conn in [1u64, 2u64] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            addrs.push(listener.local_addr().unwrap().to_string());
+            let srv = Arc::clone(&srv);
+            accepts.push(tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let cx = ReqCtx {
+                        origin: None,
+                        peer: None,
+                        conn: Some(conn),
+                    };
+                    let _ = srv.accept(cx, tx, rx).await;
+                }
+            }));
+        }
+        let _handlers = serve_filesystem(
+            srv.as_ref(),
+            &wasm,
+            wrpc_transport::tcp::Client::from(addrs[0].clone()),
+            (),
+            builder.build(),
+            grants.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let first = wrpc_transport::tcp::Client::from(&addrs[0]);
+        let second = wrpc_transport::tcp::Client::from(&addrs[1]);
+
+        let root = mount::open_root(&first, (), &grant)
+            .await
+            .unwrap()
+            .expect("mount on the first connection");
+        let ok = Descriptor::read_directory(&first, (), &root.as_borrow()).await;
+        assert!(ok.is_ok(), "the minting connection uses its handle: {ok:?}");
+
+        // The same handle bytes from the other connection: unknown.
+        let other = Descriptor::read_directory(&second, (), &root.as_borrow()).await;
+        assert!(
+            other.is_err(),
+            "a handle must not resolve on another connection, got {other:?}"
+        );
+        let handle: Bytes = AsRef::<Bytes>::as_ref(&root).clone();
+        let no_paths: [&[Option<usize>]; 0] = [];
+        let ((removed,), _) = second
+            .invoke_values::<_, (Bytes,), (bool,), _>(
+                (),
+                RESOURCES_INSTANCE,
+                "drop",
+                (handle.clone(),),
+                no_paths,
+            )
+            .await
+            .expect("drop invocation");
+        assert!(!removed, "another connection cannot drop the handle");
+
+        // Still live where it was minted, and droppable there.
+        let still = Descriptor::read_directory(&first, (), &root.as_borrow()).await;
+        assert!(still.is_ok(), "{still:?}");
+        let ((removed,), _) = first
+            .invoke_values::<_, (Bytes,), (bool,), _>(
+                (),
+                RESOURCES_INSTANCE,
+                "drop",
+                (handle,),
+                no_paths,
+            )
+            .await
+            .expect("drop invocation");
+        assert!(removed);
+        for a in accepts {
+            a.abort();
+        }
+    }
+
+    /// A filesystem chain end to end: the `fs_wrap` fixture composed in front
+    /// of the passthrough and served as the default chain, so every operation
+    /// passes the wrapper first: it refuses paths naming `forbidden`,
+    /// everything else reaches the real filesystem.
     #[tokio::test]
     async fn a_filesystem_chain_interposes_on_every_operation() {
         use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
@@ -720,6 +1312,7 @@ mod tests {
             (),
             wasi,
             grants.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -828,6 +1421,7 @@ mod tests {
             (),
             wasi,
             grants.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -925,6 +1519,7 @@ mod tests {
             (),
             wasi,
             grants.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -1028,6 +1623,7 @@ mod tests {
             (),
             wasi,
             grants.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -1154,6 +1750,7 @@ mod tests {
             (),
             wasi,
             grants.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -1252,6 +1849,7 @@ mod tests {
             (),
             wasi,
             grants.clone(),
+            None,
         )
         .await
         .unwrap();

@@ -16,6 +16,7 @@ pub fn iroh_ctx(conn: &iroh::endpoint::Connection) -> crate::ReqCtx {
     crate::ReqCtx {
         origin: None,
         peer: Some(ezcap::PublicKey::from_bytes(*conn.remote_id().as_bytes())),
+        conn: Some(crate::next_connection()),
     }
 }
 

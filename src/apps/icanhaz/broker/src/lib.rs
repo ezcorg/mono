@@ -41,6 +41,18 @@ pub struct ReqCtx {
     /// path: the QUIC handshake proves the remote endpoint id). `None` on
     /// WebSocket and WebTransport.
     pub peer: Option<ezcap::PublicKey>,
+    /// The transport connection this invocation arrived on, minted by
+    /// [`next_connection`] when the transport accepted it. Resource handles a
+    /// served component hands out are bound to it: a handle is only ever
+    /// honored on the connection it was minted for. `None` where a transport
+    /// carries no connection (the loopback test serves).
+    pub conn: Option<u64>,
+}
+
+/// A fresh connection id for a `ReqCtx`, unique for the life of the process.
+pub fn next_connection() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Lets a handler read what the transport proved about the caller out of
@@ -51,6 +63,11 @@ pub trait AsOrigin {
     fn origin(&self) -> Option<&str>;
     /// The transport-authenticated peer key, if any.
     fn peer(&self) -> Option<&ezcap::PublicKey> {
+        None
+    }
+    /// The transport connection the invocation arrived on, if the transport
+    /// identifies one; what served resource handles are bound to.
+    fn connection(&self) -> Option<u64> {
         None
     }
     /// Both, as a certificate's audience is checked against them.
@@ -72,5 +89,8 @@ impl AsOrigin for ReqCtx {
     }
     fn peer(&self) -> Option<&ezcap::PublicKey> {
         self.peer.as_ref()
+    }
+    fn connection(&self) -> Option<u64> {
+        self.conn
     }
 }

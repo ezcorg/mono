@@ -51,6 +51,7 @@ mod remote_tests;
 
 // The broker itself is a library (`icanhaz-broker`), re-exported here so the
 // daemon, the tray app and tests address it as they always did.
+pub use icanhaz_broker::next_connection;
 pub use icanhaz_broker::{
     approve, broker, capabilities, configuration, configuration_serve, store, AsOrigin, ReqCtx,
 };

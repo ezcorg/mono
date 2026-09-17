@@ -343,6 +343,7 @@ mod tests {
                         Some(Approval {
                             grant: None,
                             narrowing: Some(ezcap::Narrowing::allow("size(call.args.key) < 64")),
+                            via: Vec::new(),
                             remember: false,
                             ttl_secs: 60,
                         })
