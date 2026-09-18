@@ -43,9 +43,12 @@ enum Capability {
         #[arg(long)]
         json: bool,
     },
-    /// Validate and add a component to the daemon's store.
+    /// Add a component to the daemon's store: a local `.wasm` (validated
+    /// here first), an OCI reference (`oci://ghcr.io/org/name:tag`), or a
+    /// component another daemon holds (`iroh:<key>?addr=…#sha256:<hex>`).
+    /// The daemon fetches the latter two itself and records where from.
     Add {
-        wasm: PathBuf,
+        wasm: String,
         #[arg(long, env = "ICANHAZ_WS", default_value = "ws://127.0.0.1:7777")]
         daemon: String,
         /// Provenance: where the source lives (a repository or URL).
@@ -207,9 +210,17 @@ async fn main() -> anyhow::Result<()> {
             build,
             builder,
         } => {
-            let bytes = std::fs::read(&wasm).with_context(|| format!("read {}", wasm.display()))?;
-            components::validate(&bytes)?;
             let client = ws(&daemon)?;
+            if icanhaz_host::fetch::ComponentSource::is_source(&wasm) {
+                icanhaz_host::fetch::ComponentSource::parse(&wasm)?;
+                match components_client::fetch(&client, (), &wasm).await? {
+                    Ok(info) => println!("{}", info.hash),
+                    Err(e) => bail!("{e}"),
+                }
+                return Ok(());
+            }
+            let bytes = std::fs::read(&wasm).with_context(|| format!("read {wasm}"))?;
+            components::validate(&bytes)?;
             let provenance = source.map(|source| components_client::Provenance {
                 source,
                 revision,

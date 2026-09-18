@@ -22,7 +22,7 @@ describe("a novel capability from the store (browser → host)", () => {
 
         const grant = await requestScoped(
             t,
-            { tag: "component", val: { provides: IFACE, provider: added.val.hash, delegated: [] } },
+            { tag: "component", val: { provides: IFACE, provider: added.val.hash, delegated: [], source: undefined } },
             { when: "true", allow: 'call.method == "greet"' },
             "say hello",
             undefined,
@@ -61,7 +61,7 @@ describe("a novel capability from the store (browser → host)", () => {
         if (inference.tag !== "ok") return;
         const grant = await request(
             t,
-            { tag: "component", val: { provides: ORACLE, provider: added.val.hash, delegated: [inference.val.token] } },
+            { tag: "component", val: { provides: ORACLE, provider: added.val.hash, delegated: [inference.val.token], source: undefined } },
             "ask the oracle",
             undefined,
         );

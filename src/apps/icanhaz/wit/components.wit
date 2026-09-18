@@ -38,6 +38,15 @@ interface components {
   }
 
   add: func(bytes: list<u8>, provenance: option<provenance>) -> result<component-info, string>;
+  /// Fetch a component from a source and add it. A source is an OCI
+  /// reference, `oci://<registry>/<name>[:<tag>|@<digest>]`, or a component
+  /// another daemon holds, `iroh:<key>?addr=…#sha256:<hex>`. The bytes are
+  /// verified against the digest they were announced under before the store
+  /// keeps them, and the provenance records the source and that digest; a
+  /// tag is resolved once and forgotten, so an updated tag is a new
+  /// component. Fetching grants nothing: the component sits inert until a
+  /// grant names it.
+  fetch: func(source: string) -> result<component-info, string>;
   all: func() -> list<component-info>;
   get: func(hash: string) -> result<list<u8>, string>;
   /// Local hosts only.

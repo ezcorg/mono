@@ -78,6 +78,11 @@ export async function add(t: WrpcTransport, bytes: Uint8Array, provenance: Prove
     return dec_90(resultValue(resp), 0)[0];
 }
 
+export async function fetch(t: WrpcTransport, source: string): Promise<{ tag: "ok"; val: ComponentInfo } | { tag: "err"; val: string }> {
+    const resp = await invoke(t, INSTANCE, "fetch", [...encodeString(source)]);
+    return dec_90(resultValue(resp), 0)[0];
+}
+
 export async function all(t: WrpcTransport): Promise<ComponentInfo[]> {
     const resp = await invoke(t, INSTANCE, "all", []);
     return dec_91(resultValue(resp), 0)[0];

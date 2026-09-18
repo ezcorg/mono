@@ -2025,6 +2025,7 @@ mod tests {
                 provides: IFACE.to_string(),
                 provider: Some(info.hash.clone()),
                 delegated: Vec::new(),
+                source: None,
             })
         };
         let (token, scoped, wrong) = {
@@ -2233,6 +2234,7 @@ mod tests {
                     provides: IFACE.to_string(),
                     provider: Some(info.hash.clone()),
                     delegated: vec![inference.clone()],
+                    source: None,
                 }),
                 "oracle".to_string(),
                 Duration::from_secs(60),
@@ -2245,6 +2247,7 @@ mod tests {
                 provides: IFACE.to_string(),
                 provider: Some(info.hash.clone()),
                 delegated: vec![],
+                source: None,
             }),
             "oracle, nothing lent".to_string(),
             Duration::from_secs(60),
@@ -2406,6 +2409,7 @@ mod tests {
                     provides: IFACE.to_string(),
                     provider: Some(info.hash.clone()),
                     delegated: vec![fs_grant.clone()],
+                    source: None,
                 }),
                 "reader".to_string(),
                 Duration::from_secs(60),
@@ -2418,6 +2422,7 @@ mod tests {
                 provides: IFACE.to_string(),
                 provider: Some(info.hash.clone()),
                 delegated: vec![],
+                source: None,
             }),
             "reader, nothing lent".to_string(),
             Duration::from_secs(60),
@@ -2526,6 +2531,7 @@ mod tests {
                 provides: IFACE.to_string(),
                 provider: Some(info.hash.clone()),
                 delegated: vec![],
+                source: None,
             }),
             "pipe".to_string(),
             Duration::from_secs(60),

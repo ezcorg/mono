@@ -11,7 +11,7 @@ type Capability =
   | { kind: "sockets"; endpoints: string[]; may_listen: boolean }
   | { kind: "inference"; models: string[] }
   | { kind: "foreign"; path: string; summary: string }
-  | { kind: "component"; provides: string; provider: string | null; delegated: string[] };
+  | { kind: "component"; provides: string; provider: string | null; delegated: string[]; source: string | null };
 type ScopeText = { when: string[]; allow: string[] };
 type Pending = {
   id: string;
@@ -53,7 +53,22 @@ type ConfigurationView = {
 };
 type SiteView = { origin: string; kinds: string[] };
 
-type ComponentInfo = { hash: string; name: string | null; size: number; imports: string[]; exports: string[]; added: number };
+type Provenance = { source: string; revision: string | null; build: string | null; builder: string | null };
+type ComponentInfo = {
+  hash: string;
+  name: string | null;
+  size: number;
+  imports: string[];
+  exports: string[];
+  added: number;
+  provenance: Provenance | null;
+  reproducible: boolean;
+};
+/** Where a component came from, for the human deciding whether to run it. */
+const origin = (c: ComponentInfo): string =>
+  c.provenance
+    ? `${c.provenance.source}${c.provenance.revision ? ` @ ${c.provenance.revision.replace(/^sha256:/, "").slice(0, 12)}` : ""}${c.reproducible ? " · reproducible" : ""}`
+    : "no provenance";
 type ErrorEntry = { id: number; message: string };
 type AppInfo = { version: string; ws: string; wt: string; root: string };
 
@@ -663,6 +678,7 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
                 <input type="checkbox" checked={via().includes(c.hash)} onChange={(e) => toggleVia(c.hash, e.currentTarget.checked)} />
                 <span class="path">{c.name ?? c.hash.slice(7, 19)}</span>
                 <span class="dim">{c.exports.map((x) => x.replace(/@.*$/, "")).join(", ")}</span>
+                <span class="dim small">{origin(c)}</span>
               </label>
             )}
           </For>
@@ -787,6 +803,9 @@ function CapabilityEditor(props: { orig: Capability; cap: () => Capability; setC
           <span class="path">{(props.cap() as Extract<Capability, { kind: "component" }>).provides}</span>
         </div>
         <p class="dim small">// nothing native provides this; it runs from the component(s) ticked under "provide through"</p>
+        <Show when={(props.cap() as Extract<Capability, { kind: "component" }>).source}>
+          {(src) => <div class="dim">fetched from {src()}</div>}
+        </Show>
         <Show when={(props.cap() as Extract<Capability, { kind: "component" }>).delegated.length > 0}>
           <div class="dim">lent {(props.cap() as Extract<Capability, { kind: "component" }>).delegated.length} of the requester's grant(s) for what it imports</div>
         </Show>

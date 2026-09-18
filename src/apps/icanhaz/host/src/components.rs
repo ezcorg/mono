@@ -414,10 +414,17 @@ pub type AfterAdd = Arc<
         + Sync,
 >;
 
+/// Who may put code in the store: decides for the requesting principal.
+/// Adding grants nothing, but it takes disk and a name on the offers list,
+/// so it is for the local user and the hosts the human approved.
+pub type InstallGate = Arc<dyn Fn(&crate::broker::Principal) -> Result<(), String> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ComponentsProvider {
     components: Arc<ComponentStore>,
     after_add: Option<AfterAdd>,
+    fetcher: Option<Arc<crate::fetch::Fetcher>>,
+    install: Option<InstallGate>,
 }
 
 impl ComponentsProvider {
@@ -425,12 +432,104 @@ impl ComponentsProvider {
         Self {
             components,
             after_add: None,
+            fetcher: None,
+            install: None,
         }
+    }
+
+    /// Gate `add` and `fetch` by requester; without one, anyone may install.
+    pub fn with_install_gate(mut self, gate: InstallGate) -> Self {
+        self.install = Some(gate);
+        self
+    }
+
+    fn may_install(&self, cx: &impl AsOrigin) -> Result<(), String> {
+        match &self.install {
+            Some(gate) => gate(&crate::broker::principal_of(cx)),
+            None => Ok(()),
+        }
+    }
+
+    /// Make sure `hash` is held, fetching it from `source` when not; what
+    /// lands must hash to `hash`, whatever the source served.
+    pub async fn ensure(
+        &self,
+        hash: &str,
+        source: Option<&str>,
+    ) -> Result<crate::broker::ComponentSummary, String> {
+        if let Some(info) = self.components.find(hash).await {
+            return Ok(summary(&info));
+        }
+        let Some(source) = source else {
+            return Err(format!(
+                "this daemon does not hold {hash} and the request names no source"
+            ));
+        };
+        let Some(fetcher) = &self.fetcher else {
+            return Err("this daemon fetches nothing: no OCI or peer client".to_string());
+        };
+        let source = crate::fetch::ComponentSource::parse(source).map_err(|e| format!("{e:#}"))?;
+        let (bytes, provenance) = fetcher.fetch(&source).await.map_err(|e| format!("{e:#}"))?;
+        let fetched = validate(&bytes).map_err(|e| format!("{e:#}"))?;
+        if fetched.hash != hash {
+            return Err(format!(
+                "{source} serves {}, not the {hash} the request names",
+                fetched.hash
+            ));
+        }
+        let info = self.land(&bytes, Some(provenance)).await?;
+        Ok(crate::broker::ComponentSummary {
+            hash: info.hash,
+            name: info.name,
+            source: info.provenance.as_ref().map(|p| p.source.clone()),
+            revision: info.provenance.as_ref().and_then(|p| p.revision.clone()),
+            reproducible: info.reproducible,
+        })
     }
 
     pub fn with_after_add(mut self, hook: AfterAdd) -> Self {
         self.after_add = Some(hook);
         self
+    }
+
+    /// What `fetch` pulls with; without it, `fetch` refuses.
+    pub fn with_fetcher(mut self, fetcher: Arc<crate::fetch::Fetcher>) -> Self {
+        self.fetcher = Some(fetcher);
+        self
+    }
+
+    /// Keep `bytes` with `provenance` and tell the daemon it landed.
+    async fn land(&self, bytes: &[u8], provenance: Option<Provenance>) -> Result<InfoWire, String> {
+        let info = self
+            .components
+            .add(bytes, provenance)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        if let Some(hook) = &self.after_add {
+            hook(info.clone()).await;
+        }
+        Ok(to_wire(info))
+    }
+}
+
+fn summary(info: &ComponentInfo) -> crate::broker::ComponentSummary {
+    crate::broker::ComponentSummary {
+        hash: info.hash.clone(),
+        name: info.name.clone(),
+        source: info.provenance.as_ref().map(|p| p.source.clone()),
+        revision: info.provenance.as_ref().and_then(|p| p.revision.clone()),
+        reproducible: info.reproducible,
+    }
+}
+
+impl crate::broker::ComponentResolver for ComponentsProvider {
+    fn ensure(
+        &self,
+        hash: String,
+        source: Option<String>,
+    ) -> futures::future::BoxFuture<'static, Result<crate::broker::ComponentSummary, String>> {
+        let me = self.clone();
+        Box::pin(async move { me.ensure(&hash, source.as_deref()).await })
     }
 }
 
@@ -439,22 +538,36 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::com
 {
     async fn add(
         &self,
-        _cx: C,
+        cx: C,
         bytes: Bytes,
         provenance: Option<ProvenanceWire>,
     ) -> anyhow::Result<Result<InfoWire, String>> {
-        let added = self
-            .components
-            .add(&bytes, provenance.map(provenance_from_wire))
-            .await;
-        let info = match added {
-            Ok(info) => info,
+        if let Err(e) = self.may_install(&cx) {
+            return Ok(Err(e));
+        }
+        Ok(self
+            .land(&bytes, provenance.map(provenance_from_wire))
+            .await)
+    }
+
+    async fn fetch(&self, cx: C, source: String) -> anyhow::Result<Result<InfoWire, String>> {
+        if let Err(e) = self.may_install(&cx) {
+            return Ok(Err(e));
+        }
+        let Some(fetcher) = &self.fetcher else {
+            return Ok(Err(
+                "this daemon fetches nothing: no OCI or peer client".to_string()
+            ));
+        };
+        let source = match crate::fetch::ComponentSource::parse(&source) {
+            Ok(s) => s,
             Err(e) => return Ok(Err(format!("{e:#}"))),
         };
-        if let Some(hook) = &self.after_add {
-            hook(info.clone()).await;
-        }
-        Ok(Ok(to_wire(info)))
+        let (bytes, provenance) = match fetcher.fetch(&source).await {
+            Ok(fetched) => fetched,
+            Err(e) => return Ok(Err(format!("{e:#}"))),
+        };
+        Ok(self.land(&bytes, Some(provenance)).await)
     }
 
     async fn all(&self, _cx: C) -> anyhow::Result<Vec<InfoWire>> {
@@ -631,6 +744,106 @@ mod tests {
             "the inner mount is wired, not imported: {:?}",
             info.imports
         );
+    }
+
+    /// A request naming a provider this daemon lacks, with a source: the
+    /// provider resolves through the store, fetching and keeping the bytes
+    /// with their provenance; bytes that do not hash as the request names
+    /// are refused and never kept.
+    #[tokio::test]
+    async fn a_missing_provider_is_fetched_from_its_source_and_checked_against_its_hash() {
+        let greeter = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/greeter.wasm"
+        ))
+        .expect("greeter.wasm fixture");
+        let hash = validate(&greeter).unwrap().hash;
+        let (addr, manifest_digest) =
+            crate::fetch::tests::registry("acme/greeter", &greeter, greeter.clone()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Store::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let store = Arc::new(ComponentStore::new(dir.path().join("components"), Some(db)));
+        let provider = ComponentsProvider::new(Arc::clone(&store)).with_fetcher(Arc::new(
+            crate::fetch::Fetcher::with_config(crate::fetch::tests::plain_http(), None),
+        ));
+        let oci = format!("oci://{addr}/acme/greeter:latest");
+
+        // Not held, no source: refused.
+        let err = provider.ensure(&hash, None).await.unwrap_err();
+        assert!(err.contains("names no source"), "{err}");
+        // Wrong hash for what the source serves: refused, nothing kept.
+        let other = format!("sha256:{}", "11".repeat(32));
+        let err = provider.ensure(&other, Some(&oci)).await.unwrap_err();
+        assert!(err.contains(&hash) && err.contains(&other), "{err}");
+        assert!(store.find(&other).await.is_none());
+        assert!(store.find(&hash).await.is_none());
+        // The right hash: fetched, kept with its provenance, described.
+        let summary = provider.ensure(&hash, Some(&oci)).await.expect("resolved");
+        assert_eq!(summary.hash, hash);
+        assert_eq!(summary.source.as_deref(), Some(oci.as_str()));
+        assert_eq!(summary.revision.as_deref(), Some(manifest_digest.as_str()));
+        assert!(!summary.reproducible);
+        assert_eq!(
+            store.find(&hash).await.unwrap().provenance.unwrap().source,
+            oci
+        );
+        // Held now: resolved without a source, and through the broker's trait.
+        assert_eq!(provider.ensure(&hash, None).await.unwrap().hash, hash);
+        assert_eq!(
+            crate::broker::ComponentResolver::ensure(&provider, hash.clone(), None)
+                .await
+                .unwrap()
+                .hash,
+            hash
+        );
+    }
+
+    /// Installing is for the local user and approved hosts: a page from an
+    /// unapproved origin cannot add or fetch, and a local caller can.
+    #[tokio::test]
+    async fn installing_is_gated_by_requester() {
+        use bindings::exports::icanhaz::nocap::components::Handler as _;
+
+        let greeter = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/greeter.wasm"
+        ))
+        .expect("greeter.wasm fixture");
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(ComponentStore::new(dir.path().join("components"), None));
+        let provider = ComponentsProvider::new(store).with_install_gate(Arc::new(|p| {
+            if p.id == "https://stranger.example" {
+                Err(format!("{} is not an approved host", p.id))
+            } else {
+                Ok(())
+            }
+        }));
+        let page = crate::ReqCtx {
+            origin: Some("https://stranger.example".to_string()),
+            peer: None,
+            conn: None,
+        };
+        let refused = provider
+            .add(page.clone(), greeter.clone().into(), None)
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(refused.contains("not an approved host"), "{refused}");
+        let refused = provider
+            .fetch(page, "oci://ghcr.io/acme/greeter:latest".to_string())
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(refused.contains("not an approved host"), "{refused}");
+        let added = provider
+            .add(crate::ReqCtx::default(), greeter.into(), None)
+            .await
+            .unwrap()
+            .expect("the local user may add");
+        assert!(added.hash.starts_with("sha256:"));
     }
 
     #[test]

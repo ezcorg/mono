@@ -42,7 +42,12 @@ interface types {
   /// for what it imports: when the component calls an imported capability
   /// with its own token, the daemon substitutes the delegated grant of that
   /// kind. Each must be live and held by the requester.
-  record component-request { provides: string, provider: option<string>, delegated: list<string> }
+  /// `source` says where `provider` can be fetched from when this daemon
+  /// does not hold it (`oci://…` or `iroh:…#sha256:…`, see `components.fetch`):
+  /// the daemon fetches it, checks the bytes hash to `provider`, and keeps
+  /// them with that provenance before the request reaches consent. A fetch
+  /// grants nothing; the consent decides.
+  record component-request { provides: string, provider: option<string>, delegated: list<string>, source: option<string> }
 
   /// LLM inference through the host's configured providers. `models` lists the
   /// models the grant may use (empty = any the host has configured); budgets and

@@ -75,6 +75,8 @@ pub enum CapabilityDto {
         provider: Option<String>,
         /// Grants the requester lends the component for what it imports.
         delegated: Vec<String>,
+        /// Where the provider was to be fetched from, if the request said.
+        source: Option<String>,
     },
 }
 
@@ -148,6 +150,7 @@ impl From<&CapabilityKind> for CapabilityDto {
                 provides: c.provides.clone(),
                 provider: c.provider.clone(),
                 delegated: c.delegated.clone(),
+                source: c.source.clone(),
             },
         }
     }
@@ -204,11 +207,13 @@ impl CapabilityDto {
                 provides,
                 provider,
                 delegated,
+                source,
             } => Some(CapabilityKind::Component(
                 icanhaz_host::broker::ComponentRequest {
                     provides,
                     provider,
                     delegated,
+                    source,
                 },
             )),
             CapabilityDto::Sockets { .. } | CapabilityDto::Foreign { .. } => None,

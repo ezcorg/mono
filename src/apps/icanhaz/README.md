@@ -44,6 +44,14 @@ browser / editor / agent ──wRPC──▶ router ──▶ [wrapper …] ─�
   served through the same router, and their imports of native capabilities
   are satisfied by composing the shipped components in, running under grants
   the requester **delegates** to them.
+- **Getting components.** The store is content-addressed. A component can be
+  added from a file, pulled from an OCI registry (`oci://ghcr.io/org/name:tag`,
+  the tag resolved to a digest once and recorded as provenance), or fetched
+  from another daemon by hash over iroh. A request may name its provider by
+  hash together with a source; a daemon that lacks it fetches it, checks the
+  bytes against the hash, and only then shows the consent card, where the
+  component's origin is visible. Fetching grants nothing: installing is for
+  the local user and approved hosts, and authority comes only from consent.
 - **Scopes** are CEL clauses (`ezco:ezcap`) over an environment generated from
   the interface's WIT: `call.method`, `call.args.*`, `state.*`, `time`. They
   narrow only, render as sentences in the consent window, and are checked at
@@ -121,6 +129,8 @@ icanhaz capability new mine --export example:mine/mine@0.1.0 --wit ./wit   # a n
 cargo build --release --target wasm32-wasip2 --target-dir target
 icanhaz capability inspect target/wasm32-wasip2/release/<crate>.wasm
 icanhaz capability add     target/wasm32-wasip2/release/<crate>.wasm
+icanhaz capability add     oci://ghcr.io/org/name:tag        # pulled by the daemon; the tag resolves to a digest once
+icanhaz capability add     'iroh:<key>?addr=…#sha256:<hex>'  # a component another daemon holds
 ```
 
 A scaffold vendors the daemon's WIT, generates the `Guest` impls (resource

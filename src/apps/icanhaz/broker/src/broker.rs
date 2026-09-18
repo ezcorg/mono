@@ -60,8 +60,9 @@ pub use bindings::icanhaz::nocap::types::{
     CapabilityKind, ComponentRequest, FsRequest, FsRights, InferenceRequest, PathGrant,
     ProcessRequest, TerminalRequest,
 };
-use bindings::icanhaz::nocap::types::{Denied, GrantInfo, Principal, PrincipalKind};
+use bindings::icanhaz::nocap::types::{Denied, GrantInfo};
 use bindings::icanhaz::nocap::types::{Endpoint, SocketRequest, Transport};
+pub use bindings::icanhaz::nocap::types::{Principal, PrincipalKind};
 /// The call a native handler submits for admission (`ezcap::Call`).
 pub use ezcap::Call as AdmitCall;
 use ezcap::{Audience, Certificate, Keypair, Membranes, Narrowing, Presented, Scope as EzScope};
@@ -390,6 +391,28 @@ pub trait RemoteBroker: Send + Sync {
     ) -> futures::future::BoxFuture<'static, anyhow::Result<Result<(String, RemoteDetail), Denied>>>;
 }
 
+/// What a store holds of a component, for a request that names one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComponentSummary {
+    pub hash: String,
+    pub name: Option<String>,
+    /// Where it came from, and the revision or digest there.
+    pub source: Option<String>,
+    pub revision: Option<String>,
+    pub reproducible: bool,
+}
+
+/// The component store, as the broker needs it: make sure a component a
+/// request names is held, fetching it from the request's `source` when it
+/// is not. Transport-free; the daemon implements it over its store.
+pub trait ComponentResolver: Send + Sync {
+    fn ensure(
+        &self,
+        hash: String,
+        source: Option<String>,
+    ) -> futures::future::BoxFuture<'static, Result<ComponentSummary, String>>;
+}
+
 /// A signal that fires when a grant becomes invalid — explicitly **revoked**, or
 /// **expired**. A streaming capability awaits [`Revocation::cancelled`] to end its
 /// output stream + release its resource (kill the child / PTY shell, stop the fs
@@ -519,7 +542,7 @@ fn kind_to_json(k: &CapabilityKind) -> serde_json::Value {
         CapabilityKind::Terminal(t) => json!({"terminal": {"shell": t.shell, "jailed": t.jailed}}),
         CapabilityKind::Inference(i) => json!({"inference": {"models": i.models}}),
         CapabilityKind::Component(c) => {
-            json!({"component": {"provides": c.provides, "provider": c.provider, "delegated": c.delegated}})
+            json!({"component": {"provides": c.provides, "provider": c.provider, "delegated": c.delegated, "source": c.source}})
         }
     }
 }
@@ -611,6 +634,7 @@ fn kind_from_json(v: &serde_json::Value) -> Option<CapabilityKind> {
             provides: str_of(c, "provides")?,
             provider: str_of(c, "provider"),
             delegated: strings(c, "delegated"),
+            source: str_of(c, "source"),
         }));
     }
     None
@@ -1809,6 +1833,9 @@ pub struct BrokerProvider {
     hosts: Arc<Mutex<Hosts>>,
     /// The peer transport, for `redeem-at`; `None` = no peers reachable.
     remote: Option<Arc<dyn RemoteBroker>>,
+    /// The component store, for a request naming a provider; `None` = a
+    /// provider must already be held (nothing is fetched).
+    components: Option<Arc<dyn ComponentResolver>>,
 }
 
 impl BrokerProvider {
@@ -1824,12 +1851,20 @@ impl BrokerProvider {
             pairings,
             hosts: Hosts::shared(),
             remote: None,
+            components: None,
         }
     }
 
     /// Reach other brokers over the daemon's peer transport (`redeem-at`).
     pub fn with_remote(mut self, remote: Arc<dyn RemoteBroker>) -> Self {
         self.remote = Some(remote);
+        self
+    }
+
+    /// Resolve a component request's provider through the store: held, or
+    /// fetched from the request's source.
+    pub fn with_components(mut self, components: Arc<dyn ComponentResolver>) -> Self {
+        self.components = Some(components);
         self
     }
 
@@ -1997,7 +2032,7 @@ fn principal_from_origin(origin: Option<&str>) -> Principal {
 
 /// The principal a transport context proves: a browser-attested origin, a
 /// QUIC-authenticated peer key, or — with neither — the anonymous local peer.
-fn principal_of(cx: &impl AsOrigin) -> Principal {
+pub fn principal_of(cx: &impl AsOrigin) -> Principal {
     match (cx.origin(), cx.peer()) {
         (Some(o), _) => principal_from_origin(Some(o)),
         (None, Some(peer)) => Principal {
@@ -2107,6 +2142,31 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                 hosts.record_seen(&principal.id, kind);
                 tracing::info!(requester = %principal.id, kind, "request from an unapproved host — recorded, not prompted");
                 return Ok(Err(Denied::NotAuthorized));
+            }
+        }
+
+        // A component request names its provider by hash; the daemon must hold
+        // it before the human can be shown what they would be approving. When
+        // it does not, and the request says where to fetch it, it is fetched
+        // now (after the host gate, so an unapproved requester cannot make the
+        // daemon fetch anything) and checked against the hash. A fetched
+        // component is inert until the consent below approves a grant on it.
+        if let CapabilityKind::Component(c) = &want {
+            if let Some(hash) = &c.provider {
+                match &self.components {
+                    Some(components) => {
+                        if let Err(e) = components.ensure(hash.clone(), c.source.clone()).await {
+                            tracing::info!(%hash, source = ?c.source, "component request refused: {e}");
+                            return Ok(Err(Denied::NoProvider));
+                        }
+                    }
+                    None if c.source.is_some() => {
+                        return Ok(Err(Denied::Unsupported(
+                            "this daemon does not fetch components".to_string(),
+                        )));
+                    }
+                    None => {}
+                }
             }
         }
 
@@ -3014,5 +3074,121 @@ mod tests {
         let again = Hosts::shared();
         Hosts::restore(&again, &store).await;
         assert_eq!(again.lock().unwrap().list(), vec!["https://c.example"]);
+    }
+
+    /// A component request names its provider by hash; when the daemon
+    /// lacks it, the request's source is resolved through the component
+    /// store before consent, and a provider that cannot be had refuses the
+    /// request before anyone is prompted.
+    #[tokio::test]
+    async fn a_component_request_resolves_its_provider_before_consent() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use bindings::exports::icanhaz::nocap::broker::Handler as _;
+
+        struct Resolver {
+            held: String,
+            calls: AtomicUsize,
+        }
+        impl ComponentResolver for Resolver {
+            fn ensure(
+                &self,
+                hash: String,
+                source: Option<String>,
+            ) -> futures::future::BoxFuture<'static, Result<ComponentSummary, String>> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let held = self.held.clone();
+                Box::pin(async move {
+                    if hash == held || source.is_some() {
+                        Ok(ComponentSummary {
+                            hash,
+                            name: Some("greeter".to_string()),
+                            source,
+                            revision: None,
+                            reproducible: false,
+                        })
+                    } else {
+                        Err(format!("not held: {hash}"))
+                    }
+                })
+            }
+        }
+        let resolver = Arc::new(Resolver {
+            held: "sha256:held".to_string(),
+            calls: AtomicUsize::new(0),
+        });
+        let store = GrantStore::shared();
+        let provider = BrokerProvider::new(store, Consent::AutoApprove, Pairings::shared())
+            .with_components(resolver.clone());
+        let ask = |provider: Option<&str>, source: Option<&str>| {
+            CapabilityKind::Component(ComponentRequest {
+                provides: "example:greeter/greeter@0.1.0".to_string(),
+                provider: provider.map(str::to_string),
+                delegated: vec![],
+                source: source.map(str::to_string),
+            })
+        };
+
+        // Held: granted, the resolver consulted.
+        let granted = provider
+            .request(
+                crate::ReqCtx::default(),
+                ask(Some("sha256:held"), None),
+                "x".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(granted.is_ok(), "{granted:?}");
+        assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
+        // Missing with a source: fetched (the resolver says so), then granted.
+        let granted = provider
+            .request(
+                crate::ReqCtx::default(),
+                ask(Some("sha256:new"), Some("oci://ghcr.io/acme/greeter:1")),
+                "x".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(granted.is_ok(), "{granted:?}");
+        // Missing and unfetchable: no provider, no prompt.
+        let refused = provider
+            .request(
+                crate::ReqCtx::default(),
+                ask(Some("sha256:nope"), None),
+                "x".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(refused, Err(Denied::NoProvider)), "{refused:?}");
+        // No provider named at all: nothing to resolve; consent decides.
+        let granted = provider
+            .request(crate::ReqCtx::default(), ask(None, None), "x".into(), None)
+            .await
+            .unwrap();
+        assert!(granted.is_ok(), "{granted:?}");
+        assert_eq!(resolver.calls.load(Ordering::SeqCst), 3);
+
+        // A daemon that fetches nothing refuses a request that needs a fetch.
+        let plain = BrokerProvider::new(
+            GrantStore::shared(),
+            Consent::AutoApprove,
+            Pairings::shared(),
+        );
+        let refused = plain
+            .request(
+                crate::ReqCtx::default(),
+                ask(Some("sha256:new"), Some("oci://ghcr.io/acme/greeter:1")),
+                "x".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(refused, Err(Denied::Unsupported(_))),
+            "{refused:?}"
+        );
     }
 }

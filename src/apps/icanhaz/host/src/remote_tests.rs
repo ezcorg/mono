@@ -353,3 +353,79 @@ async fn a_certificate_from_another_daemon_redeems_over_iroh_and_forwards_calls(
     .await
     .expect("test timed out");
 }
+
+/// A component another daemon holds is fetched by hash over the peer path,
+/// through its `components` interface, and lands with that daemon as its
+/// provenance. Bytes that do not hash as asked are refused.
+#[tokio::test]
+async fn a_component_is_fetched_from_a_peer_by_hash() {
+    use futures::FutureExt as _;
+
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let greeter = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/greeter.wasm"
+        ))
+        .expect("greeter.wasm fixture");
+        // R: a store with the greeter, served over iroh.
+        let r = ezcap::Keypair::generate().unwrap();
+        let ep_r = Endpoint::builder(Minimal)
+            .secret_key(iroh::SecretKey::from_bytes(&r.to_bytes()))
+            .alpns(vec![IROH_ALPN.to_vec()])
+            .bind()
+            .await
+            .expect("bind R");
+        let locator = locator_of(&ep_r, &r.public());
+        let dir = tempfile::tempdir().unwrap();
+        let store_r = Arc::new(crate::components::ComponentStore::new(
+            dir.path().join("components"),
+            None,
+        ));
+        let info = store_r.add(&greeter, None).await.expect("stored at R");
+        let provider = crate::components::ComponentsProvider::new(Arc::clone(&store_r));
+        tokio::spawn(async move {
+            let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
+            let accept = tokio::spawn(accept_iroh::<()>(ep_r, Arc::clone(&srv)));
+            let c = crate::components::bindings::serve(srv.as_ref(), provider)
+                .await
+                .expect("serve components");
+            let mut invs = futures::stream::select_all(
+                c.into_iter()
+                    .map(|(_, _, s)| s.map(|r| r.map(|f| f.boxed())).boxed()),
+            );
+            while let Some(res) = invs.next().await {
+                if let Ok(fut) = res {
+                    tokio::spawn(async move {
+                        let _ = fut.await;
+                    });
+                }
+            }
+            accept.abort();
+        });
+
+        // L: reaches peers, holds nothing.
+        let l = ezcap::Keypair::generate().unwrap();
+        let ep_l = Endpoint::builder(Minimal)
+            .secret_key(iroh::SecretKey::from_bytes(&l.to_bytes()))
+            .bind()
+            .await
+            .expect("bind L");
+        let fetcher = crate::fetch::Fetcher::new(Some(Remotes::new(ep_l)));
+        let source = crate::fetch::ComponentSource::parse(&format!("{locator}#{}", info.hash))
+            .expect("a peer source");
+        let (bytes, provenance) = fetcher.fetch(&source).await.expect("fetched from R");
+        assert_eq!(bytes, greeter);
+        assert_eq!(provenance.source, locator);
+        assert_eq!(provenance.revision.as_deref(), Some(info.hash.as_str()));
+
+        // A hash R does not hold is refused, as is one whose bytes would not match.
+        let missing = format!("{locator}#sha256:{}", "00".repeat(32));
+        let err = fetcher
+            .fetch(&crate::fetch::ComponentSource::parse(&missing).unwrap())
+            .await
+            .expect_err("refused");
+        assert!(format!("{err:#}").contains("no component"), "{err:#}");
+    })
+    .await
+    .expect("test timed out");
+}

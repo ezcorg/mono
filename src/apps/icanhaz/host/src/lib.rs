@@ -61,6 +61,7 @@ pub use icanhaz_broker::{
 
 /// The component store: capability components a user brings, validated and kept by hash.
 pub mod components;
+pub mod fetch;
 /// The peer path: serving over iroh.
 pub mod iroh;
 /// The resolver's runtime: grants provided through store components (wac-composed wrappers).

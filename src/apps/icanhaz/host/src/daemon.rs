@@ -270,14 +270,19 @@ pub async fn run(
     let mut broker = broker;
     let mut process = process;
     let mut inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
+    let mut remotes = None;
     if let Some(ep) = &iroh_ep {
-        let remotes = crate::remote::Remotes::new(ep.clone());
+        let peers = crate::remote::Remotes::new(ep.clone());
         let locator = crate::remote::locator_of(ep, &broker_key.public());
         grants.lock().unwrap().set_locator(locator);
-        broker = broker.with_remote(Arc::new(remotes.clone()));
-        process = process.with_remotes(remotes.clone());
-        inference = inference.with_remotes(remotes);
+        broker = broker.with_remote(Arc::new(peers.clone()));
+        process = process.with_remotes(peers.clone());
+        inference = inference.with_remotes(peers.clone());
+        remotes = Some(peers);
     }
+    // Components fetched from an OCI registry or from a peer land in the
+    // store with their source as provenance.
+    let fetcher = crate::fetch::Fetcher::shared(remotes);
     // The raw host layer every shipped component imports: the gate over the
     // grant store, and the providers' native implementations.
     let (inference_complete, inference_models) = inference.native_for_grants();
@@ -368,13 +373,36 @@ pub async fn run(
     }
     // `components.add` replies only once the component's interfaces are
     // served everywhere: a page can use what it added as soon as it hears back.
-    let components = components.with_after_add({
-        let components_serve = components_serve.clone();
-        Arc::new(move |info| {
+    let components = components
+        .with_after_add({
             let components_serve = components_serve.clone();
-            Box::pin(async move { components_serve.added(info).await })
+            Arc::new(move |info| {
+                let components_serve = components_serve.clone();
+                Box::pin(async move { components_serve.added(info).await })
+            })
+        })
+        .with_fetcher(Arc::clone(&fetcher));
+    // Who may put code in the store: the local user, and the hosts the human
+    // approved (the same gate as asking for a grant). A component request
+    // naming a provider this daemon lacks is resolved through the store
+    // before it reaches the consent window.
+    let components = components.with_install_gate({
+        let hosts = Arc::clone(&hosts);
+        Arc::new(move |principal: &crate::broker::Principal| {
+            let gated = matches!(
+                principal.kind,
+                crate::broker::PrincipalKind::WebOrigin | crate::broker::PrincipalKind::Peer
+            ) && principal.id != "local";
+            if gated && !hosts.lock().unwrap().is_allowed(&principal.id) {
+                return Err(format!(
+                    "{} is not an approved host: adding components is for the local user and approved hosts",
+                    principal.id
+                ));
+            }
+            Ok(())
         })
     });
+    let broker = broker.with_components(Arc::new(components.clone()));
 
     // TLS identity for WebTransport: user-supplied cert/key, else self-signed.
     let identity = match (&config.cert, &config.key) {
