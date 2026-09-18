@@ -66,7 +66,9 @@ fn daemon_config() -> DaemonConfig {
         root,
         capabilities_dir: std::env::var("ICANHAZ_CAPABILITIES_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../capabilities")),
+            .unwrap_or_else(|_| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../capabilities")
+            }),
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label: "native consent window".to_string(),

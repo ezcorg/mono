@@ -251,8 +251,13 @@ where
     .context("failed to serve the resource-drop op")?;
     _capability_handlers.push(drop_handlers);
     for (name, path) in &capabilities.components {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("read the {name} capability component {}", path.display()))?;
+        let bytes = std::fs::read(path).with_context(|| {
+            format!(
+                "read the {name} capability component {} (build the wasm guests first: \
+                     src/apps/icanhaz/scripts/build-wasm.sh)",
+                path.display()
+            )
+        })?;
         let handlers = serve_capability(
             srv_ref,
             &bytes,
