@@ -29,7 +29,9 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 
 [build-dependencies]
 # build.rs generates the ezcap CEL environments from ../wit (see build.rs).
-ezcap = { path = "../../../rust/ezcap" }
+# No runtime: the build script only needs WIT parsing, and this keeps cel-cpp
+# from being compiled a second time for the host profile.
+ezcap = { path = "../../../rust/ezcap", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

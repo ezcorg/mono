@@ -21,22 +21,33 @@
 //!   travel in a share bundle and be redeemed at the issuing broker.
 //!
 //! The WIT package itself is at `wit/ezcap.wit`; [`types`] mirrors it.
+//!
+//! The `runtime` feature (on by default) brings in cel-cxx and with it
+//! [`bind`], [`membrane`], [`registry`] and [`CallEnv::apply`]. A build script
+//! that only generates environments depends on this crate with default
+//! features off, so the C++ CEL library is compiled once per build.
 
+#[cfg(feature = "runtime")]
 pub mod bind;
 pub mod build;
 pub mod cert;
 pub mod env;
+#[cfg(feature = "runtime")]
 pub mod membrane;
 pub mod profile;
+#[cfg(feature = "runtime")]
 pub mod registry;
 pub mod shape;
 pub mod types;
 
+#[cfg(feature = "runtime")]
 pub use bind::Val;
 pub use cert::{Audience, CertError, Certificate, Keypair, Presented, PublicKey};
 pub use env::CallEnv;
+#[cfg(feature = "runtime")]
 pub use membrane::{Call, Caller, Instance, InstanceId, Membrane};
 pub use profile::{Sentence, render};
+#[cfg(feature = "runtime")]
 pub use registry::{Membranes, RegistryError};
 pub use shape::{Decl, Shape};
 pub use types::{Capability, CapabilityError, Kind, Narrowing, Scope};

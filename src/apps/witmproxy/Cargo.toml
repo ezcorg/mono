@@ -159,4 +159,6 @@ workspace = true
 
 [build-dependencies]
 # build.rs generates the ezcap CEL environments for the provider resources from ./wit.
-ezcap = { path = "../../rust/ezcap" }
+# No runtime: the build script only needs WIT parsing, and this keeps cel-cpp
+# from being compiled a second time for the host profile.
+ezcap = { path = "../../rust/ezcap", default-features = false }

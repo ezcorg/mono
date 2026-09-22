@@ -14,6 +14,7 @@
 
 use crate::shape::{Decl, Shape, flatten_params, method_name, resource_of};
 use crate::types::{Kind, KindError};
+#[cfg(feature = "runtime")]
 use cel_cxx::{EnvBuilder, FnMarker, Optional, RuntimeMarker};
 use std::collections::{BTreeMap, HashMap};
 use wit_parser::{InterfaceId, Resolve, TypeDefKind};
@@ -212,6 +213,7 @@ impl CallEnv {
     /// Declare every bindable variable on a CEL environment builder. Opaque
     /// declarations are skipped: a clause that names one fails to compile,
     /// which is the intended signal.
+    #[cfg(feature = "runtime")]
     pub fn apply<'f, Fm: FnMarker, Rm: RuntimeMarker>(
         &self,
         mut builder: EnvBuilder<'f, Fm, Rm>,
@@ -279,6 +281,7 @@ pub fn fixed_decls() -> Vec<Decl> {
 
 /// Declare one variable by shape. cel-cxx declares by Rust type, so this is a
 /// dispatch table over the shapes [`Shape::is_bindable`] admits.
+#[cfg(feature = "runtime")]
 pub fn declare<'f, Fm: FnMarker, Rm: RuntimeMarker>(
     b: EnvBuilder<'f, Fm, Rm>,
     name: &str,
