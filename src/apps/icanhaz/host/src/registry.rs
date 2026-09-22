@@ -261,19 +261,21 @@ impl RegistryIndex {
         let manifest: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|e| (StatusCode::BAD_REQUEST, format!("not a manifest: {e}")))?;
         let layers = manifest["layers"].as_array().cloned().unwrap_or_default();
-        let (hash, config_digest) =
-            match (layers.as_slice(), manifest["config"]["digest"].as_str()) {
-                ([layer], Some(config)) if layer["mediaType"] == WASM_LAYER_MEDIA_TYPE => (
-                    layer["digest"].as_str().unwrap_or("").to_string(),
-                    config.to_string(),
-                ),
-                _ => return Err((
+        let (hash, config_digest) = match (layers.as_slice(), manifest["config"]["digest"].as_str())
+        {
+            ([layer], Some(config)) if layer["mediaType"] == WASM_LAYER_MEDIA_TYPE => (
+                layer["digest"].as_str().unwrap_or("").to_string(),
+                config.to_string(),
+            ),
+            _ => {
+                return Err((
                     StatusCode::BAD_REQUEST,
                     format!(
                         "a manifest here is one `{WASM_LAYER_MEDIA_TYPE}` layer over a wasm config"
                     ),
-                )),
-            };
+                ))
+            }
+        };
         if self.components.get(&hash).is_err() {
             return Err((
                 StatusCode::BAD_REQUEST,

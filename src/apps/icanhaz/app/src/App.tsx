@@ -25,7 +25,26 @@ type Pending = {
 };
 // Mirror the Rust command DTOs.
 type GrantView = { id: string; holder: string; summary: string; via: string[]; icon: string; expires_in_secs: number };
-type CapabilityView = { id: string; icon: string; description: string };
+type CapabilityView = {
+  id: string;
+  icon: string;
+  description: string;
+  interfaces: string[];
+  served_by: ComponentInfo[];
+  configurable: boolean;
+};
+/** What the Capabilities tab is showing: the list, one native capability, one
+ *  store component, or one configuration another host declared here. */
+type Page = { view: "list" } | { view: "capability"; id: string } | { view: "component"; hash: string } | { view: "foreign"; id: string };
+/** Configuration that belongs to Settings rather than to a capability. */
+const SETTINGS_CONFIG = new Set(["registry", "registries"]);
+/** The grant kinds a store component serves, read off the gates it imports. */
+const servesKinds = (c: ComponentInfo): string[] =>
+  c.imports.flatMap((i) => {
+    const m = /^icanhaz:nocap\/gate-([a-z]+)@/.exec(i);
+    return m ? [m[1]!] : [];
+  });
+const shortIface = (x: string) => x.replace(/@.*$/, "");
 // Mirrors `icanhaz_host::configuration` (ezco:ezcap/forms as JSON): a unit input
 // type is its name, `select` carries its options; values are externally tagged.
 type InputType = "str" | "boolean" | "number" | "datetime" | "daterange" | "file" | "binary" | "secret" | { select: string[] };
@@ -112,6 +131,7 @@ export function App() {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
   const [ttl, setTtl] = createSignal(defaultTtl());
   const [tab, setTab] = createSignal<Tab>("grants");
+  const [page, setPage] = createSignal<Page>({ view: "list" });
   const [newHost, setNewHost] = createSignal("");
 
   const capIcon = (id: string) => caps().find((c) => c.id === id)?.icon ?? "🔑";
@@ -134,15 +154,19 @@ export function App() {
         const byId = new Map(prev.map((x) => [x.id, x]));
         return p.map((f) => byId.get(f.id) ?? f);
       });
-      setGrants(g);
-      setCaps(c);
-      setSites(s);
-      setApprovedHosts(ah);
-      setUnknownHosts(uh);
-      setErrors(er);
-      // Keep a panel's rows stable while its form is open: replace only on change.
-      setConfig((prev) => (JSON.stringify(prev) === JSON.stringify(cf) ? prev : cf));
-      setComponents((prev) => (JSON.stringify(prev) === JSON.stringify(cm) ? prev : cm));
+      // Every second the poll hands back fresh arrays of fresh objects. Anything
+      // keyed on them (a `For` row, a `Show` with a callback) would remount, and a
+      // form open inside would vanish mid-edit. Replace a list only when it changed.
+      const stable = <T,>(set: (f: (prev: T) => T) => void, next: T) =>
+        set((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      stable(setGrants, g);
+      stable(setCaps, c);
+      stable(setSites, s);
+      stable(setApprovedHosts, ah);
+      stable(setUnknownHosts, uh);
+      stable(setErrors, er);
+      stable(setConfig, cf);
+      stable(setComponents, cm);
     } catch {
       /* transient — the backend may still be starting */
     }
@@ -222,7 +246,7 @@ export function App() {
       <nav class="tabs">
         <For each={TABS}>
           {([id, label]) => (
-            <button class="tab" classList={{ active: tab() === id }} onClick={() => setTab(id)}>
+            <button class="tab" classList={{ active: tab() === id }} onClick={() => { setTab(id); setPage({ view: "list" }); }}>
               {label}
             </button>
           )}
@@ -230,55 +254,140 @@ export function App() {
       </nav>
 
       <Show when={tab() === "capabilities"}>
-        <p class="dim intro">// capabilities installed on this host. Those that need setup take it here; keys never leave this machine.</p>
-        <For each={caps()} fallback={<p class="empty">No capabilities installed.</p>}>
-          {(c) => (
-            <>
-              <div class="row">
+        <Show when={page().view === "list"}>
+          <p class="dim intro">// what this host can grant. Open one for its interfaces, the components that provide it, and its settings; keys never leave this machine.</p>
+          <For each={caps()} fallback={<p class="empty">No capabilities installed.</p>}>
+            {(c) => (
+              <button class="row nav" onClick={() => setPage({ view: "capability", id: c.id })}>
                 <span class="ico">{c.icon}</span>
                 <div class="grow">
                   <div class="row-title">{c.id}</div>
                   <div class="desc dim">{c.description}</div>
                 </div>
-              </div>
-              <Show when={config().find((cfg) => cfg.capability === c.id)}>
-                {(cfg) => <ConfigurationPanel cfg={cfg()} onChanged={refresh} />}
-              </Show>
-            </>
-          )}
-        </For>
-        <div class="section-label">capability components</div>
-        <p class="dim intro">// code the daemon can link as a capability, kept by hash. Adding one grants nothing; linking it to a provider is a grant like any other.</p>
-        <For each={components()} fallback={<p class="empty">No components in the store.</p>}>
-          {(c) => (
-            <div class="row">
-              <span class="ico">🧩</span>
-              <div class="grow">
-                <div class="row-title">{c.name ?? c.hash.slice(7, 19)}</div>
-                <div class="desc dim">
-                  <code>{c.hash.slice(0, 23)}…</code> · {Math.round(c.size / 1024)} KB · exports {c.exports.map((e) => e.replace(/@.*$/, "")).join(", ")}
+                <div class="row-meta">
+                  <Show when={c.configurable}><span class="chip">settings</span></Show>
+                  <span class="chev">›</span>
                 </div>
-              </div>
-            </div>
-          )}
-        </For>
-        <Show when={config().some((cfg) => !caps().some((c) => c.id === cfg.capability))}>
-          <div class="section-label">from other hosts on this machine</div>
-          <p class="dim intro">// settings other programs declared here (witmproxy's plugins). They read the values back; keys stay in the store.</p>
-          <For each={config().filter((cfg) => !caps().some((c) => c.id === cfg.capability))}>
-            {(cfg) => (
-              <>
-                <div class="row">
+              </button>
+            )}
+          </For>
+          <div class="section-label">capability components</div>
+          <p class="dim intro">// code the daemon can link as a capability, kept by hash. Adding one grants nothing; linking it to a provider is a grant like any other.</p>
+          <For each={components()} fallback={<p class="empty">No components in the store.</p>}>
+            {(c) => (
+              <button class="row nav" onClick={() => setPage({ view: "component", hash: c.hash })}>
+                <span class="ico">🧩</span>
+                <div class="grow">
+                  <div class="row-title">{c.name ?? c.hash.slice(7, 19)}</div>
+                  <div class="desc dim">
+                    {servesKinds(c).length > 0 ? `${servesKinds(c).join(", ")} · ` : ""}exports {c.exports.map(shortIface).join(", ")}
+                  </div>
+                </div>
+                <div class="row-meta"><span class="chev">›</span></div>
+              </button>
+            )}
+          </For>
+          <Show when={config().some((cfg) => !caps().some((c) => c.id === cfg.capability) && !SETTINGS_CONFIG.has(cfg.capability))}>
+            <div class="section-label">from other hosts on this machine</div>
+            <p class="dim intro">// settings other programs declared here (witmproxy's plugins). They read the values back; keys stay in the store.</p>
+            <For each={config().filter((cfg) => !caps().some((c) => c.id === cfg.capability) && !SETTINGS_CONFIG.has(cfg.capability))}>
+              {(cfg) => (
+                <button class="row nav" onClick={() => setPage({ view: "foreign", id: cfg.capability })}>
                   <span class="ico">{cfg.icon}</span>
                   <div class="grow">
                     <div class="row-title">{cfg.capability}</div>
                     <Show when={cfg.description}>{(d) => <div class="desc dim">{d()}</div>}</Show>
                   </div>
+                  <div class="row-meta"><span class="chip">settings</span><span class="chev">›</span></div>
+                </button>
+              )}
+            </For>
+          </Show>
+        </Show>
+
+        <Show when={page().view === "capability" ? caps().find((c) => c.id === (page() as { id: string }).id) : undefined}>
+          {(c) => (
+            <div class="page">
+              <button class="back" onClick={() => setPage({ view: "list" })}>‹ capabilities</button>
+              <div class="page-head">
+                <span class="ico big">{c().icon}</span>
+                <div class="grow">
+                  <div class="page-title">{c().id}</div>
+                  <div class="dim">{c().description}</div>
                 </div>
-                <ConfigurationPanel cfg={cfg} onChanged={refresh} />
-              </>
-            )}
-          </For>
+              </div>
+              <div class="section-label">interfaces</div>
+              <p class="dim small">// what a page or component talks to when it holds a {c().id} grant</p>
+              <For each={c().interfaces} fallback={<p class="empty small">No component in the store serves this kind yet.</p>}>
+                {(i) => <div class="row sub"><code class="grow">{i}</code></div>}
+              </For>
+              <div class="section-label">provided by</div>
+              <p class="dim small">// the components a {c().id} grant can be provided through; the shipped one by default, a wrapper when chosen at consent</p>
+              <For each={c().served_by} fallback={<p class="empty small">Nothing in the store provides it.</p>}>
+                {(comp) => (
+                  <button class="row sub nav" onClick={() => setPage({ view: "component", hash: comp.hash })}>
+                    <span class="grow"><b>{comp.name ?? comp.hash.slice(7, 19)}</b> <span class="dim">{origin(comp)}</span></span>
+                    <span class="chev">›</span>
+                  </button>
+                )}
+              </For>
+              <Show when={config().find((cfg) => cfg.capability === c().id)}>
+                {(cfg) => (
+                  <>
+                    <div class="section-label">settings</div>
+                    <Show when={cfg().description}>{(d) => <p class="dim small">// {d()}</p>}</Show>
+                    <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+                  </>
+                )}
+              </Show>
+            </div>
+          )}
+        </Show>
+
+        <Show when={page().view === "component" ? components().find((c) => c.hash === (page() as { hash: string }).hash) : undefined}>
+          {(c) => (
+            <div class="page">
+              <button class="back" onClick={() => setPage({ view: "list" })}>‹ capabilities</button>
+              <div class="page-head">
+                <span class="ico big">🧩</span>
+                <div class="grow">
+                  <div class="page-title">{c().name ?? c().hash.slice(7, 19)}</div>
+                  <div class="dim">a capability component · {Math.round(c().size / 1024)} KB · added {new Date(c().added * 1000).toLocaleDateString()}</div>
+                </div>
+              </div>
+              <div class="about">
+                <div><span class="dim">hash</span> <code>{c().hash}</code></div>
+                <div><span class="dim">from</span> {origin(c())}</div>
+                <Show when={c().provenance?.build}>{(b) => <div><span class="dim">built by</span> <code>{b()}</code></div>}</Show>
+                <Show when={servesKinds(c()).length > 0}>
+                  <div><span class="dim">provides</span> {servesKinds(c()).map((k) => `${capIcon(k)} ${k}`).join("  ")}</div>
+                </Show>
+              </div>
+              <div class="section-label">exports</div>
+              <p class="dim small">// the interfaces a grant provided through this component is used through</p>
+              <For each={c().exports}>{(e) => <div class="row sub"><code class="grow">{e}</code></div>}</For>
+              <div class="section-label">imports</div>
+              <p class="dim small">// what it needs from the daemon: WASI, the raw host layer behind the gates it consumes, or another capability lent to it</p>
+              <For each={c().imports}>{(i) => <div class="row sub"><code class="grow">{i}</code></div>}</For>
+            </div>
+          )}
+        </Show>
+
+        <Show when={page().view === "foreign" ? config().find((cfg) => cfg.capability === (page() as { id: string }).id) : undefined}>
+          {(cfg) => (
+            <div class="page">
+              <button class="back" onClick={() => setPage({ view: "list" })}>‹ capabilities</button>
+              <div class="page-head">
+                <span class="ico big">{cfg().icon}</span>
+                <div class="grow">
+                  <div class="page-title">{cfg().capability}</div>
+                  <Show when={cfg().description}>{(d) => <div class="dim">{d()}</div>}</Show>
+                </div>
+              </div>
+              <div class="section-label">settings</div>
+              <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+            </div>
+          )}
         </Show>
       </Show>
 
@@ -375,6 +484,25 @@ export function App() {
           <span class="grow">Approved hosts</span>
           <button class="mini danger" onClick={clearHosts}>clear all</button>
         </div>
+
+        <Show when={config().find((cfg) => cfg.capability === "registry")}>
+          {(cfg) => (
+            <>
+              <div class="section-label">this daemon's registry</div>
+              <p class="dim small">// {cfg().description}</p>
+              <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+            </>
+          )}
+        </Show>
+        <Show when={config().find((cfg) => cfg.capability === "registries")}>
+          {(cfg) => (
+            <>
+              <div class="section-label">other registries</div>
+              <p class="dim small">// {cfg().description}</p>
+              <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+            </>
+          )}
+        </Show>
 
         <div class="section-label">about</div>
         <Show when={info()}>
@@ -879,6 +1007,16 @@ button:disabled { opacity: .5; cursor: default; }
 .ico { font-size: 1.1rem; line-height: 1; flex: none; }
 .grow { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .row-title { font-weight: 700; }
+button.row.nav { width: 100%; text-align: left; cursor: pointer; font: inherit; }
+button.row.nav:hover { border-color: color-mix(in srgb, CanvasText 45%, transparent); }
+.chev { opacity: .45; font-size: 1.2em; line-height: 1; }
+.back { background: none; border: none; padding: 0; opacity: .6; cursor: pointer; margin: .2rem 0 .6rem; }
+.back:hover { opacity: 1; }
+.page-head { display: flex; align-items: center; gap: .8rem; margin-bottom: .4rem; }
+.page-title { font-weight: 700; font-size: 1.05rem; }
+.ico.big { font-size: 1.7rem; }
+.page .config { margin-left: 0; padding-left: 0; border-left: none; }
+.page .row.sub code { font-size: .9em; }
 .desc { font-size: .88em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .row-meta { display: inline-flex; align-items: center; gap: .7rem; font-size: .88em; flex: none; }
 .mini { padding: .2rem .75rem; font-size: .85em; }

@@ -88,6 +88,8 @@ src/apps/icanhaz/
     fixtures/             test fixtures and the crates they are built from
     templates/            what `icanhaz capability new|wrap` scaffolds
   capabilities/   the shipped capability components (wasm32-wasip2 crates)
+  examples/       capabilities authored the way a user would (links: backlinks
+                  for a vault of notes, over a delegated filesystem grant)
   app/            the tray app (Tauri): embeds the daemon, consent window,
                   grants, configuration, the component store
   web/            @joinezco/icanhaz-web: the browser client (wRPC over one
@@ -151,3 +153,14 @@ A scaffold vendors the daemon's WIT, generates the `Guest` impls (resource
 wrappers included) and an `AGENTS.md` with the rules: imports are capabilities
 only, authority comes from the grant, keep the WIT's asyncness. Once added,
 the component is offered in the consent window for every grant kind it gates.
+`examples/links` is a complete one: a backlinks index the editor's demo
+drives, tested from a page through the real daemon.
+
+## The tray
+
+Capabilities are a list; opening one shows the interfaces a grant of that
+kind is used through (derived from the store), the components that can
+provide it, and its settings. A store component's page shows its hash,
+origin, what it provides, and its exports and imports. The daemon's own
+registry credential and the credentials for other registries live under
+Settings.

@@ -1,0 +1,19 @@
+[package]
+name = "links"
+version = "0.1.0"
+edition = "2024"
+description = "backlinks for a vault of markdown notes, over a delegated filesystem grant"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.54"
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+# Built on its own, outside the mono workspace (a wasm32-wasip2 guest).
+[workspace]

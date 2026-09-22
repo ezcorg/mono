@@ -30,9 +30,11 @@ for c in capabilities/*/; do
   build "$c"
 done
 
-# The fixtures. A fixture that vendors the daemon's WIT (a `wit/deps/icanhaz-nocap`
-# holding nocap.wit) gets a fresh copy first, so it cannot drift from the daemon.
-for f in host/fixtures/*/; do
+# The fixtures, and the example capabilities (authored the way a user would;
+# their artifacts land beside the fixtures for the host and browser tests). A
+# crate that vendors the daemon's WIT (a `wit/deps/icanhaz-nocap` holding
+# nocap.wit) gets a fresh copy first, so it cannot drift from the daemon.
+for f in host/fixtures/*/ examples/*/; do
   [ -f "$f/Cargo.toml" ] || continue
   name=$(sed -n 's/^name *= *"\([^"]*\)".*/\1/p' "$f/Cargo.toml" | head -1)
   if [ -f "$f/wit/deps/icanhaz-nocap/nocap.wit" ]; then

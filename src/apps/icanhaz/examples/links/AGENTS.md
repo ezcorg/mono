@@ -1,0 +1,57 @@
+# links
+
+An icanhaz **capability**: a WebAssembly component the daemon links between a
+caller and a provider. This one provides `example:links/links@0.1.0`.
+
+## The rules
+
+- **Imports are capabilities, never libraries.** The daemon links only
+  capability interfaces (`wasi:*`, `icanhaz:nocap/*`, `ezco:ezcap/*`). A regex engine, a parser, anything else, is compiled into
+  this crate or composed in at build time with `wac`. `icanhaz capability
+  inspect` names any import that breaks this rule.
+- **The world is `wit/world.wit`.** Everything it imports and exports is
+  vendored under `wit/deps/`; do not edit those copies. Change the world when
+  the capability's shape changes, then rebuild.
+- **Authority comes from the grant, not from here.** A capability is
+  resource-shaped: a caller presents its grant token once, to `open` on the
+  interface you export, and the object `open` returns *is* the capability; its
+  methods carry no token. Forward `open` to the interface you import and keep
+  the upstream object; forward each method to it. Narrowing what a grant may
+  do is done with the `ezco:ezcap` scope on the grant (CEL), or by what this
+  component refuses or rewrites.
+- **Files come through a grant.** To read or write files, import
+  `icanhaz:nocap/filesystem` and `wasi:filesystem/types` and call `open` with
+  the grant you were opened with: the filesystem grant delegated to you
+  yields a descriptor scoped to its root, with its rights. No store has
+  preopens, so `wasi:filesystem/preopens` (and `std::fs` on top of it) sees
+  nothing; there is no other way to a file.
+- **Keep the WIT's asyncness.** A function declared `async func` is `async fn`
+  here and its forward is awaited; a synchronous export cannot block on an
+  asynchronous import, so the shape of the interface you export must match
+  the one you import method for method (a wrapper's does by construction).
+
+## Build, check, add
+
+```sh
+cargo build --release --target wasm32-wasip2
+icanhaz capability inspect target/wasm32-wasip2/release/links.wasm
+icanhaz capability add     target/wasm32-wasip2/release/links.wasm
+```
+
+`inspect` validates the component (imports and exports against the rule
+above) and prints its world; `add` stores it in the daemon by hash. The
+daemon links it at grant time when the human chooses it in the consent window.
+
+## Test
+
+Tests are ordinary Rust tests in this crate. Unit-test the logic that decides
+what to forward, refuse or rewrite; for the wasm build itself, `inspect` is
+the check that matters. `nix develop` (or the container fallback) gives you
+the toolchain.
+
+## Layout
+
+- `src/lib.rs`: the component. `wit_bindgen::generate!` makes the imported
+  interfaces available as modules and the exported ones as `Guest` traits;
+  `export!(Component)` wires the implementation in.
+- `wit/world.wit`: the world; `wit/deps/`: vendored packages.

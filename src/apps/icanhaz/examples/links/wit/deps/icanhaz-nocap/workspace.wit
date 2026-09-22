@@ -1,0 +1,27 @@
+package icanhaz:nocap@0.1.0;
+
+/// Host metadata about a consented filesystem grant: just enough for a
+/// client to address the same files a native host tool does. `root-path` is
+/// the host **absolute path** the grant is jailed to, so the client can form
+/// real `file://` URIs: a native language server speaks host paths, not the
+/// client's grant-relative VFS paths.
+///
+/// Gated by the grant: you only learn the path for a filesystem grant you
+/// hold. This discloses *where* the jail lives on disk, never authority
+/// beyond it. Resource-shaped: the token once, at `open`.
+interface workspace {
+  resource workspace {
+    root-path: func() -> result<string, string>;
+  }
+  open: func(grant: string) -> result<workspace, string>;
+}
+
+world workspace-client {
+  import workspace;
+}
+
+world workspace-capability {
+  import gate-filesystem;
+  import jail;
+  export workspace;
+}

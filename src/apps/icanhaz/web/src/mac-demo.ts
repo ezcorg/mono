@@ -21,6 +21,8 @@ import "./mac-window.css";
 import { connect, requestFilesystemGrant, type Transport } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
 import { workspaceRoot } from "./workspace";
+import { add as addComponent } from "./generated/components";
+import { openLinks, requestLinksGrant, type LinksIndex } from "./links";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
 import {
@@ -93,6 +95,8 @@ function buildChrome(root: HTMLElement, title: string) {
     const titlebar = el("div", "mac-titlebar", lights, toolbarMount, themeToggle);
 
     const sidebarMount = el("div", "mac-sidebar");
+    const linksMount = el("div", "mac-links");
+    sidebarMount.append(linksMount);
     const editorMount = el("div", "mac-editor");
     const body = el("div", "mac-body", el("div", "mac-body-row", sidebarMount, editorMount));
 
@@ -100,7 +104,7 @@ function buildChrome(root: HTMLElement, title: string) {
     const page = el("div", "dev-page", header, win);
     root.replaceChildren(page);
 
-    return { status, toolbarMount, themeToggle, sidebarMount, editorMount };
+    return { status, toolbarMount, themeToggle, sidebarMount, linksMount, editorMount };
 }
 
 /** Wire the light/system/dark segmented control; drives `data-theme` on the
@@ -148,7 +152,7 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
     const ws = params.get("ws") ?? opts.defaultWs ?? "ws://127.0.0.1:7777";
     const filepath = params.get("file") ?? opts.defaultFile;
 
-    const { status, toolbarMount, themeToggle, sidebarMount, editorMount } = buildChrome(
+    const { status, toolbarMount, themeToggle, sidebarMount, linksMount, editorMount } = buildChrome(
         opts.root,
         opts.title ?? "icanhaz",
     );
@@ -212,9 +216,73 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
         // Expose for manual debugging in the console.
         (window as unknown as { editor?: MarkdownEditor }).editor = editor;
 
+        // Backlinks: a novel capability from the store, lent this page's
+        // filesystem grant. The demo adds the example component itself; a real
+        // vault would name it by hash and source and let the daemon fetch it.
+        void mountLinks(transport, grant, editor, linksMount).catch((e) => console.warn("links unavailable:", e));
+
         setStatus(`editing ${filepath} via ${transport.kind} — autosaving to the host`);
     } catch (e) {
         console.error(e);
         setStatus(`failed: ${e}`, true);
     }
+}
+
+/** The backlinks panel under the outline: what links to the open note, the
+ *  dangling links in the vault, and a rename that rewrites every link. */
+async function mountLinks(transport: Transport, fsGrant: string, editor: MarkdownEditor, mount: HTMLElement): Promise<void> {
+    const wasm = new Uint8Array(await (await fetch("/fixtures/links.wasm")).arrayBuffer());
+    const added = await addComponent(transport, wasm, undefined);
+    if (added.tag !== "ok") throw new Error(added.val);
+    const token = await requestLinksGrant(transport, {
+        provider: added.val.hash,
+        filesystemGrant: fsGrant,
+        reason: "show which notes link to the one you are editing",
+    });
+    const index: LinksIndex = await openLinks(transport, token);
+    const persistence = editor.storage.persistence as { options: { filepath?: string }; loadFile: (path: string) => Promise<void> };
+    const title = el("div", "mac-links-title", "Links");
+    const list = el("ul", "mac-links-list");
+    const dangling = el("div", "mac-links-dangling");
+    mount.replaceChildren(title, list, dangling);
+    let current = "";
+    const render = async () => {
+        const path = persistence.options.filepath ?? "";
+        const [into, unresolved] = await Promise.all([index.backlinks(path), index.unresolved()]);
+        current = path;
+        list.replaceChildren(
+            ...(into.length === 0 ? [el("li", "mac-links-empty", "nothing links here yet")] : []),
+            ...into.map((l) => {
+                const li = el("li", "mac-links-item");
+                const a = el("a", "mac-links-link", `${l.source}:${l.line}`);
+                a.setAttribute("href", "#");
+                a.addEventListener("click", (ev) => {
+                    ev.preventDefault();
+                    void persistence.loadFile(l.source).then(render);
+                });
+                li.append(a);
+                return li;
+            }),
+        );
+        const mine = unresolved.filter((l) => l.source === path);
+        dangling.textContent = mine.length === 0 ? "" : `${mine.length} link${mine.length === 1 ? "" : "s"} in this note point nowhere: ${mine.map((l) => l.target).join(", ")}`;
+    };
+    const rename = el("button", "mac-links-rename", "rename this note…");
+    rename.addEventListener("click", async () => {
+        const to = prompt("New path for this note (links to it are rewritten):", current);
+        if (!to || to === current) return;
+        try {
+            const n = await index.rename(current, to);
+            await persistence.loadFile(to);
+            await render();
+            console.info(`renamed ${current} → ${to}, rewrote ${n} link(s)`);
+        } catch (e) {
+            alert(`rename refused: ${e}`);
+        }
+    });
+    mount.append(rename);
+    await render();
+    // The note may change under us (autosave, another page): re-read every few seconds.
+    setInterval(() => void render().catch(() => {}), 4000);
+    editor.on("update", () => void 0);
 }

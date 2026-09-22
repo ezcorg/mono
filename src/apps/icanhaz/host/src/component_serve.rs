@@ -1344,7 +1344,19 @@ where
                 let Some(token) = grant else {
                     anyhow::bail!("{provides}: no grant for this call");
                 };
-                let mut call = crate::broker::AdmitCall::new(name);
+                // The environment names a method bare (`rename`), the way
+                // `ezcap::shape::method_name` does; the export is
+                // `[method]index.rename`. A clause on `call.method` sees the
+                // former.
+                let method = if name.starts_with("[constructor]") {
+                    "constructor"
+                } else {
+                    wrpc_wasmtime::rpc_func_name(name)
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(name)
+                };
+                let mut call = crate::broker::AdmitCall::new(method);
                 for (n, v) in names.iter().zip(vals.iter()).skip(1) {
                     let mut flat = Vec::new();
                     flatten_val(&ezcap::shape::cel_ident(n), v, &mut flat);
@@ -2486,6 +2498,236 @@ mod tests {
             .await
             .unwrap();
         assert!(gone.is_err(), "{gone:?}");
+        accept.abort();
+    }
+
+    // The wRPC client of the links example (its `links-client` world).
+    mod links_client {
+        wit_bindgen_wrpc::generate!({
+            world: "example:links/links-client",
+            path: "../examples/links/wit",
+        });
+    }
+
+    /// The links example end to end, the way a page would use it: a store
+    /// component nobody native provides, composed over the shipped filesystem
+    /// capability, reading the vault through the filesystem grant lent to it.
+    /// A read-only grant indexes but cannot rename; a component grant scoped
+    /// with `call.method != "rename"` is refused at the method, before the
+    /// component runs; a grant with write rights renames and rewrites links.
+    #[tokio::test]
+    async fn the_links_example_indexes_a_vault_through_a_delegated_grant() {
+        use crate::broker::{CapabilityKind, ComponentRequest, FsRequest, FsRights, PathGrant};
+        use crate::store::Store as Db;
+        use links_client::example::links::links::{self as links, Index};
+
+        const IFACE: &str = "example:links/links@0.1.0";
+        let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/links.wasm"))
+            .expect("links.wasm (scripts/build-wasm.sh)");
+        let dir = tempfile::tempdir().unwrap();
+        let source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Db::open_with(dir.path().join("icanhaz.db"), &source)
+            .await
+            .unwrap();
+        let components = Arc::new(crate::components::ComponentStore::new(
+            dir.path().join("components"),
+            Some(db),
+        ));
+        let info = components.add(&bytes, None).await.expect("stored");
+        let filesystem =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
+        let shipped_info = components
+            .add(&filesystem, None)
+            .await
+            .expect("shipped filesystem");
+        components.register_shipped(&shipped_info);
+        // The component's own WIT gives its interface an admission environment.
+        let grants = GrantStore::shared();
+        let env = crate::components::env_for(&bytes, IFACE).expect("an environment from the WIT");
+        grants.lock().unwrap().add_environment(IFACE, env).unwrap();
+
+        // A small vault.
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(vault.join("projects")).unwrap();
+        std::fs::write(
+            vault.join("index.md"),
+            "# Index\n\nSee [[plan]] and [the roadmap](projects/roadmap.md).\nAlso [[nowhere]].\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join("plan.md"),
+            "# Plan\n\nBack to [index](index.md) and [roadmap](projects/roadmap.md).\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join("projects/roadmap.md"),
+            "# Roadmap\n\nUp to [[../plan]].\n",
+        )
+        .unwrap();
+
+        let issue_fs = |g: &mut GrantStore, rights: FsRights| {
+            g.issue(
+                CapabilityKind::Filesystem(FsRequest {
+                    roots: vec![PathGrant {
+                        path: "/".to_string(),
+                        rights,
+                    }],
+                }),
+                "filesystem".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            )
+        };
+        let issue_links = |g: &mut GrantStore, fs: &str, allow: &str| {
+            g.issue_scoped(
+                CapabilityKind::Component(ComponentRequest {
+                    provides: IFACE.to_string(),
+                    provider: Some(info.hash.clone()),
+                    delegated: vec![fs.to_string()],
+                    source: None,
+                }),
+                ezcap::Scope::allow(allow),
+                "links".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            )
+            .expect("scope compiles")
+        };
+        let (rw, ro, scoped) = {
+            let mut g = grants.lock().unwrap();
+            let fs_rw = issue_fs(&mut g, FsRights::READ | FsRights::WRITE);
+            let fs_ro = issue_fs(&mut g, FsRights::READ);
+            let rw = issue_links(&mut g, &fs_rw, "true");
+            let ro = issue_links(&mut g, &fs_ro, "true");
+            let scoped = issue_links(&mut g, &fs_rw, "call.method != \"rename\"");
+            (rw, ro, scoped)
+        };
+
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let router = component_router(
+            IFACE,
+            Arc::clone(&components),
+            wrpc_transport::tcp::Client::from(addr.clone()),
+            (),
+            grants.clone(),
+            jail_raw(&grants, &vault),
+            Handles::new(),
+        )
+        .unwrap();
+        let ty = Component::new(router.engine(), &bytes)
+            .unwrap()
+            .component_type();
+        let _handlers = serve_interface(srv.as_ref(), &router, &ty, IFACE)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&addr);
+
+        // Read-only: the index answers, rename is refused by the descriptor.
+        let index = links::open(&wrpc, (), &ro)
+            .await
+            .unwrap()
+            .expect("opened read-only");
+        let mut into_plan = Index::backlinks(&wrpc, (), &index.as_borrow(), "plan")
+            .await
+            .unwrap()
+            .expect("backlinks");
+        into_plan.sort_by(|a, b| a.source.cmp(&b.source));
+        assert_eq!(
+            into_plan
+                .iter()
+                .map(|l| (l.source.as_str(), l.line))
+                .collect::<Vec<_>>(),
+            vec![("index.md", 3), ("projects/roadmap.md", 3)]
+        );
+        let dangling = Index::unresolved(&wrpc, (), &index.as_borrow())
+            .await
+            .unwrap()
+            .expect("unresolved");
+        assert_eq!(dangling.len(), 1);
+        assert_eq!(
+            (dangling[0].source.as_str(), dangling[0].target.as_str()),
+            ("index.md", "nowhere.md")
+        );
+        let refused = Index::rename(&wrpc, (), &index.as_borrow(), "plan.md", "planning.md")
+            .await
+            .unwrap();
+        assert!(
+            refused.unwrap_err().contains("not permitted"),
+            "a read-only grant cannot rename"
+        );
+        assert!(vault.join("plan.md").exists());
+
+        // Scoped: the clause on the component grant refuses the method itself.
+        let index = links::open(&wrpc, (), &scoped)
+            .await
+            .unwrap()
+            .expect("opened scoped");
+        assert_eq!(
+            Index::backlinks(&wrpc, (), &index.as_borrow(), "plan")
+                .await
+                .unwrap()
+                .unwrap()
+                .len(),
+            2
+        );
+        let refused = Index::rename(&wrpc, (), &index.as_borrow(), "plan.md", "planning.md").await;
+        assert!(
+            refused.is_err(),
+            "the scope refuses rename before the component runs: {refused:?}"
+        );
+        assert!(vault.join("plan.md").exists());
+
+        // Read and write: rename moves the note and rewrites every link to it.
+        let index = links::open(&wrpc, (), &rw)
+            .await
+            .unwrap()
+            .expect("opened read-write");
+        let rewritten = Index::rename(
+            &wrpc,
+            (),
+            &index.as_borrow(),
+            "plan.md",
+            "projects/planning.md",
+        )
+        .await
+        .unwrap()
+        .expect("renamed");
+        assert_eq!(rewritten, 2);
+        assert!(!vault.join("plan.md").exists());
+        assert!(vault.join("projects/planning.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(vault.join("index.md")).unwrap(),
+            "# Index\n\nSee [[projects/planning]] and [the roadmap](projects/roadmap.md).\nAlso [[nowhere]].\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(vault.join("projects/roadmap.md")).unwrap(),
+            "# Roadmap\n\nUp to [[planning]].\n"
+        );
+        let mut into_planning =
+            Index::backlinks(&wrpc, (), &index.as_borrow(), "projects/planning.md")
+                .await
+                .unwrap()
+                .unwrap();
+        into_planning.sort_by(|a, b| a.source.cmp(&b.source));
+        assert_eq!(
+            into_planning
+                .iter()
+                .map(|l| l.source.as_str())
+                .collect::<Vec<_>>(),
+            vec!["index.md", "projects/roadmap.md"]
+        );
         accept.abort();
     }
 

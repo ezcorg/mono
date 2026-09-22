@@ -1,0 +1,36 @@
+package example:links@0.1.0;
+
+/// Backlinks for a vault of markdown notes: which notes link to a note, which
+/// links point nowhere, and renaming a note with every link to it rewritten.
+/// A novel capability, authored outside the daemon: it reaches the vault
+/// through the filesystem grant delegated to it, and nothing else. Links are
+/// markdown links to relative paths (`[text](notes/plan.md)`) and wikilinks
+/// (`[[plan]]`, resolved as `plan.md` beside the linking note).
+interface links {
+  /// One link: the note it is in, the note it names (a path relative to the
+  /// vault root), and the line it is on.
+  record link {
+    source: string,
+    target: string,
+    line: u32,
+  }
+
+  /// The index over a vault, for one grant. Resource-shaped: the token once,
+  /// at `open`; every query re-reads the vault, so it is never stale.
+  resource index {
+    /// The links into `note`, a path relative to the vault root.
+    backlinks: func(note: string) -> result<list<link>, string>;
+    /// Every link whose target does not exist.
+    unresolved: func() -> result<list<link>, string>;
+    /// Move `old-path` to `new-path` and rewrite every link to it in every
+    /// note. Returns how many links were rewritten. Needs a grant with write
+    /// rights: a read-only one indexes but cannot rename.
+    rename: func(old-path: string, new-path: string) -> result<u32, string>;
+  }
+  open: func(grant: string) -> result<index, string>;
+}
+
+/// The wRPC client side.
+world links-client {
+  import links;
+}

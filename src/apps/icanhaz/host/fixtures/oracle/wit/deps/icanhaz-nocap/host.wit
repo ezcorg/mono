@@ -15,8 +15,8 @@ package icanhaz:nocap@0.1.0;
 /// the first method; `admit` is per-operation admission against the grant's
 /// `allow` clause, with `call.method` and the string arguments bound.
 interface gate-filesystem {
-  /// A live filesystem grant: its first root, relative to the served preopen
-  /// (`""`/`"/"` is the whole preopen), which the descriptor is scoped to.
+  /// A live filesystem grant: its first root, relative to the jail
+  /// (`""`/`"/"` is the whole jail), which the descriptor is scoped to.
   validate: func(grant: string) -> result<string, string>;
   admit: func(grant: string, method: string, args: list<tuple<string, string>>) -> result<_, string>;
 }

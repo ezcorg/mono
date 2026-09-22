@@ -333,19 +333,56 @@ pub struct CapabilityView {
     pub id: String,
     pub icon: String,
     pub description: String,
+    /// The interfaces a grant of this kind is used through, derived from the
+    /// components in the store that consume its gate.
+    pub interfaces: Vec<String>,
+    /// The store components that can provide a grant of this kind (the
+    /// shipped one, and any wrapper exporting one of its interfaces).
+    pub served_by: Vec<icanhaz_host::components::ComponentInfo>,
+    /// Whether this capability declares configuration to fill in.
+    pub configurable: bool,
 }
 
-/// The installed host capabilities, described in `lang` (else the host locale).
+/// The installed host capabilities, described in `lang` (else the host
+/// locale), with what the store knows about each.
 #[tauri::command]
-pub fn list_capabilities(lang: Option<String>) -> Vec<CapabilityView> {
-    icanhaz_host::capabilities::registry()
-        .iter()
-        .map(|c| CapabilityView {
+pub async fn list_capabilities(app: AppHandle, lang: Option<String>) -> Vec<CapabilityView> {
+    let services = app.try_state::<Services>();
+    let components = match &services {
+        Some(s) => s.components.list().await,
+        None => Vec::new(),
+    };
+    let declared: Vec<String> = match &services {
+        Some(s) => s
+            .registry
+            .declared()
+            .await
+            .into_iter()
+            .map(|d| d.capability)
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut out = Vec::new();
+    for c in icanhaz_host::capabilities::registry() {
+        let interfaces = match &services {
+            Some(s) => s.components.interfaces_of(c.id).await,
+            None => Vec::new(),
+        };
+        let served_by = components
+            .iter()
+            .filter(|info| info.exports.iter().any(|e| interfaces.contains(e)))
+            .cloned()
+            .collect();
+        out.push(CapabilityView {
             id: c.id.to_string(),
             icon: c.icon.to_string(),
             description: c.describe(lang.as_deref()).to_string(),
-        })
-        .collect()
+            interfaces,
+            served_by,
+            configurable: declared.iter().any(|d| d == c.id),
+        });
+    }
+    out
 }
 
 /// A site with durable pairing trust: origin + the capability kinds it covers.

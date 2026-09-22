@@ -38,10 +38,38 @@ interface components {
   }
 
   add: func(bytes: list<u8>, provenance: option<provenance>) -> result<component-info, string>;
+  /// Fetch a component from a source and add it. A source is an OCI
+  /// reference, `oci://<registry>/<name>[:<tag>|@<digest>]`, or a component
+  /// another daemon holds, `iroh:<key>?addr=…#sha256:<hex>`. The bytes are
+  /// verified against the digest they were announced under before the store
+  /// keeps them, and the provenance records the source and that digest; a
+  /// tag is resolved once and forgotten, so an updated tag is a new
+  /// component. Fetching grants nothing: the component sits inert until a
+  /// grant names it.
+  fetch: func(source: string) -> result<component-info, string>;
   all: func() -> list<component-info>;
   get: func(hash: string) -> result<list<u8>, string>;
   /// Local hosts only.
   remove: func(hash: string) -> result<bool, string>;
+
+  /// A component this daemon's registry serves, when one is served: pulled
+  /// as `oci://<registry bind>/<name>:<tag>` by anyone holding the registry
+  /// credential.
+  record publication {
+    /// `<name>:<tag>`.
+    reference: string,
+    /// The manifest digest a pull by tag resolves to.
+    digest: string,
+    /// The component's hash: the manifest's one layer.
+    hash: string,
+  }
+  /// Publish a held component under `reference` (`<name>:<tag>`) in this
+  /// daemon's registry. The manifest is generated once, so the digest is
+  /// stable until the tag is published again. Local hosts only.
+  publish: func(hash: string, reference: string) -> result<publication, string>;
+  /// Forget a tag; the component stays in the store. Local hosts only.
+  unpublish: func(reference: string) -> result<bool, string>;
+  published: func() -> list<publication>;
 }
 
 world components-wrpc {

@@ -29,6 +29,8 @@ exclude = [
     # host-target `cargo build` never tries to compile them.
     "src/apps/icanhaz/capabilities",
     "src/apps/icanhaz/host/fixtures",
+    # Example capabilities authored the way a user would (wasm32-wasip2 guests).
+    "src/apps/icanhaz/examples",
     # Vendored upstream workspace (cbeck88/conf-rs). Defines its own [workspace];
     # witmproxy depends on the `conf` crate by path. Excluded so Cargo doesn't
     # pull it (and its conf_derive/conf_extra members) into the mono workspace.
