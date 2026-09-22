@@ -44,9 +44,10 @@ echo "== published $HASH as $SOURCE"
 "$BIN/icanhaz" capability configure registries "$PUB_REGISTRY" "username=$USER_NAME" "password:secret=$PASSWORD" --daemon "$CONSUMER_WS" >/dev/null
 echo "== consumer at $CONSUMER_WS has a credential for $PUB_REGISTRY"
 
-URL="http://localhost:5173/?links-provider=$HASH&links-source=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$SOURCE")"
+URL="http://localhost:5173/editor-demo.html?links-provider=$HASH&links-source=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$SOURCE")"
 echo
-echo "open the demo with the component named by hash and source:"
+echo "with the consumer daemon at $CONSUMER_WS and the demo served (cd src/apps/icanhaz/web && pnpm dev),"
+echo "open the editor demo with the component named by hash and source:"
 echo "  $URL"
 echo
 echo "the publisher runs until this script is stopped (ctrl-c); its log is $STATE/publisher.log"

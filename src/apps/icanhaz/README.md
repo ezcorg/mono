@@ -167,7 +167,8 @@ consumer over its own vault.
 src/apps/icanhaz/scripts/demo-publisher.sh      # starts the publisher, publishes links, configures the consumer, prints the demo URL
 ```
 
-The URL it prints carries `links-provider` (the hash) and `links-source`
+The URL it prints is the editor demo (`web/editor-demo.html`, served by
+`pnpm dev` in `web/`) with `links-provider` (the hash) and `links-source`
 (the `oci://` reference); the consumer fetches the component, checks the
 hash, and shows the consent card with where it came from. The browser suite
 runs the same flow: its harness starts a publisher beside the test daemon.
