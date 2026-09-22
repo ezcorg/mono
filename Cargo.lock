@@ -2446,6 +2446,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "docker_credential"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29547a1dc60885a552306986316bc9701ba120c1a8db6769fa68691529ad373d"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dom_query"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4290,12 +4301,17 @@ name = "icanhaz-host"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bytes",
  "cap-primitives",
  "clap",
+ "docker_credential",
  "ezcap",
  "ezdb",
  "futures",
+ "http-body-util",
+ "hyper 1.11.1",
+ "hyper-util",
  "icanhaz-broker",
  "iroh",
  "notify 6.1.1",

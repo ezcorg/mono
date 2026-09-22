@@ -51,6 +51,25 @@ interface components {
   get: func(hash: string) -> result<list<u8>, string>;
   /// Local hosts only.
   remove: func(hash: string) -> result<bool, string>;
+
+  /// A component this daemon's registry serves, when one is served: pulled
+  /// as `oci://<registry bind>/<name>:<tag>` by anyone holding the registry
+  /// credential.
+  record publication {
+    /// `<name>:<tag>`.
+    reference: string,
+    /// The manifest digest a pull by tag resolves to.
+    digest: string,
+    /// The component's hash: the manifest's one layer.
+    hash: string,
+  }
+  /// Publish a held component under `reference` (`<name>:<tag>`) in this
+  /// daemon's registry. The manifest is generated once, so the digest is
+  /// stable until the tag is published again. Local hosts only.
+  publish: func(hash: string, reference: string) -> result<publication, string>;
+  /// Forget a tag; the component stays in the store. Local hosts only.
+  unpublish: func(reference: string) -> result<bool, string>;
+  published: func() -> list<publication>;
 }
 
 world components-wrpc {

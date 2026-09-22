@@ -27,7 +27,7 @@ pub mod bindings {
 }
 
 use bindings::exports::icanhaz::nocap::components::{
-    ComponentInfo as InfoWire, Provenance as ProvenanceWire,
+    ComponentInfo as InfoWire, Provenance as ProvenanceWire, Publication as PublishedWire,
 };
 pub use bindings::icanhaz::nocap::components as client;
 
@@ -425,6 +425,8 @@ pub struct ComponentsProvider {
     after_add: Option<AfterAdd>,
     fetcher: Option<Arc<crate::fetch::Fetcher>>,
     install: Option<InstallGate>,
+    /// The daemon's registry index, for `publish`; without one, publishing is refused.
+    registry: Option<Arc<crate::registry::RegistryIndex>>,
 }
 
 impl ComponentsProvider {
@@ -434,7 +436,14 @@ impl ComponentsProvider {
             after_add: None,
             fetcher: None,
             install: None,
+            registry: None,
         }
+    }
+
+    /// Where `publish` puts tags: the served registry's index.
+    pub fn with_registry(mut self, registry: Arc<crate::registry::RegistryIndex>) -> Self {
+        self.registry = Some(registry);
+        self
     }
 
     /// Gate `add` and `fetch` by requester; without one, anyone may install.
@@ -599,6 +608,64 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::com
             .remove(&hash)
             .await
             .map_err(|e| format!("{e:#}")))
+    }
+
+    async fn publish(
+        &self,
+        cx: C,
+        hash: String,
+        reference: String,
+    ) -> anyhow::Result<Result<PublishedWire, String>> {
+        if let Some(o) = cx.origin() {
+            return Ok(Err(format!(
+                "publishing is for local hosts, not pages ({o})"
+            )));
+        }
+        let Some(registry) = &self.registry else {
+            return Ok(Err(
+                "this daemon serves no registry (set ICANHAZ_REGISTRY_BIND)".to_string(),
+            ));
+        };
+        Ok(registry
+            .publish(&hash, &reference)
+            .await
+            .map(published_to_wire)
+            .map_err(|e| format!("{e:#}")))
+    }
+
+    async fn unpublish(&self, cx: C, reference: String) -> anyhow::Result<Result<bool, String>> {
+        if let Some(o) = cx.origin() {
+            return Ok(Err(format!(
+                "publishing is for local hosts, not pages ({o})"
+            )));
+        }
+        let Some(registry) = &self.registry else {
+            return Ok(Err("this daemon serves no registry".to_string()));
+        };
+        Ok(registry
+            .unpublish(&reference)
+            .await
+            .map_err(|e| format!("{e:#}")))
+    }
+
+    async fn published(&self, _cx: C) -> anyhow::Result<Vec<PublishedWire>> {
+        Ok(match &self.registry {
+            Some(registry) => registry
+                .published()
+                .await
+                .into_iter()
+                .map(published_to_wire)
+                .collect(),
+            None => Vec::new(),
+        })
+    }
+}
+
+fn published_to_wire(p: crate::registry::Published) -> PublishedWire {
+    PublishedWire {
+        reference: p.reference,
+        digest: p.digest,
+        hash: p.hash,
     }
 }
 
@@ -767,7 +834,11 @@ mod tests {
             .unwrap();
         let store = Arc::new(ComponentStore::new(dir.path().join("components"), Some(db)));
         let provider = ComponentsProvider::new(Arc::clone(&store)).with_fetcher(Arc::new(
-            crate::fetch::Fetcher::with_config(crate::fetch::tests::plain_http(), None),
+            crate::fetch::Fetcher::with_config(
+                crate::fetch::tests::plain_http(),
+                None,
+                crate::fetch::Credentials::shared(),
+            ),
         ));
         let oci = format!("oci://{addr}/acme/greeter:latest");
 

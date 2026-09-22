@@ -115,6 +115,10 @@ async fn main() -> anyhow::Result<()> {
         capabilities_dir: std::env::var("ICANHAZ_CAPABILITIES_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../capabilities")),
+        registry_bind: match std::env::var("ICANHAZ_REGISTRY_BIND") {
+            Ok(bind) => Some(bind.parse().context("invalid ICANHAZ_REGISTRY_BIND")?),
+            Err(_) => None,
+        },
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label,

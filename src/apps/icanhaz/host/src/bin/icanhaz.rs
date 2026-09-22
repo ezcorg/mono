@@ -64,6 +64,25 @@ enum Capability {
         #[arg(long)]
         builder: Option<String>,
     },
+    /// Publish a held component in the daemon's own registry under
+    /// `<name>:<tag>`, for others to pull with the registry credential.
+    Publish {
+        hash: String,
+        reference: String,
+        #[arg(long, env = "ICANHAZ_WS", default_value = "ws://127.0.0.1:7777")]
+        daemon: String,
+    },
+    /// Forget a published tag (the component stays in the store).
+    Unpublish {
+        reference: String,
+        #[arg(long, env = "ICANHAZ_WS", default_value = "ws://127.0.0.1:7777")]
+        daemon: String,
+    },
+    /// The tags the daemon's registry serves.
+    Published {
+        #[arg(long, env = "ICANHAZ_WS", default_value = "ws://127.0.0.1:7777")]
+        daemon: String,
+    },
     /// The components in the daemon's store.
     List {
         #[arg(long, env = "ICANHAZ_WS", default_value = "ws://127.0.0.1:7777")]
@@ -230,6 +249,31 @@ async fn main() -> anyhow::Result<()> {
             match components_client::add(&client, (), &bytes.into(), provenance).await? {
                 Ok(info) => println!("{}", info.hash),
                 Err(e) => bail!("{e}"),
+            }
+        }
+        Capability::Publish {
+            hash,
+            reference,
+            daemon,
+        } => {
+            let client = ws(&daemon)?;
+            match components_client::publish(&client, (), &hash, &reference).await? {
+                Ok(p) => println!("{}\t{}", p.reference, p.digest),
+                Err(e) => bail!("{e}"),
+            }
+        }
+        Capability::Unpublish { reference, daemon } => {
+            let client = ws(&daemon)?;
+            match components_client::unpublish(&client, (), &reference).await? {
+                Ok(true) => println!("unpublished {reference}"),
+                Ok(false) => println!("{reference} was not published"),
+                Err(e) => bail!("{e}"),
+            }
+        }
+        Capability::Published { daemon } => {
+            let client = ws(&daemon)?;
+            for p in components_client::published(&client, ()).await? {
+                println!("{}\t{}\t{}", p.reference, p.digest, p.hash);
             }
         }
         Capability::List { daemon, json } => {

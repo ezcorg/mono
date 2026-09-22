@@ -40,6 +40,9 @@ pub struct DaemonConfig {
     /// wasm32-wasip2/release/<name>_capability.wasm` for filesystem, process,
     /// terminal, watch, workspace and inference.
     pub capabilities_dir: std::path::PathBuf,
+    /// Serve the daemon's own OCI registry here (`ICANHAZ_REGISTRY_BIND`);
+    /// `None` serves none.
+    pub registry_bind: Option<SocketAddr>,
     /// WebTransport TLS: PEM cert/key paths; a self-signed cert is generated if either
     /// is absent.
     pub cert: Option<String>,
@@ -90,6 +93,10 @@ pub struct Services {
     pub registry: Arc<Registry>,
     /// Capability components by hash (`<store dir>/components/`).
     pub components: Arc<crate::components::ComponentStore>,
+    /// How this daemon signs in to other registries (`registries/<host>`).
+    pub credentials: Arc<crate::fetch::Credentials>,
+    /// The credential this daemon's own registry requires (`registry`).
+    pub registry_access: Arc<crate::registry::RegistryAccess>,
 }
 
 impl Services {
@@ -126,18 +133,30 @@ impl Services {
             components_dir,
             store.clone(),
         ));
+        let credentials = crate::fetch::Credentials::shared();
+        let registry_access = crate::registry::RegistryAccess::shared();
+        if let Some(store) = &store {
+            credentials.reload(store).await;
+            registry_access.reload(store).await;
+        }
         Self {
             store,
             providers,
             identity,
             registry,
             components,
+            credentials,
+            registry_access,
         }
     }
 
     /// Every configuration the daemon's own capabilities declare.
     pub fn declared() -> Vec<Declared> {
-        vec![Providers::declared()]
+        vec![
+            Providers::declared(),
+            crate::fetch::Credentials::declared(),
+            crate::registry::RegistryAccess::declared(),
+        ]
     }
 
     /// The wRPC provider other local hosts declare through.
@@ -181,8 +200,19 @@ impl Services {
 
     /// The capabilities that cache their configuration re-read it here.
     async fn reload(&self, capability: &str) {
-        if capability == "inference" {
-            self.providers.reload().await;
+        match capability {
+            "inference" => self.providers.reload().await,
+            "registries" => {
+                if let Some(store) = &self.store {
+                    self.credentials.reload(store).await;
+                }
+            }
+            "registry" => {
+                if let Some(store) = &self.store {
+                    self.registry_access.reload(store).await;
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -235,6 +265,7 @@ pub async fn run(
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
     let configuration = services.configuration_provider();
     let components = services.components_provider();
+    let registry_store = services.store.clone();
     let Services {
         providers,
         identity: broker_key,
@@ -282,7 +313,7 @@ pub async fn run(
     }
     // Components fetched from an OCI registry or from a peer land in the
     // store with their source as provenance.
-    let fetcher = crate::fetch::Fetcher::shared(remotes);
+    let fetcher = crate::fetch::Fetcher::shared(remotes, Arc::clone(&services.credentials));
     // The raw host layer every shipped component imports: the gate over the
     // grant store, and the providers' native implementations.
     let (inference_complete, inference_models) = inference.native_for_grants();
@@ -402,6 +433,24 @@ pub async fn run(
             Ok(())
         })
     });
+    // The daemon's own registry, when a bind is configured: the store behind
+    // the distribution API, gated by the `registry` credential.
+    let registry_index =
+        crate::registry::RegistryIndex::new(Arc::clone(&services.components), registry_store);
+    let components = components.with_registry(Arc::clone(&registry_index));
+    if let Some(bind) = config.registry_bind {
+        match tokio::net::TcpListener::bind(bind).await {
+            Ok(listener) => {
+                let registry = crate::registry::Registry::new(
+                    Arc::clone(&registry_index),
+                    Arc::clone(&services.registry_access),
+                );
+                tokio::spawn(registry.serve(listener));
+                tracing::info!(%bind, "registry serving the component store (credential required)");
+            }
+            Err(e) => tracing::warn!(error = %e, %bind, "registry not served: bind failed"),
+        }
+    }
     let broker = broker.with_components(Arc::new(components.clone()));
 
     // TLS identity for WebTransport: user-supplied cert/key, else self-signed.

@@ -18,6 +18,13 @@ use sha2::{Digest as _, Sha256};
 
 use crate::components::Provenance;
 use crate::remote::Remotes;
+use icanhaz_broker::configuration::{Declared, Field, InputType, Value};
+use icanhaz_broker::store::Store;
+
+/// `sha256:<hex>` of `bytes`: how components, layers and manifests are named.
+pub fn digest_of(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
 
 /// A place a component can be fetched from.
 #[derive(Debug, Clone, PartialEq)]
@@ -69,28 +76,135 @@ impl fmt::Display for ComponentSource {
     }
 }
 
-/// Fetches components: an OCI client, and the peer connections when the
-/// daemon has a peer endpoint.
+/// How this daemon authenticates to registries, by registry host: what the
+/// human configured in the store (`registries/<host>`, a username and a
+/// secret password), else the credential the user's Docker client keeps
+/// (`docker login <host>`), else anonymous.
+#[derive(Default)]
+pub struct Credentials {
+    configured: std::sync::RwLock<std::collections::HashMap<String, (String, String)>>,
+}
+
+impl Credentials {
+    /// The store owner prefix registry credentials live under.
+    pub const OWNER_PREFIX: &'static str = "registries/";
+
+    pub fn shared() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// The configuration the tray renders: one instance per registry host.
+    pub fn declared() -> Declared {
+        Declared::new(
+            "registries",
+            "registry",
+            vec![
+                Field::new("username", InputType::Str, "The account at the registry"),
+                Field::new("password", InputType::Secret, "Its password or access token"),
+            ],
+        )
+        .describe(
+            "How this daemon signs in to OCI registries it pulls components from or pushes them to. \
+             Name each instance after the registry host (ghcr.io). Without one, the credential the \
+             Docker client keeps for the host is used, else the pull is anonymous.",
+        )
+    }
+
+    /// Re-read the configured credentials.
+    pub async fn reload(&self, store: &Store) {
+        let mut configured = std::collections::HashMap::new();
+        match store.owners(Self::OWNER_PREFIX).await {
+            Ok(owners) => {
+                for owner in owners {
+                    let host = owner
+                        .strip_prefix(Self::OWNER_PREFIX)
+                        .unwrap_or(&owner)
+                        .to_string();
+                    let rows = match store.configuration(&owner).await {
+                        Ok(rows) => rows,
+                        Err(e) => {
+                            tracing::warn!(error = %e, owner, "could not read a registry credential");
+                            continue;
+                        }
+                    };
+                    let get = |field: &str| -> Option<String> {
+                        rows.iter().find(|(n, _)| n == field).and_then(|(_, v)| {
+                            serde_json::from_value::<Value>(v.clone())
+                                .ok()
+                                .and_then(|v| v.text().map(str::to_string))
+                        })
+                    };
+                    if let (Some(user), Some(pass)) = (get("username"), get("password")) {
+                        configured.insert(host, (user, pass));
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "could not list registry credentials"),
+        }
+        *self.configured.write().unwrap_or_else(|e| e.into_inner()) = configured;
+    }
+
+    /// Set a credential directly (tests, or a daemon without a store).
+    pub fn set(&self, host: &str, username: &str, password: &str) {
+        self.configured
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                host.to_string(),
+                (username.to_string(), password.to_string()),
+            );
+    }
+
+    /// The credential to present to `registry`.
+    pub fn auth_for(&self, registry: &str) -> RegistryAuth {
+        if let Some((user, pass)) = self
+            .configured
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(registry)
+        {
+            return RegistryAuth::Basic(user.clone(), pass.clone());
+        }
+        match docker_credential::get_credential(registry) {
+            Ok(docker_credential::DockerCredential::UsernamePassword(user, pass)) => {
+                RegistryAuth::Basic(user, pass)
+            }
+            Ok(docker_credential::DockerCredential::IdentityToken(token)) => {
+                RegistryAuth::Bearer(token)
+            }
+            Err(_) => RegistryAuth::Anonymous,
+        }
+    }
+}
+
+/// Fetches components: an OCI client with the daemon's credentials, and the
+/// peer connections when the daemon has a peer endpoint.
 pub struct Fetcher {
     oci: WasmClient,
+    credentials: Arc<Credentials>,
     remotes: Option<Remotes>,
 }
 
 impl Fetcher {
-    pub fn new(remotes: Option<Remotes>) -> Self {
-        Self::with_config(ClientConfig::default(), remotes)
+    pub fn new(remotes: Option<Remotes>, credentials: Arc<Credentials>) -> Self {
+        Self::with_config(ClientConfig::default(), remotes, credentials)
     }
 
     /// With an explicit OCI client configuration (a test's plain-HTTP registry).
-    pub fn with_config(config: ClientConfig, remotes: Option<Remotes>) -> Self {
+    pub fn with_config(
+        config: ClientConfig,
+        remotes: Option<Remotes>,
+        credentials: Arc<Credentials>,
+    ) -> Self {
         Self {
             oci: WasmClient::new(Client::new(config)),
+            credentials,
             remotes,
         }
     }
 
-    pub fn shared(remotes: Option<Remotes>) -> Arc<Self> {
-        Arc::new(Self::new(remotes))
+    pub fn shared(remotes: Option<Remotes>, credentials: Arc<Credentials>) -> Arc<Self> {
+        Arc::new(Self::new(remotes, credentials))
     }
 
     /// The component's bytes and the provenance they arrived with. The bytes
@@ -103,9 +217,10 @@ impl Fetcher {
     }
 
     async fn fetch_oci(&self, reference: &Reference) -> anyhow::Result<(Vec<u8>, Provenance)> {
+        let auth = self.credentials.auth_for(reference.resolve_registry());
         let image = self
             .oci
-            .pull(reference, &RegistryAuth::Anonymous)
+            .pull(reference, &auth)
             .await
             .with_context(|| format!("pull oci://{}", reference.whole()))?;
         // The component is the wasm layer; a single-layer artifact from an
@@ -312,7 +427,7 @@ pub(crate) mod tests {
         ))
         .expect("greeter.wasm fixture");
         let (addr, manifest_digest) = registry("acme/greeter", &greeter, greeter.clone()).await;
-        let fetcher = Fetcher::with_config(plain_http(), None);
+        let fetcher = Fetcher::with_config(plain_http(), None, Credentials::shared());
         let source = ComponentSource::parse(&format!("oci://{addr}/acme/greeter:latest")).unwrap();
         let (bytes, provenance) = fetcher.fetch(&source).await.expect("pulled");
         assert_eq!(bytes, greeter);
@@ -342,7 +457,7 @@ pub(crate) mod tests {
         let mut tampered = greeter.clone();
         tampered.push(0);
         let (addr, _) = registry("acme/greeter", &greeter, tampered).await;
-        let fetcher = Fetcher::with_config(plain_http(), None);
+        let fetcher = Fetcher::with_config(plain_http(), None, Credentials::shared());
         let source = ComponentSource::parse(&format!("oci://{addr}/acme/greeter:latest")).unwrap();
         let err = fetcher.fetch(&source).await.expect_err("refused");
         let text = format!("{err:#}").to_lowercase();

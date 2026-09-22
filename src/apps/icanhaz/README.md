@@ -52,6 +52,17 @@ browser / editor / agent ──wRPC──▶ router ──▶ [wrapper …] ─�
   bytes against the hash, and only then shows the consent card, where the
   component's origin is visible. Fetching grants nothing: installing is for
   the local user and approved hosts, and authority comes only from consent.
+  Pulls sign in with the credential configured for the registry host
+  (`registries` in the tray's settings), else the one the Docker client keeps
+  for it, else anonymously.
+- **Serving components.** With `ICANHAZ_REGISTRY_BIND` set, the daemon serves
+  its store as an OCI registry: `icanhaz capability publish <hash> name:tag`
+  makes a held component pullable as `oci://<bind>/name:tag` by `wkg`, `oras`,
+  wassette or another icanhaz, and a push lands in the store like `add`. It
+  holds capability components and nothing else: a pushed layer must validate
+  under the same rule as `add`. Every request, pull or push, needs the
+  `registry` credential from the tray's settings, since a component's bytes
+  are their author's; the registry serves nothing until it is set.
 - **Scopes** are CEL clauses (`ezco:ezcap`) over an environment generated from
   the interface's WIT: `call.method`, `call.args.*`, `state.*`, `time`. They
   narrow only, render as sentences in the consent window, and are checked at
@@ -105,8 +116,9 @@ ICANHAZ_CONSENT=auto cargo run --bin icanhazd
 filesystem jail), `ICANHAZ_CAPABILITIES_DIR`, `ICANHAZ_CONSENT`
 (`auto` | `deny` | `approve` over `ICANHAZ_APPROVE_BIND`), `ICANHAZ_PAIRINGS`,
 `ICANHAZ_HOSTS`, `ICANHAZ_DB` and `ICANHAZ_DB_KEY`, `ICANHAZ_IROH` (`0` to skip
-the peer endpoint), `ICANHAZ_CERT` and `ICANHAZ_KEY` for WebTransport TLS, and
-`ICANHAZ_ECHO=1` for a loopback inference model.
+the peer endpoint), `ICANHAZ_REGISTRY_BIND` to serve the daemon's own OCI
+registry (off unless set), `ICANHAZ_CERT` and `ICANHAZ_KEY` for WebTransport
+TLS, and `ICANHAZ_ECHO=1` for a loopback inference model.
 
 ## Tests
 
@@ -131,6 +143,8 @@ icanhaz capability inspect target/wasm32-wasip2/release/<crate>.wasm
 icanhaz capability add     target/wasm32-wasip2/release/<crate>.wasm
 icanhaz capability add     oci://ghcr.io/org/name:tag        # pulled by the daemon; the tag resolves to a digest once
 icanhaz capability add     'iroh:<key>?addr=…#sha256:<hex>'  # a component another daemon holds
+icanhaz capability publish <hash> acme/name:v1          # served by this daemon's registry (ICANHAZ_REGISTRY_BIND)
+icanhaz capability published                            # the tags it serves
 ```
 
 A scaffold vendors the daemon's WIT, generates the `Guest` impls (resource

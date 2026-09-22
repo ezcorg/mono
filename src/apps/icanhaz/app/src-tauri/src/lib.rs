@@ -69,6 +69,9 @@ fn daemon_config() -> DaemonConfig {
             .unwrap_or_else(|_| {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../capabilities")
             }),
+        registry_bind: std::env::var("ICANHAZ_REGISTRY_BIND")
+            .ok()
+            .map(|b| b.parse().expect("invalid ICANHAZ_REGISTRY_BIND")),
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label: "native consent window".to_string(),

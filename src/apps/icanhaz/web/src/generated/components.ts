@@ -6,8 +6,9 @@ const INSTANCE = "icanhaz:nocap/components@0.1.0";
 
 export type Provenance = { source: string; revision: string | undefined; build: string | undefined; builder: string | undefined };
 export type ComponentInfo = { hash: string; name: string | undefined; size: bigint; imports: string[]; exports: string[]; added: bigint; provenance: Provenance | undefined; reproducible: boolean };
+export type Publication = { reference: string; digest: string; hash: string };
 
-function enc_89(v: Uint8Array): number[] {
+function enc_90(v: Uint8Array): number[] {
     return encodeBytes(v);
 }
 function enc_87(v: Provenance | undefined): number[] {
@@ -20,7 +21,7 @@ function enc_84(v: string | undefined): number[] {
     return v === undefined ? [0] : [1, ...encodeString(v)];
 }
 
-function dec_90(b: Uint8Array, o0: number): [{ tag: "ok"; val: ComponentInfo } | { tag: "err"; val: string }, number] {
+function dec_91(b: Uint8Array, o0: number): [{ tag: "ok"; val: ComponentInfo } | { tag: "err"; val: string }, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) { const [val, o2] = decComponentInfo(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = readString(b, o1); return [{ tag: "err", val }, o2];
@@ -56,44 +57,73 @@ function decProvenance(b: Uint8Array, o0: number): [Provenance, number] {
     const [_3, o4] = dec_84(b, o3);
     return [{ source: _0, revision: _1, build: _2, builder: _3 }, o4];
 }
-function dec_91(b: Uint8Array, o0: number): [ComponentInfo[], number] {
+function dec_92(b: Uint8Array, o0: number): [ComponentInfo[], number] {
     return readList(b, o0, decComponentInfo);
 }
-function dec_92(b: Uint8Array, o0: number): [{ tag: "ok"; val: Uint8Array } | { tag: "err"; val: string }, number] {
+function dec_93(b: Uint8Array, o0: number): [{ tag: "ok"; val: Uint8Array } | { tag: "err"; val: string }, number] {
     const [d, o1] = readLeb128(b, o0);
-    if (d === 0) { const [val, o2] = dec_89(b, o1); return [{ tag: "ok", val }, o2]; }
+    if (d === 0) { const [val, o2] = dec_90(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = readString(b, o1); return [{ tag: "err", val }, o2];
 }
-function dec_89(b: Uint8Array, o0: number): [Uint8Array, number] {
+function dec_90(b: Uint8Array, o0: number): [Uint8Array, number] {
     return readBytes(b, o0);
 }
-function dec_93(b: Uint8Array, o0: number): [{ tag: "ok"; val: boolean } | { tag: "err"; val: string }, number] {
+function dec_94(b: Uint8Array, o0: number): [{ tag: "ok"; val: boolean } | { tag: "err"; val: string }, number] {
     const [d, o1] = readLeb128(b, o0);
     if (d === 0) { const [val, o2] = readBool(b, o1); return [{ tag: "ok", val }, o2]; }
     const [val, o2] = readString(b, o1); return [{ tag: "err", val }, o2];
 }
+function dec_95(b: Uint8Array, o0: number): [{ tag: "ok"; val: Publication } | { tag: "err"; val: string }, number] {
+    const [d, o1] = readLeb128(b, o0);
+    if (d === 0) { const [val, o2] = decPublication(b, o1); return [{ tag: "ok", val }, o2]; }
+    const [val, o2] = readString(b, o1); return [{ tag: "err", val }, o2];
+}
+function decPublication(b: Uint8Array, o0: number): [Publication, number] {
+    const [_0, o1] = readString(b, o0);
+    const [_1, o2] = readString(b, o1);
+    const [_2, o3] = readString(b, o2);
+    return [{ reference: _0, digest: _1, hash: _2 }, o3];
+}
+function dec_96(b: Uint8Array, o0: number): [Publication[], number] {
+    return readList(b, o0, decPublication);
+}
 
 export async function add(t: WrpcTransport, bytes: Uint8Array, provenance: Provenance | undefined): Promise<{ tag: "ok"; val: ComponentInfo } | { tag: "err"; val: string }> {
-    const resp = await invoke(t, INSTANCE, "add", [...enc_89(bytes), ...enc_87(provenance)]);
-    return dec_90(resultValue(resp), 0)[0];
+    const resp = await invoke(t, INSTANCE, "add", [...enc_90(bytes), ...enc_87(provenance)]);
+    return dec_91(resultValue(resp), 0)[0];
 }
 
 export async function fetch(t: WrpcTransport, source: string): Promise<{ tag: "ok"; val: ComponentInfo } | { tag: "err"; val: string }> {
     const resp = await invoke(t, INSTANCE, "fetch", [...encodeString(source)]);
-    return dec_90(resultValue(resp), 0)[0];
+    return dec_91(resultValue(resp), 0)[0];
 }
 
 export async function all(t: WrpcTransport): Promise<ComponentInfo[]> {
     const resp = await invoke(t, INSTANCE, "all", []);
-    return dec_91(resultValue(resp), 0)[0];
+    return dec_92(resultValue(resp), 0)[0];
 }
 
 export async function get(t: WrpcTransport, hash: string): Promise<{ tag: "ok"; val: Uint8Array } | { tag: "err"; val: string }> {
     const resp = await invoke(t, INSTANCE, "get", [...encodeString(hash)]);
-    return dec_92(resultValue(resp), 0)[0];
+    return dec_93(resultValue(resp), 0)[0];
 }
 
 export async function remove(t: WrpcTransport, hash: string): Promise<{ tag: "ok"; val: boolean } | { tag: "err"; val: string }> {
     const resp = await invoke(t, INSTANCE, "remove", [...encodeString(hash)]);
-    return dec_93(resultValue(resp), 0)[0];
+    return dec_94(resultValue(resp), 0)[0];
+}
+
+export async function publish(t: WrpcTransport, hash: string, reference: string): Promise<{ tag: "ok"; val: Publication } | { tag: "err"; val: string }> {
+    const resp = await invoke(t, INSTANCE, "publish", [...encodeString(hash), ...encodeString(reference)]);
+    return dec_95(resultValue(resp), 0)[0];
+}
+
+export async function unpublish(t: WrpcTransport, reference: string): Promise<{ tag: "ok"; val: boolean } | { tag: "err"; val: string }> {
+    const resp = await invoke(t, INSTANCE, "unpublish", [...encodeString(reference)]);
+    return dec_94(resultValue(resp), 0)[0];
+}
+
+export async function published(t: WrpcTransport): Promise<Publication[]> {
+    const resp = await invoke(t, INSTANCE, "published", []);
+    return dec_96(resultValue(resp), 0)[0];
 }

@@ -46,6 +46,8 @@ tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
+# Decoding the Basic credential the served registry checks.
+base64 = "0.22"
 # The consent broker as a library: grant store, certificates, consent, store.
 icanhaz-broker = { path = "../broker" }
 # The shared capability scope model (ezco:ezcap): per-call admission membranes.
@@ -64,6 +66,10 @@ wac-types = "0.11"
 # Pulling components from OCI registries (`oci://…`), the way wkg and wassette publish them.
 oci-wasm = { version = "0.6", default-features = false, features = ["rustls-tls"] }
 oci-client = { version = "0.17", default-features = false, features = ["rustls-tls"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+docker_credential = "1"
 
 [dev-dependencies]
 tempfile = "3"

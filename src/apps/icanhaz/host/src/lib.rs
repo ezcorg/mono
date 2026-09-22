@@ -66,6 +66,7 @@ pub mod fetch;
 pub mod iroh;
 /// The resolver's runtime: grants provided through store components (wac-composed wrappers).
 pub mod raw;
+pub mod registry;
 /// Other brokers over iroh: locators, connections, remote redemption.
 pub mod remote;
 /// Scaffolds for authoring capabilities (`icanhaz capability new|wrap`).

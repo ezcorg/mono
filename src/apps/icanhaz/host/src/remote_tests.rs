@@ -410,7 +410,10 @@ async fn a_component_is_fetched_from_a_peer_by_hash() {
             .bind()
             .await
             .expect("bind L");
-        let fetcher = crate::fetch::Fetcher::new(Some(Remotes::new(ep_l)));
+        let fetcher = crate::fetch::Fetcher::new(
+            Some(Remotes::new(ep_l)),
+            crate::fetch::Credentials::shared(),
+        );
         let source = crate::fetch::ComponentSource::parse(&format!("{locator}#{}", info.hash))
             .expect("a peer source");
         let (bytes, provenance) = fetcher.fetch(&source).await.expect("fetched from R");
