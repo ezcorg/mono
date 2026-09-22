@@ -55,7 +55,8 @@ browser / editor / agent ──wRPC──▶ router ──▶ [wrapper …] ─�
   the local user and approved hosts, and authority comes only from consent.
   Pulls sign in with the credential configured for the registry host
   (`registries` in the tray's settings), else the one the Docker client keeps
-  for it, else anonymously.
+  for it, else anonymously. A registry on this machine is reached over plain
+  HTTP; any other over HTTPS unless its `registries` entry says `http`.
 - **Serving components.** With `ICANHAZ_REGISTRY_BIND` set, the daemon serves
   its store as an OCI registry: `icanhaz capability publish <hash> name:tag`
   makes a held component pullable as `oci://<bind>/name:tag` by `wkg`, `oras`,

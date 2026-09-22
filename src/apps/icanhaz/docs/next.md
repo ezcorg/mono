@@ -45,6 +45,12 @@ the RFC's milestone statuses, not here.
   capability published` is the only view.
 - Registry pulls are anonymous-or-basic. Bearer tokens from `docker login`
   are honoured for pulling; the served registry issues none.
+- The served registry speaks plain HTTP, so its Basic credential crosses
+  the wire in the clear beyond loopback. On a tailnet that is the tailnet's
+  encryption; anywhere else put it behind a TLS proxy, or give it a
+  certificate the way the WebTransport listener has one. A consumer reaches
+  a registry on its own machine over HTTP without being told; a plain-HTTP
+  registry elsewhere needs `http` set on its `registries` entry.
 - The browser runtime reports a call the daemon refused as `NoReply`
   without the reason, since wRPC carries no error frame for a refused
   route. The reason is in the daemon's log. A diagnostic side channel is

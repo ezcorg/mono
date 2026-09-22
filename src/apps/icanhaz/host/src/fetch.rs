@@ -10,7 +10,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use oci_client::client::{Client, ClientConfig};
+use oci_client::client::{Client, ClientConfig, ClientProtocol};
 use oci_client::secrets::RegistryAuth;
 use oci_client::Reference;
 use oci_wasm::{WasmClient, WASM_LAYER_MEDIA_TYPE};
@@ -83,6 +83,9 @@ impl fmt::Display for ComponentSource {
 #[derive(Default)]
 pub struct Credentials {
     configured: std::sync::RwLock<std::collections::HashMap<String, (String, String)>>,
+    /// Registries reached over plain HTTP by configuration (a private
+    /// network's); loopback registries always are.
+    plain_http: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 impl Credentials {
@@ -101,18 +104,28 @@ impl Credentials {
             vec![
                 Field::new("username", InputType::Str, "The account at the registry"),
                 Field::new("password", InputType::Secret, "Its password or access token"),
+                Field::new(
+                    "http",
+                    InputType::Boolean,
+                    "Reach this registry over plain HTTP (a registry on a private network without TLS). \
+                     A registry on this machine (localhost, 127.0.0.1) is reached that way regardless.",
+                )
+                .optional()
+                .default(Value::Boolean(false)),
             ],
         )
         .describe(
             "How this daemon signs in to OCI registries it pulls components from or pushes them to. \
-             Name each instance after the registry host (ghcr.io). Without one, the credential the \
-             Docker client keeps for the host is used, else the pull is anonymous.",
+             Name each instance after the registry host, with its port if it has one (ghcr.io, \
+             localhost:5000). Without one, the credential the Docker client keeps for the host is \
+             used, else the pull is anonymous.",
         )
     }
 
     /// Re-read the configured credentials.
     pub async fn reload(&self, store: &Store) {
         let mut configured = std::collections::HashMap::new();
+        let mut plain_http = std::collections::HashSet::new();
         match store.owners(Self::OWNER_PREFIX).await {
             Ok(owners) => {
                 for owner in owners {
@@ -134,6 +147,17 @@ impl Credentials {
                                 .and_then(|v| v.text().map(str::to_string))
                         })
                     };
+                    let http = rows.iter().find(|(n, _)| n == "http").and_then(|(_, v)| {
+                        serde_json::from_value::<Value>(v.clone())
+                            .ok()
+                            .and_then(|v| match v {
+                                Value::Boolean(b) => Some(b),
+                                _ => None,
+                            })
+                    });
+                    if http == Some(true) {
+                        plain_http.insert(host.clone());
+                    }
                     if let (Some(user), Some(pass)) = (get("username"), get("password")) {
                         configured.insert(host, (user, pass));
                     }
@@ -142,6 +166,27 @@ impl Credentials {
             Err(e) => tracing::warn!(error = %e, "could not list registry credentials"),
         }
         *self.configured.write().unwrap_or_else(|e| e.into_inner()) = configured;
+        *self.plain_http.write().unwrap_or_else(|e| e.into_inner()) = plain_http;
+    }
+
+    /// Whether `registry` (host, or host:port) is reached over plain HTTP:
+    /// on this machine, or configured so.
+    pub fn plain_http(&self, registry: &str) -> bool {
+        let host = registry
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(registry);
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host == "localhost"
+            || host == "::1"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+            || self
+                .plain_http
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(registry)
     }
 
     /// Set a credential directly (tests, or a daemon without a store).
@@ -177,30 +222,53 @@ impl Credentials {
     }
 }
 
-/// Fetches components: an OCI client with the daemon's credentials, and the
-/// peer connections when the daemon has a peer endpoint.
+/// Fetches components: an OCI client per registry, with the daemon's
+/// credentials and the registry's protocol (HTTPS, or plain HTTP for a
+/// registry on this machine or one configured so), and the peer connections
+/// when the daemon has a peer endpoint.
 pub struct Fetcher {
-    oci: WasmClient,
+    /// An explicit protocol for every registry (a test's plain-HTTP one).
+    protocol: Option<ClientProtocol>,
     credentials: Arc<Credentials>,
     remotes: Option<Remotes>,
 }
 
 impl Fetcher {
     pub fn new(remotes: Option<Remotes>, credentials: Arc<Credentials>) -> Self {
-        Self::with_config(ClientConfig::default(), remotes, credentials)
+        Self {
+            protocol: None,
+            credentials,
+            remotes,
+        }
     }
 
-    /// With an explicit OCI client configuration (a test's plain-HTTP registry).
-    pub fn with_config(
-        config: ClientConfig,
+    /// With one explicit protocol for every registry.
+    pub fn with_protocol(
+        protocol: ClientProtocol,
         remotes: Option<Remotes>,
         credentials: Arc<Credentials>,
     ) -> Self {
         Self {
-            oci: WasmClient::new(Client::new(config)),
+            protocol: Some(protocol),
             credentials,
             remotes,
         }
+    }
+
+    /// The client for `registry`: the explicit configuration, else HTTPS
+    /// with plain HTTP where `Credentials::plain_http` says so.
+    fn oci(&self, registry: &str) -> WasmClient {
+        let protocol = match &self.protocol {
+            Some(protocol) => protocol.clone(),
+            None if self.credentials.plain_http(registry) => {
+                ClientProtocol::HttpsExcept(vec![registry.to_string()])
+            }
+            None => ClientProtocol::Https,
+        };
+        WasmClient::new(Client::new(ClientConfig {
+            protocol,
+            ..ClientConfig::default()
+        }))
     }
 
     pub fn shared(remotes: Option<Remotes>, credentials: Arc<Credentials>) -> Arc<Self> {
@@ -217,9 +285,10 @@ impl Fetcher {
     }
 
     async fn fetch_oci(&self, reference: &Reference) -> anyhow::Result<(Vec<u8>, Provenance)> {
-        let auth = self.credentials.auth_for(reference.resolve_registry());
+        let registry = reference.resolve_registry();
+        let auth = self.credentials.auth_for(registry);
         let image = self
-            .oci
+            .oci(registry)
             .pull(reference, &auth)
             .await
             .with_context(|| format!("pull oci://{}", reference.whole()))?;
@@ -312,7 +381,6 @@ pub(crate) mod tests {
 
     use std::collections::HashMap;
 
-    use oci_client::client::ClientProtocol;
     use oci_wasm::{WasmConfig, WASM_MANIFEST_CONFIG_MEDIA_TYPE, WASM_MANIFEST_MEDIA_TYPE};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
@@ -412,11 +480,8 @@ pub(crate) mod tests {
         (addr, manifest_digest)
     }
 
-    pub(crate) fn plain_http() -> ClientConfig {
-        ClientConfig {
-            protocol: ClientProtocol::Http,
-            ..ClientConfig::default()
-        }
+    pub(crate) fn plain_http() -> ClientProtocol {
+        ClientProtocol::Http
     }
 
     #[tokio::test]
@@ -427,7 +492,7 @@ pub(crate) mod tests {
         ))
         .expect("greeter.wasm fixture");
         let (addr, manifest_digest) = registry("acme/greeter", &greeter, greeter.clone()).await;
-        let fetcher = Fetcher::with_config(plain_http(), None, Credentials::shared());
+        let fetcher = Fetcher::with_protocol(plain_http(), None, Credentials::shared());
         let source = ComponentSource::parse(&format!("oci://{addr}/acme/greeter:latest")).unwrap();
         let (bytes, provenance) = fetcher.fetch(&source).await.expect("pulled");
         assert_eq!(bytes, greeter);
@@ -447,6 +512,37 @@ pub(crate) mod tests {
         );
     }
 
+    /// A daemon's own client (no explicit configuration) reaches a registry
+    /// on this machine over plain HTTP, and one configured `http` too; any
+    /// other registry is HTTPS.
+    #[tokio::test]
+    async fn a_loopback_or_configured_registry_is_reached_over_plain_http() {
+        let greeter = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/greeter.wasm"
+        ))
+        .expect("greeter.wasm fixture");
+        let (addr, _) = registry("acme/greeter", &greeter, greeter.clone()).await;
+        let credentials = Credentials::shared();
+        assert!(credentials.plain_http(&addr));
+        assert!(credentials.plain_http("localhost:5000"));
+        assert!(!credentials.plain_http("ghcr.io"));
+        assert!(!credentials.plain_http("registry.internal:5000"));
+        credentials
+            .plain_http
+            .write()
+            .unwrap()
+            .insert("registry.internal:5000".to_string());
+        assert!(credentials.plain_http("registry.internal:5000"));
+        let fetcher = Fetcher::new(None, credentials);
+        let source = ComponentSource::parse(&format!("oci://{addr}/acme/greeter:latest")).unwrap();
+        let (bytes, _) = fetcher
+            .fetch(&source)
+            .await
+            .expect("pulled over plain HTTP");
+        assert_eq!(bytes, greeter);
+    }
+
     #[tokio::test]
     async fn refuses_a_layer_whose_bytes_are_not_what_the_manifest_names() {
         let greeter = std::fs::read(concat!(
@@ -457,7 +553,7 @@ pub(crate) mod tests {
         let mut tampered = greeter.clone();
         tampered.push(0);
         let (addr, _) = registry("acme/greeter", &greeter, tampered).await;
-        let fetcher = Fetcher::with_config(plain_http(), None, Credentials::shared());
+        let fetcher = Fetcher::with_protocol(plain_http(), None, Credentials::shared());
         let source = ComponentSource::parse(&format!("oci://{addr}/acme/greeter:latest")).unwrap();
         let err = fetcher.fetch(&source).await.expect_err("refused");
         let text = format!("{err:#}").to_lowercase();

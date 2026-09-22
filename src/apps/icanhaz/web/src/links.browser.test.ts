@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
-import { add as addComponent } from "./generated/components";
+import { add as addComponent, all } from "./generated/components";
 import { wrpcFilesystem } from "./vfs";
 import { openLinks, requestLinksGrant } from "./links";
 import { LINKS, WS } from "./test-ws";
@@ -11,6 +11,35 @@ import { LINKS, WS } from "./test-ws";
 // daemon the harness starts (auto consent, a throwaway jail).
 
 describe("a novel capability in the editor: backlinks", () => {
+    it("is fetched from another daemon's registry when the page names it by hash and source", async () => {
+        const t = await connect({ ws: WS });
+        const fsGrant = await requestFilesystemGrant(t, "the vault");
+        const fs = await wrpcFilesystem(t, fsGrant);
+        const dir = `links-remote-${Date.now()}`;
+        await fs.mkdir(dir, { recursive: false });
+        await fs.writeFile(`${dir}/a.md`, `see [[b]]\n`);
+        await fs.writeFile(`${dir}/b.md`, `# b\n`);
+
+        // Nothing is added here, and the daemon holds no such component yet
+        // (this case runs first): it resolves the provider from the source,
+        // checks the hash, keeps it with the publisher as provenance, and only
+        // then decides the grant.
+        expect((await all(t)).some((c) => c.hash === LINKS.provider), "the consumer starts without it").toBe(false);
+        const token = await requestLinksGrant(t, { provider: LINKS.provider, source: LINKS.source, filesystemGrant: fsGrant });
+        const held = (await all(t)).find((c) => c.hash === LINKS.provider);
+        expect(held?.provenance?.source).toBe(LINKS.source);
+        const index = await openLinks(t, token);
+        const into = await index.backlinks(`${dir}/b.md`);
+        expect(into.map((l) => l.source)).toEqual([`${dir}/a.md`]);
+        await index.close();
+
+        // A wrong hash for that source is refused before consent.
+        await expect(
+            requestLinksGrant(t, { provider: `sha256:${"11".repeat(32)}`, source: LINKS.source, filesystemGrant: fsGrant }),
+        ).rejects.toThrow(/no-provider/);
+        t.close();
+    }, 30000);
+
     it("indexes the vault through the lent filesystem grant, and a scoped grant cannot rename", async () => {
         const t = await connect({ ws: WS });
         const wasm = new Uint8Array(await (await fetch("/fixtures/links.wasm")).arrayBuffer());
@@ -48,30 +77,6 @@ describe("a novel capability in the editor: backlinks", () => {
         expect(await fs.exists(`${dir}/plan.md`)).toBe(false);
         expect(await fs.readFile(`${dir}/index.md`)).toContain("[[planning]]");
         await index.close();
-        t.close();
-    }, 30000);
-
-    it("is fetched from another daemon's registry when the page names it by hash and source", async () => {
-        const t = await connect({ ws: WS });
-        const fsGrant = await requestFilesystemGrant(t, "the vault");
-        const fs = await wrpcFilesystem(t, fsGrant);
-        const dir = `links-remote-${Date.now()}`;
-        await fs.mkdir(dir, { recursive: false });
-        await fs.writeFile(`${dir}/a.md`, `see [[b]]\n`);
-        await fs.writeFile(`${dir}/b.md`, `# b\n`);
-
-        // No bytes are added here: the daemon resolves the provider from the
-        // source, checks the hash, and only then decides the grant.
-        const token = await requestLinksGrant(t, { provider: LINKS.provider, source: LINKS.source, filesystemGrant: fsGrant });
-        const index = await openLinks(t, token);
-        const into = await index.backlinks(`${dir}/b.md`);
-        expect(into.map((l) => l.source)).toEqual([`${dir}/a.md`]);
-        await index.close();
-
-        // A wrong hash for that source is refused before consent.
-        await expect(
-            requestLinksGrant(t, { provider: `sha256:${"11".repeat(32)}`, source: LINKS.source, filesystemGrant: fsGrant }),
-        ).rejects.toThrow(/no-provider/);
         t.close();
     }, 30000);
 });

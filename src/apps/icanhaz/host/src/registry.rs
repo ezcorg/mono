@@ -686,7 +686,7 @@ impl Registry {
 mod tests {
     use super::*;
     use crate::fetch::{tests::plain_http, ComponentSource, Credentials, Fetcher};
-    use oci_client::client::{Client, Config, ImageLayer};
+    use oci_client::client::{Client, ClientConfig, Config, ImageLayer};
     use oci_client::secrets::RegistryAuth;
     use oci_client::Reference;
     use oci_wasm::WasmClient;
@@ -723,7 +723,7 @@ mod tests {
     fn fetcher_as(addr: &str, username: &str, password: &str) -> Fetcher {
         let credentials = Credentials::shared();
         credentials.set(addr, username, password);
-        Fetcher::with_config(plain_http(), None, credentials)
+        Fetcher::with_protocol(plain_http(), None, credentials)
     }
 
     #[tokio::test]
@@ -763,7 +763,7 @@ mod tests {
         );
 
         // Anonymous, or the wrong password: nothing comes back, not even the manifest.
-        let anonymous = Fetcher::with_config(plain_http(), None, Credentials::shared());
+        let anonymous = Fetcher::with_protocol(plain_http(), None, Credentials::shared());
         let err = anonymous
             .fetch(&source)
             .await
@@ -795,7 +795,10 @@ mod tests {
     async fn a_pushed_component_lands_in_the_store_and_only_a_component_is_accepted() {
         let (addr, index, components) = served().await;
         let oracle = fixture("oracle");
-        let client = WasmClient::new(Client::new(plain_http()));
+        let client = WasmClient::new(Client::new(ClientConfig {
+            protocol: plain_http(),
+            ..ClientConfig::default()
+        }));
         let reference: Reference = format!("{addr}/acme/oracle:v1").parse().unwrap();
         let auth = RegistryAuth::Basic("theo".into(), "pw".into());
         let (config, layer) =
@@ -836,7 +839,10 @@ mod tests {
 
         // Without the credential, nothing is pushed (a fresh client: the one
         // above keeps the credential it authenticated with).
-        let anonymous = WasmClient::new(Client::new(plain_http()));
+        let anonymous = WasmClient::new(Client::new(ClientConfig {
+            protocol: plain_http(),
+            ..ClientConfig::default()
+        }));
         let (config, layer) = WasmConfig::from_raw_component(oracle.clone(), None).unwrap();
         let other: Reference = format!("{addr}/acme/oracle:v2").parse().unwrap();
         assert!(anonymous

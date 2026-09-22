@@ -834,7 +834,7 @@ mod tests {
             .unwrap();
         let store = Arc::new(ComponentStore::new(dir.path().join("components"), Some(db)));
         let provider = ComponentsProvider::new(Arc::clone(&store)).with_fetcher(Arc::new(
-            crate::fetch::Fetcher::with_config(
+            crate::fetch::Fetcher::with_protocol(
                 crate::fetch::tests::plain_http(),
                 None,
                 crate::fetch::Credentials::shared(),
