@@ -10,7 +10,8 @@ is an object that *is* the capability. `icanhazd` is the daemon; the tray app
 in `app/` embeds it and is the consent surface; `web/` is the browser client
 the markdown editor uses.
 
-The design of record is the platform RFC (`src/typescript/markdown-editor/docs/gap-analysis-and-platform-rfc.md`,
+What remains, and the designs not yet built (an MCP front), are in
+`docs/next.md` and `docs/mcp.md`. The design of record is the platform RFC (`src/typescript/markdown-editor/docs/gap-analysis-and-platform-rfc.md`,
 §13 scoping, §14 authoring, §15 import resolution, §16 work plan). This file
 is the map of what is built.
 
