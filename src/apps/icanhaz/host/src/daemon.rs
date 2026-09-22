@@ -161,7 +161,28 @@ impl Services {
 
     /// The wRPC provider other local hosts declare through.
     pub fn configuration_provider(&self) -> ConfigurationProvider {
-        ConfigurationProvider::new(Arc::clone(&self.registry))
+        let providers = Arc::clone(&self.providers);
+        let store = self.store.clone();
+        let credentials = Arc::clone(&self.credentials);
+        let registry_access = Arc::clone(&self.registry_access);
+        ConfigurationProvider::new(Arc::clone(&self.registry)).with_changed(Arc::new(
+            move |capability: String| {
+                let providers = Arc::clone(&providers);
+                let store = store.clone();
+                let credentials = Arc::clone(&credentials);
+                let registry_access = Arc::clone(&registry_access);
+                Box::pin(async move {
+                    reload(
+                        &capability,
+                        &providers,
+                        store.as_ref(),
+                        &credentials,
+                        &registry_access,
+                    )
+                    .await
+                })
+            },
+        ))
     }
 
     /// The wRPC provider components are added and fetched through.
@@ -200,20 +221,39 @@ impl Services {
 
     /// The capabilities that cache their configuration re-read it here.
     async fn reload(&self, capability: &str) {
-        match capability {
-            "inference" => self.providers.reload().await,
-            "registries" => {
-                if let Some(store) = &self.store {
-                    self.credentials.reload(store).await;
-                }
+        reload(
+            capability,
+            &self.providers,
+            self.store.as_ref(),
+            &self.credentials,
+            &self.registry_access,
+        )
+        .await
+    }
+}
+
+/// The capabilities that cache their configuration re-read it here, after
+/// the tray or the command line changed it.
+async fn reload(
+    capability: &str,
+    providers: &Arc<Providers>,
+    store: Option<&Store>,
+    credentials: &Arc<crate::fetch::Credentials>,
+    registry_access: &Arc<crate::registry::RegistryAccess>,
+) {
+    match capability {
+        "inference" => providers.reload().await,
+        "registries" => {
+            if let Some(store) = store {
+                credentials.reload(store).await;
             }
-            "registry" => {
-                if let Some(store) = &self.store {
-                    self.registry_access.reload(store).await;
-                }
-            }
-            _ => {}
         }
+        "registry" => {
+            if let Some(store) = store {
+                registry_access.reload(store).await;
+            }
+        }
+        _ => {}
     }
 }
 

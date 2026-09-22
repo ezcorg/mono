@@ -14,6 +14,7 @@ use anyhow::{bail, Context as _};
 use clap::{Parser, Subcommand};
 
 use icanhaz_host::components::{self, client as components_client};
+use icanhaz_host::configuration_serve::client as configuration_client;
 use icanhaz_host::scaffold::{self, WorldSpec};
 
 #[derive(Parser)]
@@ -37,6 +38,24 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum Capability {
+    /// Set one configured instance: `icanhaz capability configure registry default username=theo password:secret=pw`.
+    /// A value is `key=value` (text), or typed as `key:secret=`, `key:boolean=`,
+    /// `key:number=`, `key:select=`.
+    Configure {
+        capability: String,
+        instance: String,
+        #[arg(required = true)]
+        values: Vec<String>,
+        #[arg(long, env = "ICANHAZ_WS", default_value = "ws://127.0.0.1:7777")]
+        daemon: String,
+    },
+    /// Remove one configured instance.
+    Unconfigure {
+        capability: String,
+        instance: String,
+        #[arg(long, env = "ICANHAZ_WS", default_value = "ws://127.0.0.1:7777")]
+        daemon: String,
+    },
     /// Validate a component and print its world (imports, exports, hash).
     Inspect {
         wasm: PathBuf,
@@ -142,11 +161,8 @@ enum Capability {
     },
 }
 
-fn ws(daemon: &str) -> anyhow::Result<wrpc_websockets::Client<'static>> {
-    let builder = wrpc_websockets::tokio_websockets::ClientBuilder::new()
-        .uri(daemon)
-        .with_context(|| format!("daemon url `{daemon}`"))?;
-    Ok(wrpc_websockets::Client::from_builder(builder))
+async fn ws(daemon: &str) -> anyhow::Result<icanhaz_host::ws_client::MuxClient> {
+    icanhaz_host::ws_client::MuxClient::connect(daemon).await
 }
 
 fn print_info(info: &components::ComponentInfo, json: bool) -> anyhow::Result<()> {
@@ -229,7 +245,7 @@ async fn main() -> anyhow::Result<()> {
             build,
             builder,
         } => {
-            let client = ws(&daemon)?;
+            let client = ws(&daemon).await?;
             if icanhaz_host::fetch::ComponentSource::is_source(&wasm) {
                 icanhaz_host::fetch::ComponentSource::parse(&wasm)?;
                 match components_client::fetch(&client, (), &wasm).await? {
@@ -251,19 +267,68 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => bail!("{e}"),
             }
         }
+        Capability::Configure {
+            capability,
+            instance,
+            values,
+            daemon,
+        } => {
+            use icanhaz_host::configuration_serve::bindings::ezco::ezcap::forms::{
+                ActualInput, UserInput,
+            };
+            let mut inputs = Vec::new();
+            for v in &values {
+                let (key, value) = v
+                    .split_once('=')
+                    .with_context(|| format!("`{v}` is not key=value"))?;
+                let (name, ty) = key.split_once(':').unwrap_or((key, "str"));
+                let value = match ty {
+                    "str" => ActualInput::Str(value.to_string()),
+                    "secret" => ActualInput::Secret(value.to_string()),
+                    "select" => ActualInput::Select(value.to_string()),
+                    "boolean" => ActualInput::Boolean(value.parse().with_context(|| format!("`{value}` is not a boolean"))?),
+                    "number" => ActualInput::Number(value.parse().with_context(|| format!("`{value}` is not a number"))?),
+                    "datetime" => ActualInput::Datetime(value.to_string()),
+                    other => bail!("`{other}` is not an input type (str, secret, select, boolean, number, datetime)"),
+                };
+                inputs.push(UserInput {
+                    name: name.to_string(),
+                    value,
+                });
+            }
+            let client = ws(&daemon).await?;
+            match configuration_client::configure(&client, (), &capability, &instance, &inputs)
+                .await?
+            {
+                Ok(()) => println!("configured {capability} {instance}"),
+                Err(e) => bail!("{e}"),
+            }
+        }
+        Capability::Unconfigure {
+            capability,
+            instance,
+            daemon,
+        } => {
+            let client = ws(&daemon).await?;
+            match configuration_client::unconfigure(&client, (), &capability, &instance).await? {
+                Ok(true) => println!("removed {capability} {instance}"),
+                Ok(false) => println!("{capability} {instance} was not configured"),
+                Err(e) => bail!("{e}"),
+            }
+        }
         Capability::Publish {
             hash,
             reference,
             daemon,
         } => {
-            let client = ws(&daemon)?;
+            let client = ws(&daemon).await?;
             match components_client::publish(&client, (), &hash, &reference).await? {
                 Ok(p) => println!("{}\t{}", p.reference, p.digest),
                 Err(e) => bail!("{e}"),
             }
         }
         Capability::Unpublish { reference, daemon } => {
-            let client = ws(&daemon)?;
+            let client = ws(&daemon).await?;
             match components_client::unpublish(&client, (), &reference).await? {
                 Ok(true) => println!("unpublished {reference}"),
                 Ok(false) => println!("{reference} was not published"),
@@ -271,13 +336,13 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Capability::Published { daemon } => {
-            let client = ws(&daemon)?;
+            let client = ws(&daemon).await?;
             for p in components_client::published(&client, ()).await? {
                 println!("{}\t{}\t{}", p.reference, p.digest, p.hash);
             }
         }
         Capability::List { daemon, json } => {
-            let client = ws(&daemon)?;
+            let client = ws(&daemon).await?;
             let list = components_client::all(&client, ()).await?;
             for c in list {
                 let info = components::ComponentInfo {
@@ -299,7 +364,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Capability::Get { hash, out, daemon } => {
-            let client = ws(&daemon)?;
+            let client = ws(&daemon).await?;
             match components_client::get(&client, (), &hash).await? {
                 Ok(bytes) => {
                     std::fs::write(&out, &bytes)?;

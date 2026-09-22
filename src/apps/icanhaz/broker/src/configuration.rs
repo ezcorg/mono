@@ -207,12 +207,14 @@ impl Declared {
         if instance.is_empty() {
             bail!("the {} needs a name", self.instance_noun);
         }
+        // A name is what a person types: letters, digits, `-`, `_`, `.`, and
+        // `:` so a registry host may carry its port (`localhost:5000`).
         if !instance
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
         {
             bail!(
-                "`{instance}`: a {} name is letters, digits, `-`, `_` and `.`",
+                "`{instance}`: a {} name is letters, digits, `-`, `_`, `.` and `:`",
                 self.instance_noun
             );
         }

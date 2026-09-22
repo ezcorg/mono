@@ -156,6 +156,32 @@ the component is offered in the consent window for every grant kind it gates.
 `examples/links` is a complete one: a backlinks index the editor's demo
 drives, tested from a page through the real daemon.
 
+The realistic path, with a second daemon as the publisher: it serves its
+registry with the component published, the daemon behind the demo has a
+credential for that registry, and the page names the component by hash and
+source. Nothing of the publisher's is used remotely; the index runs on the
+consumer over its own vault.
+
+```sh
+src/apps/icanhaz/scripts/demo-publisher.sh      # starts the publisher, publishes links, configures the consumer, prints the demo URL
+```
+
+The URL it prints carries `links-provider` (the hash) and `links-source`
+(the `oci://` reference); the consumer fetches the component, checks the
+hash, and shows the consent card with where it came from. The browser suite
+runs the same flow: its harness starts a publisher beside the test daemon.
+
+Configuration from the command line, for scripts and headless daemons:
+
+```sh
+icanhaz capability configure registry default username=me password:secret=pw   # the served registry's credential
+icanhaz capability configure registries ghcr.io username=me password:secret=tok # a credential for another registry
+icanhaz capability unconfigure registries ghcr.io
+```
+
+The `icanhaz` command talks to a daemon over its multiplexed WebSocket, the
+same framing a page uses.
+
 ## The tray
 
 Capabilities are a list; opening one shows the interfaces a grant of that

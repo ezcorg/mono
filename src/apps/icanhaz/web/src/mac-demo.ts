@@ -217,9 +217,14 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
         (window as unknown as { editor?: MarkdownEditor }).editor = editor;
 
         // Backlinks: a novel capability from the store, lent this page's
-        // filesystem grant. The demo adds the example component itself; a real
-        // vault would name it by hash and source and let the daemon fetch it.
-        void mountLinks(transport, grant, editor, linksMount).catch((e) => console.warn("links unavailable:", e));
+        // filesystem grant. Named by hash and source (`?links-provider=sha256:…
+        // &links-source=oci://…`), the daemon fetches it, checks the hash and
+        // shows the consent card with its origin; without them the demo adds
+        // the example's bytes itself.
+        void mountLinks(transport, grant, editor, linksMount, {
+            provider: params.get("links-provider") ?? undefined,
+            source: params.get("links-source") ?? undefined,
+        }).catch((e) => console.warn("links unavailable:", e));
 
         setStatus(`editing ${filepath} via ${transport.kind} — autosaving to the host`);
     } catch (e) {
@@ -230,12 +235,23 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
 
 /** The backlinks panel under the outline: what links to the open note, the
  *  dangling links in the vault, and a rename that rewrites every link. */
-async function mountLinks(transport: Transport, fsGrant: string, editor: MarkdownEditor, mount: HTMLElement): Promise<void> {
-    const wasm = new Uint8Array(await (await fetch("/fixtures/links.wasm")).arrayBuffer());
-    const added = await addComponent(transport, wasm, undefined);
-    if (added.tag !== "ok") throw new Error(added.val);
+async function mountLinks(
+    transport: Transport,
+    fsGrant: string,
+    editor: MarkdownEditor,
+    mount: HTMLElement,
+    named: { provider?: string; source?: string },
+): Promise<void> {
+    let provider = named.provider;
+    if (!provider) {
+        const wasm = new Uint8Array(await (await fetch("/fixtures/links.wasm")).arrayBuffer());
+        const added = await addComponent(transport, wasm, undefined);
+        if (added.tag !== "ok") throw new Error(added.val);
+        provider = added.val.hash;
+    }
     const token = await requestLinksGrant(transport, {
-        provider: added.val.hash,
+        provider,
+        source: named.source,
         filesystemGrant: fsGrant,
         reason: "show which notes link to the one you are editing",
     });

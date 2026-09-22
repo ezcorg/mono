@@ -871,6 +871,163 @@ mod tests {
         assert_eq!(index.published().await.len(), 1);
     }
 
+    /// The realistic path for a novel capability: another daemon serves its
+    /// registry with the links example published; this daemon, given a
+    /// credential for it, resolves a request naming the component by hash
+    /// and source, fetches it, checks the hash, and serves it over its own
+    /// vault. The publisher's registry never sees a query.
+    #[tokio::test]
+    async fn a_novel_capability_named_by_hash_and_source_is_fetched_from_another_daemons_registry()
+    {
+        use crate::broker::{CapabilityKind, ComponentRequest, FsRequest, FsRights, PathGrant};
+        use crate::component_serve::{component_router, serve_interface, Handles};
+        use std::time::Duration;
+
+        const IFACE: &str = "example:links/links@0.1.0";
+        // The publisher: its registry holds the links example.
+        let (addr, index, publisher_store) = served().await;
+        let links = fixture("links");
+        let published_info = publisher_store.add(&links, None).await.unwrap();
+        index
+            .publish(&published_info.hash, "example/links:v1")
+            .await
+            .expect("published");
+        let hash = published_info.hash.clone();
+        let source = format!("oci://{addr}/example/links:v1");
+
+        // The consumer: an empty store, a credential for the publisher's registry.
+        let dir = tempfile::tempdir().unwrap();
+        let db_source = ezdb::KeySource::File(dir.path().join("k"));
+        let db = Store::open_with(dir.path().join("icanhaz.db"), &db_source)
+            .await
+            .unwrap();
+        let components = Arc::new(ComponentStore::new(dir.path().join("components"), Some(db)));
+        let filesystem = std::fs::read(format!(
+            "{}/../capabilities/filesystem/target/wasm32-wasip2/release/filesystem_capability.wasm",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("build capabilities/filesystem first");
+        let shipped = components.add(&filesystem, None).await.unwrap();
+        components.register_shipped(&shipped);
+        let provider = crate::components::ComponentsProvider::new(Arc::clone(&components))
+            .with_fetcher(Arc::new(fetcher_as(&addr, "theo", "pw")));
+        assert!(
+            components.find(&hash).await.is_none(),
+            "the consumer starts without it"
+        );
+
+        // A wrong credential cannot fetch it.
+        let wrong = crate::components::ComponentsProvider::new(Arc::clone(&components))
+            .with_fetcher(Arc::new(fetcher_as(&addr, "theo", "nope")));
+        let err = wrong.ensure(&hash, Some(&source)).await.unwrap_err();
+        assert!(err.to_lowercase().contains("authorized"), "{err}");
+        assert!(components.find(&hash).await.is_none());
+
+        // The request's provider resolves: fetched, hash-checked, kept with its source.
+        let summary = provider
+            .ensure(&hash, Some(&source))
+            .await
+            .expect("resolved from the publisher");
+        assert_eq!(summary.source.as_deref(), Some(source.as_str()));
+        let held = components.find(&hash).await.expect("now held");
+        assert_eq!(held.provenance.as_ref().unwrap().source, source);
+
+        // Served over the consumer's own vault, through the delegated grant.
+        let grants = crate::broker::GrantStore::shared();
+        let env = crate::components::env_for(&links, IFACE).unwrap();
+        grants.lock().unwrap().add_environment(IFACE, env).unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(vault.join("a.md"), "see [[b]]\n").unwrap();
+        std::fs::write(vault.join("b.md"), "# b\n").unwrap();
+        let (token, fs_token) = {
+            let mut g = grants.lock().unwrap();
+            let fs_token = g.issue(
+                CapabilityKind::Filesystem(FsRequest {
+                    roots: vec![PathGrant {
+                        path: "/".to_string(),
+                        rights: FsRights::READ,
+                    }],
+                }),
+                "vault".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            let token = g.issue(
+                CapabilityKind::Component(ComponentRequest {
+                    provides: IFACE.to_string(),
+                    provider: Some(hash.clone()),
+                    delegated: vec![fs_token.clone()],
+                    source: Some(source.clone()),
+                }),
+                "links".to_string(),
+                Duration::from_secs(60),
+                crate::broker::anonymous_principal(),
+            );
+            (token, fs_token)
+        };
+        let _ = fs_token;
+        let jail = crate::workspace::WorkspaceProvider::new(vault.clone(), grants.clone());
+        let mut raw = crate::raw::Raw::new(grants.clone());
+        raw.root = Some(jail.native_for_grants());
+        raw.open_root = Some(jail.native_open_root());
+        let srv = Arc::new(wrpc_transport::Server::default());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let rpc_addr = listener.local_addr().unwrap().to_string();
+        let accept = {
+            let srv = Arc::clone(&srv);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let _ = srv.accept((), tx, rx).await;
+                }
+            })
+        };
+        let router = component_router(
+            IFACE,
+            Arc::clone(&components),
+            wrpc_transport::tcp::Client::from(rpc_addr.clone()),
+            (),
+            grants.clone(),
+            Arc::new(raw),
+            Handles::new(),
+        )
+        .unwrap();
+        let ty = wasmtime::component::Component::new(router.engine(), &links)
+            .unwrap()
+            .component_type();
+        let _handlers = serve_interface(srv.as_ref(), &router, &ty, IFACE)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let wrpc = wrpc_transport::tcp::Client::from(&rpc_addr);
+        let opened = links_client::example::links::links::open(&wrpc, (), &token)
+            .await
+            .unwrap()
+            .expect("opened");
+        let into_b = links_client::example::links::links::Index::backlinks(
+            &wrpc,
+            (),
+            &opened.as_borrow(),
+            "b",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            into_b.iter().map(|l| l.source.as_str()).collect::<Vec<_>>(),
+            vec!["a.md"]
+        );
+        accept.abort();
+    }
+
+    mod links_client {
+        wit_bindgen_wrpc::generate!({
+            world: "example:links/links-client",
+            path: "../examples/links/wit",
+        });
+    }
+
     #[test]
     fn credentials_prefer_what_is_configured() {
         let credentials = Credentials::default();

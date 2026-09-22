@@ -71,3 +71,5 @@ pub mod registry;
 pub mod remote;
 /// Scaffolds for authoring capabilities (`icanhaz capability new|wrap`).
 pub mod scaffold;
+/// The multiplexed WebSocket client a native program uses to talk to a daemon.
+pub mod ws_client;

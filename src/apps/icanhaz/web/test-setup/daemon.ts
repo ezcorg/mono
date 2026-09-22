@@ -46,7 +46,7 @@ async function waitForPort(port: number, ms = 30000): Promise<void> {
 
 export default async function setup({ provide }: GlobalSetupContext) {
     // Build first (fast when cached) so tests always run against current daemon code.
-    const build = spawnSync("cargo", ["build", "--bin", "icanhazd"], {
+    const build = spawnSync("cargo", ["build", "--bin", "icanhazd", "--bin", "icanhaz"], {
         cwd: REPO_ROOT,
         env: { ...process.env, PATH: PATH_WITH_CARGO },
         stdio: "inherit",
@@ -106,8 +106,57 @@ export default async function setup({ provide }: GlobalSetupContext) {
     provide("icanhazWs", wsUrl);
     console.log(`[icanhaz test daemon] serving ${wsUrl} (jail ${jail})`);
 
+    // A second, distinct daemon: the publisher. It serves its own registry with
+    // the links example published, and the test daemon is given a credential
+    // for it, so a page can name the component by hash and source and have
+    // the test daemon fetch it (the realistic path for a novel capability).
+    const pubWs = await freePort();
+    const pubWt = await freePort();
+    const pubRegistry = await freePort();
+    const pubState = mkdtempSync(join(tmpdir(), "ic-publisher-"));
+    let publisher: ChildProcess | undefined = spawn(join(targetDir, "debug", "icanhazd"), [], {
+        env: {
+            ...process.env,
+            PATH: PATH_WITH_CARGO,
+            ICANHAZ_WS_BIND: `127.0.0.1:${pubWs}`,
+            ICANHAZ_WT_BIND: `127.0.0.1:${pubWt}`,
+            ICANHAZ_REGISTRY_BIND: `127.0.0.1:${pubRegistry}`,
+            ICANHAZ_ROOT: join(pubState, "root"),
+            ICANHAZ_PAIRINGS: join(pubState, "pairings.json"),
+            ICANHAZ_HOSTS: join(pubState, "hosts.json"),
+            ICANHAZ_CONSENT: "auto",
+            ICANHAZ_DB: join(pubState, "icanhaz.db"),
+            ICANHAZ_DB_KEY: "test",
+            ICANHAZ_IROH: "0",
+        },
+        stdio: "inherit",
+    });
+    publisher.on("exit", (code) => {
+        if (code) console.error(`[icanhaz publisher] exited early with code ${code}`);
+        publisher = undefined;
+    });
+    await waitForPort(pubWs);
+    const cli = (args: string[], daemonWs: string): string => {
+        const run = spawnSync(join(targetDir, "debug", "icanhaz"), ["capability", ...args, "--daemon", daemonWs], {
+            env: { ...process.env, PATH: PATH_WITH_CARGO },
+            encoding: "utf8",
+        });
+        if (run.status !== 0) throw new Error(`icanhaz capability ${args[0]} failed: ${run.stderr}`);
+        return run.stdout.trim();
+    };
+    const publisherWs = `ws://127.0.0.1:${pubWs}`;
+    cli(["configure", "registry", "default", "username=publisher", "password:secret=pw"], publisherWs);
+    const linksHash = cli(["add", join(HERE, "..", "..", "host", "fixtures", "links.wasm")], publisherWs);
+    cli(["publish", linksHash, "example/links:v1"], publisherWs);
+    cli(["configure", "registries", `127.0.0.1:${pubRegistry}`, "username=publisher", "password:secret=pw"], wsUrl);
+    const linksSource = `oci://127.0.0.1:${pubRegistry}/example/links:v1`;
+    provide("icanhazLinks", { provider: linksHash, source: linksSource });
+    console.log(`[icanhaz publisher] serving ${publisherWs}, registry 127.0.0.1:${pubRegistry}: ${linksHash} as ${linksSource}`);
+
     return async () => {
         daemon?.kill("SIGKILL");
+        publisher?.kill("SIGKILL");
         try { rmSync(jail, { recursive: true, force: true }); } catch { /* best effort */ }
+        try { rmSync(pubState, { recursive: true, force: true }); } catch { /* best effort */ }
     };
 }

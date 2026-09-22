@@ -35,14 +35,34 @@ use bindings::ezco::ezcap::forms::{
     UserInput as UserInputWire,
 };
 
+/// Told which capability's configuration changed, so what caches it can
+/// re-read (the daemon's providers and credentials).
+pub type Changed = Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ConfigurationProvider {
     registry: Arc<Registry>,
+    changed: Option<Changed>,
 }
 
 impl ConfigurationProvider {
     pub fn new(registry: Arc<Registry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            changed: None,
+        }
+    }
+
+    /// Run `changed` after `configure` or `unconfigure` lands.
+    pub fn with_changed(mut self, changed: Changed) -> Self {
+        self.changed = Some(changed);
+        self
+    }
+
+    async fn notify(&self, capability: &str) {
+        if let Some(changed) = &self.changed {
+            changed(capability.to_string()).await;
+        }
     }
 }
 
@@ -117,6 +137,13 @@ fn declared_from_wire(d: DeclaredWire) -> Declared {
     }
 }
 
+fn user_input_from_wire(u: UserInputWire) -> UserInput {
+    UserInput {
+        name: u.name,
+        value: value_from_wire(u.value),
+    }
+}
+
 fn user_input_to_wire(u: UserInput) -> UserInputWire {
     UserInputWire {
         name: u.name,
@@ -182,6 +209,50 @@ impl<C: AsOrigin + Send + Sync + 'static>
                     .collect(),
             })
             .map_err(|e| e.to_string()))
+    }
+
+    async fn configure(
+        &self,
+        cx: C,
+        capability: String,
+        instance: String,
+        inputs: Vec<UserInputWire>,
+    ) -> anyhow::Result<Result<(), String>> {
+        if let Err(e) = local_only(&cx) {
+            return Ok(Err(e));
+        }
+        let inputs: Vec<UserInput> = inputs.into_iter().map(user_input_from_wire).collect();
+        let res = self
+            .registry
+            .configure(&capability, &instance, &inputs)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+        if res.is_ok() {
+            self.notify(&capability).await;
+        }
+        Ok(res)
+    }
+
+    async fn unconfigure(
+        &self,
+        cx: C,
+        capability: String,
+        instance: String,
+    ) -> anyhow::Result<Result<bool, String>> {
+        if let Err(e) = local_only(&cx) {
+            return Ok(Err(e));
+        }
+        let res = self
+            .registry
+            .unconfigure(&capability, &instance)
+            .await
+            .map(|(_, removed)| removed)
+            .map_err(|e| e.to_string());
+        if res.is_ok() {
+            self.notify(&capability).await;
+        }
+        Ok(res)
     }
 }
 
