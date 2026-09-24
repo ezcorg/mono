@@ -8,7 +8,7 @@ import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import type { FileOperations, FileSearch, VersionLog, VfsInterface } from "@joinezco/storage";
+import { conflictCopyPath, type FileOperations, type FileSearch, type VersionLog, type VfsInterface } from "@joinezco/storage";
 
 /** What a code block needs of a version log (a vault's `versions`). */
 export type FileVersions = Pick<VersionLog, 'head' | 'put' | 'read'>;
@@ -26,18 +26,20 @@ import { contextMenu } from "./context-menu";
 import { navigationHistory } from "./navigation";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
+import { clampRange, findRegion, followRange, lineCount, rangeOf, sliceLines, spliceLines, type LineRange } from "./utils/region";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
 
 // --- File change notification bus for multi-view sync ---
 type FileChangeListener = {
     view: EditorView;
-    callback: (content: string) => void;
+    /** The file's new text, and the version it is when saved through a log. */
+    callback: (content: string, version?: string) => void;
 };
 
 class FileChangeBus {
     private listeners: Map<string, Set<FileChangeListener>> = new Map();
 
-    subscribe(path: string, view: EditorView, callback: (content: string) => void): () => void {
+    subscribe(path: string, view: EditorView, callback: (content: string, version?: string) => void): () => void {
         let set = this.listeners.get(path);
         if (!set) {
             set = new Set();
@@ -52,12 +54,12 @@ class FileChangeBus {
     }
 
     /** Notify all listeners for `path` except the source view. */
-    notify(path: string, content: string, sourceView: EditorView) {
+    notify(path: string, content: string, sourceView: EditorView, version?: string) {
         const set = this.listeners.get(path);
         if (!set) return;
         for (const listener of set) {
             if (listener.view !== sourceView) {
-                listener.callback(content);
+                listener.callback(content, version);
             }
         }
     }
@@ -106,6 +108,13 @@ export type CodeblockConfig = {
      *  version it was made on, and one made on a stale version becomes a
      *  conflict copy beside the file (see `FileEvent`'s `conflict`). */
     versions?: FileVersions;
+    /** Show and edit only these lines of `filepath` (a region, as a note's
+     *  ```` ```src/lib.rs#L40-L80 ```` fence is). The file is the source of
+     *  truth: the lines are read from it (found again by `content`, the
+     *  region's text as last seen, when they have moved), and an edit is
+     *  put back where they are when it is saved. `regionField` has where
+     *  they are now. */
+    range?: LineRange;
     language?: ExtensionOrLanguage;
     dark?: boolean;
     settings?: Partial<EditorSettings>;
@@ -186,6 +195,33 @@ export const currentFileField = StateField.define<{
         return value;
     }
 });
+
+/** Which lines of the file the view shows, as they are numbered in the file
+ *  now (a region: `CodeblockConfig.range`), or null for the whole file. */
+export const setRegionEffect = StateEffect.define<LineRange | null>();
+export const regionField = StateField.define<LineRange | null>({
+    create(state) {
+        const cfg = state.facet(CodeblockFacet);
+        return cfg.filepath && cfg.range ? cfg.range : null;
+    },
+    update(value, tr) {
+        for (const e of tr.effects) {
+            if (e.is(setRegionEffect)) value = e.value;
+            // Another file is opened whole; a region belongs to its file.
+            else if (e.is(openFileEffect) && e.value.path !== tr.startState.field(currentFileField).path) value = null;
+            else if (e.is(closeFileEffect)) value = null;
+        }
+        return value;
+    },
+});
+
+/** The line-number gutter, which numbers a region's lines as the file does. */
+export function numberedLines(): Extension {
+    return [
+        lineNumbers({ formatNumber: (n, state) => String(n + (state.field(regionField, false)?.from ?? 1) - 1) }),
+        highlightActiveLineGutter(),
+    ];
+}
 
 /** Nothing can be typed into a file that is still loading, or one only shown. */
 const fileReadOnly = EditorState.readOnly.compute([currentFileField], (state) => {
@@ -318,7 +354,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, range, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -331,9 +367,10 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
+        regionField,
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
@@ -342,7 +379,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         // showLineNumbers/showFoldGutter above); the settings panel later
         // reconfigures this same compartment to toggle it.
         lineWrappingCompartment.of(wrapLines ? EditorView.lineWrapping : []),
-        lineNumbersCompartment.of(showLineNums ? [lineNumbers(), highlightActiveLineGutter()] : []),
+        lineNumbersCompartment.of(showLineNums ? numberedLines() : []),
         foldGutterCompartment.of(showFold ? [foldGutter()] : []),
         tooltips({ position: "fixed" }),
         showPanel.of(toolbar ? toolbarPanel : null),
@@ -404,7 +441,7 @@ const codeblockView = ViewPlugin.define((view) => {
                 effects.push(lineWrappingCompartment.reconfigure(partial.lineWrap ? EditorView.lineWrapping : []));
             }
             if ('showLineNumbers' in partial) {
-                effects.push(lineNumbersCompartment.reconfigure(partial.showLineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : []));
+                effects.push(lineNumbersCompartment.reconfigure(partial.showLineNumbers ? numberedLines() : []));
             }
             if ('showFoldGutter' in partial) {
                 effects.push(foldGutterCompartment.reconfigure(partial.showFoldGutter ? [foldGutter()] : []));
@@ -426,6 +463,93 @@ const codeblockView = ViewPlugin.define((view) => {
     // before an earlier one), awaitable as a whole by `persistFile`.
     let writing: Promise<void> = Promise.resolve();
 
+    // For a region: the whole file as it was last loaded or saved, and where
+    // the region's lines are in it. The region field mirrors `region`.
+    let shown: string | null = null;
+    let region: LineRange | null = null;
+
+    /** The file's text now and its version (with a log), or null for a
+     *  file that is gone or is not text. */
+    async function current(path: string): Promise<{ text: string | null; version: string | null }> {
+        if (versions) {
+            const head = await versions.head(path);
+            return { text: head ? textOf(await versions.read(head)) : null, version: head?.id ?? null };
+        }
+        return { text: await fs.readFile(path).catch(() => null), version: null };
+    }
+
+    /** Write `text`, the view's document, as `path`: the whole file, or for
+     *  a region, the file with the region's lines put where they are now. */
+    async function store(path: string, text: string, leaving = false): Promise<void> {
+        const parent = dirname(path);
+        if (parent && parent !== '.') {
+            await fs.mkdir(parent, { recursive: true }).catch(console.error);
+        }
+        let content = text;
+        let base = version;
+        // The whole file a region's latest lines would make (a conflict
+        // copy's contents), and where the region is once written.
+        let whole = (lines: string) => lines;
+        let placed: LineRange | null = null;
+        let lost = false;
+        try {
+            if (region && shown !== null) {
+                // When the file has changed since it was shown, the edit goes
+                // where the region's lines are now; when those lines are what
+                // changed, it is a conflict.
+                let into = shown;
+                let at = region;
+                const now = await current(path);
+                if (now.text === shown) base = versions ? now.version : base;
+                else if (now.text !== null || versions) {
+                    const moved = now.text === null ? null : followRange(shown, now.text, region);
+                    if (moved) {
+                        into = now.text!;
+                        at = moved;
+                        base = now.version;
+                    } else lost = true;
+                }
+                whole = (lines) => spliceLines(into, at, lines);
+                content = whole(text);
+                placed = rangeOf(at.from, text);
+            }
+            if (versions) {
+                const result = await versions.put(path, base, content);
+                if (result.ok === false) return conflicted(path, text, result.conflict.path, whole);
+                version = result.version.id;
+            } else if (lost) {
+                const copy = await conflictCopyPath(fs, path);
+                await fs.writeFile(copy, content);
+                return conflicted(path, text, copy, whole);
+            } else {
+                await fs.writeFile(path, content);
+            }
+        } catch (error) {
+            console.error(`Failed to save ${path}`, error);
+            // Still unsaved: the next edit, switch or persist tries again.
+            if (view.state.field(currentFileField).path === path) dirty = true;
+            emitFileEvent(view, { type: 'error', path, error });
+            return;
+        }
+        if (placed) {
+            shown = content;
+            region = placed;
+            const file = view.state.field(currentFileField);
+            if (file.path === path && !file.loading) safeDispatch(view, { effects: setRegionEffect.of(placed) });
+        }
+        if (leaving) LSP.notifyFileChanged(path, FileChangeType.Changed);
+        // The OPEN document is now persisted → send textDocument/didSave. This is what
+        // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
+        // borrow, and other errors that don't run off the live edit buffer, and which
+        // otherwise never update until reload). We write the disk BEFORE didSave so flycheck
+        // reads current content. (didChangeWatchedFiles is for OTHER files — see below.)
+        else LSP.notifyFileSaved(path, content);
+
+        // Notify other views of the same file
+        fileChangeBus.notify(path, content, view, version ?? undefined);
+        emitFileEvent(view, { type: 'save', path });
+    }
+
     /** Write the open file's unsaved edits now, if it has any. */
     const writeNow = (): Promise<void> => {
         save.cancel();
@@ -434,48 +558,18 @@ const codeblockView = ViewPlugin.define((view) => {
         dirty = false;
         const path = fileState.path;
         const content = view.state.doc.toString();
-        writing = writing.then(async () => {
-            // confirm parent exists
-            const parent = dirname(path);
-            if (parent && parent !== '.') {
-                await fs.mkdir(parent, { recursive: true }).catch(console.error);
-            }
-            try {
-                if (versions) {
-                    const result = await versions.put(path, version, content);
-                    if (result.ok === false) return conflicted(path, content, result.conflict.path);
-                    version = result.version.id;
-                } else {
-                    await fs.writeFile(path, content);
-                }
-            } catch (error) {
-                console.error(`Failed to save ${path}`, error);
-                // Still unsaved: the next edit, switch or persist tries again.
-                if (view.state.field(currentFileField).path === path) dirty = true;
-                emitFileEvent(view, { type: 'error', path, error });
-                return;
-            }
-            // The OPEN document is now persisted → send textDocument/didSave. This is what
-            // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
-            // borrow, and other errors that don't run off the live edit buffer, and which
-            // otherwise never update until reload). We write the disk BEFORE didSave so flycheck
-            // reads current content. (didChangeWatchedFiles is for OTHER files — see below.)
-            LSP.notifyFileSaved(path, content);
-
-            // Notify other views of the same file
-            fileChangeBus.notify(path, content, view);
-            emitFileEvent(view, { type: 'save', path });
-        });
+        writing = writing.then(() => store(path, content));
         return writing;
     };
 
     /** A save of `path` was refused: the file changed since it was loaded.
-     *  The edits are at `copy` (the latest of them, if typing went on), and
-     *  the view takes the file as it is now. */
-    async function conflicted(path: string, saved: string, copy: string) {
+     *  The edits are at `copy` (the latest of them, if typing went on; for a
+     *  region, the file with them in it), and the view takes the file as it
+     *  is now. */
+    async function conflicted(path: string, saved: string, copy: string, whole: (lines: string) => string = (lines) => lines) {
         const open = view.state.field(currentFileField).path === path;
         const latest = view.state.doc.toString();
-        if (open && latest !== saved) await fs.writeFile(copy, latest).catch(console.error);
+        if (open && latest !== saved) await fs.writeFile(copy, whole(latest)).catch(console.error);
         emitFileEvent(view, { type: 'conflict', path, copy });
         if (!open) return;
         dirty = false;
@@ -493,13 +587,27 @@ const codeblockView = ViewPlugin.define((view) => {
             unsubscribeFileChanges();
             unsubscribeFileChanges = null;
         }
-        unsubscribeFileChanges = fileChangeBus.subscribe(path, view, (newContent) => {
+        unsubscribeFileChanges = fileChangeBus.subscribe(path, view, (newContent, newVersion) => {
+            // Saved elsewhere: this view's next save is made on that version.
+            if (newVersion !== undefined) version = newVersion;
+            let text = newContent;
+            let moved: LineRange | null = null;
+            if (region && shown !== null) {
+                // A region follows its lines; when they are what changed, it
+                // shows the lines at its place.
+                moved = followRange(shown, newContent, region) ?? clampRange(region, lineCount(newContent));
+                shown = newContent;
+                region = moved;
+                text = sliceLines(newContent, moved);
+            }
             const currentContent = view.state.doc.toString();
-            if (newContent === currentContent) return; // No change
+            const was = view.state.field(regionField);
+            if (text === currentContent && (!moved || (was?.from === moved.from && was.to === moved.to))) return; // No change
             receivingExternalUpdate = true;
             try {
                 view.dispatch({
-                    changes: { from: 0, to: view.state.doc.length, insert: newContent }
+                    changes: text === currentContent ? [] : { from: 0, to: view.state.doc.length, insert: text },
+                    effects: moved ? setRegionEffect.of(moved) : [],
                 });
             } finally {
                 receivingExternalUpdate = false;
@@ -701,15 +809,8 @@ const codeblockView = ViewPlugin.define((view) => {
             dirty = false;
             const oldPath = activePath;
             const oldContent = view.state.doc.toString();
-            const parent = dirname(oldPath);
-            if (parent && parent !== '.') await fs.mkdir(parent, { recursive: true }).catch(console.error);
-            if (versions) {
-                const result = await versions.put(oldPath, version, oldContent).catch((e) => (console.error(e), null));
-                if (result && result.ok === false) emitFileEvent(view, { type: 'conflict', path: oldPath, copy: result.conflict.path });
-            } else {
-                await fs.writeFile(oldPath, oldContent).catch(console.error);
-            }
-            LSP.notifyFileChanged(oldPath, FileChangeType.Changed);
+            writing = writing.then(() => store(oldPath, oldContent, true));
+            await writing;
         }
         try {
             const ext = path.split('.').pop()?.toLowerCase();
@@ -771,8 +872,28 @@ const codeblockView = ViewPlugin.define((view) => {
             const unit = detectIndentationUnit(content) || "    ";
 
             if (ticket !== latestOpen) return;
+
+            // A region: its lines, where they are in the file now. Reopened
+            // (after a conflict), they are followed from the file as it was
+            // shown; opened first, found by the text the host last saw them
+            // with (a note's fence body) if they have moved; otherwise they
+            // are the lines the range names.
+            const wanted = isRasterImage || isBinary ? null : view.state.field(regionField);
+            let placed: LineRange | null = null;
+            if (wanted) {
+                const clamped = clampRange(wanted, lineCount(content));
+                const cfg = view.state.facet(CodeblockFacet);
+                const seen = activePath === null && path === cfg.filepath ? cfg.content : undefined;
+                placed = (activePath === path && shown !== null ? followRange(shown, content, wanted) : null)
+                    ?? (seen && sliceLines(content, clamped) !== seen ? findRegion(content, seen, wanted.from) : null)
+                    ?? clamped;
+            }
+            const lines = placed ? sliceLines(content, placed) : content;
+
             activePath = path;
             version = opened;
+            shown = placed ? content : null;
+            region = placed;
 
             // Check for image/SVG files
             const isSvg = ext === SVG_EXTENSION;
@@ -789,6 +910,7 @@ const codeblockView = ViewPlugin.define((view) => {
                         effects: [
                             ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
                             fileLoadedEffect.of({ path, content, language: null, preview: true }),
+                            setRegionEffect.of(null),
                         ],
                         annotations: Transaction.addToHistory.of(false),
                     };
@@ -808,11 +930,12 @@ const codeblockView = ViewPlugin.define((view) => {
                     const clearDiag = setDiagnostics(view.state, []);
                     return {
                         ...clearDiag,
-                        changes: { from: 0, to: view.state.doc.length, insert: content },
+                        changes: { from: 0, to: view.state.doc.length, insert: lines },
                         effects: [
                             ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
                             indentationCompartment.reconfigure(indentUnit.of(unit)),
-                            fileLoadedEffect.of({ path, content, language: lang }),
+                            fileLoadedEffect.of({ path, content: lines, language: lang }),
+                            setRegionEffect.of(placed),
                             languageServerCompartment.reconfigure([]),
                         ],
                         annotations: Transaction.addToHistory.of(false),
@@ -826,7 +949,9 @@ const codeblockView = ViewPlugin.define((view) => {
 
                 // The file is editable now; its language server joins when
                 // it is ready (a TypeScript worker takes seconds to start).
-                if (lang) void attachLanguageServer(path, lang, ext, ticket);
+                // Not for a region: the server would take its lines for the
+                // whole file.
+                if (lang && !placed) void attachLanguageServer(path, lang, ext, ticket);
             }
 
             // Subscribe to changes from other views of the same file
@@ -886,12 +1011,21 @@ const codeblockView = ViewPlugin.define((view) => {
                 save.cancel();
                 dirty = false;
                 activePath = null;
+                shown = null;
+                region = null;
                 latestOpen++;
                 removePreview();
                 unsubscribeFileChanges?.();
                 unsubscribeFileChanges = null;
                 const closed = u.startState.field(currentFileField).path;
                 if (closed) queueMicrotask(() => emitFileEvent(view, { type: 'close', path: closed }));
+            }
+            // A region that moved in its file is numbered from its new first
+            // line (the gutter redraws its numbers only when its own
+            // configuration changes, or the document does).
+            const startedAt = u.startState.field(regionField)?.from ?? 1;
+            if ((u.state.field(regionField)?.from ?? 1) !== startedAt && u.state.field(settingsField).showLineNumbers) {
+                safeDispatch(view, { effects: lineNumbersCompartment.reconfigure(numberedLines()) });
             }
             // Told after the update, so a listener may dispatch.
             if (file.path && !file.loading && u.transactions.some(isLoad)) {
@@ -972,10 +1106,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, range, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, range, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })]
     });
     const view = new EditorView({ state, parent });
     return view;

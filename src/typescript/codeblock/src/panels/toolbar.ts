@@ -5,9 +5,9 @@
  * gutter-width CSS variables, loading spinner, settings compartment
  * reconfiguration, and the CM StateField / StateEffect plumbing.
  */
-import { EditorView, Panel, lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
 import { goBack, goForward, canGoBack, canGoForward } from "../navigation";
@@ -105,7 +105,7 @@ function handleCMSettingsEntry(view: EditorView, entry: SettingsEntry) {
         const newValue = !s[key];
         const effects: StateEffect<any>[] = [updateSettingsEffect.of({ [key]: newValue })];
         if (key === 'lineWrap') effects.push(lineWrappingCompartment.reconfigure(newValue ? EditorView.lineWrapping : []));
-        if (key === 'showLineNumbers') effects.push(lineNumbersCompartment.reconfigure(newValue ? [lineNumbers(), highlightActiveLineGutter()] : []));
+        if (key === 'showLineNumbers') effects.push(lineNumbersCompartment.reconfigure(newValue ? numberedLines() : []));
         if (key === 'showFoldGutter') effects.push(foldGutterCompartment.reconfigure(newValue ? [foldGutter()] : []));
         // autoHideToolbar handled in update cycle
         safeDispatch(view, { effects });
