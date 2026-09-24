@@ -58,7 +58,7 @@ applied as one transaction that keeps the caret, then saved.
 |---|---|
 | CommonMark + GFM | headings, lists (marker kept), task lists, tables, quotes, code fences (CodeMirror, real LSP; a fence named by a file writes through to it) |
 | Wikilinks `[[note]]`, `[[note\|text]]`, `[[note#heading]]`, `[[#heading]]` | resolved by the host; a dangling link is dimmed and creates its note when followed; `[[` offers the vault's notes |
-| Embeds `![[target]]` | an image by name, a note or one of its sections (read-only), lines of a file `![[src/lib.rs#L40-L80]]`, or a file card |
+| Embeds `![[target]]` | an image by name, a note or one of its sections (read-only), lines of a file `![[src/lib.rs#L40-L80]]` (editable, written back into the file), or a file card |
 | Images `![alt](path)` | read from the vault as bytes; `\|200` in the alt sizes; pasted or dropped images are stored under `attachments/` |
 | Front matter | a properties table, YAML on focus; `id:` assigned on first open when the host asks |
 | Math `$…$`, `$$…$$` | KaTeX by default (loaded on first use), any `MathRenderer` otherwise; prices stay text |

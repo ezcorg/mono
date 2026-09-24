@@ -68,14 +68,12 @@ Chrome at `/usr/bin/google-chrome` or `CHROME_PATH`.
 
 ## Where to continue
 
-1. **What E2's editor half left** (RFC §16): editable region embeds
-   (`![[src/lib.rs#L40-L80]]` as an editor over those lines, writing the
-   range back with `vault.versions.put` on the version it showed); a review
-   entry in the editor when a save becomes a conflict copy (today a
-   `conflict` event and the copy); signing keys for the version log (a
-   `Signer` is injected; the keys belong with the identity work). The
-   icanhaz half (overlay membrane, `clonefile` resolver, the workspace
-   block) is not this brief's.
+1. **What E2's editor half left** (RFC §16): a review entry in the editor
+   when a save becomes a conflict copy (today a `conflict` event and the
+   copy); signing keys for the version log (a `Signer` is injected; the
+   keys belong with the identity work). The icanhaz half (overlay
+   membrane, `clonefile` resolver, the workspace block) is not this
+   brief's.
 2. **What E1 left** (RFC §16): persist the vault's index as a per-device cache keyed by mtime (it rebuilds on
    open today); tags and a property index; block ids assigned by the
    editor (`^abc`); highlight `==x==`; diagrams behind a renderer interface
