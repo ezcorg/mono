@@ -14,7 +14,7 @@
  *         toolbar: { search: vault.search, files: vault.files },
  *     })
  */
-import { FileType, walk, type VfsInterface } from './vfs.js'
+import { FileType, type VfsInterface } from './vfs.js'
 import { basename, dirname, extname, isHidden, isNote, normalizePath } from './path.js'
 import { SearchIndex, type FileSearch } from './search.js'
 import type { FileOperations } from './files.js'
@@ -117,11 +117,29 @@ export class Vault {
     async rebuild(): Promise<void> {
         this.graph = new LinkGraph()
         this.text.clear()
-        for await (const rooted of walk(this.store, '/')) {
-            const path = normalizePath(rooted)
-            if (!this.ignore(path)) await this.indexFile(path)
+        for await (const path of this.walk('')) {
+            // A note that cannot be read is still there to link to.
+            await this.indexFile(path).catch(() => this.addFile(path))
         }
         this.changed()
+    }
+
+    /** The files under `dir` the vault indexes. A folder `ignore` leaves out
+     *  is not entered (`.git` can be large), and one that cannot be read is
+     *  passed over rather than failing the walk. */
+    private async *walk(dir: string): AsyncGenerator<string> {
+        let entries: [string, FileType][]
+        try {
+            entries = await this.store.readDir(dir || '/')
+        } catch {
+            return
+        }
+        for (const [name, type] of entries) {
+            const path = dir ? `${dir}/${name}` : name
+            if (this.ignore(path)) continue
+            if (type === FileType.Directory) yield* this.walk(path)
+            else yield path
+        }
     }
 
     /** Stop following the store. */
@@ -286,20 +304,29 @@ export class Vault {
     }
 
     /** Bring the index in line with the store at `path` (a file, a directory,
-     *  or something no longer there). */
+     *  or something no longer there). Everything is read first and the index
+     *  changed in one step, so nothing asking meanwhile (a rename resolving
+     *  links while the store reports the move) sees the path missing. */
     private async reindexUnder(path: string): Promise<void> {
         const clean = normalizePath(path)
+        const found: [string, string | null][] = []
+        const read = async (file: string) => {
+            if (!isNote(file)) return found.push([file, null])
+            const text = await this.store.readFile(file).catch(() => null)
+            if (text !== null) found.push([file, text])
+        }
+        const stat = this.ignore(clean) ? null : await this.store.stat(clean).catch(() => null)
+        if (stat?.type === FileType.Directory) {
+            for await (const file of this.walk(clean)) await read(file)
+        } else if (stat) {
+            await read(clean)
+        }
         for (const known of [...this.graph.files.all()]) {
             if (known === clean || known.startsWith(`${clean}/`)) this.removeFile(known)
         }
-        const stat = await this.store.stat(clean).catch(() => null)
-        if (stat?.type === FileType.Directory) {
-            for await (const rooted of walk(this.store, clean)) {
-                const file = normalizePath(rooted)
-                if (!this.ignore(file)) await this.indexFile(file)
-            }
-        } else if (stat && !this.ignore(clean)) {
-            await this.indexFile(clean)
+        for (const [file, text] of found) {
+            if (text === null) this.addFile(file)
+            else this.setNote(file, text)
         }
         this.changed()
     }

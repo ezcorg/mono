@@ -208,6 +208,38 @@ describe('keeping current', () => {
         vault.close()
     })
 
+    it('renames while watching the store as it would without: the move’s own events change nothing', async () => {
+        const store = memoryVfs({ 'a/plan.md': '# Plan', 'x.md': 'See [[plan]].' })
+        const vault = await Vault.open(store)
+        expect(await vault.rename('a/plan.md', 'b/plan.md')).toBe(0)
+        expect(await store.readFile('x.md')).toBe('See [[plan]].')
+        await tick()
+        expect(vault.backlinks('b/plan.md').map((l) => l.source)).toEqual(['x.md'])
+        vault.close()
+    })
+
+    it('walks around what it leaves out, and past what it cannot read', async () => {
+        const store = memoryVfs({ 'a.md': '[[b]]', 'b.md': '# B', '.git/objects/x': 'blob', 'locked/c.md': '# C' })
+        const listed: string[] = []
+        const spy: VfsInterface = {
+            ...store,
+            readFile: async (path) => {
+                if (normalizePath(path) === 'b.md') throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+                return store.readFile(path)
+            },
+            readDir: async (path) => {
+                listed.push(normalizePath(path))
+                if (normalizePath(path) === 'locked') throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+                return store.readDir(path)
+            },
+        }
+        const vault = await Vault.open(spy, { watch: false })
+        expect(vault.paths()).toEqual(['a.md', 'b.md'])
+        expect(listed.some((p) => p.startsWith('.git'))).toBe(false)
+        // b.md could not be read, but [[b]] still finds it.
+        expect(vault.unresolved()).toEqual([])
+    })
+
     it('leaves dot-directories out', async () => {
         const vault = await Vault.open(await fixtureCopy(), { watch: false })
         expect(vault.paths().some((f) => f.startsWith('.obsidian'))).toBe(false)
