@@ -1,4 +1,4 @@
-import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, TransactionSpec } from "@codemirror/state";
+import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, Transaction, TransactionSpec } from "@codemirror/state";
 import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, showPanel, tooltips, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./themes/index";
@@ -126,14 +126,15 @@ export const configCompartment = new Compartment();
 export const languageSupportCompartment = new Compartment();
 export const languageServerCompartment = new Compartment();
 export const indentationCompartment = new Compartment();
-export const readOnlyCompartment = new Compartment();
 export const lineWrappingCompartment = new Compartment();
 export const lineNumbersCompartment = new Compartment();
 export const foldGutterCompartment = new Compartment();
 
 // Effects + Fields for async file handling
 export const openFileEffect = StateEffect.define<{ path: string; skipSave?: boolean }>();
-export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null }>();
+/** A file's contents arrived. `image` marks a raster image: previewed, never
+ *  edited or written. */
+export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null; image?: boolean }>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
@@ -147,34 +148,49 @@ export const currentFileField = StateField.define<{
     content: string;
     language: ExtensionOrLanguage | null;
     loading: boolean;
+    /** A raster image, shown as a preview: read-only, never written. */
+    image: boolean;
 }>({
     create(state) {
         const cfg = state.facet(CodeblockFacet);
         if (cfg.filepath) {
             // Seed an initial load; the plugin will react after init without dispatching during construction
-            return { path: cfg.filepath, content: "", language: null, loading: true };
+            return { path: cfg.filepath, content: "", language: null, loading: true, image: false };
         }
         // No initial file; start with provided content
-        return { path: null, content: cfg.content || "", language: cfg.language || null, loading: false };
+        return { path: null, content: cfg.content || "", language: cfg.language || null, loading: false, image: false };
     },
     update(value, tr) {
         for (let e of tr.effects) {
             if (e.is(openFileEffect)) {
-                return { path: e.value.path, content: "", language: null, loading: true };
+                return { path: e.value.path, content: "", language: null, loading: true, image: false };
             }
             if (e.is(fileLoadedEffect)) {
-                return { path: e.value.path, content: e.value.content, language: e.value.language, loading: false };
+                return { path: e.value.path, content: e.value.content, language: e.value.language, loading: false, image: !!e.value.image };
             }
         }
         return value;
     }
 });
 
-// A safe dispatcher to avoid nested-update errors from UI events during CM updates
-function safeDispatch(view: EditorView, spec: TransactionSpec) {
+/** Nothing can be typed into a file that is still loading, or into an image. */
+const fileReadOnly = EditorState.readOnly.compute([currentFileField], (state) => {
+    const file = state.field(currentFileField);
+    return file.loading || file.image;
+});
+
+/** Whether a transaction is the user's (or a command's) edit, as opposed to
+ *  a file's contents arriving or another view's save being mirrored. */
+const isLoad = (tr: Transaction) => tr.effects.some((e) => e.is(fileLoadedEffect));
+
+// A safe dispatcher to avoid nested-update errors from UI events during CM updates.
+// A spec that depends on the document (a range to replace) is given as a
+// function, so it is computed against the state it is applied to: other
+// dispatches may land before the microtask runs.
+export function safeDispatch(view: EditorView, spec: TransactionSpec | (() => TransactionSpec)) {
     // Always queue to a microtask so we never dispatch within an ongoing update cycle
     queueMicrotask(() => {
-        try { view.dispatch(spec); } catch (e) { console.error(e); }
+        try { view.dispatch(typeof spec === 'function' ? spec() : spec); } catch (e) { console.error(e); }
     });
 }
 
@@ -229,7 +245,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
-        readOnlyCompartment.of(EditorState.readOnly.of(false)),
+        fileReadOnly,
         // Honour the initial `lineWrap` setting (consistent with
         // showLineNumbers/showFoldGutter above); the settings panel later
         // reconfigures this same compartment to toggle it.
@@ -306,10 +322,16 @@ const codeblockView = ViewPlugin.define((view) => {
         }
     });
 
+    // Edits not yet written to the open file. Set by the user's edits, never
+    // by a file's contents arriving, so opening and leaving a file (an image,
+    // a file with CRLFs) writes nothing.
+    let dirty = false;
+
     // Debounced save
     const save = debounce(async () => {
         const fileState = view.state.field(currentFileField);
-        if (fileState.path && !fileState.loading) {
+        if (fileState.path && !fileState.loading && !fileState.image && dirty) {
+            dirty = false;
             const content = view.state.doc.toString();
             // confirm parent exists
             const parent = dirname(fileState.path);
@@ -490,18 +512,45 @@ const codeblockView = ViewPlugin.define((view) => {
         });
     }
 
+    /** Start (or reuse) the language server for `path` and attach it, if
+     *  the file is still the one open when it is ready. */
+    async function attachLanguageServer(path: string, lang: string, ext: string | undefined, ticket: number) {
+        // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
+        const tsExtensions = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts'];
+        const { typescript } = view.state.facet(CodeblockFacet);
+        let lsp: Extension | null = null;
+        try {
+            const libFiles = typescript?.resolveLib && ext && tsExtensions.includes(ext)
+                ? await prefillTypescriptDefaults(fs, typescript.resolveLib, typescript)
+                : getCachedLibFiles();
+            lsp = await LSP.client({ language: lang as any, path, fs, libFiles });
+        } catch (lspErr) {
+            // Gracefully degrade when LSP is unavailable (e.g. missing worker, test environment)
+            console.warn("LSP unavailable for this view:", lspErr);
+        }
+        if (!lsp || ticket !== latestOpen) return;
+        safeDispatch(view, { effects: languageServerCompartment.reconfigure([lsp]) });
+    }
+
+    // Each open is numbered; only the latest may put its file in the view,
+    // so when opens overlap the last one asked for wins, whichever read ends first.
+    let latestOpen = 0;
+
     async function handleOpen(path: string) {
         if (!path) return;
         if (opening === path) return;
         opening = path;
+        const ticket = ++latestOpen;
         // Cancel the debounced save and manually flush the current file.
         // We can't use save.flush() because openFileEffect has already updated
         // currentFileField.path to the NEW path, but the document still holds
         // the OLD file's content. Using activePath ensures we write to the
         // correct location.
         save.cancel();
-        // A read-only view (an image) has nothing of its own to write back.
-        if (activePath && view.state.field(settingsField).autosave && !view.state.readOnly) {
+        // Only edits are written back: an image, or a file opened and left
+        // untouched, is not.
+        if (activePath && dirty && view.state.field(settingsField).autosave) {
+            dirty = false;
             const oldPath = activePath;
             const oldContent = view.state.doc.toString();
             const parent = dirname(oldPath);
@@ -552,26 +601,7 @@ const codeblockView = ViewPlugin.define((view) => {
 
             const unit = detectIndentationUnit(content) || "    ";
 
-            // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
-            const tsExtensions = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts'];
-            const { typescript } = view.state.facet(CodeblockFacet);
-            let libFiles: Record<string, string> | undefined;
-            if (typescript?.resolveLib && ext && tsExtensions.includes(ext)) {
-                libFiles = await prefillTypescriptDefaults(fs, typescript.resolveLib, typescript);
-            } else {
-                libFiles = getCachedLibFiles();
-            }
-
-            let lsp: Extension | null = null;
-            if (lang) {
-                try {
-                    lsp = await LSP.client({ language: lang as any, path, fs, libFiles });
-                } catch (lspErr) {
-                    // Gracefully degrade when LSP is unavailable (e.g. missing worker, test environment)
-                    console.warn("LSP unavailable for this view:", lspErr);
-                }
-            }
-
+            if (ticket !== latestOpen) return;
             activePath = path;
 
             // Check for image/SVG files
@@ -581,41 +611,51 @@ const codeblockView = ViewPlugin.define((view) => {
                 // Raster image: show preview, hide editor content
                 // Clear diagnostics + change content in one dispatch to avoid
                 // stale decoration positions from the previous file.
-                const clearDiag = setDiagnostics(view.state, []);
-                safeDispatch(view, {
-                    ...clearDiag,
-                    changes: { from: 0, to: view.state.doc.length, insert: content },
-                    effects: [
-                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
-                        fileLoadedEffect.of({ path, content, language: null }),
-                        readOnlyCompartment.reconfigure(EditorState.readOnly.of(true)),
-                    ]
+                safeDispatch(view, () => {
+                    const clearDiag = setDiagnostics(view.state, []);
+                    return {
+                        ...clearDiag,
+                        changes: { from: 0, to: view.state.doc.length, insert: content },
+                        effects: [
+                            ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
+                            fileLoadedEffect.of({ path, content, language: null, image: true }),
+                        ],
+                        annotations: Transaction.addToHistory.of(false),
+                    };
                 });
                 showImagePreview(imageUrl);
             } else {
                 // Remove any existing preview
                 removePreview();
 
-                // Clear diagnostics + change content + reconfigure LSP in one
-                // atomic dispatch. Separate dispatches cause RangeError when
-                // stale LSP decorations reference positions beyond the new
-                // document's length.
-                const clearDiag = setDiagnostics(view.state, []);
-                safeDispatch(view, {
-                    ...clearDiag,
-                    changes: { from: 0, to: view.state.doc.length, insert: content },
-                    effects: [
-                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
-                        indentationCompartment.reconfigure(indentUnit.of(unit)),
-                        fileLoadedEffect.of({ path, content, language: lang }),
-                        languageServerCompartment.reconfigure(lsp ? [lsp] : []),
-                    ]
+                // The file's text, with the last file's diagnostics and
+                // language server gone, in one transaction computed when it
+                // is applied (another open may have changed the document
+                // since this one began). Kept out of the undo history, so undo
+                // cannot bring the last file's text into this one.
+                safeDispatch(view, () => {
+                    const clearDiag = setDiagnostics(view.state, []);
+                    return {
+                        ...clearDiag,
+                        changes: { from: 0, to: view.state.doc.length, insert: content },
+                        effects: [
+                            ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
+                            indentationCompartment.reconfigure(indentUnit.of(unit)),
+                            fileLoadedEffect.of({ path, content, language: lang }),
+                            languageServerCompartment.reconfigure([]),
+                        ],
+                        annotations: Transaction.addToHistory.of(false),
+                    };
                 });
 
                 // SVG: show live preview below the editor
                 if (isSvg) {
                     showSvgView(content, 'preview');
                 }
+
+                // The file is editable now; its language server joins when
+                // it is ready (a TypeScript worker takes seconds to start).
+                if (lang) void attachLanguageServer(path, lang, ext, ticket);
             }
 
             // Subscribe to changes from other views of the same file
@@ -623,7 +663,7 @@ const codeblockView = ViewPlugin.define((view) => {
         } catch (e) {
             console.error("Failed to open file", e);
         } finally {
-            opening = null;
+            if (opening === path) opening = null;
         }
     }
 
@@ -663,15 +703,15 @@ const codeblockView = ViewPlugin.define((view) => {
                 }
             }
 
-            // Keep read-only in sync with loading state without dispatching new transactions
-            const prev = u.startState.field(currentFileField);
-            const next = u.state.field(currentFileField);
-            if (prev.loading !== next.loading) {
-                // Reconfigure readOnly via compartment inside the same update when possible
-                safeDispatch(view, { effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(next.loading)) });
+            // A file arriving replaces whatever was unsaved (written, or
+            // given up with autosave off, when it was opened).
+            if (u.transactions.some(isLoad)) dirty = false;
+            const edited = !receivingExternalUpdate && u.transactions.some((tr) => tr.docChanged && !isLoad(tr));
+            const file = u.state.field(currentFileField);
+            if (edited && file.path && !file.loading && !file.image) {
+                dirty = true;
+                if (u.state.field(settingsField).autosave) save();
             }
-
-            if (u.docChanged && !receivingExternalUpdate && !u.state.field(currentFileField).loading && u.state.field(settingsField).autosave) save();
 
             // Live SVG preview update
             if (u.docChanged && previewEl?.classList.contains('cm-svg-preview')) {
