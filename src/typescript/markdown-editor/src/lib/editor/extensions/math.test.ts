@@ -58,6 +58,17 @@ describe('Math syntax', () => {
         expect(reloaded.getText()).toBe('Not math: $x$ and $y$.')
     })
 
+    it('keeps a literal dollar literal when what would close it is past formatting or a link', () => {
+        for (const md of ['pay \\$a **b$** later', 'An \\$x [[plan]] y$ here', '*a \\$b* c$d']) {
+            const { editor } = make({ content: md })
+            expect(nodes(editor, 'mathInline')).toHaveLength(0)
+            const saved = getMarkdownContent(editor)
+            const { editor: reloaded } = make({ content: saved })
+            expect(nodes(reloaded, 'mathInline')).toHaveLength(0)
+            expect(reloaded.getText()).toBe(editor.getText())
+        }
+    })
+
     it('stays text when turned off', () => {
         const { editor } = make({ content: 'a $x$ b', math: false })
         expect(nodes(editor, 'mathInline')).toHaveLength(0)
