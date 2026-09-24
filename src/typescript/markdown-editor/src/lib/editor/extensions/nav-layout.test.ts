@@ -128,3 +128,23 @@ describe('The left column', () => {
         expect(list.hidden).toBe(false)
     })
 })
+
+describe('The note column', () => {
+    it('fits the host it is given, however long a word in the note', async () => {
+        // A host that lays the editor out as a flex item (as the demo's
+        // window does), narrower than the note's longest word at heading size.
+        const container = document.createElement('div')
+        container.style.cssText = 'display: flex; width: 420px; height: 400px; overflow: auto;'
+        document.body.append(container)
+        const word = '`@joinezco/markdown-editor-and-then-some`'
+        const editor = createEditor({ element: container, content: `# ${word}\n\nhttps://example.com/${'a'.repeat(120)}` })
+        created.push({ editor, container })
+        await waitFor(() => editor.getText().includes('example.com'), 3000)
+        const root = box(container, '.ezco-mde')
+        expect(root.width).toBeLessThanOrEqual(420)
+        // Nothing to scroll sideways to: the word wraps inside the column.
+        expect(container.scrollWidth).toBeLessThanOrEqual(container.clientWidth)
+        expect(box(container, '.ezco-mde-body h1').right).toBeLessThanOrEqual(container.getBoundingClientRect().right)
+    })
+})
+

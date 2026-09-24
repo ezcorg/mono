@@ -69,10 +69,14 @@ export const styleModule: StyleModule = new StyleModule({
     // outline). A consumer bounds the height + makes `.ezco-mde-content` scroll
     // to pin the toolbar while only the body scrolls.
     // ─────────────────────────────────────────────────────────────
+    // Both may shrink below their content's widest word (a long URL, a
+    // package name in a heading): it wraps inside the column instead of
+    // widening the editor past its host.
     '.ezco-mde': {
         display: 'flex',
         'flex-direction': 'column',
         'min-height': 0,
+        'min-width': 0,
         flex: 1,
     },
     '.ezco-mde-content': {
@@ -80,6 +84,7 @@ export const styleModule: StyleModule = new StyleModule({
         'flex-direction': 'row',
         'align-items': 'stretch',
         'min-height': 0,
+        'min-width': 0,
         flex: 1,
         // Establish a stacking context so embedded codeblocks' internal z-indexes
         // (their sticky panel header uses z-index: 200) stay confined to the
