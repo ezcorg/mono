@@ -509,6 +509,12 @@ pub async fn serve_websocket_all(
             loop {
                 match listener.accept().await {
                     Ok((stream, _addr)) => {
+                        // Every invocation is a few small frames each way; with
+                        // Nagle on, Linux holds each behind the peer's delayed
+                        // ACK (~40 ms an op on loopback; macOS hid it).
+                        if let Err(err) = stream.set_nodelay(true) {
+                            tracing::warn!(?err, "TCP_NODELAY");
+                        }
                         let srv = Arc::clone(&srv);
                         tokio::spawn(async move {
                             match wrpc_websockets::ServerBuilder::new().accept(stream).await {
