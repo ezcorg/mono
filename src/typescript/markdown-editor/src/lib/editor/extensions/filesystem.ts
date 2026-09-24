@@ -5,7 +5,8 @@ import {
     codeblock,
     basicSetup,
 } from '@joinezco/codeblock'
-import { dirname, type VfsInterface } from '@joinezco/storage'
+import { dirname, extname, type VfsInterface } from '@joinezco/storage'
+import { IMAGE_EXTENSIONS } from './assets'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 
@@ -373,8 +374,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })
                 await fs.writeFile(path, '')
             }
-            // 2. Read the new file (may reject — let the caller handle it).
-            const content = await fs.readFile(path)
+            // 2. Read the new file (may reject — let the caller handle it). An
+            //    image is not text: the code view previews it from its bytes.
+            const content = IMAGE_EXTENSIONS.has(extname(path)) ? '' : await fs.readFile(path)
             // 3. Retarget autosave at the new file *before* swapping content,
             //    and load without scheduling a save.
             storage.options.filepath = path

@@ -31,6 +31,8 @@ import { Mathematics, MathOptions } from './extensions/math';
 import { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
 import { Callout, CalloutTitle } from './extensions/callout';
 import { SourceView } from './extensions/source-view';
+import { Image, ImageOptions } from './extensions/image';
+import { Embed } from './extensions/embed';
 import { MarkdownText } from './extensions/text';
 import type { LinkIndex } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
@@ -125,6 +127,9 @@ export type MarkdownSetupOptions = {
     footnotes?: boolean;
     /** `> [!note]` callouts. `false` leaves them as plain quotes. */
     callouts?: boolean;
+    /** Images. `attachments` is the vault folder pasted and dropped images are
+     *  stored in (default `attachments`); `false` leaves pasting to the browser. */
+    images?: Partial<ImageOptions>;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -143,13 +148,15 @@ export type MarkdownEditor = Editor & {
 }
 
 /** The document and its syntax beyond CommonMark: the nodes both setups share. */
-function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts'>): AnyExtension[] {
+function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts' | 'images'>): AnyExtension[] {
     return [
         // The document admits front matter before its blocks; the text node
         // escapes what would otherwise read back as syntax.
         options.frontMatter !== false ? FrontMatterDocument : Document,
         MarkdownText,
         Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
+        Embed,
+        Image.configure(options.images ?? {}),
         ...(options.frontMatter !== false ? [FrontMatter.configure(options.frontMatter ?? {})] : []),
         ...(options.math !== false ? [Mathematics.configure(options.math ?? {})] : []),
         ...(options.footnotes !== false ? [FootnoteReference, FootnoteDefinition] : []),
@@ -266,7 +273,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
  * individual extensions you want.
  */
 export function minimalSetup(
-    options: { extensions?: AnyExtension[] } & Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts'> = {},
+    options: { extensions?: AnyExtension[] } & Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts' | 'images'> = {},
 ): AnyExtension[] {
     return [
         ExtendedLink.configure({}),
@@ -412,6 +419,9 @@ export { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
 export { Callout, CalloutTitle, calloutType } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';
+export { Image, attachImages } from './extensions/image';
+export type { ImageOptions } from './extensions/image';
+export { Embed } from './extensions/embed';
 export type { LinksPanelOptions } from './extensions/links-panel';
 export type { WikilinkOptions, WikilinkStorage } from './extensions/wikilink';
 export { findFragment, revealFragment } from './extensions/fragment';

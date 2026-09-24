@@ -58,6 +58,9 @@ export interface WikilinkStorage {
     /** Resolve a wikilink target from the open note (cached until the
      *  resolver reports a change). */
     resolve: (target: string) => Promise<LinkResolution | null>
+    /** Resolve a target of either syntax from the open note; undefined when
+     *  the host supplied no resolver. */
+    resolveTarget: (target: string, syntax: LinkSyntax) => Promise<LinkResolution | null | undefined>
     /** Be told when cached resolutions were dropped. */
     onResolutionsChanged: (listener: () => void) => () => void
 }
@@ -185,6 +188,7 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
             // Installed in onCreate, once the editor exists.
             follow: async () => false,
             resolve: async () => null,
+            resolveTarget: async () => undefined,
             onResolutionsChanged: () => () => {},
         }
     },
@@ -207,23 +211,25 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
             return () => listeners.delete(listener)
         }
 
-        storage.resolve = (target) => {
-            if (!resolver) return Promise.resolve(null)
+        storage.resolveTarget = (target, syntax) => {
+            if (!resolver) return Promise.resolve(undefined)
             const from = openPath(editor)
-            const key = `${from ?? ''}\u0000${target}`
+            const key = `${syntax}\u0000${from ?? ''}\u0000${target}`
             let pending = cache.get(key)
             if (!pending) {
-                pending = resolver.resolve(target, from, 'wikilink').catch(() => null)
+                pending = resolver.resolve(target, from, syntax).catch(() => null)
                 cache.set(key, pending)
             }
             return pending
         }
 
+        storage.resolve = async (target) => (await storage.resolveTarget(target, 'wikilink')) ?? null
+
         storage.follow = async (target, fragment, syntax = 'wikilink') => {
             const from = openPath(editor)
             if (!target.trim()) return revealFragment(editor, fragment)
             if (!resolver) return false
-            const resolution = syntax === 'wikilink' ? await storage.resolve(target) : await resolver.resolve(target, from, syntax)
+            const resolution = await storage.resolveTarget(target, syntax)
             if (!resolution) return false
             if (open) {
                 await open(resolution, fragment, editor)

@@ -384,24 +384,33 @@ const codeblockView = ViewPlugin.define((view) => {
         }
     }
 
+    let previewUrl: string | null = null;
+
     function removePreview() {
         if (previewEl) {
             previewEl.remove();
             previewEl = null;
         }
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+            previewUrl = null;
+        }
         svgViewMode = 'preview';
         showScroller();
     }
 
-    function showImagePreview(content: string) {
+    /** Show an image from its URL (an object URL over the file's bytes, or a
+     *  data URL an older import stored as text); null when unreadable. */
+    function showImagePreview(content: string | null) {
         removePreview();
         previewEl = document.createElement('div');
         previewEl.className = 'cm-image-preview';
         previewEl.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;min-height:200px;overflow:auto;background:var(--cm-background, #1e1e1e);';
 
         const img = document.createElement('img');
-        if (content.startsWith('data:') || content.startsWith('http') || content.startsWith('blob:')) {
+        if (content && (content.startsWith('data:') || content.startsWith('http') || content.startsWith('blob:'))) {
             img.src = content;
+            if (content.startsWith('blob:')) previewUrl = content;
         } else {
             const msg = document.createElement('div');
             msg.style.cssText = 'color:var(--cm-toolbar-color, #ccc);text-align:center;';
@@ -489,7 +498,8 @@ const codeblockView = ViewPlugin.define((view) => {
         // the OLD file's content. Using activePath ensures we write to the
         // correct location.
         save.cancel();
-        if (activePath && view.state.field(settingsField).autosave) {
+        // A read-only view (an image) has nothing of its own to write back.
+        if (activePath && view.state.field(settingsField).autosave && !view.state.readOnly) {
             const oldPath = activePath;
             const oldContent = view.state.doc.toString();
             const parent = dirname(oldPath);
@@ -512,7 +522,17 @@ const codeblockView = ViewPlugin.define((view) => {
             });
 
             const exists = await fs.exists(path);
-            const content = exists ? await fs.readFile(path) : "";
+            const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
+            // An image is bytes: previewed from them, never read into the text editor.
+            let imageUrl: string | null = null;
+            if (isRasterImage && exists) {
+                const bytes = await fs.readBytes(path).catch(() => null);
+                const head = bytes ? new TextDecoder().decode(bytes.subarray(0, 5)) : '';
+                imageUrl = !bytes ? null
+                    : head === 'data:' ? new TextDecoder().decode(bytes)
+                    : URL.createObjectURL(new Blob([bytes as BlobPart], { type: `image/${ext === 'jpg' ? 'jpeg' : ext === 'ico' ? 'x-icon' : ext}` }));
+            }
+            const content = exists && !isRasterImage ? await fs.readFile(path) : "";
 
             // Ensure the file exists on VFS before LSP initialization.
             // The LSP uses readDirectory to find source files and match them
@@ -559,7 +579,6 @@ const codeblockView = ViewPlugin.define((view) => {
             activePath = path;
 
             // Check for image/SVG files
-            const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
             const isSvg = ext === SVG_EXTENSION;
 
             if (isRasterImage) {
@@ -576,7 +595,7 @@ const codeblockView = ViewPlugin.define((view) => {
                         readOnlyCompartment.reconfigure(EditorState.readOnly.of(true)),
                     ]
                 });
-                showImagePreview(content);
+                showImagePreview(imageUrl);
             } else {
                 // Remove any existing preview
                 removePreview();

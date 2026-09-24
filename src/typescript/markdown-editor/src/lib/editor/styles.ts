@@ -1547,6 +1547,89 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-callout-content > * + *': {
         'margin-top': '0.4em',
     },
+    // Images (extensions/image.ts) and embeds (extensions/embed.ts).
+    '.ezco-mde-image': {
+        display: 'inline-block',
+        'max-width': '100%',
+        'vertical-align': 'bottom',
+    },
+    '.ezco-mde-image > img, .ezco-mde-embed--image > img': {
+        display: 'block',
+        'max-width': '100%',
+        'border-radius': '4px',
+    },
+    '.ezco-mde-image.is-missing::before': {
+        content: '"⚠ " attr(data-missing)',
+        display: 'inline-block',
+        padding: '0.3em 0.6em',
+        'border-radius': '4px',
+        'font-size': '0.85em',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        background: 'var(--ezco-mde-code-bg)',
+    },
+    '.ProseMirror-selectednode.ezco-mde-image > img, .ProseMirror-selectednode.ezco-mde-embed': {
+        outline: '2px solid var(--ezco-mde-accent)',
+        'outline-offset': '2px',
+    },
+    '.ezco-mde-embed': {
+        display: 'inline-block',
+        'max-width': '100%',
+        'vertical-align': 'bottom',
+    },
+    '.ezco-mde-embed--note, .ezco-mde-embed--region': {
+        display: 'block',
+        margin: '0.3em 0',
+        padding: '0.5em 0.9em',
+        'border-left': '3px solid var(--ezco-mde-divider)',
+        'border-radius': '4px',
+        background: 'color-mix(in srgb, var(--ezco-mde-code-bg) 60%, transparent)',
+    },
+    '.ezco-mde-embed-header': {
+        display: 'block',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': '12px',
+        'margin-bottom': '0.3em',
+    },
+    '.ezco-mde-embed-open': {
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--ezco-mde-link-color)',
+        font: 'inherit',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-embed-card': {
+        display: 'inline-block',
+        margin: 0,
+        padding: '0.2em 0.6em',
+        'border-radius': '4px',
+        background: 'var(--ezco-mde-code-bg)',
+    },
+    '.ezco-mde-embed.is-missing .ezco-mde-embed-open': {
+        opacity: 0.6,
+    },
+    '.ezco-mde-embed-content > * + *': {
+        'margin-top': '0.6em',
+    },
+    '.ezco-mde-embed-content > :first-child': {
+        'margin-top': 0,
+    },
+    '.ezco-mde-embed-region': {
+        margin: 0,
+        'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        'font-size': '0.85em',
+        'white-space': 'pre-wrap',
+        'counter-reset': 'none',
+    },
+    '.ezco-mde-embed-line::before': {
+        content: 'attr(data-line)',
+        display: 'inline-block',
+        width: '3em',
+        'margin-right': '1em',
+        'text-align': 'right',
+        opacity: 0.45,
+        'user-select': 'none',
+    },
     // ─────────────────────────────────────────────────────────────
     // Links panel (extensions/links-panel.ts): what links to the open note,
     // and its links to notes not written yet. By default a footer under the

@@ -250,17 +250,6 @@ function injectNerdFontFace() {
     document.head.appendChild(style);
 }
 
-// ---------------------------------------------------------------------------
-// File import helper
-// ---------------------------------------------------------------------------
-function fileToDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
-}
 
 // ---------------------------------------------------------------------------
 // Standalone toolbar styles (not scoped to .cm-editor)
@@ -1279,7 +1268,7 @@ export class ToolbarCore {
             if (dir) await fs.mkdir(dir, { recursive: true });
             const ext = path.split('.').pop()?.toLowerCase() || '';
             if (BINARY_IMAGE_EXTS.has(ext)) {
-                await fs.writeFile(path, await fileToDataUrl(file));
+                await fs.writeBytes(path, new Uint8Array(await file.arrayBuffer()));
             } else {
                 await fs.writeFile(path, await file.text());
             }
