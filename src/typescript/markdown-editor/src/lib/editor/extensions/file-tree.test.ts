@@ -106,6 +106,18 @@ describe('File tree', () => {
         expect(await vault.fs.readFile('index.md')).toBe('# Index\n\nSee [[roadmap]]. Also this.!')
     })
 
+    it('acts on the row that has focus, however it got there', async () => {
+        const { container } = await open('index.md')
+        await waitFor(() => shown(container).includes('zebra.md'), 3000)
+        // Focus moved without the tree's own keys (Tab, a screen reader).
+        row(container, 'zebra.md').focus()
+        await userEvent.keyboard('{F2}')
+        await waitFor(() => !!container.querySelector('.ezco-mde-files-rename'), 2000)
+        expect(container.querySelector('.ezco-mde-files-rename')?.closest('[data-path]')?.getAttribute('data-path')).toBe('zebra.md')
+        await userEvent.keyboard('{Escape}')
+        expect(row(container, 'zebra.md').tabIndex).toBe(0)
+    })
+
     it('deletes after asking, closing the note if it was open', async () => {
         const { editor, vault, container } = await open('zebra.md')
         await waitFor(() => shown(container).includes('zebra.md'), 3000)

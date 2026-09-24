@@ -70,6 +70,16 @@ class FileTreeView {
         this.list.className = 'ezco-mde-files-list'
         this.list.setAttribute('role', 'tree')
         this.list.addEventListener('keydown', (e) => this.onKeyDown(e))
+        // The keys act on the focused row, however focus got there (Tab, a
+        // screen reader, a click), and that row is the one Tab returns to.
+        this.list.addEventListener('focusin', (e) => {
+            const path = (e.target as HTMLElement).closest<HTMLElement>('[role="treeitem"]')?.dataset.path
+            if (!path || path === this.active) return
+            this.active = path
+            for (const el of this.list.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
+                el.tabIndex = el.dataset.path === path ? 0 : -1
+            }
+        })
         this.status = document.createElement('div')
         this.status.className = 'ezco-mde-files-status'
         this.status.setAttribute('role', 'status')
