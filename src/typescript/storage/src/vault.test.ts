@@ -147,6 +147,18 @@ describe('renaming keeps every link meaning what it meant', () => {
         expect(await store.readFile('index.md')).toContain('![diagram](media/diagram.png) and an embed ![[diagram.png]]')
     })
 
+    it('moves a note whose link wraps an image, fixing both paths', async () => {
+        const store = memoryVfs({
+            'a/n.md': 'See [![thumb](thumb.png)](full.png) end\n',
+            'a/thumb.png': new Uint8Array([1]),
+            'a/full.png': new Uint8Array([2]),
+        })
+        await store.mkdir('b', { recursive: true })
+        const vault = await Vault.open(store, { watch: false })
+        await vault.rename('a/n.md', 'b/n.md')
+        expect(await store.readFile('b/n.md')).toBe('See [![thumb](../a/thumb.png)](../a/full.png) end\n')
+    })
+
     it('refuses to replace an existing file', async () => {
         const vault = await Vault.open(await fixtureCopy(), { watch: false })
         await expect(vault.rename('projects/plan.md', 'index.md')).rejects.toThrow(/exists/)

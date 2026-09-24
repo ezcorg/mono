@@ -315,7 +315,10 @@ export function rewriteLinks(
     let out = ''
     let last = 0
     let count = 0
-    for (const link of scanLinks(text)) {
+    // In target order, not link order: a link inside another's text
+    // (`[![thumb](a.png)](b.png)`) starts later but its target comes first.
+    // Targets never overlap, so splicing them in order is safe.
+    for (const link of scanLinks(text).sort((a, b) => a.targetStart - b.targetStart)) {
         const next = replace(link)
         if (next === null || next === link.target) continue
         out += text.slice(last, link.targetStart) + next

@@ -90,4 +90,16 @@ describe('rewriting links', () => {
         const out = rewriteLinks(text, (l) => (l.target.startsWith('plan') ? l.target.replace('plan', 'next') : null))
         expect(out).toEqual({ text: 'A [[next#Goals|goals]], [p](next.md "t"), [[other]] and `[[plan]]`.\n', count: 2 })
     })
+
+    it('rewrites a link inside another link’s text, the inner target coming first', () => {
+        const rename = (l: { target: string }) => `../a/${l.target}`
+        expect(rewriteLinks('See [![thumb](thumb.png)](full.png) end', rename)).toEqual({
+            text: 'See [![thumb](../a/thumb.png)](../a/full.png) end',
+            count: 2,
+        })
+        expect(rewriteLinks('[see [[plan]]](other.md)', (l) => (l.kind === 'wikilink' ? 'next' : 'else.md'))).toEqual({
+            text: '[see [[next]]](else.md)',
+            count: 2,
+        })
+    })
 })
