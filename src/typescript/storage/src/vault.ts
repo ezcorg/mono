@@ -21,6 +21,7 @@ import { pathTaken, type FileOperations } from './files.js'
 import { LinkGraph, syntaxOf } from './links/graph.js'
 import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve.js'
 import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax.js'
+import { VersionLog, type VersionLogOptions } from './versions.js'
 import type { LinkIndex, LinkRef, LinkResolution, LinkResolver, LinkSuggestion, LinkSyntax } from './links/types.js'
 
 export interface VaultOptions {
@@ -30,6 +31,8 @@ export interface VaultOptions {
     /** Leave a path out of every index (the default leaves out dot-files and
      *  dot-directories: `.git`, `.obsidian`, the vault's own state). */
     ignore?: (path: string) => boolean
+    /** The version log's options (a signer, say). */
+    versions?: VersionLogOptions
 }
 
 /** The links of a vault, as the editor asks for them. */
@@ -44,6 +47,8 @@ export class Vault {
     readonly search: FileSearch
     /** Creating, moving (links kept) and deleting files. */
     readonly files: FileOperations
+    /** Every file's version log, with writes refused on a stale version. */
+    readonly versions: VersionLog
 
     private graph = new LinkGraph()
     private text = new SearchIndex()
@@ -68,6 +73,8 @@ export class Vault {
     ) {
         this.ignore = options.ignore ?? isHidden
         this.fs = this.observe(store)
+        // Over the observed filesystem, so what it writes is indexed.
+        this.versions = new VersionLog(this.fs, options.versions)
         const ready = () => this.ready
         this.links = {
             backlinks: async (note) => (await ready(), this.graph.backlinks(note)),
@@ -233,6 +240,7 @@ export class Vault {
         const parent = dirname(to)
         if (parent && !(await this.store.exists(parent))) await this.store.mkdir(parent, { recursive: true })
         await this.store.rename(from, to)
+        await this.versions.move(from, to)
         for (const [a, b] of moved) {
             this.graph.moveFile(a, b)
             this.text.remove(a)

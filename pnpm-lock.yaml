@@ -769,6 +769,9 @@ importers:
 
   src/typescript/storage:
     dependencies:
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
       markdown-it:
         specifier: ^14.1.0
         version: 14.3.1
@@ -13894,8 +13897,7 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
-  '@noble/hashes@1.8.0':
-    optional: true
+  '@noble/hashes@1.8.0': {}
 
   '@nodable/entities@3.0.0': {}
 
