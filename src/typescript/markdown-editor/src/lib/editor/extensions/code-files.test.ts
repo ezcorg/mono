@@ -40,7 +40,7 @@ describe('Files that are not Markdown', () => {
         const { container, persistence } = open(fs, 'a.md')
         await waitFor(() => !!container.querySelector('.ProseMirror')?.textContent?.includes('A'), 3000)
         await persistence.loadFile('doc.pdf')
-        await waitFor(() => !!container.querySelector('.cm-binary-preview'), 3000)
+        expect(container.querySelector('.cm-binary-preview')).not.toBeNull()
         await autosave()
         await persistence.loadFile('a.md')
         await autosave()
@@ -50,14 +50,31 @@ describe('Files that are not Markdown', () => {
 
     it('writes a code file’s edits, once, and nothing when it is only opened', async () => {
         const { fs, writes } = recorded({ 'a.md': '# A', 'main.ts': 'export const x = 1;\n' })
-        const { container, persistence } = open(fs, 'main.ts')
-        await waitFor(() => !!container.querySelector('.ezco-mde-code-host .cm-content')?.textContent?.includes('x = 1'), 3000)
+        const { container, persistence } = open(fs, 'a.md')
+        await waitFor(() => !!container.querySelector('.ProseMirror')?.textContent?.includes('A'), 3000)
+        const events: Array<{ type: string; path: string }> = []
+        persistence.subscribe((event: { type: string; path: string }) => events.push({ type: event.type, path: event.path }))
+        // Resolves with the file in the code view.
+        await persistence.loadFile('main.ts')
+        expect(persistence.codeView.state.doc.toString()).toBe('export const x = 1;\n')
         await autosave()
         expect(writes).toEqual([])
-        const code = persistence.codeView
-        code.dispatch({ changes: { from: 0, insert: '// edited\n' }, userEvent: 'input.type' })
+        persistence.codeView.dispatch({ changes: { from: 0, insert: '// edited\n' }, userEvent: 'input.type' })
         await autosave()
         expect(await fs.readFile('main.ts')).toBe('// edited\nexport const x = 1;\n')
         expect(writes).toEqual(['main.ts'])
+        // The code view's lifecycle is the editor's.
+        expect(events.filter((e) => e.path === 'main.ts')).toEqual([
+            { type: 'load', path: 'main.ts' },
+            { type: 'save', path: 'main.ts' },
+        ])
+    })
+
+    it('rejects opening a file it cannot read', async () => {
+        const store = memoryVfs({ 'a.md': '# A', 'locked.ts': 'x' })
+        const fs: VfsInterface = { ...store, readBytes: () => Promise.reject(new Error('EACCES')) }
+        const { container, persistence } = open(fs, 'a.md')
+        await waitFor(() => !!container.querySelector('.ProseMirror')?.textContent?.includes('A'), 3000)
+        await expect(persistence.loadFile('locked.ts')).rejects.toThrow('EACCES')
     })
 })

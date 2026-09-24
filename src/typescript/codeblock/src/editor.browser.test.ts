@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { undo } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import { memoryVfs, type VfsInterface } from '@joinezco/storage';
-import { createCodeblock, currentFileField, openFileEffect } from './editor';
+import { createCodeblock, onFileEvent, openFileEffect, whenFileLoaded, type FileEvent } from './editor';
 
 const views: EditorView[] = [];
 afterEach(() => {
@@ -23,11 +23,7 @@ function mount(fs: VfsInterface, filepath?: string, toolbar = false): EditorView
 
 const open = (view: EditorView, path: string) => view.dispatch({ effects: openFileEffect.of({ path }) });
 
-const loaded = (view: EditorView, path: string) =>
-    until(() => {
-        const file = view.state.field(currentFileField);
-        return file.path === path && !file.loading;
-    });
+const loaded = (view: EditorView, path: string) => whenFileLoaded(view, path);
 
 /** Past the autosave's 500 ms debounce. */
 const autosave = () => new Promise((r) => setTimeout(r, 700));
@@ -110,6 +106,48 @@ describe('Files in a code block', () => {
         expect(view.state.doc.toString()).toBe('C');
         expect(await fs.readFile('b.txt')).toBe('B');
         expect(await fs.readFile('c.txt')).toBe('C');
+    });
+
+    it('say when they are loaded and saved, and can be waited for', async () => {
+        const fs = memoryVfs({ 'a.txt': 'A', 'b.txt': 'B' });
+        const view = mount(fs, 'a.txt');
+        const events: FileEvent[] = [];
+        onFileEvent(view, (event) => events.push(event));
+        await whenFileLoaded(view, 'a.txt');
+        // Already loaded: resolves at once.
+        await whenFileLoaded(view);
+        open(view, 'b.txt');
+        await whenFileLoaded(view, 'b.txt');
+        view.dispatch({ changes: { from: 1, insert: '!' }, userEvent: 'input.type' });
+        await until(() => events.some((e) => e.type === 'save'));
+        expect(events).toEqual([
+            { type: 'load', path: 'a.txt' },
+            { type: 'load', path: 'b.txt' },
+            { type: 'save', path: 'b.txt' },
+        ]);
+        expect(await fs.readFile('b.txt')).toBe('B!');
+    });
+
+    it('say when one cannot be opened, or saved (and keep the edits unsaved)', async () => {
+        const store = memoryVfs({ 'a.txt': 'A', 'locked.txt': 'L' });
+        let failWrites = true;
+        const fs: VfsInterface = {
+            ...store,
+            readBytes: (path) => (path === 'locked.txt' ? Promise.reject(new Error('EACCES')) : store.readBytes(path)),
+            writeFile: (path, data) => (failWrites ? Promise.reject(new Error('EROFS')) : store.writeFile(path, data)),
+        };
+        const view = mount(fs, 'a.txt');
+        const events: FileEvent[] = [];
+        onFileEvent(view, (event) => events.push(event));
+        await loaded(view, 'a.txt');
+        view.dispatch({ changes: { from: 1, insert: '!' }, userEvent: 'input.type' });
+        await until(() => events.some((e) => e.type === 'error'));
+        expect(events.find((e) => e.type === 'error')).toMatchObject({ path: 'a.txt', error: { message: 'EROFS' } });
+        failWrites = false;
+        // Still unsaved, so leaving writes it.
+        open(view, 'locked.txt');
+        await expect(whenFileLoaded(view, 'locked.txt')).rejects.toThrow('EACCES');
+        expect(await store.readFile('a.txt')).toBe('A!');
     });
 
     it('keep one file’s edits out of the next one’s undo', async () => {

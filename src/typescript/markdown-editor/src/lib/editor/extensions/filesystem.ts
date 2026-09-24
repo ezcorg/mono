@@ -5,6 +5,9 @@ import {
     codeblock,
     basicSetup,
     persistFile,
+    onFileEvent,
+    whenFileLoaded,
+    type FileEvent,
 } from '@joinezco/codeblock'
 import { dirname, type VfsInterface } from '@joinezco/storage'
 import { EditorState } from '@codemirror/state'
@@ -71,12 +74,10 @@ function getMarkdown(editor: Editor): string {
     return editor.storage.markdown.getMarkdown()
 }
 
-/** What happened to the open file: it was loaded into the editor, or the
- *  editor's content was written to it. */
-export interface FileEvent {
-    type: 'load' | 'save'
-    path: string
-}
+/** What happened to the open file (the codeblock's lifecycle, which a code
+ *  file in the code view goes through): loaded into the editor, written, or
+ *  failed to open or save. */
+export type { FileEvent }
 
 export interface LoadOptions {
     /** Create the file (empty) when it does not exist. */
@@ -295,6 +296,11 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 parent: host,
             })
             storage.codeHost = host
+            // The code view's lifecycle is the open file's.
+            const codeView = storage.codeView
+            onFileEvent(codeView, (event) => {
+                if (storage.codeView === codeView) emit(event)
+            })
         }
 
         // Replace the document *without it counting as a user edit*, so a
@@ -327,8 +333,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             } finally {
                 storage.loadingFile = false
             }
+            // A code file is loaded when its codeblock says so.
             const loaded = storage.options.filepath
-            if (loaded) emit({ type: 'load', path: loaded })
+            if (loaded && !storage.codeView) emit({ type: 'load', path: loaded })
             if (didInitialLoad) {
                 scrollEditorToTop(editor.view.dom as HTMLElement)
                 // Move the caret to the start of the freshly-opened file (focus
@@ -408,6 +415,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             //    and load without scheduling a save.
             storage.options.filepath = path
             loadContent(content, options.focus ?? storage.options.focusOnLoad !== false)
+            // Resolves once the file is in the editor, a code file included
+            // (its codeblock reads it); rejects if it cannot be opened.
+            if (storage.codeView) await whenFileLoaded(storage.codeView, path)
         }
 
         // Initial load (also a non-editing load → no spurious save).

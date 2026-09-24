@@ -22,7 +22,8 @@ const { fs, search, files } = vault;
 if (!(await fs.exists('example.ts'))) await fs.writeFile('example.ts', 'export const hello = (name: string) => `hello, ${name}`;\n');
 
 const parent = document.getElementById('editor') as HTMLDivElement;
-createCodeblock({
+// On `window` for the e2e suite, which awaits the view's file lifecycle.
+(window as any).__view = createCodeblock({
     parent, fs, filepath: 'example.ts', language: 'ts', toolbar: true, search, files, cwd: '/',
     settings: { agentUrl: 'http://localhost:3141' },
     typescript: { resolveLib },

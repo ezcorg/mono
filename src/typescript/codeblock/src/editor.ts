@@ -194,6 +194,43 @@ export function textOf(bytes: Uint8Array): string | null {
 
 const persisters = new WeakMap<EditorView, () => Promise<void>>();
 
+/** What happens to the file a code block shows: `load`, its contents are in
+ *  the view (editable, unless it is only shown); `save`, a write of its
+ *  edits has landed; `error`, it could not be opened or a save failed (the
+ *  edits stay unsaved). */
+export type FileEvent =
+    | { type: 'load' | 'save'; path: string }
+    | { type: 'error'; path: string; error: unknown };
+
+const fileListeners = new WeakMap<EditorView, Set<(event: FileEvent) => void>>();
+
+function emitFileEvent(view: EditorView, event: FileEvent) {
+    for (const listener of fileListeners.get(view) ?? []) listener(event);
+}
+
+/** Be told when `view` loads or saves a file. Returns an unsubscribe. */
+export function onFileEvent(view: EditorView, listener: (event: FileEvent) => void): () => void {
+    let listeners = fileListeners.get(view);
+    if (!listeners) fileListeners.set(view, (listeners = new Set()));
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
+
+/** Resolves once `view` shows `path` loaded (at once when it already does);
+ *  without a path, once it shows any file. Rejects if opening it fails. */
+export function whenFileLoaded(view: EditorView, path?: string): Promise<void> {
+    const shows = (file: { path: string | null; loading: boolean }) => !!file.path && !file.loading && (!path || file.path === path);
+    if (shows(view.state.field(currentFileField))) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+        const stop = onFileEvent(view, (event) => {
+            if (event.type === 'save' || (path && event.path !== path)) return;
+            stop();
+            if (event.type === 'error') reject(event.error);
+            else resolve();
+        });
+    });
+}
+
 /** Write the file open in `view` now if it has unsaved edits (autosave on or
  *  off), and resolve once every write of it already started has landed. */
 export function persistFile(view: EditorView): Promise<void> {
@@ -366,7 +403,15 @@ const codeblockView = ViewPlugin.define((view) => {
             if (parent && parent !== '.') {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
-            await fs.writeFile(path, content).catch(console.error);
+            try {
+                await fs.writeFile(path, content);
+            } catch (error) {
+                console.error(`Failed to save ${path}`, error);
+                // Still unsaved: the next edit, switch or persist tries again.
+                if (view.state.field(currentFileField).path === path) dirty = true;
+                emitFileEvent(view, { type: 'error', path, error });
+                return;
+            }
             // The OPEN document is now persisted → send textDocument/didSave. This is what
             // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
             // borrow, and other errors that don't run off the live edit buffer, and which
@@ -376,6 +421,7 @@ const codeblockView = ViewPlugin.define((view) => {
 
             // Notify other views of the same file
             fileChangeBus.notify(path, content, view);
+            emitFileEvent(view, { type: 'save', path });
         });
         return writing;
     };
@@ -710,6 +756,7 @@ const codeblockView = ViewPlugin.define((view) => {
             subscribeToFileChanges(path);
         } catch (e) {
             console.error("Failed to open file", e);
+            if (ticket === latestOpen) emitFileEvent(view, { type: 'error', path, error: e });
         } finally {
             if (opening === path) opening = null;
         }
@@ -756,6 +803,11 @@ const codeblockView = ViewPlugin.define((view) => {
             if (u.transactions.some(isLoad)) dirty = false;
             const edited = !receivingExternalUpdate && u.transactions.some((tr) => tr.docChanged && !isLoad(tr));
             const file = u.state.field(currentFileField);
+            // Told after the update, so a listener may dispatch.
+            if (file.path && !file.loading && u.transactions.some(isLoad)) {
+                const path = file.path;
+                queueMicrotask(() => emitFileEvent(view, { type: 'load', path }));
+            }
             if (edited && file.path && !file.loading && !file.preview) {
                 dirty = true;
                 if (u.state.field(settingsField).autosave) save();
