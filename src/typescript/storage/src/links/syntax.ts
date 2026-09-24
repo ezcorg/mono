@@ -131,7 +131,7 @@ export function scanLinks(text: string): ScannedLink[] {
                 inFrontMatter = false
                 continue
             }
-            if (i > 0) scanWikilinks(line, lineStart, i + 1, out)
+            if (i > 0) scanWikilinks(line, line, lineStart, i + 1, out)
             continue
         }
         const fenceMatch = FENCE.exec(line)
@@ -146,7 +146,7 @@ export function scanLinks(text: string): ScannedLink[] {
             continue
         }
         const masked = maskCode(line)
-        scanWikilinks(masked, lineStart, i + 1, out)
+        scanWikilinks(masked, line, lineStart, i + 1, out)
         scanMarkdownLinks(masked, line, lineStart, i + 1, out)
     }
     return out.sort((a, b) => a.start - b.start)
@@ -184,14 +184,19 @@ function maskCode(line: string): string {
     return out
 }
 
-function scanWikilinks(masked: string, lineStart: number, lineNo: number, out: ScannedLink[]) {
+// Links are found in the masked copy of a line (so code and escaped
+// brackets are not mistaken for links) and read from the source line (so an
+// escape inside one, `[[plan\|alias]]` in a table or `\(` in a destination,
+// means what it does to the editor's parser). The two have the same length.
+
+function scanWikilinks(masked: string, line: string, lineStart: number, lineNo: number, out: ScannedLink[]) {
     let from = 0
     for (;;) {
         const open = masked.indexOf('[[', from)
         if (open < 0) return
         const embed = open > 0 && masked[open - 1] === '!'
         const at = embed ? open - 1 : open
-        const m = matchWikilinkAt(masked, at)
+        const m = matchWikilinkAt(line, at)
         if (!m) {
             from = open + 2
             continue
@@ -211,13 +216,70 @@ function scanWikilinks(masked: string, lineStart: number, lineNo: number, out: S
     }
 }
 
+const PUNCTUATION = /[!-/:-@[-`{-~]/
+
+/**
+ * A link destination and what follows it up to the closing `)`, read from
+ * `line` at `from` as CommonMark does: `<…>`, or a run without spaces in
+ * which parentheses balance and `\(`, `\)` are escapes; then an optional
+ * title in quotes or parentheses. Null when there is no such destination.
+ */
+function readDestination(line: string, from: number): { start: number; end: number; close: number } | null {
+    let i = from
+    while (line[i] === ' ' || line[i] === '\t') i++
+    const start = i
+    if (line[i] === '<') {
+        i++
+        while (i < line.length && line[i] !== '>') {
+            if (line[i] === '<') return null
+            i += line[i] === '\\' && i + 1 < line.length ? 2 : 1
+        }
+        if (i >= line.length) return null
+        i++
+    } else {
+        let depth = 0
+        while (i < line.length) {
+            const c = line[i]
+            if (c === '\\' && PUNCTUATION.test(line[i + 1] ?? '')) {
+                i += 2
+                continue
+            }
+            if (c <= ' ') break
+            if (c === '(') depth++
+            else if (c === ')') {
+                if (depth === 0) break
+                depth--
+            }
+            i++
+        }
+        if (i === start || depth > 0) return null
+    }
+    const end = i
+    while (line[i] === ' ' || line[i] === '\t') i++
+    const quote = line[i]
+    if (i > end && (quote === '"' || quote === "'" || quote === '(')) {
+        const closer = quote === '(' ? ')' : quote
+        i++
+        while (i < line.length && line[i] !== closer) i += line[i] === '\\' ? 2 : 1
+        if (i >= line.length) return null
+        i++
+        while (line[i] === ' ' || line[i] === '\t') i++
+    }
+    return line[i] === ')' ? { start, end, close: i } : null
+}
+
 function scanMarkdownLinks(masked: string, line: string, lineStart: number, lineNo: number, out: ScannedLink[]) {
     // A reference definition: `[id]: destination "title"` at the start of a line.
-    const def = /^ {0,3}\[([^\]]+)\]:[ \t]*(<[^>\n]*>|\S+)/.exec(masked)
+    const def = /^ {0,3}\[([^\]]+)\]:[ \t]*/.exec(masked)
     if (def && !def[1].startsWith('^')) {
-        const dest = def[2]
-        const destStart = def.index + def[0].length - dest.length
-        pushDestination('definition', def[1], dest, destStart, def.index, def[0].length, line, lineStart, lineNo, out)
+        const destStart = def[0].length
+        const angled = line[destStart] === '<'
+        let destEnd = destStart
+        if (angled) destEnd = line.indexOf('>', destStart) + 1
+        else while (destEnd < line.length && line[destEnd] > ' ') destEnd++
+        if (destEnd > destStart) {
+            pushDestination('definition', def[1], destStart, destEnd, def.index, line.length, line, lineStart, lineNo, out)
+        }
         return
     }
     let from = 0
@@ -241,50 +303,35 @@ function scanMarkdownLinks(masked: string, line: string, lineStart: number, line
             from = close + 2
             continue
         }
-        const destFrom = close + 2
-        const rest = masked.slice(destFrom)
-        const destMatch = /^[ \t]*(<[^>\n]*>|[^\s)]+)?/.exec(rest)!
-        const dest = destMatch[1]
-        const endParen = masked.indexOf(')', destFrom + destMatch[0].length)
-        if (!dest || endParen < 0) {
-            from = destFrom
+        const dest = readDestination(line, close + 2)
+        if (!dest) {
+            from = close + 2
             continue
         }
         const image = open > 0 && masked[open - 1] === '!'
-        const destStart = destFrom + destMatch[0].length - dest.length
-        pushDestination(
-            image ? 'image' : 'markdown',
-            line.slice(open + 1, close),
-            dest,
-            destStart,
-            image ? open - 1 : open,
-            endParen + 1 - (image ? open - 1 : open),
-            line,
-            lineStart,
-            lineNo,
-            out,
-        )
-        from = endParen + 1
+        const start = image ? open - 1 : open
+        pushDestination(image ? 'image' : 'markdown', line.slice(open + 1, close), dest.start, dest.end, start, dest.close + 1, line, lineStart, lineNo, out)
+        from = dest.close + 1
     }
 }
 
+/** Record the link whose destination is `line[destStart, destEnd)` (angle
+ *  brackets included), unless it leaves the vault. */
 function pushDestination(
     kind: LinkKind,
     text: string,
-    dest: string,
     destStart: number,
+    destEnd: number,
     start: number,
-    length: number,
+    end: number,
     line: string,
     lineStart: number,
     lineNo: number,
     out: ScannedLink[],
 ) {
-    const angled = dest.startsWith('<')
-    const inner = angled ? dest.slice(1, -1) : dest
+    const angled = line[destStart] === '<'
     const innerStart = destStart + (angled ? 1 : 0)
-    // Read the destination from the source line (the masked copy blanks escapes).
-    const written = line.slice(innerStart, innerStart + inner.length)
+    const written = line.slice(innerStart, destEnd - (angled ? 1 : 0))
     const hash = written.indexOf('#')
     const target = hash < 0 ? written : written.slice(0, hash)
     if (!target || isExternalTarget(written)) return
@@ -297,7 +344,7 @@ function pushDestination(
         targetStart: lineStart + innerStart,
         targetEnd: lineStart + innerStart + target.length,
         start: lineStart + start,
-        end: lineStart + start + length,
+        end: lineStart + end,
         angled,
     })
 }
@@ -328,12 +375,14 @@ export function rewriteLinks(
     return { text: out + text.slice(last), count }
 }
 
-/** Percent-decode a Markdown destination; malformed escapes are kept as is. */
+/** A Markdown destination as the path it names: backslash escapes of
+ *  punctuation undone, then percent-decoded (a malformed `%` is kept). */
 export function decodeDestination(target: string): string {
+    const unescaped = target.replace(/\\([!-/:-@[-`{-~])/g, '$1')
     try {
-        return decodeURI(target)
+        return decodeURI(unescaped)
     } catch {
-        return target
+        return unescaped
     }
 }
 

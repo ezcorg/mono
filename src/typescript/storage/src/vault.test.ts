@@ -159,6 +159,23 @@ describe('renaming keeps every link meaning what it meant', () => {
         expect(await store.readFile('b/n.md')).toBe('See [![thumb](../a/thumb.png)](../a/full.png) end\n')
     })
 
+    it('counts and rewrites links written with escapes: aliases in tables, parentheses in paths', async () => {
+        const store = memoryVfs({
+            'Meeting (2026).md': '# Meeting',
+            'plan.md': '# Plan',
+            'index.md': '| note | link |\n|---|---|\n| p | [[plan\\|The plan]] |\n\nSee [m](Meeting%20\\(2026\\).md).\n',
+        })
+        const vault = await Vault.open(store, { watch: false })
+        expect(vault.backlinks('plan.md').map((l) => l.source)).toEqual(['index.md'])
+        expect(vault.backlinks('Meeting (2026).md').map((l) => l.source)).toEqual(['index.md'])
+        expect(vault.unresolved()).toEqual([])
+        await vault.rename('plan.md', 'next.md')
+        await vault.rename('Meeting (2026).md', 'Meeting 2026.md')
+        const index = await store.readFile('index.md')
+        expect(index).toContain('| p | [[next\\|The plan]] |')
+        expect(index).toContain('See [m](Meeting%202026.md).')
+    })
+
     it('refuses to replace an existing file', async () => {
         const vault = await Vault.open(await fixtureCopy(), { watch: false })
         await expect(vault.rename('projects/plan.md', 'index.md')).rejects.toThrow(/exists/)

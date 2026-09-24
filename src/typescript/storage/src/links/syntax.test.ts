@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatWikilink, parseWikilink, rewriteLinks, scanLinks } from './syntax.js'
+import { decodeDestination, formatWikilink, parseWikilink, rewriteLinks, scanLinks } from './syntax.js'
 
 describe('wikilink grammar', () => {
     const forms = [
@@ -73,6 +73,27 @@ describe('scanning a note for links', () => {
             '[[after]]',
         ].join('\n')
         expect(scanLinks(text).map((l) => l.target)).toEqual(['real', 'after'])
+    })
+
+    it('reads links written with backslash escapes, as the editor writes them', () => {
+        const text = [
+            '| [[plan\\|The plan]] | ![[img.png\\|200]] |',
+            '[a](Meeting%20\\(2026\\).md) and [b](file(1).md) and [c](d.md \'single\') and [e](f.md (paren title))',
+            '[q]: x\\(1\\).md',
+        ].join('\n')
+        const links = scanLinks(text)
+        expect(links.map((l) => [l.kind, l.target, l.text])).toEqual([
+            ['wikilink', 'plan', 'The plan'],
+            ['embed', 'img.png', '200'],
+            ['markdown', 'Meeting%20\\(2026\\).md', 'a'],
+            ['markdown', 'file(1).md', 'b'],
+            ['markdown', 'd.md', 'c'],
+            ['markdown', 'f.md', 'e'],
+            ['definition', 'x\\(1\\).md', 'q'],
+        ])
+        for (const l of links) expect(text.slice(l.targetStart, l.targetEnd)).toBe(l.target)
+        expect(decodeDestination('Meeting%20\\(2026\\).md')).toBe('Meeting (2026).md')
+        expect(decodeDestination('x\\(1\\).md')).toBe('x(1).md')
     })
 
     it('reads wikilinks in front matter, not Markdown links', () => {
