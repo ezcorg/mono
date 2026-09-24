@@ -15,6 +15,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { computeHeadingSlugs } from './slug-utils'
+import { mountInRail } from './rail'
 
 /** Where the sidebar DOM should be placed (same shape as `ToolbarMount`). */
 export type SidebarMount =
@@ -121,6 +122,7 @@ function findScrollContainer(el: HTMLElement | null): HTMLElement {
 
 class SidebarView {
     private nav: HTMLElement
+    private unmount: () => void = () => {}
     private list: HTMLElement
     private entries: OutlineEntry[] = []
     private signature = ''
@@ -174,21 +176,8 @@ class SidebarView {
     }
 
     private mount(mount: SidebarMount | undefined) {
-        const editorRoot = this.view.dom.parentElement as HTMLElement | null
-        if (mount instanceof HTMLElement) {
-            mount.appendChild(this.nav)
-        } else if (typeof mount === 'function' && editorRoot) {
-            const container = mount(editorRoot)
-            if (container instanceof HTMLElement) container.appendChild(this.nav)
-        } else if (editorRoot?.parentElement) {
-            // Default: the sibling immediately before the editor root (left of
-            // it in a flex row).
-            editorRoot.parentElement.insertBefore(this.nav, editorRoot)
-        } else if (editorRoot) {
-            editorRoot.insertBefore(this.nav, this.view.dom)
-        } else {
-            document.body.appendChild(this.nav)
-        }
+        // In the rail beside the note, shared with the file tree.
+        this.unmount = mountInRail(this.nav, mount, this.view.dom.parentElement as HTMLElement | null)
     }
 
     /** Collect the document's headings (in order), with their inline content. */
@@ -328,7 +317,7 @@ class SidebarView {
 
     destroy() {
         this.scrollTarget.removeEventListener('scroll', this.onScroll)
-        this.nav.remove()
+        this.unmount()
     }
 }
 

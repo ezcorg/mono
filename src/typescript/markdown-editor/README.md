@@ -23,7 +23,7 @@ const editor = createEditor({
     search: vault.search, // the ⌘P palette
     files: vault.files, // create / rename (links kept) / delete
     frontMatter: { assignId: () => newNoteId() }, // stable note ids
-    fileTree: {}, // the vault beside the note
+    fileTree: {}, // the vault beside the note (closed until asked for, ⌘⇧E)
 })
 ```
 
@@ -86,7 +86,9 @@ theme's variables.
 - `/`: slash commands; `:` then two letters: emoji; `[[`: link to a note.
 - ⌘/Ctrl+Enter or a click: follow a link. Backspace after a wikilink: edit its
   source.
-- In the file tree: arrows, Enter, F2 to rename, Delete (asks first).
+- ⌘⇧E / Ctrl+Shift+E, or its header: show or hide the file tree (closed until
+  asked for; `fileTree: { open: true }` starts it open). In it: arrows,
+  Enter, F2 to rename, Delete (asks first).
 
 ## Develop
 

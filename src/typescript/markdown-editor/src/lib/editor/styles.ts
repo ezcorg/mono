@@ -98,6 +98,25 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-nav': {
         flex: 'none',
     },
+    // The rail (extensions/rail.ts): the column the outline and the file tree
+    // share, the editor's or the host's. The rail is what stays in view as the
+    // note scrolls, no taller than the scroll area it is in (the height is kept
+    // by script); its panels stack inside it. Pinned on their own, the panels
+    // would pin to the same place and cover each other.
+    '.ezco-mde-rail': {
+        flex: 'none',
+        'align-self': 'flex-start',
+        position: 'sticky',
+        top: 0,
+        'box-sizing': 'border-box',
+        'max-height': 'var(--ezco-mde-rail-height, 100vh)',
+        'overflow-y': 'auto',
+    },
+    '.ezco-mde-rail > .ezco-mde-sidebar, .ezco-mde-rail > .ezco-mde-files': {
+        position: 'static',
+        'max-height': 'none',
+        'overflow-y': 'visible',
+    },
     // The block-action indicator's column — a fixed width so the indicator never
     // overlaps the navbar or the prose; `position: relative` is the positioning
     // context for the absolutely-positioned button.
@@ -1754,7 +1773,44 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'flex',
         'align-items': 'center',
         gap: '2px',
-        padding: '0 4px 6px 8px',
+        padding: '0 4px 6px 0',
+    },
+    // The header opens and closes the tree: a disclosure triangle before the title.
+    '.ezco-mde-files-toggle': {
+        flex: 1,
+        display: 'flex',
+        'align-items': 'center',
+        gap: '4px',
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        // Out into the margin, so the triangle hangs there as the folders' do
+        // and the title lines up with the outline's.
+        padding: '2px 4px',
+        'margin-left': '-10px',
+        'border-radius': '4px',
+        cursor: 'pointer',
+        'text-align': 'left',
+    },
+    '.ezco-mde-files-toggle::before': {
+        content: "'▾'",
+        'font-size': '10px',
+        opacity: 0.5,
+        width: '10px',
+    },
+    '.ezco-mde-files.is-collapsed .ezco-mde-files-toggle::before': {
+        content: "'▸'",
+    },
+    '.ezco-mde-files-toggle:hover, .ezco-mde-files-toggle:focus-visible': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.1))',
+        outline: 'none',
+    },
+    '.ezco-mde-files.is-collapsed .ezco-mde-files-header': {
+        'padding-bottom': 0,
+    },
+    '.ezco-mde-files-actions[hidden], .ezco-mde-files-list[hidden], .ezco-mde-files-status[hidden]': {
+        display: 'none',
     },
     '.ezco-mde-files-title': {
         flex: 1,

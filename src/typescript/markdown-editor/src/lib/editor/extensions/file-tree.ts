@@ -10,11 +10,15 @@
  * Keyboard first, as an ARIA tree: arrows move and open or close folders,
  * Enter opens a file, F2 renames in place, Delete asks (in the row) and
  * deletes. The header makes a new note or folder in the selected folder.
+ *
+ * Closed until asked for (its header, ⌘⇧E, or `toggleFileTree`), unless the
+ * host passes `open`; while closed it reads no folders.
  */
 import { Editor, Extension } from '@tiptap/core'
 import { FileType, basename, dirname, extname, isHidden, joinPath, normalizePath, type FileOperations, type VfsInterface } from '@joinezco/storage'
 import type { SidebarMount } from './sidebar'
 import type { FileSystemStorage } from './filesystem'
+import { mountInRail } from './rail'
 
 export interface FileTreeOptions {
     /** Where to render (see `SidebarMount`); by default before the editor. */
@@ -28,6 +32,17 @@ export interface FileTreeOptions {
     subscribe?: (listener: () => void) => () => void
     /** Leave paths out of the tree (default: dot-files and dot-folders). */
     ignore?: (path: string) => boolean
+    /** Start open (default: closed to its header). */
+    open?: boolean
+}
+
+declare module '@tiptap/core' {
+    interface Commands<ReturnType> {
+        fileTree: {
+            /** Show or hide the file tree (⌘⇧E). */
+            toggleFileTree: () => ReturnType
+        }
+    }
 }
 
 interface Entry {
@@ -40,6 +55,10 @@ class FileTreeView {
     readonly dom: HTMLElement
     private list: HTMLElement
     private status: HTMLElement
+    private toggle: HTMLButtonElement
+    private unmount: () => void = () => {}
+    private actions: HTMLElement
+    private shown = false
     /** Folders shown open. */
     private open = new Set<string>([''])
     /** What each open folder holds, as last read. */
@@ -62,12 +81,24 @@ class FileTreeView {
 
         const header = document.createElement('div')
         header.className = 'ezco-mde-files-header'
+        this.toggle = document.createElement('button')
+        this.toggle.type = 'button'
+        this.toggle.className = 'ezco-mde-files-toggle'
+        this.toggle.title = 'Show or hide the files (⌘⇧E)'
         const title = document.createElement('span')
         title.className = 'ezco-mde-files-title'
         title.textContent = options.title ?? 'Files'
-        header.append(title, this.button('+', 'New note', () => void this.createNote()), this.button('⊞', 'New folder', () => void this.createFolder()))
+        this.toggle.append(title)
+        this.toggle.addEventListener('mousedown', (e) => e.preventDefault())
+        this.toggle.addEventListener('click', () => this.setShown(!this.shown))
+        this.actions = document.createElement('span')
+        this.actions.className = 'ezco-mde-files-actions'
+        this.actions.append(this.button('+', 'New note', () => void this.createNote()), this.button('⊞', 'New folder', () => void this.createFolder()))
+        header.append(this.toggle, this.actions)
         this.list = document.createElement('ul')
         this.list.className = 'ezco-mde-files-list'
+        this.list.id = `ezco-mde-files-${++treeCount}`
+        this.toggle.setAttribute('aria-controls', this.list.id)
         this.list.setAttribute('role', 'tree')
         this.list.addEventListener('keydown', (e) => this.onKeyDown(e))
         // The keys act on the focused row, however focus got there (Tab, a
@@ -85,6 +116,7 @@ class FileTreeView {
         this.status.setAttribute('role', 'status')
         this.dom.append(header, this.list, this.status)
         this.mount(options.mount)
+        this.setShown(!!options.open, false)
 
         const persistence = this.persistence()
         if (persistence) {
@@ -99,6 +131,26 @@ class FileTreeView {
         const current = this.currentPath()
         if (current) this.reveal(current)
         else void this.refresh()
+    }
+
+    /** Show or hide the tree (its header stays); read it when shown. */
+    setShown(shown: boolean, read = true) {
+        this.shown = shown
+        this.dom.classList.toggle('is-collapsed', !shown)
+        this.toggle.setAttribute('aria-expanded', String(shown))
+        this.list.hidden = !shown
+        this.status.hidden = !shown
+        this.actions.hidden = !shown
+        if (shown && read) {
+            const current = this.currentPath()
+            if (current) this.reveal(current)
+            else void this.refresh()
+        }
+    }
+
+    toggleShown() {
+        this.setShown(!this.shown)
+        if (this.shown) this.focusRow(this.active ?? this.currentPath() ?? this.visible()[0]?.path ?? '')
     }
 
     private get fs(): VfsInterface | undefined {
@@ -131,13 +183,8 @@ class FileTreeView {
     }
 
     private mount(mount: SidebarMount | undefined) {
-        const root = this.editor.view.dom.parentElement as HTMLElement | null
-        if (mount instanceof HTMLElement) mount.appendChild(this.dom)
-        else if (typeof mount === 'function' && root) {
-            const container = mount(root)
-            if (container instanceof HTMLElement) container.appendChild(this.dom)
-        } else if (root?.parentElement) root.parentElement.insertBefore(this.dom, root)
-        else document.body.appendChild(this.dom)
+        // In the rail beside the note, shared with the outline.
+        this.unmount = mountInRail(this.dom, mount, this.editor.view.dom.parentElement as HTMLElement | null)
     }
 
     private schedule() {
@@ -161,10 +208,11 @@ class FileTreeView {
         void this.refresh()
     }
 
-    /** Re-read every open folder and draw the tree. */
+    /** Re-read every open folder and draw the tree (not while it is closed:
+     *  opening it reads it). */
     async refresh(): Promise<void> {
         const fs = this.fs
-        if (!fs) return
+        if (!fs || !this.shown) return
         const next = new Map<string, Entry[]>()
         for (const folder of [...this.open]) {
             try {
@@ -445,15 +493,34 @@ class FileTreeView {
 
     destroy() {
         for (const cleanup of this.cleanups) cleanup()
-        this.dom.remove()
+        this.unmount()
     }
 }
+
+let treeCount = 0
 
 export const FileTree = Extension.create<FileTreeOptions>({
     name: 'fileTree',
 
     addOptions() {
-        return { mount: undefined, className: undefined, title: undefined, files: undefined, subscribe: undefined, ignore: undefined }
+        return { mount: undefined, className: undefined, title: undefined, files: undefined, subscribe: undefined, ignore: undefined, open: false }
+    },
+
+    addCommands() {
+        return {
+            toggleFileTree:
+                () =>
+                ({ editor }) => {
+                    const view = views.get(editor)
+                    if (!view) return false
+                    view.toggleShown()
+                    return true
+                },
+        }
+    },
+
+    addKeyboardShortcuts() {
+        return { 'Mod-Shift-e': () => this.editor.commands.toggleFileTree() }
     },
 
     onCreate() {

@@ -27,7 +27,7 @@ async function open(path = 'index.md') {
         links: { resolver: vault.links, index: vault.links },
         search: vault.search,
         files: vault.files,
-        fileTree: {},
+        fileTree: { open: true },
     })
     created.push({ editor, container })
     await waitFor(() => editor.getText().length > 0, 3000)
