@@ -178,6 +178,19 @@ export interface FileSystemStorage {
 
 const unfollow = new WeakMap<Editor, () => void>()
 
+/** Replace the document with a file's contents, outside the undo history:
+ *  undo never brings back the file shown before, nor empties a new one. */
+function setDocument(editor: Editor, content: string): void {
+    editor
+        .chain()
+        .command(({ tr }) => {
+            tr.setMeta('addToHistory', false)
+            return true
+        })
+        .setContent(content)
+        .run()
+}
+
 export const FileSystem = Extension.create<FileSystemOptions>({
     name: 'persistence',
 
@@ -298,7 +311,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             const { from, to } = editor.state.selection
             storage.loadingFile = true
             try {
-                editor.commands.setContent(note.content)
+                setDocument(editor, note.content)
                 const end = editor.state.doc.content.size
                 editor.commands.setTextSelection({ from: Math.min(from, end), to: Math.min(to, end) })
             } finally {
@@ -330,7 +343,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // e.g. the outline sidebar — reflects the code file (no Markdown
             // headings) instead of the previously open file. (Gated by
             // `loadingFile`, so it schedules no save.)
-            editor.commands.setContent('')
+            setDocument(editor, '')
             // Rebuilt fresh on each load: a CodeMirror instance is configured
             // for one language/file and can't cleanly hot-swap them.
             storage.codeView?.destroy()
@@ -424,7 +437,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                     showCodeEditor(content, languageForPath(path), fs, path)
                 } else {
                     hideCodeEditor()
-                    editor.commands.setContent(content)
+                    setDocument(editor, content)
                 }
             } finally {
                 storage.loadingFile = false
@@ -507,7 +520,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 // Destroying the code view drops its pending save with it.
                 hideCodeEditor()
                 storage.options.filepath = undefined
-                editor.commands.setContent('')
+                setDocument(editor, '')
                 storage.dirty = false
             } finally {
                 storage.loadingFile = false

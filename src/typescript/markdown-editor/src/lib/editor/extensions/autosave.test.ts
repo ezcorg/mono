@@ -112,6 +112,20 @@ describe('FileSystem autosave / file navigation', () => {
         expect(files['test.md']).toMatch(/Test edited/)
     })
 
+    it('keeps opening a file out of the undo history', async () => {
+        const { fs, files } = makeMockFs({ 'test.md': '# Test\n', 'README.md': '# Readme\n' })
+        ;({ editor, el } = makeEditor(fs, 'test.md', true))
+        await tick(150)
+        await (editor!.storage as any).persistence.loadFile('README.md')
+        // Undo must not bring back the file shown before (for autosave to write
+        // into this one), nor empty the file just opened.
+        editor!.commands.undo()
+        editor!.commands.undo()
+        expect((editor!.storage as any).markdown.getMarkdown()).toBe('# Readme')
+        await tick(700)
+        expect(files['README.md']).toBe('# Readme\n')
+    })
+
     it('autosaves edits to the newly opened file, not the previous one', async () => {
         const { fs, files } = makeMockFs({ 'test.md': '# Test\n', 'README.md': '# Readme\n' })
         ;({ editor, el } = makeEditor(fs, 'test.md', true))
