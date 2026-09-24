@@ -78,3 +78,30 @@ describe('Files that are not Markdown', () => {
         await expect(persistence.loadFile('locked.ts')).rejects.toThrow('EACCES')
     })
 })
+
+describe('Opening files one after another', () => {
+    it('shows the last file asked for, whichever read ends last', async () => {
+        const store = memoryVfs({ 'a.md': '# A', 'b.md': '# B', 'main.ts': 'export {}\n' })
+        const held: Array<() => void> = []
+        const fs: VfsInterface = {
+            ...store,
+            // The first file's read is slow: it ends after the next open.
+            readFile: (path) =>
+                path === 'a.md' ? new Promise((resolve) => held.push(() => resolve(store.readFile(path)))) : store.readFile(path),
+        }
+        const { editor, persistence } = open(fs, 'a.md')
+        await persistence.loadFile('b.md')
+        held.forEach((release) => release())
+        await new Promise((r) => setTimeout(r, 50))
+        expect(persistence.options.filepath).toBe('b.md')
+        expect((editor.storage as any).markdown.getMarkdown()).toBe('# B')
+
+        // And a code file opened while a note is still being read.
+        const slow = persistence.loadFile('a.md')
+        await persistence.loadFile('main.ts')
+        held.forEach((release) => release())
+        await slow
+        expect(persistence.options.filepath).toBe('main.ts')
+        expect(persistence.codeView?.state.doc.toString()).toBe('export {}\n')
+    })
+})

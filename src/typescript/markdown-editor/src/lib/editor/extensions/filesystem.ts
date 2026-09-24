@@ -150,6 +150,9 @@ export interface FileSystemStorage {
     /** @internal Who is subscribed (kept from the start, since plugin views
      *  subscribe before `onCreate` runs). */
     listeners: Set<(event: FileEvent) => void>
+    /** @internal Hand over the real methods once the editor is created;
+     *  calls made before then are waiting for them. */
+    install: (methods: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'loadFile' | 'close'>) => void
 }
 
 export const FileSystem = Extension.create<FileSystemOptions>({
@@ -168,6 +171,12 @@ export const FileSystem = Extension.create<FileSystemOptions>({
     // `editor.storage.persistence`, which the toolbar uses to drive file loads.
     addStorage(): FileSystemStorage {
         const listeners = new Set<(event: FileEvent) => void>()
+        // The object returned here is not necessarily the one hooks see as
+        // `this.storage`, so the early calls reach the real methods through
+        // this closure rather than through the object.
+        let methods!: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'loadFile' | 'close'>
+        let installed!: () => void
+        const ready = new Promise<void>((resolve) => (installed = resolve))
         return {
             options: this.options,
             saveTimeout: null,
@@ -175,12 +184,13 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             codeView: null,
             codeHost: null,
             // Real implementations are installed in onCreate (they need the
-            // live editor).
-            flushPendingSave: async () => {},
-            save: async () => {},
+            // live editor), which Tiptap runs a tick after construction; a
+            // call before then waits for it rather than doing nothing.
+            flushPendingSave: () => ready.then(() => methods.flushPendingSave()),
+            save: () => ready.then(() => methods.save()),
             dirty: false,
-            loadFile: async () => {},
-            close: async () => {},
+            loadFile: (path, options) => ready.then(() => methods.loadFile(path, options)),
+            close: () => ready.then(() => methods.close()),
             // Live from the start: plugin views (the toolbar) are built before
             // `onCreate` runs, and subscribe as they are built.
             subscribe: (listener) => {
@@ -189,6 +199,10 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             },
             write: () => {},
             listeners,
+            install: (real) => {
+                methods = real
+                installed()
+            },
         }
     },
 
@@ -318,6 +332,10 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // load after it is a file *switch*, so reset the scroll to the top of the
         // new file rather than inheriting the previous file's scroll offset.
         let didInitialLoad = false
+        // Every load takes a ticket; only the latest may put its file in the
+        // editor, so the last file asked for is the one shown, whichever
+        // read ends last (the first file's, say, overtaken by an open).
+        let latestLoad = 0
         const loadContent = (content: string, focus = storage.options.focusOnLoad !== false) => {
             storage.dirty = false
             storage.loadingFile = true
@@ -384,6 +402,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         }
 
         storage.close = async () => {
+            latestLoad++
             await flushPendingSave()
             storage.loadingFile = true
             try {
@@ -399,6 +418,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         storage.loadFile = async (path: string, options: LoadOptions = {}) => {
             const { fs } = storage.options
             if (!fs) return
+            const ticket = ++latestLoad
             // 1. Persist the outgoing file's unsaved edits to *its* path first,
             //    so they're neither lost nor written to the incoming file, and
             //    wait for them: reopening the same file must read them back.
@@ -411,6 +431,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // 2. Read the new file (may reject — let the caller handle it). A
             //    file that is not prose is read by the code view itself.
             const content = isProseFile(path) ? await fs.readFile(path) : ''
+            if (ticket !== latestLoad) return
             // 3. Retarget autosave at the new file *before* swapping content,
             //    and load without scheduling a save.
             storage.options.filepath = path
@@ -423,12 +444,21 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // Initial load (also a non-editing load → no spurious save).
         const { fs, filepath } = storage.options
         if (fs && filepath) {
+            const ticket = ++latestLoad
             ;(isProseFile(filepath) ? fs.readFile(filepath) : Promise.resolve(''))
-                .then(content => loadContent(content))
+                .then(content => {
+                    if (ticket === latestLoad) loadContent(content)
+                })
                 .catch(error => {
                     console.warn(`[Filesystem] Failed to load content from ${filepath}:`, error)
                 })
         }
+        storage.install({
+            flushPendingSave: storage.flushPendingSave,
+            save: storage.save,
+            loadFile: storage.loadFile,
+            close: storage.close,
+        })
     },
 
     onUpdate() {
