@@ -100,6 +100,16 @@ else becomes a version on the head it replaced when the log next looks.
 `history`, `read` and `move` (a vault rename calls it) complete it;
 versions are signed when the log is given a `Signer`.
 
+## Models and plugins
+
+`Inference` is the interface for a model (a streamed completion); the
+prose actions (`PROSE_ACTIONS`: rewrite, summarize, continue, ask) are
+requests built from a selection and its note. `PluginHost` reads plugin
+manifests (`manifest.toml`: `wants` by WIT path, slash commands, themes
+over the editor's variables), asks a `Granter` for each want, hands the
+plugin a provider exposing only what was granted, and keeps the installed
+set in `.eznote/plugins.toml`, pinned by sha256.
+
 ## Notes
 
 `newNoteId()` makes ULIDs for a note's `id:`; `noteIdOf(text)` reads it.

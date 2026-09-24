@@ -70,6 +70,15 @@ set (`minimalSetup()` a lean one) for `new Editor({ extensions })`, and
 `createEditor()` also builds the default layout (toolbar slot, left column,
 block-action gutter).
 
+## Models and plugins
+
+Given `inference` (storage's interface; icanhaz-web's `editorInference`
+makes the daemon's capability one), the selection and slash menus offer
+Rewrite, Summarize, Continue writing and Ask…: the answer streams into a
+panel under the text and goes in only when accepted. `plugins` takes a
+`PluginHost`'s contributions: slash commands that insert text, and a
+theme's variables.
+
 ## Keys
 
 - ⌘P / Ctrl+P: the toolbar as a command palette (files by name, notes by
