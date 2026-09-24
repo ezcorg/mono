@@ -101,9 +101,10 @@ export class Vault {
                 await fs.unlink(clean)
             },
         }
-        this.ready = this.rebuild().then(() => {
-            if (options.watch !== false) this.follow()
-        })
+        // Following starts before the first walk, so a change made while the
+        // walk runs is heard (and applied once the walk is done).
+        if (options.watch !== false) this.follow()
+        this.ready = this.rebuild()
     }
 
     /** Index `store`, and resolve when the index is built. */
@@ -358,6 +359,7 @@ export class Vault {
         void (async () => {
             try {
                 for await (const event of this.store.watch('/', { signal })) {
+                    await this.ready
                     const path = normalizePath(event.filename)
                     if (!path || this.ignore(path)) continue
                     await this.reindexUnder(path).catch(() => {})

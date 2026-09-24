@@ -257,6 +257,27 @@ describe('keeping current', () => {
         expect(vault.unresolved()).toEqual([])
     })
 
+    it('hears changes made while it is first read', async () => {
+        const store = memoryVfs({ 'a.md': '# A' })
+        let wrote = false
+        const spy: VfsInterface = {
+            ...store,
+            // Another program writes just after the walk has listed the root.
+            readDir: async (path) => {
+                const listed = await store.readDir(path)
+                if (!wrote) {
+                    wrote = true
+                    await store.writeFile('late.md', '# Late')
+                }
+                return listed
+            },
+        }
+        const vault = new Vault(spy)
+        await vault.ready
+        await waitUntil(() => vault.paths().includes('late.md'))
+        vault.close()
+    })
+
     it('leaves dot-directories out', async () => {
         const vault = await Vault.open(await fixtureCopy(), { watch: false })
         expect(vault.paths().some((f) => f.startsWith('.obsidian'))).toBe(false)
@@ -265,3 +286,11 @@ describe('keeping current', () => {
         expect(vault.backlinks('index.md').some((l) => l.source.startsWith('.'))).toBe(false)
     })
 })
+
+async function waitUntil(condition: () => boolean, timeout = 2000): Promise<void> {
+    const start = Date.now()
+    while (!condition()) {
+        if (Date.now() - start > timeout) throw new Error('timed out')
+        await new Promise((r) => setTimeout(r, 5))
+    }
+}
