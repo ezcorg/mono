@@ -158,6 +158,14 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         run: (e) => e.chain().focus().unsetAllMarks().run(),
     })
 
+    // Prose actions, when the host gave the editor a model.
+    const ai = (editor.storage as any).proseAI as { inference?: unknown; actions: { id: string; label: string }[] } | undefined
+    if (ai?.inference) {
+        for (const action of ai.actions) {
+            actions.push({ label: action.label, icon: '✦', run: (e) => void e.commands.runProseAction(action.id) })
+        }
+    }
+
     return actions.filter((a) => !a.isAvailable || a.isAvailable(editor))
 }
 

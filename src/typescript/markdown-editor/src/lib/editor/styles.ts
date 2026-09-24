@@ -1615,6 +1615,81 @@ export const styleModule: StyleModule = new StyleModule({
         'margin-top': 0,
     },
     // ─────────────────────────────────────────────────────────────
+    // Prose actions (extensions/prose-ai.ts): the answer's panel, and the
+    // text it is about.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-ai': {
+        position: 'absolute',
+        'z-index': 20,
+        width: 'min(360px, 100%)',
+        'box-sizing': 'border-box',
+        padding: '0.6em 0.75em',
+        'border-radius': '8px',
+        border: '1px solid var(--ezco-mde-border, rgba(127,127,127,0.3))',
+        background: 'var(--ezco-mde-bg, Canvas)',
+        color: 'var(--ezco-mde-fg, CanvasText)',
+        'box-shadow': '0 6px 24px rgba(0,0,0,0.12)',
+        'font-size': '0.9em',
+    },
+    '.ezco-mde-ai[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-ai-title': {
+        'font-weight': 600,
+        'margin-bottom': '0.4em',
+    },
+    '.ezco-mde-ai-ask': {
+        width: '100%',
+        'box-sizing': 'border-box',
+        font: 'inherit',
+        padding: '0.3em 0.5em',
+        'margin-bottom': '0.4em',
+    },
+    '.ezco-mde-ai-ask[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-ai-output': {
+        'white-space': 'pre-wrap',
+        'max-height': '16em',
+        overflow: 'auto',
+    },
+    '.ezco-mde-ai-note': {
+        opacity: 0.65,
+        'font-size': '0.9em',
+    },
+    '.ezco-mde-ai-note:empty': {
+        display: 'none',
+    },
+    '.ezco-mde-ai-actions': {
+        display: 'flex',
+        gap: '0.5em',
+        'margin-top': '0.6em',
+    },
+    '.ezco-mde-ai-button': {
+        font: 'inherit',
+        padding: '0.2em 0.7em',
+        'border-radius': '4px',
+        border: '1px solid currentColor',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-ai-button:disabled': {
+        opacity: 0.45,
+        cursor: 'default',
+    },
+    '.ezco-mde-ai-target': {
+        background: 'color-mix(in srgb, #7c3aed 16%, transparent)',
+        'border-radius': '2px',
+    },
+    '.ezco-mde-ai-caret': {
+        display: 'inline-block',
+        width: '2px',
+        height: '1em',
+        'vertical-align': 'text-bottom',
+        background: '#7c3aed',
+    },
+    // ─────────────────────────────────────────────────────────────
     // Conflict notice (extensions/conflict-notice.ts): above the document.
     // ─────────────────────────────────────────────────────────────
     '.ezco-mde-conflict': {

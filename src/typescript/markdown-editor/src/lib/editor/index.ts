@@ -11,6 +11,7 @@ import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
 import { FileSystem, FileSystemOptions, type FileSystemStorage } from './extensions/filesystem';
 import { ConflictNotice } from './extensions/conflict-notice';
+import { ProseAI } from './extensions/prose-ai';
 import type { FileVersions } from '@joinezco/codeblock';
 import { styleModule } from './styles';
 import { ExtendedLink } from './extensions/link';
@@ -38,7 +39,7 @@ import { Image, ImageOptions } from './extensions/image';
 import { Embed } from './extensions/embed';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { MarkdownText } from './extensions/text';
-import { Vault, fileOperations, type FileOperations, type FileSearch, type LinkIndex, type LinkResolver, type VfsInterface } from '@joinezco/storage';
+import { Vault, fileOperations, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -139,6 +140,10 @@ export type MarkdownSetupOptions = {
     search?: FileSearch;
     /** Creates, moves and deletes files for the toolbar and codeblocks. */
     files?: FileOperations;
+    /** A model, for prose actions (rewrite, summarize, continue, an
+     *  instruction): icanhaz's `inference` capability, a provider's API, a
+     *  local model. Without it none is offered. */
+    inference?: Inference;
     /** Every file's version log (a vault's `versions`): loads and saves go
      *  through it, a save naming the version it was made on; one made on a
      *  stale version is kept as a conflict copy. Without it, files are read
@@ -228,6 +233,28 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
     };
 }
 
+/** Slash commands for prose actions, offered when there is a model. */
+const proseSlashCommands: SlashCommand[] = [
+    {
+        title: 'Ask AI',
+        description: 'Tell a model what to write here',
+        icon: '✦',
+        command: ({ editor, range }) => editor.chain().focus().deleteRange(range).runProseAction('ask').run(),
+    },
+    {
+        title: 'Continue writing',
+        description: 'A model writes on from here',
+        icon: '✦',
+        command: ({ editor, range }) => editor.chain().focus().deleteRange(range).runProseAction('continue').run(),
+    },
+    {
+        title: 'Summarize note',
+        description: 'A model sums the note up here',
+        icon: '✦',
+        command: ({ editor, range }) => editor.chain().focus().deleteRange(range).runProseAction('summarize').run(),
+    },
+]
+
 /**
  * `files` whose renames keep the open note consistent: its unsaved edits are
  * written before links are rewritten (so the rewrite reads them), and it is
@@ -266,8 +293,10 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     let persistence: FileSystemStorage | undefined;
     const given = vaultServices(options);
     const services = { ...given, files: keepingOpenNote(given.files, () => persistence) };
-    const commands = Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands;
+    const base = Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands;
+    const commands = options.inference ? [...base, ...proseSlashCommands] : base;
     return [
+        ProseAI.configure({ inference: options.inference }),
         ConflictNotice,
         FileSystem.configure({
             ...options.fs,
@@ -512,6 +541,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 // functions above use these same units.
 export { FileSystem } from './extensions/filesystem';
 export { ConflictNotice } from './extensions/conflict-notice';
+export { ProseAI, type ProseAIOptions } from './extensions/prose-ai';
 export { openDocuments, type OpenDocuments, type OpenDocument, type TextEdit, type TextRange, type TextPosition, type EditResult } from './extensions/edits';
 export type { FileSystemOptions, FileSystemStorage, FileEvent, LoadOptions } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';
