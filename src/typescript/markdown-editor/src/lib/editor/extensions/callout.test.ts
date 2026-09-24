@@ -43,6 +43,22 @@ describe('Callout syntax', () => {
         expect(editor.state.doc.child(1).type.name).toBe('blockquote')
     })
 
+    it('keeps a body that starts with a rule, or a line of `=`, from underlining the title', () => {
+        for (const [md, first] of [
+            ['> [!note] Title\n> ***', 'horizontalRule'],
+            ['> [!note] Title\n> \\===', 'paragraph'],
+        ] as const) {
+            const { editor } = make(md)
+            const saved = getMarkdownContent(editor)
+            const { editor: again } = make(saved)
+            const callout = again.state.doc.firstChild!
+            expect(callout.type.name).toBe('callout')
+            expect(callout.firstChild!.textContent).toBe('Title')
+            expect(callout.child(1).type.name).toBe(first)
+            expect(getMarkdownContent(again)).toBe(saved)
+        }
+    })
+
     it('stays a quote when turned off', () => {
         const { editor } = make('> [!note] x', { callouts: false })
         expect(editor.state.doc.firstChild!.type.name).toBe('blockquote')

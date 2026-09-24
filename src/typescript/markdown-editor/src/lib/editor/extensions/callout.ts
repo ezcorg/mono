@@ -158,6 +158,14 @@ export const CalloutTitle = Node.create({
     },
 })
 
+/** Whether `block`, written on the line after the title, would be read as
+ *  the title's setext underline: a rule (written `---`), or a paragraph whose
+ *  first line is only `=` or `-`. Such a body is set off by a blank line. */
+function underlinesTitle(block: PMNode): boolean {
+    if (block.type.name === 'horizontalRule') return true
+    return block.type.name === 'paragraph' && /^(?:=+|-+)[ \t]*$/.test(block.textContent.split('\n')[0])
+}
+
 export const Callout = Node.create({
     name: 'callout',
     group: 'block',
@@ -208,7 +216,7 @@ export const Callout = Node.create({
                             state.renderInline(title, false)
                         }
                         if (node.childCount < 2) return
-                        if (node.attrs.spaced) state.closeBlock(title)
+                        if (node.attrs.spaced || underlinesTitle(node.child(1))) state.closeBlock(title)
                         else state.ensureNewLine()
                         for (let i = 1; i < node.childCount; i++) state.render(node.child(i), node, i)
                     })
