@@ -110,7 +110,7 @@ describe('Wikilinks in a vault', () => {
         links(editor).find((a) => a.textContent === 'ghost')!.click()
         await waitFor(() => filepath(editor) === 'ghost.md', 3000)
         expect(await vault.fs.exists('ghost.md')).toBe(true)
-        expect(vault.files()).toContain('ghost.md')
+        expect(vault.paths()).toContain('ghost.md')
     })
 
     it('reveals a heading in the same note', async () => {

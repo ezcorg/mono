@@ -33,8 +33,9 @@ import { Callout, CalloutTitle } from './extensions/callout';
 import { SourceView } from './extensions/source-view';
 import { Image, ImageOptions } from './extensions/image';
 import { Embed } from './extensions/embed';
+import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { MarkdownText } from './extensions/text';
-import type { LinkIndex } from '@joinezco/storage';
+import { Vault, fileOperations, type FileOperations, type FileSearch, type LinkIndex, type LinkResolver, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -130,6 +131,13 @@ export type MarkdownSetupOptions = {
     /** Images. `attachments` is the vault folder pasted and dropped images are
      *  stored in (default `attachments`); `false` leaves pasting to the browser. */
     images?: Partial<ImageOptions>;
+    /** Finds files by name and notes by their text, for the toolbar (the
+     *  command palette) and embedded codeblocks. */
+    search?: FileSearch;
+    /** Creates, moves and deletes files for the toolbar and codeblocks. */
+    files?: FileOperations;
+    /** The vault as a tree of folders and files — opt-in: built only when set. */
+    fileTree?: Omit<FileTreeOptions, 'files' | 'subscribe'>;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -166,6 +174,45 @@ function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMa
     ];
 }
 
+/** What the editor reaches the vault through. */
+interface VaultServices {
+    fs?: VfsInterface;
+    search?: FileSearch;
+    files?: FileOperations;
+    resolver?: LinkResolver;
+    /** Be told when the vault changed. */
+    subscribe?: (listener: () => void) => () => void;
+}
+
+/**
+ * The host's vault services, and, for any it left out while giving a
+ * filesystem, a `Vault` of the editor's own over that filesystem. The editor
+ * then writes through the vault's observed filesystem, so its index follows
+ * every save. A rename keeps links as the host's link index means them when
+ * there is one (the vault's own rewrite would follow different rules).
+ */
+function vaultServices(options: MarkdownSetupOptions): VaultServices {
+    const hostSubscribe = options.links?.index?.subscribe ?? options.links?.resolver?.subscribe;
+    const given: VaultServices = {
+        fs: options.fs?.fs,
+        search: options.search,
+        files: options.files,
+        resolver: options.links?.resolver,
+        subscribe: hostSubscribe,
+    };
+    if (!given.fs || (given.search && given.files && given.resolver)) return given;
+    const vault = new Vault(given.fs, { watch: false });
+    const index: LinkIndex | undefined = options.links?.index;
+    const files = options.files ?? (index ? { ...fileOperations(vault.fs), rename: (a: string, b: string) => index.rename(a, b) } : vault.files);
+    return {
+        fs: vault.fs,
+        search: given.search ?? vault.search,
+        files,
+        resolver: given.resolver ?? vault.links,
+        subscribe: hostSubscribe ?? ((listener) => vault.subscribe(listener)),
+    };
+}
+
 /**
  * The default extension set — every feature the editor ships with, each a
  * standalone Tiptap unit. This is the CodeMirror-`basicSetup` analog: spread it
@@ -179,10 +226,12 @@ function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMa
  */
 export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[] {
     const { toolbar, blockActions, sidebar } = options;
+    const services = vaultServices(options);
+    const commands = Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands;
     return [
-        FileSystem.configure(options.fs || {}),
+        FileSystem.configure({ ...options.fs, fs: services.fs }),
         ExtendedLink.configure({}),
-        ...syntaxExtensions(options),
+        ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver } }),
         StarterKit.configure({
             // Our own code block (extensions/codeblock.ts), bullet list
             // (extensions/lists.ts, disambiguated dash input), paragraph
@@ -214,7 +263,11 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // Embedded codeblocks soft-wrap by default; opt out (or drop the heavy
         // CodeMirror extension entirely) via `options.codeblock`.
         ...(options.codeblock !== false
-            ? [ExtendedCodeblock.configure({ settings: options.codeblock?.settings ?? {} })]
+            ? [ExtendedCodeblock.configure({
+                settings: options.codeblock?.settings ?? {},
+                search: services.search,
+                files: services.files,
+            })]
             : []),
         TaskList,
         ExtendedTaskItem.configure({ nested: true }),
@@ -222,25 +275,25 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             table: { resizable: true, allowTableNodeSelection: true },
         }),
         ...(options.slashCommands !== false
-            ? [SlashCommands.configure({
-                commands: Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands,
-            })]
+            ? [SlashCommands.configure({ commands })]
             : []),
         // Emoji picker: `:` + 2+ chars opens a searchable grid; its ~550KB dataset
         // is dynamically imported on first use (not at editor load).
         ...(options.emoji !== false ? [EmojiPicker] : []),
-        // The toolbar reads its fs/filepath from `options.toolbar` when given,
-        // otherwise falls back to the editor's filesystem so a consumer can
-        // configure just `mount`/`className` and still get a working file search.
+        // The toolbar (also the command palette) reads its fs/filepath from
+        // `options.toolbar` when given, otherwise the editor's filesystem, so a
+        // consumer can configure just `mount`/`className` and still get file
+        // search, file management and the editor's commands.
         ...(toolbar !== false
             ? [Toolbar.configure({
-                fs: toolbar?.fs ?? options.fs?.fs,
-                index: toolbar?.index,
+                fs: toolbar?.fs ?? services.fs,
+                search: toolbar?.search ?? services.search,
+                files: toolbar?.files ?? services.files,
+                commands: toolbar?.commands ?? (options.slashCommands !== false ? commands : []),
                 filepath: toolbar?.filepath ?? options.fs?.filepath,
                 mount: toolbar?.mount,
                 className: toolbar?.className,
                 autoHide: toolbar?.autoHide ?? false,
-                linkIndex: toolbar?.linkIndex ?? options.links?.index,
             })]
             : []),
         ...(blockActions !== false
@@ -251,6 +304,10 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // The links panel: whenever the host supplies a link index.
         ...(options.links?.index && options.links.panel !== false
             ? [LinksPanel.configure({ ...options.links.panel, index: options.links.index })]
+            : []),
+        // The file tree is opt-in (built only when `fileTree` is set).
+        ...(options.fileTree
+            ? [FileTree.configure({ ...options.fileTree, files: services.files, subscribe: services.subscribe })]
             : []),
         // The outline is opt-in (generated only when `sidebar` is set).
         ...(sidebar
@@ -366,6 +423,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         sidebar: options.sidebar
             ? { ...options.sidebar, mount: options.sidebar.mount ?? slotMount(navHost) }
             : undefined,
+        fileTree: options.fileTree
+            ? { ...options.fileTree, mount: options.fileTree.mount ?? slotMount(navHost) }
+            : undefined,
     }
 
     // `element` and `extensions` are handled explicitly (extras are folded into
@@ -407,7 +467,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 // what you use and the rest tree-shakes away (`sideEffects: false`). The setup
 // functions above use these same units.
 export { FileSystem } from './extensions/filesystem';
-export type { FileSystemOptions, FileSystemStorage, FileEvent } from './extensions/filesystem';
+export type { FileSystemOptions, FileSystemStorage, FileEvent, LoadOptions } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';
 export { Wikilink, wikilinkLabel } from './extensions/wikilink';
 export { LinksPanel } from './extensions/links-panel';
@@ -422,6 +482,8 @@ export { MarkdownText } from './extensions/text';
 export { Image, attachImages } from './extensions/image';
 export type { ImageOptions } from './extensions/image';
 export { Embed } from './extensions/embed';
+export { FileTree } from './extensions/file-tree';
+export type { FileTreeOptions } from './extensions/file-tree';
 export type { LinksPanelOptions } from './extensions/links-panel';
 export type { WikilinkOptions, WikilinkStorage } from './extensions/wikilink';
 export { findFragment, revealFragment } from './extensions/fragment';

@@ -8,7 +8,7 @@
  * disk under `~/Documents/eznote/`.
  *
  * Every path the editor hands over — bare note names (`Untitled-….md`),
- * `.`/empty, or a rooted path like `/` or `/.codeblock/index.json` — is
+ * `.`/empty, or a rooted path like `/` or `/attachments/a.png` — is
  * resolved *inside* the notes directory. The editor's file browser and search
  * indexer treat `/` as the root of the workspace, so a leading slash means
  * "the notes dir", never the host filesystem root (which the Tauri fs scope

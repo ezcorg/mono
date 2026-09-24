@@ -8,10 +8,16 @@
  * can report them, changes made by anything else (`watch`).
  *
  *     const vault = await Vault.open(hostFs)
- *     createEditor({ fs: { fs: vault.fs, … }, links: { resolver: vault.links, index: vault.links } })
+ *     createEditor({
+ *         fs: { fs: vault.fs, … },
+ *         links: { resolver: vault.links, index: vault.links },
+ *         toolbar: { search: vault.search, files: vault.files },
+ *     })
  */
 import { FileType, walk, type VfsInterface } from './vfs'
 import { basename, dirname, extname, isHidden, isNote, normalizePath } from './path'
+import { SearchIndex, type FileSearch } from './search'
+import type { FileOperations } from './files'
 import { LinkGraph, syntaxOf } from './links/graph'
 import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve'
 import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax'
@@ -34,48 +40,87 @@ export class Vault {
     readonly fs: VfsInterface
     /** Backlinks, unresolved links, resolution, suggestions and renames. */
     readonly links: VaultLinks
+    /** Files by path and name, notes by their text. */
+    readonly search: FileSearch
+    /** Creating, moving (links kept) and deleting files. */
+    readonly files: FileOperations
 
     private graph = new LinkGraph()
+    private text = new SearchIndex()
     private listeners = new Set<() => void>()
     private notifyScheduled = false
     private watchAbort = new AbortController()
     private ignore: (path: string) => boolean
 
-    private constructor(
+    /** Resolves once the first walk of the store is indexed. Every
+     *  asynchronous query waits for it; `fs` is usable at once. */
+    readonly ready: Promise<void>
+
+    /**
+     * A vault over `store`, indexing it in the background (`ready`). Use
+     * `Vault.open` to wait for the index; construct directly when the
+     * filesystem is needed before the index is (an editor opening a note).
+     */
+    constructor(
         /** The store as given, unobserved. */
         readonly store: VfsInterface,
-        options: VaultOptions,
+        options: VaultOptions = {},
     ) {
         this.ignore = options.ignore ?? isHidden
         this.fs = this.observe(store)
+        const ready = () => this.ready
         this.links = {
-            backlinks: async (note) => this.graph.backlinks(note),
-            unresolved: async () => this.graph.unresolved(),
-            rename: (oldPath, newPath) => this.rename(oldPath, newPath),
-            resolve: async (target, from, syntax) => this.resolve(target, from, syntax),
-            suggest: async (query, from, limit) => this.suggest(query, from, limit),
+            backlinks: async (note) => (await ready(), this.graph.backlinks(note)),
+            unresolved: async () => (await ready(), this.graph.unresolved()),
+            rename: async (oldPath, newPath) => (await ready(), this.rename(oldPath, newPath)),
+            resolve: async (target, from, syntax) => (await ready(), this.resolve(target, from, syntax)),
+            suggest: async (query, from, limit) => (await ready(), this.suggest(query, from, limit)),
             subscribe: (listener) => this.subscribe(listener),
         }
+        this.search = {
+            search: async (query, options) => {
+                await ready()
+                return this.text.search(query, { ...options, read: (path) => this.store.readFile(path) })
+            },
+        }
+        const fs = this.fs
+        this.files = {
+            async create(path, content = '', options = {}) {
+                const clean = normalizePath(path)
+                if (!options.overwrite && (await fs.exists(clean))) throw new Error(`${clean} already exists`)
+                const parent = dirname(clean)
+                if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })
+                if (typeof content === 'string') await fs.writeFile(clean, content)
+                else await fs.writeBytes(clean, content)
+            },
+            mkdir: (path) => fs.mkdir(normalizePath(path), { recursive: true }),
+            rename: async (oldPath, newPath) => (await ready(), this.rename(oldPath, newPath)),
+            async remove(path) {
+                const clean = normalizePath(path)
+                if ((await fs.stat(clean))?.type === FileType.Directory) throw new Error(`${clean} is a folder`)
+                await fs.unlink(clean)
+            },
+        }
+        this.ready = this.rebuild().then(() => {
+            if (options.watch !== false) this.follow()
+        })
     }
 
-    /** Index `store` and keep the index current. */
+    /** Index `store`, and resolve when the index is built. */
     static async open(store: VfsInterface, options: VaultOptions = {}): Promise<Vault> {
         const vault = new Vault(store, options)
-        await vault.rebuild()
-        if (options.watch !== false) vault.follow()
+        await vault.ready
         return vault
     }
 
     /** Re-read every file. */
     async rebuild(): Promise<void> {
-        const graph = new LinkGraph()
+        this.graph = new LinkGraph()
+        this.text.clear()
         for await (const rooted of walk(this.store, '/')) {
             const path = normalizePath(rooted)
-            if (this.ignore(path)) continue
-            if (isNote(path)) graph.setNote(path, await this.store.readFile(path))
-            else graph.addFile(path)
+            if (!this.ignore(path)) await this.indexFile(path)
         }
-        this.graph = graph
         this.changed()
     }
 
@@ -91,8 +136,8 @@ export class Vault {
         return () => this.listeners.delete(listener)
     }
 
-    /** Every file in the vault. */
-    files(): string[] {
+    /** Every file in the vault, sorted. */
+    paths(): string[] {
         return [...this.graph.files.all()].sort()
     }
 
@@ -157,7 +202,7 @@ export class Vault {
             })
             if (!candidate) continue
             const text = await this.store.readFile(note)
-            this.graph.setNote(note, text)
+            this.setNote(note, text)
             const pins = new Map<number, string>()
             for (const link of scanLinks(text)) {
                 const r = link.target.trim() ? this.graph.resolve(link, note) : null
@@ -169,7 +214,11 @@ export class Vault {
         const parent = dirname(to)
         if (parent && !(await this.store.exists(parent))) await this.store.mkdir(parent, { recursive: true })
         await this.store.rename(from, to)
-        for (const [a, b] of moved) this.graph.moveFile(a, b)
+        for (const [a, b] of moved) {
+            this.graph.moveFile(a, b)
+            this.text.remove(a)
+            this.text.set(b, isNote(b) ? await this.store.readFile(b) : null)
+        }
 
         // After: rewrite whatever no longer resolves where it did.
         let count = 0
@@ -184,7 +233,7 @@ export class Vault {
             })
             if (rewritten.count === 0) continue
             await this.store.writeFile(now, rewritten.text)
-            this.graph.setNote(now, rewritten.text)
+            this.setNote(now, rewritten.text)
             count += rewritten.count
         }
         this.changed()
@@ -209,20 +258,20 @@ export class Vault {
             async writeFile(path, data) {
                 await store.writeFile(path, data)
                 if (!indexed(path)) return
-                if (isNote(path)) vault.graph.setNote(path, data)
-                else vault.graph.addFile(path)
+                if (isNote(path)) vault.setNote(path, data)
+                else vault.addFile(path)
                 vault.changed()
             },
             async writeBytes(path, data) {
                 await store.writeBytes(path, data)
                 if (!indexed(path)) return
-                if (isNote(path)) vault.graph.setNote(path, new TextDecoder().decode(data))
-                else vault.graph.addFile(path)
+                if (isNote(path)) vault.setNote(path, new TextDecoder().decode(data))
+                else vault.addFile(path)
                 vault.changed()
             },
             async unlink(path) {
                 await store.unlink(path)
-                vault.graph.removeFile(path)
+                vault.removeFile(path)
                 vault.changed()
             },
             async rename(oldPath, newPath) {
@@ -238,7 +287,7 @@ export class Vault {
     private async reindexUnder(path: string): Promise<void> {
         const clean = normalizePath(path)
         for (const known of [...this.graph.files.all()]) {
-            if (known === clean || known.startsWith(`${clean}/`)) this.graph.removeFile(known)
+            if (known === clean || known.startsWith(`${clean}/`)) this.removeFile(known)
         }
         const stat = await this.store.stat(clean).catch(() => null)
         if (stat?.type === FileType.Directory) {
@@ -253,8 +302,25 @@ export class Vault {
     }
 
     private async indexFile(path: string): Promise<void> {
-        if (isNote(path)) this.graph.setNote(path, await this.store.readFile(path))
-        else this.graph.addFile(path)
+        if (isNote(path)) this.setNote(path, await this.store.readFile(path))
+        else this.addFile(path)
+    }
+
+    // Every change to what is indexed goes through these, so the link graph
+    // and the search index never disagree.
+    private setNote(path: string, text: string): void {
+        this.graph.setNote(path, text)
+        this.text.set(path, text)
+    }
+
+    private addFile(path: string): void {
+        this.graph.addFile(path)
+        this.text.set(path, null)
+    }
+
+    private removeFile(path: string): void {
+        this.graph.removeFile(path)
+        this.text.remove(path)
     }
 
     private follow(): void {

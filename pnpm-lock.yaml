@@ -352,9 +352,6 @@ importers:
       lodash:
         specifier: ^4.18.1
         version: 4.18.1
-      minisearch:
-        specifier: ^7.2.0
-        version: 7.2.0
       path-browserify:
         specifier: ^1.0.1
         version: 1.0.1
@@ -774,6 +771,10 @@ importers:
         version: 5.9.3
 
   src/typescript/storage:
+    dependencies:
+      minisearch:
+        specifier: ^7.2.0
+        version: 7.2.0
     devDependencies:
       '@types/node':
         specifier: ^25.9.5

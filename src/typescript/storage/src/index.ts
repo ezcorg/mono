@@ -25,5 +25,7 @@ export {
     markdownDestinationFor,
 } from './links/resolve'
 export { LinkGraph } from './links/graph'
+export { SearchIndex, snippetOf, titleOf, type FileSearch, type SearchHit, type SearchOptions } from './search'
+export { fileOperations, type FileOperations, type CreateOptions } from './files'
 export { Vault, type VaultOptions, type VaultLinks } from './vault'
 export { newNoteId, frontMatterOf, noteIdOf } from './id'

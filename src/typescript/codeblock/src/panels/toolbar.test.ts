@@ -54,7 +54,7 @@ describe('Toolbar Panel', () => {
                     filepath: null,
                     content: '',
                     toolbar: true,
-                    index: null,
+
                     language: null
                 }),
                 searchResultsField,

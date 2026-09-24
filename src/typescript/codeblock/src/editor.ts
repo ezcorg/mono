@@ -8,11 +8,10 @@ import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import type { VfsInterface } from "@joinezco/storage";
+import type { FileOperations, FileSearch, VfsInterface } from "@joinezco/storage";
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { lintKeymap, setDiagnostics } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
-import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
@@ -96,7 +95,10 @@ export type CodeblockConfig = {
      *  editor's line-number gutter so they line up with the code (the look inside the markdown-editor); `compact` keeps
      *  them tight to the text, for a toolbar hosted away from the editor — a window's title bar, say. */
     toolbarLayout?: 'gutter' | 'compact';
-    index?: SearchIndex;
+    /** Finds files for the toolbar (a vault's search). */
+    search?: FileSearch;
+    /** Creates, moves and deletes files for the toolbar (a vault's keep links working). */
+    files?: FileOperations;
     language?: ExtensionOrLanguage;
     dark?: boolean;
     settings?: Partial<EditorSettings>;
@@ -208,7 +210,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, index, dark, settings, typescript, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, search, files, dark, settings, typescript, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -221,7 +223,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, dark, settings, typescript })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         languageSupportCompartment.of([]),
@@ -548,12 +550,6 @@ const codeblockView = ViewPlugin.define((view) => {
                 await new Promise(r => setTimeout(r, 50));
             }
 
-            // Add new files to the search index so they appear in future searches
-            const { index } = view.state.facet(CodeblockFacet);
-            if (index) {
-                index.add(path);
-                if (index.savePath) index.save(fs, index.savePath);
-            }
             const unit = detectIndentationUnit(content) || "    ";
 
             // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
@@ -744,10 +740,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, index, dark, settings, typescript }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, dark, settings, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, dark, settings, typescript })]
     });
     const view = new EditorView({ state, parent });
     return view;

@@ -8,7 +8,7 @@ import {
   latestNotePath,
   newScratchPath,
 } from "./lib/tauri-vfs";
-import { Vault, type VfsInterface } from "@joinezco/storage";
+import { Vault, newNoteId, type VfsInterface } from "@joinezco/storage";
 import "./App.css";
 
 /** System-wide hotkey that summons the window and opens a fresh scratch note. */
@@ -126,8 +126,15 @@ function App() {
         className: "mac-titlebar-search",
       },
       // Wikilinks resolve against the vault; backlinks show under the note,
-      // and a rename from the toolbar rewrites every link to the note.
+      // and a rename from the toolbar rewrites every link to the note. The
+      // toolbar (⌘P) searches the vault's index: names and what notes say.
       links: { resolver: vault.links, index: vault.links },
+      search: vault.search,
+      files: vault.files,
+      // Every note carries a stable id (RFC §3), given on first open.
+      frontMatter: { assignId: () => newNoteId() },
+      // The notes folder as a tree, in the editor's left column.
+      fileTree: {},
       onUpdate: () => {},
     });
     applyTheme(themeMode());

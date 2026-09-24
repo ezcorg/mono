@@ -1,7 +1,8 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import type { NodeType } from '@tiptap/pm/model';
-import { basicSetup, codeblock, CodeblockFS, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
+import { basicSetup, codeblock, CodeblockFS, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, setThemeEffect } from '@joinezco/codeblock'
+import type { FileOperations, FileSearch } from '@joinezco/storage'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
@@ -120,6 +121,10 @@ export interface ExtendedCodeblockOptions {
     HTMLAttributes: Record<string, unknown>;
     /** Class prefix used when parsing/serializing the language (default `language-`). */
     languageClassPrefix: string;
+    /** Finds files for each codeblock's toolbar (the editor's vault search). */
+    search?: FileSearch;
+    /** Creates, moves and deletes files for each codeblock's toolbar. */
+    files?: FileOperations;
 }
 
 export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
@@ -625,55 +630,55 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // to a standalone worker.
             const editorFs = editor.storage.persistence?.options?.fs;
             const fsPromise = editorFs ? Promise.resolve(editorFs) : getFileSystemWorker();
+            const { search, files } = this.options;
             fsPromise.then(fs => {
                 fsWorker = fs;
-                SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
-                    // Default the code font size to the editor's paragraph
-                    // size MINUS 2px: an equal px value reads visually larger in
-                    // the monospace code font (wider glyphs, tighter leading)
-                    // than in the prose font, so we nudge it down to balance the
-                    // two. An explicit `settings.fontSize` (configured on the
-                    // extension) still wins.
-                    const baseFontPx = measureBaseFontPx();
-                    const resolvedSettings = baseFontPx
-                        ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
-                        : codeblockSettings;
-                    // Reconfigure with codeblock extension once fs is ready
-                    cm.setState(EditorState.create({
-                        doc: node.textContent || '',
-                        extensions: [
-                            keymap.of(codemirrorKeymap()),
-                            basicSetup,
-                            EditorView.updateListener.of((update) => forwardUpdate(cm, update)),
-                            EditorView.updateListener.of(syncFileAttrs),
-                            codeblock({
-                                content: node.textContent,
-                                fs: fsWorker,
-                                language: node.attrs.language,
-                                filepath: node.attrs.file,
-                                index,
-                                // Match the editor's light/dark mode rather
-                                // than forcing dark; respects an explicit
-                                // `data-theme`, else follows the OS.
-                                dark: isDarkMode(view.dom),
-                                // Soft-wrap by default + match the editor font
-                                // size (configurable via the `settings` option).
-                                settings: resolvedSettings,
-                            }),
-                        ]
-                    }));
+                // Default the code font size to the editor's paragraph
+                // size MINUS 2px: an equal px value reads visually larger in
+                // the monospace code font (wider glyphs, tighter leading)
+                // than in the prose font, so we nudge it down to balance the
+                // two. An explicit `settings.fontSize` (configured on the
+                // extension) still wins.
+                const baseFontPx = measureBaseFontPx();
+                const resolvedSettings = baseFontPx
+                    ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
+                    : codeblockSettings;
+                // Reconfigure with codeblock extension once fs is ready
+                cm.setState(EditorState.create({
+                    doc: node.textContent || '',
+                    extensions: [
+                        keymap.of(codemirrorKeymap()),
+                        basicSetup,
+                        EditorView.updateListener.of((update) => forwardUpdate(cm, update)),
+                        EditorView.updateListener.of(syncFileAttrs),
+                        codeblock({
+                            content: node.textContent,
+                            fs: fsWorker,
+                            language: node.attrs.language,
+                            filepath: node.attrs.file,
+                            search,
+                            files,
+                            // Match the editor's light/dark mode rather
+                            // than forcing dark; respects an explicit
+                            // `data-theme`, else follows the OS.
+                            dark: isDarkMode(view.dom),
+                            // Soft-wrap by default + match the editor font
+                            // size (configurable via the `settings` option).
+                            settings: resolvedSettings,
+                        }),
+                    ]
+                }));
 
-                    // If created via input rule (empty), focus toolbar and open dropdown
-                    if (wasCreatedEmpty) {
-                        requestAnimationFrame(() => {
-                            const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
-                            if (toolbarInput) {
-                                toolbarInput.focus();
-                                toolbarInput.click();
-                            }
-                        });
-                    }
-                })
+                // If created via input rule (empty), focus toolbar and open dropdown
+                if (wasCreatedEmpty) {
+                    requestAnimationFrame(() => {
+                        const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                        if (toolbarInput) {
+                            toolbarInput.focus();
+                            toolbarInput.click();
+                        }
+                    });
+                }
             }).catch(error => {
                 console.error('Failed to initialize filesystem worker:', error);
             });

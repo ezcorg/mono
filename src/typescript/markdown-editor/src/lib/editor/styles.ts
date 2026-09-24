@@ -1631,6 +1631,115 @@ export const styleModule: StyleModule = new StyleModule({
         'user-select': 'none',
     },
     // ─────────────────────────────────────────────────────────────
+    // File tree (extensions/file-tree.ts): the vault's folders and files,
+    // in the outline's type and palette.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-files': {
+        'box-sizing': 'border-box',
+        width: '220px',
+        // Stays in view as the note scrolls (harmless where the parent is not
+        // a scroller), like the outline.
+        position: 'sticky',
+        top: 0,
+        'align-self': 'flex-start',
+        'max-height': '100vh',
+        'overflow-y': 'auto',
+        padding: '0.5rem 0 0.5rem 0.7rem',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': '13px',
+        color: 'var(--ezco-mde-fg)',
+    },
+    '.ezco-mde-files-header': {
+        display: 'flex',
+        'align-items': 'center',
+        gap: '2px',
+        padding: '0 4px 6px 8px',
+    },
+    '.ezco-mde-files-title': {
+        flex: 1,
+        'font-size': '11px',
+        'font-weight': 600,
+        'text-transform': 'uppercase',
+        'letter-spacing': '0.06em',
+        opacity: 0.5,
+    },
+    '.ezco-mde-files-action': {
+        border: 'none',
+        background: 'transparent',
+        color: 'inherit',
+        opacity: 0.6,
+        cursor: 'pointer',
+        padding: '0 4px',
+        font: 'inherit',
+        'border-radius': '4px',
+    },
+    '.ezco-mde-files-action:hover, .ezco-mde-files-action:focus-visible': {
+        opacity: 1,
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.1))',
+        outline: 'none',
+    },
+    '.ezco-mde-files-list': {
+        'list-style': 'none',
+        margin: 0,
+        padding: 0,
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '1px',
+    },
+    '.ezco-mde-files-item': {
+        display: 'flex',
+        'align-items': 'center',
+        padding: '3px 8px',
+        'padding-left': 'calc(8px + var(--depth, 0) * 0.9rem)',
+        'border-radius': '5px',
+        cursor: 'pointer',
+        'white-space': 'nowrap',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        outline: 'none',
+    },
+    '.ezco-mde-files-item:hover, .ezco-mde-files-item:focus-visible': {
+        color: 'var(--ezco-mde-fg)',
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.1))',
+    },
+    '.ezco-mde-files-item.is-current': {
+        color: 'var(--ezco-mde-accent-fg, #fff)',
+        background: 'var(--ezco-mde-accent, #2490e9)',
+    },
+    '.ezco-mde-files-item.is-confirming': {
+        color: '#d33',
+    },
+    '.ezco-mde-files-item.is-folder::before': {
+        content: '"▸"',
+        display: 'inline-block',
+        width: '1em',
+        'margin-left': '-1em',
+        opacity: 0.6,
+        transition: 'transform 120ms ease',
+    },
+    '.ezco-mde-files-item.is-folder[aria-expanded="true"]::before': {
+        transform: 'rotate(90deg)',
+    },
+    '.ezco-mde-files-name': {
+        overflow: 'hidden',
+        'text-overflow': 'ellipsis',
+    },
+    '.ezco-mde-files-rename': {
+        width: '100%',
+        font: 'inherit',
+        padding: '0 2px',
+        border: '1px solid var(--ezco-mde-accent, #2490e9)',
+        'border-radius': '3px',
+        background: 'var(--ezco-mde-bg, #fff)',
+        color: 'var(--ezco-mde-fg)',
+    },
+    '.ezco-mde-files-empty, .ezco-mde-files-status': {
+        padding: '4px 8px',
+        opacity: 0.6,
+    },
+    '.ezco-mde-files-status:empty': {
+        display: 'none',
+    },
+    // ─────────────────────────────────────────────────────────────
     // Links panel (extensions/links-panel.ts): what links to the open note,
     // and its links to notes not written yet. By default a footer under the
     // note; hosts may mount it in a column. Same type and palette as the

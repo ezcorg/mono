@@ -1,22 +1,23 @@
 import { createCodeblock, fileChangeBus } from "../../editor";
 import { Vfs } from "../../utils/fs";
-import { SearchIndex } from "../../utils/search";
+import { Vault } from "@joinezco/storage";
 
 async function init() {
     // Use FSA (OPFS) directly — SharedWorker hangs in headless Chrome.
-    const fs = await Vfs.worker(undefined, `codeblock-test-multiview-${Date.now()}`);
-    const index = await SearchIndex.get(fs, '.codeblock/index.json');
+    // The vault indexes the store for the toolbar's search; editors write through its fs.
+    const vault = new Vault(await Vfs.worker(undefined, `codeblock-test-multiview-${Date.now()}`));
+    const { fs, search, files } = vault;
 
     const parentA = document.getElementById('editor-a') as HTMLDivElement;
     const parentB = document.getElementById('editor-b') as HTMLDivElement;
 
     // Create editors with initial content (not filepath) to avoid VFS read timing issues
     const viewA = createCodeblock({
-        parent: parentA, fs, content: 'hello world', language: 'md', toolbar: true, index, cwd: '/',
+        parent: parentA, fs, content: 'hello world', language: 'md', toolbar: true, search, files, cwd: '/',
     });
 
     const viewB = createCodeblock({
-        parent: parentB, fs, content: 'hello world', language: 'md', toolbar: true, index, cwd: '/',
+        parent: parentB, fs, content: 'hello world', language: 'md', toolbar: true, search, files, cwd: '/',
     });
 
     // Manually subscribe both to the same file for sync testing

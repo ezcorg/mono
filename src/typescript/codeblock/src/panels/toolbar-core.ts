@@ -7,10 +7,9 @@
  * host-specific callbacks.
  */
 
-import { HighlightedSearch, SearchIndex } from "../utils/search";
 import { extOrLanguageToLanguageId } from "../lsps";
 import { Seti } from "@m234/nerd-fonts/fs";
-import type { VfsInterface } from "@joinezco/storage";
+import { fileOperations, type FileOperations, type FileSearch, type SearchHit, type VfsInterface } from "@joinezco/storage";
 import { StyleModule } from "style-mod";
 import { vscodeStyleMod } from "../themes/vscode";
 
@@ -21,7 +20,7 @@ type NerdIcon = { value: string; hexCode: number; color?: string };
 
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem';
+    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem' | 'host-command';
     icon: string;
     iconColor?: string;
     query: string;
@@ -52,7 +51,20 @@ export interface BrowseEntry {
     fullPath: string;
 }
 
-export type SearchResult = HighlightedSearch | CommandResult | BrowseEntry | SettingsEntry;
+/** A file the search found; `id` is its path. */
+export type FileResult = SearchHit & { id: string };
+
+/** A command the host offers in the toolbar (the editor's, when the toolbar
+ *  is its command palette). */
+export interface HostCommand {
+    id: string;
+    icon?: string;
+    /** Extra words it is found by. */
+    keywords?: string[];
+    run(): void;
+}
+
+export type SearchResult = FileResult | CommandResult | BrowseEntry | SettingsEntry;
 
 export interface NamingMode {
     active: boolean;
@@ -103,26 +115,30 @@ export type ToolbarIntent =
 // ---------------------------------------------------------------------------
 export interface ToolbarHost {
     fs: VfsInterface;
-    index?: SearchIndex;
+    /** Finds files by path and name (and notes by their text). Without it the
+     *  toolbar offers commands and browsing only. */
+    search?: FileSearch;
+    /** Creates, moves and deletes files. Defaults to plain operations over
+     *  `fs`; a vault's keeps links working through a rename. */
+    files?: FileOperations;
     cwd?: string;
     filepath?: string;
     language?: string;
 
-    /** Tell the host to open a file. */
-    openFile(path: string, options?: { skipSave?: boolean }): void;
+    /** Tell the host to open a file; `find` is text to reveal in it (a
+     *  search hit in the file's content). */
+    openFile(path: string, options?: { skipSave?: boolean; find?: string }): void;
     /** Get the current document content (for save-as). */
     getDocContent(): string;
     /** Move focus from toolbar to editor body. */
     focusEditor(): void;
     /** Notify that a file was created/changed/deleted on the VFS. */
     notifyFileChanged?(path: string, type: number): void;
-    /**
-     * Move the open file, keeping what the host knows current: its unsaved
-     * edits persisted first, and (when the host keeps a link index) every
-     * link to it rewritten. Without it the toolbar writes the open document
-     * to the old path and moves the file.
-     */
-    renameFile?(oldPath: string, newPath: string): Promise<void>;
+    /** Write the open document's unsaved edits to its file now, before the
+     *  toolbar moves it. Without it the toolbar writes the document itself. */
+    persist?(): Promise<void>;
+    /** Commands the host offers, matched against the query. */
+    commands?(query: string): HostCommand[];
     /** Get the current file path from host state (may differ from initial filepath). */
     getCurrentFilePath?(): string | null;
     /** Whether autosave is enabled. */
@@ -219,7 +235,7 @@ export const FOLDER_ICON = '\ue613';
 export const FOLDER_OPEN_ICON = '\uf07c';
 const PARENT_DIR_ICON = '\uf112';
 
-const BINARY_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+const BINARY_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'pdf', 'wasm', 'zip', 'mp3', 'mp4', 'webm', 'wav', 'ogg']);
 const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
@@ -232,6 +248,9 @@ export function isBrowseEntry(result: SearchResult): result is BrowseEntry {
 }
 export function isSettingsEntry(result: SearchResult): result is SettingsEntry {
     return 'type' in result && ('settingKey' in result);
+}
+export function isFileResult(result: SearchResult): result is FileResult {
+    return 'match' in result && 'path' in result;
 }
 
 // Nerd font injection (idempotent)
@@ -367,6 +386,16 @@ const toolbarStyleModule = new StyleModule({
         '& > .cm-search-result-label': {
             flex: 1,
             padding: '0 2px 0 6px',
+            minWidth: '0',
+        },
+        // A content hit: the line it matched, under its path.
+        '& .cm-search-result-snippet': {
+            display: 'block',
+            opacity: '0.7',
+            fontSize: '0.85em',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
         },
     },
 });
@@ -396,6 +425,9 @@ export class ToolbarCore {
     readonly resultsList: HTMLElement;
 
     private host: ToolbarHost;
+    private fileOps: FileOperations;
+    /** Bumped per query, so a slow search cannot overwrite a newer one. */
+    private searchToken = 0;
     private selectedIndex = 0;
     private namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
     private browseMode: BrowseMode = { active: false, currentPath: '/', filter: '' };
@@ -416,6 +448,7 @@ export class ToolbarCore {
 
     constructor(host: ToolbarHost) {
         this.host = host;
+        this.fileOps = host.files ?? fileOperations(host.fs);
         this.currentFilePath = host.filepath || null;
 
         injectNerdFontFace();
@@ -568,6 +601,11 @@ export class ToolbarCore {
         // Settings
         if (this.host.buildSettingsEntries) {
             commands.push({ id: 'Settings', type: 'settings', icon: COG_ICON, query: '' });
+        }
+
+        // The host's own commands, matched against the query.
+        for (const command of this.host.commands?.(query) ?? []) {
+            commands.push({ id: command.id, type: 'host-command', icon: command.icon ?? '\uf120', query, action: () => command.run() });
         }
 
         return commands;
@@ -750,6 +788,12 @@ export class ToolbarCore {
         const resultLabel = document.createElement("div");
         resultLabel.className = "cm-search-result-label";
         resultLabel.textContent = result.id;
+        if (isFileResult(result) && result.match === 'content' && result.snippet) {
+            const snippet = document.createElement("span");
+            snippet.className = "cm-search-result-snippet";
+            snippet.textContent = result.line ? `${result.line}: ${result.snippet}` : result.snippet;
+            resultLabel.appendChild(snippet);
+        }
         li.appendChild(resultLabel);
 
         if (i === this.selectedIndex) li.classList.add("selected");
@@ -871,10 +915,11 @@ export class ToolbarCore {
         }
     }
 
-    private handleSearchResult(result: HighlightedSearch) {
+    private handleSearchResult(result: FileResult) {
+        const query = this.input.value.trim();
         this.input.value = result.id;
         this.setResults([]);
-        this.host.openFile(result.id);
+        this.host.openFile(result.id, result.match === 'content' ? { find: query } : undefined);
     }
 
     private handleCommandResult(command: CommandResult) {
@@ -911,8 +956,9 @@ export class ToolbarCore {
             this.triggerFileImport(false);
         } else if (command.type === 'import-local-folder') {
             this.triggerFileImport(true);
-        } else if (command.type === 'file-action' && command.action) {
+        } else if ((command.type === 'file-action' || command.type === 'host-command') && command.action) {
             this.setResults([]);
+            this.resetInputToCurrentFile();
             command.action();
         }
     }
@@ -1123,15 +1169,10 @@ export class ToolbarCore {
     private async confirmDelete() {
         if (!this.deleteMode.active) return;
         const path = this.deleteMode.filePath;
-        const { fs, index } = this.host;
         try {
             const currentPath = this.getCurrentFilePath();
             const wasOpen = currentPath === path;
-            await fs.unlink(path).catch(e => console.warn('VFS unlink failed:', e));
-            if (index) {
-                try { index.index.discard(path); } catch { }
-                if (index.savePath) index.save(fs, index.savePath);
-            }
+            await this.fileOps.remove(path).catch(e => console.warn('Delete failed:', e));
             this.host.notifyFileChanged?.(path, FileChangeType.Deleted);
             this.exitDeleteMode();
             this.setResults([]);
@@ -1211,48 +1252,31 @@ export class ToolbarCore {
     // File operations
     // -----------------------------------------------------------------------
     private async createBlankFile(pathToOpen: string) {
-        const { fs, index } = this.host;
-        const dir = pathToOpen.substring(0, pathToOpen.lastIndexOf('/'));
-        if (dir) await fs.mkdir(dir, { recursive: true }).catch(() => {});
-        await fs.writeFile(pathToOpen, '').catch(console.error);
-        if (index) { index.add(pathToOpen); if (index.savePath) index.save(fs, index.savePath); }
+        // Reaching here with a file at the path means the overwrite was confirmed.
+        await this.fileOps.create(pathToOpen, '', { overwrite: true }).catch(console.error);
+        this.host.notifyFileChanged?.(pathToOpen, FileChangeType.Created);
         this.setResults([]);
         this.host.openFile(pathToOpen);
     }
 
     private async createAndOpenFile(pathToOpen: string) {
-        const { fs, index } = this.host;
-        const content = this.host.getDocContent();
-        const dir = pathToOpen.substring(0, pathToOpen.lastIndexOf('/'));
-        if (dir) await fs.mkdir(dir, { recursive: true }).catch(() => {});
-        await fs.writeFile(pathToOpen, content).catch(console.error);
-        if (index) { index.add(pathToOpen); if (index.savePath) index.save(fs, index.savePath); }
+        await this.fileOps.create(pathToOpen, this.host.getDocContent(), { overwrite: true }).catch(console.error);
+        this.host.notifyFileChanged?.(pathToOpen, FileChangeType.Created);
         this.setResults([]);
         this.host.openFile(pathToOpen);
     }
 
     private async performRename(oldPath: string, newPath: string) {
-        const { fs, index } = this.host;
-        const dir = newPath.substring(0, newPath.lastIndexOf('/'));
         try {
-            if (dir) await fs.mkdir(dir, { recursive: true }).catch(() => {});
+            // The open document is the file being moved: its edits go first.
+            if (this.host.persist) await this.host.persist();
+            else await this.host.fs.writeFile(oldPath, this.host.getDocContent());
             // Reaching here with a file at `newPath` means the overwrite was confirmed.
-            if (await fs.exists(newPath)) await fs.unlink(newPath);
-            if (this.host.renameFile) {
-                await this.host.renameFile(oldPath, newPath);
-            } else {
-                // The open document is the file being moved: persist it, then move it.
-                await fs.writeFile(oldPath, this.host.getDocContent());
-                await fs.rename(oldPath, newPath);
-            }
+            if (await this.host.fs.exists(newPath)) await this.fileOps.remove(newPath);
+            await this.fileOps.rename(oldPath, newPath);
         } catch (e) {
             console.error(`Rename of ${oldPath} to ${newPath} failed:`, e);
             return;
-        }
-        if (index) {
-            try { index.index.discard(oldPath); } catch { }
-            index.add(newPath);
-            if (index.savePath) index.save(fs, index.savePath);
         }
         this.host.notifyFileChanged?.(oldPath, FileChangeType.Deleted);
         this.host.notifyFileChanged?.(newPath, FileChangeType.Created);
@@ -1261,21 +1285,13 @@ export class ToolbarCore {
     }
 
     private async importFiles(files: FileList) {
-        const { fs, index } = this.host;
         for (const file of files) {
             const path = file.webkitRelativePath || file.name;
-            const dir = path.substring(0, path.lastIndexOf('/'));
-            if (dir) await fs.mkdir(dir, { recursive: true });
             const ext = path.split('.').pop()?.toLowerCase() || '';
-            if (BINARY_IMAGE_EXTS.has(ext)) {
-                await fs.writeBytes(path, new Uint8Array(await file.arrayBuffer()));
-            } else {
-                await fs.writeFile(path, await file.text());
-            }
-            if (index) index.add(path);
+            const content = BINARY_EXTS.has(ext) ? new Uint8Array(await file.arrayBuffer()) : await file.text();
+            await this.fileOps.create(path, content, { overwrite: true });
             this.host.notifyFileChanged?.(path, FileChangeType.Created);
         }
-        if (index?.savePath) await index.save(fs, index.savePath);
         if (files.length > 0) {
             const first = files[0].webkitRelativePath || files[0].name;
             this.host.openFile(first);
@@ -1312,10 +1328,33 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     // Input event handlers
     // -----------------------------------------------------------------------
-    private onInputClick() {
+    /** A query starting `>` asks for the host's commands alone (as in a
+     *  command palette): no files, no file commands. */
+    private commandsOnly(query: string): CommandResult[] | null {
+        if (!query.startsWith('>') || !this.host.commands) return null;
+        return this.host.commands(query).map((command) => ({
+            id: command.id, type: 'host-command' as const, icon: command.icon ?? '\uf120', query, action: () => command.run(),
+        }));
+    }
+
+    /** Files matching `query`, from the host's search. */
+    private async searchFiles(query: string, limit: number): Promise<FileResult[]> {
+        if (!this.host.search || !query.trim()) return [];
+        const hits = await this.host.search.search(query, { limit }).catch(() => []);
+        return hits.map((hit) => ({ ...hit, id: hit.path }));
+    }
+
+    private async onInputClick() {
         if (this.namingMode.active || this.settingsMode.active || this.browseMode.active) return;
         this.resultsExpanded = false;
         const query = this.input.value;
+        const token = ++this.searchToken;
+        const onlyCommands = this.commandsOnly(query);
+        if (onlyCommands) {
+            this.setResults(onlyCommands);
+            document.addEventListener("click", this.handleClickOutsideBound);
+            return;
+        }
         let results: SearchResult[] = [];
         if (query.trim()) {
             // Even on the "untouched" path (user just clicked into the
@@ -1326,7 +1365,8 @@ export class ToolbarCore {
             // always false on first open and the dropdown shows
             // nonsensical "Create new file 'X'" / "Rename to 'X'"
             // entries for the file the user already has open.
-            const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 100);
+            const searchResults: SearchResult[] = await this.searchFiles(query, 100);
+            if (token !== this.searchToken) return;
             if (!this.inputTouched) {
                 results = this.createCommandResults(query, searchResults);
             } else {
@@ -1341,8 +1381,9 @@ export class ToolbarCore {
         document.addEventListener("click", this.handleClickOutsideBound);
     }
 
-    private onInputChange(event: Event) {
+    private async onInputChange(event: Event) {
         const query = (event.target as HTMLInputElement).value;
+        const token = ++this.searchToken;
         this.selectedIndex = 0;
         this.inputTouched = true;
         this.resultsExpanded = false;
@@ -1374,9 +1415,17 @@ export class ToolbarCore {
             }
         }
 
+        const onlyCommands = this.commandsOnly(query);
+        if (onlyCommands) {
+            this.lastIntent = 'command';
+            this.cancelAiClassify();
+            this.setResults(onlyCommands);
+            return;
+        }
         let results: SearchResult[] = [];
         if (query.trim()) {
-            const searchResults: SearchResult[] = (this.host.index?.search(query) || []).slice(0, 1000);
+            const searchResults: SearchResult[] = await this.searchFiles(query, 200);
+            if (token !== this.searchToken) return;
             const commands = this.createCommandResults(query, searchResults);
             const { intent, confidence } = this.detectIntent(query, searchResults);
             this.lastIntent = intent;

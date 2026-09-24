@@ -27,17 +27,17 @@ const { github, icon } = projects.find((p) => p.id === 'markdown-editor')!;
 			window.__ezos = { github, icon };
 		</script>
 		<script>
-			import { getDemoFs } from '../../scripts/demo-fs';
+			import { getDemoVault } from '../../scripts/demo-fs';
 			import { frame } from '../../scripts/ezos-frame';
 			const { tool, dark } = frame((window as unknown as { __ezos: { github: string; icon: string } }).__ezos);
 			const el = document.getElementById('mount')!;
 			(async () => {
-				const fs = await getDemoFs();
-				const [{ createEditor }, { SearchIndex }] = await Promise.all([import('@joinezco/markdown-editor'), import('@joinezco/codeblock')]);
-				const index = await SearchIndex.get(fs, '.codeblock/index.json').catch(() => undefined);
+				const vault = await getDemoVault();
+				const { fs, search, files } = vault;
+				const { createEditor } = await import('@joinezco/markdown-editor');
 				el.innerHTML = '';
 				/* the file-search toolbar mounts in the title bar; the block-action gutter stays out of the way */
-				const editor = createEditor({ element: el, autofocus: false, fs: { fs, filepath: 'hello.md', autoSave: true }, toolbar: { fs, index, filepath: 'hello.md', mount: tool, autoHide: false, className: 'ezos-search' }, blockActions: false });
+				const editor = createEditor({ element: el, autofocus: false, fs: { fs, filepath: 'hello.md', autoSave: true }, search, files, links: { resolver: vault.links }, toolbar: { filepath: 'hello.md', mount: tool, autoHide: false, className: 'ezos-search' }, blockActions: false });
 				/* the lights in the room switch the editor's theme (and its embedded codeblocks') too */
 				const wrap = editor.view.dom.closest('.ezco-mde') ?? editor.view.dom;
 				const theme = (d: boolean) => { wrap.setAttribute('data-theme', d ? 'dark' : 'light'); editor.commands.setCodeblockTheme({ dark: d }); };

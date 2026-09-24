@@ -1,29 +1,10 @@
-import { CodeblockFS, SearchIndex } from "@joinezco/codeblock";
-import type { VfsInterface } from "@joinezco/storage";
+import { CodeblockFS } from "@joinezco/codeblock";
+import { Vault, type VfsInterface } from "@joinezco/storage";
 import { files } from "../data/demo-files.js";
 
-// `SearchIndex.get` doesn't cache — each caller builds and saves a new
-// instance. Multiple consumers on the same page (our two demo codeblocks
-// plus every codeblock embedded inside the markdown-editor's content)
-// then concurrently call `fs.writeFile('.codeblock/index.json', ...)`,
-// which the OPFS worker's sync access handle rejects with
-// `NoModificationAllowedError`. Dedup by path here so all consumers
-// share one Promise<SearchIndex> and only one save races to the file.
-const _searchIndexOrigGet = SearchIndex.get.bind(SearchIndex);
-const _searchIndexCache = new Map<string, Promise<SearchIndex>>();
-(SearchIndex as { get: typeof SearchIndex.get }).get = ((
-    fs: VfsInterface,
-    path: string,
-) => {
-    let cached = _searchIndexCache.get(path);
-    if (!cached) {
-        cached = _searchIndexOrigGet(fs, path);
-        _searchIndexCache.set(path, cached);
-    }
-    return cached;
-}) as typeof SearchIndex.get;
-
-// Shared singleton for the `ezco-demo` OPFS bucket.
+// Shared singleton for the `ezco-demo` OPFS bucket, as a vault: one index
+// behind every demo on the page (the codeblocks, the editor and every
+// codeblock embedded in it search the same one, and see each other's files).
 //
 // `CodeblockFS.worker(undefined, "ezco-demo")` opens sync access handles in
 // the codeblock SharedWorker's OPFS layer; calling it twice in the same
@@ -38,7 +19,7 @@ const _searchIndexCache = new Map<string, Promise<SearchIndex>>();
 
 declare global {
     // eslint-disable-next-line no-var
-    var __ezcoDemoFs: Promise<VfsInterface> | undefined;
+    var __ezcoDemoVault: Promise<Vault> | undefined;
 }
 
 async function seed(fs: VfsInterface) {
@@ -61,12 +42,13 @@ async function seed(fs: VfsInterface) {
     );
 }
 
-export function getDemoFs(): Promise<VfsInterface> {
-    if (globalThis.__ezcoDemoFs) return globalThis.__ezcoDemoFs;
-    const promise = CodeblockFS.worker(undefined, "ezco-demo").then(async (fs) => {
-        await seed(fs);
-        return fs;
+export function getDemoVault(): Promise<Vault> {
+    if (globalThis.__ezcoDemoVault) return globalThis.__ezcoDemoVault;
+    const promise = CodeblockFS.worker(undefined, "ezco-demo").then(async (store) => {
+        const vault = new Vault(store);
+        await seed(vault.fs);
+        return vault;
     });
-    globalThis.__ezcoDemoFs = promise;
+    globalThis.__ezcoDemoVault = promise;
     return promise;
 }

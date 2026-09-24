@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
-import { CodeblockFS, SearchIndex } from '@joinezco/codeblock';
+import { CodeblockFS } from '@joinezco/codeblock';
+import { Vault } from '@joinezco/storage';
 import './App.css'
 import { file } from './example';
 
@@ -110,15 +111,10 @@ function App() {
   const toolbarMountRef = useRef<HTMLDivElement>(null);
   const sidebarMountRef = useRef<HTMLDivElement>(null);
 
-  async function loadFs() {
-    const fs = await CodeblockFS.worker('/snapshot.bin');
-    let index: SearchIndex | undefined;
-    try {
-      index = await SearchIndex.get(fs, '.codeblock/index.json');
-    } catch (error) {
-      console.warn('Failed to create search index:', error);
-    }
-    return { fs, index };
+  // The demo's files (the package's own source, as a snapshot) as a vault:
+  // one index behind the palette's search, wikilinks, backlinks and renames.
+  async function loadVault() {
+    return new Vault(await CodeblockFS.worker('/snapshot.bin'));
   }
 
   // Create the editor once. The custom/default distinction is purely
@@ -128,8 +124,9 @@ function App() {
     let cancelled = false;
     let ed: MarkdownEditor | null = null;
 
-    loadFs().then(async ({ fs, index }) => {
+    loadVault().then(async (vault) => {
       if (cancelled || !editorBodyRef.current) return;
+      const { fs } = vault;
       await fs.writeFile('test.md', file);
       // Seed a non-Markdown file so the titlebar search can open it and show
       // the "code files render as a single codeblock" behavior (and round-trip
@@ -140,19 +137,21 @@ function App() {
       ed = createEditor({
         element: editorBodyRef.current,
         fs: { fs, filepath: 'test.md', autoSave: true },
+        links: { resolver: vault.links, index: vault.links },
+        search: vault.search,
+        files: vault.files,
         // Mount the file-search toolbar into the window titlebar (in place of
         // a title) and keep it always visible there, instead of the default
         // floating auto-hiding pill. `.mac-titlebar-search` retheme lives in
         // App.css.
         toolbar: {
-          fs,
-          index,
           filepath: 'test.md',
           mount: () => toolbarMountRef.current,
           autoHide: false,
           className: 'mac-titlebar-search',
         },
-        // Auto-generated document outline, mounted into the window's left column.
+        // The vault's files and the document's outline, in the window's left column.
+        fileTree: { mount: () => sidebarMountRef.current },
         sidebar: {
           mount: () => sidebarMountRef.current,
           title: 'Document',

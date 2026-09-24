@@ -77,6 +77,15 @@ export interface FileEvent {
     path: string
 }
 
+export interface LoadOptions {
+    /** Create the file (empty) when it does not exist. */
+    create?: boolean
+    /** Move focus into the loaded file (default: the `focusOnLoad` option).
+     *  A caller managing focus itself (a file tree naming a new note) passes
+     *  `false`. */
+    focus?: boolean
+}
+
 export interface FileSystemOptions {
     fs?: VfsInterface
     filepath?: string
@@ -121,11 +130,17 @@ export interface FileSystemStorage {
      * its "open file" through here. With `create`, a missing file is created
      * empty first (following a link to a note not written yet).
      */
-    loadFile: (path: string, options?: { create?: boolean }) => Promise<void>
+    loadFile: (path: string, options?: LoadOptions) => Promise<void>
+    /** Close the open file (its edits saved first): the editor is left empty,
+     *  attached to no file, as after the file is deleted. */
+    close: () => Promise<void>
     /** Be told when a file is loaded or saved. Returns an unsubscribe. */
     subscribe: (listener: (event: FileEvent) => void) => () => void
     /** @internal Write the open file's content and announce the save. */
     write: (fs: VfsInterface, path: string, content: string) => void
+    /** @internal Who is subscribed (kept from the start, since plugin views
+     *  subscribe before `onCreate` runs). */
+    listeners: Set<(event: FileEvent) => void>
 }
 
 export const FileSystem = Extension.create<FileSystemOptions>({
@@ -143,6 +158,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
     // guarantees is shared across every lifecycle hook *and* reachable as
     // `editor.storage.persistence`, which the toolbar uses to drive file loads.
     addStorage(): FileSystemStorage {
+        const listeners = new Set<(event: FileEvent) => void>()
         return {
             options: this.options,
             saveTimeout: null,
@@ -154,8 +170,15 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // live editor).
             flushPendingSave: async () => {},
             loadFile: async () => {},
-            subscribe: () => () => {},
+            close: async () => {},
+            // Live from the start: plugin views (the toolbar) are built before
+            // `onCreate` runs, and subscribe as they are built.
+            subscribe: (listener) => {
+                listeners.add(listener)
+                return () => listeners.delete(listener)
+            },
             write: () => {},
+            listeners,
         }
     },
 
@@ -168,13 +191,8 @@ export const FileSystem = Extension.create<FileSystemOptions>({
 
         const editableEl = () => editor.view.dom as HTMLElement
 
-        const listeners = new Set<(event: FileEvent) => void>()
         const emit = (event: FileEvent) => {
-            for (const listener of listeners) listener(event)
-        }
-        storage.subscribe = (listener) => {
-            listeners.add(listener)
-            return () => listeners.delete(listener)
+            for (const listener of storage.listeners) listener(event)
         }
         // Every write of the open file goes through here: in order (a later
         // save never lands before an earlier one), announced when it lands,
@@ -309,7 +327,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // load after it is a file *switch*, so reset the scroll to the top of the
         // new file rather than inheriting the previous file's scroll offset.
         let didInitialLoad = false
-        const loadContent = (content: string) => {
+        const loadContent = (content: string, focus = storage.options.focusOnLoad !== false) => {
             storage.loadingFile = true
             try {
                 const path = storage.options.filepath
@@ -329,7 +347,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 scrollEditorToTop(editor.view.dom as HTMLElement)
                 // Move the caret to the start of the freshly-opened file (focus
                 // follows from the toolbar into the document), unless opted out.
-                if (storage.options.focusOnLoad !== false) {
+                if (focus) {
                     if (storage.codeView) storage.codeView.focus()
                     else editor.commands.focus('start', { scrollIntoView: false })
                 }
@@ -363,7 +381,19 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         }
         storage.flushPendingSave = flushPendingSave
 
-        storage.loadFile = async (path: string, options: { create?: boolean } = {}) => {
+        storage.close = async () => {
+            await flushPendingSave()
+            storage.loadingFile = true
+            try {
+                hideCodeEditor()
+                storage.options.filepath = undefined
+                editor.commands.setContent('')
+            } finally {
+                storage.loadingFile = false
+            }
+        }
+
+        storage.loadFile = async (path: string, options: LoadOptions = {}) => {
             const { fs } = storage.options
             if (!fs) return
             // 1. Persist the outgoing file's unsaved edits to *its* path first,
@@ -380,7 +410,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // 3. Retarget autosave at the new file *before* swapping content,
             //    and load without scheduling a save.
             storage.options.filepath = path
-            loadContent(content)
+            loadContent(content, options.focus ?? storage.options.focusOnLoad !== false)
         }
 
         // Initial load (also a non-editing load → no spurious save).

@@ -176,7 +176,7 @@ function safeDispatch(view: EditorView, spec: any) {
 // CM Panel
 // ---------------------------------------------------------------------------
 export const toolbarPanel = (view: EditorView): Panel => {
-    let { filepath, language, index } = view.state.facet(CodeblockFacet);
+    let { filepath, language, search, files } = view.state.facet(CodeblockFacet);
 
     // --- Clear filesystem ---
     async function clearFilesystem() {
@@ -209,14 +209,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
             await fs.unlink(dir).catch(() => {});
         }
 
-        // Clear search index
-        if (index) {
-            index.index.removeAll();
-            if (index.savePath) {
-                await fs.writeFile(index.savePath, '{}').catch(() => {});
-            }
-        }
-
         // Try to clear OPFS storage
         if (typeof navigator !== 'undefined' && 'storage' in navigator && 'getDirectory' in (navigator.storage ?? {})) {
             try {
@@ -241,7 +233,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
     // --- Create ToolbarCore with CM host ---
     const core = new ToolbarCore({
         fs: view.state.facet(CodeblockFacet).fs,
-        index,
+        search,
+        files,
         cwd: view.state.facet(CodeblockFacet).cwd,
         filepath,
         language,

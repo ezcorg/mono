@@ -61,7 +61,7 @@ export default defineConfig({
             "@joinezco/codeblock > @volar/language-service",
             "@joinezco/codeblock > comlink",
             "@joinezco/codeblock > lodash",
-            "@joinezco/codeblock > minisearch",
+            "@joinezco/storage > minisearch",
             "@joinezco/codeblock > path-browserify",
             "@joinezco/codeblock > @marimo-team/codemirror-ai",
             "@joinezco/codeblock > vscode-languageserver-protocol",

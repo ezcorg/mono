@@ -24,9 +24,9 @@ async function fixtureCopy(): Promise<VfsInterface> {
 
 /** What the index says about every note: backlinks per note, and the dangling links. */
 async function snapshot(vault: Vault) {
-    const notes = vault.files().filter(isNote)
+    const notes = vault.paths().filter(isNote)
     return {
-        files: vault.files(),
+        files: vault.paths(),
         backlinks: Object.fromEntries(notes.map((n) => [n, vault.backlinks(n)])),
         unresolved: vault.unresolved(),
     }
@@ -37,7 +37,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
 describe('the link index, rebuilt from a fixture vault', () => {
     it('knows every file, what links where, and what points nowhere', async () => {
         const vault = await Vault.open(nodeVfs(FIXTURE), { watch: false })
-        expect(vault.files()).toEqual([
+        expect(vault.paths()).toEqual([
             'archive/2025/plan.md',
             'attachments/diagram.png',
             'index.md',
@@ -121,7 +121,7 @@ describe('renaming keeps every link meaning what it meant', () => {
         expect(index).toContain('related: "[[work/plan]]"')
         expect(index).toContain('See [[plan]] and [[Plan#Goals|the goals]], the [roadmap](work/roadmap.md)')
         expect(await store.readFile('work/plan.md')).toBe(before)
-        expect(vault.files()).toContain('work/roadmap.md')
+        expect(vault.paths()).toContain('work/roadmap.md')
         expect(vault.backlinks('work/roadmap.md').map((l) => l.source)).toEqual(['index.md', 'work/plan.md'])
     })
 
@@ -181,7 +181,7 @@ describe('keeping current', () => {
 
     it('leaves dot-directories out', async () => {
         const vault = await Vault.open(await fixtureCopy(), { watch: false })
-        expect(vault.files().some((f) => f.startsWith('.obsidian'))).toBe(false)
+        expect(vault.paths().some((f) => f.startsWith('.obsidian'))).toBe(false)
         await vault.fs.mkdir('.eznote', { recursive: true })
         await vault.fs.writeFile('.eznote/state.md', '[[index]]')
         expect(vault.backlinks('index.md').some((l) => l.source.startsWith('.'))).toBe(false)

@@ -1,11 +1,11 @@
 import { createCodeblock } from "../../editor";
 import { Vfs } from "../../utils/fs";
-import { SearchIndex } from "../../utils/search";
+import { Vault } from "@joinezco/storage";
 
 async function init() {
     // Use FSA (OPFS) with unique bucket name for test isolation
-    const fs = await Vfs.worker(undefined, `codeblock-test-create-${Date.now()}`);
-    const index = await SearchIndex.get(fs, '.codeblock/index.json');
+    const vault = new Vault(await Vfs.worker(undefined, `codeblock-test-create-${Date.now()}`));
+    const { fs, search, files } = vault;
 
     const parent = document.getElementById('editor') as HTMLDivElement;
 
@@ -16,13 +16,14 @@ async function init() {
         content: 'initial content here',
         language: 'txt' as any,
         toolbar: true,
-        index,
+        search,
+        files,
         cwd: '/',
     });
 
     (window as any).__view = view;
     (window as any).__fs = fs;
-    (window as any).__index = index;
+    (window as any).__vault = vault;
     (window as any).__ready = true;
 }
 
