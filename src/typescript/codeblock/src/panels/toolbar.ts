@@ -209,25 +209,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
             await fs.unlink(dir).catch(() => {});
         }
 
-        // Try to clear OPFS storage
-        if (typeof navigator !== 'undefined' && 'storage' in navigator && 'getDirectory' in (navigator.storage ?? {})) {
-            try {
-                const root = await navigator.storage.getDirectory();
-                // @ts-ignore - remove() may not be in all type defs
-                for await (const [name] of root.entries()) {
-                    await root.removeEntry(name, { recursive: true }).catch(() => {});
-                }
-            } catch { /* OPFS not available or permission denied */ }
-        }
-
-        // Reset editor to blank state
-        safeDispatch(view, {
-            changes: { from: 0, to: view.state.doc.length, insert: '' },
-            effects: [
-                openFileEffect.of({ path: '', skipSave: true }),
-                setSearchResults.of([]),
-            ]
-        });
+        // Put the open file down, unsaved: it is gone.
+        closeFile(view);
+        safeDispatch(view, { effects: [setSearchResults.of([])] });
     }
 
     // --- Create ToolbarCore with CM host ---

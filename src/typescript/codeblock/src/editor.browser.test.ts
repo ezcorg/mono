@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { undo } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import { memoryVfs, Vault, type VfsInterface } from '@joinezco/storage';
+import { opfsBucket, opfsVfs, removeOpfsBucket } from '@joinezco/storage/browser';
 import { createCodeblock, currentFileField, onFileEvent, openFileEffect, whenFileLoaded, type FileEvent } from './editor';
 
 const views: EditorView[] = [];
@@ -136,6 +137,27 @@ describe('Files in a code block', () => {
         expect(await vault.fs.exists('x')).toBe(false);
     });
 
+    it('clear their own files, leaving the origin’s other vaults, and stay editable', async () => {
+        const other = opfsVfs(await opfsBucket('codeblock-test-other-vault'));
+        await other.writeFile('keep.md', 'kept');
+        const fs = memoryVfs({ 'a.txt': 'A', 'dir/b.txt': 'B' });
+        const view = mount(fs, 'a.txt', true);
+        await loaded(view, 'a.txt');
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        input.focus();
+        input.value = 'settings';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const entry = () => [...view.dom.querySelectorAll('.cm-search-result')].find((r) => r.textContent?.includes('Clear filesystem')) as HTMLElement | undefined;
+        await until(() => !!entry());
+        entry()!.click();
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await until(() => view.state.field(currentFileField).path === null);
+        await until(async () => !(await fs.exists('a.txt')) && !(await fs.exists('dir/b.txt')));
+        expect(view.state.readOnly).toBe(false);
+        expect(await other.readFile('keep.md')).toBe('kept');
+        await removeOpfsBucket('codeblock-test-other-vault');
+    });
+
     it('show a file that is not text instead of editing it, and never write it', async () => {
         // A PDF's head: text, then bytes that are not UTF-8, and NULs.
         const pdf = new Uint8Array([...new TextEncoder().encode('%PDF-1.7\n'), 0xe2, 0xe3, 0xcf, 0xd3, 0, 0, 10, 0xff]);
@@ -238,9 +260,9 @@ describe('Files in a code block', () => {
     });
 });
 
-async function until(condition: () => boolean, timeout = 5000): Promise<void> {
+async function until(condition: () => boolean | Promise<boolean>, timeout = 5000): Promise<void> {
     const start = Date.now();
-    while (!condition()) {
+    while (!(await condition())) {
         if (Date.now() - start > timeout) throw new Error('timed out');
         await new Promise((r) => setTimeout(r, 10));
     }

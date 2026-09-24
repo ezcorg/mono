@@ -156,7 +156,8 @@ export interface ToolbarHost {
     // File actions (optional, e.g. SVG preview toggle)
     fileActions?: FileActionEntry[];
 
-    /** Clear the filesystem and all related persistent storage. */
+    /** Delete every file in the editor's filesystem (and nothing else: an
+     *  origin's other vaults are not the editor's). */
     onClearFilesystem?(): Promise<void>;
 
     // Navigation history (optional)
@@ -1220,7 +1221,7 @@ export class ToolbarCore {
         this.clearFilesystemPending = true;
         this.stateIcon.textContent = '\u2717';
         this.input.value = '';
-        this.input.placeholder = 'Clear all files and storage? (Enter to confirm, Esc to cancel)';
+        this.input.placeholder = 'Delete every file here? (Enter to confirm, Esc to cancel)';
         this.input.focus();
         this.setResults([]);
     }
