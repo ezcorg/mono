@@ -29,16 +29,8 @@ import {
 } from '@tauri-apps/plugin-fs'
 import { documentDir, join } from '@tauri-apps/api/path'
 import { FileType, type VfsInterface, type WatchEvent } from '@joinezco/storage'
+import { watchEventsOf } from './watch-events'
 
-/** `path` relative to the directory `dir` (both absolute host paths), with
- *  `/` separators: the watch contract names changes relative to what is
- *  watched. */
-const relativeTo = (dir: string, path: string): string => {
-    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
-    const base = norm(dir)
-    const full = norm(path)
-    return full.startsWith(`${base}/`) ? full.slice(base.length + 1) : full.split('/').pop() ?? full
-}
 
 /** Create a host-filesystem VFS rooted at the absolute directory `base`. */
 export function createTauriVfs(base: string): VfsInterface {
@@ -137,17 +129,9 @@ export function createTauriVfs(base: string): VfsInterface {
             try {
                 unwatch = await fsWatch(
                     watched,
+                    // Every path the event names: a rename carries both sides.
                     (event: any) => {
-                        const t = event?.type
-                        const isRename =
-                            t && typeof t === 'object'
-                                ? 'create' in t || 'remove' in t || 'rename' in t
-                                : false
-                        const first: string = event?.paths?.[0] ?? ''
-                        push({
-                            eventType: isRename ? 'rename' : 'change',
-                            filename: relativeTo(watched, first),
-                        })
+                        for (const e of watchEventsOf(watched, event)) push(e)
                     },
                     { recursive: true },
                 )
