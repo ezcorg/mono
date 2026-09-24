@@ -45,6 +45,7 @@
   "dependencies": {
     "@noble/hashes": "^1.8.0",
     "markdown-it": "^14.1.0",
-    "minisearch": "^7.2.0"
+    "minisearch": "^7.2.0",
+    "smol-toml": "^1.8.0"
   }
 }

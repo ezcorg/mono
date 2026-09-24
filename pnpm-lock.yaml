@@ -778,6 +778,9 @@ importers:
       minisearch:
         specifier: ^7.2.0
         version: 7.2.0
+      smol-toml:
+        specifier: ^1.8.0
+        version: 1.8.0
     devDependencies:
       '@types/markdown-it':
         specifier: ^14.1.2
