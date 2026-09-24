@@ -22,6 +22,7 @@ import { connect, requestFilesystemGrant, type Transport } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
 import { workspaceRoot } from "./workspace";
 import { add as addComponent } from "./generated/components";
+import { editorInference, requestInferenceGrant } from "./inference";
 import { editorLinks, openLinks, requestLinksGrant, type LinksIndex } from "./links";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
@@ -206,6 +207,10 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
             // The editor's own links panel, in the column under the outline;
             // renames from the toolbar go through the capability too.
             links: { ...links, panel: { mount: () => linksMount } },
+            // Prose actions (rewrite, summarize, continue, ask) over the
+            // daemon's inference capability, its grant asked for the first
+            // time one runs.
+            inference: editorInference(transport, () => requestInferenceGrant(transport, "let a model help write this note")),
             // The file-search toolbar mounts into the window titlebar (in place
             // of a title) and stays visible there (not the default floating pill);
             // `.mac-titlebar-search` rethemes it into a slim titlebar field.
