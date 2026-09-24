@@ -30,6 +30,28 @@ const editor = createEditor({
 With `fs` alone the editor keeps a vault of its own over it, so wikilinks,
 search and renames work without the host building one.
 
+## Versions and edits from elsewhere
+
+Given `versions: vault.versions`, the editor loads and saves through the
+vault's version log: a save names the version it was made on, and if the
+file changed underneath, the edits are kept as a conflict copy
+(`persistence.subscribe` hears `conflict`) and the note shows the file as
+it now is. A note with nothing unsaved follows its file when something
+else changes it.
+
+Something other than the person typing (an agent, a tool) changes an open
+file through the editor, not under it:
+
+```ts
+const docs = openDocuments(editor)
+const doc = await docs.read('notes/plan.md') // { text, version }
+await docs.edit('notes/plan.md', doc.version, [{ range: { from: 0, to: 5 }, text: 'Hello' }])
+```
+
+Edits are LSP-shaped (offsets, or lines and characters) on a document
+version that moves with every change; a stale one is refused. They are
+applied as one transaction that keeps the caret, then saved.
+
 ## What it understands
 
 | Syntax | Notes |

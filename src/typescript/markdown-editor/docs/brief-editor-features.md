@@ -6,7 +6,9 @@ vault around it. Read this, then the RFC beside it
 the gap list, §3 to §7 the decisions that shape the editor, §16 the
 milestones. The icanhaz side (the capability daemon the editor MAY talk to) is
 built through M6. E1, the editor's foundations and the vault package, is
-built (branch `editor-e1`, 2026-09-23); E2 to E7 are not started. This brief
+built (branch `editor-e1`, 2026-09-23), and so is E2's editor half
+(versions and the `edit()` path); the rest of E2 and E3 to E7 are not
+started. This brief
 says where to continue and what not to touch.
 
 HUMAN'S NOTE: Most of these documents were written by an LLM that may not have had full context into the overall ambitions of the project. The general idea is that from `@joinezco/markdown-editor`, to `@joinezco/codebock`, to `@joinezco/vault` (I suppose? I think it would sound better as `@joinezco/storage` and not be clearly trying to emulate Obsidian), that functionality is composed of interfaces which allow each library to avoid making assumptions about the environment its operating in (i.e in a browser vs. a native app), and then we provide different implementations of those interfaces depending on what is possible in a given environment. The browser, for instance, could not run any processes on the host (unless of course they're running `icanhaz` and they grant the capability to the editor -- though then in the case of running processes the editor would likely also require the host filesystem vs. something browser-native like indexeddb, otherwise it would not make much sense). Local-first, peer-to-peer, and open is the prevailing philosophy.
@@ -60,23 +62,20 @@ the daemon, which needs the capability guests built
 (`cargo build --release --target wasm32-wasip2` in each
 `src/apps/icanhaz/capabilities/*`). The browser suites can fail cold and pass
 warm because of dependency optimisation; run once more before believing a
-failure. On this machine five of codeblock's puppeteer e2e cases fail
-(file persistence across switches, rename via the toolbar, three TypeScript
-diagnostics cases) before and after E1 alike; they are unexamined.
+failure. `pnpm test` in codeblock runs its jsdom unit tests, its Chromium
+project (`*.browser.test.ts`) and the puppeteer e2e suite, which needs
+Chrome at `/usr/bin/google-chrome` or `CHROME_PATH`.
 
 ## Where to continue
 
-1. **E2's editor half**, the first thing that makes an agent editing a note
-   safe: a per-file version log with base-version writes (`put(path,
-   base, bytes)` refused when stale, the losing side kept as a conflict
-   copy), and an `edit(path, base, [{range, text}])` path into open
-   documents applied as a transaction that keeps the user's caret (RFC §3).
-   The log is storage's (`.eznote/versions/`, a `VersionedVfs` or a
-   `Vault` method, not the editor's); the `edit()` entry is the editor's,
-   offered to the host as an interface. Its icanhaz half (the overlay
-   membrane and the `clonefile` resolver) is not built and is not this
-   brief's; the editor half needs only the VFS. Editable region embeds
-   (`![[src/lib.rs#L40-L80]]`) follow from it: they write a range of a file.
+1. **What E2's editor half left** (RFC §16): editable region embeds
+   (`![[src/lib.rs#L40-L80]]` as an editor over those lines, writing the
+   range back with `vault.versions.put` on the version it showed); a review
+   entry in the editor when a save becomes a conflict copy (today a
+   `conflict` event and the copy); signing keys for the version log (a
+   `Signer` is injected; the keys belong with the identity work). The
+   icanhaz half (overlay membrane, `clonefile` resolver, the workspace
+   block) is not this brief's.
 2. **What E1 left** (RFC §16): persist the vault's index as a per-device cache keyed by mtime (it rebuilds on
    open today); tags and a property index; block ids assigned by the
    editor (`^abc`); highlight `==x==`; diagrams behind a renderer interface

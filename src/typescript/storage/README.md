@@ -82,6 +82,24 @@ from the root, then by path tail anywhere, closest first. A rename moves the
 file and rewrites links to it as qualified as they were written, fixes links
 inside the moved note, and lengthens a wikilink the new name would capture.
 
+## Versions
+
+`vault.versions` (a `VersionLog`, over any VFS) keeps every file's
+versions in `.eznote/`: the bytes once, by blake3 hash, and each version's
+parents. A write names the version it was made on:
+
+```ts
+const head = await vault.versions.head('notes/plan.md')
+const result = await vault.versions.put('notes/plan.md', head.id, text)
+if (!result.ok) result.conflict.path // the bytes, kept beside the file
+```
+
+A stale write changes nothing at the path; its bytes become a conflict
+copy (`plan (conflict, 2026-09-23 12.04).md`). A change made by anything
+else becomes a version on the head it replaced when the log next looks.
+`history`, `read` and `move` (a vault rename calls it) complete it;
+versions are signed when the log is given a `Signer`.
+
 ## Notes
 
 `newNoteId()` makes ULIDs for a note's `id:`; `noteIdOf(text)` reads it.
