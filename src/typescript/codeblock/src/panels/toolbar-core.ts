@@ -9,7 +9,7 @@
 
 import { extOrLanguageToLanguageId } from "../lsps";
 import { Seti } from "@m234/nerd-fonts/fs";
-import { fileOperations, type FileOperations, type FileSearch, type SearchHit, type VfsInterface } from "@joinezco/storage";
+import { fileOperations, pathTaken, type FileOperations, type FileSearch, type SearchHit, type VfsInterface } from "@joinezco/storage";
 import { StyleModule } from "style-mod";
 import { vscodeStyleMod } from "../themes/vscode";
 
@@ -1247,7 +1247,9 @@ export class ToolbarCore {
     }
 
     private async checkOverwriteAndExecute(path: string, action: OverwriteMode['action'], execute: () => void | Promise<void>, oldPath?: string) {
-        const exists = await this.host.fs.exists(path);
+        // A rename to another spelling of the same name is not a replacement,
+        // even where the disk says a file of that name exists (it is this one).
+        const exists = await pathTaken(this.host.fs, path, action === 'rename' ? oldPath : undefined);
         if (exists) this.enterOverwriteMode(path, action, oldPath);
         else await execute();
     }
@@ -1275,7 +1277,7 @@ export class ToolbarCore {
             // The open document is the file being moved: its edits go first.
             await this.host.persist();
             // Reaching here with a file at `newPath` means the overwrite was confirmed.
-            if (await this.host.fs.exists(newPath)) await this.fileOps.remove(newPath);
+            if (await pathTaken(this.host.fs, newPath, oldPath)) await this.fileOps.remove(newPath);
             await this.fileOps.rename(oldPath, newPath);
         } catch (e) {
             console.error(`Rename of ${oldPath} to ${newPath} failed:`, e);

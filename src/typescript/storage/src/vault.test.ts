@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { dirname as nodeDirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Vault } from './vault.js'
+import { fileOperations } from './files.js'
 import { memoryVfs } from './memory.js'
 import { nodeVfs } from './node.js'
 import { walk, type VfsInterface } from './vfs.js'
 import { isNote, normalizePath } from './path.js'
+import { caseInsensitive } from './testing/case-insensitive.js'
 
 const FIXTURE = join(nodeDirname(fileURLToPath(import.meta.url)), '__fixtures__', 'vault')
 
@@ -174,6 +176,21 @@ describe('renaming keeps every link meaning what it meant', () => {
         const index = await store.readFile('index.md')
         expect(index).toContain('| p | [[next\\|The plan]] |')
         expect(index).toContain('See [m](Meeting%202026.md).')
+    })
+
+    it('renames a note to another spelling of its name on a disk that ignores case', async () => {
+        const store = caseInsensitive(memoryVfs({ 'plan.md': '# Plan', 'index.md': 'See [[plan]] and [p](plan.md).' }))
+        const vault = await Vault.open(store, { watch: false })
+        await vault.rename('plan.md', 'Plan.md')
+        expect((await store.readDir('/')).map(([name]) => name).sort()).toEqual(['Plan.md', 'index.md'])
+        expect(await store.readFile('Plan.md')).toBe('# Plan')
+        expect(await store.readFile('index.md')).toBe('See [[plan]] and [p](Plan.md).')
+        // Another file's name, however spelled, is still taken.
+        await store.writeFile('a.md', 'a')
+        await expect(vault.rename('a.md', 'PLAN.md')).rejects.toThrow(/exists/)
+        await expect(fileOperations(store).rename('a.md', 'pLaN.md')).rejects.toThrow(/exists/)
+        expect(await fileOperations(store).rename('a.md', 'A.md')).toBe(0)
+        expect((await store.readDir('/')).map(([name]) => name).sort()).toEqual(['A.md', 'Plan.md', 'index.md'])
     })
 
     it('refuses to replace an existing file', async () => {

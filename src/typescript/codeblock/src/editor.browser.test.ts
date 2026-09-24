@@ -89,6 +89,25 @@ describe('Files in a code block', () => {
         expect(events[events.length - 1]).toEqual({ type: 'close', path: 'a.txt' });
     });
 
+    it('rename to another spelling of their name on a disk that ignores case', async () => {
+        const store = caseInsensitive(memoryVfs({ 'plan.md': '# Plan' }));
+        const vault = await Vault.open(store, { watch: false });
+        const view = mount(vault.fs, 'plan.md', true, vault);
+        await loaded(view, 'plan.md');
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        input.focus();
+        input.value = 'Plan.md';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const command = () => [...view.dom.querySelectorAll('.cm-command-result')].find((r) => r.textContent?.includes('Rename to "Plan.md"')) as HTMLElement | undefined;
+        await until(() => !!command());
+        command()!.click();
+        // No "exists, overwrite?": it is the same file.
+        await loaded(view, 'Plan.md');
+        expect(input.placeholder).not.toMatch(/Overwrite/);
+        expect((await store.readDir('/')).map(([name]) => name)).toEqual(['Plan.md']);
+        expect(await store.readFile('Plan.md')).toBe('# Plan');
+    });
+
     it('show a file that is not text instead of editing it, and never write it', async () => {
         // A PDF's head: text, then bytes that are not UTF-8, and NULs.
         const pdf = new Uint8Array([...new TextEncoder().encode('%PDF-1.7\n'), 0xe2, 0xe3, 0xcf, 0xd3, 0, 0, 10, 0xff]);
@@ -197,4 +216,39 @@ async function until(condition: () => boolean, timeout = 5000): Promise<void> {
         if (Date.now() - start > timeout) throw new Error('timed out');
         await new Promise((r) => setTimeout(r, 10));
     }
+}
+
+/** `fs` as a disk that ignores case: a path finds an entry however it is
+ *  spelled; names keep the spelling they were given. */
+function caseInsensitive(fs: VfsInterface): VfsInterface {
+    const spelled = async (path: string) => {
+        let out = '';
+        for (const segment of path.split('/').filter(Boolean)) {
+            const entries = await fs.readDir(out || '/').catch(() => [] as [string, number][]);
+            const found = entries.find(([name]) => name.toLowerCase() === segment.toLowerCase())?.[0] ?? segment;
+            out = out ? `${out}/${found}` : found;
+        }
+        return out;
+    };
+    const at = <A extends unknown[], R>(fn: (path: string, ...rest: A) => Promise<R>) =>
+        async (path: string, ...rest: A): Promise<R> => fn(await spelled(path), ...rest);
+    return {
+        readFile: at((p) => fs.readFile(p)),
+        writeFile: at((p, d: string) => fs.writeFile(p, d)),
+        readBytes: at((p) => fs.readBytes(p)),
+        writeBytes: at((p, d: Uint8Array) => fs.writeBytes(p, d)),
+        mkdir: at((p, o: { recursive: boolean }) => fs.mkdir(p, o)),
+        readDir: at((p) => fs.readDir(p)),
+        exists: at((p) => fs.exists(p)),
+        stat: at((p) => fs.stat(p)),
+        unlink: at((p) => fs.unlink(p)),
+        async rename(oldPath, newPath) {
+            const from = await spelled(oldPath);
+            const to = await spelled(newPath);
+            if (to !== from) return fs.rename(from, to);
+            const parent = from.includes('/') ? from.slice(0, from.lastIndexOf('/') + 1) : '';
+            return fs.rename(from, parent + newPath.split('/').pop());
+        },
+        watch: (path, options) => fs.watch(path, options),
+    };
 }

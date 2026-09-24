@@ -6,7 +6,7 @@
  * whichever the host provides.
  */
 import { FileType, type VfsInterface } from './vfs.js'
-import { dirname, normalizePath } from './path.js'
+import { basename, dirname, normalizePath } from './path.js'
 
 export interface CreateOptions {
     /** Replace a file already at the path (default: refuse). */
@@ -24,6 +24,22 @@ export interface FileOperations {
     rename(oldPath: string, newPath: string): Promise<number>
     /** Delete a file. */
     remove(path: string): Promise<void>
+}
+
+/**
+ * Whether moving `from` to `path` would land on another entry. On a disk
+ * that ignores case (macOS, Windows), `exists` says yes for another spelling
+ * of the same name, so renaming `plan.md` to `Plan.md` would look like
+ * replacing a file with itself; for such a rename, `path` is taken only if
+ * its folder lists that exact spelling (a disk that tells case apart, with
+ * both). Without `from`, whether anything is at `path`.
+ */
+export async function pathTaken(fs: VfsInterface, path: string, from?: string): Promise<boolean> {
+    const clean = normalizePath(path)
+    if (!(await fs.exists(clean))) return false
+    if (from === undefined || normalizePath(from).toLowerCase() !== clean.toLowerCase()) return true
+    const name = basename(clean)
+    return (await fs.readDir(dirname(clean) || '/')).some(([entry]) => entry === name)
 }
 
 async function ensureParent(fs: VfsInterface, path: string): Promise<void> {
@@ -48,7 +64,7 @@ export function fileOperations(fs: VfsInterface): FileOperations {
             const from = normalizePath(oldPath)
             const to = normalizePath(newPath)
             if (from === to) return 0
-            if (await fs.exists(to)) throw new Error(`${to} already exists`)
+            if (await pathTaken(fs, to, from)) throw new Error(`${to} already exists`)
             await ensureParent(fs, to)
             await fs.rename(from, to)
             return 0

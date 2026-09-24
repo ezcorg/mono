@@ -17,7 +17,7 @@
 import { FileType, type VfsInterface } from './vfs.js'
 import { basename, dirname, extname, isHidden, isNote, normalizePath } from './path.js'
 import { SearchIndex, type FileSearch } from './search.js'
-import type { FileOperations } from './files.js'
+import { pathTaken, type FileOperations } from './files.js'
 import { LinkGraph, syntaxOf } from './links/graph.js'
 import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve.js'
 import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax.js'
@@ -191,7 +191,7 @@ export class Vault {
         if (to.startsWith(`${from}/`)) throw new Error(`rename: cannot move ${from} into itself`)
         const stat = await this.store.stat(from)
         if (!stat) throw new Error(`rename: ${from} does not exist`)
-        if (await this.store.exists(to)) throw new Error(`rename: ${to} already exists`)
+        if (await pathTaken(this.store, to, from)) throw new Error(`rename: ${to} already exists`)
 
         // Everything that moves, old path → new.
         const moved = new Map<string, string>()
