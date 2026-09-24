@@ -151,6 +151,9 @@ export interface FileSystemStorage {
     /** The version the open note was loaded or last saved as, when loads
      *  and saves go through a version log. */
     version: string | null
+    /** The open document's version as an editor of it sees it: moves on with
+     *  every change, saved or not (LSP's document version). */
+    documentVersion: number
     /**
      * Switch the active file. Persists the outgoing file's unsaved edits to
      * *its* path first, then loads `path` — without the load looking like a
@@ -227,6 +230,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             refresh: () => ready.then(() => methods.refresh()),
             dirty: false,
             version: null,
+            documentVersion: 0,
             loadFile: (path, options) => ready.then(() => methods.loadFile(path, options)),
             close: (options) => ready.then(() => methods.close(options)),
             // Live from the start: plugin views (the toolbar) are built before
@@ -380,6 +384,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                     doc: content,
                     extensions: [
                         basicSetup,
+                        EditorView.updateListener.of((update) => {
+                            if (update.docChanged) storage.documentVersion++
+                        }),
                         codeblock({
                             content,
                             fs,
@@ -583,6 +590,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
 
     onUpdate() {
         const storage = this.storage as FileSystemStorage
+        if (!storage.codeView) storage.documentVersion++
         if (storage.loadingFile) return // programmatic load, not a user edit
         // A code file is shown in the swapped-in code editor, which owns its own
         // (raw) saving; the rich-text editor's autosave must not fire for it.

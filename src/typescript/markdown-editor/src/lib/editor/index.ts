@@ -509,6 +509,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 // what you use and the rest tree-shakes away (`sideEffects: false`). The setup
 // functions above use these same units.
 export { FileSystem } from './extensions/filesystem';
+export { openDocuments, type OpenDocuments, type OpenDocument, type TextEdit, type TextRange, type TextPosition, type EditResult } from './extensions/edits';
 export type { FileSystemOptions, FileSystemStorage, FileEvent, LoadOptions } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';
 export { Wikilink, wikilinkLabel } from './extensions/wikilink';
