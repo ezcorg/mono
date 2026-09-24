@@ -13,7 +13,7 @@
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { basename, dirname, encodeDestination, extname, joinPath, relativePath } from '@joinezco/storage'
+import { basename, decodeDestination, dirname, encodeDestination, extname, joinPath, relativePath } from '@joinezco/storage'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { IMAGE_EXTENSIONS, altOf, isUrl, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
 
@@ -75,6 +75,43 @@ async function attach(editor: Editor, files: File[], pos: number, folder: string
 const imageFiles = (list: FileList | null | undefined): File[] =>
     [...(list ?? [])].filter((f) => f.type.startsWith('image/') || IMAGE_EXTENSIONS.has(extname(f.name)))
 
+const ANGLED = '\uE000'
+
+/**
+ * markdown-it normalizes a destination (`<my pic.png>` becomes `my%20pic.png`),
+ * so how it was written is gone before the editor sees it. Its destination
+ * parser is wrapped to mark one written in angle brackets with a private-use
+ * character that survives normalization; a core rule takes the mark off and
+ * notes it on the image (`data-angled`), so it is written back the same way.
+ */
+function rememberAngledDestinations(markdownit: any) {
+    if (markdownit.__ezcoAngled) return
+    markdownit.__ezcoAngled = true
+    const parse = markdownit.helpers.parseLinkDestination
+    markdownit.helpers.parseLinkDestination = (str: string, start: number, max: number) => {
+        const result = parse(str, start, max)
+        if (result.ok && str.charCodeAt(start) === 0x3c /* < */) result.str = ANGLED + result.str
+        return result
+    }
+    const marker = markdownit.normalizeLink(ANGLED)
+    const unmark = (token: any, attr: string) => {
+        const value = token.attrGet(attr)
+        if (typeof value !== 'string' || !value.startsWith(marker)) return false
+        token.attrSet(attr, value.slice(marker.length))
+        return true
+    }
+    markdownit.core.ruler.after('inline', 'ezco_angled_destinations', (state: any) => {
+        const visit = (tokens: any[]) => {
+            for (const token of tokens) {
+                if (token.type === 'image' && unmark(token, 'src')) token.attrSet('data-angled', '')
+                else if (token.type === 'link_open') unmark(token, 'href')
+                if (token.children) visit(token.children)
+            }
+        }
+        visit(state.tokens)
+    })
+}
+
 export const Image = Node.create<ImageOptions>({
     name: 'image',
     group: 'inline',
@@ -91,6 +128,8 @@ export const Image = Node.create<ImageOptions>({
             src: { default: '' },
             alt: { default: null },
             title: { default: null },
+            /** The destination was written in angle brackets (`![a](<my pic.png>)`). */
+            angled: { default: false, rendered: false },
         }
     },
 
@@ -102,6 +141,7 @@ export const Image = Node.create<ImageOptions>({
                     src: (el as HTMLElement).getAttribute('src') ?? '',
                     alt: (el as HTMLElement).getAttribute('alt'),
                     title: (el as HTMLElement).getAttribute('title'),
+                    angled: (el as HTMLElement).hasAttribute('data-angled'),
                 }),
             },
         ]
@@ -120,13 +160,16 @@ export const Image = Node.create<ImageOptions>({
         return {
             markdown: {
                 serialize(state: any, node: PMNode) {
-                    const src = String(node.attrs.src ?? '').replace(/[()]/g, '\\$&')
+                    const raw = String(node.attrs.src ?? '')
+                    // Written as it was: in angle brackets (spaces as spaces), or
+                    // encoded with its parentheses escaped.
+                    const src = node.attrs.angled ? `<${decodeDestination(raw).replace(/[<>]/g, '\\$&')}>` : raw.replace(/[()]/g, '\\$&')
                     const title = node.attrs.title ? ` "${String(node.attrs.title).replace(/"/g, '\\"')}"` : ''
                     // In a table a bare pipe would end the cell (`![pic|200](…)`).
                     const alt = state.esc(node.attrs.alt ?? '')
                     state.write(`![${state.inTable ? alt.replace(/(?<!\\)\|/g, '\\|') : alt}](${src}${title})`)
                 },
-                parse: {},
+                parse: { setup: rememberAngledDestinations },
             } as MarkdownNodeSpec,
         }
     },

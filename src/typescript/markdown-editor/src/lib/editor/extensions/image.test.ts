@@ -38,6 +38,7 @@ describe('Image syntax', () => {
         'An image ![inline](i.png) within text.',
         '![](https://example.com/x.png)',
         '![p](a\\(1\\).png)',
+        '![b](<my pic.png>) and ![c](my%20pic.png)',
     ]
 
     it.each(roundTrips)('round-trips %j byte for byte', (md) => {
