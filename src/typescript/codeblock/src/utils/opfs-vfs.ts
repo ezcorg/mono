@@ -42,6 +42,18 @@ export class OpfsVfs implements VfsInterface {
         return this.call('writeFile', path, data);
     }
 
+    async readBytes(path: string): Promise<Uint8Array> {
+        return this.call('readBytes', path);
+    }
+
+    async writeBytes(path: string, data: Uint8Array): Promise<void> {
+        return this.call('writeBytes', path, data);
+    }
+
+    async rename(oldPath: string, newPath: string): Promise<void> {
+        return this.call('rename', oldPath, newPath);
+    }
+
     async mkdir(path: string, options: { recursive: boolean }): Promise<void> {
         if (options?.recursive) {
             // Create each segment since the OPFS worker's mkdir is single-level
@@ -71,7 +83,7 @@ export class OpfsVfs implements VfsInterface {
             type: result.type as FileType,
             size: result.size,
             ctime: 0,
-            mtime: 0,
+            mtime: result.mtime ?? 0,
         };
     }
 

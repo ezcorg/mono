@@ -49,6 +49,9 @@ function createVfsFromPort(port: MessagePort): VfsInterface {
     return {
         readFile: (path: string) => call('readFile', path),
         writeFile: (path: string, data: string) => call('writeFile', path, data),
+        readBytes: (path: string) => call('readBytes', path),
+        writeBytes: (path: string, data: Uint8Array) => call('writeBytes', path, data),
+        rename: (oldPath: string, newPath: string) => call('rename', oldPath, newPath),
         mkdir: (path: string, options: any) => call('mkdir', path, options),
         readDir: (path: string) => call('readDir', path),
         exists: (path: string) => call('exists', path),

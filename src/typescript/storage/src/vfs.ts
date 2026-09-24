@@ -32,7 +32,10 @@ export interface FileStat {
 }
 
 export interface WatchEvent {
+    /** `change` for new contents; `rename` for an entry created, removed or moved. */
     eventType: 'rename' | 'change'
+    /** The entry's path relative to the watched path (so, watching the
+     *  root, a vault path). */
     filename: string
 }
 
@@ -50,6 +53,21 @@ export interface VfsInterface {
      * @param data The data to write
      */
     writeFile: (path: string, data: string) => Promise<void>
+
+    /**
+     * Reads a file's bytes: attachments (images, PDFs) and anything else that
+     * is not UTF-8 text.
+     */
+    readBytes: (path: string) => Promise<Uint8Array>
+
+    /** Writes bytes to a file, creating it or replacing its contents. */
+    writeBytes: (path: string, data: Uint8Array) => Promise<void>
+
+    /**
+     * Moves a file or directory. The destination's parent must exist; a file
+     * already at the destination is replaced.
+     */
+    rename: (oldPath: string, newPath: string) => Promise<void>
 
     /**
      * Watch for changes to a file or directory

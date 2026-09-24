@@ -5,7 +5,6 @@ import { FileSystem, FileType } from '@volar/language-service';
 import { URI } from 'vscode-uri';
 import { CborUint8Array } from "@jsonjoy.com/json-pack/lib/cbor/types";
 import { SnapshotNode } from "@joinezco/memfs/snapshot";
-import { promises } from "node:fs";
 import type { FsApi } from "@joinezco/memfs/node/types";
 
 Comlink.transferHandlers.set("asyncGenerator", asyncGeneratorTransferHandler);
@@ -24,6 +23,19 @@ export namespace Vfs {
 
             async writeFile(path: string, data: string): Promise<void> {
                 await fs.promises.writeFile(path, data);
+            },
+
+            async readBytes(path: string): Promise<Uint8Array> {
+                const result = await fs.promises.readFile(path);
+                return typeof result === 'string' ? new TextEncoder().encode(result) : new Uint8Array(result as Uint8Array);
+            },
+
+            async writeBytes(path: string, data: Uint8Array): Promise<void> {
+                await fs.promises.writeFile(path, data);
+            },
+
+            async rename(oldPath: string, newPath: string): Promise<void> {
+                await fs.promises.rename(oldPath, newPath);
             },
 
             async *watch(path: string, { signal }: { signal: AbortSignal }) {
@@ -87,84 +99,6 @@ export namespace Vfs {
 
             async unlink(path: string): Promise<void> {
                 await fs.promises.unlink(path);
-            },
-        }
-    }
-
-    export const fromNodelike = (fs: typeof promises): VfsInterface => {
-        return {
-            async readFile(path: string): Promise<string> {
-                return fs.readFile(path, { encoding: "utf-8" });
-            },
-
-            async writeFile(path: string, data: string): Promise<void> {
-                await fs.writeFile(path, data);
-            },
-
-            async *watch(path: string, { signal }: { signal: AbortSignal }) {
-                for await (const e of await fs.watch(path, { signal, encoding: "utf-8", recursive: true })) {
-                    yield e as { eventType: "rename" | "change"; filename: string };
-                }
-            },
-
-            async mkdir(path: string, options: { recursive: boolean }): Promise<void> {
-                await fs.mkdir(path, options);
-            },
-
-            async readDir(path: string): Promise<[string, FileType][]> {
-                const files = await fs.readdir(path, { withFileTypes: true, encoding: "utf-8" });
-                return files.map((ent: any) => {
-                    let type = FileType.File;
-                    switch ((ent.stats.mode as number) & 0o170000) {
-                        case 0o040000:
-                            type = FileType.Directory;
-                            break;
-                        case 0o120000:
-                            type = FileType.SymbolicLink;
-                            break;
-                    }
-                    return [ent.path, type];
-                });
-            },
-
-            async exists(path: string): Promise<boolean> {
-                try {
-                    await fs.access(path);
-                    return true;
-                } catch {
-                    return false;
-                }
-            },
-
-            async stat(path: string) {
-                try {
-                    const stat = await fs.stat(path);
-                    let type = FileType.File;
-
-                    switch ((stat.mode as number) & 0o170000) {
-                        case 0o040000:
-                            type = FileType.Directory;
-                            break;
-                        case 0o120000:
-                            type = FileType.SymbolicLink;
-                            break;
-                    }
-                    // console.debug(`Stat success "${path}"`);
-                    return {
-                        name: path,
-                        atime: stat.atime,
-                        mtime: stat.mtime,
-                        ctime: stat.ctime,
-                        size: stat.size,
-                        type,
-                    };
-                } catch (err) {
-                    return null;
-                }
-            },
-
-            async unlink(path: string): Promise<void> {
-                await fs.unlink(path);
             },
         }
     }

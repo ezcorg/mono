@@ -4,8 +4,7 @@
         "noEmit": false,
         "declaration": true,
         "outDir": "dist",
-        "rootDir": "src",
-        "types": []
+        "rootDir": "src"
     },
     "exclude": ["src/**/*.test.ts", "src/**/__fixtures__/**"]
 }

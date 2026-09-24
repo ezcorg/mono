@@ -92,7 +92,7 @@ function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
 
 let syncHandleSupported: boolean | null = null;
 
-async function readFile(path: string): Promise<string> {
+async function readBytes(path: string): Promise<Uint8Array> {
     const { dir, name } = splitPath(path);
     const dirHandle = await getDirHandle(dir);
     const fileHandle = await dirHandle.getFileHandle(name);
@@ -111,7 +111,7 @@ async function readFile(path: string): Promise<string> {
                     const size = accessHandle.getSize();
                     const buf = new Uint8Array(size);
                     accessHandle.read(buf, { at: 0 });
-                    return new TextDecoder().decode(buf);
+                    return buf;
                 } finally {
                     accessHandle.close();
                 }
@@ -131,24 +131,88 @@ async function readFile(path: string): Promise<string> {
 
     // Fallback: async read via getFile()
     const file = await fileHandle.getFile();
-    return file.text();
+    return new Uint8Array(await file.arrayBuffer());
 }
 
-async function writeFile(path: string, data: string): Promise<void> {
+async function readFile(path: string): Promise<string> {
+    return new TextDecoder().decode(await readBytes(path));
+}
+
+async function writeBytes(path: string, data: Uint8Array): Promise<void> {
     const { dir, name } = splitPath(path);
     const dirHandle = await getDirHandle(dir);
     const fileHandle = await dirHandle.getFileHandle(name, { create: true });
     await withFileLock(path, async () => {
         const accessHandle = await (fileHandle as any).createSyncAccessHandle();
         try {
-            const encoded = new TextEncoder().encode(data);
             accessHandle.truncate(0);
-            accessHandle.write(encoded, { at: 0 });
+            accessHandle.write(data, { at: 0 });
             accessHandle.flush();
         } finally {
             accessHandle.close();
         }
     });
+}
+
+async function writeFile(path: string, data: string): Promise<void> {
+    await writeBytes(path, new TextEncoder().encode(data));
+}
+
+/** Move a file or a directory. OPFS's `move()` is used for files where the
+ *  browser has it; directories (which not every browser can move) and
+ *  browsers without it copy and then remove. */
+async function rename(oldPath: string, newPath: string): Promise<void> {
+    const from = splitPath(oldPath);
+    const to = splitPath(newPath);
+    const fromDir = await getDirHandle(from.dir);
+    const toDir = await getDirHandle(to.dir);
+    let fileHandle: FileSystemFileHandle | null = null;
+    try {
+        fileHandle = await fromDir.getFileHandle(from.name);
+    } catch {
+        fileHandle = null;
+    }
+    if (fileHandle) {
+        await withFileLock(oldPath, () => withFileLock(newPath, async () => {
+            try {
+                await toDir.removeEntry(to.name);
+            } catch { /* nothing there */ }
+            if (typeof (fileHandle as any).move === 'function') {
+                await (fileHandle as any).move(toDir, to.name);
+                return;
+            }
+            const bytes = new Uint8Array(await (await fileHandle!.getFile()).arrayBuffer());
+            const target = await toDir.getFileHandle(to.name, { create: true });
+            const writable = await (target as any).createWritable();
+            await writable.write(bytes);
+            await writable.close();
+            await fromDir.removeEntry(from.name);
+        }));
+        return;
+    }
+    // A directory: copy the tree, then drop the original and its cached handles.
+    const source = await fromDir.getDirectoryHandle(from.name);
+    const target = await toDir.getDirectoryHandle(to.name, { create: true });
+    await copyTree(source, target);
+    await fromDir.removeEntry(from.name, { recursive: true });
+    const prefix = normalizePath(oldPath);
+    for (const key of [...dirCache.keys()]) {
+        if (key === prefix || key.startsWith(`${prefix}/`)) dirCache.delete(key);
+    }
+}
+
+async function copyTree(source: FileSystemDirectoryHandle, target: FileSystemDirectoryHandle): Promise<void> {
+    for await (const [name, handle] of (source as any).entries()) {
+        if (handle.kind === 'directory') {
+            await copyTree(handle, await target.getDirectoryHandle(name, { create: true }));
+        } else {
+            const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+            const out = await target.getFileHandle(name, { create: true });
+            const writable = await (out as any).createWritable();
+            await writable.write(bytes);
+            await writable.close();
+        }
+    }
 }
 
 async function mkdir(path: string): Promise<void> {
@@ -174,14 +238,14 @@ async function exists(path: string): Promise<boolean> {
     }
 }
 
-async function stat(path: string): Promise<{ type: number; size: number } | null> {
+async function stat(path: string): Promise<{ type: number; size: number; mtime?: number } | null> {
     const { dir, name } = splitPath(path);
     try {
         const dirHandle = await getDirHandle(dir);
         try {
             const fh = await dirHandle.getFileHandle(name);
             const file = await fh.getFile();
-            return { type: 1, size: file.size }; // FileType.File
+            return { type: 1, size: file.size, mtime: file.lastModified }; // FileType.File
         } catch {
             try {
                 await dirHandle.getDirectoryHandle(name);
@@ -233,6 +297,9 @@ const methods: Record<string, (...args: any[]) => Promise<any>> = {
     init: (bucketName: string) => init(bucketName),
     readFile,
     writeFile,
+    readBytes,
+    writeBytes,
+    rename,
     mkdir,
     exists,
     stat,

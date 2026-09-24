@@ -17,6 +17,9 @@
 import {
     readTextFile,
     writeTextFile,
+    readFile as fsReadFile,
+    writeFile as fsWriteFile,
+    rename as fsRename,
     mkdir as fsMkdir,
     exists as fsExists,
     readDir as fsReadDir,
@@ -27,7 +30,15 @@ import {
 import { documentDir, join } from '@tauri-apps/api/path'
 import { FileType, type VfsInterface, type WatchEvent } from '@joinezco/storage'
 
-const basename = (p: string): string => p.split(/[\\/]/).pop() ?? p
+/** `path` relative to the directory `dir` (both absolute host paths), with
+ *  `/` separators: the watch contract names changes relative to what is
+ *  watched. */
+const relativeTo = (dir: string, path: string): string => {
+    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+    const base = norm(dir)
+    const full = norm(path)
+    return full.startsWith(`${base}/`) ? full.slice(base.length + 1) : full.split('/').pop() ?? full
+}
 
 /** Create a host-filesystem VFS rooted at the absolute directory `base`. */
 export function createTauriVfs(base: string): VfsInterface {
@@ -48,6 +59,18 @@ export function createTauriVfs(base: string): VfsInterface {
 
         async writeFile(path, data) {
             await writeTextFile(resolve(path), data)
+        },
+
+        async readBytes(path) {
+            return fsReadFile(resolve(path))
+        },
+
+        async writeBytes(path, data) {
+            await fsWriteFile(resolve(path), data)
+        },
+
+        async rename(oldPath, newPath) {
+            await fsRename(resolve(oldPath), resolve(newPath))
         },
 
         async mkdir(path, options) {
@@ -110,9 +133,10 @@ export function createTauriVfs(base: string): VfsInterface {
             }
 
             let unwatch: (() => void) | undefined
+            const watched = resolve(path)
             try {
                 unwatch = await fsWatch(
-                    resolve(path),
+                    watched,
                     (event: any) => {
                         const t = event?.type
                         const isRename =
@@ -122,7 +146,7 @@ export function createTauriVfs(base: string): VfsInterface {
                         const first: string = event?.paths?.[0] ?? ''
                         push({
                             eventType: isRename ? 'rename' : 'change',
-                            filename: basename(first),
+                            filename: relativeTo(watched, first),
                         })
                     },
                     { recursive: true },

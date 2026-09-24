@@ -77,48 +77,65 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsIn
         return r.val;
     };
 
+    const readBytes = async (path: string): Promise<Uint8Array> => {
+        const fd = await open(path, {}, { read: true });
+        try {
+            const chunks: Uint8Array[] = [];
+            let offset = 0n;
+            for (;;) {
+                const r = await fs.descriptorRead(t, fd, 65536n, offset);
+                if (r.tag !== "ok") throw new Error(`read ${path}: ${r.val}`);
+                const [chunk, eof] = r.val;
+                chunks.push(chunk);
+                offset += BigInt(chunk.length);
+                if (eof) break;
+            }
+            return concat(chunks);
+        } finally {
+            await dropHandle(t, fd);
+        }
+    };
+
+    const writeBytes = async (path: string, bytes: Uint8Array): Promise<void> => {
+        // Do NOT open with truncate: it empties the file on disk first, and a native
+        // watcher (rust-analyzer's cargo-check/flycheck) can read that empty window and
+        // cache a bogus error (e.g. "main function not found"). Instead overwrite in place,
+        // then set-size to trim any leftover tail — the file is never empty on disk.
+        const fd = await open(path, { create: true, truncate: false }, { read: true, write: true });
+        try {
+            let offset = 0n;
+            const len = BigInt(bytes.length);
+            while (offset < len) {
+                const r = await fs.descriptorWrite(t, fd, bytes.subarray(Number(offset)), offset);
+                if (r.tag !== "ok") throw new Error(`write ${path}: ${r.val}`);
+                if (r.val === 0n) break; // guard against a 0-byte write looping forever
+                offset += r.val;
+            }
+            // Trim to the exact length (removes any tail left when overwriting longer content).
+            const s = await fs.descriptorSetSize(t, fd, len);
+            if (s.tag !== "ok") throw new Error(`set-size ${path}: ${s.val}`);
+        } finally {
+            await dropHandle(t, fd);
+        }
+    };
+
     return {
         async readFile(path) {
-            const fd = await open(path, {}, { read: true });
-            try {
-                const chunks: Uint8Array[] = [];
-                let offset = 0n;
-                for (;;) {
-                    const r = await fs.descriptorRead(t, fd, 65536n, offset);
-                    if (r.tag !== "ok") throw new Error(`read ${path}: ${r.val}`);
-                    const [chunk, eof] = r.val;
-                    chunks.push(chunk);
-                    offset += BigInt(chunk.length);
-                    if (eof) break;
-                }
-                return td.decode(concat(chunks));
-            } finally {
-                await dropHandle(t, fd);
-            }
+            return td.decode(await readBytes(path));
         },
 
         async writeFile(path, data) {
-            // Do NOT open with truncate: it empties the file on disk first, and a native
-            // watcher (rust-analyzer's cargo-check/flycheck) can read that empty window and
-            // cache a bogus error (e.g. "main function not found"). Instead overwrite in place,
-            // then set-size to trim any leftover tail — the file is never empty on disk.
-            const fd = await open(path, { create: true, truncate: false }, { read: true, write: true });
-            try {
-                const bytes = te.encode(data);
-                let offset = 0n;
-                const len = BigInt(bytes.length);
-                while (offset < len) {
-                    const r = await fs.descriptorWrite(t, fd, bytes.subarray(Number(offset)), offset);
-                    if (r.tag !== "ok") throw new Error(`write ${path}: ${r.val}`);
-                    if (r.val === 0n) break; // guard against a 0-byte write looping forever
-                    offset += r.val;
-                }
-                // Trim to the exact length (removes any tail left when overwriting longer content).
-                const s = await fs.descriptorSetSize(t, fd, len);
-                if (s.tag !== "ok") throw new Error(`set-size ${path}: ${s.val}`);
-            } finally {
-                await dropHandle(t, fd);
-            }
+            await writeBytes(path, te.encode(data));
+        },
+
+        readBytes,
+        writeBytes,
+
+        // Both paths are under the same grant-scoped root, so the host's jail
+        // confines the move to it.
+        async rename(oldPath, newPath) {
+            const r = await fs.descriptorRenameAt(t, root, rel(oldPath), root, rel(newPath));
+            if (r.tag !== "ok") throw new Error(`rename ${oldPath} -> ${newPath}: ${r.val}`);
         },
 
         // Native change events via the host `watch` capability (a `notify` watcher

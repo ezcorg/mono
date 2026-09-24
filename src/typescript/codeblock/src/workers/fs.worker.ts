@@ -170,7 +170,8 @@ async function hydrateFromSnapshot(vfs: VfsInterface, node: any, path: string): 
     } else if (type === 1) {
         const dir = path.substring(0, path.lastIndexOf('/'));
         if (dir) await vfs.mkdir(dir, { recursive: true }).catch(() => {});
-        await vfs.writeFile(path, new TextDecoder().decode(data as Uint8Array));
+        // Bytes as they are: a snapshot carries images and other binaries too.
+        await vfs.writeBytes(path, data as Uint8Array);
     }
 }
 

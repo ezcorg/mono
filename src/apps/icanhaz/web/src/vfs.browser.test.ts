@@ -39,4 +39,23 @@ describe("wrpcFilesystem — VfsInterface over wRPC", () => {
 
         t.close();
     });
+
+    it("round-trips bytes and renames within the grant (attachments, link-rewriting renames)", async () => {
+        const t = await connect({ ws: WS });
+        const grant = await requestFilesystemGrant(t, "vfs bytes + rename");
+        const fs = await wrpcFilesystem(t, grant);
+        const dir = `vfs-bytes-${Date.now()}`;
+        await fs.mkdir(`${dir}/sub`, { recursive: true });
+
+        // Every byte value survives, which a UTF-8 text path would not.
+        const bytes = new Uint8Array(300).map((_, i) => i % 256);
+        await fs.writeBytes(`${dir}/img.bin`, bytes);
+        expect([...(await fs.readBytes(`${dir}/img.bin`))]).toEqual([...bytes]);
+
+        await fs.rename(`${dir}/img.bin`, `${dir}/sub/moved.bin`);
+        expect(await fs.exists(`${dir}/img.bin`)).toBe(false);
+        expect([...(await fs.readBytes(`${dir}/sub/moved.bin`))]).toEqual([...bytes]);
+
+        t.close();
+    });
 });
