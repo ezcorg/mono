@@ -1,3 +1,4 @@
+import type { JSONContent } from '@tiptap/core'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { MarkdownEditor } from '../index'
 import {
@@ -175,8 +176,8 @@ describe('MarkdownEditor Extensions', () => {
             editor.commands.setContent(codeBlock)
 
             // Code blocks render via CodeMirror node view, not <pre>
-            const json = editor.getJSON()
-            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            const json: JSONContent = editor.getJSON()
+            const codeNode = json.content?.find((n) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
             expect(codeNode).toBeTruthy()
             expect(codeNode?.attrs?.language).toBe('javascript')
             expect(codeNode?.content?.[0]?.text).toContain('function hello')
@@ -186,8 +187,8 @@ describe('MarkdownEditor Extensions', () => {
             const pythonCode = '```python\ndef hello():\n    print("Hello, World!")\n```'
             editor.commands.setContent(pythonCode)
 
-            const json = editor.getJSON()
-            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            const json: JSONContent = editor.getJSON()
+            const codeNode = json.content?.find((n) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
             expect(codeNode).toBeTruthy()
             expect(codeNode?.attrs?.language).toBe('python')
             expect(codeNode?.content?.[0]?.text).toContain('def hello')
@@ -197,8 +198,8 @@ describe('MarkdownEditor Extensions', () => {
             const plainCode = '```\nplain text code\nno syntax highlighting\n```'
             editor.commands.setContent(plainCode)
 
-            const json = editor.getJSON()
-            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            const json: JSONContent = editor.getJSON()
+            const codeNode = json.content?.find((n) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
             expect(codeNode).toBeTruthy()
             expect(codeNode?.content?.[0]?.text).toContain('plain text code')
         })
@@ -231,8 +232,8 @@ describe('MarkdownEditor Extensions', () => {
             editor.commands.setContent(fileReference)
 
             // Verify via JSON — CodeMirror node view doesn't render <pre>
-            const json = editor.getJSON()
-            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            const json: JSONContent = editor.getJSON()
+            const codeNode = json.content?.find((n) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
             expect(codeNode).toBeTruthy()
             expect(codeNode?.content?.[0]?.text).toContain('console.log')
             expect(codeNode?.content?.[0]?.text).toContain('File content')
@@ -302,8 +303,8 @@ Visit [our website](https://example.com) for more info.`
             expect(editor.view.dom.querySelector('[data-checked="true"]')).toBeTruthy()
 
             // Code blocks (verified via JSON since CodeMirror node view replaces <pre>)
-            const json = editor.getJSON()
-            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            const json: JSONContent = editor.getJSON()
+            const codeNode = json.content?.find((n) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
             expect(codeNode).toBeTruthy()
             expect(codeNode?.content?.[0]?.text).toContain('function example')
 

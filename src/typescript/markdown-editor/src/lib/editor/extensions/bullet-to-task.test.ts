@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { JSONContent } from '@tiptap/core';
 import { createEditor } from '../index';
 
 describe('BulletToTaskConverter', () => {
@@ -9,7 +10,7 @@ describe('BulletToTaskConverter', () => {
         // on programmatic insertContent, so we set the final markdown form.
         editor.commands.setContent('- [ ] Hello world');
 
-        const json = editor.getJSON();
+        const json: JSONContent = editor.getJSON();
         expect(json.content?.[0].type).toBe('taskList');
         expect(json.content?.[0].content?.[0].type).toBe('taskItem');
         expect(json.content?.[0].content?.[0].attrs?.checked).toBe(false);
@@ -21,7 +22,7 @@ describe('BulletToTaskConverter', () => {
         // Set content as checked task list markdown directly
         editor.commands.setContent('- [x] Hello world');
 
-        const json = editor.getJSON();
+        const json: JSONContent = editor.getJSON();
         expect(json.content?.[0].type).toBe('taskList');
         expect(json.content?.[0].content?.[0].type).toBe('taskItem');
         expect(json.content?.[0].content?.[0].attrs?.checked).toBe(true);

@@ -10,7 +10,7 @@ export const viteDefaults = {
   include: ['**/*'],
   exclude: ['.git', 'dist', 'build', 'coverage', 'static'],
   gitignore: '.gitignore',
-  transform: async (fs: ArrayBuffer) => fs,
+  transform: async (tree: Uint8Array) => tree,
   output: './snapshot.bin'
 }
 
@@ -19,7 +19,7 @@ export type SnapshotProps = {
   include?: string[];
   exclude?: string[];
   gitignore?: string | false;
-  transform?: (tree: ArrayBuffer) => ArrayBuffer;
+  transform?: (tree: Uint8Array) => Uint8Array | Promise<Uint8Array>;
   output?: string;
 }
 

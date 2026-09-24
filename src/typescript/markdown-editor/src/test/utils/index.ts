@@ -1,5 +1,6 @@
 import { MarkdownEditor, createEditor, MarkdownEditorOptions } from '../../lib/editor'
-import { CodeblockFS, type Fs } from '@joinezco/codeblock'
+import { CodeblockFS } from '@joinezco/codeblock'
+import type { VfsInterface } from '@joinezco/storage'
 
 /**
  * Test utilities for markdown editor testing
@@ -29,7 +30,7 @@ export function removeTestContainer(container: HTMLElement): void {
 /**
  * Creates a mock filesystem for testing
  */
-export async function createMockFS(): Promise<Fs | null> {
+export async function createMockFS(): Promise<VfsInterface | null> {
     try {
         // Create a minimal filesystem for testing
         const fs = await CodeblockFS.worker()

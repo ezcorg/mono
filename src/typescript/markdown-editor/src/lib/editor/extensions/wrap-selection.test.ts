@@ -44,7 +44,7 @@ describe('Smart selection wrap', () => {
     function type(editor: MarkdownEditor, char: string): boolean {
         const { from, to } = editor.state.selection
         return !!editor.view.someProp('handleTextInput', (f) =>
-            f(editor.view, from, to, char),
+            f(editor.view, from, to, char, () => editor.state.tr.insertText(char, from, to)),
         )
     }
 

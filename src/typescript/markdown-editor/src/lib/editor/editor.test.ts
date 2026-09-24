@@ -1,3 +1,4 @@
+import type { JSONContent } from '@tiptap/core'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { MarkdownEditor } from './index'
@@ -152,8 +153,8 @@ describe('MarkdownEditor', () => {
 
             // Code blocks render via CodeMirror node view, not <pre>.
             // Verify the node exists in the document model.
-            const json = editor.getJSON()
-            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            const json: JSONContent = editor.getJSON()
+            const codeNode = json.content?.find((n) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
             expect(codeNode).toBeTruthy()
             expect(codeNode?.content?.[0]?.text).toContain('console.log')
             expect(codeNode?.content?.[0]?.text).toContain('Hello')
@@ -336,19 +337,15 @@ describe('MarkdownEditor', () => {
             editor.commands.setTextSelection(0)
             const { from } = editor.state.selection
             editor.commands.insertContentAt(from, 'Added text')
+            expect(editor.storage.markdown.getMarkdown()).toContain('Added text')
 
-            // Undo
+            // Undo takes the insertion back out…
             pressKey(editor, 'z', { ctrl: true })
+            expect(editor.storage.markdown.getMarkdown()).toBe(originalContent)
 
-            // Content should be closer to original (undo may not be perfect due to test setup)
-            const undoContent = editor.storage.markdown.getMarkdown()
-            expect(undoContent).toBeDefined()
-
-            // Redo
+            // …and redo puts it back.
             pressKey(editor, 'y', { ctrl: true })
-
-            const redoContent = editor.storage.markdown.getMarkdown()
-            expect(redoContent).toBeDefined()
+            expect(editor.storage.markdown.getMarkdown()).toContain('Added text')
         })
     })
 })

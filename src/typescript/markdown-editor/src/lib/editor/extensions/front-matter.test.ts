@@ -89,7 +89,6 @@ describe('Note identity', () => {
         const fs = memoryVfs({ 'a.md': '# A\n\nBody.' })
         const editor = await openNote(fs, 'a.md')
         await waitFor(() => documentId(editor) === 'ID1', 3000)
-        await waitFor(() => fs.readFile('a.md').then(() => true), 100)
         await new Promise((r) => setTimeout(r, 700))
         expect(await fs.readFile('a.md')).toBe('---\nid: ID1\n---\n\n# A\n\nBody.')
         editor.commands.undo()
