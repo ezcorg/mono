@@ -26,3 +26,4 @@ export {
 } from './links/resolve'
 export { LinkGraph } from './links/graph'
 export { Vault, type VaultOptions, type VaultLinks } from './vault'
+export { newNoteId, frontMatterOf, noteIdOf } from './id'

@@ -16,6 +16,8 @@ import type { MarkdownNodeSpec } from 'tiptap-markdown'
  * survives re-parsing as its own block; a markdown-it core rule then strips
  * that NBSP back out on load so the editor still sees a *truly* empty paragraph
  * (no stray whitespace to trip over when the user starts typing in it).
+ * Empty paragraphs at the very end of the document are not spacing and
+ * write nothing.
  */
 export const Paragraph = Node.create({
     name: 'paragraph',
@@ -56,7 +58,19 @@ export const Paragraph = Node.create({
     addStorage() {
         return {
             markdown: {
-                serialize(state, node) {
+                serialize(state, node, parent, index) {
+                    // Empty paragraphs after the last content are where the
+                    // caret sits at the end of the note, not spacing between
+                    // blocks: they write nothing (so a note emptied, or holding
+                    // only front matter, does not save a stray NBSP line).
+                    if (node.content.size === 0 && parent?.type.name === 'doc') {
+                        let trailing = true
+                        for (let i = index; i < parent.childCount && trailing; i++) {
+                            const next = parent.child(i)
+                            trailing = next.type === node.type && next.content.size === 0
+                        }
+                        if (trailing) return
+                    }
                     if (node.content.size === 0) {
                         // NBSP keeps an otherwise-empty paragraph from
                         // collapsing into adjacent blank lines on re-parse.

@@ -1,5 +1,6 @@
 import { AnyExtension, Editor, EditorOptions } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import Document from '@tiptap/extension-document';
 import TaskList from '@tiptap/extension-task-list';
 import { TableKit } from '@tiptap/extension-table'
 import { Markdown, MarkdownStorage } from 'tiptap-markdown';
@@ -25,6 +26,12 @@ import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import { Wikilink, WikilinkOptions } from './extensions/wikilink';
 import { LinksPanel, LinksPanelOptions } from './extensions/links-panel';
+import { FrontMatter, FrontMatterDocument, FrontMatterOptions } from './extensions/front-matter';
+import { Mathematics, MathOptions } from './extensions/math';
+import { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
+import { Callout, CalloutTitle } from './extensions/callout';
+import { SourceView } from './extensions/source-view';
+import { MarkdownText } from './extensions/text';
 import type { LinkIndex } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
@@ -108,6 +115,16 @@ export type MarkdownSetupOptions = {
      *  backlinks panel from its `index` (a `Vault`'s `links` from
      *  `@joinezco/storage` is both). */
     links?: LinksOptions;
+    /** Front matter (a note's YAML properties). Pass `{ assignId }` to give
+     *  notes opened without an `id:` one; `false` leaves front matter as text. */
+    frontMatter?: FrontMatterOptions | false;
+    /** `$…$` and `$$…$$` math. Pass `{ renderer }` to typeset with something
+     *  other than KaTeX; `false` leaves dollars as text. */
+    math?: Partial<MathOptions> | false;
+    /** `[^1]` footnotes. `false` leaves them as text. */
+    footnotes?: boolean;
+    /** `> [!note]` callouts. `false` leaves them as plain quotes. */
+    callouts?: boolean;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -123,6 +140,23 @@ export type MarkdownEditor = Editor & {
     storage: {
         markdown: MarkdownStorage;
     } & Record<string, any>;
+}
+
+/** The document and its syntax beyond CommonMark: the nodes both setups share. */
+function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts'>): AnyExtension[] {
+    return [
+        // The document admits front matter before its blocks; the text node
+        // escapes what would otherwise read back as syntax.
+        options.frontMatter !== false ? FrontMatterDocument : Document,
+        MarkdownText,
+        Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
+        ...(options.frontMatter !== false ? [FrontMatter.configure(options.frontMatter ?? {})] : []),
+        ...(options.math !== false ? [Mathematics.configure(options.math ?? {})] : []),
+        ...(options.footnotes !== false ? [FootnoteReference, FootnoteDefinition] : []),
+        ...(options.callouts !== false ? [CalloutTitle, Callout] : []),
+        // Front matter and math show rendered until the caret is in them.
+        SourceView,
+    ];
 }
 
 /**
@@ -141,17 +175,20 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     return [
         FileSystem.configure(options.fs || {}),
         ExtendedLink.configure({}),
-        Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
+        ...syntaxExtensions(options),
         StarterKit.configure({
             // Our own code block (extensions/codeblock.ts), bullet list
             // (extensions/lists.ts, disambiguated dash input), paragraph
-            // (survives blank-line runs across a Markdown round-trip), and link
-            // (extensions/link.ts, click-to-follow + inline editor) replace
-            // StarterKit's — disable those so there are no duplicate-name clashes.
+            // (survives blank-line runs across a Markdown round-trip), link
+            // (extensions/link.ts, click-to-follow + inline editor), document
+            // (room for front matter) and text (escaping) replace StarterKit's —
+            // disable those so there are no duplicate-name clashes.
             codeBlock: false,
             bulletList: false,
             paragraph: false,
             link: false,
+            document: false,
+            text: false,
         }),
         Paragraph,
         BulletList,
@@ -228,15 +265,19 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
  * The CodeMirror-`minimalSetup` analog; add features back by importing the
  * individual extensions you want.
  */
-export function minimalSetup(options: { extensions?: AnyExtension[]; links?: LinksOptions } = {}): AnyExtension[] {
+export function minimalSetup(
+    options: { extensions?: AnyExtension[] } & Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts'> = {},
+): AnyExtension[] {
     return [
         ExtendedLink.configure({}),
-        Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
+        ...syntaxExtensions(options),
         StarterKit.configure({
             // Keep StarterKit's lightweight code block here (no CodeMirror).
             bulletList: false,
             paragraph: false,
             link: false,
+            document: false,
+            text: false,
         }),
         Paragraph,
         BulletList,
@@ -363,6 +404,14 @@ export type { FileSystemOptions, FileSystemStorage, FileEvent } from './extensio
 export { ExtendedLink } from './extensions/link';
 export { Wikilink, wikilinkLabel } from './extensions/wikilink';
 export { LinksPanel } from './extensions/links-panel';
+export { FrontMatter, FrontMatterDocument, documentId } from './extensions/front-matter';
+export type { FrontMatterOptions } from './extensions/front-matter';
+export { Mathematics, MathInline, MathBlock, katexRenderer } from './extensions/math';
+export type { MathOptions, MathRenderer } from './extensions/math';
+export { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
+export { Callout, CalloutTitle, calloutType } from './extensions/callout';
+export { SourceView } from './extensions/source-view';
+export { MarkdownText } from './extensions/text';
 export type { LinksPanelOptions } from './extensions/links-panel';
 export type { WikilinkOptions, WikilinkStorage } from './extensions/wikilink';
 export { findFragment, revealFragment } from './extensions/fragment';

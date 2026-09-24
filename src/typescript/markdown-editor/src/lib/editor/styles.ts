@@ -602,7 +602,7 @@ export const styleModule: StyleModule = new StyleModule({
             },
         // Inset blocks want extra breathing room above (overrides the
         // base 1em — these read as standalone surfaces).
-        '& > * + .cm-editor, & > * + .tableWrapper, & > * + blockquote':
+        '& > * + .cm-editor, & > * + .tableWrapper, & > * + blockquote, & > * + .ezco-mde-callout':
             {
                 'margin-top': '1.5em',
             },
@@ -626,6 +626,11 @@ export const styleModule: StyleModule = new StyleModule({
         // applies whenever the preceding sibling is *not* a heading.
         '& > :not(h1, h2, h3, h4, h5, h6) + .cm-editor': {
             'margin-top': 0,
+        },
+        // Front matter is the note's header, not a block before it: whatever
+        // follows (usually the title) sits close under the properties.
+        '& > .ezco-mde-front-matter + *': {
+            'margin-top': '0.75rem',
         },
     },
     // Block-action overlay — a tall narrow button that spans the full
@@ -1318,6 +1323,229 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-sidebar-link.is-active code': {
         background: 'rgba(255, 255, 255, 0.22)',
         color: 'var(--ezco-mde-accent-fg, #fff)',
+    },
+    // ─────────────────────────────────────────────────────────────
+    // Source on focus (extensions/source-view.ts): a node shows its rendered
+    // preview until the caret is in it (`is-editing`), then its source.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-source-view:not(.is-editing) > .ezco-mde-source-text': {
+        display: 'none',
+    },
+    '.ezco-mde-source-view.is-editing > .ezco-mde-source-preview': {
+        display: 'none',
+    },
+    '.ezco-mde-source-preview': {
+        cursor: 'text',
+    },
+    '.ezco-mde-source-preview.is-empty': {
+        opacity: 0.5,
+        'font-style': 'italic',
+    },
+    '.ezco-mde-source-preview.is-invalid': {
+        color: '#d33',
+    },
+    '.ezco-mde-source-text': {
+        'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        'font-size': '0.9em',
+    },
+
+    // Front matter (extensions/front-matter.ts): a properties table; the YAML
+    // when the caret is in it.
+    '.ezco-mde-body .ezco-mde-front-matter': {
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': '13px',
+        'padding-bottom': '0.6rem',
+        'border-bottom': '1px solid var(--ezco-mde-divider)',
+    },
+    '.ezco-mde-body .ezco-mde-front-matter > pre.ezco-mde-source-text': {
+        margin: 0,
+        padding: '0.5em 0.7em',
+        background: 'var(--ezco-mde-code-bg)',
+        'border-radius': '6px',
+        'white-space': 'pre-wrap',
+    },
+    '.ezco-mde-props': {
+        display: 'grid',
+        'grid-template-columns': 'minmax(6em, max-content) 1fr',
+        'column-gap': '1.2em',
+        'row-gap': '0.25em',
+    },
+    '.ezco-mde-prop': {
+        display: 'contents',
+    },
+    '.ezco-mde-prop-key': {
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        'white-space': 'nowrap',
+    },
+    '.ezco-mde-prop-value': {
+        'overflow-wrap': 'anywhere',
+    },
+    '.ezco-mde-prop-value.is-empty, .ezco-mde-props-empty': {
+        opacity: 0.5,
+    },
+    '.ezco-mde-prop-chip': {
+        display: 'inline-block',
+        margin: '0 0.35em 0.2em 0',
+        padding: '0 0.5em',
+        'border-radius': '999px',
+        background: 'var(--ezco-mde-code-bg)',
+    },
+    '.ezco-mde-props-error': {
+        color: '#d33',
+        'margin-bottom': '0.3em',
+    },
+    '.ezco-mde-props-raw': {
+        margin: 0,
+        'white-space': 'pre-wrap',
+    },
+
+    // Math (extensions/math.ts): typeset, and its TeX between its dollars when
+    // the caret is in it.
+    '.ezco-mde-body .ezco-mde-math-inline > .ezco-mde-source-text': {
+        background: 'var(--ezco-mde-code-bg)',
+        padding: '0.1em 0.2em',
+        'border-radius': '3px',
+    },
+    '.ezco-mde-body .ezco-mde-math-inline > .ezco-mde-source-text::before, .ezco-mde-body .ezco-mde-math-inline > .ezco-mde-source-text::after': {
+        content: '"$"',
+        opacity: 0.45,
+    },
+    '.ezco-mde-body .ezco-mde-math-block > .ezco-mde-source-preview': {
+        'text-align': 'center',
+        'overflow-x': 'auto',
+        padding: '0.25em 0',
+    },
+    '.ezco-mde-body .ezco-mde-math-block > pre.ezco-mde-source-text': {
+        margin: 0,
+        padding: '0.5em 0.7em',
+        background: 'var(--ezco-mde-code-bg)',
+        'border-radius': '6px',
+        'white-space': 'pre-wrap',
+    },
+    '.ezco-mde-body .ezco-mde-math-block > pre.ezco-mde-source-text::before, .ezco-mde-body .ezco-mde-math-block > pre.ezco-mde-source-text::after': {
+        content: '"$$"',
+        display: 'block',
+        opacity: 0.45,
+    },
+
+    // Footnotes (extensions/footnote.ts): references numbered by first use;
+    // a definition with its number in a gutter.
+    '.ezco-mde-body .ezco-mde-footnote-ref': {
+        color: 'var(--ezco-mde-link-color)',
+        cursor: 'pointer',
+        'font-size': '0.7em',
+        'line-height': 0,
+        padding: '0 0.1em',
+    },
+    '.ezco-mde-body .ezco-mde-footnote-ref.is-missing': {
+        color: '#d33',
+    },
+    '.ezco-mde-body .ezco-mde-footnote-def': {
+        display: 'flex',
+        gap: '0.6em',
+        'font-size': '0.9em',
+    },
+    '.ezco-mde-body .ezco-mde-footnote-def.is-unreferenced': {
+        opacity: 0.7,
+    },
+    '.ezco-mde-footnote-label': {
+        flex: 'none',
+        'min-width': '1.5em',
+        color: 'var(--ezco-mde-link-color)',
+        cursor: 'pointer',
+        'user-select': 'none',
+    },
+    '.ezco-mde-footnote-label::after': {
+        content: '"."',
+    },
+    '.ezco-mde-footnote-body': {
+        flex: 1,
+        'min-width': 0,
+    },
+    '.ezco-mde-footnote-body > * + *': {
+        'margin-top': '0.5em',
+    },
+
+    // Callouts (extensions/callout.ts): a tinted box in the kind's colour with
+    // its icon; the title in the colour; a collapsed callout shows only it.
+    '.ezco-mde-body .ezco-mde-callout': {
+        position: 'relative',
+        padding: '0.6em 0.9em 0.6em 2.4em',
+        'border-left': '3px solid var(--ezco-mde-callout-color, #448aff)',
+        'border-radius': '6px',
+        background: 'color-mix(in srgb, var(--ezco-mde-callout-color, #448aff) 9%, transparent)',
+    },
+    '.ezco-mde-callout[data-callout-type="note"]': { '--ezco-mde-callout-color': '#448aff' },
+    '.ezco-mde-callout[data-callout-type="note"] > .ezco-mde-callout-icon::before': { content: '"✎"' },
+    '.ezco-mde-callout[data-callout-type="abstract"]': { '--ezco-mde-callout-color': '#00b0ff' },
+    '.ezco-mde-callout[data-callout-type="abstract"] > .ezco-mde-callout-icon::before': { content: '"☰"' },
+    '.ezco-mde-callout[data-callout-type="info"]': { '--ezco-mde-callout-color': '#00b8d4' },
+    '.ezco-mde-callout[data-callout-type="info"] > .ezco-mde-callout-icon::before': { content: '"ℹ"' },
+    '.ezco-mde-callout[data-callout-type="todo"]': { '--ezco-mde-callout-color': '#448aff' },
+    '.ezco-mde-callout[data-callout-type="todo"] > .ezco-mde-callout-icon::before': { content: '"☐"' },
+    '.ezco-mde-callout[data-callout-type="tip"]': { '--ezco-mde-callout-color': '#00bfa5' },
+    '.ezco-mde-callout[data-callout-type="tip"] > .ezco-mde-callout-icon::before': { content: '"✦"' },
+    '.ezco-mde-callout[data-callout-type="success"]': { '--ezco-mde-callout-color': '#00c853' },
+    '.ezco-mde-callout[data-callout-type="success"] > .ezco-mde-callout-icon::before': { content: '"✓"' },
+    '.ezco-mde-callout[data-callout-type="question"]': { '--ezco-mde-callout-color': '#64dd17' },
+    '.ezco-mde-callout[data-callout-type="question"] > .ezco-mde-callout-icon::before': { content: '"?"' },
+    '.ezco-mde-callout[data-callout-type="warning"]': { '--ezco-mde-callout-color': '#ff9100' },
+    '.ezco-mde-callout[data-callout-type="warning"] > .ezco-mde-callout-icon::before': { content: '"⚠"' },
+    '.ezco-mde-callout[data-callout-type="failure"]': { '--ezco-mde-callout-color': '#ff5252' },
+    '.ezco-mde-callout[data-callout-type="failure"] > .ezco-mde-callout-icon::before': { content: '"✗"' },
+    '.ezco-mde-callout[data-callout-type="danger"]': { '--ezco-mde-callout-color': '#ff1744' },
+    '.ezco-mde-callout[data-callout-type="danger"] > .ezco-mde-callout-icon::before': { content: '"⚡"' },
+    '.ezco-mde-callout[data-callout-type="bug"]': { '--ezco-mde-callout-color': '#f50057' },
+    '.ezco-mde-callout[data-callout-type="bug"] > .ezco-mde-callout-icon::before': { content: '"✱"' },
+    '.ezco-mde-callout[data-callout-type="example"]': { '--ezco-mde-callout-color': '#7c4dff' },
+    '.ezco-mde-callout[data-callout-type="example"] > .ezco-mde-callout-icon::before': { content: '"☷"' },
+    '.ezco-mde-callout[data-callout-type="quote"]': { '--ezco-mde-callout-color': '#9e9e9e' },
+    '.ezco-mde-callout[data-callout-type="quote"] > .ezco-mde-callout-icon::before': { content: '"❝"' },
+    '.ezco-mde-callout-icon': {
+        position: 'absolute',
+        left: '0.55em',
+        top: '0.55em',
+        width: '1.4em',
+        height: '1.4em',
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--ezco-mde-callout-color, #448aff)',
+        cursor: 'pointer',
+        font: 'inherit',
+        'line-height': 1.4,
+    },
+    '.ezco-mde-callout-fold': {
+        position: 'absolute',
+        right: '0.5em',
+        top: '0.55em',
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--ezco-mde-callout-color, #448aff)',
+        cursor: 'pointer',
+        transition: 'transform 120ms ease',
+    },
+    '.ezco-mde-callout-fold::before': {
+        content: '"▾"',
+    },
+    '.ezco-mde-callout.is-collapsed > .ezco-mde-callout-fold': {
+        transform: 'rotate(-90deg)',
+    },
+    '.ezco-mde-callout.is-collapsed > .ezco-mde-callout-content > :not(.ezco-mde-callout-title)': {
+        display: 'none',
+    },
+    '.ezco-mde-body .ezco-mde-callout-title': {
+        color: 'var(--ezco-mde-callout-color, #448aff)',
+        'font-weight': 600,
+    },
+    '.ezco-mde-body .ezco-mde-callout-title:has(> br.ProseMirror-trailingBreak:only-child)::before': {
+        content: 'var(--ezco-mde-callout-default-title)',
+        opacity: 0.8,
+        'pointer-events': 'none',
+    },
+    '.ezco-mde-callout-content > * + *': {
+        'margin-top': '0.4em',
     },
     // ─────────────────────────────────────────────────────────────
     // Links panel (extensions/links-panel.ts): what links to the open note,

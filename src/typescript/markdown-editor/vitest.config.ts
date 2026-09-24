@@ -115,6 +115,11 @@ export default defineConfig({
             '@joinezco/codeblock > @jsonjoy.com/util/lib/buffers/Writer',
             '@joinezco/codeblock > @codemirror/lsp-client > marked',
             'multimatch',
+            // Loaded lazily by the math and front-matter views: listed so the
+            // first test to show a formula or a property table does not
+            // trigger a re-optimize and reload mid-run.
+            'katex',
+            'yaml',
         ],
     },
     // Server configuration for tests
