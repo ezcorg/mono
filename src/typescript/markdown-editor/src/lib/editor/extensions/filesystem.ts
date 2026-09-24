@@ -397,8 +397,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             const { fs } = storage.options
             if (!fs) return
             // 1. Persist the outgoing file's unsaved edits to *its* path first,
-            //    so they're neither lost nor written to the incoming file.
-            void flushPendingSave()
+            //    so they're neither lost nor written to the incoming file, and
+            //    wait for them: reopening the same file must read them back.
+            await flushPendingSave()
             if (options.create && !(await fs.exists(path))) {
                 const parent = dirname(path)
                 if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })

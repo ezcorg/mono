@@ -98,6 +98,20 @@ describe('FileSystem autosave / file navigation', () => {
         expect(files['README.md']).toBe('# Readme\n')
     })
 
+    it('keeps the last edits when the open file is opened again', async () => {
+        const { fs, files } = makeMockFs({ 'test.md': '# Test\n' })
+        ;({ editor, el } = makeEditor(fs, 'test.md', true))
+        await tick(150)
+
+        // Within the debounce, open the same file again (from the file tree, the palette).
+        editor!.commands.setContent('# Test edited\n')
+        await (editor!.storage as any).persistence.loadFile('test.md')
+
+        expect((editor!.storage as any).markdown.getMarkdown()).toMatch(/Test edited/)
+        await tick(700)
+        expect(files['test.md']).toMatch(/Test edited/)
+    })
+
     it('autosaves edits to the newly opened file, not the previous one', async () => {
         const { fs, files } = makeMockFs({ 'test.md': '# Test\n', 'README.md': '# Readme\n' })
         ;({ editor, el } = makeEditor(fs, 'test.md', true))
