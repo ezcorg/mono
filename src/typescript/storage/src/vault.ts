@@ -22,6 +22,7 @@ import { LinkGraph, syntaxOf } from './links/graph.js'
 import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve.js'
 import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax.js'
 import { VersionLog, type VersionLogOptions } from './versions.js'
+import { formatThread, spliceThread, threadsIn, type CommentIndex, type CommentRef, type ThreadSource } from './comments.js'
 import type { LinkIndex, LinkRef, LinkResolution, LinkResolver, LinkSuggestion, LinkSyntax } from './links/types.js'
 
 export interface VaultOptions {
@@ -49,9 +50,13 @@ export class Vault {
     readonly files: FileOperations
     /** Every file's version log, with writes refused on a stale version. */
     readonly versions: VersionLog
+    /** Comment threads by the notes they are about, and changing them. */
+    readonly comments: CommentIndex
 
     private graph = new LinkGraph()
     private text = new SearchIndex()
+    /** The threads each note holds (notes with none are left out). */
+    private threads = new Map<string, ThreadSource[]>()
     private listeners = new Set<() => void>()
     private notifyScheduled = false
     private watchAbort = new AbortController()
@@ -90,6 +95,11 @@ export class Vault {
                 return this.text.search(query, { ...options, read: (path) => this.store.readFile(path) })
             },
         }
+        this.comments = {
+            threadsAbout: async (note) => (await ready(), this.threadsAbout(note)),
+            update: (ref, next) => this.updateThread(ref, next),
+            subscribe: (listener) => this.subscribe(listener),
+        }
         const fs = this.fs
         this.files = {
             async create(path, content = '', options = {}) {
@@ -125,6 +135,7 @@ export class Vault {
     async rebuild(): Promise<void> {
         this.graph = new LinkGraph()
         this.text.clear()
+        this.threads.clear()
         for await (const path of this.walk('')) {
             // A note that cannot be read is still there to link to.
             await this.indexFile(path).catch(() => this.addFile(path))
@@ -177,6 +188,33 @@ export class Vault {
 
     backlinks(note: string): LinkRef[] {
         return this.graph.backlinks(note)
+    }
+
+    /** Threads in other notes with a target resolving to `note`. */
+    threadsAbout(note: string): CommentRef[] {
+        const clean = normalizePath(note)
+        const out: CommentRef[] = []
+        for (const [source, threads] of this.threads) {
+            if (source === clean) continue
+            for (const t of threads) {
+                if (t.thread.targets.some((link) => link.target.trim() && this.resolve(link.target, source)?.path === clean)) {
+                    out.push({ ...t, source })
+                }
+            }
+        }
+        return out.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line)
+    }
+
+    /** Write `next` in place of the thread `ref` read, if it is still as read. */
+    private async updateThread(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
+        const text = await this.fs.readFile(ref.source)
+        const found = threadsIn(text).find((t) => t.form === ref.form && t.label === ref.label && t.text === ref.text)
+        if (!found) throw new Error(`The thread in ${ref.source} changed since it was read`)
+        const updated = spliceThread(text, found, next === null ? null : formatThread(next, found.label))
+        await this.fs.writeFile(ref.source, updated)
+        if (next === null) return null
+        const now = threadsIn(updated).find((t) => t.start === found.start)
+        return now ? { ...now, source: ref.source } : null
     }
 
     unresolved(): LinkRef[] {
@@ -242,6 +280,9 @@ export class Vault {
         await this.store.rename(from, to)
         await this.versions.move(from, to)
         for (const [a, b] of moved) {
+            const threads = this.threads.get(a)
+            this.threads.delete(a)
+            if (threads && isNote(b)) this.threads.set(b, threads)
             this.graph.moveFile(a, b)
             this.text.remove(a)
             this.text.set(b, isNote(b) ? await this.store.readFile(b) : null)
@@ -350,16 +391,22 @@ export class Vault {
     private setNote(path: string, text: string): void {
         this.graph.setNote(path, text)
         this.text.set(path, text)
+        const threads = threadsIn(text)
+        const clean = normalizePath(path)
+        if (threads.length) this.threads.set(clean, threads)
+        else this.threads.delete(clean)
     }
 
     private addFile(path: string): void {
         this.graph.addFile(path)
         this.text.set(path, null)
+        this.threads.delete(normalizePath(path))
     }
 
     private removeFile(path: string): void {
         this.graph.removeFile(path)
         this.text.remove(path)
+        this.threads.delete(normalizePath(path))
     }
 
     private follow(): void {

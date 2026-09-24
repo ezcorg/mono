@@ -294,3 +294,62 @@ async function waitUntil(condition: () => boolean, timeout = 2000): Promise<void
         await new Promise((r) => setTimeout(r, 5))
     }
 }
+
+describe('A vault’s comments', () => {
+    const REVIEW = [
+        '# Review',
+        '',
+        '- @alice 2026-09-13T12:10Z · open · [[Plan#:~:text=ship%20it]]',
+        '  Which release?',
+        '- @bob 2026-09-13T12:11Z · open · [[Other#^x]]',
+        '  Not about the plan.',
+        '',
+    ].join('\n')
+    const NOTES = {
+        'projects/Plan.md': '# Plan\n\nWe ship it. ^abc\n\n[^c-1]: @theo 2026-09-13T12:00Z · open · [[#^abc]]\n    Its own thread.\n',
+        'reviews/2026-09-13.md': REVIEW,
+        'journal.md': 'Today.\n\n[^c-2]: @theo 2026-09-13T13:00Z · resolved · [[Plan#^abc]] [[Other]]\n    Done?\n',
+        'Other.md': '# Other\n',
+    }
+
+    it('are found by the note they are about, wherever they are written', async () => {
+        const vault = await Vault.open(memoryVfs(NOTES), { watch: false })
+        const about = await vault.comments.threadsAbout('projects/Plan.md')
+        expect(about.map((t) => [t.source, t.form, t.label, t.thread.author])).toEqual([
+            ['journal.md', 'footnote', 'c-2', 'theo'],
+            ['reviews/2026-09-13.md', 'item', null, 'alice'],
+        ])
+        // A note's own threads are the editor's to read; they are not repeated.
+        expect(about.some((t) => t.source === 'projects/Plan.md')).toBe(false)
+        expect((await vault.comments.threadsAbout('Other.md')).map((t) => t.thread.author)).toEqual(['theo', 'bob'])
+    })
+
+    it('follow the notes they are in and about through renames', async () => {
+        const vault = await Vault.open(memoryVfs(NOTES), { watch: false })
+        await vault.rename('reviews/2026-09-13.md', 'reviews/done.md')
+        await vault.rename('projects/Plan.md', 'Plan-2026.md')
+        const about = await vault.comments.threadsAbout('Plan-2026.md')
+        expect(about.map((t) => t.source)).toEqual(['journal.md', 'reviews/done.md'])
+        // The links were kept pointing at the plan.
+        expect(about[1].thread.targets[0]).toMatchObject({ target: 'Plan-2026', fragment: ':~:text=ship%20it' })
+    })
+
+    it('are changed where they live, and not over a change made meanwhile', async () => {
+        const vault = await Vault.open(memoryVfs(NOTES), { watch: false })
+        const [, review] = await vault.comments.threadsAbout('projects/Plan.md')
+        const next = { ...review.thread, status: 'resolved' as const, replies: [{ author: 'theo', time: '2026-09-13T14:00Z', body: 'The next one.', replies: [] }] }
+        const written = await vault.comments.update(review, next)
+        expect(await vault.fs.readFile('reviews/2026-09-13.md')).toBe(REVIEW.replace(
+            '- @alice 2026-09-13T12:10Z · open · [[Plan#:~:text=ship%20it]]\n  Which release?',
+            '- @alice 2026-09-13T12:10Z · resolved · [[Plan#:~:text=ship%20it]]\n  Which release?\n  - @theo 2026-09-13T14:00Z: The next one.',
+        ))
+        expect(written?.thread).toEqual(next)
+        // The index has the new text.
+        expect((await vault.comments.threadsAbout('projects/Plan.md'))[1].thread.status).toBe('resolved')
+        // The old reading is stale now.
+        await expect(vault.comments.update(review, null)).rejects.toThrow(/changed since it was read/)
+        // Removed, with the note otherwise as it was.
+        await vault.comments.update(written!, null)
+        expect(await vault.fs.readFile('reviews/2026-09-13.md')).toBe(REVIEW.split('\n').filter((_, i) => i !== 2 && i !== 3).join('\n'))
+    })
+})
