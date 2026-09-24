@@ -82,6 +82,30 @@ describe('File tree', () => {
         expect(shown(container)).toContain('projects/roadmap.md')
     })
 
+    it('renames a note the open one links to, keeping the open note’s edits and its rewritten link', async () => {
+        const { editor, vault, container } = await open('index.md')
+        await waitFor(() => shown(container).includes('projects'), 3000)
+        // An unsaved edit to the open note (autosave has not fired yet).
+        editor.commands.focus('end')
+        editor.commands.insertContent(' Also this.')
+        row(container, 'projects').click()
+        await waitFor(() => shown(container).includes('projects/plan.md'), 3000)
+        // Down past projects/2026 to projects/plan.md, and rename it.
+        row(container, 'projects').focus()
+        await userEvent.keyboard('{ArrowDown}{ArrowDown}')
+        expect(document.activeElement?.getAttribute('data-path')).toBe('projects/plan.md')
+        await userEvent.keyboard('{F2}')
+        await waitFor(() => !!container.querySelector('.ezco-mde-files-rename'), 2000)
+        await userEvent.keyboard('roadmap{Enter}')
+        await waitFor(() => shown(container).includes('projects/roadmap.md'), 3000)
+        expect(await vault.fs.readFile('index.md')).toBe('# Index\n\nSee [[roadmap]]. Also this.')
+        // The editor shows the rewritten link, and its next save keeps it.
+        await waitFor(() => (editor.storage as any).markdown.getMarkdown() === '# Index\n\nSee [[roadmap]]. Also this.', 3000)
+        editor.commands.insertContent('!')
+        await new Promise((r) => setTimeout(r, 700))
+        expect(await vault.fs.readFile('index.md')).toBe('# Index\n\nSee [[roadmap]]. Also this.!')
+    })
+
     it('deletes after asking, closing the note if it was open', async () => {
         const { editor, vault, container } = await open('zebra.md')
         await waitFor(() => shown(container).includes('zebra.md'), 3000)

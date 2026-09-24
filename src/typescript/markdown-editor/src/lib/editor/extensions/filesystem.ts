@@ -96,6 +96,9 @@ export interface FileSystemOptions {
      *  move focus to the start of the file. Default `true`; set `false` to leave
      *  focus where it is (e.g. on the toolbar). */
     focusOnLoad?: boolean
+    /** Handed the persistence once the editor is created, for code built
+     *  before there is an editor (the extension list) to reach it. */
+    bind?: (storage: FileSystemStorage) => void
 }
 
 export interface FileSystemStorage {
@@ -129,6 +132,12 @@ export interface FileSystemStorage {
      * an image. Resolves once the writes have landed.
      */
     save: () => Promise<void>
+    /**
+     * Re-read the open note if its file changed under it (a rename rewrote
+     * its links), keeping the caret. Not while it has unsaved edits: those
+     * are written first by whoever changes the file (`save`).
+     */
+    refresh: () => Promise<void>
     /** Edits to the prose document not yet written. */
     dirty: boolean
     /**
@@ -153,7 +162,7 @@ export interface FileSystemStorage {
     listeners: Set<(event: FileEvent) => void>
     /** @internal Hand over the real methods once the editor is created;
      *  calls made before then are waiting for them. */
-    install: (methods: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'loadFile' | 'close'>) => void
+    install: (methods: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'refresh' | 'loadFile' | 'close'>) => void
 }
 
 export const FileSystem = Extension.create<FileSystemOptions>({
@@ -175,7 +184,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // The object returned here is not necessarily the one hooks see as
         // `this.storage`, so the early calls reach the real methods through
         // this closure rather than through the object.
-        let methods!: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'loadFile' | 'close'>
+        let methods!: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'refresh' | 'loadFile' | 'close'>
         let installed!: () => void
         const ready = new Promise<void>((resolve) => (installed = resolve))
         return {
@@ -189,6 +198,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // call before then waits for it rather than doing nothing.
             flushPendingSave: () => ready.then(() => methods.flushPendingSave()),
             save: () => ready.then(() => methods.save()),
+            refresh: () => ready.then(() => methods.refresh()),
             dirty: false,
             loadFile: (path, options) => ready.then(() => methods.loadFile(path, options)),
             close: (options) => ready.then(() => methods.close(options)),
@@ -402,6 +412,26 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             return writing
         }
 
+        storage.refresh = async () => {
+            const { fs, filepath } = storage.options
+            if (!fs || !filepath || storage.codeView || storage.dirty) return
+            const ticket = latestLoad
+            const text = await fs.readFile(filepath).catch(() => null)
+            // Moved on, or edited, meanwhile: the newer state stands.
+            if (text === null || ticket !== latestLoad || storage.dirty || storage.options.filepath !== filepath) return
+            if (text === getMarkdown(editor)) return
+            const { from, to } = editor.state.selection
+            storage.loadingFile = true
+            try {
+                editor.commands.setContent(text)
+                const end = editor.state.doc.content.size
+                editor.commands.setTextSelection({ from: Math.min(from, end), to: Math.min(to, end) })
+            } finally {
+                storage.loadingFile = false
+            }
+            emit({ type: 'load', path: filepath })
+        }
+
         storage.close = async (options = {}) => {
             latestLoad++
             const closed = storage.options.filepath
@@ -462,9 +492,11 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                     console.warn(`[Filesystem] Failed to load content from ${filepath}:`, error)
                 })
         }
+        this.options.bind?.(storage)
         storage.install({
             flushPendingSave: storage.flushPendingSave,
             save: storage.save,
+            refresh: storage.refresh,
             loadFile: storage.loadFile,
             close: storage.close,
         })

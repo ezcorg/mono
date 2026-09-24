@@ -8,7 +8,7 @@ import { StyleModule } from 'style-mod';
 
 import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
-import { FileSystem, FileSystemOptions } from './extensions/filesystem';
+import { FileSystem, FileSystemOptions, type FileSystemStorage } from './extensions/filesystem';
 import { styleModule } from './styles';
 import { ExtendedLink } from './extensions/link';
 import { LinkMenu } from './extensions/link-menu';
@@ -214,6 +214,28 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
 }
 
 /**
+ * `files` whose renames keep the open note consistent: its unsaved edits are
+ * written before links are rewritten (so the rewrite reads them), and it is
+ * re-read afterwards if the rename changed it, so the next save does not put
+ * the old links back. The file tree, the palette and code blocks all rename
+ * through this.
+ */
+function keepingOpenNote(files: FileOperations | undefined, open: () => FileSystemStorage | undefined): FileOperations | undefined {
+    if (!files) return files;
+    return {
+        create: (path, content, options) => files.create(path, content, options),
+        mkdir: (path) => files.mkdir(path),
+        remove: (path) => files.remove(path),
+        async rename(oldPath, newPath) {
+            await open()?.save();
+            const count = await files.rename(oldPath, newPath);
+            await open()?.refresh();
+            return count;
+        },
+    };
+}
+
+/**
  * The default extension set — every feature the editor ships with, each a
  * standalone Tiptap unit. This is the CodeMirror-`basicSetup` analog: spread it
  * into `new Editor({ extensions: markdownSetup(opts) })` for the full experience,
@@ -226,10 +248,12 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
  */
 export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[] {
     const { toolbar, blockActions, sidebar } = options;
-    const services = vaultServices(options);
+    let persistence: FileSystemStorage | undefined;
+    const given = vaultServices(options);
+    const services = { ...given, files: keepingOpenNote(given.files, () => persistence) };
     const commands = Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands;
     return [
-        FileSystem.configure({ ...options.fs, fs: services.fs }),
+        FileSystem.configure({ ...options.fs, fs: services.fs, bind: (storage) => (persistence = storage) }),
         ExtendedLink.configure({}),
         ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver } }),
         StarterKit.configure({
