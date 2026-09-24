@@ -12,44 +12,6 @@ afterEach(() => {
     document.body.innerHTML = ''
 })
 
-// Mock window.matchMedia for tests
-Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: (query: string) => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: () => { },
-        removeListener: () => { },
-        addEventListener: () => { },
-        removeEventListener: () => { },
-        dispatchEvent: () => { },
-    }),
-})
-
-// Mock ResizeObserver
-globalThis.ResizeObserver = class ResizeObserver {
-    observe() { }
-    unobserve() { }
-    disconnect() { }
-}
-
-// Mock IntersectionObserver
-globalThis.IntersectionObserver = class IntersectionObserver {
-    root = null
-    rootMargin = ''
-    thresholds = []
-
-    constructor() { }
-    observe() { }
-    unobserve() { }
-    disconnect() { }
-    takeRecords() { return [] }
-}
-
-// Mock getComputedStyle
-Object.defineProperty(window, 'getComputedStyle', {
-    value: () => ({
-        getPropertyValue: () => '',
-    }),
-})
+// The suites run in a real browser (Chromium, through Playwright): layout,
+// computed styles, observers and media queries are the browser's own, so
+// what a test measures is what a user sees. Nothing here stands in for them.
