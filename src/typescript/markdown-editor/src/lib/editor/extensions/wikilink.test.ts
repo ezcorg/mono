@@ -142,6 +142,38 @@ describe('Wikilinks in a vault', () => {
         }
         expect(opened).toEqual([])
     })
+
+    it('creates only notes from Markdown links: a bare web address opens the site, a missing file nothing', async () => {
+        const { editor, vault } = await inVault({ 'index.md': '# Index\n\n[site](www.example.com), [doc](missing.pdf) and [new](new.md).' })
+        const follow = async (text: string) => {
+            let pos = 0
+            editor.state.doc.descendants((node, p) => {
+                if (node.isText && node.text === text) pos = p + 1
+            })
+            editor.commands.setTextSelection(pos)
+            editor.commands.keyboardShortcut('Mod-Enter')
+        }
+        const opened: string[] = []
+        const original = window.open
+        window.open = ((url?: string | URL) => {
+            opened.push(String(url))
+            return null
+        }) as typeof window.open
+        try {
+            await follow('site')
+            await follow('doc')
+            await new Promise((r) => setTimeout(r, 200))
+            expect(opened).toEqual(['https://www.example.com'])
+            expect(await vault.fs.exists('www.example.com')).toBe(false)
+            expect(await vault.fs.exists('missing.pdf')).toBe(false)
+            expect(filepath(editor)).toBe('index.md')
+            await follow('new')
+            await waitFor(() => filepath(editor) === 'new.md', 3000)
+            expect(await vault.fs.exists('new.md')).toBe(true)
+        } finally {
+            window.open = original
+        }
+    })
 })
 
 describe('Editing wikilinks', () => {

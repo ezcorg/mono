@@ -23,6 +23,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import tippy, { type Instance as TippyInstance } from 'tippy.js'
 import {
     formatWikilink,
+    isNote,
     matchWikilinkAt,
     normalizePath,
     parseWikilink,
@@ -100,6 +101,13 @@ const optionalData = (name: string) => ({
     renderHTML: (attrs: Record<string, unknown>) =>
         attrs[name] === null || attrs[name] === undefined ? {} : { [`data-${name}`]: attrs[name] },
 })
+
+function openInNewTab(url: string): void {
+    if (typeof window === 'undefined') return
+    // No window-features string: that makes it a popup, which blockers drop.
+    const win = window.open(url, '_blank')
+    if (win) win.opener = null
+}
 
 export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
     name: 'wikilink',
@@ -231,6 +239,13 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
             if (!resolver) return false
             const resolution = await storage.resolveTarget(target, syntax)
             if (!resolution) return false
+            // Following a link creates a note, never another kind of file: a
+            // Markdown link to a missing `www.example.com` means the site, and
+            // one to a missing `report.pdf` has nothing to open.
+            if (!resolution.exists && syntax === 'markdown' && !isNote(resolution.path)) {
+                if (/^www\./i.test(target)) openInNewTab(`https://${target}`)
+                return true
+            }
             if (open) {
                 await open(resolution, fragment, editor)
                 return true
