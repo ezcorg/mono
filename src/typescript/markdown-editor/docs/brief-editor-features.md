@@ -7,10 +7,11 @@ the gap list, §3 to §7 the decisions that shape the editor, §16 the
 milestones. The icanhaz side (the capability daemon the editor MAY talk to) is
 built through M6. E1, the editor's foundations and the vault package, is
 built (branch `editor-e1`, 2026-09-23), and so are E2's editor half
-(versions and the `edit()` path) and E4's first half (prose actions over a
-host's `inference`, plugin manifests with `wants` and the plugin host);
-the rest of E2 and E4, and E3, E5 to E7, are not started. This brief
-says where to continue and what not to touch.
+(versions and the `edit()` path), E3 (comments, 2026-09-24, but for read
+state) and E4's first half (prose actions over a host's `inference`,
+plugin manifests with `wants` and the plugin host); the rest of E2 and
+E4, and E5 to E7, are not started. This brief says where to continue and
+what not to touch.
 
 HUMAN'S NOTE: Most of these documents were written by an LLM that may not have had full context into the overall ambitions of the project. The general idea is that from `@joinezco/markdown-editor`, to `@joinezco/codebock`, to `@joinezco/vault` (I suppose? I think it would sound better as `@joinezco/storage` and not be clearly trying to emulate Obsidian), that functionality is composed of interfaces which allow each library to avoid making assumptions about the environment its operating in (i.e in a browser vs. a native app), and then we provide different implementations of those interfaces depending on what is possible in a given environment. The browser, for instance, could not run any processes on the host (unless of course they're running `icanhaz` and they grant the capability to the editor -- though then in the case of running processes the editor would likely also require the host filesystem vs. something browser-native like indexeddb, otherwise it would not make much sense). Local-first, peer-to-peer, and open is the prevailing philosophy.
 
@@ -79,15 +80,16 @@ Chrome at `/usr/bin/google-chrome` or `CHROME_PATH`.
    open today); tags and a property index; block ids assigned by the
    editor (`^abc`); highlight `==x==`; diagrams behind a renderer interface
    as math is.
+3. **What E3 left** (RFC §16, `comments-discussions-rfc.md` §6): read and
+   unread per device, notifications of replies, signed authorship; all
+   three wait on device identity (RFC §9). The pieces: threads are
+   Markdown (`@joinezco/storage`'s `comments.ts`), anchors are text
+   fragments or pins (`quote.ts`, `span.ts`), the index is
+   `vault.comments`, and the editor's `Comments` and `CommentMargin`
+   extensions read and write them.
 
 ## Then
 
-- **E3, comments**, on top of versions; `comments-discussions-rfc.md` and
-  RFC §4 carry the model (URL anchors, footnote threads). The pieces are
-  in place: footnote definitions keep their place and their indented
-  continuation, text fragments (`#:~:text=`) resolve (`fragment.ts`), notes
-  carry ids, and `edit()` lets a comment's author (or an agent) change a
-  note through the editor.
 - **What E4 left** (RFC §16): the iframe bridge speaking a plugin's
   provider over `postMessage`, the `eznote:plugin` WIT and the host
   executor, so code plugins (not only declarative ones) get their grants;

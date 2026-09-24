@@ -24,6 +24,7 @@ const editor = createEditor({
     files: vault.files, // create / rename (links kept) / delete
     frontMatter: { assignId: () => newNoteId() }, // stable note ids
     fileTree: {}, // the vault beside the note (closed until asked for, ⌘⇧E)
+    comments: { author: 'theo', index: vault.comments }, // threads in the margin
 })
 ```
 
@@ -52,6 +53,35 @@ Edits are LSP-shaped (offsets, or lines and characters) on a document
 version that moves with every change; a stale one is refused. They are
 applied as one transaction that keeps the caret, then saved.
 
+## Comments
+
+A thread is a footnote whose first line says who started it, when, whether
+it is open and what it is about. What it is about is links into the note's
+text, the strings "copy link to highlight" makes, so a comment's anchor and
+a link to a passage are one thing ([the comments RFC](docs/comments-discussions-rfc.md)):
+
+```markdown
+The quick brown fox jumps over the [lazy dog]{#c-01JAB3C4D5EFGHJK}.
+
+[^c-01JAB3C4D5EFGHJK]: @theo 2026-09-13T12:04Z · open · [[#:~:text=brown%20fox]] [[#c-01JAB3C4D5EFGHJK]]
+    Are both of these the same animal?
+    - @alice 2026-09-13T12:10Z: No, and the second one should be a cat.
+      - @theo 2026-09-13T12:12Z: 👍
+```
+
+The editor finds each target (a quote as written, regardless of case, or
+approximately after an edit made elsewhere; a pin; a block id), highlights
+it, and shows the thread in a margin beside the note, level with its text
+(over the note's edge, as a popover, when there is no room). Anchors keep
+up with editing: a quote whose words are changed is rewritten, in the same
+undo step, to quote what is there now; text no quote can tell apart is
+pinned instead. Given `comments: { author, index }`, threads are written as
+`author` (select text, then Comment or ⌘⌥M) and threads about the note that
+live in other notes (a review, a day's notes) come from `index`, a vault's
+`comments`, and are changed where they live. `editor.storage.comments` has
+the threads, `exportAnnotations()` (W3C Web Annotations) and
+`markdownWithoutComments()`.
+
 ## What it understands
 
 | Syntax | Notes |
@@ -64,6 +94,8 @@ applied as one transaction that keeps the caret, then saved.
 | Front matter | a properties table, YAML on focus; `id:` assigned on first open when the host asks |
 | Math `$…$`, `$$…$$` | KaTeX by default (loaded on first use), any `MathRenderer` otherwise; prices stay text |
 | Footnotes `[^1]` | numbered by first use, definitions kept where written |
+| Comment threads `[^c-…]: @who TIME · open · [[#…]]` | shown in the margin, hidden in the note; written back byte for byte until changed (see Comments) |
+| Bracketed spans `[text]{#id .class key=value}` | Pandoc's and Djot's attributed text; a comment's pin |
 | Callouts `> [!note] Title` | kinds and aliases, fold markers, Obsidian's syntax |
 
 Every extension is exported on its own; `markdownSetup()` returns the default
@@ -90,6 +122,8 @@ theme's variables.
 - ⌘⇧E / Ctrl+Shift+E, or its header: show or hide the file tree (closed until
   asked for; `fileTree: { open: true }` starts it open). In it: arrows,
   Enter, F2 to rename, Delete (asks first).
+- ⌘⌥M / Ctrl+Alt+M: comment on the selection. In a comment box, ⌘/Ctrl+Enter
+  posts and Escape cancels.
 
 ## Develop
 

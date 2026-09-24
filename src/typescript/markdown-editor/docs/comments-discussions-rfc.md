@@ -1,6 +1,6 @@
 # RFC: Comments and discussions
 
-**Status:** v2, 2026-09-24. Replaces the v1 draft (a sidecar CRDT with
+**Status:** v2, 2026-09-24, built (branch `editor-e1`) but for §6. Replaces the v1 draft (a sidecar CRDT with
 relative-position anchors), which the platform RFC's §3 and §4 overruled:
 files are the unit, the CRDT is opt-in, and a comment is Markdown in a note.
 This document is the detailed design behind the platform RFC's §4 and its
