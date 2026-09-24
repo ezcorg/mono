@@ -39,6 +39,7 @@ import { Image, ImageOptions } from './extensions/image';
 import { Embed } from './extensions/embed';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { MarkdownText } from './extensions/text';
+import { Span } from './extensions/span';
 import { Vault, fileOperations, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
@@ -185,6 +186,8 @@ function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMa
         ...(options.math !== false ? [Mathematics.configure(options.math ?? {})] : []),
         ...(options.footnotes !== false ? [FootnoteReference, FootnoteDefinition] : []),
         ...(options.callouts !== false ? [CalloutTitle, Callout] : []),
+        // Bracketed spans (`[text]{#id .class}`) round-trip in every editor.
+        Span,
         // Front matter and math show rendered until the caret is in them.
         SourceView,
     ];
@@ -572,6 +575,7 @@ export type { FrontMatterOptions } from './extensions/front-matter';
 export { Mathematics, MathInline, MathBlock, katexRenderer } from './extensions/math';
 export type { MathOptions, MathRenderer } from './extensions/math';
 export { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
+export { Span, parseSpanAttributes, formatSpanAttributes, type SpanAttributes } from './extensions/span';
 export { Callout, CalloutTitle, calloutType } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';
