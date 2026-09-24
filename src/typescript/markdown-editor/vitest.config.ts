@@ -107,6 +107,7 @@ export default defineConfig({
             '@joinezco/codeblock > comlink',
             '@joinezco/codeblock > lodash',
             '@joinezco/storage > minisearch',
+            '@joinezco/storage > markdown-it',
             '@joinezco/codeblock > path-browserify',
             '@joinezco/codeblock > @marimo-team/codemirror-ai',
             '@joinezco/codeblock > vscode-languageserver-protocol',

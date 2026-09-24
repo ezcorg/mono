@@ -13,6 +13,7 @@
  * where a bare pipe would end the cell). All three are kept exactly as
  * written, so formatting a parsed link gives the source back.
  */
+import MarkdownIt from 'markdown-it'
 
 export interface Wikilink {
     /** The note or file named, as written (`plan`, `notes/plan`, `img.png`).
@@ -106,50 +107,63 @@ export function isExternalTarget(target: string): boolean {
     return /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('//') || target.startsWith('#')
 }
 
-const FENCE = /^( {0,3})(`{3,}|~{3,})/
-
 /**
  * Every link in a note: wikilinks and embeds, inline Markdown links and
- * images, and reference definitions (`[id]: path`). Fenced code, inline code
- * and backslash-escaped brackets are skipped; external destinations are
- * left out. Front matter is scanned for wikilinks only (Obsidian treats a
- * property value of `"[[Note]]"` as a link).
+ * images, and reference definitions (`[id]: path`). Code (fenced or
+ * indented, wherever it sits: in a list item, in a quote), inline code and
+ * backslash-escaped brackets are skipped; external destinations are left
+ * out. Front matter, when closed, is scanned for wikilinks only (Obsidian
+ * treats a property value of `"[[Note]]"` as a link).
  */
 export function scanLinks(text: string): ScannedLink[] {
     const out: ScannedLink[] = []
     const lines = text.split('\n')
+    const starts: number[] = []
     let offset = 0
-    let fence: { char: string; len: number } | null = null
-    let inFrontMatter = lines[0]?.replace(/\r$/, '') === '---'
-    for (let i = 0; i < lines.length; i++) {
-        const raw = lines[i]
-        const line = raw.replace(/\r$/, '')
-        const lineStart = offset
+    for (const raw of lines) {
+        starts.push(offset)
         offset += raw.length + 1
-        if (inFrontMatter) {
-            if (i > 0 && (line === '---' || line === '...')) {
-                inFrontMatter = false
-                continue
-            }
-            if (i > 0) scanWikilinks(line, line, lineStart, i + 1, out)
-            continue
+    }
+    const line = (i: number) => lines[i].replace(/\r$/, '')
+
+    // Front matter: `---` on the first line, up to the first `---` or `...`.
+    // Unclosed, the `---` is a rule, as it is to the editor.
+    let body = 0
+    if (lines.length > 1 && line(0) === '---') {
+        const close = lines.findIndex((_, i) => i > 0 && (line(i) === '---' || line(i) === '...'))
+        if (close > 0) {
+            for (let i = 1; i < close; i++) scanWikilinks(line(i), line(i), starts[i], i + 1, out)
+            body = close + 1
         }
-        const fenceMatch = FENCE.exec(line)
-        if (fence) {
-            if (fenceMatch && fenceMatch[2][0] === fence.char && fenceMatch[2].length >= fence.len && !line.slice(fenceMatch[0].length).trim()) {
-                fence = null
-            }
-            continue
-        }
-        if (fenceMatch) {
-            fence = { char: fenceMatch[2][0], len: fenceMatch[2].length }
-            continue
-        }
-        const masked = maskCode(line)
-        scanWikilinks(masked, line, lineStart, i + 1, out)
-        scanMarkdownLinks(masked, line, lineStart, i + 1, out)
+    }
+
+    const code = codeLines(lines.slice(body).join('\n'))
+    for (let i = body; i < lines.length; i++) {
+        if (code.has(i - body)) continue
+        const source = line(i)
+        const masked = maskCode(source)
+        scanWikilinks(masked, source, starts[i], i + 1, out)
+        scanMarkdownLinks(masked, source, starts[i], i + 1, out)
     }
     return out.sort((a, b) => a.start - b.start)
+}
+
+let blocks: MarkdownIt | null = null
+
+/** The lines of `body` (0-based) that are code, by the editor's block
+ *  grammar: markdown-it with raw HTML off, as the editor configures it. */
+function codeLines(body: string): Set<number> {
+    if (!blocks) {
+        blocks = new MarkdownIt('default', { html: false })
+        // Block structure is all this needs.
+        blocks.core.ruler.disable(['inline', 'linkify', 'replacements', 'smartquotes', 'text_join'], true)
+    }
+    const code = new Set<number>()
+    for (const token of blocks.parse(body, {})) {
+        if ((token.type !== 'fence' && token.type !== 'code_block') || !token.map) continue
+        for (let l = token.map[0]; l < token.map[1]; l++) code.add(l)
+    }
+    return code
 }
 
 /** `line` with inline code spans and backslash escapes blanked out (same

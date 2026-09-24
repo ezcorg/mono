@@ -96,6 +96,38 @@ describe('scanning a note for links', () => {
         expect(decodeDestination('x\\(1\\).md')).toBe('x(1).md')
     })
 
+    it('knows code wherever it sits: fenced in a list item or a quote, or indented', () => {
+        const text = [
+            '- item',
+            '',
+            '    ```',
+            '    [[fenced in a list]]',
+            '    ```',
+            '- [[listed]]',
+            '',
+            '> ```',
+            '> [[fenced in a quote]]',
+            '> ```',
+            '> [[quoted]]',
+            '',
+            'para',
+            '',
+            '    [[indented code]]',
+            '',
+            '[[after]]',
+        ].join('\n')
+        expect(scanLinks(text).map((l) => [l.target, l.line])).toEqual([
+            ['listed', 6],
+            ['quoted', 11],
+            ['after', 17],
+        ])
+    })
+
+    it('takes front matter only when it is closed, as the editor does', () => {
+        expect(scanLinks('---\n\nA rule, then [a](b.md) and [[c]].').map((l) => l.target)).toEqual(['b.md', 'c'])
+        expect(scanLinks('---\ntitle: [x](y.md)\n...\n[[body]]').map((l) => l.target)).toEqual(['body'])
+    })
+
     it('reads wikilinks in front matter, not Markdown links', () => {
         const text = '---\nrelated: "[[plan]]"\nurl: "[x](y.md)"\n---\n[[body]]'
         expect(scanLinks(text).map((l) => [l.target, l.line])).toEqual([

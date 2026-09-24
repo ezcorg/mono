@@ -16,6 +16,9 @@ export default defineConfig({
                 },
             },
             {
+                // Pre-bundled up front, so no test's first import has Vite
+                // re-optimize and reload the page mid-run.
+                optimizeDeps: { include: ['markdown-it', 'minisearch'] },
                 test: {
                     name: 'browser',
                     include: ['src/**/*.browser.test.ts'],
