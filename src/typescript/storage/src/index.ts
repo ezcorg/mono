@@ -32,3 +32,14 @@ export { newNoteId, frontMatterOf, noteIdOf } from './id.js'
 export { VersionLog, type FileVersion, type PutResult, type Signer, type VersionLogOptions } from './versions.js'
 export { serveVfs, remoteVfs, vfsPort, DISCONNECTED, type RemoteVfs, type PortLike } from './remote.js'
 export { takeSnapshot, restoreSnapshot, type SnapshotNode, type TakeSnapshotOptions } from './snapshot.js'
+export {
+    PROSE_ACTIONS,
+    proseAction,
+    completeText,
+    type Inference,
+    type CompletionRequest,
+    type CompletionEvent,
+    type ChatMessage,
+    type ProseAction,
+    type ProseContext,
+} from './ai.js'
