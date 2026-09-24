@@ -4,9 +4,11 @@ For an agent beginning work on `@joinezco/markdown-editor` (this package)
 and the vault around it. Read this, then the RFC beside it
 (`gap-analysis-and-platform-rfc.md`), which is the design of record: §2 is
 the gap list, §3 to §7 the decisions that shape the editor, §16 the
-milestones. The icanhaz side (the capability daemon the editor talks to) is
+milestones. The icanhaz side (the capability daemon the editor MAY talk to) is
 built through M6; the editor milestones E1 to E7 are not started. This
 brief says where to begin and what not to touch.
+
+HUMAN'S NOTE: Most of these documents were written by an LLM that may not have had full context into the overall ambitions of the project. The general idea is that from `@joinezco/markdown-editor`, to `@joinezco/codebock`, to `@joinezco/vault` (I suppose? I think it would sound better as `@joinezco/storage` and not be clearly trying to emulate Obsidian), that functionality is composed of interfaces which allow each library to avoid making assumptions about the environment its operating in (i.e in a browser vs. a native app), and then we provide different implementations of those interfaces depending on what is possible in a given environment. The browser, for instance, could not run any processes on the host (unless of course they're running `icanhaz` and they grant the capability to the editor -- though then in the case of running processes the editor would likely also require the host filesystem vs. something browser-native like indexeddb, otherwise it would not make much sense). Local-first, peer-to-peer, and open is the prevailing philosophy.
 
 ## The ground
 
