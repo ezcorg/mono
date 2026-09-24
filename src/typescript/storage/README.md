@@ -17,7 +17,9 @@ current as they change; nothing is synced.
   links, a rename that rewrites links. The editor takes these from its host.
 - `FileSearch`: files by path and name, notes by their text, with the line
   and a snippet of a text match.
-- `FileOperations`: create, mkdir, rename, remove, the way a host means them.
+- `FileOperations`: create, mkdir, rename, remove, the way a host means them
+  (`pathTaken` tells a rename's destination from its source on a disk that
+  ignores case).
 
 ## Implementations
 
