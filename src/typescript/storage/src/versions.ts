@@ -65,6 +65,28 @@ export interface VersionLogOptions {
 const encoder = new TextEncoder()
 const hash = (bytes: Uint8Array) => bytesToHex(blake3(bytes))
 
+/**
+ * A free name beside `path` for a copy of it that lost a write
+ * (`plan (conflict, 2026-09-23 12.04).md`; `who`, a signer's id, in place of
+ * `conflict` when there is one). Anything that keeps a losing write beside
+ * the file names it so, with a log or without.
+ */
+export async function conflictCopyPath(fs: VfsInterface, path: string, options: { when?: number; who?: string } = {}): Promise<string> {
+    const clean = normalizePath(path)
+    const name = basename(clean)
+    const dot = name.lastIndexOf('.')
+    const stem = dot > 0 ? name.slice(0, dot) : name
+    const ext = dot > 0 ? name.slice(dot) : ''
+    const when = new Date(options.when ?? Date.now())
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const stamp = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}.${pad(when.getMinutes())}`
+    const who = options.who ?? 'conflict'
+    for (let n = 1; ; n++) {
+        const candidate = joinPath(dirname(clean), `${stem} (${who}, ${stamp}${n > 1 ? ` ${n}` : ''})${ext}`)
+        if (!(await fs.exists(candidate))) return candidate
+    }
+}
+
 export class VersionLog {
     private readonly dir: string
     private readonly now: () => number
@@ -194,20 +216,8 @@ export class VersionLog {
         return version
     }
 
-    /** A free name beside `path` for a copy that lost to it. */
-    private async conflictPath(path: string): Promise<string> {
-        const name = basename(path)
-        const dot = name.lastIndexOf('.')
-        const stem = dot > 0 ? name.slice(0, dot) : name
-        const ext = dot > 0 ? name.slice(dot) : ''
-        const when = new Date(this.now())
-        const pad = (n: number) => String(n).padStart(2, '0')
-        const stamp = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}.${pad(when.getMinutes())}`
-        const who = this.options.signer?.id ?? 'conflict'
-        for (let n = 1; ; n++) {
-            const candidate = joinPath(dirname(path), `${stem} (${who}, ${stamp}${n > 1 ? ` ${n}` : ''})${ext}`)
-            if (!(await this.fs.exists(candidate))) return candidate
-        }
+    private conflictPath(path: string): Promise<string> {
+        return conflictCopyPath(this.fs, path, { when: this.now(), who: this.options.signer?.id })
     }
 
     private async ensureDir(path: string): Promise<void> {

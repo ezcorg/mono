@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { memoryVfs } from './memory.js'
-import { VersionLog, type FileVersion } from './versions.js'
+import { VersionLog, conflictCopyPath, type FileVersion } from './versions.js'
 import { Vault } from './vault.js'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
@@ -28,6 +28,16 @@ describe('A file’s version log', () => {
         const again = await log.put('notes/plan.md', v1.id, 'and again')
         if (again.ok) throw new Error('expected a refusal')
         expect(again.conflict.path).not.toBe(stale.conflict.path)
+    })
+
+    it('names a conflict copy the same way for anything that keeps one, with a log or without', async () => {
+        const fs = memoryVfs({ 'src/lib.rs': 'fn main() {}' })
+        const when = new Date(2026, 8, 23, 12, 4).getTime()
+        const first = await conflictCopyPath(fs, 'src/lib.rs', { when })
+        expect(first).toBe('src/lib (conflict, 2026-09-23 12.04).rs')
+        await fs.writeFile(first, 'lost')
+        expect(await conflictCopyPath(fs, 'src/lib.rs', { when })).toBe('src/lib (conflict, 2026-09-23 12.04 2).rs')
+        expect(await conflictCopyPath(fs, 'Makefile', { when, who: 'laptop' })).toBe('Makefile (laptop, 2026-09-23 12.04)')
     })
 
     it('takes a change made outside it (an editor, git) for a version on the one before', async () => {
