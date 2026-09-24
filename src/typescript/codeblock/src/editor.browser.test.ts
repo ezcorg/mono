@@ -13,10 +13,10 @@ afterEach(() => {
     views.length = 0;
 });
 
-function mount(fs: VfsInterface, filepath?: string): EditorView {
+function mount(fs: VfsInterface, filepath?: string, toolbar = false): EditorView {
     const parent = document.createElement('div');
     document.body.append(parent);
-    const view = createCodeblock({ parent, fs, filepath, toolbar: false });
+    const view = createCodeblock({ parent, fs, filepath, toolbar });
     views.push(view);
     return view;
 }
@@ -49,6 +49,22 @@ describe('Files in a code block', () => {
         expect(view.state.readOnly).toBe(false);
         await autosave();
         expect([...(await fs.readBytes('pic.png'))]).toEqual([...PNG]);
+    });
+
+    it('keep an image’s bytes when it is renamed from the toolbar', async () => {
+        const fs = memoryVfs({ 'pic.png': PNG });
+        const view = mount(fs, 'pic.png', true);
+        await loaded(view, 'pic.png');
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        input.focus();
+        input.value = 'moved.png';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const command = () => [...view.dom.querySelectorAll('.cm-command-result')].find((r) => r.textContent?.includes('Rename to "moved.png"')) as HTMLElement | undefined;
+        await until(() => !!command());
+        command()!.click();
+        await loaded(view, 'moved.png');
+        expect(await fs.exists('pic.png')).toBe(false);
+        expect([...(await fs.readBytes('moved.png'))]).toEqual([...PNG]);
     });
 
     it('show a file that is not text instead of editing it, and never write it', async () => {

@@ -84,4 +84,29 @@ describe('The toolbar as a command palette', () => {
         await waitFor(() => results(container).some((r) => r.textContent?.includes('index.md')), 3000)
         expect(getMarkdownContent(editor)).toContain('Zebras')
     })
+
+    it('renames an open code file or image, carrying what is in it (autosave off)', async () => {
+        const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13])
+        const fs = memoryVfs({ 'main.ts': 'export const x = 1;\n', 'pic.png': png })
+        const { editor, container } = make({ fs: { fs, filepath: 'main.ts' } })
+        const persistence = (editor.storage as any).persistence
+        await waitFor(() => !!persistence.codeView?.state.doc.toString().includes('x = 1'), 3000)
+        persistence.codeView.dispatch({ changes: { from: 0, insert: '// edited\n' }, userEvent: 'input.type' })
+
+        const rename = async (to: string) => {
+            input(container).focus()
+            input(container).value = to
+            input(container).dispatchEvent(new Event('input', { bubbles: true }))
+            await waitFor(() => results(container).some((r) => r.textContent?.includes(`Rename to "${to}"`)), 3000)
+            results(container).find((r) => r.textContent?.includes(`Rename to "${to}"`))!.click()
+            await waitFor(() => filepath(editor) === to, 3000)
+        }
+        await rename('moved.ts')
+        expect(await fs.readFile('moved.ts')).toBe('// edited\nexport const x = 1;\n')
+
+        await persistence.loadFile('pic.png')
+        await waitFor(() => !!container.querySelector('.cm-image-preview'), 3000)
+        await rename('renamed.png')
+        expect([...(await fs.readBytes('renamed.png'))]).toEqual([...png])
+    })
 })

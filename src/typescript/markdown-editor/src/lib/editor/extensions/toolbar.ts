@@ -251,16 +251,19 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                                 })
                             : undefined,
                         async persist() {
-                            // The open note's unsaved edits land on its path before
+                            // The open file's unsaved edits land on its path before
                             // it moves (with autosave off, the move is what saves
                             // them), so the move carries them and a rewrite of its
-                            // links reads them.
-                            const persistence = (extension.editor.storage as any).persistence
-                            const path = persistence?.options?.filepath
-                            if (persistence?.options?.autoSave) await persistence.flushPendingSave?.()
-                            else if (path) await fs.writeFile(path, host.getDocContent())
+                            // links reads them. The persistence layer knows which
+                            // view holds the file (a code file's is not the prose
+                            // document) and writes nothing for an image.
+                            await (extension.editor.storage as any).persistence?.save?.()
                         },
                         getDocContent() {
+                            // A code file's text is in the code view, not the
+                            // (emptied) prose document.
+                            const codeView = (extension.editor.storage as any).persistence?.codeView
+                            if (codeView) return codeView.state.doc.toString()
                             try {
                                 return (extension.editor.storage as any).markdown.getMarkdown()
                             } catch {

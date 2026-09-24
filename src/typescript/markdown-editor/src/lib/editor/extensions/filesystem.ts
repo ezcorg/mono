@@ -122,6 +122,15 @@ export interface FileSystemStorage {
      */
     flushPendingSave: () => Promise<void>
     /**
+     * Write the open file's unsaved edits now, whether or not autosave is on
+     * (a move is about to carry the file, say): the prose document's, or the
+     * code view's through its codeblock. Nothing when there are none, or for
+     * an image. Resolves once the writes have landed.
+     */
+    save: () => Promise<void>
+    /** Edits to the prose document not yet written. */
+    dirty: boolean
+    /**
      * Switch the active file. Persists the outgoing file's unsaved edits to
      * *its* path first, then loads `path` — without the load looking like a
      * user edit, so it can never schedule a save against the wrong file. This
@@ -167,6 +176,8 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // Real implementations are installed in onCreate (they need the
             // live editor).
             flushPendingSave: async () => {},
+            save: async () => {},
+            dirty: false,
             loadFile: async () => {},
             close: async () => {},
             // Live from the start: plugin views (the toolbar) are built before
@@ -302,6 +313,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // new file rather than inheriting the previous file's scroll offset.
         let didInitialLoad = false
         const loadContent = (content: string, focus = storage.options.focusOnLoad !== false) => {
+            storage.dirty = false
             storage.loadingFile = true
             try {
                 const path = storage.options.filepath
@@ -340,6 +352,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 clearTimeout(storage.saveTimeout)
                 storage.saveTimeout = null
                 if (fs && filepath && autoSave && !storage.codeView) {
+                    storage.dirty = false
                     void save(fs, filepath, getMarkdown(editor))
                 }
             }
@@ -349,6 +362,20 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         }
         storage.flushPendingSave = flushPendingSave
 
+        storage.save = () => {
+            if (storage.codeView) return persistFile(storage.codeView)
+            if (storage.saveTimeout !== null) {
+                clearTimeout(storage.saveTimeout)
+                storage.saveTimeout = null
+            }
+            const { fs, filepath } = storage.options
+            if (fs && filepath && storage.dirty) {
+                storage.dirty = false
+                void save(fs, filepath, getMarkdown(editor))
+            }
+            return writing
+        }
+
         storage.close = async () => {
             await flushPendingSave()
             storage.loadingFile = true
@@ -356,6 +383,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 hideCodeEditor()
                 storage.options.filepath = undefined
                 editor.commands.setContent('')
+                storage.dirty = false
             } finally {
                 storage.loadingFile = false
             }
@@ -401,7 +429,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         if (storage.codeView) return
 
         const { fs, autoSave, filepath } = storage.options
-        if (!fs || !autoSave || !filepath) return
+        if (!fs || !filepath) return
+        storage.dirty = true
+        if (!autoSave) return
 
         // Debounced auto-save.
         if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
@@ -414,6 +444,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // one.
             const { fs: currentFs, filepath: currentPath } = storage.options
             if (!currentFs || !currentPath || storage.codeView) return
+            storage.dirty = false
             storage.write(currentFs, currentPath, getMarkdown(this.editor))
         }, 500) // debounce by 500ms
     },

@@ -7,7 +7,7 @@
  */
 import { EditorView, Panel, lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile } from "../editor";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
 import { goBack, goForward, canGoBack, canGoForward } from "../navigation";
@@ -242,6 +242,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
             safeDispatch(view, { effects: [setSearchResults.of([]), openFileEffect.of({ path, skipSave: opts?.skipSave })] });
         },
         getDocContent() { return view.state.doc.toString(); },
+        persist() { return persistFile(view); },
         focusEditor() { view.focus(); },
         notifyFileChanged(path, type) { LSP.notifyFileChanged(path, type); },
         getCurrentFilePath() { return view.state.field(currentFileField).path; },

@@ -134,9 +134,10 @@ export interface ToolbarHost {
     focusEditor(): void;
     /** Notify that a file was created/changed/deleted on the VFS. */
     notifyFileChanged?(path: string, type: number): void;
-    /** Write the open document's unsaved edits to its file now, before the
-     *  toolbar moves it. Without it the toolbar writes the document itself. */
-    persist?(): Promise<void>;
+    /** Write the open file's unsaved edits now, autosave or not, before the
+     *  toolbar moves it. Only the host knows what the open document is (text
+     *  or an image, which view holds it), so the toolbar never writes it. */
+    persist(): Promise<void>;
     /** Commands the host offers, matched against the query. */
     commands?(query: string): HostCommand[];
     /** Get the current file path from host state (may differ from initial filepath). */
@@ -1269,8 +1270,7 @@ export class ToolbarCore {
     private async performRename(oldPath: string, newPath: string) {
         try {
             // The open document is the file being moved: its edits go first.
-            if (this.host.persist) await this.host.persist();
-            else await this.host.fs.writeFile(oldPath, this.host.getDocContent());
+            await this.host.persist();
             // Reaching here with a file at `newPath` means the overwrite was confirmed.
             if (await this.host.fs.exists(newPath)) await this.fileOps.remove(newPath);
             await this.fileOps.rename(oldPath, newPath);
