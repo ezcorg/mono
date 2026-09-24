@@ -14,7 +14,7 @@
  */
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
-import type { Node as PMNode } from '@tiptap/pm/model'
+import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
 import { isNote, matchWikilinkAt, normalizePath } from '@joinezco/storage'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
@@ -68,7 +68,20 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
     },
 
     parseHTML() {
-        return [{ tag: 'pre[data-front-matter]', preserveWhitespace: 'full', priority: 60 }]
+        return [
+            {
+                tag: 'pre[data-front-matter]',
+                preserveWhitespace: 'full',
+                priority: 60,
+                // The YAML comes in an attribute: a newline at the start of a
+                // `<pre>` is dropped by HTML parsing, and the text is parsed
+                // twice on its way in. Pasted HTML has only the text.
+                getContent: (dom, schema) => {
+                    const yaml = (dom as HTMLElement).getAttribute('data-yaml') ?? dom.textContent ?? ''
+                    return yaml ? Fragment.from(schema.text(yaml)) : Fragment.empty
+                },
+            },
+        ]
     },
 
     renderHTML({ HTMLAttributes }) {
@@ -86,7 +99,8 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
                     state.write('---\n')
                     if (node.textContent) {
                         state.text(node.textContent, false)
-                        state.ensureNewLine()
+                        // Every line of the YAML ends here, a blank last one included.
+                        state.write('\n')
                     }
                     state.write(node.attrs.close)
                     state.closeBlock(node)
@@ -123,7 +137,7 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
                         )
                         const esc = markdownit.utils.escapeHtml
                         markdownit.renderer.rules.ezco_front_matter = (tokens: any[], idx: number) =>
-                            `<pre data-front-matter="" data-close="${esc(tokens[idx].meta.close)}">${esc(tokens[idx].content)}</pre>`
+                            `<pre data-front-matter="" data-close="${esc(tokens[idx].meta.close)}" data-yaml="${esc(tokens[idx].content)}"></pre>`
                     },
                 },
             } as MarkdownNodeSpec,

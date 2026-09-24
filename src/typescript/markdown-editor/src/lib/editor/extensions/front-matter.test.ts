@@ -26,6 +26,8 @@ describe('Front matter syntax', () => {
         '---\nclosed: the YAML way\n...\n\nbody',
         '---\nonly: properties\n---',
         '---\n# a YAML comment, kept\nlist:\n  - one\n  - two\n---\n\ntext',
+        '---\nid: X\n\n---\n\nA blank line before the closing fence.',
+        '---\n\nid: X\n---\n\nA blank line after the opening one.',
     ]
 
     it.each(roundTrips)('round-trips %j byte for byte', (md) => {
