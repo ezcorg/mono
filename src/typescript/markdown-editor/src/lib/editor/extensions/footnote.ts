@@ -21,7 +21,7 @@ const isSpace = (c: number) => c === 0x20 || c === 0x09
 
 /** `[^label]: …` and the lines indented under it (after markdown-it-footnote,
  *  but leaving the definition where it is). */
-function footnoteDefinitionRule(state: any, startLine: number, endLine: number, silent: boolean): boolean {
+export function footnoteDefinitionRule(state: any, startLine: number, endLine: number, silent: boolean): boolean {
     const start = state.bMarks[startLine] + state.tShift[startLine]
     const max = state.eMarks[startLine]
     if (start + 4 > max) return false

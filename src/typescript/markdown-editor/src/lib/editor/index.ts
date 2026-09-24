@@ -40,7 +40,8 @@ import { Embed } from './extensions/embed';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { MarkdownText } from './extensions/text';
 import { Span } from './extensions/span';
-import { Vault, fileOperations, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
+import { CommentThread, Comments } from './extensions/comments';
+import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -155,6 +156,18 @@ export type MarkdownSetupOptions = {
     versions?: FileVersions;
     /** The vault as a tree of folders and files — opt-in: built only when set. */
     fileTree?: Omit<FileTreeOptions, 'files' | 'subscribe'>;
+    /** Comment threads (the comments RFC). A note's threads are read and
+     *  shown whatever is given here; `false` leaves them in the note unshown. */
+    comments?: CommentsSetupOptions | false;
+}
+
+export interface CommentsSetupOptions {
+    /** The handle comments are written as. Without it threads are shown,
+     *  not written. */
+    author?: string;
+    /** Threads written in other notes (a vault's `comments`); the editor's
+     *  own vault's when it made one. */
+    index?: CommentIndex;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -186,8 +199,10 @@ function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMa
         ...(options.math !== false ? [Mathematics.configure(options.math ?? {})] : []),
         ...(options.footnotes !== false ? [FootnoteReference, FootnoteDefinition] : []),
         ...(options.callouts !== false ? [CalloutTitle, Callout] : []),
-        // Bracketed spans (`[text]{#id .class}`) round-trip in every editor.
+        // Bracketed spans (a comment's pin) and comment threads round-trip in
+        // every editor, whether or not it shows comments.
         Span,
+        CommentThread,
         // Front matter and math show rendered until the caret is in them.
         SourceView,
     ];
@@ -200,6 +215,7 @@ interface VaultServices {
     files?: FileOperations;
     resolver?: LinkResolver;
     versions?: FileVersions;
+    comments?: CommentIndex;
     /** Be told when the vault changed. */
     subscribe?: (listener: () => void) => () => void;
 }
@@ -221,6 +237,7 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         files: options.files,
         resolver: options.links?.resolver,
         versions: options.versions,
+        comments: options.comments ? options.comments.index : undefined,
         subscribe: hostSubscribe,
     };
     if (!given.fs || (given.search && given.files && given.resolver)) return given;
@@ -235,6 +252,7 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         // Versions only when the host asks: a folder given as `fs` alone gets
         // no `.eznote/` of records it did not ask for.
         versions: given.versions,
+        comments: given.comments ?? vault.comments,
         subscribe: hostSubscribe ?? ((listener) => vault.subscribe(listener)),
     };
 }
@@ -402,6 +420,11 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // The file tree is opt-in (built only when `fileTree` is set).
         ...(options.fileTree
             ? [FileTree.configure({ ...options.fileTree, files: services.files, subscribe: services.subscribe })]
+            : []),
+        // Comments: the note's threads (and those written elsewhere) found,
+        // highlighted, and changed by commands.
+        ...(options.comments !== false
+            ? [Comments.configure({ author: options.comments?.author, index: services.comments })]
             : []),
         // The outline is opt-in (generated only when `sidebar` is set).
         ...(sidebar
@@ -576,6 +599,8 @@ export { Mathematics, MathInline, MathBlock, katexRenderer } from './extensions/
 export type { MathOptions, MathRenderer } from './extensions/math';
 export { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
 export { Span, parseSpanAttributes, formatSpanAttributes, type SpanAttributes } from './extensions/span';
+export { CommentThread, Comments, commentsKey, messageAt } from './extensions/comments';
+export type { CommentsOptions, CommentsStorage, CommentTarget, CommentThreadInfo, MessagePath, WebAnnotation } from './extensions/comments';
 export { Callout, CalloutTitle, calloutType } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';

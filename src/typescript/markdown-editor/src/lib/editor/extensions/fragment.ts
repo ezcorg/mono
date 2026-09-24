@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
+import { findTextFragment as matchTextFragment, parseTextFragment } from '@joinezco/storage'
 import { slugify } from './slug-utils'
 
 /**
@@ -10,13 +11,18 @@ import { slugify } from './slug-utils'
  *   nested `#Plan#Goals` names the last heading);
  * - a block id, `^abc`, which Obsidian writes at the end of a paragraph;
  * - a text fragment, `:~:text=[prefix-,]start[,end][,-suffix]`, the form a
- *   browser's "copy link to highlight" produces (and a comment's anchor).
+ *   browser's "copy link to highlight" produces (and a comment's anchor),
+ *   found as written, regardless of case, or approximately (see
+ *   `@joinezco/storage`'s `findTextFragment`);
+ * - a pin, the id of a bracketed span (`[text]{#c-…}`).
  */
 export function findFragment(doc: PMNode, fragment: string): { from: number; to: number } | null {
     const frag = fragment.trim()
     if (!frag) return null
-    if (frag.startsWith(':~:text=')) return findTextFragment(doc, frag.slice(':~:text='.length))
+    if (frag.startsWith(':~:text=')) return locateTextFragment(doc, frag)
     if (frag.startsWith('^')) return findBlockId(doc, frag.slice(1))
+    const pin = findPin(doc, frag)
+    if (pin) return pin
     const last = frag.split('#').filter(Boolean).pop() ?? frag
     const slug = slugify(last)
     const text = last.trim().toLowerCase()
@@ -50,7 +56,7 @@ export function revealFragment(editor: Editor, fragment: string | null): boolean
     return true
 }
 
-function findBlockId(doc: PMNode, id: string): { from: number; to: number } | null {
+export function findBlockId(doc: PMNode, id: string): { from: number; to: number } | null {
     const marker = new RegExp(`(?:^|\\s)\\^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`)
     let found: { from: number; to: number } | null = null
     doc.descendants((node, pos) => {
@@ -62,58 +68,75 @@ function findBlockId(doc: PMNode, id: string): { from: number; to: number } | nu
     return found
 }
 
-/** The text of each textblock with a map back to document positions (inline
- *  atoms, which have no text, simply do not appear). */
-function textblocks(doc: PMNode): { text: string; positions: number[] }[] {
-    const out: { text: string; positions: number[] }[] = []
+/** The text a bracketed span with this id holds (`[text]{#id}`). */
+export function findPin(doc: PMNode, id: string): { from: number; to: number } | null {
+    let from = -1
+    let to = -1
     doc.descendants((node, pos) => {
-        if (!node.isTextblock) return true
-        let text = ''
-        const positions: number[] = []
-        node.forEach((child, offset) => {
-            if (!child.isText || !child.text) return
-            for (let i = 0; i < child.text.length; i++) positions.push(pos + 1 + offset + i)
-            text += child.text
-        })
-        positions.push(pos + node.nodeSize - 1)
-        out.push({ text, positions })
+        if (!node.isText) return true
+        if (node.marks.some((m) => m.type.name === 'span' && m.attrs.id === id)) {
+            if (from < 0) from = pos
+            to = pos + node.nodeSize
+        }
         return false
     })
-    return out
+    return from < 0 ? null : { from, to }
 }
 
-function findTextFragment(doc: PMNode, directive: string): { from: number; to: number } | null {
-    const decode = (s: string) => {
-        try {
-            return decodeURIComponent(s)
-        } catch {
-            return s
+/** A document's text as a reader sees it: its textblocks joined by
+ *  newlines, an inline atom (a wikilink, an image) as the text it shows.
+ *  `positions[i]` is where character `i` is in the document (a newline's,
+ *  the end of the block before it). */
+export interface DocText {
+    text: string
+    positions: number[]
+}
+
+export function docText(doc: PMNode): DocText {
+    let text = ''
+    const positions: number[] = []
+    let end = -1
+    doc.descendants((node, pos) => {
+        if (!node.isTextblock) return true
+        if (end >= 0) {
+            text += '\n'
+            positions.push(end)
         }
+        node.forEach((child, offset) => {
+            const at = pos + 1 + offset
+            const piece = child.isText ? child.text ?? '' : ((child.type.spec as { leafText?: (n: PMNode) => string }).leafText?.(child) ?? '')
+            for (let i = 0; i < piece.length; i++) positions.push(child.isText ? at + i : at)
+            text += piece
+        })
+        end = pos + node.nodeSize - 1
+        return false
+    })
+    return { text, positions }
+}
+
+/** The offset in `docText` of the first character at or after `pos`. */
+export function textOffset(flat: DocText, pos: number): number {
+    let lo = 0
+    let hi = flat.positions.length
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (flat.positions[mid] < pos) lo = mid + 1
+        else hi = mid
     }
-    const parts = directive.split('&')[0].split(',')
-    let prefix = ''
-    let suffix = ''
-    if (parts[0]?.endsWith('-')) prefix = decode(parts.shift()!.slice(0, -1))
-    if (parts[parts.length - 1]?.startsWith('-')) suffix = decode(parts.pop()!.slice(1))
-    const start = decode(parts[0] ?? '')
-    const end = parts[1] !== undefined ? decode(parts[1]) : null
-    if (!start) return null
-    for (const block of textblocks(doc)) {
-        let from = 0
-        for (;;) {
-            const at = block.text.indexOf(start, from)
-            if (at < 0) break
-            from = at + 1
-            if (prefix && !block.text.slice(0, at).trimEnd().endsWith(prefix)) continue
-            let stop = at + start.length
-            if (end !== null) {
-                const e = block.text.indexOf(end, stop)
-                if (e < 0) continue
-                stop = e + end.length
-            }
-            if (suffix && !block.text.slice(stop).trimStart().startsWith(suffix)) continue
-            return { from: block.positions[at], to: block.positions[stop - 1] + 1 }
-        }
-    }
-    return null
+    return lo
+}
+
+/** Offsets `[from, to)` of `docText` as a document range. */
+export function docRange(flat: DocText, from: number, to: number): { from: number; to: number } {
+    return { from: flat.positions[from], to: flat.positions[to - 1] + 1 }
+}
+
+/** A text fragment in the document (`:~:text=…`), and whether it was found
+ *  as written (or only approximately). Nearest `near` when it is in several
+ *  places. */
+export function locateTextFragment(doc: PMNode, fragment: string, near?: number, flat: DocText = docText(doc)): { from: number; to: number; exact: boolean } | null {
+    const f = parseTextFragment(fragment)
+    if (!f) return null
+    const match = matchTextFragment(flat.text, f, near === undefined ? undefined : textOffset(flat, near))
+    return match ? { ...docRange(flat, match.from, match.to), exact: match.exact } : null
 }
