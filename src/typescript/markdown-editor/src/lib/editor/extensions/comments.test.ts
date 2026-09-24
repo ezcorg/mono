@@ -27,7 +27,7 @@ const NOTE = ['# Animals', '', 'The quick brown fox jumps over the [lazy dog]{#c
 
 function open(content: string, options: Partial<MarkdownEditorOptions> = {}) {
     const container = createTestContainer(`comments-${created.length}`)
-    const editor = createEditor({ element: container, content, comments: { author: 'theo' }, ...options })
+    const editor = createEditor({ element: container, content, comments: { author: 'theo', margin: false }, ...options })
     created.push({ editor, container })
     return { editor, container, comments: (editor.storage as any).comments as CommentsStorage }
 }
@@ -147,7 +147,7 @@ describe('Writing comments', () => {
     })
 
     it('writes nothing without an author', () => {
-        const { editor, comments } = open(NOTE, { comments: {} })
+        const { editor, comments } = open(NOTE, { comments: { margin: false } })
         expect(comments.author()).toBeNull()
         expect(editor.commands.replyToComment('c-01J9K', 'hi')).toBe(false)
         editor.commands.setTextSelection(rangeOf(editor, 'quick'))
@@ -190,7 +190,7 @@ describe('Re-anchoring', () => {
     it('finds a quote changed outside the editor, and rewrites it to what it found', async () => {
         const fs = memoryVfs({ 'n.md': NOTE })
         const container = createTestContainer('comments-reload')
-        const editor = createEditor({ element: container, fs: { fs, filepath: 'n.md', autoSave: true }, comments: { author: 'theo' } })
+        const editor = createEditor({ element: container, fs: { fs, filepath: 'n.md', autoSave: true }, comments: { author: 'theo', margin: false } })
         created.push({ editor, container })
         await waitFor(() => editor.getText().includes('brown fox'), 3000)
         // Another program changed the quoted words a little.
@@ -216,7 +216,7 @@ describe('Threads written in other notes', () => {
             links: { resolver: vault.links, index: vault.links },
             search: vault.search,
             files: vault.files,
-            comments: { author: 'theo', index: vault.comments },
+            comments: { author: 'theo', index: vault.comments, margin: false },
         })
         created.push({ editor, container })
         const comments = (editor.storage as any).comments as CommentsStorage

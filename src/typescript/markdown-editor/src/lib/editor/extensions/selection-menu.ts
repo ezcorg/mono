@@ -158,6 +158,12 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         run: (e) => e.chain().focus().unsetAllMarks().run(),
     })
 
+    // A comment on the selection, when the host says who is writing.
+    const comments = (editor.storage as any).comments as { author?: () => string | null } | undefined
+    if (comments?.author?.()) {
+        actions.push({ label: 'Comment', icon: '💬', run: (e) => void e.commands.startComment() })
+    }
+
     // Prose actions, when the host gave the editor a model.
     const ai = (editor.storage as any).proseAI as { inference?: unknown; actions: { id: string; label: string }[] } | undefined
     if (ai?.inference) {

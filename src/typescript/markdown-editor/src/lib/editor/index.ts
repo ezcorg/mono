@@ -41,6 +41,7 @@ import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { MarkdownText } from './extensions/text';
 import { Span } from './extensions/span';
 import { CommentThread, Comments } from './extensions/comments';
+import { CommentMargin } from './extensions/comment-margin';
 import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
@@ -168,6 +169,10 @@ export interface CommentsSetupOptions {
     /** Threads written in other notes (a vault's `comments`); the editor's
      *  own vault's when it made one. */
     index?: CommentIndex;
+    /** Where the margin goes (`createEditor` puts it beside the note), or
+     *  `false` for none: a host showing threads its own way reads them from
+     *  `editor.storage.comments`. */
+    margin?: { mount?: SidebarOptions['mount'] } | false;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -421,10 +426,13 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         ...(options.fileTree
             ? [FileTree.configure({ ...options.fileTree, files: services.files, subscribe: services.subscribe })]
             : []),
-        // Comments: the note's threads (and those written elsewhere) found,
-        // highlighted, and changed by commands.
+        // Comments: the note's threads (and those written elsewhere) found and
+        // highlighted, and a margin to read and write them in.
         ...(options.comments !== false
-            ? [Comments.configure({ author: options.comments?.author, index: services.comments })]
+            ? [
+                Comments.configure({ author: options.comments?.author, index: services.comments }),
+                ...(options.comments?.margin !== false ? [CommentMargin.configure({ mount: options.comments?.margin?.mount })] : []),
+            ]
             : []),
         // The outline is opt-in (generated only when `sidebar` is set).
         ...(sidebar
@@ -502,6 +510,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
     let navHost: HTMLElement | undefined
     let gutter: HTMLElement | undefined
     let bodyHost: HTMLElement | undefined
+    let commentsHost: HTMLElement | undefined
     if (userEl && typeof document !== 'undefined') {
         const make = (cls: string) => {
             const el = document.createElement('div')
@@ -517,7 +526,9 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         // (a built one keeps its 48px even when empty).
         if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
         bodyHost = make('ezco-mde-body-host')
-        content.append(...[navHost, gutter, bodyHost].filter((el): el is HTMLElement => !!el))
+        // The comment margin, right of the note.
+        if (options.comments !== false) commentsHost = make('ezco-mde-comments')
+        content.append(...[navHost, gutter, bodyHost, commentsHost].filter((el): el is HTMLElement => !!el))
         wrapper.append(toolbarSlot, content)
         userEl.appendChild(wrapper)
     }
@@ -542,6 +553,14 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         fileTree: options.fileTree
             ? { ...options.fileTree, mount: options.fileTree.mount ?? slotMount(navHost) }
             : undefined,
+        comments: options.comments === false
+            ? false
+            : {
+                ...options.comments,
+                margin: options.comments?.margin === false
+                    ? false
+                    : { ...options.comments?.margin, mount: options.comments?.margin?.mount ?? slotMount(commentsHost) },
+            },
     }
 
     // `element` and `extensions` are handled explicitly (extras are folded into
@@ -601,6 +620,7 @@ export { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
 export { Span, parseSpanAttributes, formatSpanAttributes, type SpanAttributes } from './extensions/span';
 export { CommentThread, Comments, commentsKey, messageAt } from './extensions/comments';
 export type { CommentsOptions, CommentsStorage, CommentTarget, CommentThreadInfo, MessagePath, WebAnnotation } from './extensions/comments';
+export { CommentMargin, type CommentMarginOptions } from './extensions/comment-margin';
 export { Callout, CalloutTitle, calloutType } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';

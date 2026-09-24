@@ -1744,6 +1744,298 @@ export const styleModule: StyleModule = new StyleModule({
         cursor: 'pointer',
     },
     // ─────────────────────────────────────────────────────────────
+    // Comments (extensions/comments.ts, comment-margin.ts): commented text,
+    // and the margin of threads beside the note.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-comment': {
+        background: 'color-mix(in srgb, #f5b400 22%, transparent)',
+        'border-bottom': '2px solid color-mix(in srgb, #f5b400 55%, transparent)',
+    },
+    '.ezco-mde-comment.is-active': {
+        background: 'color-mix(in srgb, #f5b400 42%, transparent)',
+    },
+    '.ezco-mde-comment.is-draft': {
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 22%, transparent)',
+        'border-bottom-color': 'var(--ezco-mde-accent)',
+    },
+    '.ezco-mde-comments': {
+        flex: 'none',
+        'min-width': 0,
+    },
+    '.ezco-mde-comment-margin': {
+        position: 'relative',
+        width: '256px',
+        'box-sizing': 'border-box',
+        padding: '0 12px 24px 8px',
+        'font-size': '0.8125rem',
+        'line-height': 1.45,
+        color: 'var(--ezco-mde-fg)',
+    },
+    '.ezco-mde-comment-margin[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-comment-margin-head': {
+        display: 'flex',
+        'justify-content': 'space-between',
+        'align-items': 'baseline',
+        gap: '8px',
+        padding: '4px 2px 8px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        'font-size': '0.75rem',
+    },
+    '.ezco-mde-comment-list': {
+        position: 'relative',
+    },
+    '.ezco-mde-comment-card': {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        'box-sizing': 'border-box',
+        padding: '8px 10px',
+        'border-radius': '8px',
+        border: '1px solid var(--ezco-mde-divider)',
+        background: 'var(--ezco-mde-bg)',
+    },
+    '.ezco-mde-comment-card.is-placed': {
+        transition: 'transform 140ms ease, box-shadow 140ms ease',
+    },
+    '.ezco-mde-comment-card[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-comment-card.is-active': {
+        'z-index': 2,
+        'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.12)',
+    },
+    '.ezco-mde-comment-card.is-resolved:not(.is-active)': {
+        opacity: 0.7,
+    },
+    '.ezco-mde-comment-head': {
+        display: 'flex',
+        'align-items': 'baseline',
+        'flex-wrap': 'wrap',
+        gap: '2px 6px',
+    },
+    '.ezco-mde-comment-author': {
+        'font-weight': 600,
+    },
+    '.ezco-mde-comment-time': {
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        'font-size': '0.92em',
+    },
+    '.ezco-mde-comment-status': {
+        padding: '0 6px',
+        'border-radius': '999px',
+        'font-size': '0.85em',
+        background: 'color-mix(in srgb, #16a34a 16%, transparent)',
+        color: 'color-mix(in srgb, #16a34a 80%, var(--ezco-mde-fg))',
+    },
+    '.ezco-mde-comment-message': {
+        position: 'relative',
+    },
+    // Over the message's corner, taking no room of its own.
+    '.ezco-mde-comment-tools': {
+        position: 'absolute',
+        top: '-2px',
+        right: 0,
+        display: 'flex',
+        gap: '2px',
+        padding: '0 2px',
+        'border-radius': '4px',
+        background: 'var(--ezco-mde-bg)',
+        opacity: 0,
+        'pointer-events': 'none',
+        transition: 'opacity 120ms ease',
+    },
+    // The message under the pointer, not the ones it is a reply within.
+    '.ezco-mde-comment-message:hover:not(:has(.ezco-mde-comment-message:hover)) > .ezco-mde-comment-head > .ezco-mde-comment-tools, .ezco-mde-comment-message:focus-within:not(:has(.ezco-mde-comment-message:focus-within)) > .ezco-mde-comment-head > .ezco-mde-comment-tools': {
+        opacity: 1,
+        'pointer-events': 'auto',
+    },
+    '.ezco-mde-comment-tool, .ezco-mde-comment-emoji': {
+        font: 'inherit',
+        'font-size': '0.85em',
+        padding: '0 4px',
+        border: 0,
+        'border-radius': '4px',
+        background: 'transparent',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-comment-tool:hover, .ezco-mde-comment-emoji:hover': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.14))',
+        color: 'var(--ezco-mde-fg)',
+    },
+    '.ezco-mde-comment-body': {
+        'overflow-wrap': 'anywhere',
+    },
+    '.ezco-mde-comment-body p, .ezco-mde-comment-body ul, .ezco-mde-comment-body ol, .ezco-mde-comment-body pre, .ezco-mde-comment-body blockquote': {
+        margin: '0.3em 0',
+    },
+    '.ezco-mde-comment-body > :first-child': {
+        'margin-top': 0,
+    },
+    '.ezco-mde-comment-body > :last-child': {
+        'margin-bottom': 0,
+    },
+    '.ezco-mde-comment-body pre': {
+        'white-space': 'pre-wrap',
+        padding: '4px 6px',
+        'border-radius': '4px',
+        background: 'var(--ezco-mde-code-bg)',
+    },
+    '.ezco-mde-comment-body [data-wikilink]': {
+        color: 'var(--ezco-mde-link-color)',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-comment-replies': {
+        'margin-top': '6px',
+        'padding-left': '8px',
+        'border-left': '2px solid var(--ezco-mde-divider)',
+    },
+    '.ezco-mde-comment-message.is-reply + .ezco-mde-comment-message.is-reply': {
+        'margin-top': '8px',
+    },
+    '.ezco-mde-comment-reactions': {
+        display: 'flex',
+        'flex-wrap': 'wrap',
+        gap: '4px',
+        'margin-top': '4px',
+    },
+    '.ezco-mde-comment-reaction': {
+        font: 'inherit',
+        'font-size': '0.9em',
+        padding: '0 7px',
+        'border-radius': '999px',
+        border: '1px solid var(--ezco-mde-divider)',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-comment-reaction[aria-pressed="true"]': {
+        'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 60%, transparent)',
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 14%, transparent)',
+    },
+    '.ezco-mde-comment-picker': {
+        display: 'flex',
+        gap: '2px',
+    },
+    '.ezco-mde-comment-picker[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-comment-actions': {
+        display: 'flex',
+        'flex-wrap': 'wrap',
+        gap: '6px',
+        'margin-top': '8px',
+    },
+    '.ezco-mde-comment-actions:empty': {
+        display: 'none',
+    },
+    '.ezco-mde-comment-button': {
+        font: 'inherit',
+        'font-size': '0.92em',
+        padding: '2px 9px',
+        'border-radius': '6px',
+        border: '1px solid var(--ezco-mde-divider)',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-comment-button:hover': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.14))',
+    },
+    '.ezco-mde-comment-button.is-primary': {
+        background: 'var(--ezco-mde-accent)',
+        color: 'var(--ezco-mde-accent-fg, #fff)',
+        'border-color': 'transparent',
+    },
+    '.ezco-mde-comment-button.is-danger': {
+        color: '#d14343',
+    },
+    '.ezco-mde-comment-button.is-close': {
+        'margin-left': 'auto',
+        border: 0,
+    },
+    '.ezco-mde-comment-link': {
+        font: 'inherit',
+        padding: 0,
+        border: 0,
+        background: 'none',
+        color: 'var(--ezco-mde-link-color)',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-comment-where': {
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        'margin-bottom': '4px',
+    },
+    '.ezco-mde-comment-orphan': {
+        'margin-bottom': '6px',
+        padding: '4px 6px',
+        'border-radius': '4px',
+        background: 'color-mix(in srgb, #d97706 12%, transparent)',
+    },
+    '.ezco-mde-comment-orphan .ezco-mde-comment-link': {
+        display: 'block',
+        'margin-top': '2px',
+    },
+    '.ezco-mde-comment-quote': {
+        'font-style': 'italic',
+    },
+    '.ezco-mde-comment-composer': {
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '6px',
+        'margin-top': '8px',
+    },
+    '.ezco-mde-comment-composer-label': {
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        'font-size': '0.92em',
+    },
+    '.ezco-mde-comment-composer-label[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-comment-input': {
+        font: 'inherit',
+        width: '100%',
+        'box-sizing': 'border-box',
+        'min-height': '2.8em',
+        padding: '6px 8px',
+        resize: 'none',
+        'border-radius': '6px',
+        border: '1px solid var(--ezco-mde-divider)',
+        background: 'var(--ezco-mde-bg)',
+        color: 'inherit',
+    },
+    '.ezco-mde-comment-input:focus': {
+        outline: '2px solid color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',
+        'outline-offset': '-1px',
+    },
+    '.ezco-mde-comment-composer-actions': {
+        display: 'flex',
+        'justify-content': 'flex-end',
+        gap: '6px',
+    },
+    // No room beside the note: the thread being looked at, over its edge.
+    '.ezco-mde-comment-margin.is-narrow': {
+        position: 'absolute',
+        top: 0,
+        right: '8px',
+        width: 'min(300px, calc(100% - 16px))',
+        padding: 0,
+        'z-index': 30,
+        // Over the note: only the card itself takes clicks.
+        'pointer-events': 'none',
+    },
+    '.ezco-mde-comment-margin.is-narrow .ezco-mde-comment-margin-head': {
+        display: 'none',
+    },
+    '.ezco-mde-comment-margin.is-narrow .ezco-mde-comment-card': {
+        'pointer-events': 'auto',
+        'box-shadow': '0 8px 28px rgba(0, 0, 0, 0.2)',
+    },
+    // ─────────────────────────────────────────────────────────────
     // File tree (extensions/file-tree.ts): the vault's folders and files,
     // in the outline's type and palette.
     // ─────────────────────────────────────────────────────────────
