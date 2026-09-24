@@ -1614,6 +1614,36 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-embed-content > :first-child': {
         'margin-top': 0,
     },
+    // ─────────────────────────────────────────────────────────────
+    // Conflict notice (extensions/conflict-notice.ts): above the document.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-conflict': {
+        display: 'flex',
+        'flex-wrap': 'wrap',
+        'align-items': 'center',
+        gap: '0.5em 0.75em',
+        margin: '0 0 0.75em',
+        padding: '0.5em 0.75em',
+        'border-radius': '6px',
+        'font-size': '0.875em',
+        background: 'color-mix(in srgb, #d97706 14%, transparent)',
+        border: '1px solid color-mix(in srgb, #d97706 45%, transparent)',
+    },
+    '.ezco-mde-conflict[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-conflict-message': {
+        flex: '1 1 20em',
+    },
+    '.ezco-mde-conflict button': {
+        font: 'inherit',
+        padding: '0.2em 0.6em',
+        'border-radius': '4px',
+        border: '1px solid currentColor',
+        background: 'transparent',
+        color: 'inherit',
+        cursor: 'pointer',
+    },
     '.ezco-mde-embed-region': {
         display: 'block',
         margin: 0,

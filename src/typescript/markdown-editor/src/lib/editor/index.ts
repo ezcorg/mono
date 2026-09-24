@@ -10,6 +10,7 @@ import { StyleModule } from 'style-mod';
 import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
 import { FileSystem, FileSystemOptions, type FileSystemStorage } from './extensions/filesystem';
+import { ConflictNotice } from './extensions/conflict-notice';
 import type { FileVersions } from '@joinezco/codeblock';
 import { styleModule } from './styles';
 import { ExtendedLink } from './extensions/link';
@@ -267,6 +268,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     const services = { ...given, files: keepingOpenNote(given.files, () => persistence) };
     const commands = Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands;
     return [
+        ConflictNotice,
         FileSystem.configure({
             ...options.fs,
             fs: services.fs,
@@ -509,6 +511,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 // what you use and the rest tree-shakes away (`sideEffects: false`). The setup
 // functions above use these same units.
 export { FileSystem } from './extensions/filesystem';
+export { ConflictNotice } from './extensions/conflict-notice';
 export { openDocuments, type OpenDocuments, type OpenDocument, type TextEdit, type TextRange, type TextPosition, type EditResult } from './extensions/edits';
 export type { FileSystemOptions, FileSystemStorage, FileEvent, LoadOptions } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';

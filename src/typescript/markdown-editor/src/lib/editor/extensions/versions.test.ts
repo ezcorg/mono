@@ -58,6 +58,24 @@ describe('Notes and their versions', () => {
         expect(events.filter((e) => e.type === 'conflict')).toHaveLength(1)
     })
 
+    it('says so above the note, with the way to the copy', async () => {
+        const { editor, vault, events, persistence } = await open({ 'a.md': 'A' }, 'a.md')
+        const container = editor.view.dom.closest('.ezco-mde') as HTMLElement
+        const notice = () => container.querySelector('.ezco-mde-conflict') as HTMLElement | null
+        expect(notice()?.hidden ?? true).toBe(true)
+        editor.commands.focus('end')
+        editor.commands.insertContent(' mine')
+        await vault.fs.writeFile('a.md', 'Theirs')
+        await waitFor(() => events.some((e) => e.type === 'conflict'), 3000)
+        const copy = events.find((e) => e.type === 'conflict')!.copy!
+        await waitFor(() => notice()?.hidden === false, 3000)
+        expect(notice()!.textContent).toContain(copy)
+        ;(notice()!.querySelector('button[data-action="open"]') as HTMLButtonElement).click()
+        await waitFor(() => persistence.options.filepath === copy, 3000)
+        // About another file now: gone.
+        expect(notice()!.hidden).toBe(true)
+    })
+
     it('follows its file when it changes elsewhere and nothing here is unsaved', async () => {
         const { vault, events, markdown } = await open({ 'a.md': '# A', 'b.md': '# B' }, 'a.md')
         await vault.fs.writeFile('a.md', '# A, from an agent')
