@@ -1,11 +1,11 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import type { NodeType } from '@tiptap/pm/model';
-import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, setThemeEffect } from '@joinezco/codeblock'
+import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, formatLineRange, lineRange, regionField, setThemeEffect, type FileVersions } from '@joinezco/codeblock'
 import type { FileOperations, FileSearch, VfsInterface } from '@joinezco/storage'
 import { browserVfs } from '@joinezco/storage/browser'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
-import { EditorState } from "@codemirror/state";
+import { EditorState, Transaction } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
 import { redo, undo } from "prosemirror-history"
 import { MarkdownNodeSpec } from 'tiptap-markdown';
@@ -112,6 +112,27 @@ function getFileSystemWorker(): Promise<VfsInterface> {
     return fsWorkerPromise;
 }
 
+/**
+ * A fence's info string, as markdown-it puts it on the `<code>` (its first
+ * word, after the class prefix): a language (`rust`), a file (`src/lib.rs`),
+ * or some lines of one (`src/lib.rs#L40-L80`, GitHub's fragment for lines).
+ * A word with a dot in it is a file.
+ */
+function fenceInfo(element: HTMLElement, prefix: string): { file: string | null; lines: string | null; language: string | undefined } {
+    const className = element.querySelector('code')?.getAttribute('class') ?? '';
+    const word = className.split(/\s+/).find((c) => c.startsWith(prefix))?.slice(prefix.length) ?? (className || undefined);
+    if (!word || !word.includes('.')) return { file: null, lines: null, language: word };
+    const hash = word.indexOf('#');
+    const range = hash > 0 ? lineRange(word.slice(hash + 1)) : null;
+    const file = range ? word.slice(0, hash) : word;
+    const ext = file.split('.').pop()?.toLowerCase() || '';
+    return {
+        file,
+        lines: range ? formatLineRange(range) : null,
+        language: extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown',
+    };
+}
+
 export interface ExtendedCodeblockOptions {
     /**
      * Default CodeMirror editor settings applied to every embedded
@@ -155,19 +176,8 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             language: {
                 default: 'markdown', // Default language
                 // Parse language from HTML structure if available
-                parseHTML: element => {
-                    const className = element.querySelector('code')?.getAttribute('class');
-                    const extracted = className?.replace('language-', '');
-
-                    // If the extracted value looks like a filename (contains a dot),
-                    // we'll handle this in the file attribute parseHTML instead
-                    if (extracted && extracted.includes('.')) {
-                        const ext = extracted.split('.').pop()?.toLowerCase() || '';
-                        return extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown';
-                    }
-
-                    return extracted;
-                },
+                // A language, or the one a file's extension names.
+                parseHTML: element => fenceInfo(element, this.options.languageClassPrefix ?? 'language-').language,
                 // Render language back to HTML structure
                 renderHTML: attributes => {
 
@@ -182,18 +192,15 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             },
             file: {
                 default: null,
-                // Parse filename from HTML class if it looks like a filename
-                parseHTML: element => {
-                    const className = element.querySelector('code')?.getAttribute('class');
-                    const extracted = className?.replace('language-', '');
-
-                    // If the extracted value contains a dot, treat it as a filename
-                    if (extracted && extracted.includes('.')) {
-                        return extracted;
-                    }
-
-                    return null;
-                },
+                // The file the block shows (and saves to).
+                parseHTML: element => fenceInfo(element, this.options.languageClassPrefix ?? 'language-').file,
+            },
+            lines: {
+                default: null,
+                // Which of the file's lines the block shows (`L40-L80`), as
+                // they are numbered in the file now; null for all of them.
+                parseHTML: element => fenceInfo(element, this.options.languageClassPrefix ?? 'language-').lines,
+                renderHTML: () => ({}),
             },
         };
     },
@@ -205,7 +212,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 serialize(state, node) {
 
                     if (node.attrs.file) {
-                        state.write(`\`\`\`${node.attrs.file}\n`);
+                        state.write(`\`\`\`${node.attrs.file}${node.attrs.lines ? `#${node.attrs.lines}` : ''}\n`);
                     } else {
                         state.write("```" + (node.attrs.language || "") + "\n");
                     }
@@ -253,11 +260,15 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
         const parseLanguageAttributes = (input: string | undefined) => {
             if (!input) return { language: 'markdown' };
 
-            // If input contains a dot, treat it as a filename
+            // If input contains a dot, treat it as a filename, and
+            // `file#L40-L80` as some of its lines
             if (input.includes('.')) {
-                const ext = input.split('.').pop()?.toLowerCase() || '';
+                const hash = input.indexOf('#');
+                const range = hash > 0 ? lineRange(input.slice(hash + 1)) : null;
+                const file = range ? input.slice(0, hash) : input;
+                const ext = file.split('.').pop()?.toLowerCase() || '';
                 const lang = extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown'
-                return { file: input, language: lang };
+                return { file, lines: range ? formatLineRange(range) : null, language: lang };
             }
 
             // Otherwise, check if it's a language name
@@ -381,6 +392,14 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                             tr.delete(replaceFrom, replaceTo)
                         offset += (toB - fromB) - (toA - fromA)
                     })
+
+                    // A file's contents arriving (kept out of CodeMirror's
+                    // history) are kept out of the note's too: undoing them
+                    // would be an edit, and would write the lines the note
+                    // had back over the file's.
+                    if (update.transactions.length && update.transactions.every((t) => t.annotation(Transaction.addToHistory) === false)) {
+                        tr.setMeta('addToHistory', false)
+                    }
 
                     // Only set selection if the editor has focus or if this is a document change without focus
                     // (which happens during initial file loading)
@@ -509,12 +528,16 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // the NodeView is ever recreated (e.g. an edit to a sibling
             // list item reflows the list) it reloads from the stale attr
             // and loses the filename + syntax/semantic highlighting.
+            // A region's lines move in their file (added above, found where
+            // they went) and grow or shrink with edits: `lines` follows.
             const syncFileAttrs = (update: ViewUpdate) => {
                 if (updating) return;
                 const next = update.state.field(currentFileField, false);
                 if (!next || next.loading) return;
                 const prev = update.startState.field(currentFileField, false);
-                if (prev && prev.path === next.path && prev.language === next.language) return;
+                const region = update.state.field(regionField, false) ?? null;
+                if (prev && prev.path === next.path && prev.language === next.language &&
+                    region === (update.startState.field(regionField, false) ?? null)) return;
 
                 const pos = getPos();
                 if (pos === undefined) return;
@@ -523,15 +546,20 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
 
                 const newFile = next.path ?? null;
                 const newLang = next.language ?? current.attrs.language ?? 'markdown';
-                if (current.attrs.file === newFile && current.attrs.language === newLang) return;
+                const newLines = region ? formatLineRange(region) : null;
+                if (current.attrs.file === newFile && current.attrs.language === newLang && current.attrs.lines === newLines) return;
 
+                const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+                    ...current.attrs,
+                    file: newFile,
+                    language: newLang,
+                    lines: newLines,
+                });
+                // Where the lines are is the file's doing, not an edit to undo.
+                if (current.attrs.file === newFile && current.attrs.language === newLang) tr.setMeta('addToHistory', false);
                 updating = true;
                 try {
-                    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
-                        ...current.attrs,
-                        file: newFile,
-                        language: newLang,
-                    }));
+                    view.dispatch(tr);
                 } finally {
                     updating = false;
                 }
@@ -632,6 +660,9 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // file references seeded into the same filesystem), otherwise fall back
             // to a standalone worker.
             const editorFs = editor.storage.persistence?.options?.fs;
+            // And its version log, when the host gave one: a file's lines are
+            // saved on the version they were read as.
+            const versions: FileVersions | undefined = editorFs ? editor.storage.persistence?.options?.versions : undefined;
             const fsPromise = editorFs ? Promise.resolve(editorFs) : getFileSystemWorker();
             const { search, files } = this.options;
             fsPromise.then(fs => {
@@ -659,6 +690,8 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                             fs: fsWorker,
                             language: node.attrs.language,
                             filepath: node.attrs.file,
+                            range: node.attrs.file ? lineRange(node.attrs.lines) ?? undefined : undefined,
+                            versions,
                             search,
                             files,
                             // Match the editor's light/dark mode rather
@@ -745,7 +778,8 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     // codeblock's own file picks don't trip this and lose focus.
                     if (!updating &&
                         (updated.attrs.language !== node.attrs.language ||
-                            updated.attrs.file !== node.attrs.file)) {
+                            updated.attrs.file !== node.attrs.file ||
+                            updated.attrs.lines !== node.attrs.lines)) {
                         return false
                     }
                     node = updated

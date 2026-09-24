@@ -6,10 +6,9 @@
  * - an image (`![[diagram.png|300]]`): the image, sized by the alias;
  * - a note (`![[Plan]]`, `![[Plan#Goals]]`): the note, or the section under
  *   the named heading, rendered read-only, refreshed when the vault changes;
- * - a region of a text file (`![[src/lib.rs#L40-L80]]`): those lines, the
- *   RFC's region embed, as an editor that writes them back into the file
- *   (through the version log when there is one; see `region-editor.ts`);
- * - anything else: a card that opens the file.
+ * - anything else: a card that opens the file (for `![[src/lib.rs#L40-L80]]`,
+ *   naming the lines; a region of a file to read and edit in the note is a
+ *   fence, ```` ```src/lib.rs#L40-L80 ````, see `codeblock.ts`).
  *
  * The node serializes to exactly the source it came from.
  */
@@ -20,8 +19,7 @@ import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { IMAGE_EXTENSIONS, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
 import { wikilinkLabel, type WikilinkStorage } from './wikilink'
 import { slugify } from './slug-utils'
-import { regionEditor, type RegionEditor } from './region-editor'
-import type { FileSystemStorage } from './filesystem'
+import { lineRange } from '@joinezco/codeblock'
 
 const attrsOf = (node: PMNode): WikilinkParts => ({
     target: node.attrs.target ?? '',
@@ -35,14 +33,6 @@ const optionalData = (name: string) => ({
     renderHTML: (attrs: Record<string, unknown>) =>
         attrs[name] === null || attrs[name] === undefined ? {} : { [`data-${name}`]: attrs[name] },
 })
-
-/** `L40-L80` / `L40`: a line range (1-based, inclusive). */
-export function lineRange(fragment: string | null): { from: number; to: number } | null {
-    const m = /^L(\d+)(?:-L?(\d+))?$/i.exec(fragment ?? '')
-    if (!m) return null
-    const from = Number(m[1])
-    return { from, to: m[2] ? Math.max(from, Number(m[2])) : from }
-}
 
 /** The part of a note under the heading `fragment` names: that heading and
  *  everything up to the next heading of its level or above. */
@@ -144,16 +134,8 @@ export const Embed = Node.create({
 
     addNodeView() {
         const editor = this.editor
-        return ({ node, getPos }) => {
+        return ({ node }) => {
             let current = node
-            let regionView: RegionEditor | null = null
-            // A range this view set itself (the region grew or shrank): not a
-            // reason to show the region again.
-            let ownFragment: string | null = null
-            const dropRegion = () => {
-                regionView?.destroy()
-                regionView = null
-            }
             const dom = document.createElement('span')
             dom.className = 'ezco-mde-embed'
             dom.contentEditable = 'false'
@@ -171,7 +153,6 @@ export const Embed = Node.create({
 
             const render = async () => {
                 const mine = ++token
-                dropRegion()
                 const parts = attrsOf(current)
                 const { fs } = vaultOf(editor)
                 const resolution = parts.target.trim() ? await resolveAsset(editor, parts.target, 'wikilink') : null
@@ -203,35 +184,6 @@ export const Embed = Node.create({
                         return
                     }
                     release()
-                    const range = lineRange(parts.fragment)
-                    if (range && !isNote(path)) {
-                        const versions = ((editor.storage as any).persistence as FileSystemStorage | undefined)?.options.versions
-                        const head = versions ? await versions.head(path) : null
-                        const text = head && versions ? new TextDecoder().decode(await versions.read(head)) : await fs.readFile(path)
-                        if (mine !== token) return
-                        const title = header(`${basename(path)} · lines ${range.from}–${range.to}`, follow)
-                        const body = document.createElement('div')
-                        body.className = 'ezco-mde-embed-region'
-                        dom.className = 'ezco-mde-embed ezco-mde-embed--region'
-                        dom.replaceChildren(title, body)
-                        regionView = regionEditor(body, {
-                            fs,
-                            versions,
-                            path,
-                            range,
-                            text,
-                            version: head?.id ?? null,
-                            onRange(next) {
-                                const pos = getPos()
-                                if (typeof pos !== 'number') return
-                                ownFragment = next.from === next.to ? `L${next.from}` : `L${next.from}-L${next.to}`
-                                title.querySelector('button')!.textContent = `${basename(path)} · lines ${next.from}–${next.to}`
-                                editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, fragment: ownFragment }))
-                            },
-                            onStale: () => void render(),
-                        })
-                        return
-                    }
                     if (isNote(path)) {
                         const text = await fs.readFile(path)
                         if (mine !== token) return
@@ -244,8 +196,9 @@ export const Embed = Node.create({
                         dom.replaceChildren(header(parts.alias || wikilinkLabel({ ...parts, alias: null }), follow), content)
                         return
                     }
+                    const range = lineRange(parts.fragment)
                     dom.className = 'ezco-mde-embed ezco-mde-embed--file'
-                    dom.replaceChildren(card(basename(path), follow))
+                    dom.replaceChildren(card(range ? `${basename(path)} · ${lines(range)}` : basename(path), follow))
                 } catch (e) {
                     dom.className = 'ezco-mde-embed is-missing'
                     dom.replaceChildren(card(`${parts.target}: ${(e as Error).message}`, follow))
@@ -260,21 +213,14 @@ export const Embed = Node.create({
                 update(next) {
                     if (next.type !== current.type) return false
                     const changed = JSON.stringify(next.attrs) !== JSON.stringify(current.attrs)
-                    const own = changed && ownFragment !== null && next.attrs.fragment === ownFragment &&
-                        JSON.stringify({ ...next.attrs, fragment: null }) === JSON.stringify({ ...current.attrs, fragment: null })
-                    ownFragment = null
                     current = next
-                    if (changed && !own) void render()
+                    if (changed) void render()
                     return true
                 },
-                // The region's editor handles its own keys, clicks and input.
-                stopEvent: (e) =>
-                    !!(e.target as HTMLElement).closest?.('.ezco-mde-embed-region') ||
-                    (e.type === 'mousedown' && !!(e.target as HTMLElement).closest('.ezco-mde-embed-open')),
+                stopEvent: (e) => e.type === 'mousedown' && !!(e.target as HTMLElement).closest('.ezco-mde-embed-open'),
                 ignoreMutation: () => true,
                 destroy() {
                     token++
-                    dropRegion()
                     release()
                     off()
                 },
@@ -282,6 +228,11 @@ export const Embed = Node.create({
         }
     },
 })
+
+/** `lines 40–80`, `line 40`. */
+function lines(range: { from: number; to: number }): string {
+    return range.from === range.to ? `line ${range.from}` : `lines ${range.from}–${range.to}`
+}
 
 function header(title: string, open: () => void): HTMLElement {
     const bar = document.createElement('span')

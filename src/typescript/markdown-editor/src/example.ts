@@ -102,5 +102,12 @@ Reference and change files in a document-local filesystem.
 
 &nbsp;
 
+Or only some of a file's lines, numbered as the file numbers them. Edits go back into the file where those lines are, even if they have moved since.
+
+\`\`\`example.ts#L9-L11
+\`\`\`
+
+&nbsp;
+
 Try editing the content!
 `;

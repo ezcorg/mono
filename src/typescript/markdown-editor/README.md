@@ -57,8 +57,9 @@ applied as one transaction that keeps the caret, then saved.
 | Syntax | Notes |
 |---|---|
 | CommonMark + GFM | headings, lists (marker kept), task lists, tables, quotes, code fences (CodeMirror, real LSP; a fence named by a file writes through to it) |
+| File regions ```` ```src/lib.rs#L40-L80 ```` | some lines of a file, numbered as the file numbers them. The file is the source of truth: the fence's body is the lines as last seen, taken from the file when the note opens (found where they moved to, if they did); an edit goes back into the file where the lines are then, and the range follows the lines it holds. A save whose lines changed in the file meanwhile is kept as a conflict copy |
 | Wikilinks `[[note]]`, `[[note\|text]]`, `[[note#heading]]`, `[[#heading]]` | resolved by the host; a dangling link is dimmed and creates its note when followed; `[[` offers the vault's notes |
-| Embeds `![[target]]` | an image by name, a note or one of its sections (read-only), lines of a file `![[src/lib.rs#L40-L80]]` (editable, written back into the file), or a file card |
+| Embeds `![[target]]` | an image by name, a note or one of its sections (read-only), or a card that opens the file (`![[src/lib.rs#L40-L80]]` names its lines; to show and edit them, use a fence) |
 | Images `![alt](path)` | read from the vault as bytes; `\|200` in the alt sizes; pasted or dropped images are stored under `attachments/` |
 | Front matter | a properties table, YAML on focus; `id:` assigned on first open when the host asks |
 | Math `$…$`, `$$…$$` | KaTeX by default (loaded on first use), any `MathRenderer` otherwise; prices stay text |

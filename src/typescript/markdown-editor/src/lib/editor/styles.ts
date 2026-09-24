@@ -1600,7 +1600,7 @@ export const styleModule: StyleModule = new StyleModule({
         'max-width': '100%',
         'vertical-align': 'bottom',
     },
-    '.ezco-mde-embed--note, .ezco-mde-embed--region': {
+    '.ezco-mde-embed--note': {
         display: 'block',
         margin: '0.3em 0',
         padding: '0.5em 0.9em',
@@ -1742,18 +1742,6 @@ export const styleModule: StyleModule = new StyleModule({
         background: 'transparent',
         color: 'inherit',
         cursor: 'pointer',
-    },
-    '.ezco-mde-embed-region': {
-        display: 'block',
-        margin: 0,
-        'font-size': '0.85em',
-    },
-    '.ezco-mde-embed-region .cm-editor': {
-        background: 'var(--ezco-mde-code-bg)',
-        'border-radius': '4px',
-    },
-    '.ezco-mde-embed-region .cm-editor.cm-focused': {
-        outline: 'none',
     },
     // ─────────────────────────────────────────────────────────────
     // File tree (extensions/file-tree.ts): the vault's folders and files,
