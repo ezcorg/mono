@@ -11,7 +11,7 @@ export default defineConfig(async () => ({
   // package; excluding it from dep pre-bundling avoids esbuild mangling those
   // worker/asset URLs (mirrors the markdown-editor demo's own config).
   optimizeDeps: {
-    exclude: ["@joinezco/codeblock"],
+    exclude: ["@joinezco/codeblock", "@joinezco/storage"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

@@ -108,8 +108,10 @@ export interface FileSystemStorage {
      * Persist the current document to the current filepath *now* if (and only
      * if) a debounced save is pending, cancelling that pending save. No-ops
      * when there are no unsaved edits / autosave is off / no file is set.
+     * Resolves once every write of the open file already started has landed,
+     * so a caller about to move or read the file sees it current.
      */
-    flushPendingSave: () => void
+    flushPendingSave: () => Promise<void>
     /**
      * Switch the active file. Persists the outgoing file's unsaved edits to
      * *its* path first, then loads `path` — without the load looking like a
@@ -149,7 +151,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             codeSaveTimeout: null,
             // Real implementations are installed in onCreate (they need the
             // live editor).
-            flushPendingSave: () => {},
+            flushPendingSave: async () => {},
             loadFile: async () => {},
             subscribe: () => () => {},
             write: () => {},
@@ -173,12 +175,17 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             listeners.add(listener)
             return () => listeners.delete(listener)
         }
-        // Every write of the open file goes through here, so a save is heard.
+        // Every write of the open file goes through here: in order (a later
+        // save never lands before an earlier one), announced when it lands,
+        // and awaitable as a whole by `flushPendingSave`.
+        let writing: Promise<void> = Promise.resolve()
         const save = (fs: VfsInterface, path: string, content: string) =>
-            fs.writeFile(path, content).then(
-                () => emit({ type: 'save', path }),
-                (error) => console.error(`[Filesystem] Failed to save content to ${path}:`, error),
-            )
+            (writing = writing.then(() =>
+                fs.writeFile(path, content).then(
+                    () => emit({ type: 'save', path }),
+                    (error) => console.error(`[Filesystem] Failed to save content to ${path}:`, error),
+                ),
+            ))
         storage.write = (fs, path, content) => void save(fs, path, content)
 
         // Tear down the swapped-in code editor and restore the rich-text editor.
@@ -351,6 +358,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                     void save(fs, filepath, storage.codeView.state.doc.toString())
                 }
             }
+            return writing
         }
         storage.flushPendingSave = flushPendingSave
 
@@ -359,7 +367,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             if (!fs) return
             // 1. Persist the outgoing file's unsaved edits to *its* path first,
             //    so they're neither lost nor written to the incoming file.
-            flushPendingSave()
+            void flushPendingSave()
             if (options.create && !(await fs.exists(path))) {
                 const parent = dirname(path)
                 if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })

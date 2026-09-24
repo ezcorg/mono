@@ -22,7 +22,7 @@ import { connect, requestFilesystemGrant, type Transport } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
 import { workspaceRoot } from "./workspace";
 import { add as addComponent } from "./generated/components";
-import { openLinks, requestLinksGrant, type LinksIndex } from "./links";
+import { editorLinks, openLinks, requestLinksGrant, type LinksIndex } from "./links";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
 import { createEditor, type MarkdownEditor } from "@joinezco/markdown-editor";
@@ -186,9 +186,26 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
             await fs.writeFile(filepath, opts.seed(filepath));
         }
 
+        // Backlinks: a novel capability from the store, lent this page's
+        // filesystem grant. Named by hash and source (`?links-provider=sha256:…
+        // &links-source=oci://…`), the daemon fetches it, checks the hash and
+        // shows the consent card with its origin; without them the demo adds
+        // the example's bytes itself. The editor does not wait on consent: its
+        // links fill in when the grant arrives.
+        const links = editorLinks(
+            acquireLinks(transport, grant, {
+                provider: params.get("links-provider") ?? undefined,
+                source: params.get("links-source") ?? undefined,
+            }),
+            fs,
+        );
+
         editor = createEditor({
             element: editorMount,
             fs: { fs, filepath, autoSave: true },
+            // The editor's own links panel, in the column under the outline;
+            // renames from the toolbar go through the capability too.
+            links: { ...links, panel: { mount: () => linksMount } },
             // The file-search toolbar mounts into the window titlebar (in place
             // of a title) and stays visible there (not the default floating pill);
             // `.mac-titlebar-search` rethemes it into a slim titlebar field.
@@ -209,16 +226,6 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
         // Expose for manual debugging in the console.
         (window as unknown as { editor?: MarkdownEditor }).editor = editor;
 
-        // Backlinks: a novel capability from the store, lent this page's
-        // filesystem grant. Named by hash and source (`?links-provider=sha256:…
-        // &links-source=oci://…`), the daemon fetches it, checks the hash and
-        // shows the consent card with its origin; without them the demo adds
-        // the example's bytes itself.
-        void mountLinks(transport, grant, editor, linksMount, {
-            provider: params.get("links-provider") ?? undefined,
-            source: params.get("links-source") ?? undefined,
-        }).catch((e) => console.warn("links unavailable:", e));
-
         setStatus(`editing ${filepath} via ${transport.kind} — autosaving to the host`);
     } catch (e) {
         console.error(e);
@@ -226,15 +233,14 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
     }
 }
 
-/** The backlinks panel under the outline: what links to the open note, the
- *  dangling links in the vault, and a rename that rewrites every link. */
-async function mountLinks(
+/** The links capability for this page's vault: add the example component
+ *  unless the page names a provider, then ask for a grant that lends it the
+ *  filesystem grant, and open the index. */
+async function acquireLinks(
     transport: Transport,
     fsGrant: string,
-    editor: MarkdownEditor,
-    mount: HTMLElement,
     named: { provider?: string; source?: string },
-): Promise<void> {
+): Promise<LinksIndex> {
     let provider = named.provider;
     if (!provider) {
         const wasm = new Uint8Array(await (await fetch("/fixtures/links.wasm")).arrayBuffer());
@@ -248,50 +254,5 @@ async function mountLinks(
         filesystemGrant: fsGrant,
         reason: "show which notes link to the one you are editing",
     });
-    const index: LinksIndex = await openLinks(transport, token);
-    const persistence = editor.storage.persistence as { options: { filepath?: string }; loadFile: (path: string) => Promise<void> };
-    const title = el("div", "mac-links-title", "Links");
-    const list = el("ul", "mac-links-list");
-    const dangling = el("div", "mac-links-dangling");
-    mount.replaceChildren(title, list, dangling);
-    let current = "";
-    const render = async () => {
-        const path = persistence.options.filepath ?? "";
-        const [into, unresolved] = await Promise.all([index.backlinks(path), index.unresolved()]);
-        current = path;
-        list.replaceChildren(
-            ...(into.length === 0 ? [el("li", "mac-links-empty", "nothing links here yet")] : []),
-            ...into.map((l) => {
-                const li = el("li", "mac-links-item");
-                const a = el("a", "mac-links-link", `${l.source}:${l.line}`);
-                a.setAttribute("href", "#");
-                a.addEventListener("click", (ev) => {
-                    ev.preventDefault();
-                    void persistence.loadFile(l.source).then(render);
-                });
-                li.append(a);
-                return li;
-            }),
-        );
-        const mine = unresolved.filter((l) => l.source === path);
-        dangling.textContent = mine.length === 0 ? "" : `${mine.length} link${mine.length === 1 ? "" : "s"} in this note point nowhere: ${mine.map((l) => l.target).join(", ")}`;
-    };
-    const rename = el("button", "mac-links-rename", "rename this note…");
-    rename.addEventListener("click", async () => {
-        const to = prompt("New path for this note (links to it are rewritten):", current);
-        if (!to || to === current) return;
-        try {
-            const n = await index.rename(current, to);
-            await persistence.loadFile(to);
-            await render();
-            console.info(`renamed ${current} → ${to}, rewrote ${n} link(s)`);
-        } catch (e) {
-            alert(`rename refused: ${e}`);
-        }
-    });
-    mount.append(rename);
-    await render();
-    // The note may change under us (autosave, another page): re-read every few seconds.
-    setInterval(() => void render().catch(() => {}), 4000);
-    editor.on("update", () => void 0);
+    return openLinks(transport, token);
 }

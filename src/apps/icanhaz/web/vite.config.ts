@@ -20,7 +20,9 @@ export default defineConfig({
         // resolves them *through* the excluded package) to avoid a mid-run
         // re-optimize + page reload (the cold-cache flake). List copied from
         // markdown-editor's own proven vitest.config.ts.
-        exclude: ["@joinezco/codeblock"],
+        // @joinezco/storage is workspace-linked and dependency-free: served as
+        // is, it never triggers a re-optimize when a test first reaches it.
+        exclude: ["@joinezco/codeblock", "@joinezco/storage"],
         include: [
             "@joinezco/codeblock > @codemirror/autocomplete",
             "@joinezco/codeblock > @codemirror/commands",

@@ -116,6 +116,13 @@ export interface ToolbarHost {
     focusEditor(): void;
     /** Notify that a file was created/changed/deleted on the VFS. */
     notifyFileChanged?(path: string, type: number): void;
+    /**
+     * Move the open file, keeping what the host knows current: its unsaved
+     * edits persisted first, and (when the host keeps a link index) every
+     * link to it rewritten. Without it the toolbar writes the open document
+     * to the old path and moves the file.
+     */
+    renameFile?(oldPath: string, newPath: string): Promise<void>;
     /** Get the current file path from host state (may differ from initial filepath). */
     getCurrentFilePath?(): string | null;
     /** Whether autosave is enabled. */
@@ -1237,11 +1244,22 @@ export class ToolbarCore {
 
     private async performRename(oldPath: string, newPath: string) {
         const { fs, index } = this.host;
-        const content = this.host.getDocContent();
         const dir = newPath.substring(0, newPath.lastIndexOf('/'));
-        if (dir) await fs.mkdir(dir, { recursive: true }).catch(() => {});
-        await fs.writeFile(newPath, content).catch(console.error);
-        await fs.unlink(oldPath).catch(e => console.warn('VFS unlink failed during rename:', e));
+        try {
+            if (dir) await fs.mkdir(dir, { recursive: true }).catch(() => {});
+            // Reaching here with a file at `newPath` means the overwrite was confirmed.
+            if (await fs.exists(newPath)) await fs.unlink(newPath);
+            if (this.host.renameFile) {
+                await this.host.renameFile(oldPath, newPath);
+            } else {
+                // The open document is the file being moved: persist it, then move it.
+                await fs.writeFile(oldPath, this.host.getDocContent());
+                await fs.rename(oldPath, newPath);
+            }
+        } catch (e) {
+            console.error(`Rename of ${oldPath} to ${newPath} failed:`, e);
+            return;
+        }
         if (index) {
             try { index.index.discard(oldPath); } catch { }
             index.add(newPath);

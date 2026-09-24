@@ -70,7 +70,7 @@ export default defineConfig({
     outDir: 'dist-app'
   },
   optimizeDeps: {
-    exclude: ['@joinezco/codeblock', '@joinezco/snapshot']
+    exclude: ['@joinezco/codeblock', '@joinezco/snapshot', '@joinezco/storage']
   },
   plugins: [
     snapshot({

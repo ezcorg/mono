@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
 import { add as addComponent, all } from "./generated/components";
 import { wrpcFilesystem } from "./vfs";
-import { openLinks, requestLinksGrant } from "./links";
+import { editorLinks, openLinks, requestLinksGrant } from "./links";
+import { createEditor } from "@joinezco/markdown-editor";
 import { LINKS, WS } from "./test-ws";
 
 // The links example, the way the editor uses it: a page adds the component,
@@ -77,6 +78,44 @@ describe("a novel capability in the editor: backlinks", () => {
         expect(await fs.exists(`${dir}/plan.md`)).toBe(false);
         expect(await fs.readFile(`${dir}/index.md`)).toContain("[[planning]]");
         await index.close();
+        t.close();
+    }, 30000);
+
+    it("is the editor's link index and resolver: its panel and its links answer from the daemon", async () => {
+        const t = await connect({ ws: WS });
+        const wasm = new Uint8Array(await (await fetch("/fixtures/links.wasm")).arrayBuffer());
+        const added = await addComponent(t, wasm, undefined);
+        if (added.tag !== "ok") throw new Error(added.val);
+        const fsGrant = await requestFilesystemGrant(t, "the vault");
+        const fs = await wrpcFilesystem(t, fsGrant);
+        const dir = `links-editor-${Date.now()}`;
+        await fs.mkdir(dir, { recursive: false });
+        await fs.writeFile(`${dir}/a.md`, `# A\n\nsee [[b]] and [[ghost]]\n`);
+        await fs.writeFile(`${dir}/b.md`, `# B\n`);
+
+        const token = await requestLinksGrant(t, { provider: added.val.hash, filesystemGrant: fsGrant });
+        const links = editorLinks(openLinks(t, token), fs);
+        const el = document.createElement("div");
+        document.body.append(el);
+        const editor = createEditor({ element: el, fs: { fs, filepath: `${dir}/b.md` }, links });
+        const until = async (cond: () => boolean) => {
+            for (let i = 0; i < 100 && !cond(); i++) await new Promise((r) => setTimeout(r, 50));
+            expect(cond()).toBe(true);
+        };
+        const text = (sel: string) => [...el.querySelectorAll(sel)].map((n) => n.textContent);
+
+        // The panel under b: a links here, as the daemon's index says.
+        await until(() => text(".ezco-mde-links-name").includes("a"));
+
+        // In a: the wikilink to b resolves, the one to ghost does not, and the
+        // panel lists ghost as not written yet.
+        await editor.storage.persistence.loadFile(`${dir}/a.md`);
+        await until(() => text(".ezco-mde-wikilink.is-unresolved").join() === "ghost");
+        await until(() => text(".ezco-mde-links-dangling .ezco-mde-links-name").join() === "ghost");
+
+        editor.destroy();
+        el.remove();
+        await links.index.close();
         t.close();
     }, 30000);
 });

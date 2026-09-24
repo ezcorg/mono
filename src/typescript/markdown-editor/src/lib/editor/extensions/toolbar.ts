@@ -12,7 +12,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { ToolbarCore, type ToolbarHost, SearchIndex } from '@joinezco/codeblock'
-import type { VfsInterface } from '@joinezco/storage'
+import type { LinkIndex, VfsInterface } from '@joinezco/storage'
 
 /** Where the toolbar DOM should be placed. */
 export type ToolbarMount =
@@ -56,6 +56,11 @@ export interface ToolbarOptions {
      * auto-hiding pill behavior.
      */
     autoHide?: boolean
+    /**
+     * The vault's link index. When given, renaming a file from the toolbar
+     * goes through it, so every link to the file is rewritten.
+     */
+    linkIndex?: LinkIndex
 }
 
 const RETRACTED_CLASS = 'ezco-mde-toolbar-retracted'
@@ -162,6 +167,7 @@ export const Toolbar = Extension.create<ToolbarOptions>({
             mount: undefined,
             className: undefined,
             autoHide: false,
+            linkIndex: undefined,
         }
     },
 
@@ -172,7 +178,7 @@ export const Toolbar = Extension.create<ToolbarOptions>({
             new Plugin({
                 key: new PluginKey('toolbar'),
                 view: (editorView) => {
-                    const { fs, index, filepath, mount, className, autoHide } = extension.options
+                    const { fs, index, filepath, mount, className, autoHide, linkIndex } = extension.options
 
                     // If no filesystem, don't render the toolbar
                     if (!fs) return { update() {}, destroy() {} }
@@ -204,6 +210,17 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                             }).catch(err => {
                                 console.warn(`[Toolbar] Failed to open ${path}:`, err)
                             })
+                        },
+                        async renameFile(oldPath, newPath) {
+                            // The open note's unsaved edits land on its current
+                            // path first (with autosave off, the rename is what
+                            // saves them), so the move carries them and the
+                            // rewrite of its links reads them.
+                            const persistence = (extension.editor.storage as any).persistence
+                            if (persistence?.options?.autoSave) await persistence.flushPendingSave?.()
+                            else await fs.writeFile(oldPath, host.getDocContent())
+                            if (linkIndex) await linkIndex.rename(oldPath, newPath)
+                            else await fs.rename(oldPath, newPath)
                         },
                         getDocContent() {
                             try {

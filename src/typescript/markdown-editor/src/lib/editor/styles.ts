@@ -1319,6 +1319,79 @@ export const styleModule: StyleModule = new StyleModule({
         background: 'rgba(255, 255, 255, 0.22)',
         color: 'var(--ezco-mde-accent-fg, #fff)',
     },
+    // ─────────────────────────────────────────────────────────────
+    // Links panel (extensions/links-panel.ts): what links to the open note,
+    // and its links to notes not written yet. By default a footer under the
+    // note; hosts may mount it in a column. Same type and palette as the
+    // outline.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde-links': {
+        'box-sizing': 'border-box',
+        'margin-top': '2.5rem',
+        'padding-top': '0.75rem',
+        'border-top': '1px solid var(--ezco-mde-divider)',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': '13px',
+        color: 'var(--ezco-mde-fg)',
+    },
+    '.ezco-mde-links.ezco-mde-links--empty': {
+        display: 'none',
+    },
+    '.ezco-mde-links-title': {
+        'font-size': '11px',
+        'font-weight': 600,
+        'text-transform': 'uppercase',
+        'letter-spacing': '0.06em',
+        opacity: 0.5,
+        padding: '0 8px 6px',
+    },
+    '.ezco-mde-links-list': {
+        'list-style': 'none',
+        margin: '0 0 0.75rem',
+        padding: 0,
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '1px',
+    },
+    '.ezco-mde-links-link': {
+        display: 'flex',
+        'align-items': 'baseline',
+        gap: '0.5em',
+        width: '100%',
+        padding: '4px 8px',
+        border: 'none',
+        'border-radius': '5px',
+        background: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        'text-align': 'left',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-links-link:hover, .ezco-mde-links-link:focus-visible': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.1))',
+        outline: 'none',
+    },
+    '.ezco-mde-links-name': {
+        color: 'var(--ezco-mde-link-color)',
+        'white-space': 'nowrap',
+        overflow: 'hidden',
+        'text-overflow': 'ellipsis',
+    },
+    '.ezco-mde-links-dangling .ezco-mde-links-name': {
+        opacity: 0.7,
+    },
+    '.ezco-mde-links-folder, .ezco-mde-links-meta': {
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        'font-size': '12px',
+        'white-space': 'nowrap',
+    },
+    '.ezco-mde-links-meta': {
+        'margin-left': 'auto',
+    },
+    '.ezco-mde-links-empty': {
+        padding: '4px 8px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+    },
     // Host for the standalone code editor swapped in for a non-prose file
     // (extensions/filesystem.ts) — it replaces the rich-text editable in flow,
     // and the codeblock's own `.cm-editor` fills it.

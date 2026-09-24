@@ -8,7 +8,7 @@ import {
   latestNotePath,
   newScratchPath,
 } from "./lib/tauri-vfs";
-import type { VfsInterface } from "@joinezco/storage";
+import { Vault, type VfsInterface } from "@joinezco/storage";
 import "./App.css";
 
 /** System-wide hotkey that summons the window and opens a fresh scratch note. */
@@ -61,6 +61,7 @@ function App() {
   let titlebarToolbar!: HTMLDivElement;
   let editor: MarkdownEditor | null = null;
   let fs: VfsInterface | null = null;
+  let vault: Vault | null = null;
 
   const stored = (localStorage.getItem("eznote-theme") as ThemeMode | null) ?? "system";
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(stored);
@@ -101,7 +102,11 @@ function App() {
     applyTheme(themeMode());
 
     const base = await ensureNotesDir();
-    fs = createTauriVfs(base);
+    // The notes folder as a vault: its link index is built once here and
+    // kept current by every write through `vault.fs` and by the folder's
+    // watch (edits from other apps).
+    vault = await Vault.open(createTauriVfs(base));
+    fs = vault.fs;
 
     // Reopen the most recent note on launch, else start a fresh scratch.
     const filepath = (await latestNotePath(fs)) ?? newScratchPath();
@@ -120,6 +125,9 @@ function App() {
         autoHide: false,
         className: "mac-titlebar-search",
       },
+      // Wikilinks resolve against the vault; backlinks show under the note,
+      // and a rename from the toolbar rewrites every link to the note.
+      links: { resolver: vault.links, index: vault.links },
       onUpdate: () => {},
     });
     applyTheme(themeMode());
@@ -148,6 +156,8 @@ function App() {
     unregister(SCRATCH_SHORTCUT).catch(() => {});
     editor?.destroy();
     editor = null;
+    vault?.close();
+    vault = null;
   });
 
   return (

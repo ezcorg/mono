@@ -24,6 +24,8 @@ import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import { Wikilink, WikilinkOptions } from './extensions/wikilink';
+import { LinksPanel, LinksPanelOptions } from './extensions/links-panel';
+import type { LinkIndex } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -102,12 +104,18 @@ export type MarkdownSetupOptions = {
     /** Link hover/edit popover. `false` omits it. */
     linkMenu?: boolean;
     /** Links between notes. The editor parses and renders wikilinks on its
-     *  own; what they point at comes from the host's `resolver` (e.g. a
-     *  `Vault`'s `links` from `@joinezco/storage`). */
+     *  own; what they point at comes from the host's `resolver`, and the
+     *  backlinks panel from its `index` (a `Vault`'s `links` from
+     *  `@joinezco/storage` is both). */
     links?: LinksOptions;
 }
 
-export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'>;
+export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
+    /** The vault's link index: backlinks, dangling links, link-keeping renames. */
+    index?: LinkIndex;
+    /** The links panel (shown when there is an `index`). `false` omits it. */
+    panel?: Omit<LinksPanelOptions, 'index'> | false;
+};
 
 export type MarkdownEditorOptions = Partial<EditorOptions> & MarkdownSetupOptions;
 
@@ -188,6 +196,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
                 mount: toolbar?.mount,
                 className: toolbar?.className,
                 autoHide: toolbar?.autoHide ?? false,
+                linkIndex: toolbar?.linkIndex ?? options.links?.index,
             })]
             : []),
         ...(blockActions !== false
@@ -195,6 +204,10 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             : []),
         ...(options.selectionMenu !== false ? [SelectionMenu] : []),
         ...(options.linkMenu !== false ? [LinkMenu] : []),
+        // The links panel: whenever the host supplies a link index.
+        ...(options.links?.index && options.links.panel !== false
+            ? [LinksPanel.configure({ ...options.links.panel, index: options.links.index })]
+            : []),
         // The outline is opt-in (generated only when `sidebar` is set).
         ...(sidebar
             ? [Sidebar.configure({
@@ -349,6 +362,8 @@ export { FileSystem } from './extensions/filesystem';
 export type { FileSystemOptions, FileSystemStorage, FileEvent } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';
 export { Wikilink, wikilinkLabel } from './extensions/wikilink';
+export { LinksPanel } from './extensions/links-panel';
+export type { LinksPanelOptions } from './extensions/links-panel';
 export type { WikilinkOptions, WikilinkStorage } from './extensions/wikilink';
 export { findFragment, revealFragment } from './extensions/fragment';
 export { ExtendedCodeblock, codeblockRegistry } from './extensions/codeblock';
