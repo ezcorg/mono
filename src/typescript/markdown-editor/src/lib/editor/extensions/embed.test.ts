@@ -73,10 +73,14 @@ describe('Embeds in a vault', () => {
         expect(section.querySelector('.ezco-mde-embed-content h2')?.textContent).toBe('Goals')
         expect(section.textContent).toContain('Ship it.')
         expect(section.textContent).not.toContain('Not yet.')
-        expect([...region.querySelectorAll('.ezco-mde-embed-line')].map((l) => [l.getAttribute('data-line'), l.textContent])).toEqual([
-            ['2', '    let x = 1;'],
-            ['3', '    println!("{x}");'],
-        ])
+        // A region is an editor over those lines, numbered as in the file.
+        await waitFor(() => region.querySelectorAll('.cm-line').length === 2, 3000)
+        expect([...region.querySelectorAll('.cm-line')].map((l) => l.textContent)).toEqual(['    let x = 1;', '    println!("{x}");'])
+        expect(
+            [...region.querySelectorAll<HTMLElement>('.cm-lineNumbers .cm-gutterElement')]
+                .filter((el) => el.style.visibility !== 'hidden')
+                .map((el) => el.textContent),
+        ).toEqual(['2', '3'])
         expect(file.classList.contains('ezco-mde-embed--file')).toBe(true)
         expect(missing.classList.contains('is-missing')).toBe(true)
     })

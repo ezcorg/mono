@@ -1615,20 +1615,16 @@ export const styleModule: StyleModule = new StyleModule({
         'margin-top': 0,
     },
     '.ezco-mde-embed-region': {
+        display: 'block',
         margin: 0,
-        'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
         'font-size': '0.85em',
-        'white-space': 'pre-wrap',
-        'counter-reset': 'none',
     },
-    '.ezco-mde-embed-line::before': {
-        content: 'attr(data-line)',
-        display: 'inline-block',
-        width: '3em',
-        'margin-right': '1em',
-        'text-align': 'right',
-        opacity: 0.45,
-        'user-select': 'none',
+    '.ezco-mde-embed-region .cm-editor': {
+        background: 'var(--ezco-mde-code-bg)',
+        'border-radius': '4px',
+    },
+    '.ezco-mde-embed-region .cm-editor.cm-focused': {
+        outline: 'none',
     },
     // ─────────────────────────────────────────────────────────────
     // File tree (extensions/file-tree.ts): the vault's folders and files,
