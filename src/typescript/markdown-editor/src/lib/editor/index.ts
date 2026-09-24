@@ -189,8 +189,10 @@ interface VaultServices {
  * The host's vault services, and, for any it left out while giving a
  * filesystem, a `Vault` of the editor's own over that filesystem. The editor
  * then writes through the vault's observed filesystem, so its index follows
- * every save. A rename keeps links as the host's link index means them when
- * there is one (the vault's own rewrite would follow different rules).
+ * every save, and the vault follows the store's own changes too (a move made
+ * by the host's link index, a file written by another program), where the
+ * store can report them. A rename keeps links as the host's link index means
+ * them when there is one (the vault's own rewrite would follow different rules).
  */
 function vaultServices(options: MarkdownSetupOptions): VaultServices {
     const hostSubscribe = options.links?.index?.subscribe ?? options.links?.resolver?.subscribe;
@@ -202,7 +204,7 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         subscribe: hostSubscribe,
     };
     if (!given.fs || (given.search && given.files && given.resolver)) return given;
-    const vault = new Vault(given.fs, { watch: false });
+    const vault = new Vault(given.fs);
     const index: LinkIndex | undefined = options.links?.index;
     const files = options.files ?? (index ? { ...fileOperations(vault.fs), rename: (a: string, b: string) => index.rename(a, b) } : vault.files);
     return {

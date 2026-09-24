@@ -138,4 +138,30 @@ describe('The toolbar as a command palette', () => {
         expect(filepath(editor)).toBeUndefined()
         expect(events.filter((e) => e.path === 'notes/plan.md').map((e) => e.type)).toEqual(['load', 'close'])
     })
+
+    it('finds a file where a host’s link index moved it', async () => {
+        const store = memoryVfs(FILES)
+        // A host that renames itself (icanhaz's links capability), outside the editor.
+        const index = {
+            backlinks: async () => [],
+            unresolved: async () => [],
+            rename: async (from: string, to: string) => (await store.rename(from, to), 0),
+        }
+        const { editor, container } = make({ fs: { fs: store, filepath: 'index.md' }, links: { index } })
+        await waitFor(() => editor.getText().includes('Start here'), 3000)
+        await index.rename('notes/plan.md', 'notes/roadmap.md')
+        // Searched again until the editor's vault has heard of the move.
+        const shows = async (query: string, path: string) => {
+            for (let i = 0; i < 30; i++) {
+                input(container).focus()
+                input(container).value = query
+                input(container).dispatchEvent(new Event('input', { bubbles: true }))
+                await new Promise((r) => setTimeout(r, 100))
+                if (results(container).some((r) => r.textContent?.includes(path))) return true
+            }
+            return false
+        }
+        expect(await shows('roadmap', 'notes/roadmap.md')).toBe(true)
+        expect(await shows('plan', 'notes/plan.md')).toBe(false)
+    })
 })
