@@ -29,6 +29,7 @@ export { SearchIndex, snippetOf, titleOf, type FileSearch, type SearchHit, type 
 export { fileOperations, pathTaken, type FileOperations, type CreateOptions } from './files.js'
 export { Vault, type VaultOptions, type VaultLinks } from './vault.js'
 export { newNoteId, frontMatterOf, noteIdOf } from './id.js'
+export { findTextFragment, formatTextFragment, parseTextFragment, textFragmentFor, type TextFragment, type TextMatch } from './quote.js'
 export { VersionLog, conflictCopyPath, type FileVersion, type PutResult, type Signer, type VersionLogOptions } from './versions.js'
 export { serveVfs, remoteVfs, vfsPort, DISCONNECTED, type RemoteVfs, type PortLike } from './remote.js'
 export { takeSnapshot, restoreSnapshot, type SnapshotNode, type TakeSnapshotOptions } from './snapshot.js'
