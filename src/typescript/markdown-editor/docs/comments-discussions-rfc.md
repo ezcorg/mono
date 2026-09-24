@@ -1,265 +1,169 @@
-# RFC: Comments / discussions for `@joinezco/markdown-editor`
+# RFC: Comments and discussions
 
-**Status:** Draft for review — not yet implemented.
-**Author:** Claude (design hand-off).
-**Audience:** the implementing agent, and the maintainer (to refine before build).
+**Status:** v2, 2026-09-24. Replaces the v1 draft (a sidecar CRDT with
+relative-position anchors), which the platform RFC's §3 and §4 overruled:
+files are the unit, the CRDT is opt-in, and a comment is Markdown in a note.
+This document is the detailed design behind the platform RFC's §4 and its
+E3 milestone; where they differ, this one is newer.
 
-> This is a *design proposal*. Sections marked **OPEN** are decisions for the maintainer
-> to make before/while implementing. Nothing here has been built; treat the data shapes
-> and APIs as a starting point, not a frozen spec.
+## 1. What a comment is
 
----
+A **thread** is a footnote whose first line is a header: who started it,
+when, whether it is open, and what it is about. Its targets are links, the
+same strings "copy link to highlight" produces, so a comment's anchor and a
+shareable link are one thing.
 
-## 1. Goal & requirements
+```markdown
+The quick brown fox jumps over the [lazy dog]{#c-01JAB3C4D5EFGHJK}.
 
-Add threaded **discussions** (not code comments) to documents. A discussion:
-
-- references **0..N ranges** of text in a document (0 = a document-level note; 1 = a single
-  span; N = several discontinuous spans pointing at one thread);
-- is **threaded** (a thread = an ordered list of messages, each authored markdown);
-- has lifecycle state (open / resolved), and ideally reactions + per-user read state;
-- can be **created offline** and later **synchronized peer-to-peer** ("gossip"), merging
-  without a central server.
-
-The planned storage substrate is **P2P + CRDT** (see [icanhaz-real-impl] context): documents
-and the filesystem are CRDTs that resolve conflicts on sync. Comments must fit that model.
-
-The two hard questions: **(a) where do comments live** (in the doc vs. beside it), and
-**(b) how does an anchor survive concurrent edits** to the text it points at.
-
----
-
-## 2. Anchoring (the crux)
-
-A comment points at a text range; under concurrent offline edits the character offsets
-shift. Three strategies, in increasing robustness:
-
-1. **Character offsets** — `{from, to}` integers. Brittle: any earlier insert/delete
-   invalidates them. ❌ Rejected as a primary.
-2. **CRDT relative positions** — a stable position *identity* in the document CRDT that the
-   CRDT migrates across inserts/deletes and merges deterministically. ✅ **Primary.**
-   - Yjs: `Y.RelativePosition` (`Y.createRelativePositionFromTypeIndex` /
-     `Y.createAbsolutePositionFromRelativePosition`); `y-prosemirror` already maps between
-     PM positions and relative positions and ships a remote-cursor plugin.
-   - Automerge: `Cursor` (`getCursor` / `getCursorPosition`); `@automerge/prosemirror` binds.
-3. **Quote + context** (W3C-annotation / Hypothesis style) — store the quoted text plus a
-   prefix/suffix window; re-anchor by fuzzy search. Survives format changes and *orphaning*
-   (the CRDT position deleted), at the cost of occasional misses. ✅ **Fallback.**
-
-**Recommendation: store both per range.** Resolve via the CRDT relative position; if it can't
-be resolved (the anchored content was deleted), keep the thread but mark it **orphaned** and
-use the quote to *offer* re-anchoring rather than silently dropping it.
-
-> **Consequence:** robust anchoring requires the **document itself to be a CRDT** (so anchors
-> are positions *in* it). This editor is Tiptap/ProseMirror; a CRDT binding
-> (`y-prosemirror` or `@automerge/prosemirror`) is therefore a prerequisite for comments —
-> see §6.
-
-**OPEN — CRDT library:** Yjs vs Automerge. Recommendation: **Yjs**, because `y-prosemirror`
-is the most mature ProseMirror CRDT binding and relative positions are first-class and cheap
-to encode. Automerge is viable if the broader storage layer is already Automerge-based —
-align with whatever [icanhaz-real-impl]/the filesystem layer chooses. This choice should be
-made *once* for the whole P2P stack, not just comments.
-
----
-
-## 3. Where comments live: embedded vs. sidecar
-
-### Embedded in the `.md` (footnotes / asides / HTML comments)
-- ➕ Self-contained; travels with the file; degrades to readable footnotes in any viewer.
-- ➖ Pollutes the content; forces discussion (mutable, multi-author, threaded, resolvable,
-  read-state) to merge *interleaved with prose*; a non-editor reader sees raw syntax;
-  anchoring-inside-the-same-doc is awkward.
-
-### Sidecar in the filesystem (separate document, recommended)
-- ➕ Clean separation of concerns; the `.md` stays pristine.
-- ➕ Comments become their **own CRDT**, synced/gossiped **independently** of the document
-  (and independently permissionable later).
-- ➕ Naturally supports threads, resolved status, reactions, read-state, multiple
-  comment-sets per doc (e.g. per branch/reviewer) — none of which belong in the prose.
-- ➖ Two things to sync; the sidecar↔doc link and anchors must stay valid (§2).
-
-**Recommendation: sidecar.** It is the natural fit for P2P/CRDT/gossip: comments are a
-distinct, independently-syncable CRDT. Keep an *optional* "export to embedded footnotes" for
-interop/printing (§7), but the sidecar is canonical.
-
-### Linking sidecar ↔ document
-Key the sidecar by a **stable document ID**, not the file path (paths change; comments must
-survive renames/moves).
-
-**OPEN — document identity:** options, pick one:
-- a `uuid` in the doc's YAML frontmatter (visible, simple, but edits the content);
-- the document CRDT's own id (e.g. a Yjs `Y.Doc.guid`) recorded in fs metadata;
-- an fs-level id / xattr maintained by the filesystem layer.
-
-Recommendation: reuse the **CRDT doc id** the storage layer already assigns each document, so
-there's a single identity scheme across the stack.
-
-### Sidecar path layout (illustrative)
-```
-/.ezco/comments/<docId>            # the comments CRDT for document <docId>
-                                   # (stored as the CRDT's native update log / snapshot)
-```
-`.ezco/` is a hidden, app-owned namespace in the same virtual filesystem the editor already
-uses (`Fs`/`VfsInterface` in `@joinezco/codeblock`: `readFile`/`writeFile`/`readdir`/…).
-
----
-
-## 4. Data model (sidecar CRDT)
-
-A comments document is a CRDT keyed to one target document. Logical shape (concrete encoding
-is the CRDT's — e.g. a Yjs `Y.Map` of threads, each a `Y.Map`, messages a `Y.Array`):
-
-```jsonc
-{
-  "version": 1,
-  "targetDocId": "<docId>",
-  "threads": {
-    "<threadId>": {
-      "id": "<threadId>",
-      "status": "open",                 // "open" | "resolved"   (LWW register)
-      "createdBy": "<peerId>",
-      "createdAt": 1719500000000,       // epoch ms (informational; ordering is causal)
-      "anchors": [                      // 0..N ranges this thread points at
-        {
-          "id": "<anchorId>",
-          "relStart": "<encoded CRDT relative position>",
-          "relEnd":   "<encoded CRDT relative position>",
-          "quote":  "the exact text that was selected",
-          "prefix": "…N chars before…",   // fuzzy re-anchor fallback
-          "suffix": "…N chars after…"
-        }
-      ],
-      "messages": [                     // append-mostly; ordering causal
-        {
-          "id": "<msgId>",
-          "author": "<peerId>",
-          "bodyMarkdown": "looks good, but…",
-          "createdAt": 1719500000000,
-          "editedAt": null,
-          "reactions": { "👍": ["<peerId>", …] }   // emoji -> peers (set semantics)
-        }
-      ]
-    }
-  }
-}
+[^c-01JAB3C4D5EFGHJK]: @theo 2026-09-13T12:04Z · open · [[#:~:text=brown%20fox]] [[#c-01JAB3C4D5EFGHJK]]
+    Are both of these the same animal? See [[Zoology]].
+    - @alice 2026-09-13T12:10Z: No, and the second one should be a cat.
+      - @theo 2026-09-13T12:12Z: 👍
 ```
 
-CRDT semantics:
-- **threads / messages**: add-wins maps/arrays — concurrent additions all survive.
-- **status**: last-writer-wins register (or a tiny 2-state CRDT) — concurrent resolve/reopen
-  settles deterministically.
-- **message body edits**: LWW on `bodyMarkdown` per message (or a nested text CRDT if
-  collaborative editing of a single comment is wanted — probably overkill; **OPEN**).
-- **reactions**: per-emoji set of peer ids (add/remove-wins — pick one; add-wins is simplest).
-- **deletes**: tombstone (mark `deleted: true`) rather than hard-remove, so a concurrent
-  reply doesn't resurrect a thread inconsistently.
+Everything a thread needs is in the file: it survives any tool that keeps
+text, diffs and merges as text, reads as a footnote in a viewer that knows
+footnotes (and not at all in one that drops unreferenced definitions, which
+is the usual choice), and has history through the version log (E2). There is
+no sidecar and no store of its own.
 
----
+### 1.1 Grammar
 
-## 5. Sync / gossip / offline
+- **Thread header** (a footnote definition's first line, or a list item's):
+  `@handle TIME · STATUS · TARGETS`. `handle` is `[A-Za-z0-9_.-]+`; `TIME`
+  is UTC ISO 8601 to the minute or second (`2026-09-13T12:04Z`); `STATUS` is
+  `open` or `resolved` (absent: open); `TARGETS` is zero or more wikilinks
+  separated by spaces (absent: the thread is about the whole note). A
+  definition is a thread when its first line has this shape, whatever its
+  label; the editor labels new threads `c-` and a ULID prefix (16
+  characters: time, then randomness).
+- **Body**: the lines under the header, indented as the footnote's (four
+  spaces) or the list item's (two). Any Markdown.
+- **Replies**: a bullet list at the body's indentation whose items start
+  `- @handle TIME: `, the reply's first line after the colon. A reply's own
+  replies are a list under it. Replies are ordered as written.
+- **Reactions**: a reply whose whole body is emoji is a reaction to what it
+  replies to (`- @theo 2026-09-13T12:12Z: 👍`). Plain Markdown shows it as
+  a reply, which is what it is; the editor shows it as a chip.
 
-- The comments CRDT syncs on its **own** update stream, independent of the document. Offline
-  edits accumulate locally; on peer contact, exchange updates (state vectors / update diffs)
-  and merge. No central server.
-- Because it's a CRDT, **offline-made comments merge cleanly** with others' — no manual
-  conflict resolution.
-- **Anchor resolution needs the target doc loaded.** A relative position references the target
-  document's CRDT structure, so to turn it into a screen range the editor must have the
-  document CRDT in memory (it does, while editing). When browsing comments *without* the doc
-  (e.g. a notifications view), show `quote` text instead of a live highlight.
-- **Orphans:** if `relStart`/`relEnd` no longer resolve (anchored text deleted), the thread is
-  retained, flagged `orphaned`, and surfaced in a "resolve/re-anchor" affordance using
-  `quote`/`prefix`/`suffix`.
+The grammar lives in `@joinezco/storage` (`comments.ts`), with the link
+grammar, so the editor and the index read threads the same way. A thread the
+editor has not changed is written back byte for byte; one it changed is
+written in the canonical form above.
 
----
+### 1.2 Targets
 
-## 6. Editor integration
+A target is a wikilink whose fragment is one of:
 
-Fits the Part 1 architecture: comments ship as a **standalone, opt-in Tiptap extension**
-(individually exported; added by `markdownSetup({ comments })` or imported directly).
+- a **text fragment**, `#:~:text=[prefix-,]start[,end][,-suffix]`: a quote
+  (and context), found by search. No markup in the body.
+- a **pin**, `#c-…`: the id of a **bracketed span** (Pandoc's and Djot's
+  `[text]{#id .class key=value}`) put around the text. A pin moves with its
+  text under any edit and orphans only when its text is deleted.
+- a **block id**, `#^abc`, or a **heading**, `#Goals`, as links already have.
 
-```ts
-import { Comments } from '@joinezco/markdown-editor/extensions/comments'
-// or: markdownSetup({ comments: { provider, currentUser } })
+With a note name in front (`[[Zoology#:~:text=…]]`) a target is in another
+note. N targets make a multi-range thread; none, a note-level one.
+
+## 2. Anchoring
+
+**Creating.** "Comment" on a selection makes a text fragment for it: the
+quote itself when short (up to 60 characters), else its first and last few
+words as `start,end`, with a few words of prefix and suffix added only as far
+as needed to make it match once in the note. When no context makes it match
+once (the quoted text repeats word for word, with the same surroundings), the
+editor pins the selection instead.
+
+**Finding.** A text fragment is looked for as written, then without regard to
+case, then approximately: the place in the note whose text is nearest the
+quote (edit distance at most a quarter of its length), preferring a place
+whose prefix and suffix also match. A pin is its span; a block id, its block.
+A target found nowhere is **orphaned**: the thread stays, shows the quote it
+had, and offers to anchor it again on a new selection.
+
+**Re-anchoring.** An edit in the editor is exact: the editor keeps where each
+target is and maps it through every change, so when text inside a quoted
+range is changed, the target is rewritten (in the same undo step) to quote
+what the range holds now. A change made elsewhere (another program, a merge)
+is met by the search above when the note is read, and the target is rewritten
+to the text it was found at, so the next search is exact again. A pin needs
+neither.
+
+## 3. Where threads live, and the index
+
+A thread's default place is the footnote at the end of the note it discusses.
+It can equally be a list item in any other note (a review note, a day's
+comments, an agent's report) with the same header and targets that name the
+note:
+
+```markdown
+- @alice 2026-09-13T12:10Z · open · [[Plan#:~:text=ship%20it]]
+  Which release?
+  - @theo 2026-09-13T12:12Z: The next one.
 ```
 
-Responsibilities:
-1. **Provider boundary.** The extension does *not* own storage/CRDT/transport. It takes a
-   `CommentsProvider` the host supplies, e.g.:
-   ```ts
-   interface CommentsProvider {
-     // resolve the comments CRDT for the currently-open document
-     load(docId: string): Promise<CommentStore>
-     // reactive: notify on remote/merged changes so the editor re-renders
-     subscribe(cb: () => void): () => void
-   }
-   ```
-   The default app wires this to the Yjs/Automerge + fs sidecar; a different consumer can back
-   it however they like. (Mirrors how `FileSystem`/`Toolbar` take an injected `Fs`.)
-2. **Rendering — decorations, never serialized.** Anchored ranges render as ProseMirror
-   `Decoration.inline` highlights computed from the store; the *document content is never
-   touched*, so `getMarkdown()` stays clean. (Same proven pattern as `HeadingAnchors` /
-   `lists.ts`, which already use DOM-only decorations.)
-3. **Affordances.** A margin/gutter indicator (count of threads on a line) + a thread popover
-   (read/reply/resolve/react). Reuse the existing menu surfaces + `--ezco-mde-context-menu-*`
-   theme vars for visual consistency. The "add comment" entry can hang off the existing
-   selection menu.
-4. **Commands & API.** Tiptap commands (`addComment`, `replyToThread`, `resolveThread`,
-   `reactToMessage`) and an imperative handle on `editor.storage.comments`
-   (`getThreads()`, `focusThread(id)`, `setProvider(...)`) — consistent with Part 1's
-   "return objects the user can manipulate" goal.
+The vault's index reads every note's threads (both forms) and answers which
+threads are about a note (`CommentIndex.threadsAbout(path)`), and changes a
+thread where it lives (`update(ref, thread)`, refused if the thread's text
+changed since it was read). The editor shows a note's own threads and those
+the index finds elsewhere in one margin; replying to, resolving or reacting to
+a thread from elsewhere writes the note that holds it.
 
-```ts
-export interface CommentsOptions {
-  provider: CommentsProvider
-  currentUser: { id: string; displayName?: string }
-  /** Where the thread popover / list mounts (default: body-appended, like other menus). */
-  mount?: (root: HTMLElement) => HTMLElement | null
-  /** Render orphaned threads? default true (surfaced for re-anchor/resolve). */
-  showOrphaned?: boolean
-}
-```
+## 4. The editor
 
----
+- **Nodes.** The pin is a generic `span` mark (id, classes, attributes), so
+  bracketed spans round-trip whatever they are for. A thread parses to a
+  `commentThread` block node holding its source; it is hidden in the body and
+  shown in the margin.
+- **Margin.** Beside the note, each thread is a card level with its first
+  target, cards pushed down so none overlap: the header, the body and
+  replies rendered as Markdown, reactions as chips, and Reply, Resolve (or
+  Reopen), React, Pin, Delete. Anchored text is highlighted; hovering or
+  clicking a highlight brings its card forward, and the card's targets are
+  highlighted more strongly. Resolved threads fold to one line. Orphaned
+  targets show their quote. Where there is no room for a margin (a narrow
+  column), a card opens as a popover from its highlight.
+- **Commands.** `addComment({ ranges?, body })` (the selection when no ranges
+  are given; several ranges make one multi-range thread), `replyToComment`,
+  `resolveComment` / `reopenComment`, `reactToComment` (a toggle),
+  `pinComment` (turn a thread's text-fragment targets into pins),
+  `deleteComment`. `editor.storage.comments` has `threads()` (each with its
+  targets resolved), `focus(id)`, `exportAnnotations()` and
+  `markdownWithoutComments()`.
+- **Who.** The host gives the author's handle (`comments: { author }`);
+  without one, threads are shown and not written.
 
-## 7. Interop / degradation (optional)
+## 5. Export
 
-Keep the sidecar canonical, but offer a one-way **export to embedded footnotes** for sharing
-with non-editor tools or printing:
-- each resolved-or-open thread → a numbered footnote/aside appended to the exported `.md`,
-  with the quoted span marked. This is an *export artifact*, not the source of truth, and is
-  not re-imported (avoids the embedded-merge problems of §3).
+- **Strip**: the note without threads and with pins unwrapped to their text
+  (`stripComments(markdown)` in storage; `markdownWithoutComments()` in the
+  editor).
+- **W3C Web Annotations**: one annotation per thread (`motivation:
+  commenting`, the body as `text/markdown`, one target per resolved range with
+  a `TextQuoteSelector` and a `TextPositionSelector` over the note's text) and
+  one per reply (`motivation: replying`, targeting the annotation it answers).
+  Hypothesis and other annotation tools read this.
+- **Flatten** is a no-op: a thread is already a footnote.
 
----
+## 6. Not yet
 
-## 8. Phased implementation
+- Read and unread, per device, in `.eznote/state/<device>/` (the RFC's §4):
+  needs the device identity of §9.
+- Notifications of replies across a vault.
+- Signed authorship: a handle is a name the author chose; the version log's
+  signatures (E2's remaining work) will say who wrote a version, and so who
+  wrote what a version added.
+- Live co-editing of a comment (E6): a thread is text in the note, so a live
+  session carries it with nothing more.
 
-1. **P1 — local, single store.** Comments extension + `CommentsProvider` interface; sidecar
-   read/write through the existing `Fs`; decorations + popover UI + commands. Anchor with
-   relative positions against a **local** document CRDT (introduce the `y-prosemirror` /
-   `@automerge/prosemirror` binding here) + quote fallback. No networking yet.
-2. **P2 — sync/gossip.** Wire the comments CRDT to the P2P transport; offline queue + merge;
-   orphan detection + re-anchor UI.
-3. **P3 — polish.** Reactions, per-user read/unread, notifications view (quote-only, no live
-   highlight), embedded-footnote export.
+## 7. Decisions (v1's open questions)
 
----
-
-## 9. Decisions to confirm before building (checklist)
-
-- [ ] **CRDT library** (Yjs recommended) — must match the broader P2P/fs layer.
-- [ ] **Document identity** scheme (CRDT doc id recommended) and sidecar path layout.
-- [ ] Comments as a **separate** CRDT doc (recommended) vs. a sub-tree of the document's CRDT.
-- [ ] Whether a single comment body is **LWW** or its own collaborative text CRDT.
-- [ ] Reaction semantics (add-wins set recommended) and delete = **tombstone** policy.
-- [ ] Scope of P1 (recommend: local sidecar + decorations + UI, *before* any networking).
-
----
-
-### Cross-references
-- Builds on the Part 1 API refactor (this same change set): comments will be an
-  individually-exported, opt-in extension consumed via `markdownSetup`.
-- The decoration approach mirrors `extensions/heading-anchors.ts` and `extensions/lists.ts`.
-- The provider/injection pattern mirrors `extensions/filesystem.ts` and `extensions/toolbar.ts`
-  (host supplies the `Fs`/index; the extension stays storage-agnostic).
+| v1 asked | Answer |
+|---|---|
+| CRDT library | None for comments. A thread is text; E6's live mode, when a note uses it, carries it. |
+| Where comments live | In the note (or another note), as Markdown. No sidecar. |
+| Document identity | Not needed for anchoring: targets are links, resolved like any link, and renames rewrite them (the vault keeps links). |
+| Comment body: LWW or its own CRDT | A message is text in a file; concurrent edits are the version log's conflicts. |
+| Reactions | Emoji-only replies; toggled per author. |
+| Deletes | Removed from the text; the version log keeps what was there. |
