@@ -1,87 +1,100 @@
-# Brief: starting the editor milestones
+# Brief: the editor milestones
 
-For an agent beginning work on `@joinezco/markdown-editor` (this package)
-and the vault around it. Read this, then the RFC beside it
+For an agent working on `@joinezco/markdown-editor` (this package) and the
+vault around it. Read this, then the RFC beside it
 (`gap-analysis-and-platform-rfc.md`), which is the design of record: §2 is
 the gap list, §3 to §7 the decisions that shape the editor, §16 the
 milestones. The icanhaz side (the capability daemon the editor MAY talk to) is
-built through M6; the editor milestones E1 to E7 are not started. This
-brief says where to begin and what not to touch.
+built through M6. E1, the editor's foundations and the vault package, is
+built (branch `editor-e1`, 2026-09-23); E2 to E7 are not started. This brief
+says where to continue and what not to touch.
 
 HUMAN'S NOTE: Most of these documents were written by an LLM that may not have had full context into the overall ambitions of the project. The general idea is that from `@joinezco/markdown-editor`, to `@joinezco/codebock`, to `@joinezco/vault` (I suppose? I think it would sound better as `@joinezco/storage` and not be clearly trying to emulate Obsidian), that functionality is composed of interfaces which allow each library to avoid making assumptions about the environment its operating in (i.e in a browser vs. a native app), and then we provide different implementations of those interfaces depending on what is possible in a given environment. The browser, for instance, could not run any processes on the host (unless of course they're running `icanhaz` and they grant the capability to the editor -- though then in the case of running processes the editor would likely also require the host filesystem vs. something browser-native like indexeddb, otherwise it would not make much sense). Local-first, peer-to-peer, and open is the prevailing philosophy.
 
 ## The ground
 
-- `src/typescript/markdown-editor`: a TipTap editor with a Markdown
-  round-trip, a CodeMirror codeblock with real LSP (`@joinezco/codeblock`),
-  a VFS abstraction, an outline sidebar, a toolbar with file search, slash
-  commands, an emoji picker. Solid, single-document, single-user.
-  `src/lib/editor/index.ts` builds the extension list; extensions live in
-  `src/lib/editor/extensions/`, each with a `.test.ts` beside it.
-- `src/typescript/codeblock`: the embedded code editor, its VFS type
-  (`VfsInterface`), and the LSP client with a `RemoteLspProvider` hook.
-- `src/apps/eznote`: the Tauri app that hosts the editor over a real vault.
+- `src/typescript/storage` (`@joinezco/storage`): the vault package, named
+  per the note above. The `VfsInterface` contract (text, bytes, rename,
+  watch) and its implementations (`memoryVfs`, `nodeVfs` under
+  `/node`; the OPFS worker still lives in codeblock, Tauri's in eznote,
+  icanhaz's in icanhaz-web), the link grammar every parser shares,
+  `LinkResolver`/`LinkIndex`, `FileSearch`, `FileOperations`, and `Vault`,
+  which keeps links and text indexed over any VFS and renames without
+  breaking links. No DOM. Node tests against a fixture vault.
+- `src/typescript/markdown-editor`: a Tiptap editor with a byte-faithful
+  Markdown round-trip. Wikilinks and embeds, images from VFS bytes, front
+  matter with ids, footnotes, math, callouts, a links panel, a file tree,
+  the toolbar as a command palette, CodeMirror codeblocks with real LSP.
+  `src/lib/editor/index.ts` builds the extension list and wires the vault
+  services (with only `fs`, the editor keeps a `Vault` of its own);
+  extensions live in `src/lib/editor/extensions/`, each with a `.test.ts`
+  beside it. `source-view.ts` is the "rendered until focused" machinery.
+- `src/typescript/codeblock`: the embedded code editor, the LSP client with
+  a `RemoteLspProvider` hook, and `ToolbarCore`, whose search and file
+  operations come from its host.
+- `src/apps/eznote`: the Tauri app; it opens the notes folder as a `Vault`
+  and hands the editor its services.
 - `src/apps/icanhaz/web`: the browser client of the capability daemon.
   `vfs.ts` is a `VfsInterface` over the `filesystem` capability;
   `lsp-provider.ts` runs a native language server through `process`;
-  `links.ts` drives a novel capability (backlinks); `mac-demo.ts` shows
-  all of it mounted around the editor, including a backlinks panel that
-  belongs in the editor and is there only because the editor has no home
-  for it yet.
+  `links.ts` makes the novel backlinks capability into the editor's
+  `LinkIndex` and `LinkResolver` (`editorLinks`); `mac-demo.ts` mounts the
+  editor's own links panel with it.
 
 Run and test from the package directory:
 
 ```sh
 pnpm dev                 # the demo page
 pnpm test:run            # vitest, browser mode for the editor suites
-pnpm typecheck 2>/dev/null || pnpm exec tsc --noEmit
+pnpm typecheck
+pnpm build               # dist/ — dependents (icanhaz-web, eznote) consume it
 ```
 
-The browser suites can fail cold and pass warm because of dependency
-optimisation; run once more before believing a failure, and see the repo's
-memory notes on `optimizeDeps` if it persists.
+Storage and codeblock are consumed through their `dist/`: rebuild them
+(`pnpm build` in each, or `pnpm dev` in storage for a watch) before the
+editor's suites see a change. On a fresh machine, `pnpm exec playwright
+install chromium` first; icanhaz-web's browser suite also builds and runs
+the daemon, which needs the capability guests built
+(`cargo build --release --target wasm32-wasip2` in each
+`src/apps/icanhaz/capabilities/*`). The browser suites can fail cold and pass
+warm because of dependency optimisation; run once more before believing a
+failure. On this machine five of codeblock's puppeteer e2e cases fail
+(file persistence across switches, rename via the toolbar, three TypeScript
+diagnostics cases) before and after E1 alike; they are unexamined.
 
-## Where to begin: E1, editor foundations
+## Where to continue
 
-E1 is the milestone with no dependency on anything unbuilt, and every
-later one stands on it. In order of value:
-
-1. **Wikilinks** (`[[note]]`, `[[note|text]]`, `[[note#heading]]`): a node
-   with a Markdown round-trip, resolution against the vault, click to open
-   through the filesystem extension's `loadFile`, and an unresolved style.
-   The icanhaz backlinks example already parses them on the daemon side and
-   treats them as primary once the editor does.
-2. **A links index in the editor**: a panel or sidebar section (mount
-   pattern of `extensions/sidebar.ts`) with backlinks and unresolved links
-   for the open note. Build it against an interface, not against icanhaz:
-   `interface LinkIndex { backlinks(note), unresolved(), rename(old, new) }`
-   supplied by the host, so eznote can supply a local index and the icanhaz
-   demo can supply the capability. Then delete the panel in `mac-demo.ts`.
-3. **Front matter** with `id:`, footnotes, callouts, math, images with a
-   binary `VfsInterface` (readFile as bytes; the icanhaz VFS already reads
-   bytes underneath).
-4. **Full-text and link index, command palette, file tree** as the vault
-   package (`@joinezco/vault`) that §6 describes; file management and the
-   search index move out of `codeblock` into it.
-
-Each new node gets a round-trip test (Markdown in, Markdown out, byte for
-byte where the syntax allows) beside its extension, and the index gets a
-rebuild-from-fixture-vault test.
+1. **E2's editor half**, the first thing that makes an agent editing a note
+   safe: a per-file version log with base-version writes (`put(path,
+   base, bytes)` refused when stale, the losing side kept as a conflict
+   copy), and an `edit(path, base, [{range, text}])` path into open
+   documents applied as a transaction that keeps the user's caret (RFC §3).
+   The log is storage's (`.eznote/versions/`, a `VersionedVfs` or a
+   `Vault` method, not the editor's); the `edit()` entry is the editor's,
+   offered to the host as an interface. Its icanhaz half (the overlay
+   membrane and the `clonefile` resolver) is not built and is not this
+   brief's; the editor half needs only the VFS. Editable region embeds
+   (`![[src/lib.rs#L40-L80]]`) follow from it: they write a range of a file.
+2. **What E1 left** (RFC §16): move the OPFS/memfs worker VFS and snapshots
+   from codeblock into storage as its browser implementation; persist the
+   vault's index as a per-device cache keyed by mtime (it rebuilds on
+   open today); tags and a property index; block ids assigned by the
+   editor (`^abc`); highlight `==x==`; diagrams behind a renderer interface
+   as math is.
 
 ## Then
 
-- **E2, versions and workspaces**, is the first milestone that makes an
-  agent editing a note safe: a per-file version log with base-version
-  writes and an `edit()` path into open documents. Its icanhaz half (the
-  overlay membrane and the `clonefile` resolver) is not built; start with
-  the editor half, which needs only the VFS.
 - **E4, capabilities in the editor**: prose AI actions over the daemon's
   `inference` capability (`src/apps/icanhaz/web/src/generated/inference.ts`
   is the client; frames are `[kind][len][payload]`, text deltas then a
-  usage record), and a plugin manifest with `wants`. The iframe bridge and
-  the `eznote:plugin` executor come after.
+  usage record), taken by the editor as an interface from the host, and a
+  plugin manifest with `wants`. The iframe bridge and the `eznote:plugin`
+  executor come after.
 - **E3, comments**, on top of versions; `comments-discussions-rfc.md` and
-  RFC §4 carry the model (URL anchors, footnote threads).
+  RFC §4 carry the model (URL anchors, footnote threads). The pieces are
+  in place: footnote definitions keep their place and their indented
+  continuation, text fragments (`#:~:text=`) resolve (`fragment.ts`), and
+  notes carry ids.
 
 ## Rules that hold across the repo
 
@@ -93,8 +106,9 @@ rebuild-from-fixture-vault test.
   round-trip test for syntax, a browser test for something the daemon is
   involved in). Do not pad a timeout; find the cause.
 - **The editor does not know icanhaz.** It consumes interfaces
-  (`VfsInterface`, `RemoteLspProvider`, and whatever `LinkIndex` becomes);
-  the icanhaz web package implements them. Keep that direction.
+  (`VfsInterface`, `LinkResolver`, `LinkIndex`, `FileSearch`,
+  `FileOperations` from `@joinezco/storage`; `RemoteLspProvider`); the
+  icanhaz web package implements them. Keep that direction.
 - **Commits**: one concern each, a message that says what changed and why,
   ending with the attribution line the repo's guidance gives.
 - **Docs**: when a milestone's status changes, say so in the RFC's §16
