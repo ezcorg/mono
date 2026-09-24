@@ -19,6 +19,7 @@
   "dependencies": {
     "@joinezco/codeblock": "workspace:*",
     "@joinezco/markdown-editor": "workspace:*",
+    "@joinezco/storage": "workspace:*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0"
   },

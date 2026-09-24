@@ -7,8 +7,8 @@ import {
   ensureNotesDir,
   latestNotePath,
   newScratchPath,
-  type HostVfs,
 } from "./lib/tauri-vfs";
+import type { VfsInterface } from "@joinezco/storage";
 import "./App.css";
 
 /** System-wide hotkey that summons the window and opens a fresh scratch note. */
@@ -60,7 +60,7 @@ function App() {
   let editorHost!: HTMLDivElement;
   let titlebarToolbar!: HTMLDivElement;
   let editor: MarkdownEditor | null = null;
-  let fs: HostVfs | null = null;
+  let fs: VfsInterface | null = null;
 
   const stored = (localStorage.getItem("eznote-theme") as ThemeMode | null) ?? "system";
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(stored);

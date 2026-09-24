@@ -11,7 +11,7 @@ import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../r
 import { createLanguageServer } from '../lsps/typescript';
 import { createConnection } from 'vscode-languageserver/browser';
 import { BrowserMessageReader, BrowserMessageWriter } from '@volar/language-server/browser';
-import type { VfsInterface } from '../types';
+import type { VfsInterface } from "@joinezco/storage";
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler);

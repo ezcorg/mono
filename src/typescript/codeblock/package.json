@@ -64,6 +64,7 @@
     "@codemirror/state": "^6.7.4",
     "@codemirror/view": "^6.43.11",
     "@joinezco/memfs": "workspace:*",
+    "@joinezco/storage": "workspace:*",
     "@jsonjoy.com/json-pack": "^1.21.0",
     "@jsonjoy.com/util": "^1.9.0",
     "@lezer/highlight": "^1.2.3",

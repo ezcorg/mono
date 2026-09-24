@@ -5,7 +5,7 @@
  * using a simple request/response protocol with numeric IDs.
  */
 
-import type { VfsInterface } from "../types";
+import type { VfsInterface } from "@joinezco/storage";
 import { FileType } from "@volar/language-service";
 
 export class OpfsVfs implements VfsInterface {

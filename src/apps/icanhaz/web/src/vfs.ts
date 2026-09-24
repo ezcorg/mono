@@ -1,4 +1,4 @@
-//! A `VfsInterface`-shaped filesystem (codeblock's contract) backed by the host's
+//! A `VfsInterface` (`@joinezco/storage`'s contract) backed by the host's
 //! real `wasi:filesystem@0.2` over wRPC — the seam that lets the markdown-editor /
 //! codeblock edit host files remotely, gated + scoped by a NoCap grant.
 //!
@@ -6,9 +6,6 @@
 //! confines it to the grant's subtree — the mediating policy), then every method
 //! rides the generated `wasi:filesystem` bindings. Path-only ops (`stat`/`exists`/
 //! `unlink`/`mkdir`) use the `*-at` methods, so they open no descriptor.
-//!
-//! Structurally matches codeblock's `VfsInterface` (kept dependency-free here on
-//! purpose — no `@volar`/codeblock import; the editor consumes it structurally).
 //!
 //! DESCRIPTOR LIFETIME: `readFile`/`writeFile`/`readDir` open a per-op descriptor
 //! (and `readDir` a directory-entry-stream). These are guest-exported resources the
@@ -24,21 +21,7 @@ import * as filesystem from "./generated/filesystem";
 import * as fs from "./generated/wasi-filesystem";
 import { open as watchOpen, watcherWatch } from "./generated/watch";
 import { drop as dropResource } from "./generated/resources";
-
-/** `@volar/language-service` FileType values (Unknown/File/Directory/SymbolicLink). */
-export type FileType = 0 | 1 | 2 | 64;
-
-/** Mirrors codeblock's `VfsInterface` (src/types.ts) — consumed structurally. */
-export interface VfsLike {
-    readFile(path: string): Promise<string>;
-    writeFile(path: string, data: string): Promise<void>;
-    watch(path: string, options: { signal: AbortSignal }): AsyncGenerator<{ eventType: "rename" | "change"; filename: string }>;
-    mkdir(path: string, options: { recursive: boolean }): Promise<void>;
-    readDir(path: string): Promise<[string, FileType][]>;
-    exists(path: string): Promise<boolean>;
-    stat(path: string): Promise<unknown | undefined>;
-    unlink(path: string): Promise<void>;
-}
+import { FileType, type VfsInterface } from "@joinezco/storage";
 
 const td = new TextDecoder();
 const te = new TextEncoder();
@@ -47,7 +30,13 @@ const te = new TextEncoder();
 const rel = (p: string): string => p.replace(/^\/+/, "") || ".";
 
 const fileType = (t: fs.DescriptorType): FileType =>
-    t === "directory" ? 2 : t === "symbolic-link" ? 64 : t === "regular-file" ? 1 : 0;
+    t === "directory"
+        ? FileType.Directory
+        : t === "symbolic-link"
+          ? FileType.SymbolicLink
+          : t === "regular-file"
+            ? FileType.File
+            : FileType.Unknown;
 
 const toDate = (d: fs.Datetime | undefined): Date | undefined =>
     d ? new Date(Number(d.seconds) * 1000 + Math.floor(d.nanoseconds / 1e6)) : undefined;
@@ -77,7 +66,7 @@ async function dropHandle(t: Transport, handle: Uint8Array): Promise<void> {
  * Mount a NoCap filesystem grant and present it as a `VfsInterface`. Throws if the
  * grant is refused at the consent gate.
  */
-export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLike> {
+export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsInterface> {
     const mounted = await filesystem.open(t, grant);
     if (mounted.tag !== "ok") throw new Error(`filesystem mount denied: ${mounted.val}`);
     const root = mounted.val; // the grant-scoped root descriptor (an opaque handle)

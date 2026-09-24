@@ -1,11 +1,11 @@
 /**
  * Host-filesystem adapter for `@joinezco/markdown-editor`.
  *
- * The editor (and its file-search toolbar) talk to storage through the
- * `VfsInterface` shape from `@joinezco/codeblock` — `readFile` / `writeFile` /
- * `readDir` / `stat` / … . This module implements that shape on top of Tauri's
- * `@tauri-apps/plugin-fs`, so notes live as real files on the host disk under
- * `~/Documents/eznote/`.
+ * The editor (and its file-search toolbar) talk to storage through
+ * `@joinezco/storage`'s `VfsInterface` — `readFile` / `writeFile` /
+ * `readDir` / `stat` / … . This module implements that interface on top of
+ * Tauri's `@tauri-apps/plugin-fs`, so notes live as real files on the host
+ * disk under `~/Documents/eznote/`.
  *
  * Every path the editor hands over — bare note names (`Untitled-….md`),
  * `.`/empty, or a rooted path like `/` or `/.codeblock/index.json` — is
@@ -25,46 +25,12 @@ import {
     watch as fsWatch,
 } from '@tauri-apps/plugin-fs'
 import { documentDir, join } from '@tauri-apps/api/path'
-
-// vscode/`@volar/language-service` FileType values, inlined so the adapter
-// doesn't pull a dependency in just for an enum.
-const FILE = 1
-const DIRECTORY = 2
-const SYMLINK = 64
-
-export interface HostFileInfo {
-    name: string
-    size: number
-    mtime: Date | null
-    atime: Date | null
-    ctime: Date | null
-    type: number
-}
-
-/**
- * The subset of `@joinezco/codeblock`'s `VfsInterface` the editor + toolbar
- * use. Declared locally (rather than importing the package just for a type) so
- * the adapter stays dependency-light; it still structurally satisfies the
- * library's `fs` option at the `createEditor` call site.
- */
-export interface HostVfs {
-    readFile: (path: string) => Promise<string>
-    writeFile: (path: string, data: string) => Promise<void>
-    watch: (
-        path: string,
-        options: { signal: AbortSignal },
-    ) => AsyncGenerator<{ eventType: 'rename' | 'change'; filename: string }>
-    mkdir: (path: string, options: { recursive: boolean }) => Promise<void>
-    readDir: (path: string) => Promise<[string, number][]>
-    exists: (path: string) => Promise<boolean>
-    stat: (path: string) => Promise<HostFileInfo | null>
-    unlink: (path: string) => Promise<void>
-}
+import { FileType, type VfsInterface, type WatchEvent } from '@joinezco/storage'
 
 const basename = (p: string): string => p.split(/[\\/]/).pop() ?? p
 
 /** Create a host-filesystem VFS rooted at the absolute directory `base`. */
-export function createTauriVfs(base: string): HostVfs {
+export function createTauriVfs(base: string): VfsInterface {
     // Everything resolves under `base`: strip any leading `/` or `./`
     // segments (the editor's VFS convention roots the workspace at `/`), and
     // `.`/empty means the dir itself. A caller that already has the absolute
@@ -98,12 +64,12 @@ export function createTauriVfs(base: string): HostVfs {
 
         async readDir(path) {
             const entries = await fsReadDir(resolve(path))
-            return entries.map((e): [string, number] => {
+            return entries.map((e): [string, FileType] => {
                 const type = e.isDirectory
-                    ? DIRECTORY
+                    ? FileType.Directory
                     : e.isSymlink
-                        ? SYMLINK
-                        : FILE
+                        ? FileType.SymbolicLink
+                        : FileType.File
                 return [e.name, type]
             })
         },
@@ -112,10 +78,10 @@ export function createTauriVfs(base: string): HostVfs {
             try {
                 const info = await fsStat(resolve(path))
                 const type = info.isDirectory
-                    ? DIRECTORY
+                    ? FileType.Directory
                     : info.isSymlink
-                        ? SYMLINK
-                        : FILE
+                        ? FileType.SymbolicLink
+                        : FileType.File
                 return {
                     name: path,
                     size: info.size,
@@ -135,9 +101,9 @@ export function createTauriVfs(base: string): HostVfs {
         // the editor's autosave doesn't depend on it, and the toolbar tolerates
         // its absence.
         async *watch(path, { signal }) {
-            const queue: { eventType: 'rename' | 'change'; filename: string }[] = []
+            const queue: WatchEvent[] = []
             let wake: (() => void) | null = null
-            const push = (e: { eventType: 'rename' | 'change'; filename: string }) => {
+            const push = (e: WatchEvent) => {
                 queue.push(e)
                 wake?.()
                 wake = null
@@ -206,15 +172,15 @@ export function newScratchPath(): string {
 }
 
 /** Most-recently-modified `*.md` in the notes dir, or null if there are none. */
-export async function latestNotePath(fs: HostVfs): Promise<string | null> {
-    let entries: [string, number][]
+export async function latestNotePath(fs: VfsInterface): Promise<string | null> {
+    let entries: [string, FileType][]
     try {
         entries = await fs.readDir('.')
     } catch {
         return null
     }
     const md = entries.filter(
-        ([name, type]) => type === FILE && name.toLowerCase().endsWith('.md'),
+        ([name, type]) => type === FileType.File && name.toLowerCase().endsWith('.md'),
     )
     if (!md.length) return null
 

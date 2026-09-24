@@ -1,4 +1,4 @@
-import { VfsInterface } from "../types";
+import { statTime, type VfsInterface } from "@joinezco/storage";
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from "../rpc/serde";
 import { FileSystem, FileType } from '@volar/language-service';
@@ -77,7 +77,7 @@ export namespace Vfs {
                         atime: stat.atime,
                         mtime: stat.mtime,
                         ctime: stat.ctime,
-                        size: stat.size,
+                        size: Number(stat.size),
                         type,
                     };
                 } catch (err) {
@@ -237,20 +237,6 @@ export namespace Vfs {
         console.debug('Filesystem worker mounted');
         return vfs;
     }
-
-    export async function* walk(fs: VfsInterface, path: string): AsyncIterable<string> {
-        const files = await fs.readDir(path);
-
-        for (const [filename, type] of files) {
-            const joined = `${path === '/' ? '' : path}/${filename}`
-
-            if (type === FileType.Directory) {
-                yield* walk(fs, joined);
-            } else {
-                yield joined;
-            }
-        }
-    }
 }
 
 export class VolarFs implements FileSystem {
@@ -357,7 +343,10 @@ export class VolarFs implements FileSystem {
     stat(uri: URI) {
         const cached = this.#statCache.get(uri.path);
         if (cached) return cached;
-        return this.#fs.stat(uri.path);
+        // Volar wants numeric times; a VFS may report `Date`s (memfs, Node).
+        return Promise.resolve(this.#fs.stat(uri.path)).then((s) => s
+            ? { type: s.type, size: s.size, ctime: statTime(s.ctime), mtime: statTime(s.mtime) }
+            : undefined);
     }
     readDirectory(uri: URI) {
         // Only use dirCache for node_modules subtree (stable, preloaded).

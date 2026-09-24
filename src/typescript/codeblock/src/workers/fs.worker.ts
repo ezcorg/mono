@@ -10,7 +10,7 @@
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../rpc/serde';
 import { Vfs } from "../utils/fs";
-import type { VfsInterface } from "../types";
+import type { VfsInterface } from "@joinezco/storage";
 import type { MountArgs } from "../types";
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler);

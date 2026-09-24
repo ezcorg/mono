@@ -1,6 +1,5 @@
-import { VfsInterface } from "../types";
+import { walk, type VfsInterface } from "@joinezco/storage";
 import MiniSearch, { Options, SearchResult } from 'minisearch';
-import { Vfs } from "./fs";
 
 export const validFields = ['path', 'basename', 'dirname', 'extension'] as const
 export type IndexFields = typeof validFields[number][]
@@ -121,7 +120,7 @@ export class SearchIndex {
     static async build(fs: VfsInterface, { filter = defaultFilter, ...rest }: SearchIndexOptions) {
         const index = new MiniSearch({ ...rest })
 
-        for await (const path of Vfs.walk(fs, '/')) {
+        for await (const path of walk(fs, '/')) {
             if (!filter(path)) {
                 continue;
             }

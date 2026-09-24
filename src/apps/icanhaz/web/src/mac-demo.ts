@@ -25,12 +25,7 @@ import { add as addComponent } from "./generated/components";
 import { openLinks, requestLinksGrant, type LinksIndex } from "./links";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
-import {
-    createEditor,
-    type MarkdownEditor,
-    type FileSystemOptions,
-    type ToolbarOptions,
-} from "@joinezco/markdown-editor";
+import { createEditor, type MarkdownEditor } from "@joinezco/markdown-editor";
 
 export interface MacDemoOptions {
     /** Where to mount the whole page (usually `#root`). */
@@ -193,14 +188,12 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
 
         editor = createEditor({
             element: editorMount,
-            // `VfsLike` structurally mirrors codeblock's `VfsInterface` (only
-            // `stat`'s return is deliberately wider) — assert it to the options.
-            fs: { fs, filepath, autoSave: true } as FileSystemOptions,
+            fs: { fs, filepath, autoSave: true },
             // The file-search toolbar mounts into the window titlebar (in place
             // of a title) and stays visible there (not the default floating pill);
             // `.mac-titlebar-search` rethemes it into a slim titlebar field.
             toolbar: {
-                fs: fs as unknown as ToolbarOptions["fs"],
+                fs,
                 filepath,
                 mount: () => toolbarMount,
                 autoHide: false,

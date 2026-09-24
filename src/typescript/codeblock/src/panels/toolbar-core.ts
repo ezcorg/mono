@@ -10,7 +10,7 @@
 import { HighlightedSearch, SearchIndex } from "../utils/search";
 import { extOrLanguageToLanguageId } from "../lsps";
 import { Seti } from "@m234/nerd-fonts/fs";
-import type { VfsInterface } from "../types";
+import type { VfsInterface } from "@joinezco/storage";
 import { StyleModule } from "style-mod";
 import { vscodeStyleMod } from "../themes/vscode";
 

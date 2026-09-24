@@ -4,7 +4,7 @@ import { wrpcFilesystem } from "./vfs";
 import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
-import { createEditor, type FileSystemOptions } from "@joinezco/markdown-editor";
+import { createEditor } from "@joinezco/markdown-editor";
 
 // The 'rust branch' through the **markdown-editor**: opening a `.rs` file renders it
 // as a standalone codeblock, and that codeblock must drive the host's rust-analyzer
@@ -44,7 +44,7 @@ describe("rust-analyzer for a .rs file in the markdown-editor (end-to-end)", () 
         // the fix it passes the filepath through, so the codeblock lights up LSP.
         const editor = createEditor({
             element: el,
-            fs: { fs, filepath: "src/main.rs", autoSave: true } as FileSystemOptions,
+            fs: { fs, filepath: "src/main.rs", autoSave: true },
         });
 
         // Wait for a CodeMirror lint marker — rust-analyzer → the codeblock's LSP client →

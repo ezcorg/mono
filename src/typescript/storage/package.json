@@ -1,0 +1,32 @@
+{
+  "name": "@joinezco/storage",
+  "version": "0.0.1",
+  "description": "Folders of documents behind environment-agnostic interfaces: the VFS contract, its implementations, and the indexes derived from a vault (links, full text).",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.5",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

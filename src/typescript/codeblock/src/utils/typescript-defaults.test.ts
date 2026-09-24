@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { getRequiredLibs, getLibFieldForTarget, prefillTypescriptDefaults, resetPrefillState } from './typescript-defaults';
-import { VfsInterface } from '../types';
+import type { VfsInterface } from "@joinezco/storage";
 
 function createMockFs(): VfsInterface {
     const files = new Map<string, string>();

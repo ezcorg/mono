@@ -56,6 +56,9 @@ importers:
       '@joinezco/markdown-editor':
         specifier: workspace:*
         version: link:../../typescript/markdown-editor
+      '@joinezco/storage':
+        specifier: workspace:*
+        version: link:../../typescript/storage
       astro:
         specifier: ^5.18.2
         version: 5.18.2(@types/node@26.5.0)(jiti@2.7.0)(lightningcss@1.33.0)(rollup@4.63.1)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(typescript@5.9.3)(yaml@2.9.0)
@@ -145,6 +148,9 @@ importers:
       '@joinezco/markdown-editor':
         specifier: workspace:*
         version: link:../../typescript/markdown-editor
+      '@joinezco/storage':
+        specifier: workspace:*
+        version: link:../../typescript/storage
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -207,6 +213,9 @@ importers:
       '@joinezco/markdown-editor':
         specifier: workspace:*
         version: link:../../../typescript/markdown-editor
+      '@joinezco/storage':
+        specifier: workspace:*
+        version: link:../../../typescript/storage
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -310,6 +319,9 @@ importers:
       '@joinezco/memfs':
         specifier: workspace:*
         version: link:../memfs
+      '@joinezco/storage':
+        specifier: workspace:*
+        version: link:../storage
       '@jsonjoy.com/json-pack':
         specifier: ^1.21.0
         version: 1.21.0(tslib@2.8.1)
@@ -447,6 +459,9 @@ importers:
       '@joinezco/codeblock':
         specifier: workspace:*
         version: link:../codeblock
+      '@joinezco/storage':
+        specifier: workspace:*
+        version: link:../storage
       '@tiptap/core':
         specifier: ^3.31.3
         version: 3.31.3(@tiptap/pm@3.31.3)
@@ -745,6 +760,18 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  src/typescript/storage:
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.5
+        version: 25.9.5
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@25.9.5)(@vitest/browser-playwright@4.1.11)(@vitest/ui@4.1.11)(happy-dom@20.14.0)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.10.5(@types/node@25.9.5)(typescript@5.9.3))(vite@8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
 
   src/typescript/tiptap-markdown:
     dependencies:

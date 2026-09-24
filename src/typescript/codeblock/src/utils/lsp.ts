@@ -1,4 +1,4 @@
-import { VfsInterface } from "../types";
+import type { VfsInterface } from "@joinezco/storage";
 import * as Comlink from 'comlink';
 import { LSPClient, languageServerExtensions, type Transport } from "@codemirror/lsp-client";
 import { Extension } from "@codemirror/state";

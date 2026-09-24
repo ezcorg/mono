@@ -1,5 +1,5 @@
 import { create as createTypeScriptServicePlugins } from 'volar-service-typescript'
-import { VfsInterface } from '../types';
+import type { VfsInterface } from "@joinezco/storage";
 import { Connection, createServerBase, createTypeScriptProject } from '@volar/language-server/browser';
 import ts from 'typescript';
 import { VolarFs } from '../utils/fs';

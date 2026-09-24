@@ -12,6 +12,7 @@
   "dependencies": {
     "@joinezco/codeblock": "workspace:*",
     "@joinezco/markdown-editor": "workspace:*",
+    "@joinezco/storage": "workspace:*",
     "astro": "^5.18.2",
     "three": "0.170.0"
   },

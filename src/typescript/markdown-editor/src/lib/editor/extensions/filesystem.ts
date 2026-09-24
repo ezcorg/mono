@@ -1,11 +1,11 @@
 import { Editor, Extension } from '@tiptap/core'
 import {
-    VfsInterface,
     extOrLanguageToLanguageId,
     ExtensionOrLanguage,
     codeblock,
     basicSetup,
 } from '@joinezco/codeblock'
+import type { VfsInterface } from '@joinezco/storage'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 

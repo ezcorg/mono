@@ -8,7 +8,7 @@ import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { VfsInterface } from "./types";
+import type { VfsInterface } from "@joinezco/storage";
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { lintKeymap, setDiagnostics } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";

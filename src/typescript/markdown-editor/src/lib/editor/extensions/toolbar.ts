@@ -11,7 +11,8 @@
  */
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { ToolbarCore, type ToolbarHost, SearchIndex, type VfsInterface } from '@joinezco/codeblock'
+import { ToolbarCore, type ToolbarHost, SearchIndex } from '@joinezco/codeblock'
+import type { VfsInterface } from '@joinezco/storage'
 
 /** Where the toolbar DOM should be placed. */
 export type ToolbarMount =
