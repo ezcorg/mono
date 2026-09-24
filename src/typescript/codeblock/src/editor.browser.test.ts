@@ -108,6 +108,34 @@ describe('Files in a code block', () => {
         expect(await store.readFile('Plan.md')).toBe('# Plan');
     });
 
+    it('act on what is typed, not an earlier keystroke’s results, when Enter comes first', async () => {
+        const vault = await Vault.open(memoryVfs({ 'a.txt': 'A', 'plan.md': '# Plan' }), { watch: false });
+        // The search for `plan` answers after Enter is pressed.
+        const search = {
+            search: async (query: string, options?: { limit?: number }) => {
+                if (query === 'plan') await new Promise((r) => setTimeout(r, 300));
+                return vault.search.search(query, options);
+            },
+        };
+        const parent = document.createElement('div');
+        document.body.append(parent);
+        const view = createCodeblock({ parent, fs: vault.fs, filepath: 'a.txt', toolbar: true, search, files: vault.files });
+        views.push(view);
+        await loaded(view, 'a.txt');
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        const type = (text: string) => {
+            input.value = text;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        input.focus();
+        type('x');
+        await until(() => [...view.dom.querySelectorAll('.cm-command-result')].some((r) => r.textContent?.includes('"x"')));
+        type('plan');
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await loaded(view, 'plan.md');
+        expect(await vault.fs.exists('x')).toBe(false);
+    });
+
     it('show a file that is not text instead of editing it, and never write it', async () => {
         // A PDF's head: text, then bytes that are not UTF-8, and NULs.
         const pdf = new Uint8Array([...new TextEncoder().encode('%PDF-1.7\n'), 0xe2, 0xe3, 0xcf, 0xd3, 0, 0, 10, 0xff]);

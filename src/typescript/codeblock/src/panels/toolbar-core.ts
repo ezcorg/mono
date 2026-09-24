@@ -432,6 +432,25 @@ export class ToolbarCore {
     private fileOps: FileOperations;
     /** Bumped per query, so a slow search cannot overwrite a newer one. */
     private searchToken = 0;
+    /** The search for what is typed now, while it runs: Enter waits for it,
+     *  so it acts on these results and not an earlier keystroke's. */
+    private searching: Promise<void> | null = null;
+
+    /** Run `search` as the current search, known to Enter while it runs. */
+    private async asCurrentSearch(search: () => Promise<void>): Promise<void> {
+        const running = search();
+        const tracked: Promise<void> = running.catch(() => {}).finally(() => {
+            if (this.searching === tracked) this.searching = null;
+        });
+        this.searching = tracked;
+        return running;
+    }
+
+    /** Forget any search still running: its results would reopen the list. */
+    private dropSearch() {
+        this.searchToken++;
+        this.searching = null;
+    }
     private selectedIndex = 0;
     private namingMode: NamingMode = { active: false, type: 'create-file', originalQuery: '' };
     private browseMode: BrowseMode = { active: false, currentPath: '/', filter: '' };
@@ -908,6 +927,7 @@ export class ToolbarCore {
     // Result selection
     // -----------------------------------------------------------------------
     private selectResult(result: SearchResult) {
+        this.dropSearch();
         if (isSettingsEntry(result)) {
             this.handleSettingsEntry(result);
         } else if (isBrowseEntry(result)) {
@@ -1360,30 +1380,32 @@ export class ToolbarCore {
             document.addEventListener("click", this.handleClickOutsideBound);
             return;
         }
-        let results: SearchResult[] = [];
-        if (query.trim()) {
-            // Even on the "untouched" path (user just clicked into the
-            // input without typing, so input.value is the current file
-            // path), we still need to run the FS search so
-            // `createCommandResults` can detect that the query matches
-            // an existing file. Without this, `hasExactFileMatch` is
-            // always false on first open and the dropdown shows
-            // nonsensical "Create new file 'X'" / "Rename to 'X'"
-            // entries for the file the user already has open.
-            const searchResults: SearchResult[] = await this.searchFiles(query, 100);
-            if (token !== this.searchToken) return;
-            if (!this.inputTouched) {
-                results = this.createCommandResults(query, searchResults);
+        await this.asCurrentSearch(async () => {
+            let results: SearchResult[] = [];
+            if (query.trim()) {
+                // Even on the "untouched" path (user just clicked into the
+                // input without typing, so input.value is the current file
+                // path), we still need to run the FS search so
+                // `createCommandResults` can detect that the query matches
+                // an existing file. Without this, `hasExactFileMatch` is
+                // always false on first open and the dropdown shows
+                // nonsensical "Create new file 'X'" / "Rename to 'X'"
+                // entries for the file the user already has open.
+                const searchResults: SearchResult[] = await this.searchFiles(query, 100);
+                if (token !== this.searchToken) return;
+                if (!this.inputTouched) {
+                    results = this.createCommandResults(query, searchResults);
+                } else {
+                    const commands = this.createCommandResults(query, searchResults);
+                    const { intent } = this.detectIntent(query, searchResults);
+                    results = this.prioritizeResults(searchResults, commands, intent);
+                }
             } else {
-                const commands = this.createCommandResults(query, searchResults);
-                const { intent } = this.detectIntent(query, searchResults);
-                results = this.prioritizeResults(searchResults, commands, intent);
+                results = this.createCommandResults('', []);
             }
-        } else {
-            results = this.createCommandResults('', []);
-        }
-        this.setResults(results);
-        document.addEventListener("click", this.handleClickOutsideBound);
+            this.setResults(results);
+            document.addEventListener("click", this.handleClickOutsideBound);
+        });
     }
 
     private async onInputChange(event: Event) {
@@ -1427,36 +1449,38 @@ export class ToolbarCore {
             this.setResults(onlyCommands);
             return;
         }
-        let results: SearchResult[] = [];
-        if (query.trim()) {
-            const searchResults: SearchResult[] = await this.searchFiles(query, 200);
-            if (token !== this.searchToken) return;
-            const commands = this.createCommandResults(query, searchResults);
-            const { intent, confidence } = this.detectIntent(query, searchResults);
-            this.lastIntent = intent;
+        await this.asCurrentSearch(async () => {
+            let results: SearchResult[] = [];
+            if (query.trim()) {
+                const searchResults: SearchResult[] = await this.searchFiles(query, 200);
+                if (token !== this.searchToken) return;
+                const commands = this.createCommandResults(query, searchResults);
+                const { intent, confidence } = this.detectIntent(query, searchResults);
+                this.lastIntent = intent;
 
-            // Auto-enter modes for high-confidence structural intents
-            if (confidence >= 0.85) {
-                if (intent === 'browse' && query.endsWith('/')) {
-                    this.enterBrowseMode(query === '/' ? '/' : query.replace(/\/+$/, ''));
-                    return;
+                // Auto-enter modes for high-confidence structural intents
+                if (confidence >= 0.85) {
+                    if (intent === 'browse' && query.endsWith('/')) {
+                        this.enterBrowseMode(query === '/' ? '/' : query.replace(/\/+$/, ''));
+                        return;
+                    }
+                    if (intent === 'settings' && /^settings?\/?$/i.test(query.trim())) {
+                        this.enterSettingsMode();
+                        return;
+                    }
                 }
-                if (intent === 'settings' && /^settings?\/?$/i.test(query.trim())) {
-                    this.enterSettingsMode();
-                    return;
-                }
+
+                results = this.prioritizeResults(searchResults, commands, intent);
+
+                // Schedule AI classification for low-confidence intents
+                this.scheduleAiClassify(query, searchResults, commands, confidence);
+            } else {
+                this.lastIntent = 'unknown';
+                results = this.createCommandResults('', []);
+                this.cancelAiClassify();
             }
-
-            results = this.prioritizeResults(searchResults, commands, intent);
-
-            // Schedule AI classification for low-confidence intents
-            this.scheduleAiClassify(query, searchResults, commands, confidence);
-        } else {
-            this.lastIntent = 'unknown';
-            results = this.createCommandResults('', []);
-            this.cancelAiClassify();
-        }
-        this.setResults(results);
+            this.setResults(results);
+        });
     }
 
     /**
@@ -1570,19 +1594,29 @@ export class ToolbarCore {
         } else if (event.key === "ArrowUp") {
             event.preventDefault();
             if (this.visibleItems.length) { this.selectedIndex = mod(this.selectedIndex - 1, this.visibleItems.length); this.highlightSelection(true); }
-        } else if (event.key === "Enter" && this.visibleItems.length && this.selectedIndex >= 0) {
+        } else if (event.key === "Enter" && (this.searching || (this.visibleItems.length && this.selectedIndex >= 0))) {
             event.preventDefault();
-            const item = this.visibleItems[this.selectedIndex];
-            if (item === SHOW_MORE_SENTINEL) this.expandResults();
-            else this.selectResult(item);
+            void this.enterSelected();
         } else if (event.key === "Delete" && this.visibleItems.length && this.selectedIndex >= 0) {
             const item = this.visibleItems[this.selectedIndex];
             if (item !== SHOW_MORE_SENTINEL && !isCommandResult(item) && !isBrowseEntry(item) && !isSettingsEntry(item)) {
                 event.preventDefault(); this.enterDeleteMode(item.id);
             }
         } else if (event.key === "Escape") {
-            event.preventDefault(); this.setResults([]); this.resetInputToCurrentFile(); this.input.blur();
+            event.preventDefault(); this.dropSearch(); this.setResults([]); this.resetInputToCurrentFile(); this.input.blur();
         }
+    }
+
+    /** Enter on the selected result of what is typed now: while its search
+     *  runs, the list shown belongs to an earlier keystroke. */
+    private async enterSelected() {
+        const query = this.input.value;
+        while (this.searching) await this.searching;
+        if (this.input.value !== query) return;
+        if (!this.visibleItems.length || this.selectedIndex < 0) return;
+        const item = this.visibleItems[this.selectedIndex];
+        if (item === SHOW_MORE_SENTINEL) this.expandResults();
+        else this.selectResult(item);
     }
 
     // -----------------------------------------------------------------------
