@@ -4,17 +4,18 @@ import {
     ExtensionOrLanguage,
     codeblock,
     basicSetup,
+    persistFile,
 } from '@joinezco/codeblock'
-import { dirname, extname, type VfsInterface } from '@joinezco/storage'
-import { IMAGE_EXTENSIONS } from './assets'
+import { dirname, type VfsInterface } from '@joinezco/storage'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 
 // File extensions that open as prose (the normal Markdown editor). Everything
 // else opens in a standalone code editor (a @joinezco/codeblock instance that
-// swaps in for the rich-text editor) and round-trips its raw bytes back to
-// disk, instead of being parsed as Markdown (which would mangle code — `#` →
-// headings, ``` fences, etc.).
+// swaps in for the rich-text editor), which reads the file itself, shows an
+// image or a file that is not text rather than decoding it, and writes the
+// file back only when it is edited, instead of it being parsed as Markdown
+// (which would mangle code — `#` → headings, ``` fences, etc.).
 const PROSE_EXTENSIONS = new Set(['md', 'markdown', 'mdx', 'txt', 'text'])
 
 /** True for Markdown / plain-text files (and extensionless paths). */
@@ -112,8 +113,6 @@ export interface FileSystemStorage {
     /** Host element the code editor mounts into (a sibling of the hidden
      *  ProseMirror editable). */
     codeHost: HTMLElement | null
-    /** Pending debounced-save handle for the code editor. */
-    codeSaveTimeout: ReturnType<typeof setTimeout> | null
     /**
      * Persist the current document to the current filepath *now* if (and only
      * if) a debounced save is pending, cancelling that pending save. No-ops
@@ -165,7 +164,6 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             loadingFile: false,
             codeView: null,
             codeHost: null,
-            codeSaveTimeout: null,
             // Real implementations are installed in onCreate (they need the
             // live editor).
             flushPendingSave: async () => {},
@@ -209,10 +207,6 @@ export const FileSystem = Extension.create<FileSystemOptions>({
 
         // Tear down the swapped-in code editor and restore the rich-text editor.
         const hideCodeEditor = () => {
-            if (storage.codeSaveTimeout !== null) {
-                clearTimeout(storage.codeSaveTimeout)
-                storage.codeSaveTimeout = null
-            }
             storage.codeView?.destroy()
             storage.codeView = null
             storage.codeHost?.remove()
@@ -220,19 +214,6 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             const editable = editableEl()
             editable.style.display = ''
             editable.closest('.ezco-mde')?.classList.remove('ezco-mde--code-file')
-        }
-
-        const scheduleCodeSave = () => {
-            if (storage.loadingFile) return
-            const { fs, autoSave } = storage.options
-            if (!fs || !autoSave) return
-            if (storage.codeSaveTimeout !== null) clearTimeout(storage.codeSaveTimeout)
-            storage.codeSaveTimeout = setTimeout(() => {
-                storage.codeSaveTimeout = null
-                const { fs: currentFs, filepath: currentPath } = storage.options
-                if (!currentFs || !currentPath || !storage.codeView) return
-                void save(currentFs, currentPath, storage.codeView.state.doc.toString())
-            }, 500)
         }
 
         // Swap the rich-text editor out for a standalone code editor. The
@@ -283,27 +264,20 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                     doc: content,
                     extensions: [
                         basicSetup,
-                        // The codeblock owns no persistence of its own here; we
-                        // debounce-save its raw text back to the file ourselves.
-                        EditorView.updateListener.of((update) => {
-                            if (update.docChanged) scheduleCodeSave()
-                        }),
                         codeblock({
                             content,
                             fs,
-                            // Give the codeblock the real path so it drives a per-file
-                            // language server (the codeblock's `handleOpen` wires LSP only
-                            // when it has a filepath): a remote `RemoteLspProvider` (e.g.
-                            // rust-analyzer over wRPC) is requested for this file, and the
-                            // codeblock's save emits `didSave` → on-save diagnostics. We
-                            // still own persistence (`scheduleCodeSave`, flushed on
-                            // navigate) — the codeblock's own write is a harmless same-bytes
-                            // duplicate, but its LSP wiring is what a bare content view lacks.
+                            // The codeblock owns the file: it reads it (an image or
+                            // bytes that are not text are shown, not decoded), wires
+                            // its language server (a `RemoteLspProvider` such as
+                            // rust-analyzer over wRPC is requested per file), and
+                            // writes it back only when edited, with `didSave` for
+                            // on-save diagnostics. Autosave follows this editor's.
                             filepath,
                             language: language as ExtensionOrLanguage,
                             toolbar: false,
                             dark,
-                            settings,
+                            settings: { ...settings, autosave: !!storage.options.autoSave },
                         }),
                     ],
                 }),
@@ -369,15 +343,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                     void save(fs, filepath, getMarkdown(editor))
                 }
             }
-            // Code editor's pending save.
-            if (storage.codeSaveTimeout !== null) {
-                clearTimeout(storage.codeSaveTimeout)
-                storage.codeSaveTimeout = null
-                if (fs && filepath && autoSave && storage.codeView) {
-                    void save(fs, filepath, storage.codeView.state.doc.toString())
-                }
-            }
-            return writing
+            // The code editor's, which it owns.
+            const code = storage.codeView && autoSave ? persistFile(storage.codeView) : undefined
+            return code ? Promise.all([writing, code]).then(() => {}) : writing
         }
         storage.flushPendingSave = flushPendingSave
 
@@ -405,9 +373,9 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })
                 await fs.writeFile(path, '')
             }
-            // 2. Read the new file (may reject — let the caller handle it). An
-            //    image is not text: the code view previews it from its bytes.
-            const content = IMAGE_EXTENSIONS.has(extname(path)) ? '' : await fs.readFile(path)
+            // 2. Read the new file (may reject — let the caller handle it). A
+            //    file that is not prose is read by the code view itself.
+            const content = isProseFile(path) ? await fs.readFile(path) : ''
             // 3. Retarget autosave at the new file *before* swapping content,
             //    and load without scheduling a save.
             storage.options.filepath = path
@@ -417,7 +385,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // Initial load (also a non-editing load → no spurious save).
         const { fs, filepath } = storage.options
         if (fs && filepath) {
-            fs.readFile(filepath)
+            ;(isProseFile(filepath) ? fs.readFile(filepath) : Promise.resolve(''))
                 .then(content => loadContent(content))
                 .catch(error => {
                     console.warn(`[Filesystem] Failed to load content from ${filepath}:`, error)
@@ -453,7 +421,6 @@ export const FileSystem = Extension.create<FileSystemOptions>({
     onDestroy() {
         const storage = this.storage as FileSystemStorage
         if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
-        if (storage.codeSaveTimeout !== null) clearTimeout(storage.codeSaveTimeout)
         storage.codeView?.destroy()
         storage.codeHost?.remove()
     },

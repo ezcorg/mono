@@ -51,6 +51,24 @@ describe('Files in a code block', () => {
         expect([...(await fs.readBytes('pic.png'))]).toEqual([...PNG]);
     });
 
+    it('show a file that is not text instead of editing it, and never write it', async () => {
+        // A PDF's head: text, then bytes that are not UTF-8, and NULs.
+        const pdf = new Uint8Array([...new TextEncoder().encode('%PDF-1.7\n'), 0xe2, 0xe3, 0xcf, 0xd3, 0, 0, 10, 0xff]);
+        const fs = memoryVfs({ 'doc.pdf': pdf, 'a.txt': 'text' });
+        const view = mount(fs, 'a.txt');
+        await loaded(view, 'a.txt');
+        open(view, 'doc.pdf');
+        await loaded(view, 'doc.pdf');
+        expect(view.state.readOnly).toBe(true);
+        expect(view.dom.querySelector('.cm-binary-preview')?.textContent).toMatch(/doc\.pdf.*not text/);
+        await autosave();
+        open(view, 'a.txt');
+        await loaded(view, 'a.txt');
+        await autosave();
+        expect([...(await fs.readBytes('doc.pdf'))]).toEqual([...pdf]);
+        expect(view.dom.querySelector('.cm-binary-preview')).toBeNull();
+    });
+
     it('are written when edited, and only then (an untouched file keeps its CRLFs)', async () => {
         const fs = memoryVfs({ 'crlf.txt': 'one\r\ntwo\r\n', 'b.txt': 'b' });
         const view = mount(fs, 'crlf.txt');

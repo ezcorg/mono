@@ -132,9 +132,9 @@ export const foldGutterCompartment = new Compartment();
 
 // Effects + Fields for async file handling
 export const openFileEffect = StateEffect.define<{ path: string; skipSave?: boolean }>();
-/** A file's contents arrived. `image` marks a raster image: previewed, never
- *  edited or written. */
-export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null; image?: boolean }>();
+/** A file's contents arrived. `preview` marks a file shown rather than
+ *  edited (an image, or bytes that are not text): read-only, never written. */
+export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null; preview?: boolean }>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
@@ -148,36 +148,57 @@ export const currentFileField = StateField.define<{
     content: string;
     language: ExtensionOrLanguage | null;
     loading: boolean;
-    /** A raster image, shown as a preview: read-only, never written. */
-    image: boolean;
+    /** Shown rather than edited (an image, or bytes that are not text):
+     *  read-only, never written. */
+    preview: boolean;
 }>({
     create(state) {
         const cfg = state.facet(CodeblockFacet);
         if (cfg.filepath) {
             // Seed an initial load; the plugin will react after init without dispatching during construction
-            return { path: cfg.filepath, content: "", language: null, loading: true, image: false };
+            return { path: cfg.filepath, content: "", language: null, loading: true, preview: false };
         }
         // No initial file; start with provided content
-        return { path: null, content: cfg.content || "", language: cfg.language || null, loading: false, image: false };
+        return { path: null, content: cfg.content || "", language: cfg.language || null, loading: false, preview: false };
     },
     update(value, tr) {
         for (let e of tr.effects) {
             if (e.is(openFileEffect)) {
-                return { path: e.value.path, content: "", language: null, loading: true, image: false };
+                return { path: e.value.path, content: "", language: null, loading: true, preview: false };
             }
             if (e.is(fileLoadedEffect)) {
-                return { path: e.value.path, content: e.value.content, language: e.value.language, loading: false, image: !!e.value.image };
+                return { path: e.value.path, content: e.value.content, language: e.value.language, loading: false, preview: !!e.value.preview };
             }
         }
         return value;
     }
 });
 
-/** Nothing can be typed into a file that is still loading, or into an image. */
+/** Nothing can be typed into a file that is still loading, or one only shown. */
 const fileReadOnly = EditorState.readOnly.compute([currentFileField], (state) => {
     const file = state.field(currentFileField);
-    return file.loading || file.image;
+    return file.loading || file.preview;
 });
+
+/** `bytes` as UTF-8 text, or null when they are not text (a NUL early on,
+ *  or a sequence that is not UTF-8): such a file is shown, not edited, since
+ *  decoding it would change it and saving would write the change back. */
+export function textOf(bytes: Uint8Array): string | null {
+    if (bytes.subarray(0, 8192).includes(0)) return null;
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+        return null;
+    }
+}
+
+const persisters = new WeakMap<EditorView, () => Promise<void>>();
+
+/** Write the file open in `view` now if it has unsaved edits (autosave on or
+ *  off), and resolve once every write of it already started has landed. */
+export function persistFile(view: EditorView): Promise<void> {
+    return persisters.get(view)?.() ?? Promise.resolve();
+}
 
 /** Whether a transaction is the user's (or a command's) edit, as opposed to
  *  a file's contents arriving or another view's save being mirrored. */
@@ -327,30 +348,41 @@ const codeblockView = ViewPlugin.define((view) => {
     // a file with CRLFs) writes nothing.
     let dirty = false;
 
-    // Debounced save
-    const save = debounce(async () => {
-        const fileState = view.state.field(currentFileField);
-        if (fileState.path && !fileState.loading && !fileState.image && dirty) {
-            dirty = false;
-            const content = view.state.doc.toString();
-            // confirm parent exists
-            const parent = dirname(fileState.path);
+    // Writes of the open file, one after another (a later save never lands
+    // before an earlier one), awaitable as a whole by `persistFile`.
+    let writing: Promise<void> = Promise.resolve();
 
+    /** Write the open file's unsaved edits now, if it has any. */
+    const writeNow = (): Promise<void> => {
+        save.cancel();
+        const fileState = view.state.field(currentFileField);
+        if (!fileState.path || fileState.loading || fileState.preview || !dirty) return writing;
+        dirty = false;
+        const path = fileState.path;
+        const content = view.state.doc.toString();
+        writing = writing.then(async () => {
+            // confirm parent exists
+            const parent = dirname(path);
             if (parent && parent !== '.') {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
-            await fs.writeFile(fileState.path, content).catch(console.error)
+            await fs.writeFile(path, content).catch(console.error);
             // The OPEN document is now persisted → send textDocument/didSave. This is what
             // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
             // borrow, and other errors that don't run off the live edit buffer, and which
             // otherwise never update until reload). We write the disk BEFORE didSave so flycheck
             // reads current content. (didChangeWatchedFiles is for OTHER files — see below.)
-            LSP.notifyFileSaved(fileState.path, content);
+            LSP.notifyFileSaved(path, content);
 
             // Notify other views of the same file
-            fileChangeBus.notify(fileState.path, content, view);
-        }
-    }, 500);
+            fileChangeBus.notify(path, content, view);
+        });
+        return writing;
+    };
+
+    // Debounced save
+    const save = debounce(() => void writeNow(), 500);
+    persisters.set(view, writeNow);
 
     // Subscribe to external file changes for the given path
     function subscribeToFileChanges(path: string) {
@@ -448,6 +480,19 @@ const codeblockView = ViewPlugin.define((view) => {
         img.style.objectFit = 'contain';
         previewEl.appendChild(img);
 
+        hideScroller();
+        view.dom.appendChild(previewEl);
+    }
+
+    /** Say what a file that is not text is, in place of its contents. */
+    function showBinaryPreview(path: string, size: number) {
+        removePreview();
+        previewEl = document.createElement('div');
+        previewEl.className = 'cm-binary-preview';
+        previewEl.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;min-height:120px;color:var(--cm-toolbar-color, #ccc);';
+        const name = path.split('/').pop() || path;
+        const kb = size < 1024 ? `${size} bytes` : `${Math.round(size / 1024)} KB`;
+        previewEl.textContent = `${name} is not text (${kb}).`;
         hideScroller();
         view.dom.appendChild(previewEl);
     }
@@ -574,16 +619,18 @@ const codeblockView = ViewPlugin.define((view) => {
 
             const exists = await fs.exists(path);
             const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
-            // An image is bytes: previewed from them, never read into the text editor.
+            // Read as bytes: an image is previewed from them, and a file that
+            // is not text is shown as such, never decoded into the editor.
+            const bytes = exists ? await fs.readBytes(path) : null;
             let imageUrl: string | null = null;
-            if (isRasterImage && exists) {
-                const bytes = await fs.readBytes(path).catch(() => null);
-                const head = bytes ? new TextDecoder().decode(bytes.subarray(0, 5)) : '';
-                imageUrl = !bytes ? null
-                    : head === 'data:' ? new TextDecoder().decode(bytes)
+            if (isRasterImage && bytes) {
+                const head = new TextDecoder().decode(bytes.subarray(0, 5));
+                imageUrl = head === 'data:' ? new TextDecoder().decode(bytes)
                     : URL.createObjectURL(new Blob([bytes as BlobPart], { type: `image/${ext === 'jpg' ? 'jpeg' : ext === 'ico' ? 'x-icon' : ext}` }));
             }
-            const content = exists && !isRasterImage ? await fs.readFile(path) : "";
+            const text = bytes && !isRasterImage ? textOf(bytes) : '';
+            const isBinary = text === null;
+            const content = text ?? '';
 
             // Ensure the file exists on VFS before LSP initialization.
             // The LSP uses readDirectory to find source files and match them
@@ -607,8 +654,8 @@ const codeblockView = ViewPlugin.define((view) => {
             // Check for image/SVG files
             const isSvg = ext === SVG_EXTENSION;
 
-            if (isRasterImage) {
-                // Raster image: show preview, hide editor content
+            if (isRasterImage || isBinary) {
+                // An image, or a file that is not text: shown, not edited
                 // Clear diagnostics + change content in one dispatch to avoid
                 // stale decoration positions from the previous file.
                 safeDispatch(view, () => {
@@ -618,12 +665,13 @@ const codeblockView = ViewPlugin.define((view) => {
                         changes: { from: 0, to: view.state.doc.length, insert: content },
                         effects: [
                             ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
-                            fileLoadedEffect.of({ path, content, language: null, image: true }),
+                            fileLoadedEffect.of({ path, content, language: null, preview: true }),
                         ],
                         annotations: Transaction.addToHistory.of(false),
                     };
                 });
-                showImagePreview(imageUrl);
+                if (isBinary) showBinaryPreview(path, bytes?.length ?? 0);
+                else showImagePreview(imageUrl);
             } else {
                 // Remove any existing preview
                 removePreview();
@@ -708,7 +756,7 @@ const codeblockView = ViewPlugin.define((view) => {
             if (u.transactions.some(isLoad)) dirty = false;
             const edited = !receivingExternalUpdate && u.transactions.some((tr) => tr.docChanged && !isLoad(tr));
             const file = u.state.field(currentFileField);
-            if (edited && file.path && !file.loading && !file.image) {
+            if (edited && file.path && !file.loading && !file.preview) {
                 dirty = true;
                 if (u.state.field(settingsField).autosave) save();
             }
@@ -751,6 +799,7 @@ const codeblockView = ViewPlugin.define((view) => {
             unsubscribeSettings();
             removePreview();
             save.cancel();
+            persisters.delete(view);
         }
     };
 });
