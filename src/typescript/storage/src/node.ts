@@ -6,8 +6,8 @@
  */
 import { promises as fs, watch as fsWatch } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { FileType, type FileStat, type VfsInterface, type WatchEvent } from './vfs'
-import { normalizePath } from './path'
+import { FileType, type FileStat, type VfsInterface, type WatchEvent } from './vfs.js'
+import { normalizePath } from './path.js'
 
 export function nodeVfs(root: string): VfsInterface {
     const abs = (path: string) => join(root, normalizePath(path))

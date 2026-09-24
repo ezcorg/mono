@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { dirname as nodeDirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Vault } from './vault'
-import { memoryVfs } from './memory'
-import { nodeVfs } from './node'
-import { snippetOf, titleOf } from './search'
-import { fileOperations } from './files'
-import { walk } from './vfs'
-import { normalizePath } from './path'
+import { Vault } from './vault.js'
+import { memoryVfs } from './memory.js'
+import { nodeVfs } from './node.js'
+import { snippetOf, titleOf } from './search.js'
+import { fileOperations } from './files.js'
+import { walk } from './vfs.js'
+import { normalizePath } from './path.js'
 
 const FIXTURE = join(nodeDirname(fileURLToPath(import.meta.url)), '__fixtures__', 'vault')
 

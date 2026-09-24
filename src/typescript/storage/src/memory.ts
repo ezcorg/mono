@@ -2,8 +2,8 @@
  * A vault held in memory: every method of the contract, no persistence. For
  * tests, demos, and a scratch space before a real store is chosen.
  */
-import { FileType, type FileStat, type VfsInterface, type WatchEvent } from './vfs'
-import { normalizePath } from './path'
+import { FileType, type FileStat, type VfsInterface, type WatchEvent } from './vfs.js'
+import { normalizePath } from './path.js'
 
 interface MemFile {
     kind: 'file'

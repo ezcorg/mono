@@ -9,8 +9,8 @@
  * that the same interface can be served by SQLite FTS5 or the daemon.
  */
 import MiniSearch from 'minisearch'
-import { basename, extname, isNote, normalizePath } from './path'
-import { frontMatterOf } from './id'
+import { basename, extname, isNote, normalizePath } from './path.js'
+import { frontMatterOf } from './id.js'
 
 export interface SearchHit {
     /** The file's vault path. */

@@ -5,8 +5,8 @@
  * (the toolbar, a file tree) take this interface, not a VFS, so they do
  * whichever the host provides.
  */
-import { FileType, type VfsInterface } from './vfs'
-import { dirname, normalizePath } from './path'
+import { FileType, type VfsInterface } from './vfs.js'
+import { dirname, normalizePath } from './path.js'
 
 export interface CreateOptions {
     /** Replace a file already at the path (default: refuse). */

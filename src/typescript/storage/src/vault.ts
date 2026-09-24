@@ -14,14 +14,14 @@
  *         toolbar: { search: vault.search, files: vault.files },
  *     })
  */
-import { FileType, walk, type VfsInterface } from './vfs'
-import { basename, dirname, extname, isHidden, isNote, normalizePath } from './path'
-import { SearchIndex, type FileSearch } from './search'
-import type { FileOperations } from './files'
-import { LinkGraph, syntaxOf } from './links/graph'
-import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve'
-import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax'
-import type { LinkIndex, LinkRef, LinkResolution, LinkResolver, LinkSuggestion, LinkSyntax } from './links/types'
+import { FileType, walk, type VfsInterface } from './vfs.js'
+import { basename, dirname, extname, isHidden, isNote, normalizePath } from './path.js'
+import { SearchIndex, type FileSearch } from './search.js'
+import type { FileOperations } from './files.js'
+import { LinkGraph, syntaxOf } from './links/graph.js'
+import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve.js'
+import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax.js'
+import type { LinkIndex, LinkRef, LinkResolution, LinkResolver, LinkSuggestion, LinkSyntax } from './links/types.js'
 
 export interface VaultOptions {
     /** Follow changes made outside `vault.fs` through the store's `watch`.

@@ -15,9 +15,9 @@
  * An unresolved wikilink still has a path: the note it would create, beside
  * the linking note.
  */
-import { basename, dirname, extname, joinPath, normalizePath, relativePath } from '../path'
-import { decodeDestination, encodeDestination } from './syntax'
-import type { LinkResolution } from './types'
+import { basename, dirname, extname, joinPath, normalizePath, relativePath } from '../path.js'
+import { decodeDestination, encodeDestination } from './syntax.js'
+import type { LinkResolution } from './types.js'
 
 /** Extensions a wikilink may name as they are; anything else names a note
  *  and gets `.md`. (Obsidian's rule: `[[v1.2]]` is the note `v1.2.md`.) */

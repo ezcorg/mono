@@ -1,7 +1,7 @@
-export * from './vfs'
-export * from './path'
-export { memoryVfs } from './memory'
-export * from './links/types'
+export * from './vfs.js'
+export * from './path.js'
+export { memoryVfs } from './memory.js'
+export * from './links/types.js'
 export {
     parseWikilink,
     formatWikilink,
@@ -14,7 +14,7 @@ export {
     type Wikilink,
     type ScannedLink,
     type LinkKind,
-} from './links/syntax'
+} from './links/syntax.js'
 export {
     Catalog,
     resolveLink,
@@ -23,9 +23,9 @@ export {
     newNotePath,
     wikilinkTextFor,
     markdownDestinationFor,
-} from './links/resolve'
-export { LinkGraph } from './links/graph'
-export { SearchIndex, snippetOf, titleOf, type FileSearch, type SearchHit, type SearchOptions } from './search'
-export { fileOperations, type FileOperations, type CreateOptions } from './files'
-export { Vault, type VaultOptions, type VaultLinks } from './vault'
-export { newNoteId, frontMatterOf, noteIdOf } from './id'
+} from './links/resolve.js'
+export { LinkGraph } from './links/graph.js'
+export { SearchIndex, snippetOf, titleOf, type FileSearch, type SearchHit, type SearchOptions } from './search.js'
+export { fileOperations, type FileOperations, type CreateOptions } from './files.js'
+export { Vault, type VaultOptions, type VaultLinks } from './vault.js'
+export { newNoteId, frontMatterOf, noteIdOf } from './id.js'

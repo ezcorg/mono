@@ -2,9 +2,9 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FileType, statTime, walk, type VfsInterface } from './vfs'
-import { memoryVfs } from './memory'
-import { nodeVfs } from './node'
+import { FileType, statTime, walk, type VfsInterface } from './vfs.js'
+import { memoryVfs } from './memory.js'
+import { nodeVfs } from './node.js'
 
 // The contract, held against every implementation this package ships. An
 // implementation elsewhere (the OPFS worker, Tauri, icanhaz) is held to the

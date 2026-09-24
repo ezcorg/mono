@@ -4,10 +4,10 @@
  * the current set of files, so creating a note resolves links to it without
  * re-reading anything, and there is no stored answer to go stale.
  */
-import { basename, extname, isNote, normalizePath } from '../path'
-import { scanLinks, type ScannedLink } from './syntax'
-import { Catalog, resolveLink, wikilinkTextFor } from './resolve'
-import type { LinkRef, LinkResolution, LinkSuggestion } from './types'
+import { basename, extname, isNote, normalizePath } from '../path.js'
+import { scanLinks, type ScannedLink } from './syntax.js'
+import { Catalog, resolveLink, wikilinkTextFor } from './resolve.js'
+import type { LinkRef, LinkResolution, LinkSuggestion } from './types.js'
 
 /** The syntax whose rules a scanned link resolves by. */
 export function syntaxOf(link: ScannedLink): 'wikilink' | 'markdown' {

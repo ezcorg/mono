@@ -7,7 +7,7 @@ import {
     resolveMarkdownLink,
     resolveWikilink,
     wikilinkTextFor,
-} from './resolve'
+} from './resolve.js'
 
 const files = new Catalog([
     'index.md',
