@@ -3,6 +3,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Document from '@tiptap/extension-document';
 import TaskList from '@tiptap/extension-task-list';
 import { TableKit } from '@tiptap/extension-table'
+import { MarkdownTable } from './extensions/table'
 import { Markdown, MarkdownStorage } from 'tiptap-markdown';
 import { StyleModule } from 'style-mod';
 
@@ -295,9 +296,8 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             : []),
         TaskList,
         ExtendedTaskItem.configure({ nested: true }),
-        TableKit.configure({
-            table: { resizable: true, allowTableNodeSelection: true },
-        }),
+        TableKit.configure({ table: false }),
+        MarkdownTable.configure({ resizable: true, allowTableNodeSelection: true }),
         ...(options.slashCommands !== false
             ? [SlashCommands.configure({ commands })]
             : []),
@@ -378,9 +378,8 @@ export function minimalSetup(
         Markdown.configure(MARKDOWN_OPTIONS),
         TaskList,
         ExtendedTaskItem.configure({ nested: true }),
-        TableKit.configure({
-            table: { resizable: true, allowTableNodeSelection: true },
-        }),
+        TableKit.configure({ table: false }),
+        MarkdownTable.configure({ resizable: true, allowTableNodeSelection: true }),
         ...(options.extensions || []),
     ];
 }

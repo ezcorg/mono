@@ -122,7 +122,9 @@ export const Image = Node.create<ImageOptions>({
                 serialize(state: any, node: PMNode) {
                     const src = String(node.attrs.src ?? '').replace(/[()]/g, '\\$&')
                     const title = node.attrs.title ? ` "${String(node.attrs.title).replace(/"/g, '\\"')}"` : ''
-                    state.write(`![${state.esc(node.attrs.alt ?? '')}](${src}${title})`)
+                    // In a table a bare pipe would end the cell (`![pic|200](…)`).
+                    const alt = state.esc(node.attrs.alt ?? '')
+                    state.write(`![${state.inTable ? alt.replace(/(?<!\\)\|/g, '\\|') : alt}](${src}${title})`)
                 },
                 parse: {},
             } as MarkdownNodeSpec,
