@@ -8,6 +8,7 @@ import {
     onFileEvent,
     whenFileLoaded,
     type FileEvent,
+    type FileVersions,
 } from '@joinezco/codeblock'
 import { dirname, type VfsInterface } from '@joinezco/storage'
 import { EditorState } from '@codemirror/state'
@@ -99,6 +100,13 @@ export interface FileSystemOptions {
     /** Handed the persistence once the editor is created, for code built
      *  before there is an editor (the extension list) to reach it. */
     bind?: (storage: FileSystemStorage) => void
+    /** Loads and saves go through this log when given (a vault's
+     *  `versions`): a save names the version it was made on, and one made on
+     *  a stale version is kept as a conflict copy (a `conflict` event). */
+    versions?: FileVersions
+    /** Be told when files may have changed (a vault's `subscribe`): the open
+     *  note is re-read when its file changed and nothing here is unsaved. */
+    follow?: (listener: () => void) => () => void
 }
 
 export interface FileSystemStorage {
@@ -140,6 +148,9 @@ export interface FileSystemStorage {
     refresh: () => Promise<void>
     /** Edits to the prose document not yet written. */
     dirty: boolean
+    /** The version the open note was loaded or last saved as, when loads
+     *  and saves go through a version log. */
+    version: string | null
     /**
      * Switch the active file. Persists the outgoing file's unsaved edits to
      * *its* path first, then loads `path` — without the load looking like a
@@ -164,6 +175,8 @@ export interface FileSystemStorage {
      *  calls made before then are waiting for them. */
     install: (methods: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'refresh' | 'loadFile' | 'close'>) => void
 }
+
+const unfollow = new WeakMap<Editor, () => void>()
 
 export const FileSystem = Extension.create<FileSystemOptions>({
     name: 'persistence',
@@ -200,6 +213,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             save: () => ready.then(() => methods.save()),
             refresh: () => ready.then(() => methods.refresh()),
             dirty: false,
+            version: null,
             loadFile: (path, options) => ready.then(() => methods.loadFile(path, options)),
             close: (options) => ready.then(() => methods.close(options)),
             // Live from the start: plugin views (the toolbar) are built before
@@ -234,12 +248,64 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // and awaitable as a whole by `flushPendingSave`.
         let writing: Promise<void> = Promise.resolve()
         const save = (fs: VfsInterface, path: string, content: string) =>
-            (writing = writing.then(() =>
-                fs.writeFile(path, content).then(
-                    () => emit({ type: 'save', path }),
-                    (error) => console.error(`[Filesystem] Failed to save content to ${path}:`, error),
-                ),
-            ))
+            (writing = writing.then(async () => {
+                const versions = storage.options.versions
+                try {
+                    if (versions) {
+                        const result = await versions.put(path, storage.version, content)
+                        if (result.ok === false) return conflicted(fs, path, content, result.conflict.path)
+                        storage.version = result.version.id
+                    } else {
+                        await fs.writeFile(path, content)
+                    }
+                    emit({ type: 'save', path })
+                } catch (error) {
+                    console.error(`[Filesystem] Failed to save content to ${path}:`, error)
+                }
+            }))
+
+        /** A save of `path` was refused: its file changed since it was loaded.
+         *  The edits are in the conflict copy (the latest of them, if typing
+         *  went on) and the note takes the file as it now is. */
+        const conflicted = async (fs: VfsInterface, path: string, saved: string, copy: string) => {
+            const open = storage.options.filepath === path && !storage.codeView
+            const latest = open ? getMarkdown(editor) : saved
+            if (latest !== saved) await fs.writeFile(copy, latest).catch((e) => console.error(e))
+            emit({ type: 'conflict', path, copy })
+            if (!open) return
+            if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
+            storage.saveTimeout = null
+            storage.dirty = false
+            const head = await readNote(fs, path).catch(() => null)
+            if (head && storage.options.filepath === path) takeExternal(path, head)
+        }
+
+        /** The note's text and the version it is, read together when there is
+         *  a version log. */
+        const readNote = async (fs: VfsInterface, path: string): Promise<{ content: string; version: string | null }> => {
+            const versions = storage.options.versions
+            if (!versions) return { content: await fs.readFile(path), version: null }
+            const head = await versions.head(path)
+            if (!head) throw Object.assign(new Error(`ENOENT: no such file or directory, '${path}'`), { code: 'ENOENT' })
+            return { content: new TextDecoder().decode(await versions.read(head)), version: head.id }
+        }
+
+        /** Show `note` (read from the open file) in place of what is shown,
+         *  keeping the caret. */
+        const takeExternal = (path: string, note: { content: string; version: string | null }) => {
+            storage.version = note.version
+            if (note.content === getMarkdown(editor)) return
+            const { from, to } = editor.state.selection
+            storage.loadingFile = true
+            try {
+                editor.commands.setContent(note.content)
+                const end = editor.state.doc.content.size
+                editor.commands.setTextSelection({ from: Math.min(from, end), to: Math.min(to, end) })
+            } finally {
+                storage.loadingFile = false
+            }
+            emit({ type: 'load', path })
+        }
         storage.write = (fs, path, content) => void save(fs, path, content)
 
         // Tear down the swapped-in code editor and restore the rich-text editor.
@@ -315,6 +381,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                             toolbar: false,
                             dark,
                             settings: { ...settings, autosave: !!storage.options.autoSave },
+                            versions: storage.options.versions,
                         }),
                     ],
                 }),
@@ -412,25 +479,19 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             return writing
         }
 
-        storage.refresh = async () => {
-            const { fs, filepath } = storage.options
-            if (!fs || !filepath || storage.codeView || storage.dirty) return
-            const ticket = latestLoad
-            const text = await fs.readFile(filepath).catch(() => null)
-            // Moved on, or edited, meanwhile: the newer state stands.
-            if (text === null || ticket !== latestLoad || storage.dirty || storage.options.filepath !== filepath) return
-            if (text === getMarkdown(editor)) return
-            const { from, to } = editor.state.selection
-            storage.loadingFile = true
-            try {
-                editor.commands.setContent(text)
-                const end = editor.state.doc.content.size
-                editor.commands.setTextSelection({ from: Math.min(from, end), to: Math.min(to, end) })
-            } finally {
-                storage.loadingFile = false
-            }
-            emit({ type: 'load', path: filepath })
-        }
+        storage.refresh = () =>
+            // After any save in flight, so a note's own save is not taken for
+            // someone else's change.
+            (writing = writing.then(async () => {
+                const { fs, filepath } = storage.options
+                if (!fs || !filepath || storage.codeView || storage.dirty || storage.saveTimeout !== null) return
+                const ticket = latestLoad
+                const note = await readNote(fs, filepath).catch(() => null)
+                // Moved on, or edited, meanwhile: the newer state stands.
+                if (!note || ticket !== latestLoad || storage.dirty || storage.options.filepath !== filepath) return
+                if (note.version !== null && note.version === storage.version) return
+                takeExternal(filepath, note)
+            }))
 
         storage.close = async (options = {}) => {
             latestLoad++
@@ -465,12 +526,14 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             if (options.create && !(await fs.exists(path))) {
                 const parent = dirname(path)
                 if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })
-                await fs.writeFile(path, '')
+                if (storage.options.versions) await storage.options.versions.put(path, null, '')
+                else await fs.writeFile(path, '')
             }
             // 2. Read the new file (may reject — let the caller handle it). A
             //    file that is not prose is read by the code view itself.
-            const content = isProseFile(path) ? await fs.readFile(path) : ''
+            const { content, version } = isProseFile(path) ? await readNote(fs, path) : { content: '', version: null }
             if (ticket !== latestLoad) return
+            storage.version = version
             // 3. Retarget autosave at the new file *before* swapping content,
             //    and load without scheduling a save.
             storage.options.filepath = path
@@ -484,15 +547,18 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         const { fs, filepath } = storage.options
         if (fs && filepath) {
             const ticket = ++latestLoad
-            ;(isProseFile(filepath) ? fs.readFile(filepath) : Promise.resolve(''))
-                .then(content => {
-                    if (ticket === latestLoad) loadContent(content)
+            ;(isProseFile(filepath) ? readNote(fs, filepath) : Promise.resolve({ content: '', version: null }))
+                .then(({ content, version }) => {
+                    if (ticket !== latestLoad) return
+                    storage.version = version
+                    loadContent(content)
                 })
                 .catch(error => {
                     console.warn(`[Filesystem] Failed to load content from ${filepath}:`, error)
                 })
         }
         this.options.bind?.(storage)
+        unfollow.set(editor, this.options.follow?.(() => void storage.refresh()) ?? (() => {}))
         storage.install({
             flushPendingSave: storage.flushPendingSave,
             save: storage.save,
@@ -532,6 +598,8 @@ export const FileSystem = Extension.create<FileSystemOptions>({
 
     onDestroy() {
         const storage = this.storage as FileSystemStorage
+        unfollow.get(this.editor)?.()
+        unfollow.delete(this.editor)
         if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
         storage.codeView?.destroy()
         storage.codeHost?.remove()

@@ -10,6 +10,7 @@ import { StyleModule } from 'style-mod';
 import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
 import { FileSystem, FileSystemOptions, type FileSystemStorage } from './extensions/filesystem';
+import type { FileVersions } from '@joinezco/codeblock';
 import { styleModule } from './styles';
 import { ExtendedLink } from './extensions/link';
 import { LinkMenu } from './extensions/link-menu';
@@ -137,6 +138,11 @@ export type MarkdownSetupOptions = {
     search?: FileSearch;
     /** Creates, moves and deletes files for the toolbar and codeblocks. */
     files?: FileOperations;
+    /** Every file's version log (a vault's `versions`): loads and saves go
+     *  through it, a save naming the version it was made on; one made on a
+     *  stale version is kept as a conflict copy. Without it, files are read
+     *  and written as they are. */
+    versions?: FileVersions;
     /** The vault as a tree of folders and files — opt-in: built only when set. */
     fileTree?: Omit<FileTreeOptions, 'files' | 'subscribe'>;
 }
@@ -181,6 +187,7 @@ interface VaultServices {
     search?: FileSearch;
     files?: FileOperations;
     resolver?: LinkResolver;
+    versions?: FileVersions;
     /** Be told when the vault changed. */
     subscribe?: (listener: () => void) => () => void;
 }
@@ -201,6 +208,7 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         search: options.search,
         files: options.files,
         resolver: options.links?.resolver,
+        versions: options.versions,
         subscribe: hostSubscribe,
     };
     if (!given.fs || (given.search && given.files && given.resolver)) return given;
@@ -212,6 +220,9 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         search: given.search ?? vault.search,
         files,
         resolver: given.resolver ?? vault.links,
+        // Versions only when the host asks: a folder given as `fs` alone gets
+        // no `.eznote/` of records it did not ask for.
+        versions: given.versions,
         subscribe: hostSubscribe ?? ((listener) => vault.subscribe(listener)),
     };
 }
@@ -256,7 +267,13 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     const services = { ...given, files: keepingOpenNote(given.files, () => persistence) };
     const commands = Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands;
     return [
-        FileSystem.configure({ ...options.fs, fs: services.fs, bind: (storage) => (persistence = storage) }),
+        FileSystem.configure({
+            ...options.fs,
+            fs: services.fs,
+            versions: services.versions,
+            follow: services.subscribe,
+            bind: (storage) => (persistence = storage),
+        }),
         ExtendedLink.configure({}),
         ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver } }),
         StarterKit.configure({

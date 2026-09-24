@@ -181,28 +181,18 @@ export function setSelection(editor: MarkdownEditor, from: number, to?: number):
 }
 
 /**
- * Waits for a specific condition to be true
+ * Waits for a condition to be true (it may be asynchronous: a file's contents).
  */
-export function waitFor(
-    condition: () => boolean,
+export async function waitFor(
+    condition: () => boolean | Promise<boolean>,
     timeout = 5000,
     interval = 100
 ): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const startTime = Date.now()
-
-        const check = () => {
-            if (condition()) {
-                resolve()
-            } else if (Date.now() - startTime > timeout) {
-                reject(new Error('Condition not met within timeout'))
-            } else {
-                setTimeout(check, interval)
-            }
-        }
-
-        check()
-    })
+    const startTime = Date.now()
+    while (!(await condition())) {
+        if (Date.now() - startTime > timeout) throw new Error('Condition not met within timeout')
+        await new Promise((resolve) => setTimeout(resolve, interval))
+    }
 }
 
 /**

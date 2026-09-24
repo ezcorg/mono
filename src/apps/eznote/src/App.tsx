@@ -131,6 +131,9 @@ function App() {
       links: { resolver: vault.links, index: vault.links },
       search: vault.search,
       files: vault.files,
+      // Saves name the version they were made on; a note changed underneath
+      // (by an agent, in Finder) keeps the losing edits as a conflict copy.
+      versions: vault.versions,
       // Every note carries a stable id (RFC §3), given on first open.
       frontMatter: { assignId: () => newNoteId() },
       // The notes folder as a tree, in the editor's left column.
