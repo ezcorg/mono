@@ -84,6 +84,30 @@ describe('Images in a vault', () => {
         expect((await fs.readDir('attachments')).length).toBe(1)
     })
 
+    it('puts a pasted image where it was pasted, though the note changed while it was stored', async () => {
+        const store = memoryVfs({ 'n.md': 'Before. After.' })
+        let release!: () => void
+        const held = new Promise<void>((resolve) => (release = resolve))
+        // Storing the image takes a while.
+        const fs: VfsInterface = { ...store, writeBytes: async (path, data) => (await held, store.writeBytes(path, data)) }
+        const vault = await Vault.open(fs, { watch: false })
+        const { editor } = make({ fs: { fs: vault.fs, filepath: 'n.md' } })
+        await waitFor(() => editor.getText().includes('After'), 3000)
+        let at = 0
+        editor.state.doc.descendants((node, pos) => {
+            if (node.isText) at = pos + node.text!.indexOf(' After')
+        })
+        editor.commands.setTextSelection(at)
+        const data = new DataTransfer()
+        data.items.add(new File([PNG], 'dot.png', { type: 'image/png' }))
+        editor.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+        // Meanwhile, text is added before the paste position.
+        editor.commands.insertContentAt(1, 'Much ')
+        release()
+        await waitFor(() => getMarkdownContent(editor).includes('!['), 3000)
+        expect(getMarkdownContent(editor)).toMatch(/^Much Before\.!\[dot\]\(attachments\/dot-[0-9a-f]{8}\.png\) After\.$/)
+    })
+
     it('opens an image file as a preview from its bytes, and leaving it does not overwrite it', async () => {
         const { editor, container, fs } = await inVault({ 'a.md': '# A', 'pic.png': PNG }, 'a.md', true)
         const persistence = (editor.storage as any).persistence

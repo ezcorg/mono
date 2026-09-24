@@ -13,6 +13,7 @@
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { basename, decodeDestination, dirname, encodeDestination, extname, joinPath, relativePath } from '@joinezco/storage'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { IMAGE_EXTENSIONS, altOf, isUrl, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
@@ -46,10 +47,43 @@ async function attachmentName(file: File, bytes: Uint8Array): Promise<string> {
     return `${stem || 'pasted'}-${hash}.${ext}`
 }
 
-/** Store image files in the vault and insert them at `pos`. */
+type Pending = { add: { id: object; pos: number } } | { remove: object }
+
+/** Where images still being stored will go: a placeholder each, mapped
+ *  through every edit made meanwhile. */
+const pendingKey = new PluginKey<DecorationSet>('imagePending')
+
+const pendingPlugin = () =>
+    new Plugin<DecorationSet>({
+        key: pendingKey,
+        state: {
+            init: () => DecorationSet.empty,
+            apply(tr, set) {
+                set = set.map(tr.mapping, tr.doc)
+                const meta = tr.getMeta(pendingKey) as Pending | undefined
+                if (meta && 'add' in meta) {
+                    const dom = document.createElement('span')
+                    dom.className = 'ezco-mde-image-pending'
+                    set = set.add(tr.doc, [Decoration.widget(meta.add.pos, dom, { id: meta.add.id })])
+                } else if (meta) {
+                    set = set.remove(set.find(undefined, undefined, (spec) => spec.id === meta.remove))
+                }
+                return set
+            },
+        },
+        props: {
+            decorations: (state) => pendingKey.getState(state),
+        },
+    })
+
+/** Store image files in the vault and insert them at `pos`, or wherever the
+ *  edits made while they were stored have moved it. */
 async function attach(editor: Editor, files: File[], pos: number, folder: string): Promise<void> {
     const { fs, path: note } = vaultOf(editor)
     if (!fs) return
+    const id = {}
+    const tracked = !!pendingKey.getState(editor.state)
+    if (tracked) editor.view.dispatch(editor.state.tr.setMeta(pendingKey, { add: { id, pos } } satisfies Pending))
     const nodes: PMNode[] = []
     for (const file of files) {
         const bytes = new Uint8Array(await file.arrayBuffer())
@@ -62,9 +96,16 @@ async function attach(editor: Editor, files: File[], pos: number, folder: string
         const src = encodeDestination(relativePath(note ? dirname(note) : '', target))
         nodes.push(editor.schema.nodes.image.create({ src, alt: basename(file.name || target).replace(/\.[^.]*$/, '') }))
     }
-    if (!nodes.length) return
     const tr = editor.state.tr
-    let at = Math.min(pos, tr.doc.content.size)
+    let at = pos
+    if (tracked) {
+        const [placeholder] = pendingKey.getState(editor.state)!.find(undefined, undefined, (spec) => spec.id === id)
+        tr.setMeta(pendingKey, { remove: id } satisfies Pending)
+        // Deleted with the text around it: the images go where the caret is.
+        at = placeholder ? placeholder.from : editor.state.selection.from
+    }
+    if (!nodes.length) return void editor.view.dispatch(tr)
+    at = Math.min(at, tr.doc.content.size)
     for (const node of nodes) {
         tr.insert(at, node)
         at += node.nodeSize
@@ -252,6 +293,7 @@ export const Image = Node.create<ImageOptions>({
         if (folder === false) return []
         const editor = this.editor
         return [
+            pendingPlugin(),
             new Plugin({
                 key: new PluginKey('imageAttachments'),
                 props: {
