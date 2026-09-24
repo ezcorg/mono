@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
-import { CodeblockFS } from '@joinezco/codeblock';
+import { browserVfs } from '@joinezco/storage/browser';
 import { Vault } from '@joinezco/storage';
 import './App.css'
 import { file } from './example';
@@ -114,7 +114,7 @@ function App() {
   // The demo's files (the package's own source, as a snapshot) as a vault:
   // one index behind the palette's search, wikilinks, backlinks and renames.
   async function loadVault() {
-    return new Vault(await CodeblockFS.worker('/snapshot.bin'));
+    return new Vault(await browserVfs('codeblock', { snapshot: '/snapshot.bin' }));
   }
 
   // Create the editor once. The custom/default distinction is purely

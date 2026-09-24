@@ -99,6 +99,13 @@ export interface VfsInterface {
      * @param path A path to a file
      */
     unlink: (path: string) => Promise<void>
+
+    /**
+     * Optional: another port reaching this same filesystem, for a worker to
+     * use directly rather than through this thread. A filesystem served from
+     * a worker has it (`remoteVfs`); `vfsPort` gives a port for any.
+     */
+    connect?: () => Promise<MessagePort>
 }
 
 /** Milliseconds since the epoch for a stat time, or 0 when unknown. */

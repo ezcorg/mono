@@ -36,11 +36,11 @@ type EventName = \`on\$\{Capitalize<string>}\`;
 
 export { user, fetchUsers, type ReadonlyUser, type PartialUser };
 `],
-	['index.ts', `import { CodeblockFS } from "@joinezco/codeblock";
+	['index.ts', `import { browserVfs } from "@joinezco/storage/browser";
 import { createEditor } from "@joinezco/markdown-editor";
 
 async function init() {
-	const fs = await CodeblockFS.worker(undefined, "demo");
+	const fs = await browserVfs("demo");
 
 	// Seed files only if hello.md doesn't exist yet (first visit)
 	const exists = await fs.exists("hello.md");

@@ -37,11 +37,13 @@ export default defineConfig({
             // or `@joinezco/codeblock` could appear to do nothing in
             // the browser until `node_modules/.vite` was wiped by
             // hand. Excluding them makes Vite serve their built files
-            // directly on each request.
+            // directly on each request. (Storage must be served as built:
+            // its workers are found beside its modules.)
             exclude: [
                 '@joinezco/markdown-editor',
                 '@joinezco/codeblock',
                 '@joinezco/shared',
+                '@joinezco/storage',
             ],
         },
     },

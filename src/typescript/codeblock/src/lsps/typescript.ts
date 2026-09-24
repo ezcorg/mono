@@ -2,7 +2,7 @@ import { create as createTypeScriptServicePlugins } from 'volar-service-typescri
 import type { VfsInterface } from "@joinezco/storage";
 import { Connection, createServerBase, createTypeScriptProject } from '@volar/language-server/browser';
 import ts from 'typescript';
-import { VolarFs } from '../utils/fs';
+import { VolarFs } from '../utils/volar-fs';
 
 function getLanguageServicePlugins(_ts: typeof ts) {
     const plugins = [

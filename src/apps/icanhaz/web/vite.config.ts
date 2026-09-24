@@ -65,11 +65,7 @@ export default defineConfig({
             "@joinezco/codeblock > path-browserify",
             "@joinezco/codeblock > @marimo-team/codemirror-ai",
             "@joinezco/codeblock > vscode-languageserver-protocol",
-            "@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborDecoder",
-            "@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborEncoder",
-            "@joinezco/codeblock > @jsonjoy.com/util/lib/buffers/Writer",
             "@joinezco/codeblock > @codemirror/lsp-client > marked",
-            "multimatch",
         ],
     },
     resolve: {

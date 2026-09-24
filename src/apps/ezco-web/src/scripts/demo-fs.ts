@@ -1,21 +1,16 @@
-import { CodeblockFS } from "@joinezco/codeblock";
+import { browserVfs } from "@joinezco/storage/browser";
 import { Vault, type VfsInterface } from "@joinezco/storage";
 import { files } from "../data/demo-files.js";
 
-// Shared singleton for the `ezco-demo` OPFS bucket, as a vault: one index
-// behind every demo on the page (the codeblocks, the editor and every
-// codeblock embedded in it search the same one, and see each other's files).
+// The `ezco-demo` vault (the origin's OPFS, through storage's workers) as
+// one Vault: one index behind every demo on the page (the codeblocks, the
+// editor and every codeblock embedded in it search the same one, and see each
+// other's files). With Astro's ClientRouter both demo pages can run their init
+// scripts in one session, so the vault is kept on `globalThis` and handed to
+// every later caller rather than indexed twice.
 //
-// `CodeblockFS.worker(undefined, "ezco-demo")` opens sync access handles in
-// the codeblock SharedWorker's OPFS layer; calling it twice in the same
-// document throws `NoModificationAllowedError` because the previous handles
-// haven't been released. With Astro's ClientRouter, both demo pages can run
-// their init scripts in a single session, so we keep one mounted fs on
-// `globalThis` and hand it to every subsequent caller.
-//
-// Seed errors are swallowed per-file so a partial failure (e.g. a single
-// locked handle) doesn't leave the cache holding a rejected Promise — the
-// fs itself is still usable for everything else.
+// Seed errors are swallowed per file so one failure doesn't leave the cache
+// holding a rejected Promise; the vault is still usable for everything else.
 
 declare global {
     // eslint-disable-next-line no-var
@@ -44,7 +39,7 @@ async function seed(fs: VfsInterface) {
 
 export function getDemoVault(): Promise<Vault> {
     if (globalThis.__ezcoDemoVault) return globalThis.__ezcoDemoVault;
-    const promise = CodeblockFS.worker(undefined, "ezco-demo").then(async (store) => {
+    const promise = browserVfs("ezco-demo").then(async (store) => {
         const vault = new Vault(store);
         await seed(vault.fs);
         return vault;

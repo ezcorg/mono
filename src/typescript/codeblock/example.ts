@@ -1,5 +1,5 @@
 import { createCodeblock } from "./src/editor";
-import { Vfs } from "./src/utils/fs";
+import { browserVfs } from "@joinezco/storage/browser";
 import { Vault } from "@joinezco/storage";
 
 // Lazy loaders for TypeScript lib .d.ts files (Vite resolves these at build time)
@@ -15,9 +15,9 @@ const resolveLib = async (name: string): Promise<string> => {
     return loader();
 };
 
-// The same filesystem the editors run on: a SharedWorker over OPFS (in-memory where OPFS is missing).
+// The same filesystem the editors run on: the origin's OPFS through storage's workers (in memory where OPFS is missing).
 // Files persist across visits; the first one gets a file to look at.
-const vault = new Vault(await Vfs.worker(undefined, 'codeblock-example'));
+const vault = new Vault(await browserVfs('codeblock-example'));
 const { fs, search, files } = vault;
 if (!(await fs.exists('example.ts'))) await fs.writeFile('example.ts', 'export const hello = (name: string) => `hello, ${name}`;\n');
 

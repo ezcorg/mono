@@ -1,8 +1,9 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import type { NodeType } from '@tiptap/pm/model';
-import { basicSetup, codeblock, CodeblockFS, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, setThemeEffect } from '@joinezco/codeblock'
-import type { FileOperations, FileSearch } from '@joinezco/storage'
+import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, setThemeEffect } from '@joinezco/codeblock'
+import type { FileOperations, FileSearch, VfsInterface } from '@joinezco/storage'
+import { browserVfs } from '@joinezco/storage/browser'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState } from "@codemirror/state";
 import { exitCode } from "prosemirror-commands";
@@ -100,11 +101,13 @@ if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
     else if (typeof (mql as any).addListener === 'function') (mql as any).addListener(onChange);
 }
 
-let fsWorkerPromise: Promise<any> | null = null;
+let fsWorkerPromise: Promise<VfsInterface> | null = null;
 
-function getFileSystemWorker() {
+/** Where a codeblock's files live when the editor has no filesystem of its
+ *  own: the origin's `codeblock` vault. */
+function getFileSystemWorker(): Promise<VfsInterface> {
     if (!fsWorkerPromise) {
-        fsWorkerPromise = CodeblockFS.worker();
+        fsWorkerPromise = browserVfs('codeblock');
     }
     return fsWorkerPromise;
 }

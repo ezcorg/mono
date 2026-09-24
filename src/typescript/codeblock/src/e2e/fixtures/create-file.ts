@@ -1,10 +1,10 @@
 import { createCodeblock } from "../../editor";
-import { Vfs } from "../../utils/fs";
+import { browserVfs } from "@joinezco/storage/browser";
 import { Vault } from "@joinezco/storage";
 
 async function init() {
     // Use FSA (OPFS) with unique bucket name for test isolation
-    const vault = new Vault(await Vfs.worker(undefined, `codeblock-test-create-${Date.now()}`));
+    const vault = new Vault(await browserVfs(`codeblock-test-create-${Date.now()}`));
     const { fs, search, files } = vault;
 
     const parent = document.getElementById('editor') as HTMLDivElement;

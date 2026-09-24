@@ -1,9 +1,11 @@
 {
   "name": "@joinezco/storage",
   "version": "0.0.1",
-  "description": "Folders of documents behind environment-agnostic interfaces: the VFS contract, its implementations, and the indexes derived from a vault (links, full text).",
+  "description": "Folders of documents behind environment-agnostic interfaces: the VFS contract, its implementations (memory, Node, the browser's OPFS), and the indexes derived from a vault (links, full text).",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/browser/*.worker.js"
+  ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,6 +17,10 @@
     "./node": {
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "import": "./dist/browser/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -30,6 +36,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.5",
+    "@vitest/browser-playwright": "^4.1.11",
+    "playwright": "^1.63.0",
     "typescript": "~5.9.3",
     "vitest": "^4.1.11"
   },

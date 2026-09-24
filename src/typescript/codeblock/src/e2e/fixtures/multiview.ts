@@ -1,11 +1,11 @@
 import { createCodeblock, fileChangeBus } from "../../editor";
-import { Vfs } from "../../utils/fs";
+import { browserVfs } from "@joinezco/storage/browser";
 import { Vault } from "@joinezco/storage";
 
 async function init() {
     // Use FSA (OPFS) directly — SharedWorker hangs in headless Chrome.
     // The vault indexes the store for the toolbar's search; editors write through its fs.
-    const vault = new Vault(await Vfs.worker(undefined, `codeblock-test-multiview-${Date.now()}`));
+    const vault = new Vault(await browserVfs(`codeblock-test-multiview-${Date.now()}`));
     const { fs, search, files } = vault;
 
     const parentA = document.getElementById('editor-a') as HTMLDivElement;

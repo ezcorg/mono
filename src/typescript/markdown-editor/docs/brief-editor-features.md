@@ -15,12 +15,14 @@ HUMAN'S NOTE: Most of these documents were written by an LLM that may not have h
 
 - `src/typescript/storage` (`@joinezco/storage`): the vault package, named
   per the note above. The `VfsInterface` contract (text, bytes, rename,
-  watch) and its implementations (`memoryVfs`, `nodeVfs` under
-  `/node`; the OPFS worker still lives in codeblock, Tauri's in eznote,
-  icanhaz's in icanhaz-web), the link grammar every parser shares,
-  `LinkResolver`/`LinkIndex`, `FileSearch`, `FileOperations`, and `Vault`,
-  which keeps links and text indexed over any VFS and renames without
-  breaking links. No DOM. Node tests against a fixture vault.
+  watch) and its implementations (`memoryVfs`; `nodeVfs` under `/node`;
+  `browserVfs`, the OPFS behind a shared worker, under `/browser`; Tauri's
+  in eznote, icanhaz's in icanhaz-web), a filesystem over a message port
+  (`remoteVfs`, `serveVfs`), snapshots, the link grammar every parser
+  shares, `LinkResolver`/`LinkIndex`, `FileSearch`, `FileOperations`, and
+  `Vault`, which keeps links and text indexed over any VFS and renames
+  without breaking links. No DOM outside `/browser`. Node tests against a
+  fixture vault; the browser implementation's in Chromium.
 - `src/typescript/markdown-editor`: a Tiptap editor with a byte-faithful
   Markdown round-trip. Wikilinks and embeds, images from VFS bytes, front
   matter with ids, footnotes, math, callouts, a links panel, a file tree,
@@ -75,9 +77,7 @@ diagnostics cases) before and after E1 alike; they are unexamined.
    membrane and the `clonefile` resolver) is not built and is not this
    brief's; the editor half needs only the VFS. Editable region embeds
    (`![[src/lib.rs#L40-L80]]`) follow from it: they write a range of a file.
-2. **What E1 left** (RFC §16): move the OPFS/memfs worker VFS and snapshots
-   from codeblock into storage as its browser implementation; persist the
-   vault's index as a per-device cache keyed by mtime (it rebuilds on
+2. **What E1 left** (RFC §16): persist the vault's index as a per-device cache keyed by mtime (it rebuilds on
    open today); tags and a property index; block ids assigned by the
    editor (`^abc`); highlight `==x==`; diagrams behind a renderer interface
    as math is.

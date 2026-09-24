@@ -1,4 +1,4 @@
-import type { VfsInterface } from "@joinezco/storage";
+import { vfsPort, type VfsInterface } from "@joinezco/storage";
 import * as Comlink from 'comlink';
 import { LSPClient, languageServerExtensions, type Transport } from "@codemirror/lsp-client";
 import { Extension } from "@codemirror/state";
@@ -145,19 +145,10 @@ export namespace LSP {
                 return null;
         }
 
-        // Get a port connected to the fs SharedWorker's VFS and transfer
-        // it to the LSP worker so it can read files without proxying
-        // through the main thread.
-        let fsPort: MessagePort;
-        try {
-            const { Vfs } = await import('./fs');
-            fsPort = await Vfs.getVfsPort();
-        } catch (e) {
-            console.debug('[lsp] getVfsPort unavailable, using main-thread proxy');
-            const { port1, port2 } = new MessageChannel();
-            Comlink.expose(fs, port1);
-            fsPort = port2;
-        }
+        // A port to the editor's own filesystem for the language server: a
+        // worker-served one hands out a direct port, any other is served
+        // from this thread.
+        const fsPort = await vfsPort(fs);
 
         const lspPort = await factory!(Comlink.transfer({ fsPort, libFiles }, [fsPort]));
         lspPort.start();

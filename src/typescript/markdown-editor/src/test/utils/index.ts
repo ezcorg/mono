@@ -1,5 +1,5 @@
 import { MarkdownEditor, createEditor, MarkdownEditorOptions } from '../../lib/editor'
-import { CodeblockFS } from '@joinezco/codeblock'
+import { browserVfs } from '@joinezco/storage/browser'
 import type { VfsInterface } from '@joinezco/storage'
 
 /**
@@ -33,7 +33,7 @@ export function removeTestContainer(container: HTMLElement): void {
 export async function createMockFS(): Promise<VfsInterface | null> {
     try {
         // Create a minimal filesystem for testing
-        const fs = await CodeblockFS.worker()
+        const fs = await browserVfs('markdown-editor-test')
         return fs
     } catch (error) {
         console.warn('Failed to create filesystem for testing:', error)

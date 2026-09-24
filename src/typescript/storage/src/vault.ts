@@ -255,6 +255,9 @@ export class Vault {
             stat: (path) => store.stat(path),
             mkdir: (path, options) => store.mkdir(path, options),
             watch: (path, options) => store.watch(path, options),
+            // A worker given a port this way reaches the store directly; what
+            // it writes reaches the index as anything else's does, by `watch`.
+            ...(store.connect ? { connect: () => store.connect!() } : {}),
             async writeFile(path, data) {
                 await store.writeFile(path, data)
                 if (!indexed(path)) return

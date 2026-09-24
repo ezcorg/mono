@@ -1,62 +1,34 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import path from 'path';
-import { getGitignored, takeSnapshot } from '../codeblock/src/utils/snapshot';
 import fs from 'fs/promises';
 import multimatch from 'multimatch';
-
-export const viteDefaults = {
-  root: process.cwd(),
-  include: ['**/*'],
-  exclude: ['.git', 'dist', 'build', 'coverage', 'static'],
-  gitignore: '.gitignore',
-  transform: async (tree: Uint8Array) => tree,
-  output: './snapshot.bin'
-}
+import { takeSnapshot } from '@joinezco/storage';
+import { nodeVfs } from '@joinezco/storage/node';
 
 export type SnapshotProps = {
   root?: string;
   include?: string[];
   exclude?: string[];
-  gitignore?: string | false;
-  transform?: (tree: Uint8Array) => Uint8Array | Promise<Uint8Array>;
   output?: string;
 }
 
-export type BuildPathFilterArgs = {
-  include: string[],
-  exclude: string[],
-  gitignore: string | false
-}
-
-export const buildPathFilter = async ({ include, exclude, gitignore }: BuildPathFilterArgs) => {
-  const ignored = gitignore ? await getGitignored(gitignore) : [];
-  exclude = exclude ? exclude.concat(ignored) : [];
-  include = include ? include : ['**/*'];
-
-  return (filepath: string) => {
-
-    if (!(include || exclude)) return true;
-
-    const relativePath = path.relative(process.cwd(), filepath);
-
-    const included = include ? !!multimatch(relativePath, include, { partial: true }).length : true;
-    const excluded = exclude ? !!multimatch(relativePath, exclude).length : false;
-
-    return included && !excluded;
-  };
-}
-
+/** Put the files under `root` (the package itself) in a snapshot the demo
+ *  page opens its vault with. */
 export const snapshot = async (props: SnapshotProps = {}) => {
-  const { root, include, exclude, gitignore, transform, output } = { ...viteDefaults, ...props };
-  const filter = await buildPathFilter({ include, exclude, gitignore });
+  const {
+    root = process.cwd(),
+    include = ['**/*'],
+    exclude = [],
+    output = './snapshot.bin',
+  } = props;
+  const keep = (vaultPath: string) =>
+    !!multimatch(vaultPath, include, { partial: true }).length && !multimatch(vaultPath, exclude).length;
 
   try {
-    console.log('Taking snapshot of filesystem', { root, filter });
-    const snapshot = await takeSnapshot({ root, filter })
-    console.log('Snapshot created', snapshot);
-    const fsBuffer = await transform?.(snapshot) || snapshot;
-    await fs.writeFile(output, Buffer.from(fsBuffer));
+    const bytes = await takeSnapshot(nodeVfs(root), { filter: (vaultPath) => keep(vaultPath) });
+    await fs.writeFile(path.resolve(root, output), bytes);
+    console.log(`Snapshot of ${root} written to ${output} (${bytes.length} bytes)`);
   } catch (e) { console.error(e) }
 
   return {
@@ -74,7 +46,6 @@ export default defineConfig({
   },
   plugins: [
     snapshot({
-      gitignore: false,
       exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo'],
       output: './public/snapshot.bin'
     }),

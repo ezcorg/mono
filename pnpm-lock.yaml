@@ -316,18 +316,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.11
         version: 6.43.11
-      '@joinezco/memfs':
-        specifier: workspace:*
-        version: link:../memfs
       '@joinezco/storage':
         specifier: workspace:*
         version: link:../storage
-      '@jsonjoy.com/json-pack':
-        specifier: ^1.21.0
-        version: 1.21.0(tslib@2.8.1)
-      '@jsonjoy.com/util':
-        specifier: ^1.9.0
-        version: 1.9.0(tslib@2.8.1)
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
@@ -386,9 +377,6 @@ importers:
       '@types/sharedworker':
         specifier: ^0.0.223
         version: 0.0.223
-      multimatch:
-        specifier: ^8.0.0
-        version: 8.0.0
       process:
         specifier: ^0.11.10
         version: 0.11.10
@@ -779,6 +767,12 @@ importers:
       '@types/node':
         specifier: ^25.9.5
         version: 25.9.5
+      '@vitest/browser-playwright':
+        specifier: ^4.1.11
+        version: 4.1.11(msw@2.10.5(@types/node@25.9.5)(typescript@5.9.3))(playwright@1.63.0)(vite@8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(vitest@4.1.11)
+      playwright:
+        specifier: ^1.63.0
+        version: 1.63.0
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -15326,7 +15320,6 @@ snapshots:
       - msw
       - utf-8-validate
       - vite
-    optional: true
 
   '@vitest/browser-playwright@4.1.11(msw@2.10.5(@types/node@26.5.0)(typescript@5.9.3))(playwright@1.63.0)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.27.7)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(vitest@4.1.11)':
     dependencies:
@@ -15370,7 +15363,6 @@ snapshots:
       - msw
       - utf-8-validate
       - vite
-    optional: true
 
   '@vitest/browser@4.1.11(msw@2.10.5(@types/node@26.5.0)(typescript@5.9.3))(vite@8.2.2(@types/node@26.5.0)(esbuild@0.27.7)(jiti@2.7.0)(sass@1.104.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(vitest@4.1.11)':
     dependencies:
