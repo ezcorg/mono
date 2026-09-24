@@ -197,9 +197,8 @@ export class Vault {
         for (const [source, threads] of this.threads) {
             if (source === clean) continue
             for (const t of threads) {
-                if (t.thread.targets.some((link) => link.target.trim() && this.resolve(link.target, source)?.path === clean)) {
-                    out.push({ ...t, source })
-                }
+                const about = t.thread.targets.map((link) => !!link.target.trim() && this.resolve(link.target, source)?.path === clean)
+                if (about.some(Boolean)) out.push({ ...t, source, about })
             }
         }
         return out.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line)
@@ -214,7 +213,7 @@ export class Vault {
         await this.fs.writeFile(ref.source, updated)
         if (next === null) return null
         const now = threadsIn(updated).find((t) => t.start === found.start)
-        return now ? { ...now, source: ref.source } : null
+        return now ? { ...now, source: ref.source, about: ref.about } : null
     }
 
     unresolved(): LinkRef[] {

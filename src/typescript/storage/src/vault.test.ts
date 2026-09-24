@@ -322,6 +322,8 @@ describe('A vault’s comments', () => {
         // A note's own threads are the editor's to read; they are not repeated.
         expect(about.some((t) => t.source === 'projects/Plan.md')).toBe(false)
         expect((await vault.comments.threadsAbout('Other.md')).map((t) => t.thread.author)).toEqual(['theo', 'bob'])
+        // Which of a thread's targets are in the note asked about.
+        expect(about[0].about).toEqual([true, false])
     })
 
     it('follow the notes they are in and about through renames', async () => {

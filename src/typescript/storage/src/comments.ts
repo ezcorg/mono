@@ -271,6 +271,9 @@ export function threadsIn(markdown: string): ThreadSource[] {
 export interface CommentRef extends ThreadSource {
     /** The note that holds the thread. */
     source: string
+    /** For each of the thread's targets, whether it is in the note asked
+     *  about (the others are in other notes). */
+    about: boolean[]
 }
 
 /**
