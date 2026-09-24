@@ -496,6 +496,12 @@ export class ToolbarCore {
         this.input.type = "text";
         this.input.value = host.filepath || host.language || "";
         this.input.className = "cm-toolbar-input";
+        // Paths, languages and commands, not prose: no squiggles under
+        // `App.tsx`, no capital put on a path by a phone's keyboard.
+        this.input.spellcheck = false;
+        this.input.autocomplete = "off";
+        this.input.setAttribute("autocapitalize", "off");
+        this.input.setAttribute("autocorrect", "off");
         this.inputContainer.appendChild(this.input);
         this.dom.appendChild(this.inputContainer);
 

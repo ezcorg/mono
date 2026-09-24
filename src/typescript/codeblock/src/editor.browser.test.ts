@@ -203,6 +203,16 @@ describe('Files in a code block', () => {
         expect(await fs.readFile('c.txt')).toBe('C');
     });
 
+    it('name the file in a field that is not checked or corrected as prose', async () => {
+        const view = mount(memoryVfs({ 'src/App.tsx': 'export {}' }), 'src/App.tsx', true);
+        await loaded(view, 'src/App.tsx');
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        expect(input.value).toBe('src/App.tsx');
+        expect(input.spellcheck).toBe(false);
+        expect(input.autocomplete).toBe('off');
+        expect(input.getAttribute('autocapitalize')).toBe('off');
+    });
+
     it('say when they are loaded and saved, and can be waited for', async () => {
         const fs = memoryVfs({ 'a.txt': 'A', 'b.txt': 'B' });
         const view = mount(fs, 'a.txt');
