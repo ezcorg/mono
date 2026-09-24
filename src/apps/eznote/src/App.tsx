@@ -8,6 +8,7 @@ import {
   latestNotePath,
   newScratchPath,
 } from "./lib/tauri-vfs";
+import { localHandle } from "./lib/identity";
 import { Vault, newNoteId, type VfsInterface } from "@joinezco/storage";
 import "./App.css";
 
@@ -138,6 +139,9 @@ function App() {
       frontMatter: { assignId: () => newNoteId() },
       // The notes folder as a tree, in the editor's left column.
       fileTree: {},
+      // Comments are written as the local user; threads about a note found
+      // in other notes (a review, a day's notes) show beside it too.
+      comments: { author: await localHandle(), index: vault.comments },
       onUpdate: () => {},
     });
     applyTheme(themeMode());
