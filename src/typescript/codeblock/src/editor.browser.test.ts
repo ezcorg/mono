@@ -245,6 +245,39 @@ describe('Files in a code block', () => {
         expect(await store.readFile('a.txt')).toBe('A!');
     });
 
+    it('save on the version they loaded, and keep their edits as a conflict copy when the file changed underneath', async () => {
+        const vault = await Vault.open(memoryVfs({ 'a.txt': 'A' }), { watch: false });
+        const parent = document.createElement('div');
+        document.body.append(parent);
+        const view = createCodeblock({ parent, fs: vault.fs, filepath: 'a.txt', toolbar: false, versions: vault.versions });
+        views.push(view);
+        const events: FileEvent[] = [];
+        onFileEvent(view, (event) => events.push(event));
+        await loaded(view, 'a.txt');
+
+        // A save on top of the loaded version is a new version on it.
+        view.dispatch({ changes: { from: 1, insert: '1' }, userEvent: 'input.type' });
+        await until(() => events.some((e) => e.type === 'save'));
+        const [saved, first] = await vault.versions.history('a.txt');
+        expect(saved.parents).toEqual([first.id]);
+
+        // Changed underneath (another program), then edited here.
+        await vault.fs.writeFile('a.txt', 'changed elsewhere');
+        view.dispatch({ changes: { from: 2, insert: '2' }, userEvent: 'input.type' });
+        await until(() => events.some((e) => e.type === 'conflict'));
+        const conflict = events.find((e) => e.type === 'conflict') as Extract<FileEvent, { type: 'conflict' }>;
+        expect(conflict.path).toBe('a.txt');
+        expect(conflict.copy).toMatch(/^a \(conflict, .+\)\.txt$/);
+        expect(await vault.fs.readFile(conflict.copy)).toBe('A12');
+        // The file is the other writer's, and so is the view now.
+        expect(await vault.fs.readFile('a.txt')).toBe('changed elsewhere');
+        await until(() => view.state.doc.toString() === 'changed elsewhere');
+        // Editing on from there is a save, not another conflict.
+        view.dispatch({ changes: { from: 0, insert: '3 ' }, userEvent: 'input.type' });
+        await until(async () => (await vault.fs.readFile('a.txt')) === '3 changed elsewhere');
+        expect(events.filter((e) => e.type === 'conflict')).toHaveLength(1);
+    });
+
     it('keep one file’s edits out of the next one’s undo', async () => {
         const fs = memoryVfs({ 'a.txt': 'A', 'b.txt': 'B' });
         const view = mount(fs, 'a.txt');

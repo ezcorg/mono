@@ -8,7 +8,10 @@ import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import type { FileOperations, FileSearch, VfsInterface } from "@joinezco/storage";
+import type { FileOperations, FileSearch, VersionLog, VfsInterface } from "@joinezco/storage";
+
+/** What a code block needs of a version log (a vault's `versions`). */
+export type FileVersions = Pick<VersionLog, 'head' | 'put' | 'read'>;
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { lintKeymap, setDiagnostics } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
@@ -99,6 +102,10 @@ export type CodeblockConfig = {
     search?: FileSearch;
     /** Creates, moves and deletes files for the toolbar (a vault's keep links working). */
     files?: FileOperations;
+    /** Loads and saves go through this log when given: a save names the
+     *  version it was made on, and one made on a stale version becomes a
+     *  conflict copy beside the file (see `FileEvent`'s `conflict`). */
+    versions?: FileVersions;
     language?: ExtensionOrLanguage;
     dark?: boolean;
     settings?: Partial<EditorSettings>;
@@ -207,6 +214,9 @@ const persisters = new WeakMap<EditorView, () => Promise<void>>();
  *  unsaved). */
 export type FileEvent =
     | { type: 'load' | 'save' | 'close'; path: string }
+    /** A save was refused (the file changed since it was loaded): the edits
+     *  are at `copy`, and the view now shows the file as it is. */
+    | { type: 'conflict'; path: string; copy: string }
     | { type: 'error'; path: string; error: unknown };
 
 const fileListeners = new WeakMap<EditorView, Set<(event: FileEvent) => void>>();
@@ -246,7 +256,8 @@ export function whenFileLoaded(view: EditorView, path?: string): Promise<void> {
     if (shows(view.state.field(currentFileField))) return Promise.resolve();
     return new Promise((resolve, reject) => {
         const stop = onFileEvent(view, (event) => {
-            if (event.type === 'save' || event.type === 'close' || (path && event.path !== path)) return;
+            if (event.type !== 'load' && event.type !== 'error') return;
+            if (path && event.path !== path) return;
             stop();
             if (event.type === 'error') reject(event.error);
             else resolve();
@@ -307,7 +318,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, search, files, dark, settings, typescript, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -320,7 +331,7 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         languageSupportCompartment.of([]),
@@ -369,7 +380,10 @@ const codeblockView = ViewPlugin.define((view) => {
     StyleModule.mount(document, vscodeStyleMod);
     injectNerdFontFace();
 
-    let { fs } = view.state.facet(CodeblockFacet);
+    let { fs, versions } = view.state.facet(CodeblockFacet);
+    // The version the open file's text was loaded or last saved as, when
+    // saves go through a version log.
+    let version: string | null = null;
 
     // Flag to suppress save when receiving external file updates
     let receivingExternalUpdate = false;
@@ -427,7 +441,13 @@ const codeblockView = ViewPlugin.define((view) => {
                 await fs.mkdir(parent, { recursive: true }).catch(console.error);
             }
             try {
-                await fs.writeFile(path, content);
+                if (versions) {
+                    const result = await versions.put(path, version, content);
+                    if (result.ok === false) return conflicted(path, content, result.conflict.path);
+                    version = result.version.id;
+                } else {
+                    await fs.writeFile(path, content);
+                }
             } catch (error) {
                 console.error(`Failed to save ${path}`, error);
                 // Still unsaved: the next edit, switch or persist tries again.
@@ -448,6 +468,19 @@ const codeblockView = ViewPlugin.define((view) => {
         });
         return writing;
     };
+
+    /** A save of `path` was refused: the file changed since it was loaded.
+     *  The edits are at `copy` (the latest of them, if typing went on), and
+     *  the view takes the file as it is now. */
+    async function conflicted(path: string, saved: string, copy: string) {
+        const open = view.state.field(currentFileField).path === path;
+        const latest = view.state.doc.toString();
+        if (open && latest !== saved) await fs.writeFile(copy, latest).catch(console.error);
+        emitFileEvent(view, { type: 'conflict', path, copy });
+        if (!open) return;
+        dirty = false;
+        void handleOpen(path, true);
+    }
 
     // Debounced save
     const save = debounce(() => void writeNow(), 500);
@@ -650,9 +683,10 @@ const codeblockView = ViewPlugin.define((view) => {
     // so when opens overlap the last one asked for wins, whichever read ends first.
     let latestOpen = 0;
 
-    async function handleOpen(path: string) {
+    /** Open `path`; `again` reloads the open file (after a conflict). */
+    async function handleOpen(path: string, again = false) {
         if (!path) return;
-        if (opening === path) return;
+        if (opening === path && !again) return;
         opening = path;
         const ticket = ++latestOpen;
         // Cancel the debounced save and manually flush the current file.
@@ -669,7 +703,12 @@ const codeblockView = ViewPlugin.define((view) => {
             const oldContent = view.state.doc.toString();
             const parent = dirname(oldPath);
             if (parent && parent !== '.') await fs.mkdir(parent, { recursive: true }).catch(console.error);
-            await fs.writeFile(oldPath, oldContent).catch(console.error);
+            if (versions) {
+                const result = await versions.put(oldPath, version, oldContent).catch((e) => (console.error(e), null));
+                if (result && result.ok === false) emitFileEvent(view, { type: 'conflict', path: oldPath, copy: result.conflict.path });
+            } else {
+                await fs.writeFile(oldPath, oldContent).catch(console.error);
+            }
             LSP.notifyFileChanged(oldPath, FileChangeType.Changed);
         }
         try {
@@ -686,11 +725,20 @@ const codeblockView = ViewPlugin.define((view) => {
                 ]
             });
 
-            const exists = await fs.exists(path);
             const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
             // Read as bytes: an image is previewed from them, and a file that
             // is not text is shown as such, never decoded into the editor.
-            const bytes = exists ? await fs.readBytes(path) : null;
+            // Through the log, the bytes and the version they are come together.
+            let bytes: Uint8Array | null;
+            let opened: string | null = null;
+            if (versions) {
+                const head = await versions.head(path);
+                bytes = head ? await versions.read(head) : null;
+                opened = head?.id ?? null;
+            } else {
+                bytes = (await fs.exists(path)) ? await fs.readBytes(path) : null;
+            }
+            const exists = bytes !== null;
             let imageUrl: string | null = null;
             if (isRasterImage && bytes) {
                 const head = new TextDecoder().decode(bytes.subarray(0, 5));
@@ -707,7 +755,12 @@ const codeblockView = ViewPlugin.define((view) => {
             // back to an inferred project that lacks lib file configuration.
             if (!exists) {
                 await fs.mkdir(dirname(path), { recursive: true }).catch(() => {});
-                await fs.writeFile(path, content);
+                if (versions) {
+                    const created = await versions.put(path, null, content);
+                    opened = created.ok === true ? created.version.id : created.head?.id ?? null;
+                } else {
+                    await fs.writeFile(path, content);
+                }
                 LSP.notifyFileChanged(path, FileChangeType.Created);
                 // Give the LSP server a moment to process the file-created
                 // notification before we send didOpen — otherwise the server
@@ -719,6 +772,7 @@ const codeblockView = ViewPlugin.define((view) => {
 
             if (ticket !== latestOpen) return;
             activePath = path;
+            version = opened;
 
             // Check for image/SVG files
             const isSvg = ext === SVG_EXTENSION;
@@ -878,6 +932,7 @@ const codeblockView = ViewPlugin.define((view) => {
             // If fs changed via facet reconfig, refresh handle references
             const newFs = u.state.facet(CodeblockFacet).fs;
             if (fs !== newFs) fs = newFs;
+            versions = u.state.facet(CodeblockFacet).versions;
         },
         destroy() {
             if (unsubscribeFileChanges) {
@@ -917,10 +972,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, dark, settings, typescript }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, dark, settings, typescript })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })]
     });
     const view = new EditorView({ state, parent });
     return view;
