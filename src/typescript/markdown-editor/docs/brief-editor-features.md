@@ -68,10 +68,10 @@ Chrome at `/usr/bin/google-chrome` or `CHROME_PATH`.
 
 ## Where to continue
 
-1. **What E2's editor half left** (RFC §16): a review entry in the editor
-   when a save becomes a conflict copy (today a `conflict` event and the
-   copy); signing keys for the version log (a `Signer` is injected; the
-   keys belong with the identity work). The icanhaz half (overlay
+1. **What E2's editor half left** (RFC §16): comparing a conflict copy
+   with the file side by side (the notice opens the copy today); signing
+   keys for the version log (a `Signer` is injected; the keys belong with
+   the identity work). The icanhaz half (overlay
    membrane, `clonefile` resolver, the workspace block) is not this
    brief's.
 2. **What E1 left** (RFC §16): persist the vault's index as a per-device cache keyed by mtime (it rebuilds on
