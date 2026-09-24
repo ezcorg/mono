@@ -135,6 +135,9 @@ export const openFileEffect = StateEffect.define<{ path: string; skipSave?: bool
 /** A file's contents arrived. `preview` marks a file shown rather than
  *  edited (an image, or bytes that are not text): read-only, never written. */
 export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null; preview?: boolean }>();
+/** Put the open file down without writing its unsaved edits (it is being
+ *  deleted): the view is left empty, showing no file. */
+export const closeFileEffect = StateEffect.define<void>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
@@ -169,6 +172,9 @@ export const currentFileField = StateField.define<{
             if (e.is(fileLoadedEffect)) {
                 return { path: e.value.path, content: e.value.content, language: e.value.language, loading: false, preview: !!e.value.preview };
             }
+            if (e.is(closeFileEffect)) {
+                return { path: null, content: "", language: value.language, loading: false, preview: false };
+            }
         }
         return value;
     }
@@ -196,10 +202,11 @@ const persisters = new WeakMap<EditorView, () => Promise<void>>();
 
 /** What happens to the file a code block shows: `load`, its contents are in
  *  the view (editable, unless it is only shown); `save`, a write of its
- *  edits has landed; `error`, it could not be opened or a save failed (the
- *  edits stay unsaved). */
+ *  edits has landed; `close`, it was put down unsaved (`closeFile`);
+ *  `error`, it could not be opened or a save failed (the edits stay
+ *  unsaved). */
 export type FileEvent =
-    | { type: 'load' | 'save'; path: string }
+    | { type: 'load' | 'save' | 'close'; path: string }
     | { type: 'error'; path: string; error: unknown };
 
 const fileListeners = new WeakMap<EditorView, Set<(event: FileEvent) => void>>();
@@ -216,6 +223,22 @@ export function onFileEvent(view: EditorView, listener: (event: FileEvent) => vo
     return () => listeners.delete(listener);
 }
 
+/** Put down the file open in `view` without writing its unsaved edits
+ *  (it is being deleted): the view is left empty, showing no file. */
+export function closeFile(view: EditorView): void {
+    const clearDiag = setDiagnostics(view.state, []);
+    view.dispatch({
+        ...clearDiag,
+        changes: { from: 0, to: view.state.doc.length, insert: '' },
+        effects: [
+            ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
+            closeFileEffect.of(undefined),
+            languageServerCompartment.reconfigure([]),
+        ],
+        annotations: Transaction.addToHistory.of(false),
+    });
+}
+
 /** Resolves once `view` shows `path` loaded (at once when it already does);
  *  without a path, once it shows any file. Rejects if opening it fails. */
 export function whenFileLoaded(view: EditorView, path?: string): Promise<void> {
@@ -223,7 +246,7 @@ export function whenFileLoaded(view: EditorView, path?: string): Promise<void> {
     if (shows(view.state.field(currentFileField))) return Promise.resolve();
     return new Promise((resolve, reject) => {
         const stop = onFileEvent(view, (event) => {
-            if (event.type === 'save' || (path && event.path !== path)) return;
+            if (event.type === 'save' || event.type === 'close' || (path && event.path !== path)) return;
             stop();
             if (event.type === 'error') reject(event.error);
             else resolve();
@@ -239,7 +262,7 @@ export function persistFile(view: EditorView): Promise<void> {
 
 /** Whether a transaction is the user's (or a command's) edit, as opposed to
  *  a file's contents arriving or another view's save being mirrored. */
-const isLoad = (tr: Transaction) => tr.effects.some((e) => e.is(fileLoadedEffect));
+const isLoad = (tr: Transaction) => tr.effects.some((e) => e.is(fileLoadedEffect) || e.is(closeFileEffect));
 
 // A safe dispatcher to avoid nested-update errors from UI events during CM updates.
 // A spec that depends on the document (a range to replace) is given as a
@@ -803,6 +826,19 @@ const codeblockView = ViewPlugin.define((view) => {
             if (u.transactions.some(isLoad)) dirty = false;
             const edited = !receivingExternalUpdate && u.transactions.some((tr) => tr.docChanged && !isLoad(tr));
             const file = u.state.field(currentFileField);
+            if (u.transactions.some((tr) => tr.effects.some((e) => e.is(closeFileEffect)))) {
+                // Nothing of the file's is written from here: not its pending
+                // save, nor an open still reading.
+                save.cancel();
+                dirty = false;
+                activePath = null;
+                latestOpen++;
+                removePreview();
+                unsubscribeFileChanges?.();
+                unsubscribeFileChanges = null;
+                const closed = u.startState.field(currentFileField).path;
+                if (closed) queueMicrotask(() => emitFileEvent(view, { type: 'close', path: closed }));
+            }
             // Told after the update, so a listener may dispatch.
             if (file.path && !file.loading && u.transactions.some(isLoad)) {
                 const path = file.path;

@@ -109,4 +109,33 @@ describe('The toolbar as a command palette', () => {
         await rename('renamed.png')
         expect([...(await fs.readBytes('renamed.png'))]).toEqual([...png])
     })
+
+    it('deletes the open note, putting it down unsaved first', async () => {
+        const vault = await Vault.open(memoryVfs(FILES), { watch: false })
+        const { editor, container } = make({
+            fs: { fs: vault.fs, filepath: 'notes/plan.md', autoSave: true },
+            search: vault.search,
+            files: vault.files,
+        })
+        const persistence = (editor.storage as any).persistence
+        const events: Array<{ type: string; path: string }> = []
+        persistence.subscribe((event: { type: string; path: string }) => events.push({ type: event.type, path: event.path }))
+        await waitFor(() => editor.getText().includes('Nothing about foxes'), 3000)
+        // An edit still inside the autosave debounce.
+        editor.commands.focus('end')
+        editor.commands.insertContent(' More.')
+        const key = (k: string) => input(container).dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+        input(container).focus()
+        input(container).value = 'plan'
+        input(container).dispatchEvent(new Event('input', { bubbles: true }))
+        await waitFor(() => !!container.querySelector('.cm-file-result'), 3000)
+        for (let i = 0; i < 5 && !container.querySelector('.cm-file-result.selected'); i++) key('ArrowDown')
+        key('Delete')
+        key('Enter')
+        await waitFor(() => events.some((e) => e.type === 'close'), 3000)
+        await new Promise((r) => setTimeout(r, 700))
+        expect(await vault.fs.exists('notes/plan.md')).toBe(false)
+        expect(filepath(editor)).toBeUndefined()
+        expect(events.filter((e) => e.path === 'notes/plan.md').map((e) => e.type)).toEqual(['load', 'close'])
+    })
 })

@@ -259,6 +259,9 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                             // document) and writes nothing for an image.
                             await (extension.editor.storage as any).persistence?.save?.()
                         },
+                        async closeFile() {
+                            await (extension.editor.storage as any).persistence?.close?.({ discard: true })
+                        },
                         getDocContent() {
                             // A code file's text is in the code view, not the
                             // (emptied) prose document.

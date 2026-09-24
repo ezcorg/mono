@@ -140,9 +140,10 @@ export interface FileSystemStorage {
      * empty first (following a link to a note not written yet).
      */
     loadFile: (path: string, options?: LoadOptions) => Promise<void>
-    /** Close the open file (its edits saved first): the editor is left empty,
-     *  attached to no file, as after the file is deleted. */
-    close: () => Promise<void>
+    /** Close the open file: the editor is left empty, attached to no file.
+     *  Its unsaved edits are written first, or with `discard` (it is being
+     *  deleted) dropped. */
+    close: (options?: { discard?: boolean }) => Promise<void>
     /** Be told when a file is loaded or saved. Returns an unsubscribe. */
     subscribe: (listener: (event: FileEvent) => void) => () => void
     /** @internal Write the open file's content and announce the save. */
@@ -190,7 +191,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             save: () => ready.then(() => methods.save()),
             dirty: false,
             loadFile: (path, options) => ready.then(() => methods.loadFile(path, options)),
-            close: () => ready.then(() => methods.close()),
+            close: (options) => ready.then(() => methods.close(options)),
             // Live from the start: plugin views (the toolbar) are built before
             // `onCreate` runs, and subscribe as they are built.
             subscribe: (listener) => {
@@ -401,11 +402,18 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             return writing
         }
 
-        storage.close = async () => {
+        storage.close = async (options = {}) => {
             latestLoad++
-            await flushPendingSave()
+            const closed = storage.options.filepath
+            if (options.discard) {
+                if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
+                storage.saveTimeout = null
+            } else {
+                await flushPendingSave()
+            }
             storage.loadingFile = true
             try {
+                // Destroying the code view drops its pending save with it.
                 hideCodeEditor()
                 storage.options.filepath = undefined
                 editor.commands.setContent('')
@@ -413,6 +421,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             } finally {
                 storage.loadingFile = false
             }
+            if (closed) emit({ type: 'close', path: closed })
         }
 
         storage.loadFile = async (path: string, options: LoadOptions = {}) => {

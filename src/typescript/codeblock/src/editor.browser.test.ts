@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { undo } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
-import { memoryVfs, type VfsInterface } from '@joinezco/storage';
-import { createCodeblock, onFileEvent, openFileEffect, whenFileLoaded, type FileEvent } from './editor';
+import { memoryVfs, Vault, type VfsInterface } from '@joinezco/storage';
+import { createCodeblock, currentFileField, onFileEvent, openFileEffect, whenFileLoaded, type FileEvent } from './editor';
 
 const views: EditorView[] = [];
 afterEach(() => {
@@ -13,10 +13,10 @@ afterEach(() => {
     views.length = 0;
 });
 
-function mount(fs: VfsInterface, filepath?: string, toolbar = false): EditorView {
+function mount(fs: VfsInterface, filepath?: string, toolbar = false, vault?: Vault): EditorView {
     const parent = document.createElement('div');
     document.body.append(parent);
-    const view = createCodeblock({ parent, fs, filepath, toolbar });
+    const view = createCodeblock({ parent, fs, filepath, toolbar, search: vault?.search, files: vault?.files });
     views.push(view);
     return view;
 }
@@ -61,6 +61,32 @@ describe('Files in a code block', () => {
         await loaded(view, 'moved.png');
         expect(await fs.exists('pic.png')).toBe(false);
         expect([...(await fs.readBytes('moved.png'))]).toEqual([...PNG]);
+    });
+
+    it('are put down unsaved when deleted from the toolbar while open', async () => {
+        const vault = await Vault.open(memoryVfs({ 'a.txt': 'A', 'b.txt': 'B' }), { watch: false });
+        const view = mount(vault.fs, 'a.txt', true, vault);
+        const events: FileEvent[] = [];
+        onFileEvent(view, (event) => events.push(event));
+        await loaded(view, 'a.txt');
+        // An edit still inside the autosave debounce.
+        view.dispatch({ changes: { from: 1, insert: '!' }, userEvent: 'input.type' });
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        const key = (k: string) => input.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+        input.focus();
+        input.value = 'a.txt';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await until(() => !!view.dom.querySelector('.cm-file-result'));
+        for (let i = 0; i < 5 && !view.dom.querySelector('.cm-file-result.selected'); i++) key('ArrowDown');
+        key('Delete');
+        key('Enter');
+        await until(() => events.some((e) => e.type === 'close'));
+        await autosave();
+        expect(await vault.fs.exists('a.txt')).toBe(false);
+        expect(view.state.field(currentFileField).path).toBeNull();
+        expect(view.state.doc.toString()).toBe('');
+        expect(view.state.readOnly).toBe(false);
+        expect(events[events.length - 1]).toEqual({ type: 'close', path: 'a.txt' });
     });
 
     it('show a file that is not text instead of editing it, and never write it', async () => {

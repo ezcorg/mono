@@ -138,6 +138,9 @@ export interface ToolbarHost {
      *  toolbar moves it. Only the host knows what the open document is (text
      *  or an image, which view holds it), so the toolbar never writes it. */
     persist(): Promise<void>;
+    /** Put the open file down without writing its unsaved edits: it is about
+     *  to be deleted. */
+    closeFile(): void | Promise<void>;
     /** Commands the host offers, matched against the query. */
     commands?(query: string): HostCommand[];
     /** Get the current file path from host state (may differ from initial filepath). */
@@ -1173,15 +1176,15 @@ export class ToolbarCore {
         try {
             const currentPath = this.getCurrentFilePath();
             const wasOpen = currentPath === path;
+            // Put down first, so no pending save lands after the delete and
+            // brings the file back.
+            if (wasOpen) await this.host.closeFile();
             await this.fileOps.remove(path).catch(e => console.warn('Delete failed:', e));
             this.host.notifyFileChanged?.(path, FileChangeType.Deleted);
             this.exitDeleteMode();
             this.setResults([]);
             this.resetInputToCurrentFile();
-            if (wasOpen) {
-                this.host.openFile('');
-                this.input.value = '';
-            }
+            if (wasOpen) this.input.value = '';
         } catch (e) {
             console.error('Failed to delete file:', e);
             this.exitDeleteMode();

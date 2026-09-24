@@ -384,7 +384,7 @@ class FileTreeView {
         const files = this.options.files
         if (!files) return
         try {
-            if (this.currentPath() === path) await this.persistence()?.close()
+            if (this.currentPath() === path) await this.persistence()?.close({ discard: true })
             await files.remove(path)
             this.say(`Deleted ${basename(path)}.`)
         } catch (err) {
