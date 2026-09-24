@@ -23,6 +23,7 @@ import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
+import { Wikilink, WikilinkOptions } from './extensions/wikilink';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -100,7 +101,13 @@ export type MarkdownSetupOptions = {
     selectionMenu?: boolean;
     /** Link hover/edit popover. `false` omits it. */
     linkMenu?: boolean;
+    /** Links between notes. The editor parses and renders wikilinks on its
+     *  own; what they point at comes from the host's `resolver` (e.g. a
+     *  `Vault`'s `links` from `@joinezco/storage`). */
+    links?: LinksOptions;
 }
+
+export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'>;
 
 export type MarkdownEditorOptions = Partial<EditorOptions> & MarkdownSetupOptions;
 
@@ -126,6 +133,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     return [
         FileSystem.configure(options.fs || {}),
         ExtendedLink.configure({}),
+        Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
         StarterKit.configure({
             // Our own code block (extensions/codeblock.ts), bullet list
             // (extensions/lists.ts, disambiguated dash input), paragraph
@@ -207,9 +215,10 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
  * The CodeMirror-`minimalSetup` analog; add features back by importing the
  * individual extensions you want.
  */
-export function minimalSetup(options: { extensions?: AnyExtension[] } = {}): AnyExtension[] {
+export function minimalSetup(options: { extensions?: AnyExtension[]; links?: LinksOptions } = {}): AnyExtension[] {
     return [
         ExtendedLink.configure({}),
+        Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
         StarterKit.configure({
             // Keep StarterKit's lightweight code block here (no CodeMirror).
             bulletList: false,
@@ -337,8 +346,11 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 // what you use and the rest tree-shakes away (`sideEffects: false`). The setup
 // functions above use these same units.
 export { FileSystem } from './extensions/filesystem';
-export type { FileSystemOptions } from './extensions/filesystem';
+export type { FileSystemOptions, FileSystemStorage, FileEvent } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';
+export { Wikilink, wikilinkLabel } from './extensions/wikilink';
+export type { WikilinkOptions, WikilinkStorage } from './extensions/wikilink';
+export { findFragment, revealFragment } from './extensions/fragment';
 export { ExtendedCodeblock, codeblockRegistry } from './extensions/codeblock';
 export type { ExtendedCodeblockOptions } from './extensions/codeblock';
 export { ExtendedTaskItem } from './extensions/taskitem';

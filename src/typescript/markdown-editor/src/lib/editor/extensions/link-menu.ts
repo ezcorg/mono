@@ -3,6 +3,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { LinkPopover } from '../ui/link-popover'
+import type { WikilinkStorage } from './wikilink'
 
 /**
  * Inline link affordances:
@@ -22,6 +23,34 @@ import { LinkPopover } from '../ui/link-popover'
  * aria-* attributes onto its reference, and the ProseMirror editable must not
  * be mutated from outside its own lifecycle.
  */
+
+/**
+ * Follow a link's destination. A path into the vault (or a bare `#fragment`)
+ * opens in the editor through the wikilink extension's resolver, so a
+ * Markdown link and a wikilink to the same note behave the same; anything
+ * else (a URL, `mailto:`) opens in a new tab.
+ */
+function followHref(editor: Editor, href: string): void {
+    const wikilink = (editor.storage as any).wikilink as WikilinkStorage | undefined
+    if (wikilink && href && !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('//')) {
+        const hash = href.indexOf('#')
+        const path = hash < 0 ? href : href.slice(0, hash)
+        const fragment = hash < 0 ? null : decodeFragment(href.slice(hash + 1))
+        void wikilink.follow(path, fragment, 'markdown').then((followed) => {
+            if (!followed && path) openHref(href)
+        })
+        return
+    }
+    openHref(href)
+}
+
+function decodeFragment(fragment: string): string {
+    try {
+        return decodeURIComponent(fragment)
+    } catch {
+        return fragment
+    }
+}
 
 function openHref(href: string): void {
     if (!href || typeof window === 'undefined') return
@@ -296,9 +325,12 @@ export const LinkMenu = Extension.create<unknown, LinkMenuStorage>({
                         click: (_view, event) => {
                             if (!(event.metaKey || event.ctrlKey)) return false
                             const a = (event.target as HTMLElement | null)?.closest?.('a') as HTMLAnchorElement | null
-                            if (a?.href) {
+                            // The attribute as written (`a.href` is resolved
+                            // against the page, which a vault path is not).
+                            const href = a?.getAttribute('href')
+                            if (a && href && !a.hasAttribute('data-wikilink')) {
                                 event.preventDefault()
-                                openHref(a.href)
+                                followHref(editor, href)
                                 return true
                             }
                             return false
@@ -325,7 +357,7 @@ export const LinkMenu = Extension.create<unknown, LinkMenuStorage>({
             'Mod-Enter': () => {
                 const href = (this.editor.getAttributes('link').href as string | undefined) ?? ''
                 if (!href) return false
-                openHref(href)
+                followHref(this.editor, href)
                 return true
             },
         }

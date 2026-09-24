@@ -5,7 +5,7 @@ import {
     codeblock,
     basicSetup,
 } from '@joinezco/codeblock'
-import type { VfsInterface } from '@joinezco/storage'
+import { dirname, type VfsInterface } from '@joinezco/storage'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 
@@ -69,6 +69,13 @@ function getMarkdown(editor: Editor): string {
     return editor.storage.markdown.getMarkdown()
 }
 
+/** What happened to the open file: it was loaded into the editor, or the
+ *  editor's content was written to it. */
+export interface FileEvent {
+    type: 'load' | 'save'
+    path: string
+}
+
 export interface FileSystemOptions {
     fs?: VfsInterface
     filepath?: string
@@ -108,9 +115,14 @@ export interface FileSystemStorage {
      * *its* path first, then loads `path` — without the load looking like a
      * user edit, so it can never schedule a save against the wrong file. This
      * is the safe way to change files while autosave is on; the toolbar routes
-     * its "open file" through here.
+     * its "open file" through here. With `create`, a missing file is created
+     * empty first (following a link to a note not written yet).
      */
-    loadFile: (path: string) => Promise<void>
+    loadFile: (path: string, options?: { create?: boolean }) => Promise<void>
+    /** Be told when a file is loaded or saved. Returns an unsubscribe. */
+    subscribe: (listener: (event: FileEvent) => void) => () => void
+    /** @internal Write the open file's content and announce the save. */
+    write: (fs: VfsInterface, path: string, content: string) => void
 }
 
 export const FileSystem = Extension.create<FileSystemOptions>({
@@ -139,6 +151,8 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // live editor).
             flushPendingSave: () => {},
             loadFile: async () => {},
+            subscribe: () => () => {},
+            write: () => {},
         }
     },
 
@@ -150,6 +164,22 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         storage.options = this.options
 
         const editableEl = () => editor.view.dom as HTMLElement
+
+        const listeners = new Set<(event: FileEvent) => void>()
+        const emit = (event: FileEvent) => {
+            for (const listener of listeners) listener(event)
+        }
+        storage.subscribe = (listener) => {
+            listeners.add(listener)
+            return () => listeners.delete(listener)
+        }
+        // Every write of the open file goes through here, so a save is heard.
+        const save = (fs: VfsInterface, path: string, content: string) =>
+            fs.writeFile(path, content).then(
+                () => emit({ type: 'save', path }),
+                (error) => console.error(`[Filesystem] Failed to save content to ${path}:`, error),
+            )
+        storage.write = (fs, path, content) => void save(fs, path, content)
 
         // Tear down the swapped-in code editor and restore the rich-text editor.
         const hideCodeEditor = () => {
@@ -175,9 +205,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 storage.codeSaveTimeout = null
                 const { fs: currentFs, filepath: currentPath } = storage.options
                 if (!currentFs || !currentPath || !storage.codeView) return
-                currentFs.writeFile(currentPath, storage.codeView.state.doc.toString()).catch(error => {
-                    console.error(`[Filesystem] Failed to save content to ${currentPath}:`, error)
-                })
+                void save(currentFs, currentPath, storage.codeView.state.doc.toString())
             }, 500)
         }
 
@@ -287,6 +315,8 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             } finally {
                 storage.loadingFile = false
             }
+            const loaded = storage.options.filepath
+            if (loaded) emit({ type: 'load', path: loaded })
             if (didInitialLoad) {
                 scrollEditorToTop(editor.view.dom as HTMLElement)
                 // Move the caret to the start of the freshly-opened file (focus
@@ -310,9 +340,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 clearTimeout(storage.saveTimeout)
                 storage.saveTimeout = null
                 if (fs && filepath && autoSave && !storage.codeView) {
-                    fs.writeFile(filepath, getMarkdown(editor)).catch(error => {
-                        console.error(`[Filesystem] Failed to save content to ${filepath}:`, error)
-                    })
+                    void save(fs, filepath, getMarkdown(editor))
                 }
             }
             // Code editor's pending save.
@@ -320,20 +348,23 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 clearTimeout(storage.codeSaveTimeout)
                 storage.codeSaveTimeout = null
                 if (fs && filepath && autoSave && storage.codeView) {
-                    fs.writeFile(filepath, storage.codeView.state.doc.toString()).catch(error => {
-                        console.error(`[Filesystem] Failed to save content to ${filepath}:`, error)
-                    })
+                    void save(fs, filepath, storage.codeView.state.doc.toString())
                 }
             }
         }
         storage.flushPendingSave = flushPendingSave
 
-        storage.loadFile = async (path: string) => {
+        storage.loadFile = async (path: string, options: { create?: boolean } = {}) => {
             const { fs } = storage.options
             if (!fs) return
             // 1. Persist the outgoing file's unsaved edits to *its* path first,
             //    so they're neither lost nor written to the incoming file.
             flushPendingSave()
+            if (options.create && !(await fs.exists(path))) {
+                const parent = dirname(path)
+                if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })
+                await fs.writeFile(path, '')
+            }
             // 2. Read the new file (may reject — let the caller handle it).
             const content = await fs.readFile(path)
             // 3. Retarget autosave at the new file *before* swapping content,
@@ -374,9 +405,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // one.
             const { fs: currentFs, filepath: currentPath } = storage.options
             if (!currentFs || !currentPath || storage.codeView) return
-            currentFs.writeFile(currentPath, getMarkdown(this.editor)).catch(error => {
-                console.error(`[Filesystem] Failed to save content to ${currentPath}:`, error)
-            })
+            storage.write(currentFs, currentPath, getMarkdown(this.editor))
         }, 500) // debounce by 500ms
     },
 

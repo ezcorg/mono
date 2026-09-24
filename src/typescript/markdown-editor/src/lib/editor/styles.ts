@@ -272,6 +272,24 @@ export const styleModule: StyleModule = new StyleModule({
             cursor: 'pointer',
         },
 
+        // Wikilinks (extensions/wikilink.ts): the link colour, and a link whose
+        // note does not exist yet is dimmed with a dotted underline — still
+        // followable (following it creates the note).
+        '& .ezco-mde-wikilink': {
+            color: 'var(--ezco-mde-link-color)',
+            cursor: 'pointer',
+            'border-radius': '3px',
+        },
+        '& .ezco-mde-wikilink.is-unresolved': {
+            opacity: 0.6,
+            'text-decoration': 'underline dotted',
+            'text-underline-offset': '0.2em',
+        },
+        '& .ezco-mde-wikilink.ProseMirror-selectednode': {
+            outline: '2px solid var(--ezco-mde-accent)',
+            'outline-offset': '1px',
+        },
+
         // Block-level vertical rhythm uses *top-only* margins driven by
         // the `& > * + *` rules near the bottom of this block: each
         // element declares its own size/weight/font here, but spacing
@@ -863,7 +881,8 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
         'font-family': 'Inter, system-ui, -apple-system, sans-serif',
     },
-    '.ezco-mde-slash-menu': {
+    // The `[[` note menu (extensions/wikilink.ts) shares the slash menu's look.
+    '.ezco-mde-slash-menu, .ezco-mde-wikilink-menu': {
         display: 'flex',
         'flex-direction': 'column',
         gap: '1px',
