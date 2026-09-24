@@ -4,6 +4,7 @@ declare module "vitest" {
     interface ProvidedContext {
         icanhazWs: string;
         icanhazLinks: { provider: string; source: string };
+        icanhazWebDir: string;
     }
 }
 
@@ -17,3 +18,6 @@ export const WS: string = inject("icanhazWs");
  *  credential for. A page names the component by these; the test daemon
  *  fetches it. */
 export const LINKS: { provider: string; source: string } = inject("icanhazLinks");
+
+/** This package's directory on the host running the daemon. */
+export const WEB_DIR: string = inject("icanhazWebDir");

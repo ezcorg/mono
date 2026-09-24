@@ -6,7 +6,7 @@
 //! full-window Rust editor with diagnostics/completions.
 //!
 //! Run (rust-analyzer + cargo must be on the daemon's PATH):
-//!   cd /Users/theo/dev/mono && PATH="$HOME/.cargo/bin:$PATH" ICANHAZ_CONSENT=auto ./target/debug/icanhazd
+//!   cd <repo root> && PATH="$HOME/.cargo/bin:$PATH" ICANHAZ_CONSENT=auto ./target/debug/icanhazd
 //!   cd src/apps/icanhaz/web && npm run dev      # then open /rust-demo.html
 //!
 //! Type a type error (e.g. `let x: i32 = "no";`) → a red rust-analyzer

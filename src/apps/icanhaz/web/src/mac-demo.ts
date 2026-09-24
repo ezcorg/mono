@@ -12,7 +12,7 @@
 //! capability). The two differ only in their default file.
 //!
 //! Run (rust-analyzer + cargo on the daemon's PATH for the Rust page):
-//!   cd /Users/theo/dev/mono && PATH="$HOME/.cargo/bin:$PATH" ICANHAZ_CONSENT=auto ./target/debug/icanhazd
+//!   cd <repo root> && PATH="$HOME/.cargo/bin:$PATH" ICANHAZ_CONSENT=auto ./target/debug/icanhazd
 //!   cd src/apps/icanhaz/web && npm run dev   # open /editor-demo.html or /rust-demo.html
 //! Override the file/socket via `?file=…` and `?ws=…`.
 

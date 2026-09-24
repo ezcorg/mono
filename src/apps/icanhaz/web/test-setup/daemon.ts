@@ -104,6 +104,9 @@ export default async function setup({ provide }: GlobalSetupContext) {
     }
 
     provide("icanhazWs", wsUrl);
+    // The web package's directory on the host, for tests that hand the daemon
+    // a host path (rust-analyzer's workspace).
+    provide("icanhazWebDir", join(HERE, ".."));
     console.log(`[icanhaz test daemon] serving ${wsUrl} (jail ${jail})`);
 
     // A second, distinct daemon: the publisher. It serves its own registry with
