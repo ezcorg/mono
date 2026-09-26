@@ -20,8 +20,9 @@
  */
 import { blake3 } from '@noble/hashes/blake3'
 import { bytesToHex } from '@noble/hashes/utils'
-import type { VfsInterface } from './vfs.js'
+import { walk, type VfsInterface } from './vfs.js'
 import { basename, dirname, joinPath, normalizePath } from './path.js'
+import { Locks } from './lock.js'
 
 export interface FileVersion {
     /** blake3 over the content hash, the parents and the path. */
@@ -90,7 +91,7 @@ export async function conflictCopyPath(fs: VfsInterface, path: string, options: 
 export class VersionLog {
     private readonly dir: string
     private readonly now: () => number
-    private readonly locks = new Map<string, Promise<unknown>>()
+    private readonly locks = new Locks()
 
     constructor(
         private readonly fs: VfsInterface,
@@ -107,7 +108,7 @@ export class VersionLog {
      */
     head(path: string): Promise<FileVersion | null> {
         const clean = normalizePath(path)
-        return this.locked(clean, () => this.observe(clean))
+        return this.locks.run(clean, () => this.observe(clean))
     }
 
     /** The file's versions, newest first, back along first parents. */
@@ -140,7 +141,7 @@ export class VersionLog {
     put(path: string, base: string | null, bytes: Uint8Array | string): Promise<PutResult> {
         const clean = normalizePath(path)
         const data = typeof bytes === 'string' ? encoder.encode(bytes) : bytes
-        return this.locked(clean, async () => {
+        return this.locks.run(clean, async () => {
             const head = await this.observe(clean)
             if ((head?.id ?? null) !== base) {
                 const copy = await this.conflictPath(clean)
@@ -155,14 +156,41 @@ export class VersionLog {
         })
     }
 
-    /** The file (or folder) at `from` moved to `to`: its history follows. */
+    /**
+     * The file (or folder) at `from` moved to `to`: its history follows. A
+     * log already at `to` is one a file removed outside the vault left
+     * behind, and it is replaced (a file that arrives with no log leaves
+     * `to` with none).
+     */
     async move(from: string, to: string): Promise<void> {
         const source = this.logPath(normalizePath(from))
-        if (!(await this.fs.exists(source))) return
         const target = this.logPath(normalizePath(to))
-        const parent = dirname(target)
-        if (parent && !(await this.fs.exists(parent))) await this.fs.mkdir(parent, { recursive: true })
-        await this.fs.rename(source, target)
+        if (source === target) return
+        const taken = await this.fs.exists(target)
+        if (taken) await this.clear(target)
+        if (!(await this.fs.exists(source))) return
+        if (!taken) {
+            await this.ensureDir(dirname(target))
+            await this.fs.rename(source, target)
+            return
+        }
+        // No store renames a folder onto a folder that exists, and none can
+        // remove one, so onto a cleared log the files go one by one.
+        for await (const file of walk(this.fs, source)) {
+            const dest = joinPath(target, normalizePath(file).slice(source.length + 1))
+            await this.ensureDir(dirname(dest))
+            await this.fs.rename(file, dest)
+        }
+    }
+
+    /**
+     * The file's log removed (a folder's: every file's under it). The bytes
+     * stay in `.eznote/objects/`: they are shared by every version made of
+     * them, wherever it was written.
+     */
+    async remove(path: string): Promise<void> {
+        const log = this.logPath(normalizePath(path))
+        if (await this.fs.exists(log)) await this.clear(log)
     }
 
     // ── Records ──────────────────────────────────────────────────────────────
@@ -224,19 +252,10 @@ export class VersionLog {
         if (path && !(await this.fs.exists(path))) await this.fs.mkdir(path, { recursive: true })
     }
 
-    /** Run `fn` after every earlier operation on `path` has settled. */
-    private locked<T>(path: string, fn: () => Promise<T>): Promise<T> {
-        const previous = this.locks.get(path) ?? Promise.resolve()
-        const result = previous.then(fn, fn)
-        const tail = result.then(
-            () => {},
-            () => {},
-        )
-        this.locks.set(path, tail)
-        void tail.then(() => {
-            if (this.locks.get(path) === tail) this.locks.delete(path)
-        })
-        return result
+    /** Every file under `dir` unlinked. The contract has no way to remove a
+     *  folder, so the emptied ones stay; nothing reads them. */
+    private async clear(dir: string): Promise<void> {
+        for await (const file of walk(this.fs, dir)) await this.fs.unlink(file)
     }
 }
 

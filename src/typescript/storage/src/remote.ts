@@ -281,5 +281,7 @@ function disconnected(reason: string): Error {
 function transferablesOf(value: unknown): Transferable[] {
     if (typeof MessagePort === 'undefined' || !value || typeof value !== 'object') return []
     if (value instanceof MessagePort) return [value]
+    // Bytes: `Object.values` would list every one of them.
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return []
     return Object.values(value).filter((member): member is MessagePort => member instanceof MessagePort)
 }

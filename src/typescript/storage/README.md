@@ -97,8 +97,13 @@ if (!result.ok) result.conflict.path // the bytes, kept beside the file
 A stale write changes nothing at the path; its bytes become a conflict
 copy (`plan (conflict, 2026-09-23 12.04).md`). A change made by anything
 else becomes a version on the head it replaced when the log next looks.
-`history`, `read` and `move` (a vault rename calls it) complete it;
-versions are signed when the log is given a `Signer`.
+`history`, `read`, `move` and `remove` complete it; versions are signed
+when the log is given a `Signer`. A file's history goes with the file: a
+vault rename moves the log before the file (and back, if the store cannot
+move the file), `vault.files.remove` removes it with the file, and a log
+left behind by a file removed some other way is replaced when a file is
+renamed onto its name. The bytes in `.eznote/objects/` are shared by every
+version made of them and stay.
 
 ## Models and plugins
 
@@ -117,7 +122,7 @@ set in `.eznote/plugins.toml`, pinned by sha256.
 ## Test
 
 ```sh
-pnpm test:run   # Node (incl. a rebuild of the fixture vault in src/__fixtures__), then Chromium
+pnpm test:run   # Node, against the fixture vault in src/__fixtures__, then Chromium
 pnpm typecheck
 pnpm build
 ```

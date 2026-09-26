@@ -100,11 +100,65 @@ describe('A thread', () => {
         expect(threadsIn(item)[0].thread).toEqual(thread)
     })
 
+    it('keeps a paragraph break inside a reply, and a lazy code block in one', () => {
+        const text = [
+            '[^c-1]: @theo 2026-09-13T12:04Z · open',
+            '    - @alice 2026-09-13T12:10Z: First paragraph.',
+            '',
+            '      Second paragraph.',
+            '      - @bob 2026-09-13T12:11Z: see',
+            '',
+            '            code()',
+        ].join('\n')
+        const { thread } = parseThreadDefinition(text)!
+        expect(thread.replies[0].body).toBe('First paragraph.\n\nSecond paragraph.')
+        expect(thread.replies[0].replies[0].body).toBe('see\n\n    code()')
+        expect(formatThread(thread, 'c-1')).toBe(text)
+    })
+
+    it('drops nothing written under a header: a reply-shaped line in code is code, and text after a reply is text', () => {
+        const fenced = [
+            '[^c-1]: @theo 2026-09-13T12:04Z · open',
+            '    Write a reply like this:',
+            '    ```md',
+            '    - @alice 2026-09-13T12:10Z: like so',
+            '    ```',
+            '    and it shows in the margin.',
+            '    - @bob 2026-09-13T12:11Z: Got it.',
+        ].join('\n')
+        const a = parseThreadDefinition(fenced)!.thread
+        expect(a.body).toBe('Write a reply like this:\n```md\n- @alice 2026-09-13T12:10Z: like so\n```\nand it shows in the margin.')
+        expect(a.replies.map((r) => r.author)).toEqual(['bob'])
+        expect(formatThread(a, 'c-1')).toBe(fenced)
+        // A plain item between two replies: what is before the last run of replies is body.
+        const mixed = ['[^c-1]: @theo 2026-09-13T12:04Z · open', '    - @alice 2026-09-13T12:10Z: one', '    - a plain item', '    - @bob 2026-09-13T12:11Z: two'].join('\n')
+        const b = parseThreadDefinition(mixed)!.thread
+        expect(b.body).toBe('- @alice 2026-09-13T12:10Z: one\n- a plain item')
+        expect(b.replies.map((r) => r.body)).toEqual(['two'])
+        expect(formatThread(b, 'c-1')).toBe(mixed)
+    })
+
+    it('reads a target whose note name holds the separator', () => {
+        const header = '@theo 2026-09-13T12:04Z · resolved · [[Notes · 2026#^abc]] [[#c-1]] · Is this right?'
+        expect(parseThreadHeader(header)).toEqual({
+            author: 'theo',
+            time: '2026-09-13T12:04Z',
+            status: 'resolved',
+            targets: [
+                { target: 'Notes · 2026', fragment: '^abc', alias: null },
+                { target: '', fragment: 'c-1', alias: null },
+            ],
+            rest: 'Is this right?',
+        })
+    })
+
     it('knows a reaction from a reply', () => {
         expect(isReaction('👍')).toBe(true)
         expect(isReaction('🎉 ❤️')).toBe(true)
         expect(isReaction('👍🏽')).toBe(true)
+        expect(isReaction('👨‍👩‍👧')).toBe(true)
         expect(isReaction('👍 yes')).toBe(false)
+        expect(isReaction('👍 123')).toBe(false)
         expect(isReaction('1')).toBe(false)
         expect(isReaction('')).toBe(false)
     })
@@ -160,5 +214,8 @@ describe('The threads in a note', () => {
         // Between paragraphs: one blank line left.
         expect(stripComments(`A.\n\n${RFC_THREAD}\n\nB.\n`)).toBe('A.\n\nB.\n')
         expect(stripComments('No comments.\n')).toBe('No comments.\n')
+        // A pin around text with brackets in it, as the editor's span rule allows.
+        const nested = 'See [the [[Zoology]] note]{#c-01J9K} here.\n\n' + RFC_THREAD + '\n'
+        expect(stripComments(nested)).toBe('See the [[Zoology]] note here.\n')
     })
 })

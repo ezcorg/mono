@@ -22,6 +22,7 @@ import { LinkGraph, syntaxOf } from './links/graph.js'
 import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve.js'
 import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax.js'
 import { VersionLog, type VersionLogOptions } from './versions.js'
+import { Locks } from './lock.js'
 import { formatThread, spliceThread, threadsIn, type CommentIndex, type CommentRef, type ThreadSource } from './comments.js'
 import type { LinkIndex, LinkRef, LinkResolution, LinkResolver, LinkSuggestion, LinkSyntax } from './links/types.js'
 
@@ -57,6 +58,9 @@ export class Vault {
     private text = new SearchIndex()
     /** The threads each note holds (notes with none are left out). */
     private threads = new Map<string, ThreadSource[]>()
+    /** Comment updates to a note, one at a time: each reads what the one
+     *  before it wrote. */
+    private threadWrites = new Locks()
     private listeners = new Set<() => void>()
     private notifyScheduled = false
     private watchAbort = new AbortController()
@@ -101,6 +105,7 @@ export class Vault {
             subscribe: (listener) => this.subscribe(listener),
         }
         const fs = this.fs
+        const versions = this.versions
         this.files = {
             async create(path, content = '', options = {}) {
                 const clean = normalizePath(path)
@@ -116,6 +121,8 @@ export class Vault {
                 const clean = normalizePath(path)
                 if ((await fs.stat(clean))?.type === FileType.Directory) throw new Error(`${clean} is a folder`)
                 await fs.unlink(clean)
+                // Its history goes with it.
+                await versions.remove(clean)
             },
         }
         // Following starts before the first walk, so a change made while the
@@ -205,7 +212,11 @@ export class Vault {
     }
 
     /** Write `next` in place of the thread `ref` read, if it is still as read. */
-    private async updateThread(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
+    private updateThread(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
+        return this.threadWrites.run(normalizePath(ref.source), () => this.spliceThread(ref, next))
+    }
+
+    private async spliceThread(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
         const text = await this.fs.readFile(ref.source)
         const found = threadsIn(text).find((t) => t.form === ref.form && t.label === ref.label && t.text === ref.text)
         if (!found) throw new Error(`The thread in ${ref.source} changed since it was read`)
@@ -276,8 +287,15 @@ export class Vault {
 
         const parent = dirname(to)
         if (parent && !(await this.store.exists(parent))) await this.store.mkdir(parent, { recursive: true })
-        await this.store.rename(from, to)
+        // The log moves first: a log that cannot move leaves the file where
+        // it is, and a file the store cannot move gets its log back.
         await this.versions.move(from, to)
+        try {
+            await this.store.rename(from, to)
+        } catch (error) {
+            await this.versions.move(to, from).catch(() => {})
+            throw error
+        }
         for (const [a, b] of moved) {
             const threads = this.threads.get(a)
             this.threads.delete(a)

@@ -73,10 +73,17 @@ export function commentTime(now: number = Date.now()): string {
     return `${new Date(now).toISOString().slice(0, 16)}Z`
 }
 
+/** What may join or follow a pictograph in one emoji: the zero-width
+ *  joiner, the emoji presentation selector, the keycap, skin tones, flag
+ *  letters and tag characters. (Not `\p{Emoji_Component}`, which takes in
+ *  the digits, `#` and `*` too.) */
+const EMOJI_PART = '\\p{Emoji_Modifier}\\u200D\\uFE0F\\u20E3\\u{1F1E6}-\\u{1F1FF}\\u{E0020}-\\u{E007F}'
+const EMOJI_ONLY = new RegExp(`^(?:\\p{Extended_Pictographic}|[${EMOJI_PART}]|\\s)+$`, 'u')
+
 /** True for a body that is only emoji (a reaction). */
 export function isReaction(body: string): boolean {
     const text = body.trim()
-    return !!text && /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\p{Emoji_Modifier}|‍|️|\s)+$/u.test(text) && /\p{Extended_Pictographic}/u.test(text)
+    return !!text && EMOJI_ONLY.test(text) && /\p{Extended_Pictographic}/u.test(text)
 }
 
 /** The wikilinks a field is made of, or null when it holds anything else. */
@@ -96,6 +103,25 @@ function targetsOf(field: string): Wikilink[] | null {
     return out.length ? out : null
 }
 
+/** `text` split at ` · ` wherever that falls outside a wikilink (a note's
+ *  name may hold the separator). */
+function splitFields(text: string): string[] {
+    const out: string[] = []
+    let from = 0
+    let pos = 0
+    while (pos < text.length) {
+        if (text.startsWith('[[', pos)) {
+            const close = text.indexOf(']]', pos + 2)
+            pos = close < 0 ? text.length : close + 2
+        } else if (text.startsWith(' · ', pos)) {
+            out.push(text.slice(from, pos))
+            from = pos = pos + ' · '.length
+        } else pos++
+    }
+    out.push(text.slice(from))
+    return out
+}
+
 /** A thread header's parts, and any text after them (the body's first
  *  line, when someone wrote it on the header's line). */
 export function parseThreadHeader(line: string): { author: string; time: string; status: ThreadStatus; targets: Wikilink[]; rest: string } | null {
@@ -103,24 +129,70 @@ export function parseThreadHeader(line: string): { author: string; time: string;
     if (!m) return null
     let status: ThreadStatus | null = null
     let targets: Wikilink[] | null = null
-    const fields = m[3] ? m[3].slice(' · '.length).split(' · ') : []
+    const fields = m[3] ? splitFields(m[3].slice(' · '.length)) : []
     let i = 0
     for (; i < fields.length; i++) {
         const field = fields[i].trim()
+        const links: Wikilink[] | null = targets === null ? targetsOf(field) : null
         if ((field === 'open' || field === 'resolved') && status === null && targets === null) status = field
-        else if (targets === null && targetsOf(field)) targets = targetsOf(field)
+        else if (links) targets = links
         else break
     }
     return { author: m[1], time: m[2], status: status ?? 'open', targets: targets ?? [], rest: fields.slice(i).join(' · ') }
 }
 
-/** Lines under a header, dedented: the body, then the replies. */
-function parseBody(lines: string[]): { body: string; replies: Message[] } {
-    const first = lines.findIndex((l) => REPLY_HEADER.test(l))
-    const bodyLines = first < 0 ? lines : lines.slice(0, first)
-    return { body: trimBlankLines(bodyLines).join('\n'), replies: first < 0 ? [] : parseReplies(lines.slice(first)) }
+/** The lines of `lines` (from `from` on) inside fenced code at their
+ *  own indentation: the fences and what is between them. */
+function fencedLines(lines: string[], from = 0): Set<number> {
+    const code = new Set<number>()
+    let fence: string | null = null
+    for (let i = from; i < lines.length; i++) {
+        const f = /^\s{0,3}(`{3,}|~{3,})/.exec(lines[i])
+        if (fence) {
+            code.add(i)
+            if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null
+        } else if (f) {
+            fence = f[1]
+            code.add(i)
+        }
+    }
+    return code
 }
 
+/** Where a body's replies begin: the first `- @handle TIME:` item from which
+ *  reply items (and blank lines between them) run to the end. -1 when there
+ *  is none. A reply-shaped line inside fenced code is code, and one followed
+ *  by anything else is text, so nothing written under a header is dropped. */
+function repliesStart(lines: string[]): number {
+    const code = fencedLines(lines)
+    let start = -1
+    let i = 0
+    while (i < lines.length) {
+        if (!code.has(i) && REPLY_HEADER.test(lines[i])) {
+            if (start < 0) start = i
+            i = extent(lines, i, 2)
+        } else {
+            if (lines[i].trim()) start = -1
+            i++
+        }
+    }
+    return start
+}
+
+/**
+ * Lines under a header, dedented: the body, then the replies. `lead` is the
+ * body's first line when it was written on the header's own line; a blank
+ * line after it is a paragraph break, and kept.
+ */
+function parseBody(lines: string[], lead = ''): { body: string; replies: Message[] } {
+    const first = repliesStart(lines)
+    const bodyLines = first < 0 ? lines : lines.slice(0, first)
+    const kept = lead ? trimTrailingBlankLines(bodyLines) : trimBlankLines(bodyLines)
+    return { body: (lead ? [lead, ...kept] : kept).join('\n'), replies: first < 0 ? [] : parseReplies(lines.slice(first)) }
+}
+
+/** `lines` from the first reply on (`repliesStart`): the items, with the
+ *  blank lines between them passed over. */
 function parseReplies(lines: string[]): Message[] {
     const out: Message[] = []
     let i = 0
@@ -132,9 +204,8 @@ function parseReplies(lines: string[]): Message[] {
         }
         const j = extent(lines, i, 2)
         const inner = lines.slice(i + 1, j).map((l) => dedent(l, 2))
-        const { body, replies } = parseBody(inner)
-        const firstLine = m[3] ?? ''
-        out.push({ author: m[1], time: m[2], body: firstLine && body ? `${firstLine}\n${body}` : firstLine || body, replies })
+        const { body, replies } = parseBody(inner, m[3] ?? '')
+        out.push({ author: m[1], time: m[2], body, replies })
         i = j
     }
     return out
@@ -161,17 +232,21 @@ const dedent = (line: string, indent: number) =>
 
 function trimBlankLines(lines: string[]): string[] {
     let a = 0
+    while (a < lines.length && !lines[a].trim()) a++
+    return trimTrailingBlankLines(lines.slice(a))
+}
+
+function trimTrailingBlankLines(lines: string[]): string[] {
     let b = lines.length
-    while (a < b && !lines[a].trim()) a++
-    while (b > a && !lines[b - 1].trim()) b--
-    return lines.slice(a, b)
+    while (b > 0 && !lines[b - 1].trim()) b--
+    return lines.slice(0, b)
 }
 
 /** A thread from its header line and the lines under it (dedented). */
 export function parseThread(header: string, lines: string[]): Thread | null {
     const h = parseThreadHeader(header)
     if (!h) return null
-    const { body, replies } = parseBody(h.rest ? [h.rest, ...lines] : lines)
+    const { body, replies } = parseBody(lines, h.rest)
     return { author: h.author, time: h.time, status: h.status, targets: h.targets, body, replies }
 }
 
@@ -232,18 +307,10 @@ export function threadsIn(markdown: string): ThreadSource[] {
         const close = lines.findIndex((l, k) => k > 0 && (l === '---' || l === '...'))
         if (close > 0) i = close + 1
     }
-    let fence: string | null = null
+    const code = fencedLines(lines, i)
     for (; i < lines.length; i++) {
+        if (code.has(i)) continue
         const line = lines[i]
-        const f = /^\s{0,3}(`{3,}|~{3,})/.exec(line)
-        if (fence) {
-            if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null
-            continue
-        }
-        if (f) {
-            fence = f[1]
-            continue
-        }
         const footnote = FOOTNOTE.exec(line)
         const item = !footnote && line.startsWith('- ') ? parseThreadHeader(line.slice(2)) : null
         if (footnote && parseThreadHeader(footnote[2])) {
@@ -336,8 +403,43 @@ export function stripComments(markdown: string): string {
 /** `[text]{#id …}` for each of `ids`, as `text`. */
 function unwrapPins(markdown: string, ids: Set<string>): string {
     if (!ids.size) return markdown
-    return markdown.replace(/\[((?:\\.|[^\\\[\]])*)\]\{([^{}\n]*)\}/g, (whole, text: string, attrs: string) => {
-        const id = /(?:^|\s)#([\w-]+)(?=\s|$)/.exec(attrs)?.[1]
-        return id && ids.has(id) ? text : whole
-    })
+    let out = ''
+    let last = 0
+    let i = 0
+    while (i < markdown.length) {
+        const c = markdown[i]
+        if (c === '\\') {
+            i += 2
+            continue
+        }
+        // `[[wikilink]]` and `[^footnote]` are not spans.
+        const span = c === '[' && markdown[i + 1] !== '[' && markdown[i + 1] !== '^' ? matchSpanAt(markdown, i) : null
+        const id = span && /(?:^|\s)#([\w-]+)(?=\s|$)/.exec(span.attrs)?.[1]
+        if (span && id && ids.has(id)) {
+            out += markdown.slice(last, i) + markdown.slice(i + 1, span.textEnd)
+            last = i = span.end
+        } else i++
+    }
+    return out + markdown.slice(last)
+}
+
+/** `[text]{attrs}` at `pos`, the brackets in `text` balancing and `\\`
+ *  escaping, as the editor's span rule reads it; null when there is none. */
+function matchSpanAt(src: string, pos: number): { textEnd: number; attrs: string; end: number } | null {
+    let depth = 0
+    for (let i = pos; i < src.length; i++) {
+        const c = src[i]
+        if (c === '\\') i++
+        else if (c === '\n') return null
+        else if (c === '[') depth++
+        else if (c === ']' && --depth === 0) {
+            if (src[i + 1] !== '{') return null
+            const close = src.indexOf('}', i + 2)
+            if (close < 0) return null
+            const attrs = src.slice(i + 2, close)
+            if (/[{\n]/.test(attrs)) return null
+            return { textEnd: i, attrs, end: close + 1 }
+        }
+    }
+    return null
 }

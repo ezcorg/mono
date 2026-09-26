@@ -96,6 +96,22 @@ describe('A filesystem over a port', () => {
         release()
     })
 
+    it('carries bytes at the cost of copying them, not of listing them', async () => {
+        const bytes = new Uint8Array(8 * 1024 * 1024).map((_, i) => i % 251)
+        const fs = remote(memoryVfs({ 'big.bin': bytes }))
+        await fs.readBytes('big.bin') // warm
+        const t0 = performance.now()
+        structuredClone(bytes)
+        const copy = performance.now() - t0
+        const t1 = performance.now()
+        const back = await fs.readBytes('big.bin')
+        const overPort = performance.now() - t1
+        expect(back.length).toBe(bytes.length)
+        // A few copies and a hop: an order of magnitude, not two (walking the
+        // bytes one by one for ports to transfer cost a hundred copies' worth).
+        expect(overPort).toBeLessThan(Math.max(30, copy * 20))
+    })
+
     it('gives a port to any filesystem, serving a local one from here', async () => {
         const local = memoryVfs({ 'n.md': 'note' })
         const fs = remoteVfs(await vfsPort(local))

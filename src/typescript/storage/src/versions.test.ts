@@ -1,9 +1,39 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { memoryVfs } from './memory.js'
+import { nodeVfs } from './node.js'
+import { dirname } from './path.js'
+import type { VfsInterface } from './vfs.js'
 import { VersionLog, conflictCopyPath, type FileVersion } from './versions.js'
 import { Vault } from './vault.js'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
+
+const temps: string[] = []
+afterAll(async () => {
+    await Promise.all(temps.map((d) => rm(d, { recursive: true, force: true })))
+})
+
+/** The stores that run in Node, each seeded with `files`. */
+export const stores: [string, (files: Record<string, string>) => Promise<VfsInterface>][] = [
+    ['memory', async (files) => memoryVfs(files)],
+    [
+        'node',
+        async (files) => {
+            const dir = await mkdtemp(join(tmpdir(), 'storage-versions-'))
+            temps.push(dir)
+            const fs = nodeVfs(dir)
+            for (const [path, content] of Object.entries(files)) {
+                const parent = dirname(path)
+                if (parent) await fs.mkdir(parent, { recursive: true })
+                await fs.writeFile(path, content)
+            }
+            return fs
+        },
+    ],
+]
 
 describe('A file’s version log', () => {
     it('writes on the current version and refuses a stale one, keeping the loser as a conflict copy', async () => {
@@ -141,5 +171,73 @@ describe('A file’s version log', () => {
         const next = await vault.versions.put('c.md', head.id, '# C')
         expect(next.ok).toBe(true)
         expect((await vault.versions.history('c.md')).map((v) => v.path)).toEqual(['c.md', 'a.md'])
+    })
+})
+
+describe.each(stores)('A file’s history goes with the file (%s)', (_, make) => {
+    it('is removed with the file, its bytes kept for any other version made of them', async () => {
+        const fs = await make({ 'a.md': 'same', 'b.md': 'same' })
+        const log = new VersionLog(fs)
+        const a = (await log.head('a.md'))!
+        await log.head('b.md')
+        await fs.unlink('a.md')
+        await log.remove('a.md')
+        expect(await log.history('a.md')).toEqual([])
+        expect(await fs.exists('.eznote/versions/a.md/HEAD')).toBe(false)
+        // The bytes are b.md's too.
+        expect(text(await log.read(a))).toBe('same')
+        // A new file at the name starts a history of its own.
+        await fs.writeFile('a.md', 'new')
+        expect((await log.head('a.md'))!.parents).toEqual([])
+    })
+
+    it('is removed with a folder, every file’s under it', async () => {
+        const fs = await make({ 'notes/a.md': 'A', 'notes/deep/b.md': 'B', 'c.md': 'C' })
+        const log = new VersionLog(fs)
+        for (const path of ['notes/a.md', 'notes/deep/b.md', 'c.md']) await log.head(path)
+        await log.remove('notes')
+        expect(await fs.exists('.eznote/versions/notes/a.md/HEAD')).toBe(false)
+        expect(await fs.exists('.eznote/versions/notes/deep/b.md/HEAD')).toBe(false)
+        expect(await log.history('c.md')).toHaveLength(1)
+    })
+
+    it('replaces a log left behind when a file moves onto its name', async () => {
+        const fs = await make({ 'a.md': 'A', 'b.md': 'B' })
+        const log = new VersionLog(fs)
+        const a = (await log.head('a.md'))!
+        await log.head('b.md')
+        // Removed by something else: its log stays.
+        await fs.unlink('b.md')
+        await fs.rename('a.md', 'b.md')
+        await log.move('a.md', 'b.md')
+        expect((await log.history('b.md')).map((v) => v.id)).toEqual([a.id])
+        expect(await log.history('a.md')).toEqual([])
+    })
+
+    it('replaces the logs left behind when a folder moves onto their folder', async () => {
+        const fs = await make({ 'x/a.md': 'A', 'x/deep/b.md': 'B', 'y/a.md': 'old', 'y/deep/b.md': 'old too' })
+        const log = new VersionLog(fs)
+        const a = (await log.head('x/a.md'))!
+        const b = (await log.head('x/deep/b.md'))!
+        await log.head('y/a.md')
+        await log.head('y/deep/b.md')
+        await fs.unlink('y/a.md')
+        await fs.unlink('y/deep/b.md')
+        await fs.rename('x/a.md', 'y/a.md')
+        await fs.rename('x/deep/b.md', 'y/deep/b.md')
+        await log.move('x', 'y')
+        expect((await log.history('y/a.md')).map((v) => v.id)).toEqual([a.id])
+        expect((await log.history('y/deep/b.md')).map((v) => v.id)).toEqual([b.id])
+    })
+
+    it('leaves a log alone when nothing moves onto it: a file with no log takes none over', async () => {
+        const fs = await make({ 'a.md': 'A', 'b.md': 'B' })
+        const log = new VersionLog(fs)
+        await log.head('b.md')
+        await fs.unlink('b.md')
+        await fs.rename('a.md', 'b.md')
+        await log.move('a.md', 'b.md')
+        // The moved file's first version follows nothing.
+        expect((await log.head('b.md'))!.parents).toEqual([])
     })
 })

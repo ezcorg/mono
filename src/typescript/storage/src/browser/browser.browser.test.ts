@@ -99,6 +99,15 @@ describe('The origin’s broker', () => {
 })
 
 describeVfs('opfs (this thread)', async () => opfsVfs(await opfsBucket(fresh('opfs'))))
+
+describe('The OPFS store', () => {
+    it('renames a file onto itself without waiting on itself', async () => {
+        const fs = opfsVfs(await opfsBucket(fresh('self-rename')))
+        await fs.writeFile('same.md', 'kept')
+        await fs.rename('same.md', 'same.md')
+        expect(await fs.readFile('same.md')).toBe('kept')
+    })
+})
 describeVfs('browser (broker and store workers)', () => browserVfs(fresh('browser')))
 
 describe('Browser vaults', () => {

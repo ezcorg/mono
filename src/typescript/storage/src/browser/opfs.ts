@@ -13,6 +13,7 @@
  */
 import { FileType, type FileStat, type VfsInterface, type WatchEvent } from '../vfs.js'
 import { normalizePath } from '../path.js'
+import { Locks } from '../lock.js'
 
 /** Whether this context can reach the OPFS. */
 export function hasOpfs(): boolean {
@@ -48,23 +49,9 @@ export function opfsVfs(root: FileSystemDirectoryHandle): VfsInterface {
     const syncHandles =
         typeof FileSystemFileHandle !== 'undefined' && 'createSyncAccessHandle' in FileSystemFileHandle.prototype
     const dirs = new Map<string, FileSystemDirectoryHandle>([['', root]])
-    const locks = new Map<string, Promise<unknown>>()
+    const locks = new Locks()
     const watchers = new Set<(event: WatchEvent) => void>()
-
-    /** Run `fn` after every earlier operation on `path` has settled. */
-    const locked = <T>(path: string, fn: () => Promise<T>): Promise<T> => {
-        const previous = locks.get(path) ?? Promise.resolve()
-        const result = previous.then(fn, fn)
-        const tail = result.then(
-            () => {},
-            () => {},
-        )
-        locks.set(path, tail)
-        void tail.then(() => {
-            if (locks.get(path) === tail) locks.delete(path)
-        })
-        return result
-    }
+    const locked = <T>(path: string, fn: () => Promise<T>): Promise<T> => locks.run(path, fn)
 
     const segments = (path: string) => normalizePath(path).split('/').filter(Boolean)
 
@@ -197,6 +184,9 @@ export function opfsVfs(root: FileSystemDirectoryHandle): VfsInterface {
             const from = split(oldPath)
             const to = split(newPath)
             if (!from.clean || !to.clean) throw eisdir(from.clean ? newPath : oldPath)
+            // Onto itself: nothing to do (taking the file's lock twice would
+            // wait on itself forever).
+            if (from.clean === to.clean) return
             const source = await entry(from.clean)
             if (!source) throw enoent(oldPath)
             const target = await dir(to.parent)

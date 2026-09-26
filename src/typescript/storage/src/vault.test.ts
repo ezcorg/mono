@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname as nodeDirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Vault } from './vault.js'
@@ -6,7 +8,8 @@ import { fileOperations } from './files.js'
 import { memoryVfs } from './memory.js'
 import { nodeVfs } from './node.js'
 import { walk, type VfsInterface } from './vfs.js'
-import { isNote, normalizePath } from './path.js'
+import { dirname, isNote, normalizePath } from './path.js'
+import type { CommentRef } from './comments.js'
 import { caseInsensitive } from './testing/case-insensitive.js'
 
 const FIXTURE = join(nodeDirname(fileURLToPath(import.meta.url)), '__fixtures__', 'vault')
@@ -35,6 +38,30 @@ async function snapshot(vault: Vault) {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0))
+
+const temps: string[] = []
+afterAll(async () => {
+    await Promise.all(temps.map((d) => rm(d, { recursive: true, force: true })))
+})
+
+/** The stores that run in Node, each seeded with `files`. */
+const stores: [string, (files: Record<string, string>) => Promise<VfsInterface>][] = [
+    ['memory', async (files) => memoryVfs(files)],
+    [
+        'node',
+        async (files) => {
+            const dir = await mkdtemp(join(tmpdir(), 'storage-vault-'))
+            temps.push(dir)
+            const fs = nodeVfs(dir)
+            for (const [path, content] of Object.entries(files)) {
+                const parent = dirname(path)
+                if (parent) await fs.mkdir(parent, { recursive: true })
+                await fs.writeFile(path, content)
+            }
+            return fs
+        },
+    ],
+]
 
 describe('the link index, rebuilt from a fixture vault', () => {
     it('knows every file, what links where, and what points nowhere', async () => {
@@ -353,5 +380,68 @@ describe('A vault’s comments', () => {
         // Removed, with the note otherwise as it was.
         await vault.comments.update(written!, null)
         expect(await vault.fs.readFile('reviews/2026-09-13.md')).toBe(REVIEW.split('\n').filter((_, i) => i !== 2 && i !== 3).join('\n'))
+    })
+
+    it('apply two changes asked for at once to one note, one after the other', async () => {
+        const vault = await Vault.open(memoryVfs(NOTES), { watch: false })
+        const byAuthor = (refs: CommentRef[], author: string) => refs.find((r) => r.thread.author === author)!
+        const alice = byAuthor(await vault.comments.threadsAbout('projects/Plan.md'), 'alice')
+        const bob = byAuthor(await vault.comments.threadsAbout('Other.md'), 'bob')
+        await Promise.all([
+            vault.comments.update(alice, { ...alice.thread, status: 'resolved' }),
+            vault.comments.update(bob, { ...bob.thread, status: 'resolved' }),
+        ])
+        const text = await vault.fs.readFile('reviews/2026-09-13.md')
+        expect(text).toContain('- @alice 2026-09-13T12:10Z · resolved ·')
+        expect(text).toContain('- @bob 2026-09-13T12:11Z · resolved ·')
+    })
+})
+
+describe.each(stores)('a file’s history goes with the file (%s)', (_, make) => {
+    it('is removed with the file', async () => {
+        const vault = await Vault.open(await make({ 'a.md': '# A', 'b.md': '# B' }), { watch: false })
+        const head = (await vault.versions.head('a.md'))!
+        await vault.versions.put('a.md', head.id, '# A, again')
+        await vault.versions.head('b.md')
+        await vault.files.remove('a.md')
+        expect(vault.paths()).toEqual(['b.md'])
+        expect(await vault.versions.history('a.md')).toEqual([])
+        expect(await vault.versions.history('b.md')).toHaveLength(1)
+    })
+
+    it('follows a rename onto a name whose removed file left its log, and the index with it', async () => {
+        const store = await make({ 'a.md': '# A', 'b.md': '# B', 'c.md': 'See [[a]].' })
+        const vault = await Vault.open(store, { watch: false })
+        const a = (await vault.versions.head('a.md'))!
+        await vault.versions.head('b.md')
+        // Removed by something outside the vault: the log stays.
+        await store.unlink('b.md')
+        await vault.rebuild()
+        expect(await vault.rename('a.md', 'b.md')).toBe(1)
+        expect(await store.readFile('c.md')).toBe('See [[b]].')
+        expect(vault.paths()).toEqual(['b.md', 'c.md'])
+        expect(vault.backlinks('b.md').map((l) => l.source)).toEqual(['c.md'])
+        expect((await vault.versions.history('b.md')).map((v) => v.id)).toEqual([a.id])
+    })
+
+    it('stays where it was when the store cannot rename the file', async () => {
+        const store = await make({ 'a.md': '# A', 'c.md': 'See [[a]].' })
+        const failing: VfsInterface = {
+            ...store,
+            rename: async (from, to) => {
+                if (normalizePath(from) === 'a.md') throw Object.assign(new Error('EACCES: a.md'), { code: 'EACCES' })
+                return store.rename(from, to)
+            },
+        }
+        const vault = await Vault.open(failing, { watch: false })
+        const head = (await vault.versions.head('a.md'))!
+        await expect(vault.rename('a.md', 'b.md')).rejects.toThrow(/EACCES/)
+        expect(await store.exists('a.md')).toBe(true)
+        expect(await store.readFile('c.md')).toBe('See [[a]].')
+        expect(vault.paths()).toEqual(['a.md', 'c.md'])
+        expect((await vault.versions.history('a.md')).map((v) => v.id)).toEqual([head.id])
+        expect(await vault.versions.history('b.md')).toEqual([])
+        // And a write on that version is still on the head.
+        expect((await vault.versions.put('a.md', head.id, '# A2')).ok).toBe(true)
     })
 })

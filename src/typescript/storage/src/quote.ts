@@ -169,15 +169,19 @@ export function findTextFragment(text: string, f: TextFragment, near?: number): 
     if (exact) return exact
     const hay = fold(text)
     const start = fold(f.start)
+    const end = f.end === null ? null : fold(f.end)
+    // Every place the end nearly matches, found once for all the starts.
+    const ends = end === null ? null : approximate(hay, end, Math.floor(end.length / 4))
     const candidates: (TextMatch & { cost: number })[] = []
     // (A start found in many places is a poor anchor anyway: the first few
     // dozen are enough to choose from.)
     for (const s of approximate(hay, start, Math.floor(start.length / 4)).slice(0, 50)) {
         let to = s.to
         let cost = s.cost
-        if (f.end !== null) {
-            const end = fold(f.end)
-            const e = approximate(hay, end, Math.floor(end.length / 4), s.to)[0]
+        if (ends) {
+            // After the start, the nearest of the ends that match best.
+            let e: (typeof ends)[number] | undefined
+            for (const m of ends) if (m.from >= s.to && (!e || m.cost < e.cost)) e = m
             if (!e) continue
             to = e.to
             cost += e.cost
@@ -226,8 +230,10 @@ export function textFragmentFor(text: string, from: number, to: number): TextFra
             end = null
         }
     }
-    const before = text.slice(0, from).split(/(\s+)/)
-    const after = text.slice(to).split(/(\s+)/)
+    // Trimmed first, so the words nearest the passage come first (a split
+    // of text ending in whitespace ends with an empty string).
+    const before = text.slice(0, from).trimEnd().split(/(\s+)/)
+    const after = text.slice(to).trimStart().split(/(\s+)/)
     for (let n = 0; n <= CONTEXT_WORDS; n++) {
         for (const [p, s] of n === 0 ? [[0, 0]] : [[n, n - 1], [n, n]]) {
             const f: TextFragment = {

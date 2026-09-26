@@ -66,6 +66,28 @@ describe('A text fragment', () => {
         expect(textFragmentFor(NOTE, lazy.from - 1, lazy.to)?.start).toBe('lazy dog')
     })
 
+    it('takes as many words of context as it takes, up to six', () => {
+        // The fifth word before each `foo` is the same; the sixth tells them apart.
+        const text = 'alpha two three four five six foo. beta two three four five six foo.'
+        const second = at(text, 'foo', 1)
+        const f = textFragmentFor(text, second.from, second.to)!
+        // (Prefix and suffix grow together, so the sixth step brings the full stop along.)
+        expect(f).toEqual({ prefix: 'beta two three four five six', start: 'foo', end: null, suffix: '.' })
+        expect(findTextFragment(text, f)).toEqual({ ...second, exact: true })
+        // One word is one word.
+        const one = 'alpha foo beta gamma foo delta'
+        expect(textFragmentFor(one, one.lastIndexOf('foo'), one.lastIndexOf('foo') + 3)).toEqual({ prefix: 'gamma', start: 'foo', end: null, suffix: '' })
+    })
+
+    it('ends an approximate match at the end that matches best, not the first that nearly does', () => {
+        const text = 'START of the passage. It mentions ENDx words in passing. The passage runs to its END words.'
+        const f: TextFragment = { prefix: '', start: 'START', end: 'END words', suffix: '' }
+        const whole = { from: 0, to: text.length - 1 }
+        expect(findTextFragment(text, f)).toEqual({ ...whole, exact: true })
+        // With the start edited, the end is still the passage's own.
+        expect(findTextFragment(text.replace('START', 'STAR7'), f)).toEqual({ ...whole, exact: false })
+    })
+
     it('is not made when the passage and its surroundings repeat word for word', () => {
         const text = Array.from({ length: 30 }, () => 'la').join(' ')
         const middle = at(text, 'la', 15)
