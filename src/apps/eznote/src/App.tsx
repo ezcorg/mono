@@ -106,7 +106,8 @@ function App() {
     // The notes folder as a vault: its link index is built once here and
     // kept current by every write through `vault.fs` and by the folder's
     // watch (edits from other apps).
-    vault = await Vault.open(createTauriVfs(base));
+    const handle = await localHandle();
+    vault = await Vault.open(createTauriVfs(base), { identity: handle });
     fs = vault.fs;
 
     // Reopen the most recent note on launch, else start a fresh scratch.
@@ -137,11 +138,14 @@ function App() {
       versions: vault.versions,
       // Every note carries a stable id (RFC §3), given on first open.
       frontMatter: { assignId: () => newNoteId() },
+      // An unnamed \`\`\`ts fence gets a hidden stand-in file beside the note,
+      // so its language services work.
+      codeblock: { standIns: true },
       // The notes folder as a tree, in the editor's left column.
       fileTree: {},
-      // Comments are written as the local user; threads about a note found
-      // in other notes (a review, a day's notes) show beside it too.
-      comments: { author: await localHandle(), index: vault.comments },
+      // Comments are documents written as the local user; reactions are
+      // the user's state in the vault.
+      comments: { author: handle, index: vault.comments, reactions: vault.reactions },
       onUpdate: () => {},
     });
     applyTheme(themeMode());
