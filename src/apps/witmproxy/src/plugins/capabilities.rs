@@ -28,7 +28,8 @@ impl Capability {
     /// (an `installed-app` principal), which type-checks `allow` against the
     /// resource's interface (a clause naming an argument the interface does
     /// not have is refused here, at registration, never at the first call).
-    /// Re-compiling a narrowed scope revokes the previous grant.
+    /// Re-compiling a narrowed scope revokes the previous grant, and a
+    /// provider capability that is not granted holds no grant at all.
     pub fn compile_scope_expression(
         &mut self,
         env: &Env<'static>,
@@ -43,6 +44,9 @@ impl Capability {
                 let mut store = grants::lock(grants);
                 if let Some(old) = self.token.take() {
                     store.revoke(&old);
+                }
+                if !self.granted {
+                    return Ok(());
                 }
                 // `when` has no event to bind to for a provider capability; only
                 // `allow` is meaningful, evaluated per call.

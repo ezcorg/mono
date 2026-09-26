@@ -242,6 +242,44 @@ impl PluginRegistry {
         *guard = Arc::new(map);
     }
 
+    /// The one place a plugin enters or leaves the map. `Some(plugin)` swaps
+    /// it in under `id` (a register, a reload, an enable toggle); `None`
+    /// takes `id` out (a remove). Either way the outgoing plugin's grants are
+    /// revoked, every one of them: its authority goes with it, and a call an
+    /// in-flight snapshot still makes on an old token is refused. Returns the
+    /// outgoing plugin, if there was one.
+    fn replace_plugin(&self, id: &str, incoming: Option<WitmPlugin>) -> Option<Arc<WitmPlugin>> {
+        let mut outgoing = None;
+        self.mutate_plugins(|map| {
+            outgoing = match incoming {
+                Some(plugin) => map.insert(id.to_string(), Arc::new(plugin)),
+                None => map.remove(id),
+            };
+        });
+        if let Some(old) = &outgoing {
+            self.revoke_grants_of(old);
+        }
+        outgoing
+    }
+
+    /// Revoke every grant `plugin` holds in the registry's store.
+    fn revoke_grants_of(&self, plugin: &WitmPlugin) {
+        let mut store = crate::plugins::grants::lock(&self.grants);
+        for cap in &plugin.capabilities {
+            if let Some(token) = &cap.token {
+                store.revoke(token);
+            }
+        }
+    }
+
+    /// Let go of a plugin that will not be registered: one whose consent was
+    /// refused or failed after [`PluginRegistry::plugin_from_component`]
+    /// compiled its scopes into the grant store. Its grants are revoked, so
+    /// an install that never completed leaves nothing behind.
+    pub fn discard_plugin(&self, plugin: WitmPlugin) {
+        self.revoke_grants_of(&plugin);
+    }
+
     pub async fn load_plugins(&self) -> Result<()> {
         // `WitmPlugin::all` takes `&mut Db` but only needs the (Clone) pool.
         let mut db = self.db.clone();
@@ -255,11 +293,9 @@ impl PluginRegistry {
                 );
             }
         }
-        self.mutate_plugins(|map| {
-            for plugin in plugins.into_iter() {
-                map.insert(plugin.id(), Arc::new(plugin));
-            }
-        });
+        for plugin in plugins.into_iter() {
+            self.replace_plugin(&plugin.id(), Some(plugin));
+        }
         Ok(())
     }
 
@@ -473,21 +509,27 @@ impl PluginRegistry {
 
     pub async fn register_plugin(&self, mut plugin: WitmPlugin) -> Result<()> {
         // Its settings live at the daemon when one is configured.
-        self.sync_settings(&mut plugin).await?;
+        if let Err(e) = self.sync_settings(&mut plugin).await {
+            self.revoke_grants_of(&plugin);
+            return Err(e);
+        }
         // Compile the scope expressions as they are now. A caller may have
         // edited a scope after `plugin_from_component` compiled the
         // manifest's version; without this the stale program would keep
-        // deciding which events the plugin sees.
+        // deciding which events the plugin sees. (On failure it revokes
+        // whatever it issued.)
         let plugin = plugin.compile_capability_scope_expressions(self.env, &self.grants)?;
         // Upsert the given plugin into the database (`Insert` takes `&mut Db`
-        // but only needs the Clone pool).
+        // but only needs the Clone pool). A plugin that is not in the
+        // database is not installed, so its grants go too.
         let mut db = self.db.clone();
-        plugin.insert(&mut db).await?;
+        if let Err(e) = plugin.insert(&mut db).await {
+            self.revoke_grants_of(&plugin);
+            return Err(e);
+        }
         let plugin_id = plugin.id();
-        // Add it to the registry
-        self.mutate_plugins(|map| {
-            map.insert(plugin_id.clone(), Arc::new(plugin));
-        });
+        // Add it to the registry, revoking the grants of the plugin it replaces.
+        self.replace_plugin(&plugin_id, Some(plugin));
         // An upsert replaces the component, so the cached resolution of the
         // previous one must go with it: otherwise events keep instantiating
         // the old code until the daemon restarts.
@@ -523,10 +565,10 @@ impl PluginRegistry {
         let plugin =
             WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env, &self.grants).await?;
         // The cached InstancePre (if any) stays valid: it was resolved from a
-        // component compiled from the same bytes on the same engine.
-        self.mutate_plugins(|map| {
-            map.insert(plugin.id(), Arc::new(plugin));
-        });
+        // component compiled from the same bytes on the same engine. The
+        // grants are not: the reloaded copy holds fresh ones, and the old
+        // copy's are revoked with it.
+        self.replace_plugin(&plugin.id(), Some(plugin));
         Ok(true)
     }
 
@@ -549,16 +591,15 @@ impl PluginRegistry {
                 .await?
         };
 
-        // Build list of plugin IDs that were removed and remove from in-memory registry
+        // Build list of plugin IDs that were removed and remove from the
+        // in-memory registry, revoking each one's grants.
         let mut removed_plugin_ids = Vec::new();
-        self.mutate_plugins(|map| {
-            for (ns, n) in &deleted_plugins {
-                let plugin_id = WitmPlugin::make_id(ns, n);
-                if map.remove(&plugin_id).is_some() {
-                    removed_plugin_ids.push(plugin_id);
-                }
+        for (ns, n) in &deleted_plugins {
+            let plugin_id = WitmPlugin::make_id(ns, n);
+            if self.replace_plugin(&plugin_id, None).is_some() {
+                removed_plugin_ids.push(plugin_id);
             }
-        });
+        }
         // Drop the cached InstancePre so a reloaded component isn't
         // instantiated from a stale resolution.
         {
@@ -1011,7 +1052,8 @@ impl PluginRegistry {
                 Some(storage),
                 &plugin_limits,
                 self.breaches_for(&plugin_id),
-                Some((&self.grants, plugin_id.as_str())),
+                &self.grants,
+                plugin_id.as_str(),
             );
             let cap_resource = store.data_mut().table.push(provider)?;
             let config = plugin.configuration.clone();
@@ -1574,6 +1616,146 @@ mod tests {
         assert!(removed.contains(&"ns1/common_plugin".to_string()));
         assert!(removed.contains(&"ns2/common_plugin".to_string()));
         assert_eq!(registry.plugins().len(), 0);
+        Ok(())
+    }
+
+    /// A plugin with two provider capabilities (logger, local storage) and
+    /// the request event, as parsed: its scopes not yet compiled, so no
+    /// grants issued.
+    fn plugin_with_provider_caps(
+        registry: &PluginRegistry,
+        namespace: &str,
+        name: &str,
+    ) -> Result<WitmPlugin, anyhow::Error> {
+        let component_bytes = std::fs::read(test_component_path()?)?;
+        let component = Some(wasmtime::component::Component::from_binary(
+            &registry.runtime.engine,
+            &component_bytes,
+        )?);
+        let cap = |kind| Capability {
+            granted: true,
+            inner: WitCapability {
+                kind,
+                scope: Scope {
+                    when: "true".into(),
+                    allow: "true".into(),
+                },
+            },
+            when: None,
+            token: None,
+        };
+        let plugin = WitmPlugin {
+            limits: Default::default(),
+            name: name.into(),
+            component_bytes,
+            namespace: namespace.into(),
+            version: "0.0.0".into(),
+            author: "author".into(),
+            description: "description".into(),
+            license: "mit".into(),
+            enabled: true,
+            url: "https://example.com".into(),
+            publickey: vec![],
+            capabilities: vec![
+                cap(CapabilityKind::Logger),
+                cap(CapabilityKind::LocalStorage),
+                cap(CapabilityKind::HandleEvent(EventKind::Request)),
+            ],
+            configuration: vec![],
+            input_schema: vec![],
+            metadata: std::collections::HashMap::new(),
+            component,
+        };
+        Ok(plugin)
+    }
+
+    /// Register it the way a test does: scopes compiled, so grants are
+    /// issued for the provider capabilities.
+    async fn register_plugin_with_provider_caps(
+        registry: &PluginRegistry,
+        namespace: &str,
+        name: &str,
+    ) -> Result<(), anyhow::Error> {
+        let plugin = plugin_with_provider_caps(registry, namespace, name)?;
+        registry.register_plugin_for_test(plugin).await
+    }
+
+    /// The tokens the registered plugin `id` holds.
+    fn tokens_of(registry: &PluginRegistry, id: &str) -> Vec<String> {
+        registry.plugins()[id]
+            .capabilities
+            .iter()
+            .filter_map(|c| c.token.clone())
+            .collect()
+    }
+
+    /// Whether the store still lists `token` and admits a call on it.
+    fn live(registry: &PluginRegistry, token: &str) -> bool {
+        let mut store = crate::plugins::grants::lock(&registry.grants);
+        let listed = store.active_grants().iter().any(|g| g.id == token);
+        let admitted = store
+            .admit(token, ezcap::Call::new("info").arg("message", "x"))
+            .is_ok();
+        assert_eq!(
+            listed, admitted,
+            "listing and admission disagree on {token}"
+        );
+        listed
+    }
+
+    #[tokio::test]
+    async fn removing_or_replacing_a_plugin_revokes_its_grants() -> Result<(), anyhow::Error> {
+        let (registry, _temp_dir) = create_plugin_registry().await?;
+        let id = "test/with_grants";
+
+        register_plugin_with_provider_caps(&registry, "test", "with_grants").await?;
+        let first = tokens_of(&registry, id);
+        assert_eq!(first.len(), 2, "one grant per provider capability");
+        assert!(first.iter().all(|t| live(&registry, t)));
+
+        // Re-registering (an upgrade, a reload) replaces the plugin: the old
+        // plugin's grants are revoked and the new plugin's are live.
+        register_plugin_with_provider_caps(&registry, "test", "with_grants").await?;
+        let second = tokens_of(&registry, id);
+        assert_eq!(second.len(), 2);
+        assert!(first.iter().all(|t| !second.contains(t)), "fresh tokens");
+        assert!(
+            first.iter().all(|t| !live(&registry, t)),
+            "old tokens revoked"
+        );
+        assert!(second.iter().all(|t| live(&registry, t)), "new tokens live");
+
+        // Removing it revokes what it held; nothing of the plugin's is left.
+        let removed = registry.remove_plugin("with_grants", Some("test")).await?;
+        assert_eq!(removed, vec![id.to_string()]);
+        assert!(second.iter().all(|t| !live(&registry, t)));
+        let store = crate::plugins::grants::lock(&registry.grants);
+        assert!(
+            store.active_grants().iter().all(|g| g.holder != id),
+            "{:?}",
+            store.active_grants()
+        );
+        Ok(())
+    }
+
+    /// A plugin that fails to install (consent refused after its scopes were
+    /// compiled) is discarded, and its grants with it.
+    #[tokio::test]
+    async fn a_discarded_plugin_holds_no_grants() -> Result<(), anyhow::Error> {
+        let (registry, _temp_dir) = create_plugin_registry().await?;
+        // The state `plugin_from_component` hands back: parsed, scopes
+        // compiled, grants issued, not yet registered.
+        let plugin = plugin_with_provider_caps(&registry, "test", "refused")?
+            .compile_capability_scope_expressions(registry.env, &registry.grants)?;
+        let tokens: Vec<String> = plugin
+            .capabilities
+            .iter()
+            .filter_map(|c| c.token.clone())
+            .collect();
+        assert_eq!(tokens.len(), 2);
+        assert!(tokens.iter().all(|t| live(&registry, t)));
+        registry.discard_plugin(plugin);
+        assert!(tokens.iter().all(|t| !live(&registry, t)));
         Ok(())
     }
 

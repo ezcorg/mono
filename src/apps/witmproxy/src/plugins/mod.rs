@@ -97,9 +97,22 @@ impl WitmPlugin {
         grants: &grants::Grants,
     ) -> Result<Self> {
         let id = self.id();
-        self.capabilities
+        let compiled = self
+            .capabilities
             .iter_mut()
-            .try_for_each(|c| c.compile_scope_expression(env, grants, &id))?;
+            .try_for_each(|c| c.compile_scope_expression(env, grants, &id));
+        if let Err(e) = compiled {
+            // A plugin whose scopes do not compile is not installed, and
+            // holds none of the grants issued for the capabilities before
+            // the one that failed.
+            let mut store = grants::lock(grants);
+            for c in self.capabilities.iter_mut() {
+                if let Some(token) = c.token.take() {
+                    store.revoke(&token);
+                }
+            }
+            return Err(e);
+        }
         Ok(self)
     }
 

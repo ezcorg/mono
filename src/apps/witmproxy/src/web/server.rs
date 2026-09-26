@@ -462,6 +462,9 @@ async fn upsert_plugin(
     // when one is configured, everything as proposed otherwise.
     if let Err(e) = registry.consent_for(&mut plugin).await {
         warn!("Consent for plugin failed: {}", e);
+        // Parsing compiled its scopes into the grant store; a plugin that is
+        // not installed holds nothing there.
+        registry.discard_plugin(plugin);
         res.status_code(salvo::http::StatusCode::BAD_GATEWAY);
         res.render(salvo::writing::Text::Plain(format!(
             "Could not decide the plugin's capabilities: {}",

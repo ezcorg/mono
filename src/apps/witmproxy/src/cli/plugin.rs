@@ -460,7 +460,10 @@ impl PluginHandler {
             .await?;
         // What it gets of what it wants: the human's call at the icanhaz tray
         // app when one is configured, everything as proposed otherwise.
-        registry.consent_for(&mut plugin).await?;
+        if let Err(e) = registry.consent_for(&mut plugin).await {
+            registry.discard_plugin(plugin);
+            return Err(e);
+        }
 
         debug!(
             "Received plugin: {}/{}:{}",
