@@ -36,6 +36,7 @@ type FileChangeListener = {
     callback: (content: string, version?: string) => void;
 };
 
+/** The views of each path over one filesystem. */
 class FileChangeBus {
     private listeners: Map<string, Set<FileChangeListener>> = new Map();
 
@@ -65,7 +66,29 @@ class FileChangeBus {
     }
 }
 
-export const fileChangeBus = new FileChangeBus();
+/**
+ * A file is a path on a filesystem, so each filesystem has a bus of its
+ * own: two code blocks showing `a.txt` over different stores are showing
+ * different files, and a save in one is nothing to the other. A filesystem
+ * that is dropped takes its listeners with it.
+ */
+const buses = new WeakMap<VfsInterface, FileChangeBus>();
+const busOf = (fs: VfsInterface): FileChangeBus => {
+    let bus = buses.get(fs);
+    if (!bus) buses.set(fs, (bus = new FileChangeBus()));
+    return bus;
+};
+
+export const fileChangeBus = {
+    /** Hear saves of `path` on `fs` made by views other than `view`. */
+    subscribe(fs: VfsInterface, path: string, view: EditorView, callback: (content: string, version?: string) => void): () => void {
+        return busOf(fs).subscribe(path, view, callback);
+    },
+    /** Tell every other view of `path` on `fs` that `sourceView` saved `content`. */
+    notify(fs: VfsInterface, path: string, content: string, sourceView: EditorView, version?: string): void {
+        buses.get(fs)?.notify(path, content, sourceView, version);
+    },
+};
 
 // --- Settings propagation across editors on the same page ---
 type SettingsChangeCallback = (settings: Partial<import("./panels/settings").EditorSettings>) => void;
@@ -115,6 +138,11 @@ export type CodeblockConfig = {
      *  put back where they are when it is saved. `regionField` has where
      *  they are now. */
     range?: LineRange;
+    /** `filepath` is a stand-in the host keeps for an unnamed block (a
+     *  note's ```` ```ts ```` fence): opened and saved like any file, so the
+     *  language services see it, but shown as what it is, an unnamed block
+     *  of its language, never by the stand-in's name. */
+    anonymous?: boolean;
     language?: ExtensionOrLanguage;
     dark?: boolean;
     settings?: Partial<EditorSettings>;
@@ -354,7 +382,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, range, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -367,7 +395,7 @@ export const codeblock = ({ content, fs, cwd, filepath, range, language, toolbar
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         regionField,
@@ -546,7 +574,7 @@ const codeblockView = ViewPlugin.define((view) => {
         else LSP.notifyFileSaved(path, content);
 
         // Notify other views of the same file
-        fileChangeBus.notify(path, content, view, version ?? undefined);
+        fileChangeBus.notify(fs, path, content, view, version ?? undefined);
         emitFileEvent(view, { type: 'save', path });
     }
 
@@ -587,7 +615,7 @@ const codeblockView = ViewPlugin.define((view) => {
             unsubscribeFileChanges();
             unsubscribeFileChanges = null;
         }
-        unsubscribeFileChanges = fileChangeBus.subscribe(path, view, (newContent, newVersion) => {
+        unsubscribeFileChanges = fileChangeBus.subscribe(fs, path, view, (newContent, newVersion) => {
             // Saved elsewhere: this view's next save is made on that version.
             if (newVersion !== undefined) version = newVersion;
             let text = newContent;
@@ -850,6 +878,10 @@ const codeblockView = ViewPlugin.define((view) => {
             const isBinary = text === null;
             const content = text ?? '';
 
+            // An open that is no longer wanted (another began, or the file
+            // was put down) writes nothing: it must not create the file.
+            if (ticket !== latestOpen) return;
+
             // Ensure the file exists on VFS before LSP initialization.
             // The LSP uses readDirectory to find source files and match them
             // against tsconfig. If the file doesn't exist yet, Volar falls
@@ -1106,10 +1138,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, range, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, range, anonymous, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, range, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })]
     });
     const view = new EditorView({ state, parent });
     return view;

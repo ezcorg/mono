@@ -240,7 +240,6 @@ export const FOLDER_ICON = '\ue613';
 export const FOLDER_OPEN_ICON = '\uf07c';
 const PARENT_DIR_ICON = '\uf112';
 
-const BINARY_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'pdf', 'wasm', 'zip', 'mp3', 'mp4', 'webm', 'wav', 'ogg']);
 const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
@@ -521,11 +520,13 @@ export class ToolbarCore {
     // Public API — called by host adapters
     // -----------------------------------------------------------------------
 
-    /** Update the current file path (called when the host opens a new file). */
-    setFilePath(path: string | null) {
+    /** Update the current file path (called when the host opens a new file).
+     *  `shownAs` is what the field says instead of the path (the language of
+     *  an unnamed block whose file is a stand-in). */
+    setFilePath(path: string | null, shownAs?: string) {
         this.currentFilePath = path;
         if (!this.namingMode.active && !this.settingsMode.active) {
-            this.input.value = path || '';
+            this.input.value = shownAs ?? path ?? '';
             this.inputTouched = false;
         }
     }
@@ -1319,9 +1320,10 @@ export class ToolbarCore {
     private async importFiles(files: FileList) {
         for (const file of files) {
             const path = file.webkitRelativePath || file.name;
-            const ext = path.split('.').pop()?.toLowerCase() || '';
-            const content = BINARY_EXTS.has(ext) ? new Uint8Array(await file.arrayBuffer()) : await file.text();
-            await this.fileOps.create(path, content, { overwrite: true });
+            // As bytes, whatever the name says: decoding as text would change
+            // a file that is not UTF-8 (or strip a BOM), and the editor tells
+            // text from bytes when it opens the file.
+            await this.fileOps.create(path, new Uint8Array(await file.arrayBuffer()), { overwrite: true });
             this.host.notifyFileChanged?.(path, FileChangeType.Created);
         }
         if (files.length > 0) {

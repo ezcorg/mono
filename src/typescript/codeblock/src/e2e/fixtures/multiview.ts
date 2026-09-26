@@ -21,13 +21,13 @@ async function init() {
     });
 
     // Manually subscribe both to the same file for sync testing
-    // Use 'shared.txt' to match what the tests notify on
-    fileChangeBus.subscribe('shared.txt', viewA, (content) => {
+    // Use 'shared.txt' to match what the tests notify on; the bus is the vault's filesystem's.
+    fileChangeBus.subscribe(fs, 'shared.txt', viewA, (content) => {
         if (viewA.state.doc.toString() !== content) {
             viewA.dispatch({ changes: { from: 0, to: viewA.state.doc.length, insert: content } });
         }
     });
-    fileChangeBus.subscribe('shared.txt', viewB, (content) => {
+    fileChangeBus.subscribe(fs, 'shared.txt', viewB, (content) => {
         if (viewB.state.doc.toString() !== content) {
             viewB.dispatch({ changes: { from: 0, to: viewB.state.doc.length, insert: content } });
         }
@@ -36,6 +36,7 @@ async function init() {
     // Expose to window for test access
     (window as any).__views = { viewA, viewB };
     (window as any).__fileChangeBus = fileChangeBus;
+    (window as any).__fs = fs;
     (window as any).__editorsReady = true;
 }
 

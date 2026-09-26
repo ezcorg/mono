@@ -176,11 +176,20 @@ function safeDispatch(view: EditorView, spec: any) {
 // CM Panel
 // ---------------------------------------------------------------------------
 export const toolbarPanel = (view: EditorView): Panel => {
-    let { filepath, language, search, files } = view.state.facet(CodeblockFacet);
+    let { filepath, language, search, files, anonymous } = view.state.facet(CodeblockFacet);
+    /** What the field says for `path`: the language, for the stand-in file
+     *  of an unnamed block; else the path. */
+    const shownAs = (path: string | null, lang: string | null | undefined) =>
+        anonymous && path !== null && path === filepath ? (lang ?? language ?? '') : undefined;
 
     // --- Clear filesystem ---
     async function clearFilesystem() {
         const fs = view.state.facet(CodeblockFacet).fs;
+        // Put the open file down first, unsaved, and let a write of it
+        // already under way land: otherwise a save pending when the files
+        // are deleted brings the open one back.
+        closeFile(view);
+        await persistFile(view);
         // Recursively collect all file paths first, then delete
         const filesToDelete: string[] = [];
         const dirsToDelete: string[] = [];
@@ -209,8 +218,6 @@ export const toolbarPanel = (view: EditorView): Panel => {
             await fs.unlink(dir).catch(() => {});
         }
 
-        // Put the open file down, unsaved: it is gone.
-        closeFile(view);
         safeDispatch(view, { effects: [setSearchResults.of([])] });
     }
 
@@ -220,14 +227,21 @@ export const toolbarPanel = (view: EditorView): Panel => {
         search,
         files,
         cwd: view.state.facet(CodeblockFacet).cwd,
-        filepath,
+        // A stand-in file is never what the field says: the language is.
+        filepath: anonymous ? undefined : filepath,
         language,
         openFile(path, opts) {
             safeDispatch(view, { effects: [setSearchResults.of([]), openFileEffect.of({ path, skipSave: opts?.skipSave })] });
         },
         getDocContent() { return view.state.doc.toString(); },
         persist() { return persistFile(view); },
-        closeFile() { closeFile(view); },
+        closeFile() {
+            // Put down, then wait for any write of it already under way (a
+            // save whose debounce had fired): `persistFile` starts no new
+            // write once no file is open, and resolves when those land.
+            closeFile(view);
+            return persistFile(view);
+        },
         focusEditor() { view.focus(); },
         notifyFileChanged(path, type) { LSP.notifyFileChanged(path, type); },
         getCurrentFilePath() { return view.state.field(currentFileField).path; },
@@ -465,7 +479,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
             if (prevFile.path !== nextFile.path) {
                 updateLspLogIcon();
                 if (!core.isNamingModeActive() && !lspLogOverlay && !core.isSettingsModeActive()) {
-                    core.setFilePath(nextFile.path);
+                    core.setFilePath(nextFile.path, shownAs(nextFile.path, nextFile.language));
                 }
             }
         },

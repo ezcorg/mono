@@ -3,7 +3,7 @@ import { undo } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import { memoryVfs, Vault, type VfsInterface } from '@joinezco/storage';
 import { opfsBucket, opfsVfs, removeOpfsBucket } from '@joinezco/storage/browser';
-import { createCodeblock, currentFileField, onFileEvent, openFileEffect, whenFileLoaded, type FileEvent } from './editor';
+import { closeFile, createCodeblock, currentFileField, onFileEvent, openFileEffect, persistFile, whenFileLoaded, type FileEvent } from './editor';
 
 const views: EditorView[] = [];
 afterEach(() => {
@@ -302,6 +302,145 @@ describe('Files in a code block', () => {
         expect(await fs.readFile('a.txt')).toBe('A!');
     });
 });
+
+describe('Views of one path', () => {
+    it('keep in step over the same filesystem, and to themselves over different ones', async () => {
+        const shared = memoryVfs({ 'a.txt': 'A' });
+        const other = memoryVfs({ 'a.txt': 'A' });
+        const one = mount(shared, 'a.txt');
+        const two = mount(shared, 'a.txt');
+        const apart = mount(other, 'a.txt');
+        await Promise.all([loaded(one, 'a.txt'), loaded(two, 'a.txt'), loaded(apart, 'a.txt')]);
+
+        one.dispatch({ changes: { from: 1, insert: '!' }, userEvent: 'input.type' });
+        await persistFile(one);
+        expect(await shared.readFile('a.txt')).toBe('A!');
+        // Its sibling shows the save; the view over the other filesystem is another file's.
+        await until(() => two.state.doc.toString() === 'A!');
+        expect(apart.state.doc.toString()).toBe('A');
+        expect(await other.readFile('a.txt')).toBe('A');
+    });
+
+    it('take a version from a save beside them only over the same filesystem', async () => {
+        const first = await Vault.open(memoryVfs({ 'a.txt': 'A' }), { watch: false });
+        const second = await Vault.open(memoryVfs({ 'a.txt': 'A' }), { watch: false });
+        const make = (vault: Vault) => {
+            const parent = document.createElement('div');
+            document.body.append(parent);
+            const view = createCodeblock({ parent, fs: vault.fs, filepath: 'a.txt', toolbar: false, versions: vault.versions });
+            views.push(view);
+            return view;
+        };
+        const one = make(first);
+        const apart = make(second);
+        await Promise.all([loaded(one, 'a.txt'), loaded(apart, 'a.txt')]);
+        const events: FileEvent[] = [];
+        onFileEvent(apart, (event) => events.push(event));
+
+        one.dispatch({ changes: { from: 1, insert: '1' }, userEvent: 'input.type' });
+        await persistFile(one);
+        expect(apart.state.doc.toString()).toBe('A');
+        // The other vault's file was not saved on the first vault's version.
+        apart.dispatch({ changes: { from: 1, insert: '2' }, userEvent: 'input.type' });
+        await persistFile(apart);
+        expect(events.filter((e) => e.type === 'conflict')).toEqual([]);
+        expect(await second.fs.readFile('a.txt')).toBe('A2');
+        expect(await first.fs.readFile('a.txt')).toBe('A1');
+    });
+});
+
+describe('A write under way when the file is put down', () => {
+    /** Types `a.txt` into the toolbar, selects it and asks to delete it. */
+    async function deleteFromToolbar(view: EditorView, path: string) {
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        const key = (k: string) => input.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+        input.focus();
+        input.value = path;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await until(() => !!view.dom.querySelector('.cm-file-result'));
+        for (let i = 0; i < 5 && !view.dom.querySelector('.cm-file-result.selected'); i++) key('ArrowDown');
+        key('Delete');
+        key('Enter');
+    }
+
+    it('lands before the open file is deleted from the toolbar, so the file does not come back', async () => {
+        const store = memoryVfs({ 'a.txt': 'A', 'b.txt': 'B' });
+        const { fs, release, started } = held(store, 'writeFile');
+        const vault = await Vault.open(fs, { watch: false });
+        const view = mount(vault.fs, 'a.txt', true, vault);
+        const events: FileEvent[] = [];
+        onFileEvent(view, (event) => events.push(event));
+        await loaded(view, 'a.txt');
+        view.dispatch({ changes: { from: 1, insert: '!' }, userEvent: 'input.type' });
+        // The autosave fired; its write is under way.
+        await until(started);
+        await deleteFromToolbar(view, 'a.txt');
+        await until(() => events.some((e) => e.type === 'close'));
+        release();
+        await until(() => events.some((e) => e.type === 'save'));
+        await autosave();
+        expect(await store.exists('a.txt')).toBe(false);
+        expect(await store.exists('b.txt')).toBe(true);
+        expect(view.state.field(currentFileField).path).toBeNull();
+    });
+
+    it('lands before the files are cleared, so none comes back', async () => {
+        const store = memoryVfs({ 'a.txt': 'A', 'dir/b.txt': 'B' });
+        const { fs, release, started } = held(store, 'writeFile');
+        const view = mount(fs, 'a.txt', true);
+        const events: FileEvent[] = [];
+        onFileEvent(view, (event) => events.push(event));
+        await loaded(view, 'a.txt');
+        view.dispatch({ changes: { from: 1, insert: '!' }, userEvent: 'input.type' });
+        await until(started);
+        const input = view.dom.querySelector('.cm-toolbar-input') as HTMLInputElement;
+        input.focus();
+        input.value = 'settings';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const entry = () => [...view.dom.querySelectorAll('.cm-search-result')].find((r) => r.textContent?.includes('Clear filesystem')) as HTMLElement | undefined;
+        await until(() => !!entry());
+        entry()!.click();
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await until(() => events.some((e) => e.type === 'close'));
+        release();
+        await until(() => events.some((e) => e.type === 'save'));
+        await autosave();
+        expect(await store.exists('a.txt')).toBe(false);
+        expect(await store.exists('dir/b.txt')).toBe(false);
+        expect(view.state.field(currentFileField).path).toBeNull();
+    });
+
+    it('is not an open still reading: put down before it read the file, it does not create it', async () => {
+        const store = memoryVfs({ 'a.txt': 'A' });
+        const { fs, release, started } = held(store, 'exists');
+        const view = mount(fs, 'a.txt');
+        await until(started);
+        // Deleted elsewhere, and put down here, while the open still waits on the disk.
+        closeFile(view);
+        await store.unlink('a.txt');
+        release();
+        await autosave();
+        expect(await store.exists('a.txt')).toBe(false);
+        expect(view.state.field(currentFileField).path).toBeNull();
+    });
+});
+
+/** `store` with one method held until `release` is called (`started` says
+ *  whether it has been called): a write or a read that takes its time. */
+function held(store: VfsInterface, method: 'writeFile' | 'exists'): { fs: VfsInterface; release: () => void; started: () => boolean } {
+    let release!: () => void;
+    let started = false;
+    const gate = new Promise<void>((r) => (release = r));
+    const fs = {
+        ...store,
+        [method]: async (...args: unknown[]) => {
+            started = true;
+            await gate;
+            return (store[method] as (...a: unknown[]) => Promise<unknown>)(...args);
+        },
+    } as VfsInterface;
+    return { fs, release: () => release(), started: () => started };
+}
 
 async function until(condition: () => boolean | Promise<boolean>, timeout = 5000): Promise<void> {
     const start = Date.now();
