@@ -4,8 +4,10 @@
 //! file is encrypted at rest. What makes that worth anything is where the key
 //! lives: [`KeySource`] resolves it from the OS keychain when one is available
 //! and otherwise from a key file beside the database with `0600` permissions,
-//! creating either on first use. A caller that already holds a passphrase
-//! (witmproxy's `--db-password`) passes it directly.
+//! creating either on first use and recording which one holds it in a
+//! `<app>.key-source` marker beside the database, so later opens use that
+//! source alone. A caller that already holds a passphrase (witmproxy's
+//! `--db-password`) passes it directly.
 //!
 //! Migrations stay with each application: `sqlx::migrate!` needs a path
 //! relative to the calling crate, so apps hold the `Migrator` and hand it to
@@ -75,8 +77,14 @@ impl Db {
 
     /// Open the database at `db_path`, resolving (and on first use creating)
     /// its key through `source`.
+    ///
+    /// Resolving may block: the keychain is a synchronous D-Bus round trip on
+    /// Linux (and a prompt on macOS), so it runs off the async executor.
     pub async fn open(db_path: impl AsRef<Path>, source: &KeySource) -> Result<Self> {
-        let key = source.resolve()?;
+        let source = source.clone();
+        let key = tokio::task::spawn_blocking(move || source.resolve())
+            .await
+            .context("key resolution task")??;
         Self::from_path(db_path, key.expose()).await
     }
 
@@ -124,6 +132,58 @@ mod tests {
         // A different key does not open it (the header is ciphertext).
         let wrong = Db::from_path(&db_path, "not-the-key").await?;
         assert!(count(&wrong).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_recorded_chain_reopens_with_the_source_that_made_the_key() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("store.db");
+        let marker = dir.path().join("store.key-source");
+        let file = dir.path().join("store.key");
+
+        // Headless: the file is the only source there is.
+        let headless = KeySource::Recorded {
+            marker: marker.clone(),
+            sources: vec![KeySource::File(file.clone())],
+        };
+        let db = Db::open(&db_path, &headless).await?;
+        sqlx::query("CREATE TABLE t (v TEXT)")
+            .execute(&db.pool)
+            .await?;
+        sqlx::query("INSERT INTO t VALUES ('x')")
+            .execute(&db.pool)
+            .await?;
+        drop(db);
+        assert_eq!(std::fs::read_to_string(&marker)?, "file\n");
+
+        // Desktop: a chain that would prefer another source. The marker keeps
+        // it on the file, so the database opens with the key it was made with.
+        let desktop = KeySource::Recorded {
+            marker: marker.clone(),
+            sources: vec![
+                KeySource::Env("EZDB_TEST_KEY_THAT_IS_NOT_SET".to_string()),
+                KeySource::File(file.clone()),
+            ],
+        };
+        let db = Db::open(&db_path, &desktop).await?;
+        assert_eq!(count(&db).await?, 1);
+        drop(db);
+
+        // The key file gone: an error that names the recorded source, and no
+        // fresh key that would leave the database silently unopenable.
+        std::fs::remove_file(&file)?;
+        let Err(err) = Db::open(&db_path, &desktop).await else {
+            panic!("opened without the key");
+        };
+        assert!(
+            matches!(
+                err.downcast_ref::<KeyError>(),
+                Some(KeyError::RecordedKeyMissing { recorded, .. }) if recorded == "file"
+            ),
+            "{err:#}"
+        );
+        assert!(!file.exists());
         Ok(())
     }
 

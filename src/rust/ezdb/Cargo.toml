@@ -15,6 +15,8 @@ libsqlite3-sys = { version = "0.30.1", features = ["bundled-sqlcipher-vendored-o
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 rand = "0.8"
 zeroize = "1"
+# The keychain resolve is a blocking D-Bus round trip; `Db::open` runs it off the executor.
+tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 tempfile = "3"
