@@ -228,7 +228,9 @@ impl RegistryIndex {
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
             return Ok(());
         }
-        match crate::components::validate(bytes) {
+        match crate::components::validate(bytes)
+            .and_then(|info| crate::components::check_brought_imports(&info.imports).map(|()| info))
+        {
             Ok(_) => {
                 self.components
                     .add(

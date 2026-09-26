@@ -378,7 +378,7 @@ async fn certificates_redeem_for_their_audience_only() {
     );
     let outcome = store.lock().unwrap().admit(&redeemed, long);
     assert!(matches!(outcome, Err(Denied::OutOfScope(_))), "{outcome:?}");
-    let infos = provider.granted(ReqCtx::default()).await.expect("wrpc ok");
+    let infos = provider.granted(notes.clone()).await.expect("wrpc ok");
     assert!(
         infos.iter().any(|i| i.holder.id == "https://notes.example"),
         "{infos:?}"

@@ -62,11 +62,15 @@ fn serve(
     use futures::FutureExt as _;
     tokio::spawn(async move {
         let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
-        let accept = tokio::spawn(accept_iroh::<()>(endpoint, Arc::clone(&srv)));
+        let handles = Handles::new();
+        let accept = tokio::spawn(accept_iroh::<()>(
+            endpoint,
+            Arc::clone(&srv),
+            Arc::clone(&handles),
+        ));
         let b = crate::broker::bindings::serve(srv.as_ref(), broker)
             .await
             .expect("serve broker");
-        let handles = Handles::new();
         let mut capability_handlers = Vec::new();
         for name in ["process", "inference"] {
             let set = serve_capability(
@@ -385,7 +389,7 @@ async fn a_component_is_fetched_from_a_peer_by_hash() {
         let provider = crate::components::ComponentsProvider::new(Arc::clone(&store_r));
         tokio::spawn(async move {
             let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
-            let accept = tokio::spawn(accept_iroh::<()>(ep_r, Arc::clone(&srv)));
+            let accept = tokio::spawn(accept_iroh::<()>(ep_r, Arc::clone(&srv), Handles::new()));
             let c = crate::components::bindings::serve(srv.as_ref(), provider)
                 .await
                 .expect("serve components");

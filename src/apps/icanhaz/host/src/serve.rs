@@ -421,6 +421,7 @@ async fn serve_ws_mux(
     ws: WebSocketStream<tokio::net::TcpStream>,
     srv: Arc<wrpc_transport::Server<ReqCtx, MuxRx, MuxTx>>,
     origin: Option<String>,
+    handles: Arc<Handles>,
 ) {
     let (mut sink, mut stream) = ws.split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
@@ -433,8 +434,10 @@ async fn serve_ws_mux(
     });
 
     // One connection id per socket: every invocation multiplexed over it shares
-    // it, and the resource handles served to it are bound to it.
-    let conn = Some(crate::next_connection());
+    // it, and the resource handles served to it are bound to it (and released
+    // when the socket goes).
+    let conn_id = crate::next_connection();
+    let conn = Some(conn_id);
     // id -> the sender feeding that invocation's read half.
     let mut feeders: HashMap<u32, mpsc::UnboundedSender<io::Result<Bytes>>> = HashMap::new();
     while let Some(msg) = stream.next().await {
@@ -491,6 +494,8 @@ async fn serve_ws_mux(
         }
     }
     writer.abort();
+    // The socket is gone: so is every handle it held.
+    handles.forget_connection(conn_id).await;
 }
 
 /// Serve every capability over wRPC/WebSocket on `listener`.
@@ -503,6 +508,7 @@ pub async fn serve_websocket_all(
     components: ComponentsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport::Server::<ReqCtx, MuxRx, MuxTx>::default());
+    let handles = Arc::clone(&capabilities.handles);
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
@@ -516,6 +522,7 @@ pub async fn serve_websocket_all(
                             tracing::warn!(?err, "TCP_NODELAY");
                         }
                         let srv = Arc::clone(&srv);
+                        let handles = Arc::clone(&handles);
                         tokio::spawn(async move {
                             match wrpc_websockets::ServerBuilder::new().accept(stream).await {
                                 Ok((req, ws)) => {
@@ -527,7 +534,7 @@ pub async fn serve_websocket_all(
                                         .and_then(|v| v.to_str().ok())
                                         .map(str::to_string);
                                     // One socket → many multiplexed invocations.
-                                    serve_ws_mux(ws, srv, origin).await;
+                                    serve_ws_mux(ws, srv, origin, handles).await;
                                 }
                                 Err(err) => tracing::error!(?err, "WebSocket handshake failed"),
                             }
@@ -564,7 +571,11 @@ pub async fn serve_iroh_all(
     components: ComponentsServe,
 ) -> anyhow::Result<()> {
     let srv = Arc::new(wrpc_transport_iroh::Server::<ReqCtx>::new());
-    let accept = tokio::spawn(crate::iroh::accept_iroh::<()>(endpoint, Arc::clone(&srv)));
+    let accept = tokio::spawn(crate::iroh::accept_iroh::<()>(
+        endpoint,
+        Arc::clone(&srv),
+        Arc::clone(&capabilities.handles),
+    ));
     let res = drive(
         Arc::clone(&srv),
         broker_p,
@@ -608,13 +619,18 @@ pub async fn serve_webtransport_all(
         wtransport::SendStream,
         wrpc_webtransport::ConnHandler,
     >::new());
+    let handles = Arc::clone(&capabilities.handles);
     let accept = tokio::spawn({
         let srv = Arc::clone(&srv);
         async move {
             loop {
                 let incoming = ep.accept().await;
                 let srv = Arc::clone(&srv);
+                let handles = Arc::clone(&handles);
                 tokio::spawn(async move {
+                    // The session's connection id, once it is established: its
+                    // handles are released when the session ends.
+                    let mut conn_id = None;
                     let res = async {
                         let req = incoming.await.context("accept WT session")?;
                         // Browser-attested Origin (the WebTransport CONNECT carries it;
@@ -623,14 +639,15 @@ pub async fn serve_webtransport_all(
                         let origin = req.origin().map(str::to_string);
                         let conn = req.accept().await.context("establish WT session")?;
                         // One connection id per session; its streams share it.
-                        let conn_id = Some(crate::next_connection());
+                        let id = crate::next_connection();
+                        conn_id = Some(id);
                         loop {
                             let (tx, rx) = conn.accept_bi().await.context("accept bidi stream")?;
                             srv.accept(
                                 ReqCtx {
                                     origin: origin.clone(),
                                     peer: None,
-                                    conn: conn_id,
+                                    conn: Some(id),
                                 },
                                 tx,
                                 rx,
@@ -644,6 +661,9 @@ pub async fn serve_webtransport_all(
                     .await;
                     if let Err(err) = res {
                         tracing::debug!(?err, "WebTransport connection ended");
+                    }
+                    if let Some(id) = conn_id {
+                        handles.forget_connection(id).await;
                     }
                 });
             }

@@ -77,10 +77,13 @@ impl Store {
     /// Owners whose name starts with `prefix` (e.g. `inference/`), so a
     /// capability can enumerate its configured instances.
     pub async fn owners(&self, prefix: &str) -> Result<Vec<String>> {
+        // An exact, case-sensitive prefix match. `LIKE` would need an
+        // `ESCAPE` clause for `%` and `_` (a plugin id such as
+        // `witmproxy/@ezco/no_shorts/` has one) and folds ASCII case.
         let rows = sqlx::query(
-            "SELECT DISTINCT owner FROM configuration WHERE owner LIKE ? ORDER BY owner",
+            "SELECT DISTINCT owner FROM configuration WHERE substr(owner, 1, length(?1)) = ?1 ORDER BY owner",
         )
-        .bind(format!("{}%", prefix.replace('%', "\\%")))
+        .bind(prefix)
         .fetch_all(&self.db.pool)
         .await?;
         rows.into_iter().map(|r| Ok(r.try_get("owner")?)).collect()
@@ -249,6 +252,29 @@ mod tests {
         let cfg = store.configuration("inference/local").await?;
         assert_eq!(cfg.len(), 2);
         assert_eq!(cfg[0].0, "api_key");
+        assert_eq!(store.owners("inference/").await?, vec!["inference/local"]);
+        // A prefix is matched literally: `_` is not a wildcard and case counts.
+        store
+            .set_configuration(
+                "witmproxy/no_shorts/x",
+                "k",
+                &serde_json::json!({"str": "a"}),
+            )
+            .await?;
+        store
+            .set_configuration(
+                "witmproxy/noXshorts/y",
+                "k",
+                &serde_json::json!({"str": "b"}),
+            )
+            .await?;
+        store
+            .set_configuration("Inference/upper", "k", &serde_json::json!({"str": "c"}))
+            .await?;
+        assert_eq!(
+            store.owners("witmproxy/no_shorts/").await?,
+            vec!["witmproxy/no_shorts/x"]
+        );
         assert_eq!(store.owners("inference/").await?, vec!["inference/local"]);
 
         assert_eq!(store.state_get("inference", "budget:local:1").await?, None);

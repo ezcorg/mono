@@ -425,7 +425,7 @@ where
     ) -> wasmtime::Result<()> {
         let admit = self.router.spec.admit.clone();
         let (iface, name, param_names) = (self.iface, self.name, self.param_names);
-        let (router, chain_id) = (Arc::clone(&self.router), self.chain_id);
+        let (router, chain_id, scope) = (Arc::clone(&self.router), self.chain_id, self.scope);
         let grant = self.grant;
         let res = wrpc_wasmtime::call_concurrent_observed(
             accessor,
@@ -448,13 +448,14 @@ where
             // method on them cannot outrun it.
             |acc| {
                 let minted = acc.with(|mut a| a.get().rpc.shared.take_minted());
-                router.minted(chain_id, grant.as_deref(), minted);
+                router.minted(chain_id, grant.as_deref(), scope, minted);
             },
         )
         .await;
         // Whatever a failed encode minted belongs here too.
         let minted = accessor.with(|mut a| a.get().rpc.shared.take_minted());
-        self.router.minted(self.chain_id, grant.as_deref(), minted);
+        self.router
+            .minted(self.chain_id, grant.as_deref(), scope, minted);
         if let Err(err) = res {
             #[cfg(test)]
             eprintln!("invocation {iface}#{name} failed: {err:?}");
@@ -585,12 +586,14 @@ type Release = Arc<
 
 /// What the registry knows about a served handle: the chain whose store
 /// holds it, the grant it was acquired under (a capability object carries
-/// its grant: minted by a token call, or by a method on such an object), and
-/// how to release it.
+/// its grant: minted by a token call, or by a method on such an object), the
+/// connection it was minted on (the only one it is honored on, and whose end
+/// releases it), and how to release it.
 #[derive(Clone)]
 struct HandleEntry {
     chain: u64,
     grant: Option<String>,
+    conn: Option<u64>,
     release: Release,
 }
 
@@ -621,6 +624,39 @@ impl Handles {
     /// Forget every handle chain `chain` minted: its store is going.
     fn forget_chain(&self, chain: u64) {
         self.entries().retain(|_, entry| entry.chain != chain);
+    }
+
+    /// Connection `conn` has ended: release every handle minted on it, the
+    /// way a drop from that connection would have (evicted from its chain's
+    /// table, its guest destructor run), and forget it. A client that held
+    /// its handles "until the connection closes" (`nocap.wit`) holds nothing
+    /// afterwards. Returns how many handles were released.
+    pub async fn forget_connection(&self, conn: u64) -> usize {
+        let mine: Vec<(Uuid, HandleEntry)> = {
+            let mut entries = self.entries();
+            let ids: Vec<Uuid> = entries
+                .iter()
+                .filter(|(_, entry)| entry.conn == Some(conn))
+                .map(|(id, _)| *id)
+                .collect();
+            ids.into_iter()
+                .filter_map(|id| entries.remove(&id).map(|entry| (id, entry)))
+                .collect()
+        };
+        let mut released = 0;
+        for (id, entry) in mine {
+            match (entry.release)(id, Some(conn)).await {
+                Ok(true) => released += 1,
+                Ok(false) => {
+                    tracing::debug!(%id, conn, "connection ended: handle was already gone")
+                }
+                Err(err) => tracing::debug!(%id, conn, ?err, "connection ended: release failed"),
+            }
+        }
+        if released > 0 {
+            tracing::debug!(conn, released, "connection ended: its handles released");
+        }
+        released
     }
 
     /// Release the handle the 16 bytes `handle` name, in the scope of
@@ -1084,8 +1120,9 @@ where
         }
     }
 
-    /// Record which chain minted `ids`, and under which grant.
-    fn minted(&self, chain: u64, grant: Option<&str>, ids: Vec<Uuid>) {
+    /// Record which chain minted `ids`, under which grant, and on which
+    /// connection.
+    fn minted(&self, chain: u64, grant: Option<&str>, conn: Option<u64>, ids: Vec<Uuid>) {
         if ids.is_empty() {
             return;
         }
@@ -1099,6 +1136,7 @@ where
                 HandleEntry {
                     chain,
                     grant: grant.map(str::to_string),
+                    conn,
                     release: Arc::clone(&owner.release),
                 },
             );
@@ -2942,6 +2980,159 @@ mod tests {
             .await
             .expect("drop invocation");
         assert!(removed);
+        for a in accepts {
+            a.abort();
+        }
+    }
+
+    /// A connection's end releases the handles minted on it: gone from the
+    /// registry, evicted from the chain's table (a call on the handle fails,
+    /// a drop finds nothing), while another connection's handles survive.
+    #[tokio::test]
+    async fn a_connection_ending_releases_its_handles() {
+        use crate::broker::{CapabilityKind, FsRequest, FsRights, PathGrant};
+        use crate::ReqCtx;
+        use fs_client::icanhaz::nocap::filesystem;
+        use fs_client::wasi::filesystem::types::Descriptor;
+        use wrpc_transport::InvokeExt as _;
+
+        let wasm =
+            std::fs::read(fs_passthrough_wasm()).expect("build capabilities/filesystem first");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), b"mine\n").unwrap();
+        let grants = GrantStore::shared();
+        let grant = grants.lock().unwrap().issue(
+            CapabilityKind::Filesystem(FsRequest {
+                roots: vec![PathGrant {
+                    path: "/".to_string(),
+                    rights: FsRights::READ,
+                }],
+            }),
+            "filesystem (/)".to_string(),
+            Duration::from_secs(60),
+            crate::broker::anonymous_principal(),
+        );
+
+        let srv = Arc::new(wrpc_transport::Server::<
+            ReqCtx,
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+        >::default());
+        // One listener per "connection", as in the test above.
+        let mut addrs = Vec::new();
+        let mut accepts = Vec::new();
+        for conn in [11u64, 12u64] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            addrs.push(listener.local_addr().unwrap().to_string());
+            let srv = Arc::clone(&srv);
+            accepts.push(tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let (rx, tx) = stream.into_split();
+                    let cx = ReqCtx {
+                        origin: None,
+                        peer: None,
+                        conn: Some(conn),
+                    };
+                    let _ = srv.accept(cx, tx, rx).await;
+                }
+            }));
+        }
+        // The daemon-wide registry, held here so the test can end a connection
+        // the way a transport does.
+        let handles = Handles::new();
+        let mut handlers = serve_capability(
+            srv.as_ref(),
+            &wasm,
+            wrpc_transport::tcp::Client::from(addrs[0].clone()),
+            (),
+            grants.clone(),
+            None,
+            jail_raw(&grants, dir.path()),
+            Arc::clone(&handles),
+        )
+        .await
+        .unwrap();
+        serve_resource_drop(srv.as_ref(), Arc::clone(&handles), &mut handlers)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let first = wrpc_transport::tcp::Client::from(&addrs[0]);
+        let second = wrpc_transport::tcp::Client::from(&addrs[1]);
+
+        let root1 = filesystem::open(&first, (), &grant)
+            .await
+            .unwrap()
+            .expect("mount on the first connection");
+        let root2 = filesystem::open(&second, (), &grant)
+            .await
+            .unwrap()
+            .expect("mount on the second connection");
+        let id_of = |root: &wrpc_transport::ResourceOwn<Descriptor>| {
+            let bytes: [u8; 16] = AsRef::<Bytes>::as_ref(root)[..].try_into().unwrap();
+            Uuid::from_bytes_le(bytes)
+        };
+        assert!(handles.get(&id_of(&root1)).is_some(), "registered on mint");
+        assert!(handles.get(&id_of(&root2)).is_some(), "registered on mint");
+        assert!(
+            Descriptor::read_directory(&first, (), &root1.as_borrow())
+                .await
+                .is_ok(),
+            "live before its connection ends"
+        );
+
+        // The first connection ends: its two handles (the root, and the
+        // directory stream `read_directory` minted) are released, no others.
+        let released = handles.forget_connection(11).await;
+        assert_eq!(released, 2, "exactly the handles minted on it are released");
+        assert!(
+            handles.get(&id_of(&root1)).is_none(),
+            "the ended connection's handle is forgotten"
+        );
+        assert!(
+            handles.get(&id_of(&root2)).is_some(),
+            "the other connection's handle stays"
+        );
+        // Evicted from the chain's table: the same handle bytes, presented on a
+        // stream carrying the ended connection's id, resolve to nothing, and a
+        // drop from there finds nothing to release.
+        let gone = Descriptor::read_directory(&first, (), &root1.as_borrow()).await;
+        assert!(
+            gone.is_err(),
+            "a released handle must not resolve, got {gone:?}"
+        );
+        let handle1: Bytes = AsRef::<Bytes>::as_ref(&root1).clone();
+        let no_paths: [&[Option<usize>]; 0] = [];
+        let ((removed,), _) = first
+            .invoke_values::<_, (Bytes,), (bool,), _>(
+                (),
+                RESOURCES_INSTANCE,
+                "drop",
+                (handle1,),
+                no_paths,
+            )
+            .await
+            .expect("drop invocation");
+        assert!(!removed, "nothing left to drop after the connection ended");
+
+        // The second connection is untouched: its handle works and drops.
+        let still = Descriptor::read_directory(&second, (), &root2.as_borrow()).await;
+        assert!(still.is_ok(), "{still:?}");
+        let handle2: Bytes = AsRef::<Bytes>::as_ref(&root2).clone();
+        let ((removed,), _) = second
+            .invoke_values::<_, (Bytes,), (bool,), _>(
+                (),
+                RESOURCES_INSTANCE,
+                "drop",
+                (handle2,),
+                no_paths,
+            )
+            .await
+            .expect("drop invocation");
+        assert!(removed);
+        // Ending the second connection releases what it still held (the
+        // directory stream); ending it again finds nothing.
+        assert_eq!(handles.forget_connection(12).await, 1);
+        assert_eq!(handles.forget_connection(12).await, 0);
         for a in accepts {
             a.abort();
         }

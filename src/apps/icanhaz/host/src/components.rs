@@ -144,6 +144,28 @@ pub fn inspect(bytes: &[u8]) -> anyhow::Result<(Option<String>, Vec<String>, Vec
     Ok((Some(world.name.clone()), imports, exports))
 }
 
+/// The raw host interface that hands out file authority. A shipped component
+/// (the filesystem passthrough, `workspace`) imports it and mediates every
+/// operation on what it yields through the gate; a component a user brings
+/// reaches files through `icanhaz:nocap/filesystem`, which composes that
+/// passthrough in front of it. Importing `jail` directly would yield the
+/// delegated grant's root as a bare descriptor, so the grant's `allow`
+/// clause (`call.args.path.startsWith("src/")`) would hold for `open` and
+/// nothing after.
+pub const JAIL_INTERFACE: &str = "icanhaz:nocap/jail@";
+
+/// The rule for a component arriving from outside (the wire, a fetch, a
+/// registry push), on top of [`check_interfaces`]: the raw jail is the
+/// daemon's own.
+pub fn check_brought_imports(imports: &[String]) -> anyhow::Result<()> {
+    if let Some(import) = imports.iter().find(|i| i.starts_with(JAIL_INTERFACE)) {
+        bail!(
+            "import `{import}` is the daemon's raw jail: a component reaches files through `icanhaz:nocap/filesystem` (the shipped capability is composed in front of it), so the grant's clauses hold on every operation"
+        );
+    }
+    Ok(())
+}
+
 /// Validate and describe `bytes` without storing them.
 pub fn validate(bytes: &[u8]) -> anyhow::Result<ComponentInfo> {
     let (name, imports, exports) = inspect(bytes)?;
@@ -304,10 +326,15 @@ impl ComponentStore {
         compose(&parts)
     }
 
-    pub fn path(&self, hash: &str) -> PathBuf {
-        self.dir
-            .join(hash.trim_start_matches("sha256:"))
-            .with_extension("wasm")
+    /// Where the bytes of `hash` live. `hash` must be `sha256:<64 hex>`: it
+    /// arrives off the wire (`components.get`, a registry blob path), so
+    /// anything else would be a path under the daemon's user, not a name.
+    pub fn path(&self, hash: &str) -> anyhow::Result<PathBuf> {
+        let hex = hash
+            .strip_prefix("sha256:")
+            .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+            .with_context(|| format!("`{hash}` is not a component hash (`sha256:<64 hex>`)"))?;
+        Ok(self.dir.join(hex).with_extension("wasm"))
     }
 
     /// Validate, hash and keep `bytes`. Adding what is already there keeps
@@ -327,7 +354,7 @@ impl ComponentStore {
         }
         std::fs::create_dir_all(&self.dir)
             .with_context(|| format!("create {}", self.dir.display()))?;
-        let path = self.path(&info.hash);
+        let path = self.path(&info.hash)?;
         if !path.exists() {
             std::fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))?;
         }
@@ -360,12 +387,12 @@ impl ComponentStore {
     }
 
     pub fn get(&self, hash: &str) -> anyhow::Result<Vec<u8>> {
-        let path = self.path(hash);
+        let path = self.path(hash)?;
         std::fs::read(&path).with_context(|| format!("no component {hash}"))
     }
 
     pub async fn remove(&self, hash: &str) -> anyhow::Result<bool> {
-        let path = self.path(hash);
+        let path = self.path(hash)?;
         let existed = path.exists();
         if existed {
             std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
@@ -509,6 +536,8 @@ impl ComponentsProvider {
 
     /// Keep `bytes` with `provenance` and tell the daemon it landed.
     async fn land(&self, bytes: &[u8], provenance: Option<Provenance>) -> Result<InfoWire, String> {
+        let checked = validate(bytes).map_err(|e| format!("{e:#}"))?;
+        check_brought_imports(&checked.imports).map_err(|e| format!("{e:#}"))?;
         let info = self
             .components
             .add(bytes, provenance)
@@ -723,6 +752,85 @@ mod tests {
             "/../capabilities/filesystem/target/wasm32-wasip2/release/filesystem_capability.wasm"
         );
         std::fs::read(path).ok()
+    }
+
+    /// A hash names a file under the store's directory and nothing else: a
+    /// wire-supplied "hash" with path components must not resolve to a path.
+    #[tokio::test]
+    async fn a_hash_off_the_wire_cannot_name_a_path_outside_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("secret.wasm");
+        std::fs::write(&outside, b"not yours").unwrap();
+        let store = ComponentStore::new(dir.path().join("components"), None);
+        for bad in [
+            "../secret",
+            "sha256:../secret",
+            "sha256:../../etc/passwd",
+            "/etc/passwd",
+            "sha256:abc",
+            &format!("sha256:{}", "zz".repeat(32)),
+        ] {
+            assert!(store.path(bad).is_err(), "{bad} must not be a path");
+            assert!(store.get(bad).is_err(), "{bad} must not read");
+            assert!(store.remove(bad).await.is_err(), "{bad} must not remove");
+        }
+        assert!(outside.exists(), "nothing outside the store was touched");
+        let good = format!("sha256:{}", "ab".repeat(32));
+        assert_eq!(
+            store.path(&good).unwrap(),
+            dir.path()
+                .join("components")
+                .join(format!("{}.wasm", "ab".repeat(32)))
+        );
+    }
+
+    /// A component brought from outside may not import the raw jail: the
+    /// shipped workspace component does (it is the daemon's own), so adding
+    /// its bytes over the wire is refused, while the same bytes still seed the
+    /// store through the daemon's own `add`.
+    #[tokio::test]
+    async fn a_brought_component_may_not_import_the_raw_jail() {
+        use bindings::exports::icanhaz::nocap::components::Handler as _;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../capabilities/workspace/target/wasm32-wasip2/release/workspace_capability.wasm"
+        );
+        let Ok(workspace) = std::fs::read(path) else {
+            eprintln!("skipped: build capabilities/workspace first");
+            return;
+        };
+        let info = validate(&workspace).expect("the shipped component validates");
+        assert!(info.imports.iter().any(|i| i.starts_with(JAIL_INTERFACE)));
+        let err = check_brought_imports(&info.imports).expect_err("the raw jail is refused");
+        assert!(
+            err.to_string().contains("icanhaz:nocap/filesystem"),
+            "{err}"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(ComponentStore::new(dir.path().join("components"), None));
+        let provider = ComponentsProvider::new(Arc::clone(&store));
+        let refused = provider
+            .add(
+                crate::ReqCtx::default(),
+                Bytes::from(workspace.clone()),
+                None,
+            )
+            .await
+            .expect("wrpc ok");
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(store.get(&info.hash).is_err(), "nothing landed");
+        // A component that reaches files through the shipped capability is fine.
+        let reader = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/reader.wasm"))
+            .expect("reader.wasm fixture");
+        assert!(check_brought_imports(&validate(&reader).unwrap().imports).is_ok());
+        assert!(provider
+            .add(crate::ReqCtx::default(), Bytes::from(reader), None)
+            .await
+            .expect("wrpc ok")
+            .is_ok());
+        // The daemon's own seeding path still takes it.
+        assert!(store.add(&workspace, None).await.is_ok());
     }
 
     #[test]

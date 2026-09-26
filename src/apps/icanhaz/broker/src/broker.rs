@@ -1048,7 +1048,7 @@ impl<K: GrantKind> GrantStore<K> {
         holder: Option<Principal>,
         until: Option<Instant>,
     ) -> Result<String, Denied> {
-        let (kind, scope, instance, principal, expires, cancel) = {
+        let (kind, scope, instance, principal, expires, cancel, via, remote) = {
             let parent = self.grants.get(token).ok_or(Denied::NotAuthorized)?;
             if parent.expires <= Instant::now() || parent.cancel.is_cancelled() {
                 return Err(Denied::Revoked);
@@ -1060,13 +1060,15 @@ impl<K: GrantKind> GrantStore<K> {
                 holder.unwrap_or_else(|| parent.principal.clone()),
                 until.map_or(parent.expires, |u| u.min(parent.expires)),
                 parent.cancel.child_token(),
+                parent.via.clone(),
+                // A child of a grant held at another broker is held there too:
+                // its calls forward like the parent's. Without this, narrowing
+                // or redeeming a proxy would yield a token the providers run
+                // *locally*, executing the remote's pinned program or opening
+                // its paths on this machine, which nobody here consented to.
+                parent.remote.clone(),
             )
         };
-        let via = self
-            .grants
-            .get(token)
-            .map(|p| p.via.clone())
-            .unwrap_or_default();
         let tag = kind.env_key();
         let tag = tag.as_str();
         let instance = match instance {
@@ -1095,7 +1097,7 @@ impl<K: GrantKind> GrantStore<K> {
                 expires,
                 principal,
                 cancel,
-                remote: None,
+                remote,
                 via,
             },
         );
@@ -1373,25 +1375,26 @@ impl<K: GrantKind> GrantStore<K> {
         })
     }
 
-    /// The `(origin, kind)` a live grant is bound to — so revoking it can also forget
-    /// the site's durable pairing for that capability. `origin` is `None` for a
-    /// non-browser peer (no pairing to forget).
-    pub fn grant_target(&self, id: &str) -> Option<(Option<String>, String)> {
+    /// The origin a live grant is bound to (`None` for a non-browser peer: no
+    /// pairing to forget) with the capability it is for — its kind's durable
+    /// form and its scope — so revoking it can also forget the site's durable
+    /// pairing covering that capability.
+    pub fn grant_target(&self, id: &str) -> Option<(Option<String>, serde_json::Value, EzScope)> {
         self.grants.get(id).map(|g| {
             let origin = match g.principal.kind {
                 PrincipalKind::WebOrigin => Some(g.principal.id.clone()),
                 _ => None,
             };
-            (origin, g.kind.env_key())
+            (origin, g.kind.to_json(), g.scope.clone())
         })
     }
 }
 
-/// Revoke a grant AND forget the site's durable pairing for that capability, so the
-/// origin must re-consent instead of silently re-pairing on its next request. This is
-/// what the consent app's "Revoke" button should do — otherwise revocation only drops
-/// the live token and a remembered site re-acquires the grant on the next page load.
-/// Returns whether a grant was live.
+/// Revoke a grant AND forget the site's durable pairing covering that capability, so
+/// the origin must re-consent instead of silently re-pairing on its next request. This
+/// is what the consent app's "Revoke" button should do — otherwise revocation only
+/// drops the live token and a remembered site re-acquires the grant on the next page
+/// load. Returns whether a grant was live.
 pub fn revoke_and_unpair<K: GrantKind>(
     grants: &Arc<Mutex<GrantStore<K>>>,
     pairings: &Arc<Mutex<Pairings>>,
@@ -1399,8 +1402,11 @@ pub fn revoke_and_unpair<K: GrantKind>(
 ) -> bool {
     let target = grants.lock().unwrap().grant_target(id);
     let revoked = grants.lock().unwrap().revoke(id);
-    if let Some((Some(origin), kind)) = target {
-        pairings.lock().unwrap().revoke_kind(&origin, &kind);
+    if let Some((Some(origin), want, scope)) = target {
+        pairings
+            .lock()
+            .unwrap()
+            .revoke_capability(&origin, &want, &scope);
     }
     revoked
 }
@@ -1511,11 +1517,19 @@ async fn restore_json<T: serde::de::DeserializeOwned + Serialize + Default>(
 }
 
 /// Durable, per-origin trust: presenting a pairing secret for an origin skips the
-/// consent prompt for the kinds that origin was approved for. The secret is
-/// stored by the browser in **origin-partitioned** storage (only the paired
-/// origin's JS can read it) and bound here to that origin + the kinds it covers —
-/// so a secret used from another origin (or with no origin) doesn't match.
-/// (In-memory: a daemon restart forgets pairings and the human re-approves once.)
+/// consent prompt for the **capabilities** that origin was approved for. A pairing
+/// covers each approved capability by identity — the want as it was approved
+/// (its canonical parameters: the program resolved to an absolute path, the
+/// roots and rights, the interface with its provider hash and source) together
+/// with the approved scope — and a later request is covered only when its want
+/// is that capability and its scope is the approved one or a narrowing of it
+/// ([`ezcap::Scope::contains`]). So an origin paired for
+/// `process(/usr/bin/rust-analyzer --stdio)` still prompts for
+/// `process(/bin/rm …)`, and one paired for a scoped grant prompts for a wider
+/// one. The secret is stored by the browser in **origin-partitioned** storage
+/// (only the paired origin's JS can read it) and bound here to that origin + the
+/// capabilities it covers — so a secret used from another origin (or with no
+/// origin) doesn't match.
 pub struct Pairings {
     by_secret: HashMap<String, Pairing>,
     /// Where pairings persist across restarts.
@@ -1525,7 +1539,27 @@ pub struct Pairings {
 #[derive(Serialize, Deserialize)]
 struct Pairing {
     origin: String,
-    kinds: HashSet<String>,
+    /// The capabilities this pairing covers.
+    approved: Vec<Approved>,
+}
+
+/// One capability a pairing covers: the want as approved, in the durable form
+/// [`GrantKind::to_json`] gives (canonical parameters), and the scope it was
+/// approved with.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+struct Approved {
+    /// The key the want's environment lives under ([`GrantKind::env_key`]): its
+    /// tag, or the interface for a component kind. For the app's "Sites" view.
+    kind: String,
+    want: serde_json::Value,
+    scope: EzScope,
+}
+
+impl Approved {
+    /// Whether a request for `want` under `scope` is covered by this approval.
+    fn covers(&self, want: &serde_json::Value, scope: &EzScope) -> bool {
+        self.want == *want && self.scope.contains(scope)
+    }
 }
 
 impl Pairings {
@@ -1574,21 +1608,37 @@ impl Pairings {
         }
     }
 
-    /// Does `secret` pair `origin` for `kind`?
-    fn check(&self, secret: &str, origin: &str, kind: &str) -> bool {
-        self.by_secret
-            .get(secret)
-            .is_some_and(|p| p.origin == origin && p.kinds.contains(kind))
+    /// Does `secret` pair `origin` for `want` under `scope`: was that very
+    /// capability approved for it, with this scope or a wider one?
+    fn check<K: GrantKind>(&self, secret: &str, origin: &str, want: &K, scope: &EzScope) -> bool {
+        let want = want.to_json();
+        self.by_secret.get(secret).is_some_and(|p| {
+            p.origin == origin && p.approved.iter().any(|a| a.covers(&want, scope))
+        })
     }
 
-    /// Record that `origin` is trusted for `kind`. If they presented a secret we
-    /// already issued for this origin, extend it (return `None`); otherwise mint a
-    /// fresh secret for the client to store. Persists the change.
-    fn remember(&mut self, presented: Option<&str>, origin: &str, kind: &str) -> Option<String> {
+    /// Record that `origin` is trusted for `want` under `scope`, as approved. If
+    /// they presented a secret we already issued for this origin, extend it
+    /// (return `None`); otherwise mint a fresh secret for the client to store.
+    /// Persists the change.
+    fn remember<K: GrantKind>(
+        &mut self,
+        presented: Option<&str>,
+        origin: &str,
+        want: &K,
+        scope: &EzScope,
+    ) -> Option<String> {
+        let approved = Approved {
+            kind: want.env_key(),
+            want: want.to_json(),
+            scope: scope.clone(),
+        };
         if let Some(s) = presented {
             let extended = self.by_secret.get_mut(s).is_some_and(|p| {
                 if p.origin == origin {
-                    p.kinds.insert(kind.to_string());
+                    if !p.approved.contains(&approved) {
+                        p.approved.push(approved.clone());
+                    }
                     true
                 } else {
                     false
@@ -1604,7 +1654,7 @@ impl Pairings {
             secret.clone(),
             Pairing {
                 origin: origin.to_string(),
-                kinds: HashSet::from([kind.to_string()]),
+                approved: vec![approved],
             },
         );
         self.save();
@@ -1623,14 +1673,16 @@ impl Pairings {
         self.save();
     }
 
-    /// Forget durable trust for one `(origin, kind)`: drop `kind` from every pairing of
-    /// `origin`, and drop any pairing left covering nothing. So revoking a grant makes
-    /// the site re-consent for *that* capability without disturbing its other kinds.
-    pub fn revoke_kind(&mut self, origin: &str, kind: &str) {
+    /// Forget durable trust for one capability of `origin`: drop every approval
+    /// that covers a grant for `want` under `scope` from every pairing of
+    /// `origin`, and drop any pairing left covering nothing. So revoking a grant
+    /// makes the site re-consent for *that* capability without disturbing its
+    /// other approvals.
+    pub fn revoke_capability(&mut self, origin: &str, want: &serde_json::Value, scope: &EzScope) {
         self.by_secret.retain(|_, p| {
             if p.origin == origin {
-                p.kinds.remove(kind);
-                !p.kinds.is_empty()
+                p.approved.retain(|a| !a.covers(want, scope));
+                !p.approved.is_empty()
             } else {
                 true
             }
@@ -1639,14 +1691,14 @@ impl Pairings {
     }
 
     /// The sites with durable trust, each with the capability kinds it covers
-    /// (aggregated across secrets) — for the app's "Sites" view.
+    /// (aggregated across secrets and approvals) — for the app's "Sites" view.
     pub fn list(&self) -> Vec<(String, Vec<String>)> {
         let mut by_origin: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
             std::collections::BTreeMap::new();
         for p in self.by_secret.values() {
             let kinds = by_origin.entry(p.origin.clone()).or_default();
-            for k in &p.kinds {
-                kinds.insert(k.clone());
+            for a in &p.approved {
+                kinds.insert(a.kind.clone());
             }
         }
         by_origin
@@ -2170,10 +2222,13 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
             }
         }
 
-        // Fast path: an origin presenting a valid pairing for this kind skips the
-        // consent prompt entirely — that is the durable, origin-bound trust.
+        // Fast path: an origin presenting a valid pairing for this very
+        // capability — the same want, under the approved scope or a narrowing
+        // of it — skips the consent prompt entirely; that is the durable,
+        // origin-bound trust. Another want of the same kind, or a wider
+        // scope, is a different capability and prompts.
         if let (Some(o), Some(s)) = (origin, pairing.as_deref()) {
-            if self.pairings.lock().unwrap().check(s, o, kind) {
+            if self.pairings.lock().unwrap().check(s, o, &want, &scope) {
                 tracing::info!(origin = %o, kind, "paired — consent skipped");
                 let issued = self
                     .store
@@ -2211,22 +2266,26 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
                     Some(extra) => scope.narrowed(&extra),
                     None => scope,
                 };
+                // The (possibly attenuated) grant the human actually approved —
+                // its summary, not the original request's, is what the audit view
+                // shows, and it is the capability a pairing covers.
+                let grant = grant.unwrap_or(want);
                 // Pair the origin (if it has one AND the human chose to remember)
-                // so future requests of this kind skip consent; hand back a fresh
-                // secret only on the first pairing.
+                // for exactly this capability under this scope, so future requests
+                // for it skip consent; hand back a fresh secret only on the first
+                // pairing.
                 let new_secret = if remember {
                     origin.and_then(|o| {
-                        self.pairings
-                            .lock()
-                            .unwrap()
-                            .remember(pairing.as_deref(), o, kind)
+                        self.pairings.lock().unwrap().remember(
+                            pairing.as_deref(),
+                            o,
+                            &grant,
+                            &scope,
+                        )
                     })
                 } else {
                     None
                 };
-                // Issue the (possibly attenuated) grant the human actually approved —
-                // its summary, not the original request's, is what the audit view shows.
-                let grant = grant.unwrap_or(want);
                 let granted_summary = summarize_scoped(&grant, &scope);
                 tracing::info!(%requester, summary = %granted_summary, %reason, remember, paired = new_secret.is_some(), "consent granted");
                 let issued = self.store.lock().unwrap().issue_scoped_via(
@@ -2409,13 +2468,21 @@ impl<C: AsOrigin + Send + Sync + 'static> bindings::exports::icanhaz::nocap::bro
         Ok(self.store.lock().unwrap().identity().to_string())
     }
 
-    async fn granted(&self, _cx: C) -> anyhow::Result<Vec<GrantInfo>> {
+    async fn granted(&self, cx: C) -> anyhow::Result<Vec<GrantInfo>> {
+        // `grant-info.id` is the bearer token, so this lists only what the
+        // caller's own principal holds: every principal's grants together
+        // would hand any connected page every other origin's tokens.
+        let caller = principal_of(&cx);
         let store = self.store.lock().unwrap();
         let now = Instant::now();
         Ok(store
             .grants
             .iter()
-            .filter(|(_, g)| g.expires > now)
+            .filter(|(_, g)| g.expires > now && !g.cancel.is_cancelled())
+            .filter(|(_, g)| {
+                g.principal.id == caller.id
+                    && principal_kind_str(g.principal.kind) == principal_kind_str(caller.kind)
+            })
             .map(|(id, g)| GrantInfo {
                 id: id.clone(),
                 holder: g.principal.clone(),
@@ -2525,7 +2592,12 @@ mod tests {
             conn: None,
         };
         provider
-            .request(ctx, terminal_want(), "open a shell".to_string(), None)
+            .request(
+                ctx.clone(),
+                terminal_want(),
+                "open a shell".to_string(),
+                None,
+            )
             .await
             .unwrap()
             .expect("granted");
@@ -2541,15 +2613,76 @@ mod tests {
             .unwrap()
             .expect("granted");
 
-        let granted = provider.granted(crate::ReqCtx::default()).await.unwrap();
-        assert_eq!(granted.len(), 2);
-        assert!(granted
-            .iter()
-            .any(|g| matches!(g.holder.kind, PrincipalKind::WebOrigin)
-                && g.holder.id == "https://notes.example.com"));
-        assert!(granted
-            .iter()
-            .any(|g| matches!(g.holder.kind, PrincipalKind::Peer)));
+        // Each principal sees its own grant and nobody else's: `grant-info.id`
+        // is the bearer token, so the audit list must never cross principals.
+        let mine = provider.granted(ctx.clone()).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        assert!(
+            matches!(mine[0].holder.kind, PrincipalKind::WebOrigin)
+                && mine[0].holder.id == "https://notes.example.com"
+        );
+        let local = provider.granted(crate::ReqCtx::default()).await.unwrap();
+        assert_eq!(local.len(), 1);
+        assert!(matches!(local[0].holder.kind, PrincipalKind::Peer));
+        let stranger = crate::ReqCtx {
+            origin: Some("https://evil.example.com".to_string()),
+            peer: None,
+            conn: None,
+        };
+        assert!(provider.granted(stranger).await.unwrap().is_empty());
+    }
+
+    /// A grant held at another broker stays remote through `narrow` and
+    /// `redeem`: the child forwards like its parent, rather than running the
+    /// remote's pinned program on this machine.
+    #[tokio::test]
+    async fn narrowing_or_redeeming_a_remote_grant_keeps_it_remote() {
+        let store = GrantStore::shared();
+        let remote = Remote {
+            locator: "iroh:abc?addr=127.0.0.1:1".to_string(),
+            token: "remote-token".to_string(),
+        };
+        let proxy = store
+            .lock()
+            .unwrap()
+            .adopt_remote(
+                CapabilityKind::Process(ProcessRequest {
+                    image: "/usr/bin/cargo".into(),
+                    args: vec!["test".into()],
+                    guest_chooses_argv: false,
+                }),
+                EzScope::unrestricted(),
+                "process (cargo) @ theo-laptop".into(),
+                Duration::from_secs(600),
+                anonymous_principal(),
+                remote.clone(),
+            )
+            .expect("adopted");
+        let child = store
+            .lock()
+            .unwrap()
+            .narrow_grant(&proxy, Narrowing::allow("size(call.args.args) < 3"))
+            .expect("narrowed");
+        assert_eq!(
+            store.lock().unwrap().remote_of(&child),
+            Some(remote.clone())
+        );
+        let cert = store
+            .lock()
+            .unwrap()
+            .certify(
+                &proxy,
+                Audience::Any,
+                Duration::from_secs(60),
+                Narrowing::default(),
+            )
+            .expect("certified");
+        let redeemed = store
+            .lock()
+            .unwrap()
+            .redeem(&cert, &Presented::default(), anonymous_principal())
+            .expect("redeemed");
+        assert_eq!(store.lock().unwrap().remote_of(&redeemed), Some(remote));
     }
 
     #[tokio::test]
@@ -2594,7 +2727,8 @@ mod tests {
             .await
             .unwrap()
             .is_err());
-        // Wrong kind with the secret: pairing is kind-scoped ⇒ consent ⇒ denied.
+        // Another capability with the secret: a pairing covers only what was
+        // approved ⇒ consent ⇒ denied.
         let fs = CapabilityKind::Filesystem(FsRequest { roots: vec![] });
         assert!(denier
             .request(origin.clone(), fs, "n".to_string(), Some(secret.clone()))
@@ -2614,32 +2748,292 @@ mod tests {
             .is_err());
     }
 
+    /// A filesystem want over `roots`, read-only.
+    fn fs_roots(roots: &[&str]) -> CapabilityKind {
+        CapabilityKind::Filesystem(FsRequest {
+            roots: roots
+                .iter()
+                .map(|r| PathGrant {
+                    path: r.to_string(),
+                    rights: FsRights::READ,
+                })
+                .collect(),
+        })
+    }
+
+    /// A process want for `image` (as a client sends it: unresolved).
+    fn process_want(image: &str) -> CapabilityKind {
+        CapabilityKind::Process(ProcessRequest {
+            image: image.to_string(),
+            args: vec![],
+            guest_chooses_argv: false,
+        })
+    }
+
+    fn wire_scope(allow: &str) -> ScopeWire {
+        ScopeWire {
+            when: "true".to_string(),
+            allow: allow.to_string(),
+        }
+    }
+
+    /// A pairing covers the capability that was approved, not its kind: the
+    /// same want skips consent; another program, or other roots, of the same
+    /// kind prompts.
+    #[tokio::test]
+    async fn pairing_covers_only_the_approved_capability() {
+        use super::bindings::exports::icanhaz::nocap::broker::Handler as _;
+        let store = GrantStore::shared();
+        let pairings = Pairings::shared();
+        let origin = crate::ReqCtx {
+            origin: Some("https://notes.example.com".to_string()),
+            peer: None,
+            conn: None,
+        };
+        let approver = BrokerProvider::new(store.clone(), Consent::AutoApprove, pairings.clone());
+        let denier = BrokerProvider::new(store, Consent::AutoDeny, pairings.clone());
+
+        // Paired for `process(sh)`.
+        let secret = approver
+            .request(origin.clone(), process_want("sh"), "lsp".to_string(), None)
+            .await
+            .unwrap()
+            .expect("granted")
+            .pairing
+            .expect("a new pairing secret on first approval");
+        // The same want (resolved the same way) skips the denying consent.
+        denier
+            .request(
+                origin.clone(),
+                process_want("sh"),
+                "again".to_string(),
+                Some(secret.clone()),
+            )
+            .await
+            .unwrap()
+            .expect("the approved capability skips consent");
+        // Another program of the same kind prompts: denied here.
+        assert!(
+            denier
+                .request(
+                    origin.clone(),
+                    process_want("ls"),
+                    "rm -rf".to_string(),
+                    Some(secret.clone()),
+                )
+                .await
+                .unwrap()
+                .is_err(),
+            "a pairing for process(sh) must not cover process(ls)"
+        );
+
+        // Filesystem: the same roots skip; other roots, or more rights, prompt.
+        let g = approver
+            .request(
+                origin.clone(),
+                fs_roots(&["/a"]),
+                "read /a".to_string(),
+                Some(secret.clone()),
+            )
+            .await
+            .unwrap()
+            .expect("granted");
+        assert!(
+            g.pairing.is_none(),
+            "the presented secret is extended, not replaced"
+        );
+        denier
+            .request(
+                origin.clone(),
+                fs_roots(&["/a"]),
+                "again".to_string(),
+                Some(secret.clone()),
+            )
+            .await
+            .unwrap()
+            .expect("the approved roots skip consent");
+        assert!(denier
+            .request(
+                origin.clone(),
+                fs_roots(&["/b"]),
+                "other roots".to_string(),
+                Some(secret.clone()),
+            )
+            .await
+            .unwrap()
+            .is_err());
+        assert!(denier
+            .request(
+                origin.clone(),
+                fs_roots(&["/a", "/b"]),
+                "more roots".to_string(),
+                Some(secret.clone()),
+            )
+            .await
+            .unwrap()
+            .is_err());
+        let rw = CapabilityKind::Filesystem(FsRequest {
+            roots: vec![PathGrant {
+                path: "/a".to_string(),
+                rights: FsRights::READ | FsRights::WRITE,
+            }],
+        });
+        assert!(denier
+            .request(origin.clone(), rw, "more rights".to_string(), Some(secret))
+            .await
+            .unwrap()
+            .is_err());
+    }
+
+    /// A pairing covers the approved scope and its narrowings: a request with
+    /// the approved scope, or that scope with a clause appended, skips; a wider
+    /// or unrelated scope prompts.
+    #[tokio::test]
+    async fn pairing_covers_the_approved_scope_and_narrower_ones() {
+        use super::bindings::exports::icanhaz::nocap::broker::Handler as _;
+        let store = GrantStore::shared();
+        let pairings = Pairings::shared();
+        let origin = crate::ReqCtx {
+            origin: Some("https://notes.example.com".to_string()),
+            peer: None,
+            conn: None,
+        };
+        let approver = BrokerProvider::new(store.clone(), Consent::AutoApprove, pairings.clone());
+        let denier = BrokerProvider::new(store, Consent::AutoDeny, pairings.clone());
+
+        let approved = r#"call.method == "x""#;
+        let secret = approver
+            .request_scoped(
+                origin.clone(),
+                terminal_want(),
+                wire_scope(approved),
+                "scoped".to_string(),
+                None,
+            )
+            .await
+            .unwrap()
+            .expect("granted")
+            .pairing
+            .expect("a new pairing secret on first approval");
+
+        // The same scope skips.
+        denier
+            .request_scoped(
+                origin.clone(),
+                terminal_want(),
+                wire_scope(approved),
+                "same".to_string(),
+                Some(secret.clone()),
+            )
+            .await
+            .unwrap()
+            .expect("the approved scope skips consent");
+        // A narrowing of it skips.
+        let narrower =
+            EzScope::allow(approved).narrowed(&Narrowing::allow(r#"call.method != "y""#));
+        denier
+            .request_scoped(
+                origin.clone(),
+                terminal_want(),
+                wire_scope(&narrower.allow),
+                "narrower".to_string(),
+                Some(secret.clone()),
+            )
+            .await
+            .unwrap()
+            .expect("a narrower scope skips consent");
+        // Wider (unrestricted) prompts: denied here.
+        assert!(
+            denier
+                .request(
+                    origin.clone(),
+                    terminal_want(),
+                    "wider".to_string(),
+                    Some(secret.clone()),
+                )
+                .await
+                .unwrap()
+                .is_err(),
+            "an unrestricted request must not ride a scoped pairing"
+        );
+        // An unrelated clause prompts too.
+        assert!(denier
+            .request_scoped(
+                origin.clone(),
+                terminal_want(),
+                wire_scope(r#"call.method == "z""#),
+                "other".to_string(),
+                Some(secret),
+            )
+            .await
+            .unwrap()
+            .is_err());
+    }
+
     #[test]
     fn pairings_persist_across_reload() {
         // Persist to a throwaway file, then confirm a fresh Pairings loads the trust.
         let path =
             std::env::temp_dir().join(format!("icanhaz-pairings-{}.json", uuid::Uuid::new_v4()));
+        let scope = EzScope::allow(r#"call.method == "read""#);
         let secret = {
             let pairings = Pairings::load(path.clone());
             let mut p = pairings.lock().unwrap();
-            p.remember(None, "https://notes.example.com", "filesystem")
-                .expect("a fresh secret")
+            p.remember(
+                None,
+                "https://notes.example.com",
+                &fs_roots(&["/a"]),
+                &scope,
+            )
+            .expect("a fresh secret")
         };
 
-        // A brand-new Pairings reading the same file sees the origin-bound, kind-scoped trust.
+        // A brand-new Pairings reading the same file sees the origin-bound trust
+        // for exactly that capability.
         let reloaded = Pairings::load(path.clone());
         let p = reloaded.lock().unwrap();
         assert!(
-            p.check(&secret, "https://notes.example.com", "filesystem"),
+            p.check(
+                &secret,
+                "https://notes.example.com",
+                &fs_roots(&["/a"]),
+                &scope
+            ),
             "reloaded pairing lost"
         );
         assert!(
-            !p.check(&secret, "https://evil.example.com", "filesystem"),
+            !p.check(
+                &secret,
+                "https://evil.example.com",
+                &fs_roots(&["/a"]),
+                &scope
+            ),
             "pairing must stay origin-bound"
         );
         assert!(
-            !p.check(&secret, "https://notes.example.com", "terminal"),
-            "pairing must stay kind-scoped"
+            !p.check(
+                &secret,
+                "https://notes.example.com",
+                &fs_roots(&["/b"]),
+                &scope
+            ),
+            "pairing must stay bound to the approved capability"
+        );
+        assert!(
+            !p.check(
+                &secret,
+                "https://notes.example.com",
+                &fs_roots(&["/a"]),
+                &EzScope::unrestricted()
+            ),
+            "pairing must stay bound to the approved scope"
+        );
+        assert_eq!(
+            p.list(),
+            vec![(
+                "https://notes.example.com".to_string(),
+                vec!["filesystem".to_string()]
+            )]
         );
         drop(p);
 
@@ -2654,20 +3048,27 @@ mod tests {
         let grants = GrantStore::shared();
         let pairings = Pairings::shared();
         let origin = "https://site.example";
+        let fs = CapabilityKind::Filesystem(FsRequest { roots: vec![] });
+        let unrestricted = EzScope::unrestricted();
         let secret = pairings
             .lock()
             .unwrap()
-            .remember(None, origin, "filesystem")
+            .remember(None, origin, &fs, &unrestricted)
             .expect("a fresh secret");
+        // Another approval on the same pairing survives the revocation below.
+        assert!(pairings
+            .lock()
+            .unwrap()
+            .remember(Some(&secret), origin, &terminal_want(), &unrestricted)
+            .is_none());
 
         let principal = Principal {
             kind: PrincipalKind::WebOrigin,
             id: origin.to_string(),
             display_name: None,
         };
-        let fs = CapabilityKind::Filesystem(FsRequest { roots: vec![] });
         let token = grants.lock().unwrap().issue(
-            fs,
+            fs.clone(),
             "filesystem".to_string(),
             Duration::from_secs(60),
             principal,
@@ -2677,7 +3078,7 @@ mod tests {
             pairings
                 .lock()
                 .unwrap()
-                .check(&secret, origin, "filesystem"),
+                .check(&secret, origin, &fs, &unrestricted),
             "pairing should be live pre-revoke"
         );
         assert!(
@@ -2688,8 +3089,15 @@ mod tests {
             !pairings
                 .lock()
                 .unwrap()
-                .check(&secret, origin, "filesystem"),
+                .check(&secret, origin, &fs, &unrestricted),
             "revoke must forget the pairing so the site re-consents"
+        );
+        assert!(
+            pairings
+                .lock()
+                .unwrap()
+                .check(&secret, origin, &terminal_want(), &unrestricted),
+            "revoking one capability leaves the site's other approvals"
         );
     }
 
@@ -3039,32 +3447,45 @@ mod tests {
             .unwrap();
 
         let legacy = dir.path().join("pairings.json");
+        let unrestricted = EzScope::unrestricted();
         std::fs::write(
             &legacy,
-            r#"{"s1":{"origin":"https://a.example","kinds":["terminal"]}}"#,
+            r#"{"s1":{"origin":"https://a.example","approved":[{"kind":"terminal","want":{"terminal":{"shell":null,"jailed":false}},"scope":{"when":"true","allow":"true"}}]}}"#,
         )
         .unwrap();
         let pairings = Pairings::load(legacy.clone());
         Pairings::restore(&pairings, &store).await;
         assert!(!legacy.exists(), "legacy file removed after import");
-        assert!(pairings
-            .lock()
-            .unwrap()
-            .check("s1", "https://a.example", "terminal"));
+        assert!(pairings.lock().unwrap().check(
+            "s1",
+            "https://a.example",
+            &terminal_want(),
+            &unrestricted
+        ));
 
         // A change persists to the store and a fresh instance restores it.
         let secret = pairings
             .lock()
             .unwrap()
-            .remember(None, "https://b.example", "process")
+            .remember(
+                None,
+                "https://b.example",
+                &process_want("/bin/sh"),
+                &unrestricted,
+            )
             .expect("fresh secret");
         tokio::time::sleep(Duration::from_millis(200)).await;
         let fresh = Pairings::shared();
         Pairings::restore(&fresh, &store).await;
         {
             let fresh = fresh.lock().unwrap();
-            assert!(fresh.check(&secret, "https://b.example", "process"));
-            assert!(fresh.check("s1", "https://a.example", "terminal"));
+            assert!(fresh.check(
+                &secret,
+                "https://b.example",
+                &process_want("/bin/sh"),
+                &unrestricted
+            ));
+            assert!(fresh.check("s1", "https://a.example", &terminal_want(), &unrestricted));
         }
 
         let hosts = Hosts::shared();

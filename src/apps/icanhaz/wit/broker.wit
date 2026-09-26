@@ -15,15 +15,27 @@ interface broker {
   /// durable, origin-bound secret the client stores (origin-partitioned) and
   /// presents on later `request`s to skip re-consent. `none` once already paired
   /// (or when there is no origin to pair, e.g. a non-browser peer).
+  ///
+  /// A pairing covers **capabilities**, not kinds: each approval the human chose
+  /// to remember is recorded as the want that was approved (its canonical
+  /// parameters: the program resolved to an absolute path, the roots and their
+  /// rights, the interface with its provider hash and source) together with the
+  /// approved scope. A later request skips consent only when its want is that
+  /// same capability and its scope is the approved scope or a narrowing of it
+  /// (the approved scope with clauses appended). The same kind with other
+  /// parameters (`process` with another program, `filesystem` over other roots)
+  /// or a wider scope is a different capability and raises consent again.
+  /// Revoking a grant forgets the approval that covered it.
   record grant {
     token: string,
     pairing: option<string>,
   }
 
   /// Ask for authority. `pairing` is a previously-issued pairing secret for this
-  /// origin (or `none`); a valid one skips the consent prompt. Otherwise consent
-  /// is raised, and on approval the origin is paired (a new secret may be
-  /// returned) before the grant is issued.
+  /// origin (or `none`); a valid one covering this very want under this scope
+  /// (see `grant`) skips the consent prompt. Otherwise consent is raised, and on
+  /// approval the origin is paired for the capability as approved (a new secret
+  /// may be returned) before the grant is issued.
   request: func(want: capability-kind, reason: string, pairing: option<string>) -> result<grant, denied>;
 
   /// `request` with an admission scope (`ezco:ezcap/types.scope`). The provider
