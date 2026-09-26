@@ -7,7 +7,8 @@
  */
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, setRegionEffect, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import { lineRange } from "../utils/region";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
 import { goBack, goForward, canGoBack, canGoForward } from "../navigation";
@@ -231,7 +232,13 @@ export const toolbarPanel = (view: EditorView): Panel => {
         filepath: anonymous ? undefined : filepath,
         language,
         openFile(path, opts) {
-            safeDispatch(view, { effects: [setSearchResults.of([]), openFileEffect.of({ path, skipSave: opts?.skipSave })] });
+            // `src/a.ts#L3-L9`: those lines of the file, as a note's fence names them.
+            const hash = path.indexOf('#');
+            const range = hash > 0 ? lineRange(path.slice(hash + 1)) : null;
+            const file = range ? path.slice(0, hash) : path;
+            safeDispatch(view, {
+                effects: [setSearchResults.of([]), openFileEffect.of({ path: file, skipSave: opts?.skipSave }), ...(range ? [setRegionEffect.of(range)] : [])],
+            });
         },
         getDocContent() { return view.state.doc.toString(); },
         persist() { return persistFile(view); },

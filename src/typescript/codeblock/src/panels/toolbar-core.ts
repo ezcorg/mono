@@ -458,6 +458,9 @@ export class ToolbarCore {
     private deleteMode: DeleteMode = { active: false, filePath: '' };
     private overwriteMode: OverwriteMode = { active: false, filePath: '', action: 'create-file' };
     private inputTouched = false;
+    /** What the field says instead of the path (the language of an unnamed
+     *  block whose file is a stand-in); back to it whenever the field resets. */
+    private shownAs: string | null = null;
     private resultsExpanded = false;
     private visibleItems: VisibleItem[] = [];
     private results: SearchResult[] = [];
@@ -525,10 +528,17 @@ export class ToolbarCore {
      *  an unnamed block whose file is a stand-in). */
     setFilePath(path: string | null, shownAs?: string) {
         this.currentFilePath = path;
+        this.shownAs = shownAs ?? null;
         if (!this.namingMode.active && !this.settingsMode.active) {
             this.input.value = shownAs ?? path ?? '';
             this.inputTouched = false;
         }
+    }
+
+    /** A query's file and, after `#`, the lines asked for (`src/a.ts#L3-L9`). */
+    private static splitLines(query: string): { file: string; lines: string } {
+        const m = /^(.*?)(#L\d+(?:-L\d+)?)\s*$/i.exec(query);
+        return m ? { file: m[1], lines: m[2] } : { file: query, lines: '' };
     }
 
     /** Get the current search results. */
@@ -665,8 +675,9 @@ export class ToolbarCore {
      *  to tell "open/search this file" apart from "create this new file". */
     private queryMatchesExistingFile(query: string, searchResults: SearchResult[]): boolean {
         const currentPath = this.getCurrentFilePath();
-        return (searchResults.length > 0 && searchResults[0].id === query) ||
-            (currentPath !== null && currentPath === query);
+        const { file } = ToolbarCore.splitLines(query);
+        return (searchResults.length > 0 && searchResults[0].id === file) ||
+            (currentPath !== null && currentPath === file);
     }
 
     /** A complete filename with an extension, e.g. `readme.md`, `src/main.ts`. */
@@ -949,9 +960,12 @@ export class ToolbarCore {
 
     private handleSearchResult(result: FileResult) {
         const query = this.input.value.trim();
-        this.input.value = result.id;
+        // The lines asked for go with the file (`a.ts#L3-L9` opens those lines).
+        const { file, lines } = ToolbarCore.splitLines(query);
+        const path = lines && file === result.id ? result.id + lines : result.id;
+        this.input.value = path;
         this.setResults([]);
-        this.host.openFile(result.id, result.match === 'content' ? { find: query } : undefined);
+        this.host.openFile(path, result.match === 'content' ? { find: query } : undefined);
     }
 
     private handleCommandResult(command: CommandResult) {
@@ -1347,7 +1361,7 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     resetInputToCurrentFile() {
         const currentPath = this.getCurrentFilePath();
-        this.input.value = currentPath || this.host.language || '';
+        this.input.value = this.shownAs ?? (currentPath || this.host.language || '');
     }
 
     private handleClickOutside(event: Event) {
@@ -1461,7 +1475,7 @@ export class ToolbarCore {
         await this.asCurrentSearch(async () => {
             let results: SearchResult[] = [];
             if (query.trim()) {
-                const searchResults: SearchResult[] = await this.searchFiles(query, 200);
+                const searchResults: SearchResult[] = await this.searchFiles(ToolbarCore.splitLines(query).file, 200);
                 if (token !== this.searchToken) return;
                 const commands = this.createCommandResults(query, searchResults);
                 const { intent, confidence } = this.detectIntent(query, searchResults);

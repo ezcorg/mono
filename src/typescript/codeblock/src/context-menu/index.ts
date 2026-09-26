@@ -1,3 +1,5 @@
+import { currentFileField, regionField } from "../editor";
+import type { LineRange } from "../utils/region";
 import { Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, keymap } from "@codemirror/view";
 import { forEachDiagnostic } from "@codemirror/lint";
@@ -38,6 +40,14 @@ function buildMenuContext(view: EditorView, pos: number): MenuContext {
     let hasAI = false;
     try { hasAI = !!view.state.field(settingsField).agentUrl; } catch { /* field not present */ }
 
+    // The file, and which of its lines are shown.
+    let filePath: string | null = null;
+    let region: LineRange | null = null;
+    try {
+        filePath = view.state.field(currentFileField).path;
+        region = view.state.field(regionField, false) ?? null;
+    } catch { /* not a file-backed block */ }
+
     return {
         view,
         pos,
@@ -47,6 +57,8 @@ function buildMenuContext(view: EditorView, pos: number): MenuContext {
         cursorOnIdentifier,
         hasDiagnosticsAtCursor,
         hasAI,
+        filePath,
+        region,
     };
 }
 
