@@ -71,6 +71,37 @@ describe('Front matter view', () => {
         expect(editor.state.selection.$from.parent.type.name).toBe('frontMatter')
     })
 
+    it('is one line until asked for, opens and closes on it, and stays open from note to note', async () => {
+        const { editor, container } = make({ content: '---\nid: X1\ntags: [a]\n---\n\n# Body' })
+        await waitFor(() => !!view(container)?.querySelector('.ezco-mde-prop'), 3000)
+        const toggle = () => view(container).querySelector('.ezco-mde-props-toggle') as HTMLButtonElement
+        const edit = () => view(container).querySelector('.ezco-mde-props-edit') as HTMLButtonElement
+        expect(view(container).classList.contains('is-collapsed')).toBe(true)
+        expect(toggle().getAttribute('aria-expanded')).toBe('false')
+        expect(toggle().textContent).toBe('▸ 2 properties')
+        expect(edit().hidden).toBe(true)
+        expect(getComputedStyle(view(container).querySelector('.ezco-mde-props-host')!).display).toBe('none')
+        toggle().click()
+        expect(view(container).classList.contains('is-collapsed')).toBe(false)
+        expect(toggle().textContent).toBe('▾ 2 properties')
+        expect(edit().hidden).toBe(false)
+        expect(getComputedStyle(view(container).querySelector('.ezco-mde-props-host')!).display).not.toBe('none')
+        // Clicking the table is not a way into the YAML; "Edit YAML" is.
+        ;(view(container).querySelector('.ezco-mde-prop-key') as HTMLElement).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+        expect(view(container).classList.contains('is-editing')).toBe(false)
+        edit().click()
+        await waitFor(() => view(container).classList.contains('is-editing'), 2000)
+        expect(editor.state.selection.$from.parent.type.name).toBe('frontMatter')
+        // Back out of the YAML: the table is still open.
+        editor.commands.setTextSelection(editor.state.doc.firstChild!.nodeSize + 1)
+        await waitFor(() => !view(container).classList.contains('is-editing'), 2000)
+        expect(view(container).classList.contains('is-collapsed')).toBe(false)
+        // Another note in the same editor opens the way this one was left.
+        editor.commands.setContent('---\nid: X2\n---\n\n# Other')
+        await waitFor(() => !!view(container)?.querySelector('.ezco-mde-prop'), 3000)
+        expect(view(container).classList.contains('is-collapsed')).toBe(false)
+    })
+
     it('says so when the YAML does not parse', async () => {
         const { container } = make({ content: '---\na: [unclosed\n---\n\nx' })
         await waitFor(() => !!view(container)?.querySelector('.ezco-mde-props-error'), 3000)

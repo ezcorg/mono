@@ -85,10 +85,12 @@ had, and offers to anchor it again on a new selection.
 **Re-anchoring.** An edit in the editor is exact: the editor keeps where each
 target is and maps it through every change, so when text inside a quoted
 range is changed, the target is rewritten (in the same undo step) to quote
-what the range holds now. A change made elsewhere (another program, a merge)
-is met by the search above when the note is read, and the target is rewritten
-to the text it was found at, so the next search is exact again. A pin needs
-neither.
+what the range holds now; while the note is edited here, no approximate
+search runs, so a quote whose text was deleted is orphaned rather than
+re-attached to text that merely resembles it. A change made elsewhere
+(another program, a merge) is met by the search above when the note is read,
+and the target is rewritten to the text it was found at, so the next search
+is exact again. A pin needs neither.
 
 ## 3. Where threads live, and the index
 
@@ -116,19 +118,63 @@ a thread from elsewhere writes the note that holds it.
   bracketed spans round-trip whatever they are for. A thread parses to a
   `commentThread` block node holding its source; it is hidden in the body and
   shown in the margin.
-- **Margin.** Beside the note, each thread is a card level with its first
-  target, cards pushed down so none overlap: the header, the body and
-  replies rendered as Markdown, reactions as chips, and Reply, Resolve (or
-  Reopen), React, Pin, Delete. Anchored text is highlighted; hovering or
-  clicking a highlight brings its card forward, and the card's targets are
-  highlighted more strongly. Resolved threads fold to one line. Orphaned
-  targets show their quote. Where there is no room for a margin (a narrow
-  column), a card opens as a popover from its highlight.
+- **Showing threads.** Anchored text is highlighted, and that is all that
+  shows by default: clicking a highlight (or `focusComment`) opens that one
+  thread as a card over the note's edge, just under its text, and Escape or
+  a click elsewhere closes it (`margin: { layout: 'float' }`, the default:
+  the editor's chrome stays out of the way until asked for). A host may ask
+  for a column instead (`layout: 'column'`): every open thread a card beside
+  the note, level with its first target, cards pushed apart so none overlap,
+  the one being looked at at its text and the others moved out of its way,
+  resolved threads folded away until asked for; where the column would leave
+  the note too narrow, the threads float after all. A card is the thread's
+  messages, each with author and time and its body rendered as Markdown,
+  reactions as chips under the message they answer, replies nested and
+  folding on a click. Orphaned targets show their quote and offer to be
+  anchored again on a selection; a thread from another note says where it
+  lives.
+- **Acting on a message.** Under each message, one row: its reactions (the
+  four most given; the rest behind "+n"), React (one control: the common
+  reactions and the recently picked ones in a row, "…" for the whole grid,
+  which opens on the recent row, or the common reactions standing in for it,
+  and the first category, never blank), Reply, Resolve or Reopen on the
+  thread's first message, and a menu with Edit and Delete. A reply is
+  written right under the message it answers, in the editor itself in small
+  (the note's `markdownSetup` without its chrome: the same code blocks over
+  the same files, `[[links]]`, `:emoji:`, `/`); an edit takes the message's
+  place. What is typed is a draft kept in the browser (never in the note,
+  never seen by anyone else) until posted, so Cancel, which closes the
+  thread, loses nothing; "Open in editor" writes the same draft in a
+  full-size view over the note, with the thread and the passage it is about
+  beside the editor. Delete asks once in the row; a message others have
+  answered stays as a tombstone (`[deleted]`) so their replies keep their
+  place, one nobody answered goes, and the thread with it when it was the
+  first. Every message can be edited or deleted by whoever can edit the
+  note: a thread is text in the reader's file, and its author is a name
+  written down, not a lock (§6). Pinning (writing a bracketed span around
+  the text) is not a card action: the editor pins on its own when no quote
+  can be unique, and `pinComment` remains for a host that wants it. A
+  floating card never extends the page (under its text when the scroll area
+  has room, else above it), and the reader can drag it by a message's head
+  and resize it by its corner; it then stays where it was put.
+
+### 4.1 Where this is going: a comment as a document
+
+The threaded view is a visualization, not the model. The shape to grow
+toward: each comment may be a document of its own (a note in the vault),
+in which different passages can point at different ranges of the note it
+is about, each shown in the note as its own comment; a reply is then a
+comment whose subject is another comment document; the thread is what the
+index gathers from those references. Threads as footnotes (§1) are the
+in-note form of the same thing, and stay the default for a short comment.
+The full-size view above is the first step: a comment written as a
+document, with the document it is about in view. Not built.
 - **Commands.** `addComment({ ranges?, body })` (the selection when no ranges
   are given; several ranges make one multi-range thread), `replyToComment`,
-  `resolveComment` / `reopenComment`, `reactToComment` (a toggle),
-  `pinComment` (turn a thread's text-fragment targets into pins),
-  `deleteComment`. `editor.storage.comments` has `threads()` (each with its
+  `editComment`, `resolveComment` / `reopenComment`, `reactToComment` (a
+  toggle), `pinComment` (turn a thread's text-fragment targets into pins),
+  `deleteComment` (a reply, or the whole thread and its pins),
+  `focusComment`. `editor.storage.comments` has `threads()` (each with its
   targets resolved), `focus(id)`, `exportAnnotations()` and
   `markdownWithoutComments()`.
 - **Who.** The host gives the author's handle (`comments: { author }`);
@@ -151,9 +197,14 @@ a thread from elsewhere writes the note that holds it.
 - Read and unread, per device, in `.eznote/state/<device>/` (the RFC's §4):
   needs the device identity of §9.
 - Notifications of replies across a vault.
-- Signed authorship: a handle is a name the author chose; the version log's
-  signatures (E2's remaining work) will say who wrote a version, and so who
-  wrote what a version added.
+- Signed authorship: a handle is a name the author chose (or, in eznote
+  today, the login name the device derived), and nothing in the text
+  guarantees it: anyone who can edit the note can write, change or delete
+  any message under any name, and the editor does not pretend otherwise (no
+  message is locked to its author in the UI). The version log's signatures
+  (E2's remaining work) will say who wrote a version, and so who wrote what
+  a version added; peer-to-peer sync of notes carrying comments (E5) needs
+  that attestation before a handle means anything across devices.
 - Live co-editing of a comment (E6): a thread is text in the note, so a live
   session carries it with nothing more.
 

@@ -63,6 +63,23 @@ describe('Markdown block-level paste', () => {
         expect(firstChild.type.name).toBe('bulletList')
     })
 
+    it('keeps a pasted nested list tight, with no hard break before the sublist', () => {
+        pasteText('* Parent:\n    * child\n    * other\n* Next')
+        let hardBreaks = 0
+        editor.state.doc.descendants((node) => {
+            if (node.type.name === 'hardBreak') hardBreaks++
+        })
+        expect(hardBreaks).toBe(0)
+        expect(editor.storage.markdown.getMarkdown()).toBe('* Parent:\n  * child\n  * other\n* Next')
+    })
+
+    it('keeps the lines of a pasted code fence', () => {
+        pasteText('```js\nline one\n  line two\n```')
+        const code = editor.state.doc.firstChild
+        expect(code?.type.name).toBe('ezcodeBlock')
+        expect(code?.textContent).toBe('line one\n  line two')
+    })
+
     it('transforms a pasted "# Heading" into an h1', () => {
         pasteText('# Hello')
         expect(editor.state.doc.firstChild!.type.name).toBe('heading')

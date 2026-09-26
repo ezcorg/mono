@@ -183,11 +183,16 @@ const unfollow = new WeakMap<Editor, () => void>()
 
 /** Replace the document with a file's contents, outside the undo history:
  *  undo never brings back the file shown before, nor empties a new one. */
+/** On the transaction that puts a file's text in place of the document:
+ *  what reads the document afresh (comments finding their text) keys on it. */
+export const loadedDocumentMeta = 'ezcoLoadedDocument'
+
 function setDocument(editor: Editor, content: string): void {
     editor
         .chain()
         .command(({ tr }) => {
             tr.setMeta('addToHistory', false)
+            tr.setMeta(loadedDocumentMeta, true)
             return true
         })
         .setContent(content)
@@ -286,15 +291,24 @@ export const FileSystem = Extension.create<FileSystemOptions>({
          *  went on) and the note takes the file as it now is. */
         const conflicted = async (fs: VfsInterface, path: string, saved: string, copy: string) => {
             const open = storage.options.filepath === path && !storage.codeView
-            const latest = open ? getMarkdown(editor) : saved
+            let latest = open ? getMarkdown(editor) : saved
             if (latest !== saved) await fs.writeFile(copy, latest).catch((e) => console.error(e))
             emit({ type: 'conflict', path, copy })
             if (!open) return
+            const head = await readNote(fs, path).catch(() => null)
+            if (!head || storage.options.filepath !== path || storage.codeView) return
+            // Typing went on while the file was read: the copy gets those
+            // keystrokes too, so nothing typed is in neither place.
+            const now = getMarkdown(editor)
+            if (now !== latest) {
+                latest = now
+                await fs.writeFile(copy, latest).catch((e) => console.error(e))
+                if (storage.options.filepath !== path || storage.codeView) return
+            }
             if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
             storage.saveTimeout = null
             storage.dirty = false
-            const head = await readNote(fs, path).catch(() => null)
-            if (head && storage.options.filepath === path) takeExternal(path, head)
+            takeExternal(path, head)
         }
 
         /** The note's text and the version it is, read together when there is
@@ -621,7 +635,18 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         const storage = this.storage as FileSystemStorage
         unfollow.get(this.editor)?.()
         unfollow.delete(this.editor)
-        if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
+        // Edits made in the last moments before the editor goes (a window
+        // closed, a view unmounted) are written, not dropped with the timer.
+        if (storage.saveTimeout !== null) {
+            clearTimeout(storage.saveTimeout)
+            storage.saveTimeout = null
+            const { fs, filepath } = storage.options
+            if (fs && filepath && !storage.codeView) {
+                storage.dirty = false
+                storage.write(fs, filepath, getMarkdown(this.editor))
+            }
+        }
+        if (storage.codeView) void persistFile(storage.codeView)
         storage.codeView?.destroy()
         storage.codeHost?.remove()
     },

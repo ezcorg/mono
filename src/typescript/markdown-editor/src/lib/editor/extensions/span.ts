@@ -42,6 +42,26 @@ export function parseSpanAttributes(text: string): SpanAttributes | null {
     return out
 }
 
+/** The same attributes: id, the classes in order, the pairs in order. */
+function sameAttributes(a: SpanAttributes, b: SpanAttributes): boolean {
+    return (
+        (a.id ?? null) === (b.id ?? null) &&
+        a.classes.split(/\s+/).filter(Boolean).join(' ') === b.classes.split(/\s+/).filter(Boolean).join(' ') &&
+        JSON.stringify(Object.entries(a.attributes ?? {})) === JSON.stringify(Object.entries(b.attributes ?? {}))
+    )
+}
+
+/** A mark's attribute list: as it was written, while the attributes are
+ *  the ones that were read; in canonical form once they have changed. */
+function spanAttributesOf(mark: PMMark): string {
+    const attrs = mark.attrs as SpanAttributes & { raw: string | null }
+    if (attrs.raw !== null) {
+        const parsed = parseSpanAttributes(attrs.raw)
+        if (parsed && sameAttributes(parsed, attrs)) return `{${attrs.raw}}`
+    }
+    return formatSpanAttributes(attrs)
+}
+
 export function formatSpanAttributes({ id, classes, attributes }: SpanAttributes): string {
     const parts: string[] = []
     if (id) parts.push(`#${id}`)
@@ -66,7 +86,7 @@ function spanRule(state: any, silent: boolean): boolean {
     const attrs = parseSpanAttributes(src.slice(labelEnd + 2, close))
     if (!attrs) return false
     if (!silent) {
-        state.push('ezco_span_open', 'span', 1).meta = attrs
+        state.push('ezco_span_open', 'span', 1).meta = { ...attrs, raw: src.slice(labelEnd + 2, close) }
         const oldPos = state.pos
         const oldMax = state.posMax
         state.pos = start + 1
@@ -86,11 +106,12 @@ function setupMarkdownIt(markdownit: any) {
     markdownit.inline.ruler.before('link', 'ezco_span', spanRule)
     const esc = markdownit.utils.escapeHtml
     markdownit.renderer.rules.ezco_span_open = (tokens: any[], idx: number) => {
-        const { id, classes, attributes } = tokens[idx].meta as SpanAttributes
+        const { id, classes, attributes, raw } = tokens[idx].meta as SpanAttributes & { raw: string }
         const data = [
             id ? ` data-id="${esc(id)}"` : '',
             classes ? ` data-classes="${esc(classes)}"` : '',
             Object.keys(attributes).length ? ` data-attributes="${esc(JSON.stringify(attributes))}"` : '',
+            ` data-raw="${esc(raw)}"`,
         ].join('')
         return `<span data-md-span${data}>`
     }
@@ -125,6 +146,13 @@ export const Span = Mark.create({
                 },
                 renderHTML: (attrs) => (Object.keys(attrs.attributes ?? {}).length ? { 'data-attributes': JSON.stringify(attrs.attributes) } : {}),
             },
+            /** The attribute list as written (`.note #n1 key="v"`), written
+             *  back as long as it still says what the attributes say. */
+            raw: {
+                default: null,
+                parseHTML: (el) => el.getAttribute('data-raw'),
+                renderHTML: () => ({}),
+            },
         }
     },
 
@@ -141,7 +169,7 @@ export const Span = Mark.create({
             markdown: {
                 serialize: {
                     open: '[',
-                    close: (_state: unknown, mark: PMMark) => `]${formatSpanAttributes(mark.attrs as SpanAttributes)}`,
+                    close: (_state: unknown, mark: PMMark) => `]${spanAttributesOf(mark)}`,
                     expelEnclosingWhitespace: true,
                 },
                 parse: { setup: setupMarkdownIt },

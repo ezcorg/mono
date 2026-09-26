@@ -139,11 +139,24 @@ describe('Writing comments', () => {
         expect(comments.threads()[0].thread).toEqual(t)
     })
 
-    it('deletes a thread with its pins, leaving their text', () => {
+    it('deletes a message nobody answered, and a thread with its pins once nothing is left of it', () => {
         const { editor, comments } = open(NOTE)
+        // Alice's reply has only a reaction under it: it goes.
+        editor.commands.deleteComment('c-01J9K', [0])
+        expect(comments.threads()[0].thread.replies).toEqual([])
+        // The first message, now unanswered: the thread goes, its pin unwrapped.
         editor.commands.deleteComment('c-01J9K')
         expect(comments.threads()).toEqual([])
         expect(getMarkdownContent(editor)).toBe('# Animals\n\nThe quick brown fox jumps over the lazy dog.')
+    })
+
+    it('leaves a message others answered as a tombstone, their replies in place', () => {
+        const { editor, comments } = open(NOTE)
+        editor.commands.deleteComment('c-01J9K')
+        const [t] = comments.threads()
+        expect(t.thread.body).toBe('[deleted]')
+        expect(t.thread.replies.map((r) => r.body)).toEqual(['No, and the second one should be a cat.'])
+        expect(getMarkdownContent(editor)).toContain('[^c-01J9K]: @theo 2026-09-13T12:04Z · open · [[#:~:text=brown%20fox]] [[#c-01J9K]]\n    [deleted]\n    - @alice')
     })
 
     it('writes nothing without an author', () => {

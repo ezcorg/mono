@@ -11,6 +11,10 @@
  * Rendered outside the editor body, like the outline: by default after the
  * editable (a "linked from" footer under the note, which is where a reader
  * finishes); `mount` puts it anywhere else, e.g. a sidebar column.
+ *
+ * Nothing of it shows until asked for (⌘⇧L, `toggleLinksPanel`, or the
+ * palette), unless the host passes `open`; while hidden it asks the index
+ * for nothing.
  */
 import { Editor, Extension } from '@tiptap/core'
 import { basename, dirname, normalizePath, type LinkIndex, type LinkRef } from '@joinezco/storage'
@@ -27,11 +31,24 @@ export interface LinksPanelOptions {
     className?: string
     /** Heading over the backlinks (default "Linked from"). */
     title?: string
+    /** Start shown (default: hidden until asked for). */
+    open?: boolean
 }
 
 interface LinksPanelStorage {
     /** Re-read the index now (it also re-reads on its own). */
     refresh: () => Promise<void>
+    /** Whether the panel is shown. */
+    shown: () => boolean
+}
+
+declare module '@tiptap/core' {
+    interface Commands<ReturnType> {
+        linksPanel: {
+            /** Show or hide the links panel (⌘⇧L). */
+            toggleLinksPanel: () => ReturnType
+        }
+    }
 }
 
 /** A note's name as a reader knows it: the file name without `.md`. */
@@ -49,6 +66,7 @@ class LinksPanelView {
     private token = 0
     private scheduled = false
     private cleanups: (() => void)[] = []
+    shown = false
 
     constructor(
         private editor: Editor,
@@ -76,7 +94,19 @@ class LinksPanelView {
         const persistence = this.persistence()
         if (persistence) this.cleanups.push(persistence.subscribe(() => this.schedule()))
         if (index.subscribe) this.cleanups.push(index.subscribe(() => this.schedule()))
-        void this.refresh()
+        this.setShown(!!options.open)
+    }
+
+    /** Show or hide the panel; read the index when shown. */
+    setShown(shown: boolean) {
+        this.shown = shown
+        this.dom.hidden = !shown
+        if (shown) void this.refresh()
+    }
+
+    toggleShown() {
+        this.setShown(!this.shown)
+        if (this.shown) this.dom.scrollIntoView({ block: 'nearest' })
     }
 
     private persistence(): FileSystemStorage | undefined {
@@ -110,6 +140,7 @@ class LinksPanelView {
     }
 
     async refresh(): Promise<void> {
+        if (!this.shown) return
         const path = this.currentPath()
         const mine = ++this.token
         if (!path) {
@@ -223,11 +254,28 @@ export const LinksPanel = Extension.create<LinksPanelOptions, LinksPanelStorage>
     name: 'linksPanel',
 
     addOptions() {
-        return { index: undefined, mount: undefined, className: undefined, title: undefined }
+        return { index: undefined, mount: undefined, className: undefined, title: undefined, open: false }
     },
 
     addStorage() {
-        return { refresh: async () => {} }
+        return { refresh: async () => {}, shown: () => false }
+    },
+
+    addCommands() {
+        return {
+            toggleLinksPanel:
+                () =>
+                ({ editor }) => {
+                    const view = views.get(editor)
+                    if (!view) return false
+                    view.toggleShown()
+                    return true
+                },
+        }
+    },
+
+    addKeyboardShortcuts() {
+        return { 'Mod-Shift-l': () => this.editor.commands.toggleLinksPanel() }
     },
 
     onCreate() {
@@ -235,6 +283,7 @@ export const LinksPanel = Extension.create<LinksPanelOptions, LinksPanelStorage>
         const view = new LinksPanelView(this.editor, this.options.index, this.options)
         views.set(this.editor, view)
         this.storage.refresh = () => view.refresh()
+        this.storage.shown = () => view.shown
     },
 
     onDestroy() {

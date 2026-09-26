@@ -134,9 +134,18 @@ export function docRange(flat: DocText, from: number, to: number): { from: numbe
 /** A text fragment in the document (`:~:text=…`), and whether it was found
  *  as written (or only approximately). Nearest `near` when it is in several
  *  places. */
-export function locateTextFragment(doc: PMNode, fragment: string, near?: number, flat: DocText = docText(doc)): { from: number; to: number; exact: boolean } | null {
+export function locateTextFragment(
+    doc: PMNode,
+    fragment: string,
+    near?: number,
+    flat: DocText = docText(doc),
+    /** Whether a place whose text is only near the quote counts (when a
+     *  note is read); while it is edited here, only the quote itself does. */
+    approximate = true,
+): { from: number; to: number; exact: boolean } | null {
     const f = parseTextFragment(fragment)
     if (!f) return null
     const match = matchTextFragment(flat.text, f, near === undefined ? undefined : textOffset(flat, near))
-    return match ? { ...docRange(flat, match.from, match.to), exact: match.exact } : null
+    if (!match || (!approximate && !match.exact)) return null
+    return { ...docRange(flat, match.from, match.to), exact: match.exact }
 }

@@ -131,6 +131,10 @@ class LinkPopoverView {
         // it.
         this.onDocKeyDown = (e: KeyboardEvent) => {
             if (this.mode === 'hidden' || e.key !== 'Escape') return
+            // Only while the caret or the popover has focus: an Escape
+            // pressed in the file tree or a dialog is theirs.
+            const active = document.activeElement
+            if (!(this.view.dom.contains(active) || this.popover.dom.contains(active))) return
             e.preventDefault()
             e.stopPropagation()
             this.cancel()

@@ -14,6 +14,11 @@ import tippy, { Instance as TippyInstance } from 'tippy.js'
  * The ~550KB emoji dataset is **lazy-loaded** via a dynamic import — the cost is
  * paid on the first `:`-trigger, not at editor load (a consumer can warm it
  * ahead of time with `prefetchEmojiData()`).
+ *
+ * The grid itself (`EmojiMenu`) is the one emoji chooser of the editor:
+ * the `:` trigger drives it from the typed query, and `openEmojiPicker`
+ * opens it with a search field of its own beside any element (a comment's
+ * reactions), so there is one way to pick an emoji everywhere.
  */
 
 interface EmojiEntry {
@@ -23,6 +28,16 @@ interface EmojiEntry {
     label: string
     /** Search keywords, e.g. ["grin", "happy", "smile"]. */
     tags?: string[]
+    /** Emojibase's category (0 is smileys and emotion). */
+    group?: number
+}
+
+/** The first category, shown when nothing has been typed. */
+const FIRST_GROUP = 0
+const FIRST_GROUP_LABEL = 'Smileys & emotion'
+function firstCategory(): EmojiEntry[] {
+    if (!EMOJIS) return []
+    return EMOJIS.filter((e) => (e.group ?? FIRST_GROUP) === FIRST_GROUP).slice(0, MAX_RESULTS)
 }
 
 // ── Lazy dataset ────────────────────────────────────────────────────────────
@@ -58,6 +73,33 @@ export function prefetchEmojiData(): void {
 const COLUMNS = 9
 const MAX_RESULTS = 54 // 6 rows
 
+// ── What was picked before ──────────────────────────────────────────────────
+const RECENT_KEY = 'ezco-mde-emoji-recent'
+const RECENT_MAX = 27 // 3 rows
+
+/** The emoji picked most recently, newest first (this browser's). */
+export function recentEmoji(): string[] {
+    try {
+        const raw = localStorage.getItem(RECENT_KEY)
+        const list = raw ? (JSON.parse(raw) as unknown) : []
+        return Array.isArray(list) ? list.filter((e): e is string => typeof e === 'string').slice(0, RECENT_MAX) : []
+    } catch {
+        return []
+    }
+}
+
+/** Note that `emoji` was picked, so it comes first next time. */
+export function rememberEmoji(emoji: string): void {
+    try {
+        localStorage.setItem(RECENT_KEY, JSON.stringify([emoji, ...recentEmoji().filter((e) => e !== emoji)].slice(0, RECENT_MAX)))
+    } catch {
+        // Nothing to remember with: the picker works the same.
+    }
+}
+
+/** The reactions a conversation reaches for first (GitHub's set). */
+export const QUICK_REACTIONS = ['👍', '👎', '😄', '🎉', '😕', '❤️', '🚀', '👀']
+
 /** Rank emojis for `query` by how well its label/tags match: exact word > prefix
  *  > substring, preserving the dataset's canonical order within each tier (common
  *  emoji first). */
@@ -82,6 +124,348 @@ function searchEmojis(query: string): EmojiEntry[] {
 export interface EmojiPickerOptions {
     /** Minimum query length after `:` before the picker opens (default 2). */
     minChars: number
+}
+
+export interface EmojiMenuOptions {
+    /** An emoji was chosen. */
+    onPick: (emoji: string) => void
+    /** The menu asks to be closed (Escape, or arrowing up out of it). */
+    onClose: () => void
+    /** With a search field of its own (when not driven by typed text). */
+    search?: boolean
+}
+
+/**
+ * The emoji grid: results for a query, arrow keys through them, Enter or a
+ * click picks one, a footer names the one under focus. Loads the dataset on
+ * first use. It draws into `dom`; whoever shows it puts `dom` somewhere and
+ * gives it the keys (or, with `search`, its own field takes them).
+ */
+export class EmojiMenu {
+    readonly dom: HTMLElement
+    private results: EmojiEntry[] = []
+    private selectedIndex = 0
+    private loadToken = 0
+    private input: HTMLInputElement | null = null
+
+    constructor(private readonly options: EmojiMenuOptions) {
+        this.dom = document.createElement('div')
+        this.dom.className = 'ezco-mde-emoji-menu'
+        this.dom.setAttribute('role', 'listbox')
+        this.dom.setAttribute('aria-label', 'Emoji')
+        if (options.search) {
+            this.input = document.createElement('input')
+            this.input.type = 'search'
+            this.input.className = 'ezco-mde-emoji-search'
+            this.input.placeholder = 'Search emoji'
+            this.input.setAttribute('aria-label', 'Search emoji')
+            this.input.addEventListener('input', () => this.query(this.input!.value))
+            this.input.addEventListener('keydown', (e) => {
+                if (this.handleKeyDown(e)) return
+                if (e.key === 'Escape') {
+                    e.preventDefault()
+                    options.onClose()
+                }
+            })
+            this.dom.append(this.input)
+        }
+        this.render(false)
+    }
+
+    /** Show the results for `query` (loading the dataset first, once). With
+     *  nothing typed (a searching menu): a row of what was picked recently,
+     *  or the common reactions standing in for it, then the first category. */
+    query(query: string) {
+        this.selectedIndex = 0
+        if (!EMOJIS) {
+            const token = ++this.loadToken
+            this.results = []
+            this.render(true)
+            loadEmojis()
+                .then(() => { if (token === this.loadToken) this.query(query) })
+                .catch(() => { if (token === this.loadToken) this.render(false) })
+            return
+        }
+        if (!query) {
+            if (!this.input) {
+                this.results = []
+                this.render(false)
+                return
+            }
+            const recent = recentEmoji()
+            this.results = firstCategory()
+            this.render(false, FIRST_GROUP_LABEL, { label: recent.length ? 'Recent' : 'Reactions', emoji: recent.length ? recent : QUICK_REACTIONS })
+            return
+        }
+        this.results = searchEmojis(query)
+        this.render(false)
+    }
+
+    focus() {
+        this.input?.focus()
+    }
+
+    private pick(emoji: string) {
+        rememberEmoji(emoji)
+        this.options.onPick(emoji)
+    }
+
+    hasResults() {
+        return this.results.length > 0
+    }
+
+    private render(loading: boolean, heading?: string, row?: { label: string; emoji: string[] }) {
+        for (const child of [...this.dom.children]) if (child !== this.input) child.remove()
+        if (loading || (this.results.length === 0 && !row)) {
+            const note = document.createElement('div')
+            note.className = 'ezco-mde-emoji-note'
+            note.textContent = loading ? 'Loading emoji…' : 'No emoji found'
+            this.dom.appendChild(note)
+            return
+        }
+        // A row above the grid (recent picks): mouse and Tab, not the arrows.
+        if (row) {
+            const label = document.createElement('div')
+            label.className = 'ezco-mde-emoji-heading'
+            label.textContent = row.label
+            const strip = document.createElement('div')
+            strip.className = 'ezco-mde-emoji-row'
+            for (const emoji of row.emoji.slice(0, COLUMNS)) {
+                const cell = document.createElement('button')
+                cell.type = 'button'
+                cell.className = 'ezco-mde-emoji-cell'
+                cell.textContent = emoji
+                cell.setAttribute('aria-label', emoji)
+                cell.addEventListener('mousedown', (ev) => ev.preventDefault())
+                cell.addEventListener('click', () => this.pick(emoji))
+                strip.append(cell)
+            }
+            this.dom.append(label, strip)
+        }
+        if (heading) {
+            const label = document.createElement('div')
+            label.className = 'ezco-mde-emoji-heading'
+            label.textContent = heading
+            this.dom.appendChild(label)
+        }
+        const grid = document.createElement('div')
+        grid.className = 'ezco-mde-emoji-grid'
+        this.results.forEach((e, i) => {
+            const cell = document.createElement('button')
+            cell.type = 'button'
+            cell.className = 'ezco-mde-emoji-cell' + (i === this.selectedIndex ? ' is-selected' : '')
+            cell.textContent = e.unicode
+            cell.title = e.label
+            cell.setAttribute('role', 'option')
+            cell.setAttribute('aria-label', e.label)
+            // `mousedown` (not click) so selecting never blurs what is being typed in.
+            cell.addEventListener('mousedown', (ev) => {
+                ev.preventDefault()
+                this.pick(e.unicode)
+            })
+            cell.addEventListener('mouseenter', () => {
+                this.selectedIndex = i
+                this.updateSelection()
+            })
+            grid.appendChild(cell)
+        })
+        this.dom.appendChild(grid)
+        // OS-picker style: a footer naming the focused emoji.
+        const footer = document.createElement('div')
+        footer.className = 'ezco-mde-emoji-footer'
+        const focused = this.results[this.selectedIndex]
+        const glyph = document.createElement('span')
+        glyph.className = 'ezco-mde-emoji-footer-glyph'
+        glyph.textContent = focused?.unicode ?? ''
+        const name = document.createElement('span')
+        name.className = 'ezco-mde-emoji-footer-name'
+        name.textContent = focused?.label ?? ''
+        footer.append(glyph, name)
+        this.dom.appendChild(footer)
+    }
+
+    /** Arrow keys, Enter and Escape; true when the key was the menu's. */
+    handleKeyDown(event: KeyboardEvent): boolean {
+        if (this.results.length === 0) {
+            if (event.key === 'Escape') {
+                event.preventDefault()
+                this.options.onClose()
+                return true
+            }
+            return false
+        }
+        const last = this.results.length - 1
+        switch (event.key) {
+            case 'ArrowRight':
+                event.preventDefault()
+                this.selectedIndex = Math.min(this.selectedIndex + 1, last)
+                this.updateSelection()
+                return true
+            case 'ArrowLeft':
+                event.preventDefault()
+                this.selectedIndex = Math.max(this.selectedIndex - 1, 0)
+                this.updateSelection()
+                return true
+            case 'ArrowDown':
+                event.preventDefault()
+                this.selectedIndex = Math.min(this.selectedIndex + COLUMNS, last)
+                this.updateSelection()
+                return true
+            case 'ArrowUp':
+                event.preventDefault()
+                if (this.selectedIndex < COLUMNS) {
+                    // Out of the grid upward: back to the text (the `:` trigger
+                    // closes); a searching menu stays on its field.
+                    if (!this.input) this.options.onClose()
+                    return !!this.input
+                }
+                this.selectedIndex -= COLUMNS
+                this.updateSelection()
+                return true
+            case 'Enter':
+            case 'Tab':
+                event.preventDefault()
+                if (this.results[this.selectedIndex]) this.pick(this.results[this.selectedIndex].unicode)
+                return true
+            case 'Escape':
+                event.preventDefault()
+                this.options.onClose()
+                return true
+            default:
+                return false
+        }
+    }
+
+    private updateSelection() {
+        const cells = this.dom.querySelectorAll('.ezco-mde-emoji-cell')
+        cells.forEach((cell, i) => {
+            cell.classList.toggle('is-selected', i === this.selectedIndex)
+            if (i === this.selectedIndex) (cell as HTMLElement).scrollIntoView({ block: 'nearest' })
+        })
+        const focused = this.results[this.selectedIndex]
+        const glyph = this.dom.querySelector('.ezco-mde-emoji-footer-glyph')
+        const name = this.dom.querySelector('.ezco-mde-emoji-footer-name')
+        if (glyph) glyph.textContent = focused?.unicode ?? ''
+        if (name) name.textContent = focused?.label ?? ''
+    }
+}
+
+/**
+ * A popover beside `anchor` holding `content`, closed by Escape, a click
+ * elsewhere, or the returned function.
+ */
+function popover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void): () => void {
+    let popup: TippyInstance | null = null
+    let outside: ((e: MouseEvent) => void) | null = null
+    let keys: ((e: KeyboardEvent) => void) | null = null
+    const close = () => {
+        if (outside) document.removeEventListener('mousedown', outside)
+        if (keys) document.removeEventListener('keydown', keys, true)
+        outside = keys = null
+        popup?.destroy()
+        popup = null
+    }
+    const created = tippy(anchor, {
+        appendTo: () => document.body,
+        content,
+        showOnCreate: true,
+        interactive: true,
+        trigger: 'manual',
+        placement: 'bottom-start',
+        theme: 'ezco-mde-emoji',
+        maxWidth: 'none',
+        // Once in the document (not after a transition, which the theme may
+        // not have).
+        onMount: () => requestAnimationFrame(() => onMount?.()),
+    }) as TippyInstance | TippyInstance[]
+    popup = Array.isArray(created) ? created[0] : created
+    outside = (e: MouseEvent) => {
+        if (!content.contains(e.target as Node) && e.target !== anchor && !anchor.contains(e.target as Node)) close()
+    }
+    keys = (e: KeyboardEvent) => {
+        if (e.key === 'Escape' && (content.contains(document.activeElement) || !document.activeElement || document.activeElement === document.body)) {
+            e.preventDefault()
+            e.stopPropagation()
+            close()
+        }
+    }
+    setTimeout(() => {
+        if (outside) document.addEventListener('mousedown', outside)
+        if (keys) document.addEventListener('keydown', keys, true)
+    }, 0)
+    return close
+}
+
+/**
+ * The emoji grid with a search field, beside `anchor`. Picking closes it;
+ * so does Escape or a click elsewhere. Returns the way to close it early.
+ */
+export function openEmojiPicker(anchor: HTMLElement, onPick: (emoji: string) => void): () => void {
+    let close = () => {}
+    const menu = new EmojiMenu({
+        search: true,
+        onPick: (emoji) => {
+            close()
+            onPick(emoji)
+        },
+        onClose: () => close(),
+    })
+    menu.query('')
+    close = popover(anchor, menu.dom, () => menu.focus())
+    return close
+}
+
+/**
+ * What a reaction is picked from: the common reactions and the ones picked
+ * recently, one row, and "More" for the whole grid with search (recents
+ * first there too). Picking closes it.
+ */
+export function openReactionPicker(anchor: HTMLElement, onPick: (emoji: string) => void): () => void {
+    const root = document.createElement('div')
+    root.className = 'ezco-mde-reactions'
+    root.setAttribute('role', 'listbox')
+    root.setAttribute('aria-label', 'React')
+    const seen = new Set<string>()
+    const quick = [...QUICK_REACTIONS, ...recentEmoji()].filter((e) => !seen.has(e) && seen.add(e)).slice(0, QUICK_REACTIONS.length + 4)
+    let close = () => {}
+    const done = (emoji: string) => {
+        close()
+        rememberEmoji(emoji)
+        onPick(emoji)
+    }
+    for (const emoji of quick) {
+        const cell = document.createElement('button')
+        cell.type = 'button'
+        cell.className = 'ezco-mde-emoji-cell'
+        cell.textContent = emoji
+        cell.setAttribute('role', 'option')
+        cell.setAttribute('aria-label', `React ${emoji}`)
+        cell.addEventListener('mousedown', (e) => e.preventDefault())
+        cell.addEventListener('click', () => done(emoji))
+        root.append(cell)
+    }
+    const more = document.createElement('button')
+    more.type = 'button'
+    more.className = 'ezco-mde-emoji-more'
+    more.textContent = '…'
+    more.title = 'More emoji'
+    more.setAttribute('aria-label', 'More emoji')
+    more.addEventListener('mousedown', (e) => e.preventDefault())
+    more.addEventListener('click', () => {
+        // The whole grid takes the popover's place: recents, then a search.
+        const menu = new EmojiMenu({ search: true, onPick: done, onClose: () => close() })
+        menu.query('')
+        root.replaceChildren(menu.dom)
+        root.classList.add('is-full')
+        menu.focus()
+    })
+    root.append(more)
+    // The first reaction takes focus once shown, unless the whole grid was
+    // asked for meanwhile (its search field has it then).
+    close = popover(anchor, root, () => {
+        if (!root.classList.contains('is-full')) (root.querySelector('button') as HTMLButtonElement | null)?.focus()
+    })
+    return close
 }
 
 export const EmojiPicker = Extension.create<EmojiPickerOptions>({
@@ -118,13 +502,11 @@ export const EmojiPicker = Extension.create<EmojiPickerOptions>({
 
 class EmojiPickerView {
     public lastInputWasColon = false
-    public menu: HTMLElement | null = null
+    /** The menu while it is shown (the plugin gives it the keys). */
+    public menu: EmojiMenu | null = null
     private popup: TippyInstance | null = null
     private range: { from: number; to: number } | null = null
-    private results: EmojiEntry[] = []
-    private selectedIndex = 0
     private outsideClick: ((e: MouseEvent) => void) | null = null
-    private loadToken = 0
 
     constructor(
         private editor: Editor,
@@ -168,36 +550,22 @@ class EmojiPickerView {
         const query = match[1]
         if (this.lastInputWasColon && query.length >= this.options.minChars) {
             this.range = { from: $from.pos - match[0].length, to: $from.pos }
-            this.selectedIndex = 0
-            this.showFor(query)
+            this.show(query)
         } else {
             this.hide()
         }
     }
 
-    /** Resolve results for `query` (lazy-loading the dataset on first use) and
-     *  render. While the dataset loads, a placeholder is shown. */
-    private showFor(query: string) {
-        if (EMOJIS) {
-            this.results = searchEmojis(query)
-            this.render()
-            return
-        }
-        // First open: show a loading state, then re-evaluate once loaded (the
-        // token guards against a stale load resolving after the user moved on).
-        const token = ++this.loadToken
-        this.results = []
-        this.render(true)
-        loadEmojis()
-            .then(() => { if (token === this.loadToken && this.range) this.onSelectionUpdate() })
-            .catch(() => { if (token === this.loadToken) this.hide() })
+    handleKeyDown(event: KeyboardEvent): boolean {
+        return this.menu?.handleKeyDown(event) ?? false
     }
 
-    private render(loading = false) {
-        this.menu = this.buildMenu(loading)
-        if (this.popup) {
-            this.popup.setContent(this.menu)
-        } else {
+    private show(query: string) {
+        if (!this.menu) {
+            this.menu = new EmojiMenu({
+                onPick: (emoji) => this.selectEmoji(emoji),
+                onClose: () => this.hide(),
+            })
             const created = tippy(document.body, {
                 getReferenceClientRect: () => {
                     const view = this.editor.view
@@ -211,7 +579,7 @@ class EmojiPickerView {
                     } as DOMRect
                 },
                 appendTo: () => document.body,
-                content: this.menu,
+                content: this.menu.dom,
                 showOnCreate: true,
                 interactive: true,
                 trigger: 'manual',
@@ -223,124 +591,12 @@ class EmojiPickerView {
             }) as TippyInstance | TippyInstance[]
             this.popup = Array.isArray(created) ? created[0] : created
         }
+        this.menu.query(query)
     }
 
-    private buildMenu(loading: boolean): HTMLElement {
-        const root = document.createElement('div')
-        root.className = 'ezco-mde-emoji-menu'
-        root.setAttribute('role', 'listbox')
-        root.setAttribute('aria-label', 'Emoji')
-
-        if (loading) {
-            const note = document.createElement('div')
-            note.className = 'ezco-mde-emoji-note'
-            note.textContent = 'Loading emoji…'
-            root.appendChild(note)
-            return root
-        }
-        if (this.results.length === 0) {
-            const note = document.createElement('div')
-            note.className = 'ezco-mde-emoji-note'
-            note.textContent = 'No emoji found'
-            root.appendChild(note)
-            return root
-        }
-
-        const grid = document.createElement('div')
-        grid.className = 'ezco-mde-emoji-grid'
-        this.results.forEach((e, i) => {
-            const cell = document.createElement('button')
-            cell.type = 'button'
-            cell.className = 'ezco-mde-emoji-cell' + (i === this.selectedIndex ? ' is-selected' : '')
-            cell.textContent = e.unicode
-            cell.title = e.label
-            cell.setAttribute('role', 'option')
-            cell.setAttribute('aria-label', e.label)
-            // `mousedown` (not click) so selecting never blurs the editor first.
-            cell.addEventListener('mousedown', (ev) => {
-                ev.preventDefault()
-                this.selectEmoji(e)
-            })
-            cell.addEventListener('mouseenter', () => {
-                this.selectedIndex = i
-                this.updateSelection()
-            })
-            grid.appendChild(cell)
-        })
-        root.appendChild(grid)
-
-        // OS-picker style: a footer naming the focused emoji.
-        const footer = document.createElement('div')
-        footer.className = 'ezco-mde-emoji-footer'
-        const focused = this.results[this.selectedIndex]
-        footer.innerHTML = ''
-        const glyph = document.createElement('span')
-        glyph.className = 'ezco-mde-emoji-footer-glyph'
-        glyph.textContent = focused?.unicode ?? ''
-        const name = document.createElement('span')
-        name.className = 'ezco-mde-emoji-footer-name'
-        name.textContent = focused?.label ?? ''
-        footer.append(glyph, name)
-        root.appendChild(footer)
-        return root
-    }
-
-    handleKeyDown(event: KeyboardEvent): boolean {
-        if (this.results.length === 0) {
-            if (event.key === 'Escape') { event.preventDefault(); this.hide(); return true }
-            return false
-        }
-        const last = this.results.length - 1
-        const col = this.selectedIndex % COLUMNS
-        switch (event.key) {
-            case 'ArrowRight':
-                event.preventDefault()
-                this.selectedIndex = Math.min(this.selectedIndex + 1, last)
-                this.updateSelection(); return true
-            case 'ArrowLeft':
-                event.preventDefault()
-                this.selectedIndex = Math.max(this.selectedIndex - 1, 0)
-                this.updateSelection(); return true
-            case 'ArrowDown':
-                event.preventDefault()
-                this.selectedIndex = Math.min(this.selectedIndex + COLUMNS, last)
-                this.updateSelection(); return true
-            case 'ArrowUp':
-                event.preventDefault()
-                if (this.selectedIndex < COLUMNS) { this.hide(); return false } // exit upward
-                this.selectedIndex -= COLUMNS
-                this.updateSelection(); return true
-            case 'Enter':
-            case 'Tab':
-                event.preventDefault()
-                if (this.results[this.selectedIndex]) this.selectEmoji(this.results[this.selectedIndex])
-                return true
-            case 'Escape':
-                event.preventDefault(); this.hide(); return true
-            default:
-                // Keep `col` referenced so a future home/end nav can use it.
-                void col
-                return false
-        }
-    }
-
-    private updateSelection() {
-        if (!this.menu) return
-        const cells = this.menu.querySelectorAll('.ezco-mde-emoji-cell')
-        cells.forEach((cell, i) => {
-            cell.classList.toggle('is-selected', i === this.selectedIndex)
-            if (i === this.selectedIndex) (cell as HTMLElement).scrollIntoView({ block: 'nearest' })
-        })
-        const focused = this.results[this.selectedIndex]
-        const glyph = this.menu.querySelector('.ezco-mde-emoji-footer-glyph')
-        const name = this.menu.querySelector('.ezco-mde-emoji-footer-name')
-        if (glyph) glyph.textContent = focused?.unicode ?? ''
-        if (name) name.textContent = focused?.label ?? ''
-    }
-
-    private selectEmoji(emoji: EmojiEntry) {
+    private selectEmoji(emoji: string) {
         if (!this.range) return
-        this.editor.chain().focus().deleteRange(this.range).insertContent(emoji.unicode).run()
+        this.editor.chain().focus().deleteRange(this.range).insertContent(emoji).run()
         this.hide()
     }
 
@@ -350,13 +606,12 @@ class EmojiPickerView {
         this.popup = null
         this.menu = null
         this.range = null
-        this.results = []
     }
 
     private addOutsideClick() {
         this.outsideClick = (e: MouseEvent) => {
             const target = e.target as Node
-            if (this.menu && !this.menu.contains(target) && !this.editor.view.dom.contains(target)) {
+            if (this.menu && !this.menu.dom.contains(target) && !this.editor.view.dom.contains(target)) {
                 this.hide()
             }
         }

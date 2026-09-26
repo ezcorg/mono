@@ -85,12 +85,15 @@ export const MarkdownBlockPaste = Extension.create({
                         const container = document.createElement('div')
                         container.innerHTML = parsedHtml
 
+                        // Whitespace as HTML reads it: markdown-it puts a
+                        // newline between a list item's text and its nested
+                        // list, and preserving it would make it a hard break
+                        // (the schema's hard break stands in for line breaks
+                        // when whitespace is kept). Code keeps its whitespace
+                        // anyway: the parser keeps all of it in a `code` node.
                         const slice = DOMParser.fromSchema(view.state.schema).parseSlice(
                             container,
-                            {
-                                preserveWhitespace: true,
-                                context: view.state.selection.$from,
-                            },
+                            { context: view.state.selection.$from },
                         )
                         view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
                         return true

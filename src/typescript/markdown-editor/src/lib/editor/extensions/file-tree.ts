@@ -9,10 +9,12 @@
  *
  * Keyboard first, as an ARIA tree: arrows move and open or close folders,
  * Enter opens a file, F2 renames in place, Delete asks (in the row) and
- * deletes. The header makes a new note or folder in the selected folder.
+ * deletes, Escape closes the tree and returns to the note. The header makes
+ * a new note or folder in the selected folder.
  *
- * Closed until asked for (its header, ⌘⇧E, or `toggleFileTree`), unless the
- * host passes `open`; while closed it reads no folders.
+ * Nothing of it shows until asked for (⌘⇧E, or `toggleFileTree`), unless
+ * the host passes `open`; while closed it reads no folders. The palette
+ * (⌘P) finds files by name; the tree is for looking around folders.
  */
 import { Editor, Extension } from '@tiptap/core'
 import { FileType, basename, dirname, extname, isHidden, joinPath, normalizePath, type FileOperations, type VfsInterface } from '@joinezco/storage'
@@ -69,6 +71,8 @@ class FileTreeView {
     private confirming: string | null = null
     private cleanups: (() => void)[] = []
     private scheduled = false
+    /** Focus goes to the tree once it is drawn (it was asked for). */
+    private focusOnDraw = false
 
     constructor(
         private editor: Editor,
@@ -122,8 +126,10 @@ class FileTreeView {
         if (persistence) {
             this.cleanups.push(
                 persistence.subscribe((event) => {
+                    // A save changes no name the tree shows; the vault's own
+                    // notice covers a file made or moved by the save.
                     if (event.type === 'load') this.reveal(event.path)
-                    else this.schedule()
+                    else if (event.type !== 'save') this.schedule()
                 }),
             )
         }
@@ -133,9 +139,10 @@ class FileTreeView {
         else void this.refresh()
     }
 
-    /** Show or hide the tree (its header stays); read it when shown. */
+    /** Show or hide the tree (nothing of it shows while hidden); read it when shown. */
     setShown(shown: boolean, read = true) {
         this.shown = shown
+        this.dom.hidden = !shown
         this.dom.classList.toggle('is-collapsed', !shown)
         this.toggle.setAttribute('aria-expanded', String(shown))
         this.list.hidden = !shown
@@ -149,8 +156,13 @@ class FileTreeView {
     }
 
     toggleShown() {
+        const hadFocus = this.dom.contains(document.activeElement)
+        // Opened: the keys work at once, on the open file's row (drawn
+        // first, when the tree had not been read yet).
+        this.focusOnDraw = !this.shown
         this.setShown(!this.shown)
         if (this.shown) this.focusRow(this.active ?? this.currentPath() ?? this.visible()[0]?.path ?? '')
+        else if (hadFocus) this.editor.commands.focus()
     }
 
     private get fs(): VfsInterface | undefined {
@@ -246,6 +258,8 @@ class FileTreeView {
             }
         }
         walk('', 0)
+        // Focus stays on the tree when a redraw replaces the row that had it.
+        const hadFocus = this.list.contains(document.activeElement)
         this.list.replaceChildren(...rows)
         if (!rows.length) {
             const empty = document.createElement('li')
@@ -255,6 +269,10 @@ class FileTreeView {
         }
         const focusable = rows.find((r) => r.dataset.path === this.active) ?? rows[0]
         focusable?.setAttribute('tabindex', '0')
+        if ((hadFocus || this.focusOnDraw) && focusable) {
+            this.focusOnDraw = false
+            focusable.focus()
+        }
         this.dom.classList.toggle('ezco-mde-files--empty', !rows.length)
     }
 
@@ -264,6 +282,7 @@ class FileTreeView {
         li.setAttribute('role', 'treeitem')
         li.dataset.path = entry.path
         li.style.setProperty('--depth', String(depth))
+        li.setAttribute('aria-level', String(depth + 1))
         li.tabIndex = -1
         if (entry.folder) li.setAttribute('aria-expanded', String(this.open.has(entry.path)))
         li.classList.toggle('is-folder', entry.folder)
@@ -344,9 +363,16 @@ class FileTreeView {
         const at = rows.findIndex((r) => r.path === this.active)
         const entry = rows[at]
         if (this.confirming) {
-            e.preventDefault()
+            // Enter deletes, Escape does not; any other key is not an answer
+            // and goes on to what it usually does, the question withdrawn.
+            if (e.key === 'Enter' || e.key === 'Escape') e.preventDefault()
             if (e.key === 'Enter') void this.remove(this.confirming)
-            else if (e.key === 'Escape') this.cancelEdit(this.confirming)
+            else this.cancelEdit(this.confirming)
+            return
+        }
+        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'e') {
+            e.preventDefault()
+            this.toggleShown()
             return
         }
         const move = (to: number) => {
@@ -382,12 +408,15 @@ class FileTreeView {
                 if (entry) this.startRename(entry.path)
                 break
             case 'Delete':
-            case 'Backspace':
                 if (entry && !entry.folder) {
                     this.confirming = entry.path
                     this.draw()
                     this.focusRow(entry.path)
                 }
+                break
+            case 'Escape':
+                this.setShown(false)
+                this.editor.commands.focus()
                 break
             default:
                 return

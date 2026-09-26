@@ -96,6 +96,9 @@ async function attach(editor: Editor, files: File[], pos: number, folder: string
         const src = encodeDestination(relativePath(note ? dirname(note) : '', target))
         nodes.push(editor.schema.nodes.image.create({ src, alt: basename(file.name || target).replace(/\.[^.]*$/, '') }))
     }
+    // Another note opened meanwhile (or the editor gone): the bytes are
+    // stored, but nothing is put into a note the paste was not made in.
+    if (editor.isDestroyed || vaultOf(editor).path !== note) return
     const tr = editor.state.tr
     let at = pos
     if (tracked) {

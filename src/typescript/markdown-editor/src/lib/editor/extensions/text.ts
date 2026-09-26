@@ -50,10 +50,19 @@ function sourceAfter(parent: PMNode, index: number): string {
 }
 
 /**
- * The text node, serialized so that text stays text: `<`/`>` as
- * tiptap-markdown writes them, and, when the schema parses math, a `$` that
- * would read back as math escaped, judged against the rest of its paragraph
- * (the `$` that would close it may be past bold text or a wikilink).
+ * A `<` that would read back as an autolink (`<https://…>`, `<a@b.c>`): the
+ * one place `<` is syntax with HTML off. Any other `<`, and every `>`, is
+ * text as it is (tiptap-markdown wrote them as `&lt;` and `&gt;`, which
+ * changed `a -> b` on every save).
+ */
+const AUTOLINK_AFTER = /^(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>/
+
+/**
+ * The text node, serialized so that text stays text: a `<` escaped only
+ * where it would open an autolink, and, when the schema parses math, a `$`
+ * that would read back as math escaped, judged against the rest of its
+ * paragraph (the `$` that would close it may be past bold text or a
+ * wikilink).
  */
 export const MarkdownText = Text.extend({
     addStorage() {
@@ -66,19 +75,31 @@ export const MarkdownText = Text.extend({
                     parent?: PMNode,
                     index?: number,
                 ) {
-                    const text = (node.text ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    const text = node.text ?? ''
+                    // `state.text` escapes Markdown's own characters; the
+                    // autolink `<` is the one it does not know.
+                    const write = (part: string) => {
+                        let from = 0
+                        for (let i = part.indexOf('<'); i >= 0; i = part.indexOf('<', i + 1)) {
+                            if (!AUTOLINK_AFTER.test(part.slice(i + 1))) continue
+                            state.text(part.slice(from, i))
+                            state.write('\\<')
+                            from = i + 1
+                        }
+                        state.text(part.slice(from))
+                    }
                     if (!this.editor?.schema.nodes.mathInline) {
-                        state.text(text)
+                        write(text)
                         return
                     }
                     const after = parent && index !== undefined && parent.isTextblock ? sourceAfter(parent, index) : ''
                     let from = 0
                     for (const at of mathDollars(text, after)) {
-                        if (at > from) state.text(text.slice(from, at))
+                        if (at > from) write(text.slice(from, at))
                         state.write('\\$')
                         from = at + 1
                     }
-                    if (from < text.length) state.text(text.slice(from))
+                    if (from < text.length) write(text.slice(from))
                 },
                 parse: {},
             } as MarkdownNodeSpec,

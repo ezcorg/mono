@@ -223,12 +223,17 @@ export const FootnoteReference = Node.create({
     },
 
     addProseMirrorPlugins() {
+        // The decorations follow the document, not the selection: computed
+        // once per document, and the same set given back while it is the
+        // same document (every caret move asks again).
+        let last: { doc: PMNode; decorations: DecorationSet } | null = null
         return [
             new Plugin({
                 key: footnotesKey,
                 props: {
                     // Numbers, and what is missing, as attributes the styles show.
                     decorations(state) {
+                        if (last && last.doc === state.doc) return last.decorations
                         const { numbers, defs } = footnoteMap(state.doc)
                         const decorations: Decoration[] = []
                         state.doc.descendants((node, pos) => {
@@ -255,7 +260,8 @@ export const FootnoteReference = Node.create({
                             }
                             return true
                         })
-                        return DecorationSet.create(state.doc, decorations)
+                        last = { doc: state.doc, decorations: DecorationSet.create(state.doc, decorations) }
+                        return last.decorations
                     },
                 },
             }),

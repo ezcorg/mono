@@ -82,11 +82,18 @@ Chrome at `/usr/bin/google-chrome` or `CHROME_PATH`.
    as math is.
 3. **What E3 left** (RFC §16, `comments-discussions-rfc.md` §6): read and
    unread per device, notifications of replies, signed authorship; all
-   three wait on device identity (RFC §9). The pieces: threads are
-   Markdown (`@joinezco/storage`'s `comments.ts`), anchors are text
+   three wait on device identity (RFC §9). Until then a comment's author is
+   an unverified name, and the UI gates nothing on it. The pieces: threads
+   are Markdown (`@joinezco/storage`'s `comments.ts`), anchors are text
    fragments or pins (`quote.ts`, `span.ts`), the index is
    `vault.comments`, and the editor's `Comments` and `CommentMargin`
-   extensions read and write them.
+   extensions read and write them (threads float over the note's edge by
+   default; `margin: { layout: 'column' }` for a column).
+
+The editor's chrome is minimal by the owner's standing preference: nothing
+(file tree, backlinks, properties, comments) shows beside or above the note
+until asked for. A new panel starts hidden and gets a key, a palette entry
+or an affordance in the text, never a default column.
 
 ## Then
 

@@ -1,8 +1,8 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
-import type { NodeType } from '@tiptap/pm/model';
+import type { NodeType, Node as PMNode } from '@tiptap/pm/model';
 import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, formatLineRange, lineRange, regionField, setThemeEffect, type FileVersions } from '@joinezco/codeblock'
-import type { FileOperations, FileSearch, VfsInterface } from '@joinezco/storage'
+import { basename, dirname, joinPath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage'
 import { browserVfs } from '@joinezco/storage/browser'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState, Transaction } from "@codemirror/state";
@@ -131,6 +131,44 @@ function fenceInfo(element: HTMLElement, prefix: string): { file: string | null;
         lines: range ? formatLineRange(range) : null,
         language: extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown',
     };
+}
+
+/**
+ * The file extension a language's stand-in file gets, for the languages
+ * that have language services: an unnamed fence of one of these
+ * (```` ```ts ````) is opened as a hidden file beside the note so the
+ * services see it (`shadowPath`); any other language has none to gain.
+ */
+const SHADOW_EXT: Record<string, string> = {
+    ts: 'ts', typescript: 'ts', mts: 'mts', cts: 'cts', tsx: 'tsx',
+    js: 'js', javascript: 'js', mjs: 'mjs', cjs: 'cjs', jsx: 'jsx',
+    py: 'py', python: 'py',
+    rs: 'rs', rust: 'rs',
+    go: 'go',
+};
+
+/**
+ * Where an unnamed fence's stand-in file goes: hidden beside the note,
+ * named by the note and by the fence's place among the note's unnamed
+ * fences of that language (`.plan.2.ts` for the second ```` ```ts ```` fence
+ * of `plan.md`), so the same fence finds the same file each time the note
+ * opens and no file is made that a later open would not use again. The
+ * note is the source of truth: the file is written from the fence before
+ * the fence opens it, and hidden files are outside the vault's index.
+ * Null for a named fence, a language without services, or an editor with
+ * no note to put it beside.
+ */
+function shadowPath(doc: PMNode, pos: number, node: PMNode, note: string | null | undefined): string | null {
+    if (node.attrs.file || !note) return null;
+    const ext = SHADOW_EXT[String(node.attrs.language ?? '').toLowerCase()];
+    if (!ext) return null;
+    let n = 0;
+    doc.forEach((child, offset) => {
+        if (offset > pos || child.type !== node.type || child.attrs.file) return;
+        if (SHADOW_EXT[String(child.attrs.language ?? '').toLowerCase()] === ext) n++;
+    });
+    const stem = basename(note).replace(/\.[^.]*$/, '');
+    return joinPath(dirname(note), `.${stem}.${n}.${ext}`);
 }
 
 export interface ExtendedCodeblockOptions {
@@ -374,7 +412,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     let tr = view.state.tr
 
                     // Ensure we're working within valid document bounds
-                    const docLength = tr.doc.length
+                    const docLength = tr.doc.content.size
 
                     update.changes.iterChanges((fromA, toA, fromB, toB, text) => {
                         const replaceFrom = offset + fromA
@@ -404,7 +442,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     // Only set selection if the editor has focus or if this is a document change without focus
                     // (which happens during initial file loading)
                     if (cmView.hasFocus || update.docChanged) {
-                        const finalDocLength = tr.doc.length
+                        const finalDocLength = tr.doc.content.size
                         const clampedSelFrom = Math.max(0, Math.min(selFrom, finalDocLength))
                         const clampedSelTo = Math.max(0, Math.min(selTo, finalDocLength))
 
@@ -530,10 +568,15 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // and loses the filename + syntax/semantic highlighting.
             // A region's lines move in their file (added above, found where
             // they went) and grow or shrink with edits: `lines` follows.
+            /** The stand-in file of an unnamed fence, once it has one. */
+            let shadow: string | null = null;
             const syncFileAttrs = (update: ViewUpdate) => {
                 if (updating) return;
                 const next = update.state.field(currentFileField, false);
                 if (!next || next.loading) return;
+                // A stand-in is the fence's for language services only: the
+                // fence stays unnamed in the note.
+                if (shadow !== null && next.path === shadow) return;
                 const prev = update.startState.field(currentFileField, false);
                 const region = update.state.field(regionField, false) ?? null;
                 if (prev && prev.path === next.path && prev.language === next.language &&
@@ -665,8 +708,26 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             const versions: FileVersions | undefined = editorFs ? editor.storage.persistence?.options?.versions : undefined;
             const fsPromise = editorFs ? Promise.resolve(editorFs) : getFileSystemWorker();
             const { search, files } = this.options;
-            fsPromise.then(fs => {
+            // The filesystem may arrive after the view is gone (a note closed,
+            // an editor destroyed, while it was still being opened).
+            let destroyed = false;
+            fsPromise.then(async fs => {
+                if (destroyed || editor.isDestroyed) return;
                 fsWorker = fs;
+                // An unnamed fence of a language with services gets a stand-in
+                // file beside the note, written from the fence (the note is the
+                // source of truth) before the fence opens it.
+                const at = getPos();
+                shadow = editorFs && at !== undefined ? shadowPath(view.state.doc, at, node, editor.storage.persistence?.options?.filepath) : null;
+                if (shadow) {
+                    try {
+                        await fs.writeFile(shadow, node.textContent);
+                    } catch (error) {
+                        console.warn('The stand-in file for an unnamed code block could not be written:', error);
+                        shadow = null;
+                    }
+                    if (destroyed || editor.isDestroyed) return;
+                }
                 // Default the code font size to the editor's paragraph
                 // size MINUS 2px: an equal px value reads visually larger in
                 // the monospace code font (wider glyphs, tighter leading)
@@ -689,9 +750,11 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                             content: node.textContent,
                             fs: fsWorker,
                             language: node.attrs.language,
-                            filepath: node.attrs.file,
+                            filepath: shadow ?? node.attrs.file,
+                            anonymous: shadow !== null,
                             range: node.attrs.file ? lineRange(node.attrs.lines) ?? undefined : undefined,
-                            versions,
+                            // A stand-in has no history worth keeping.
+                            versions: shadow ? undefined : versions,
                             search,
                             files,
                             // Match the editor's light/dark mode rather
@@ -755,6 +818,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     updating = false
                 },
                 destroy() {
+                    destroyed = true;
                     // Unregister before destroying
                     codeblockRegistry.unregister(cm);
                     cm.destroy();

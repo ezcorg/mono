@@ -27,7 +27,7 @@ function isSource(node: PMNode | null | undefined): node is PMNode {
 }
 
 /** Put the caret inside `node` (at `pos`), at its start or end. */
-function enter(view: EditorView, pos: number, node: PMNode, atEnd: boolean): boolean {
+export function enter(view: EditorView, pos: number, node: PMNode, atEnd: boolean): boolean {
     const inside = atEnd ? pos + node.nodeSize - 1 : pos + 1
     const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, inside))
     view.dispatch(tr.setMeta(sourceViewKey, 'enter').scrollIntoView())
@@ -103,6 +103,9 @@ export function sourceViewDOM(
     view: EditorView,
     getPos: () => number | undefined,
     tags: { outer: 'div' | 'span'; source: 'pre' | 'span' | 'div' },
+    /** Whether a click on the preview puts the caret in the source (math
+     *  does; front matter has a control for it instead). */
+    options: { enterOnClick?: boolean } = {},
 ): { dom: HTMLElement; preview: HTMLElement; contentDOM: HTMLElement } {
     const dom = document.createElement(tags.outer)
     dom.classList.add('ezco-mde-source-view')
@@ -114,7 +117,7 @@ export function sourceViewDOM(
     contentDOM.spellcheck = false
     dom.append(preview, contentDOM)
     preview.addEventListener('mousedown', (e: MouseEvent) => {
-        if (e.button !== 0) return
+        if (e.button !== 0 || options.enterOnClick === false) return
         // Links and other controls in the preview keep their own clicks.
         if ((e.target as HTMLElement).closest('a, button, input')) return
         e.preventDefault()

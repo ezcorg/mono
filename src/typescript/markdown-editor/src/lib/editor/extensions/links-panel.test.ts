@@ -22,7 +22,7 @@ async function open(path: string, files: Record<string, string> = FILES) {
     const editor = createEditor({
         element: container,
         fs: { fs: vault.fs, filepath: path, autoSave: true },
-        links: { resolver: vault.links, index: vault.links },
+        links: { resolver: vault.links, index: vault.links, panel: { open: true } },
     })
     created.push({ editor, container })
     await waitFor(() => editor.getText().length > 0, 3000)
@@ -87,12 +87,36 @@ describe('Links panel', () => {
         }
         const fs = memoryVfs({ 'x.md': '# X' })
         const container = createTestContainer('lp-bare')
-        const editor = createEditor({ element: container, fs: { fs, filepath: 'x.md' }, links: { index } })
+        const editor = createEditor({ element: container, fs: { fs, filepath: 'x.md' }, links: { index, panel: { open: true } } })
         created.push({ editor, container })
         await waitFor(() => rows(container, 'back').length === 1, 3000)
         expect(calls).toContain('backlinks x.md')
         expect(rows(container, 'back')[0].textContent).toContain('line 4')
         expect(names(rows(container, 'dangling'))).toEqual(['nowhere'])
+    })
+
+    it('shows nothing until asked for, and toggles with ⌘⇧L', async () => {
+        const vault = await Vault.open(memoryVfs(FILES), { watch: false })
+        const container = createTestContainer('lp-hidden')
+        const calls: string[] = []
+        const index: LinkIndex = {
+            backlinks: async (p) => (calls.push(`backlinks:${p}`), vault.links.backlinks(p)),
+            unresolved: async () => (calls.push('unresolved'), vault.links.unresolved()),
+            rename: async () => 0,
+        }
+        const editor = createEditor({ element: container, fs: { fs: vault.fs, filepath: 'projects/plan.md', autoSave: true }, links: { resolver: vault.links, index } })
+        created.push({ editor, container })
+        await waitFor(() => editor.getText().length > 0, 3000)
+        await new Promise((r) => setTimeout(r, 50))
+        // Hidden, and the index has not been asked.
+        expect(panel(container).hidden).toBe(true)
+        expect(calls).toEqual([])
+        editor.commands.toggleLinksPanel()
+        await waitFor(() => rows(container, 'back').length === 2, 3000)
+        expect(panel(container).hidden).toBe(false)
+        editor.commands.focus()
+        await userEvent.keyboard('{Control>}{Shift>}l{/Shift}{/Control}')
+        await waitFor(() => panel(container).hidden, 2000)
     })
 
     it('is left out without an index, or when asked', () => {

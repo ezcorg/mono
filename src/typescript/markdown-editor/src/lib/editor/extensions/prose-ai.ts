@@ -257,7 +257,9 @@ class Session {
             this.note.textContent = ''
             this.apply.disabled = !this.answer
             this.again.disabled = false
-            this.apply.focus()
+            // Focus stays where the person is writing: the answer is
+            // announced (the output is live), and taking focus would put
+            // their next keystroke on a button.
         } catch (error) {
             if ((error as Error).name === 'AbortError') return
             this.note.textContent = `The model could not answer: ${(error as Error).message}`

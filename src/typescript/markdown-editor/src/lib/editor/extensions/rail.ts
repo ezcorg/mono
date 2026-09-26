@@ -82,7 +82,7 @@ function fit(rail: HTMLElement): () => void {
 }
 
 /** The nearest ancestor that scrolls, or null for the page itself. */
-function scrollerOf(el: HTMLElement): HTMLElement | null {
+export function scrollerOf(el: HTMLElement): HTMLElement | null {
     for (let node = el.parentElement; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
         if (/(auto|scroll|overlay)/.test(getComputedStyle(node).overflowY)) return node
     }

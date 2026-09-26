@@ -122,6 +122,11 @@ export const styleModule: StyleModule = new StyleModule({
         'max-height': 'none',
         'overflow-y': 'visible',
     },
+    // A rail whose panels are all hidden (the tree closed, no outline) takes
+    // no room: nothing shows until asked for.
+    '.ezco-mde-rail:not(:has(> :not([hidden]))), .ezco-mde-files[hidden], .ezco-mde-links[hidden]': {
+        display: 'none',
+    },
     // The block-action indicator's column — a fixed width so the indicator never
     // overlaps the navbar or the prose; `position: relative` is the positioning
     // context for the absolutely-positioned button.
@@ -161,6 +166,9 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-body-host': {
         flex: 1,
         'min-width': 0,
+        // What floats over the note (a comment card, a model's answer) is
+        // placed against the note's column.
+        position: 'relative',
         // A flex column so the editable can grow to fill the host's height: that
         // gives a click target below a short document, so clicking the empty area
         // places the caret instead of only the lines of text being clickable.
@@ -904,6 +912,70 @@ export const styleModule: StyleModule = new StyleModule({
         'text-overflow': 'ellipsis',
         'white-space': 'nowrap',
     },
+    // A reaction is picked from one row: the common ones, the recent ones,
+    // and "…" for the whole grid, which then takes the popover's place.
+    '.ezco-mde-reactions': {
+        display: 'flex',
+        'flex-wrap': 'wrap',
+        'align-items': 'center',
+        gap: '2px',
+        'max-width': '320px',
+        padding: '4px',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-color)',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-radius': '8px',
+        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.13), 0 1px 3px rgba(0, 0, 0, 0.07)',
+    },
+    '.ezco-mde-reactions.is-full': {
+        display: 'block',
+        padding: 0,
+        border: 0,
+        background: 'transparent',
+        'box-shadow': 'none',
+    },
+    '.ezco-mde-emoji-row': {
+        display: 'flex',
+        'flex-wrap': 'wrap',
+        gap: '2px',
+        'margin-bottom': '4px',
+    },
+    '.ezco-mde-emoji-more': {
+        font: 'inherit',
+        padding: '0 8px',
+        height: '28px',
+        border: 0,
+        'border-radius': '4px',
+        background: 'transparent',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-emoji-more:hover, .ezco-mde-emoji-more:focus-visible': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.14))',
+        color: 'var(--ezco-mde-fg)',
+        outline: 'none',
+    },
+    '.ezco-mde-emoji-heading': {
+        'font-size': '11px',
+        'text-transform': 'uppercase',
+        'letter-spacing': '0.06em',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        padding: '2px 4px',
+    },
+    '.ezco-mde-emoji-search': {
+        display: 'block',
+        width: '100%',
+        'box-sizing': 'border-box',
+        margin: '0 0 4px',
+        padding: '4px 6px',
+        font: 'inherit',
+        'font-size': '13px',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-radius': '4px',
+        background: 'transparent',
+        color: 'inherit',
+        outline: 'none',
+    },
     '.ezco-mde-emoji-note': {
         padding: '10px 12px',
         'font-size': '13px',
@@ -1378,6 +1450,39 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-body .ezco-mde-front-matter': {
         'font-family': 'Inter, system-ui, -apple-system, sans-serif',
         'font-size': '13px',
+    },
+    // One small line at the top of the note: "▸ 2 properties" opens the
+    // table, "▾ 2 properties" closes it, "Edit YAML" beside it shows the
+    // source. Muted, in the chrome's type, and nothing else in it is a
+    // control.
+    '.ezco-mde-props-bar': {
+        display: 'flex',
+        'align-items': 'baseline',
+        gap: '12px',
+        padding: '0 0 4px',
+    },
+    '.ezco-mde-props-toggle, .ezco-mde-props-edit': {
+        margin: 0,
+        padding: 0,
+        border: 0,
+        background: 'transparent',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        font: 'inherit',
+        'font-size': '11px',
+        'letter-spacing': '0.04em',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-props-toggle:hover, .ezco-mde-props-toggle:focus-visible, .ezco-mde-props-edit:hover, .ezco-mde-props-edit:focus-visible': {
+        color: 'var(--ezco-mde-fg)',
+        outline: 'none',
+    },
+    '.ezco-mde-props-edit[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-props-host': {
+        display: 'none',
+    },
+    '.ezco-mde-body .ezco-mde-front-matter:not(.is-collapsed) > .ezco-mde-source-preview': {
         'padding-bottom': '0.6rem',
         'border-bottom': '1px solid var(--ezco-mde-divider)',
     },
@@ -1761,14 +1866,15 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comments': {
         flex: 'none',
         'min-width': 0,
+        position: 'relative',
     },
     '.ezco-mde-comment-margin': {
         position: 'relative',
-        width: '256px',
+        width: '320px',
         'box-sizing': 'border-box',
         padding: '0 12px 24px 8px',
-        'font-size': '0.8125rem',
-        'line-height': 1.45,
+        'font-size': '0.875rem',
+        'line-height': 1.5,
         color: 'var(--ezco-mde-fg)',
     },
     '.ezco-mde-comment-margin[hidden]': {
@@ -1792,7 +1898,7 @@ export const styleModule: StyleModule = new StyleModule({
         left: 0,
         right: 0,
         'box-sizing': 'border-box',
-        padding: '8px 10px',
+        padding: '12px 14px',
         'border-radius': '8px',
         border: '1px solid var(--ezco-mde-divider)',
         background: 'var(--ezco-mde-bg)',
@@ -1834,26 +1940,57 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-message': {
         position: 'relative',
     },
-    // Over the message's corner, taking no room of its own.
-    '.ezco-mde-comment-tools': {
-        position: 'absolute',
-        top: '-2px',
-        right: 0,
+    '.ezco-mde-comment-context[hidden]': {
+        display: 'none',
+    },
+    // A message's own composer (a reply under it, an edit in its place).
+    '.ezco-mde-comment-message > .ezco-mde-comment-composer': {
+        'margin-top': '8px',
+    },
+    '.ezco-mde-comment-deleted': {
+        'font-style': 'italic',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+    },
+    // Under each message, what can be done to it: a quiet row in the
+    // chrome's muted colour, the React glyph first, then words.
+    '.ezco-mde-comment-actions': {
         display: 'flex',
-        gap: '2px',
-        padding: '0 2px',
+        'align-items': 'center',
+        'flex-wrap': 'wrap',
+        gap: '4px 10px',
+        'margin-top': '6px',
+        'font-size': '0.85em',
+    },
+    // The reactions lead the row; the first action stands a little apart.
+    '.ezco-mde-comment-reaction + .ezco-mde-comment-action': {
+        'margin-left': '4px',
+    },
+    '.ezco-mde-comment-action': {
+        display: 'inline-flex',
+        'align-items': 'center',
+        font: 'inherit',
+        padding: '1px 2px',
+        border: 0,
         'border-radius': '4px',
-        background: 'var(--ezco-mde-bg)',
-        opacity: 0,
-        'pointer-events': 'none',
-        transition: 'opacity 120ms ease',
+        background: 'transparent',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        cursor: 'pointer',
     },
-    // The message under the pointer, not the ones it is a reply within.
-    '.ezco-mde-comment-message:hover:not(:has(.ezco-mde-comment-message:hover)) > .ezco-mde-comment-head > .ezco-mde-comment-tools, .ezco-mde-comment-message:focus-within:not(:has(.ezco-mde-comment-message:focus-within)) > .ezco-mde-comment-head > .ezco-mde-comment-tools': {
-        opacity: 1,
-        'pointer-events': 'auto',
+    '.ezco-mde-comment-action:hover, .ezco-mde-comment-action:focus-visible': {
+        color: 'var(--ezco-mde-fg)',
+        background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.14))',
+        outline: 'none',
     },
-    '.ezco-mde-comment-tool, .ezco-mde-comment-emoji': {
+    '.ezco-mde-comment-action.is-icon': {
+        padding: '2px',
+    },
+    '.ezco-mde-comment-action.is-danger': {
+        color: '#d14343',
+    },
+    '.ezco-mde-comment-question': {
+        color: 'var(--ezco-mde-fg)',
+    },
+    '.ezco-mde-comment-tool': {
         font: 'inherit',
         'font-size': '0.85em',
         padding: '0 4px',
@@ -1863,9 +2000,34 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
         cursor: 'pointer',
     },
-    '.ezco-mde-comment-tool:hover, .ezco-mde-comment-emoji:hover': {
+    '.ezco-mde-comment-tool:hover, .ezco-mde-comment-tool:focus-visible': {
         background: 'var(--ezco-mde-context-menu-item-bg-hover, rgba(127, 127, 127, 0.14))',
         color: 'var(--ezco-mde-fg)',
+        outline: 'none',
+    },
+    // The way out of a floating card, in its corner.
+    '.ezco-mde-comment-tool.is-close': {
+        position: 'absolute',
+        top: '4px',
+        right: '6px',
+        'font-size': '1em',
+        'z-index': 1,
+    },
+    // Replies fold under the message they answer.
+    '.ezco-mde-comment-fold': {
+        display: 'block',
+        margin: '4px 0 0',
+        padding: 0,
+        border: 0,
+        background: 'none',
+        font: 'inherit',
+        'font-size': '0.85em',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+        cursor: 'pointer',
+    },
+    '.ezco-mde-comment-fold:hover, .ezco-mde-comment-fold:focus-visible': {
+        color: 'var(--ezco-mde-fg)',
+        outline: 'none',
     },
     '.ezco-mde-comment-body': {
         'overflow-wrap': 'anywhere',
@@ -1890,18 +2052,12 @@ export const styleModule: StyleModule = new StyleModule({
         cursor: 'pointer',
     },
     '.ezco-mde-comment-replies': {
-        'margin-top': '6px',
-        'padding-left': '8px',
+        'margin-top': '8px',
+        'padding-left': '12px',
         'border-left': '2px solid var(--ezco-mde-divider)',
     },
     '.ezco-mde-comment-message.is-reply + .ezco-mde-comment-message.is-reply': {
-        'margin-top': '8px',
-    },
-    '.ezco-mde-comment-reactions': {
-        display: 'flex',
-        'flex-wrap': 'wrap',
-        gap: '4px',
-        'margin-top': '4px',
+        'margin-top': '12px',
     },
     '.ezco-mde-comment-reaction': {
         font: 'inherit',
@@ -1917,21 +2073,10 @@ export const styleModule: StyleModule = new StyleModule({
         'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 60%, transparent)',
         background: 'color-mix(in srgb, var(--ezco-mde-accent) 14%, transparent)',
     },
-    '.ezco-mde-comment-picker': {
-        display: 'flex',
-        gap: '2px',
-    },
-    '.ezco-mde-comment-picker[hidden]': {
-        display: 'none',
-    },
-    '.ezco-mde-comment-actions': {
-        display: 'flex',
-        'flex-wrap': 'wrap',
-        gap: '6px',
-        'margin-top': '8px',
-    },
-    '.ezco-mde-comment-actions:empty': {
-        display: 'none',
+    // The rest of the reactions, behind "+n".
+    '.ezco-mde-comment-reaction.is-more': {
+        'border-style': 'dashed',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
     },
     '.ezco-mde-comment-button': {
         font: 'inherit',
@@ -1953,10 +2098,6 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde-comment-button.is-danger': {
         color: '#d14343',
-    },
-    '.ezco-mde-comment-button.is-close': {
-        'margin-left': 'auto',
-        border: 0,
     },
     '.ezco-mde-comment-link': {
         font: 'inherit',
@@ -1996,44 +2137,143 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-composer-label[hidden]': {
         display: 'none',
     },
+    // The field is a small editor of the note's make: a bordered box whose
+    // text grows with what is written, taller when asked for.
     '.ezco-mde-comment-input': {
-        font: 'inherit',
-        width: '100%',
         'box-sizing': 'border-box',
-        'min-height': '2.8em',
-        padding: '6px 8px',
-        resize: 'none',
         'border-radius': '6px',
         border: '1px solid var(--ezco-mde-divider)',
         background: 'var(--ezco-mde-bg)',
-        color: 'inherit',
     },
-    '.ezco-mde-comment-input:focus': {
+    '.ezco-mde-comment-input:focus-within': {
         outline: '2px solid color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',
         'outline-offset': '-1px',
+    },
+    '.ezco-mde-comment-input .ezco-mde-body.ezco-mde-comment-text': {
+        flex: 'none',
+        'min-height': '2.6em',
+        'max-height': '40vh',
+        'overflow-y': 'auto',
+        padding: '6px 8px',
+        // The note's type at a size for a card, between its 13px and the
+        // note's own.
+        'font-size': '15px',
+        'line-height': 1.4,
+        outline: 'none',
+        'overflow-wrap': 'anywhere',
+    },
+    '.ezco-mde-comment-composer.is-full .ezco-mde-comment-input .ezco-mde-comment-text': {
+        'min-height': '60vh',
+        'max-height': 'none',
+        'font-size': 'inherit',
+    },
+    '.ezco-mde-comment-composer-actions .is-expand': {
+        'margin-right': 'auto',
+    },
+    '.ezco-mde-comment-input .ezco-mde-comment-text > p': {
+        margin: 0,
+    },
+    '.ezco-mde-comment-input .ezco-mde-comment-text > p + p, .ezco-mde-comment-input .ezco-mde-comment-text > ul, .ezco-mde-comment-input .ezco-mde-comment-text > ol': {
+        'margin-top': '0.3em',
+    },
+    '.ezco-mde-comment-input .ezco-mde-comment-text p.is-empty:first-child::before': {
+        content: 'attr(data-placeholder)',
+        float: 'left',
+        height: 0,
+        'pointer-events': 'none',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
     },
     '.ezco-mde-comment-composer-actions': {
         display: 'flex',
         'justify-content': 'flex-end',
+        'align-items': 'center',
         gap: '6px',
     },
-    // No room beside the note: the thread being looked at, over its edge.
-    '.ezco-mde-comment-margin.is-narrow': {
+    // Floating (the default, or a column with no room): the thread being
+    // looked at, over the note's edge, just under its text.
+    '.ezco-mde-comment-margin.is-floating': {
         position: 'absolute',
         top: 0,
         right: '8px',
-        width: 'min(300px, calc(100% - 16px))',
+        width: 'min(420px, calc(100% - 16px))',
         padding: 0,
-        'z-index': 30,
+        // Over everything in the note, code blocks' pinned toolbars included.
+        'z-index': 500,
         // Over the note: only the card itself takes clicks.
         'pointer-events': 'none',
     },
-    '.ezco-mde-comment-margin.is-narrow .ezco-mde-comment-margin-head': {
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-margin-head': {
         display: 'none',
     },
-    '.ezco-mde-comment-margin.is-narrow .ezco-mde-comment-card': {
+    // While the full-size view is up, the cards step back.
+    '.ezco-mde-comment-margin.is-behind': {
+        visibility: 'hidden',
+    },
+    // A floating card is the reader's to move (by a message's head) and to
+    // size (by its corner).
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-card': {
         'pointer-events': 'auto',
         'box-shadow': '0 8px 28px rgba(0, 0, 0, 0.2)',
+        'padding-right': '28px',
+        resize: 'both',
+        overflow: 'auto',
+        'min-width': '280px',
+        'min-height': '72px',
+        'max-height': '80vh',
+    },
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-head': {
+        cursor: 'grab',
+    },
+    '.ezco-mde-comment-card.is-dragging': {
+        transition: 'none',
+        'user-select': 'none',
+        cursor: 'grabbing',
+    },
+    // The full-size view: over the note, the thread beside a full editor.
+    '.ezco-mde-comment-authoring': {
+        position: 'absolute',
+        inset: 0,
+        'z-index': 600,
+        display: 'grid',
+        'grid-template-columns': 'minmax(240px, 320px) 1fr',
+        gap: '24px',
+        padding: '16px 24px',
+        'box-sizing': 'border-box',
+        overflow: 'auto',
+        background: 'var(--ezco-mde-bg)',
+        color: 'var(--ezco-mde-fg)',
+        'font-size': '0.875rem',
+        'line-height': 1.5,
+    },
+    '.ezco-mde-comment-authoring-thread': {
+        'min-width': 0,
+        'overflow-y': 'auto',
+    },
+    '.ezco-mde-comment-authoring-quote': {
+        margin: '0 0 12px',
+        padding: '4px 10px',
+        'border-left': '3px solid color-mix(in srgb, #f5b400 55%, transparent)',
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+    },
+    '.ezco-mde-comment-authoring-main': {
+        display: 'flex',
+        'flex-direction': 'column',
+        'min-width': 0,
+    },
+    '.ezco-mde-comment-authoring-head': {
+        display: 'flex',
+        'justify-content': 'space-between',
+        'align-items': 'baseline',
+        'margin-bottom': '8px',
+        'font-weight': 600,
+        position: 'relative',
+    },
+    '.ezco-mde-comment-authoring-head .is-close': {
+        position: 'static',
+    },
+    '.ezco-mde-comment-card:focus-visible': {
+        outline: '2px solid color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',
+        'outline-offset': '1px',
     },
     // ─────────────────────────────────────────────────────────────
     // File tree (extensions/file-tree.ts): the vault's folders and files,

@@ -129,6 +129,7 @@ class SidebarView {
     private scroller: HTMLElement
     private scrollTarget: EventTarget
     private rafPending = false
+    private destroyed = false
     private onScroll: () => void
 
     constructor(
@@ -167,7 +168,8 @@ class SidebarView {
             this.rafPending = true
             requestAnimationFrame(() => {
                 this.rafPending = false
-                this.updateActive()
+                // A scroll's frame may come after the editor is gone.
+                if (!this.destroyed) this.updateActive()
             })
         }
         this.scrollTarget.addEventListener('scroll', this.onScroll, { passive: true })
@@ -316,6 +318,7 @@ class SidebarView {
     }
 
     destroy() {
+        this.destroyed = true
         this.scrollTarget.removeEventListener('scroll', this.onScroll)
         this.unmount()
     }

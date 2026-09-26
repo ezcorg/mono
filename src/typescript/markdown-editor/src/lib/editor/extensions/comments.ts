@@ -20,6 +20,7 @@
 import { Extension, Node, mergeAttributes, type Editor } from '@tiptap/core'
 import type { Mark as PMMark, Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state'
+import type { Mapping } from '@tiptap/pm/transform'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import {
     commentTime,
@@ -43,7 +44,7 @@ import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { footnoteDefinitionRule } from './footnote'
 import { docText, findBlockId, findFragment, findPin, locateTextFragment, textOffset, type DocText } from './fragment'
 import { documentId } from './front-matter'
-import type { FileSystemStorage } from './filesystem'
+import { loadedDocumentMeta, type FileSystemStorage } from './filesystem'
 
 // ── The thread node ─────────────────────────────────────────────────────────
 
@@ -161,6 +162,9 @@ export interface CommentThreadInfo {
  *  `[i, j]` that reply's j-th, and so on. */
 export type MessagePath = number[]
 
+/** What a deleted message's body says when its replies keep it in place. */
+export const DELETED_BODY = '[deleted]'
+
 interface Range {
     from: number
     to: number
@@ -186,22 +190,52 @@ export const commentsKey = new PluginKey<CommentsState>('comments')
 
 type Parsed = { label: string; thread: Thread } | null
 
-function locate(doc: PMNode, link: Wikilink, elsewhere: boolean, text: () => DocText): CommentTarget {
+/**
+ * Where a target is in this note. A text fragment is looked for as written;
+ * when the note was read afresh (`approximate`), also where its text nearly
+ * matches; while the note is edited here, where the quote was is mapped
+ * through the edit instead (`mapped`), so a quote whose words are being
+ * changed stays with them and is rewritten to what they are now.
+ */
+function locate(doc: PMNode, link: Wikilink, elsewhere: boolean, text: () => DocText, approximate: boolean, mapped: Range | null): CommentTarget {
     const target = { link, range: null, approximate: false, elsewhere, orphaned: false }
     if (elsewhere) return target
     const fragment = link.fragment?.trim()
     if (!fragment) return target
     if (fragment.startsWith(':~:text=')) {
-        const found = locateTextFragment(doc, fragment, undefined, text())
-        return found ? { ...target, range: { from: found.from, to: found.to }, approximate: !found.exact } : { ...target, orphaned: true }
+        const found = locateTextFragment(doc, fragment, undefined, text(), approximate)
+        if (found) return { ...target, range: { from: found.from, to: found.to }, approximate: !found.exact }
+        // Not where it says, but where it was: the words changed here.
+        if (mapped && mapped.to > mapped.from) return { ...target, range: mapped, approximate: true }
+        return { ...target, orphaned: true }
     }
     const range = fragment.startsWith('^') ? findBlockId(doc, fragment.slice(1)) : findPin(doc, fragment) ?? findFragment(doc, fragment)
     return range ? { ...target, range: { from: range.from, to: range.to } } : { ...target, orphaned: true }
 }
 
-function collect(doc: PMNode, external: CommentRef[], parse: (source: string) => Parsed): CommentThreadInfo[] {
+/**
+ * Every thread about the note, with where each target is. `approximate`
+ * when the note is read (its text may have changed elsewhere, and a quote
+ * is looked for where it nearly matches); while it is edited here, a
+ * target is exactly where its quote is, or nowhere (the RFC's §2: an edit
+ * here is exact, mapped through; the search is for what came from outside).
+ */
+function collect(
+    doc: PMNode,
+    external: CommentRef[],
+    parse: (source: string) => Parsed,
+    approximate: boolean,
+    /** The threads as they were, and the edit since: where a target was is
+     *  mapped through it when its quote is not found as written. */
+    previous?: { threads: CommentThreadInfo[]; mapping: Mapping },
+): CommentThreadInfo[] {
     let flat: DocText | null = null
     const text = () => (flat ??= docText(doc))
+    const mapped = (id: string, i: number): Range | null => {
+        const was = previous?.threads.find((t) => t.id === id)?.targets[i]?.range
+        if (!was || !previous) return null
+        return { from: previous.mapping.map(was.from, 1), to: previous.mapping.map(was.to, -1) }
+    }
     const info = (id: string, thread: Thread, pos: number | null, ref: CommentRef | null, targets: CommentTarget[]): CommentThreadInfo => ({
         id,
         thread,
@@ -216,10 +250,11 @@ function collect(doc: PMNode, external: CommentRef[], parse: (source: string) =>
         if (node.type.name !== 'commentThread') return
         const parsed = parse(node.attrs.source)
         if (!parsed) return
-        out.push(info(parsed.label, parsed.thread, pos, null, parsed.thread.targets.map((l) => locate(doc, l, !!l.target.trim(), text))))
+        out.push(info(parsed.label, parsed.thread, pos, null, parsed.thread.targets.map((l, i) => locate(doc, l, !!l.target.trim(), text, approximate, mapped(parsed.label, i)))))
     })
     for (const ref of external) {
-        const targets = ref.thread.targets.map((l, i) => locate(doc, l, !ref.about[i], text))
+        const id = externalId(ref)
+        const targets = ref.thread.targets.map((l, i) => locate(doc, l, !ref.about[i], text, approximate, mapped(id, i)))
         out.push(info(externalId(ref), ref.thread, null, ref, targets))
     }
     return out
@@ -442,7 +477,10 @@ declare module '@tiptap/core' {
             addComment: (options: { body: string; ranges?: Range[] }) => ReturnType
             replyToComment: (id: string, body: string, to?: MessagePath) => ReturnType
             editComment: (id: string, body: string, at?: MessagePath) => ReturnType
-            /** Remove a reply, or (`at` empty) the whole thread and its pins. */
+            /** Delete a message. One that others have answered stays as a
+             *  tombstone (`DELETED_BODY`) so their replies keep their place;
+             *  one nobody answered goes, and with it (`at` empty) the thread
+             *  and its pins. */
             deleteComment: (id: string, at?: MessagePath) => ReturnType
             resolveComment: (id: string) => ReturnType
             reopenComment: (id: string) => ReturnType
@@ -571,7 +609,16 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             replyToComment: (id, body, to = []) =>
                 change(id, (t) => (body.trim() ? updateMessage(t, to, (m) => ({ ...m, replies: [...m.replies, message(body)] })) : t)),
             editComment: (id, body, at = []) => change(id, (t) => updateMessage(t, at, (m) => ({ ...m, body: body.trim() }))),
-            deleteComment: (id, at = []) => change(id, (t) => (at.length ? updateMessage(t, at, () => null) : null)),
+            deleteComment: (id, at = []) =>
+                change(id, (t) => {
+                    const target = messageAt(t, at)
+                    if (!target) return t
+                    // Answered by someone: the words go, the place stays.
+                    if (target.replies.some((r) => !isReaction(r.body))) {
+                        return updateMessage(t, at, (m) => ({ ...m, body: DELETED_BODY, replies: m.replies.filter((r) => !isReaction(r.body)) }))
+                    }
+                    return at.length ? updateMessage(t, at, () => null) : null
+                }),
             resolveComment: (id) => change(id, (t) => ({ ...t, status: 'resolved' })),
             reopenComment: (id) => change(id, (t) => ({ ...t, status: 'open' })),
             reactToComment: (id, emoji, to = []) =>
@@ -650,7 +697,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                 key: commentsKey,
                 state: {
                     init: (_, state) => {
-                        const threads = collect(state.doc, [], parse)
+                        const threads = collect(state.doc, [], parse, true)
                         return { threads, external: [], active: null, draft: null, decorations: decorate(state.doc, threads, null, null) }
                     },
                     apply(tr, value, _old, state) {
@@ -665,12 +712,14 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                         }
                         if (meta && 'draft' in meta) draft = meta.draft ?? null
                         const recompute = tr.docChanged || !!meta?.external
-                        const threads = recompute ? collect(state.doc, external, parse) : value.threads
+                        // The note read afresh (a file loaded, threads from the
+                        // index): a quote is found where it nearly is. Edited
+                        // here: where it is, exactly.
+                        const read = !!meta?.external || !!tr.getMeta(loadedDocumentMeta)
+                        const threads = recompute ? collect(state.doc, external, parse, read, read ? undefined : { threads: value.threads, mapping: tr.mapping }) : value.threads
                         let active = meta && 'active' in meta ? meta.active ?? null : value.active
                         if (active && !threads.some((t) => t.id === active)) active = null
-                        const decorations =
-                            recompute || meta ? decorate(state.doc, threads, active, draft) : value.decorations.map(tr.mapping, tr.doc)
-                        return { threads, external, active, draft, decorations }
+                        return { threads, external, active, draft, decorations: decorate(state.doc, threads, active, draft) }
                     },
                 },
                 props: {
@@ -686,9 +735,11 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                         return false
                     },
                 },
-                appendTransaction(trs, oldState, newState) {
+                // A target whose quote is no longer what its text says (the
+                // words changed here, or it was found only approximately when
+                // the note was read) is rewritten to quote the text it is at.
+                appendTransaction(trs, _oldState, newState) {
                     if (!trs.some((tr) => tr.docChanged) || trs.some((tr) => (tr.getMeta(commentsKey) as CommentsMeta | undefined)?.reanchored)) return null
-                    const before = commentsKey.getState(oldState)?.threads ?? []
                     const after = commentsKey.getState(newState)?.threads ?? []
                     let flat: DocText | null = null
                     const text = () => (flat ??= docText(newState.doc))
@@ -699,28 +750,11 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                         if (now.pos === null) continue
                         const node = newState.doc.nodeAt(now.pos)
                         if (!node) continue
-                        const was = before.find((t) => t.id === now.id)
                         let targets = now.thread.targets
                         now.targets.forEach((target, i) => {
                             if (target.elsewhere || !target.link.fragment?.startsWith(':~:text=')) return
-                            let range: Range | null = null
-                            const old = was?.targets[i]
-                            if (old?.range && !old.approximate) {
-                                // Edited here: where its text went.
-                                let from = old.range.from
-                                let to = old.range.to
-                                for (const t of trs) {
-                                    from = t.mapping.map(from, 1)
-                                    to = t.mapping.map(to, -1)
-                                }
-                                const same = target.range && target.range.from === from && target.range.to === to && !target.approximate
-                                if (to > from && !same) range = { from, to }
-                            } else if (target.range && target.approximate) {
-                                // Edited elsewhere: where it was found.
-                                range = target.range
-                            }
-                            if (!range) return
-                            const link = anchorFor(tr, range, node.attrs.label, text(), (taken ??= pinIds(newState.doc)))
+                            if (!target.range || !target.approximate) return
+                            const link = anchorFor(tr, target.range, node.attrs.label, text(), (taken ??= pinIds(newState.doc)))
                             if (link.fragment === target.link.fragment) return
                             targets = targets.map((l, k) => (k === i ? { ...l, fragment: link.fragment } : l))
                         })

@@ -3,10 +3,14 @@
  * It is where a note keeps its properties, and its identity (`id:`, RFC §3).
  *
  * The node holds the YAML exactly as written and serializes it back
- * untouched. It shows as a table of properties (wikilinks in values are
- * followable) until the caret enters it, then as the YAML itself, edited as
- * text (see `source-view.ts`). The document admits it only as its first
- * node: `FrontMatterDocument` replaces the default document for that.
+ * untouched. It shows as one small line at the top of the note, "2
+ * properties", that opens on a click into a table of them (wikilinks in
+ * values are followable) and closes on another; "Edit YAML" beside it, or
+ * arrowing up from the note's first line, shows the YAML itself, edited as
+ * text (see `source-view.ts`). Nothing else on it is a control: clicking
+ * the table changes nothing. Whether the table is open is remembered per
+ * editor, from note to note. The document admits it only as its first node:
+ * `FrontMatterDocument` replaces the default document for that.
  *
  * With `assignId`, a note opened without an `id:` is given one (as an edit,
  * so autosave writes it, and outside the undo history). That is the host's
@@ -18,7 +22,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
 import { isNote, matchWikilinkAt, normalizePath } from '@joinezco/storage'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
-import { sourceViewDOM, sourceViewKey, sourceViewSpec } from './source-view'
+import { enter, sourceViewDOM, sourceViewKey, sourceViewSpec } from './source-view'
 import { wikilinkLabel, type WikilinkStorage } from './wikilink'
 import type { FileSystemStorage } from './filesystem'
 
@@ -154,6 +158,9 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
                 // YAML. The caret goes there only when sent (a click, an arrow
                 // key); anything else lands at the start of the body.
                 appendTransaction(transactions, oldState, newState) {
+                    // A selection (select all, a drag over the top of the note)
+                    // is left as it is: only a caret is moved.
+                    if (!newState.selection.empty) return null
                     if (!inFrontMatter(newState, type) || inFrontMatter(oldState, type)) return null
                     const deliberate = transactions.some((tr) => tr.getMeta(sourceViewKey) || tr.getMeta('pointer'))
                     return deliberate ? null : newState.tr.setSelection(bodyStart(newState))
@@ -188,8 +195,47 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
     addNodeView() {
         const editor = this.editor
         return ({ node, getPos, view }) => {
-            const { dom, preview, contentDOM } = sourceViewDOM(view, getPos, { outer: 'div', source: 'pre' })
+            const { dom, preview, contentDOM } = sourceViewDOM(view, getPos, { outer: 'div', source: 'pre' }, { enterOnClick: false })
             dom.classList.add('ezco-mde-front-matter')
+            // One line: the toggle ("▸ 2 properties"), and while open, the way
+            // to the YAML. The table sits under it.
+            const bar = document.createElement('div')
+            bar.className = 'ezco-mde-props-bar'
+            const toggle = document.createElement('button')
+            toggle.type = 'button'
+            toggle.className = 'ezco-mde-props-toggle'
+            const edit = document.createElement('button')
+            edit.type = 'button'
+            edit.className = 'ezco-mde-props-edit'
+            edit.textContent = 'Edit YAML'
+            edit.title = 'Edit the properties as YAML'
+            const table = document.createElement('div')
+            table.className = 'ezco-mde-props-host'
+            bar.append(toggle, edit)
+            preview.append(bar, table)
+            let count = 0
+            const show = (open: boolean) => {
+                dom.classList.toggle('is-collapsed', !open)
+                toggle.setAttribute('aria-expanded', String(open))
+                toggle.textContent = `${open ? '▾' : '▸'} ${count ? `${count} ${count === 1 ? 'property' : 'properties'}` : 'Properties'}`
+                edit.hidden = !open
+            }
+            const isOpen = () => propertiesOpen.get(editor) ?? false
+            show(isOpen())
+            toggle.addEventListener('mousedown', (e) => e.preventDefault())
+            toggle.addEventListener('click', () => {
+                propertiesOpen.set(editor, !isOpen())
+                show(isOpen())
+            })
+            edit.addEventListener('mousedown', (e) => e.preventDefault())
+            edit.addEventListener('click', () => {
+                const pos = getPos()
+                const target = pos === undefined ? null : view.state.doc.nodeAt(pos)
+                if (pos !== undefined && target) {
+                    enter(view, pos, target, true)
+                    view.focus()
+                }
+            })
             let current = node
             let token = 0
             const render = () => {
@@ -197,7 +243,9 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
                 const yaml = current.textContent
                 void loadYaml().then(({ parseDocument }) => {
                     if (mine !== token) return
-                    renderProperties(preview, yaml, parseDocument, editor)
+                    renderProperties(table, yaml, parseDocument, editor)
+                    count = table.querySelectorAll('.ezco-mde-prop').length
+                    show(isOpen())
                 })
             }
             render()
@@ -221,6 +269,10 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
 })
 
 const unsubscribers = new WeakMap<Editor, () => void>()
+
+/** Whether the properties table is open, per editor (it follows the reader
+ *  from note to note, not the note). */
+const propertiesOpen = new WeakMap<Editor, boolean>()
 
 function inFrontMatter(state: EditorState, type: PMNode['type']): boolean {
     const { $head } = state.selection

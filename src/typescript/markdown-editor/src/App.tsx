@@ -157,7 +157,7 @@ function App() {
           title: 'Document',
         },
         // Threads in the note, and in other notes of the vault, in the margin.
-        comments: { author: 'you', index: vault.comments },
+        comments: { author: 'theo', index: vault.comments },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
         },

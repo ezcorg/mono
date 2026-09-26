@@ -1,6 +1,5 @@
-import { AnyExtension, Editor, EditorOptions } from '@tiptap/core';
+import { AnyExtension, Editor, EditorOptions, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import Document from '@tiptap/extension-document';
 import TaskList from '@tiptap/extension-task-list';
 import { TableKit } from '@tiptap/extension-table'
 import { MarkdownTable } from './extensions/table'
@@ -28,19 +27,13 @@ import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
-import { Wikilink, WikilinkOptions } from './extensions/wikilink';
+import type { WikilinkOptions } from './extensions/wikilink';
 import { LinksPanel, LinksPanelOptions } from './extensions/links-panel';
-import { FrontMatter, FrontMatterDocument, FrontMatterOptions } from './extensions/front-matter';
-import { Mathematics, MathOptions } from './extensions/math';
-import { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
-import { Callout, CalloutTitle } from './extensions/callout';
-import { SourceView } from './extensions/source-view';
-import { Image, ImageOptions } from './extensions/image';
-import { Embed } from './extensions/embed';
+import type { FrontMatterOptions } from './extensions/front-matter';
+import type { MathOptions } from './extensions/math';
+import type { ImageOptions } from './extensions/image';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
-import { MarkdownText } from './extensions/text';
-import { Span } from './extensions/span';
-import { CommentThread, Comments } from './extensions/comments';
+import { Comments } from './extensions/comments';
 import { CommentMargin } from './extensions/comment-margin';
 import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
@@ -85,16 +78,9 @@ export function mountStyles(target?: Document | ShadowRoot): void {
 
 // Shared Markdown (de)serialization config, identical across setups so a document
 // round-trips the same regardless of which bundle built the editor.
-const MARKDOWN_OPTIONS = {
-    html: false,
-    tightLists: true,
-    tightListClass: 'tight',
-    bulletListMarker: '*',
-    linkify: true,
-    breaks: true,
-    transformPastedText: true,
-    transformCopiedText: true,
-} as const;
+import { MARKDOWN_OPTIONS } from './extensions/markdown-options';
+import { syntaxExtensions } from './minimal';
+export { minimalSetup } from './minimal';
 
 /** Feature options shared by `markdownSetup` and `createEditor`. */
 export type MarkdownSetupOptions = {
@@ -169,10 +155,14 @@ export interface CommentsSetupOptions {
     /** Threads written in other notes (a vault's `comments`); the editor's
      *  own vault's when it made one. */
     index?: CommentIndex;
-    /** Where the margin goes (`createEditor` puts it beside the note), or
-     *  `false` for none: a host showing threads its own way reads them from
-     *  `editor.storage.comments`. */
-    margin?: { mount?: SidebarOptions['mount'] } | false;
+    /** How threads are shown, or `false` for not at all (a host showing
+     *  them its own way reads them from `editor.storage.comments`).
+     *  `layout: 'float'` (the default) shows nothing beside the note: the
+     *  thread whose text is clicked opens over the note's edge, by its text.
+     *  `layout: 'column'` keeps every open thread in a column beside the
+     *  note, level with its text (`createEditor` makes the column; `mount`
+     *  puts it elsewhere). */
+    margin?: { mount?: SidebarOptions['mount']; layout?: 'float' | 'column' } | false;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -190,29 +180,6 @@ export type MarkdownEditor = Editor & {
     } & Record<string, any>;
 }
 
-/** The document and its syntax beyond CommonMark: the nodes both setups share. */
-function syntaxExtensions(options: Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts' | 'images'>): AnyExtension[] {
-    return [
-        // The document admits front matter before its blocks; the text node
-        // escapes what would otherwise read back as syntax.
-        options.frontMatter !== false ? FrontMatterDocument : Document,
-        MarkdownText,
-        Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
-        Embed,
-        Image.configure(options.images ?? {}),
-        ...(options.frontMatter !== false ? [FrontMatter.configure(options.frontMatter ?? {})] : []),
-        ...(options.math !== false ? [Mathematics.configure(options.math ?? {})] : []),
-        ...(options.footnotes !== false ? [FootnoteReference, FootnoteDefinition] : []),
-        ...(options.callouts !== false ? [CalloutTitle, Callout] : []),
-        // Bracketed spans (a comment's pin) and comment threads round-trip in
-        // every editor, whether or not it shows comments.
-        Span,
-        CommentThread,
-        // Front matter and math show rendered until the caret is in them.
-        SourceView,
-    ];
-}
-
 /** What the editor reaches the vault through. */
 interface VaultServices {
     fs?: VfsInterface;
@@ -223,6 +190,8 @@ interface VaultServices {
     comments?: CommentIndex;
     /** Be told when the vault changed. */
     subscribe?: (listener: () => void) => () => void;
+    /** A vault the editor made for itself, to close with the editor. */
+    owned?: Vault;
 }
 
 /**
@@ -259,8 +228,18 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         versions: given.versions,
         comments: given.comments ?? vault.comments,
         subscribe: hostSubscribe ?? ((listener) => vault.subscribe(listener)),
+        owned: vault,
     };
 }
+
+/** Closes the vault the editor made for itself when the editor goes. */
+const ownedVault = (vault: Vault) =>
+    Extension.create({
+        name: 'ownedVault',
+        onDestroy() {
+            vault.close();
+        },
+    });
 
 /** A plugin's slash command: it puts its text (Markdown) at the caret. */
 function pluginSlashCommand(contribution: SlashContribution): SlashCommand {
@@ -339,6 +318,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         ...(options.plugins?.slashCommands ?? []).map(pluginSlashCommand),
     ];
     return [
+        ...(given.owned ? [ownedVault(given.owned)] : []),
         ProseAI.configure({ inference: options.inference }),
         ConflictNotice,
         FileSystem.configure({
@@ -431,7 +411,34 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         ...(options.comments !== false
             ? [
                 Comments.configure({ author: options.comments?.author, index: services.comments }),
-                ...(options.comments?.margin !== false ? [CommentMargin.configure({ mount: options.comments?.margin?.mount })] : []),
+                ...(options.comments?.margin !== false
+                    ? [
+                        CommentMargin.configure({
+                            mount: options.comments?.margin?.mount,
+                            layout: options.comments?.margin?.layout ?? 'float',
+                            // A comment is written in this editor, in small: the
+                            // same syntax and code blocks over the same files,
+                            // without the chrome around the note.
+                            composer: () =>
+                                markdownSetup({
+                                    fs: services.fs ? { fs: services.fs, autoSave: false } : undefined,
+                                    search: services.search,
+                                    files: services.files,
+                                    links: { resolver: services.resolver, open: options.links?.open },
+                                    codeblock: options.codeblock,
+                                    inference: options.inference,
+                                    frontMatter: false,
+                                    footnotes: false,
+                                    callouts: false,
+                                    toolbar: false,
+                                    blockActions: false,
+                                    comments: false,
+                                    fileTree: undefined,
+                                    sidebar: undefined,
+                                }),
+                        }),
+                    ]
+                    : []),
             ]
             : []),
         // The outline is opt-in (generated only when `sidebar` is set).
@@ -442,45 +449,6 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
                 title: sidebar.title,
             })]
             : []),
-        ...(options.extensions || []),
-    ];
-}
-
-/**
- * A lean, text-only extension set: the markdown document model + I/O, basic
- * marks, links, lists, tasks, and tables — but none of the heavier chrome (no
- * CodeMirror code blocks, file search, outline, slash/emoji/selection menus, or
- * block actions). Code fences fall back to StarterKit's lightweight code block.
- * The CodeMirror-`minimalSetup` analog; add features back by importing the
- * individual extensions you want.
- */
-export function minimalSetup(
-    options: { extensions?: AnyExtension[] } & Pick<MarkdownSetupOptions, 'links' | 'frontMatter' | 'math' | 'footnotes' | 'callouts' | 'images'> = {},
-): AnyExtension[] {
-    return [
-        ExtendedLink.configure({}),
-        ...syntaxExtensions(options),
-        StarterKit.configure({
-            // Keep StarterKit's lightweight code block here (no CodeMirror).
-            bulletList: false,
-            paragraph: false,
-            link: false,
-            document: false,
-            text: false,
-        }),
-        Paragraph,
-        BulletList,
-        OrderedListStart,
-        DashListKeymap,
-        HeadingAnchors,
-        InlineCodeExit,
-        WrapSelection,
-        MarkdownBlockPaste,
-        Markdown.configure(MARKDOWN_OPTIONS),
-        TaskList,
-        ExtendedTaskItem.configure({ nested: true }),
-        TableKit.configure({ table: false }),
-        MarkdownTable.configure({ resizable: true, allowTableNodeSelection: true }),
         ...(options.extensions || []),
     ];
 }
@@ -526,8 +494,11 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         // (a built one keeps its 48px even when empty).
         if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
         bodyHost = make('ezco-mde-body-host')
-        // The comment margin, right of the note.
-        if (options.comments !== false) commentsHost = make('ezco-mde-comments')
+        // A column for comments, right of the note, when asked for: by
+        // default threads float over the note's edge and take no room.
+        if (options.comments !== false && options.comments?.margin !== false && options.comments?.margin?.layout === 'column') {
+            commentsHost = make('ezco-mde-comments')
+        }
         content.append(...[navHost, gutter, bodyHost, commentsHost].filter((el): el is HTMLElement => !!el))
         wrapper.append(toolbarSlot, content)
         userEl.appendChild(wrapper)

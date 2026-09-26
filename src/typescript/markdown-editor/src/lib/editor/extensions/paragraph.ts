@@ -63,7 +63,11 @@ export const Paragraph = Node.create({
                     // caret sits at the end of the note, not spacing between
                     // blocks: they write nothing (so a note emptied, or holding
                     // only front matter, does not save a stray NBSP line).
-                    if (node.content.size === 0 && parent?.type.name === 'doc') {
+                    // The same goes for the top of a copied slice, whose
+                    // parent is a Fragment (no type): what is copied ends
+                    // with its last content, not a blank.
+                    const atTop = !parent || !('type' in parent) || parent.type.name === 'doc'
+                    if (node.content.size === 0 && atTop) {
                         let trailing = true
                         for (let i = index; i < parent.childCount && trailing; i++) {
                             const next = parent.child(i)

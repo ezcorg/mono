@@ -40,6 +40,45 @@ const row = (c: HTMLElement, path: string) => rows(c).find((r) => r.dataset.path
 const filepath = (editor: MarkdownEditor) => (editor.storage as any).persistence.options.filepath as string
 
 describe('File tree', () => {
+    it('shows nothing of itself until asked for, and goes away on Escape', async () => {
+        const vault = await Vault.open(memoryVfs(FILES), { watch: false })
+        const container = createTestContainer('ft-hidden')
+        const reads: string[] = []
+        const fs = new Proxy(vault.fs, {
+            get(target, key) {
+                if (key === 'readDir') return (...args: unknown[]) => (reads.push(String(args[0])), (target.readDir as any)(...args))
+                return (target as any)[key]
+            },
+        }) as typeof vault.fs
+        const editor = createEditor({
+            element: container,
+            fs: { fs, filepath: 'index.md', autoSave: true },
+            links: { resolver: vault.links, index: vault.links },
+            search: vault.search,
+            files: vault.files,
+            fileTree: {},
+        })
+        created.push({ editor, container })
+        await waitFor(() => editor.getText().length > 0, 3000)
+        await new Promise((r) => setTimeout(r, 50))
+        const tree = container.querySelector('.ezco-mde-files') as HTMLElement
+        // Hidden entirely, the rail with it, and no folder read.
+        expect(tree.hidden).toBe(true)
+        expect(getComputedStyle(tree).display).toBe('none')
+        expect(getComputedStyle(container.querySelector('.ezco-mde-nav')!).display).toBe('none')
+        expect(reads).toEqual([])
+        editor.commands.focus()
+        await userEvent.keyboard('{Control>}{Shift>}e{/Shift}{/Control}')
+        await waitFor(() => !tree.hidden, 2000)
+        await waitFor(() => shown(container).includes('index.md'), 3000)
+        expect(getComputedStyle(container.querySelector('.ezco-mde-nav')!).display).not.toBe('none')
+        // Focus is on a row; Escape closes the tree and returns to the note.
+        expect(tree.contains(document.activeElement)).toBe(true)
+        await userEvent.keyboard('{Escape}')
+        await waitFor(() => tree.hidden, 2000)
+        expect(editor.isFocused).toBe(true)
+    })
+
     it('lists folders first, hides dot-folders, and opens the folders of the open file', async () => {
         const { container } = await open('projects/2026/goals.md')
         await waitFor(() => shown(container).includes('projects/2026/goals.md'), 3000)
