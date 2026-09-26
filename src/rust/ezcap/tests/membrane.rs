@@ -235,6 +235,54 @@ fn revocation_cascades_to_children() {
 }
 
 #[test]
+fn a_narrowing_clause_must_compile_on_its_own() {
+    let mut m = local_storage();
+    let parent = mint(&mut m, r#"call.args.key.startsWith("seen/")"#);
+    let other = Call::new("get").arg("key", "other/a");
+    assert!(m.admit(&parent, &other).is_err());
+    // Conjoined textually each of these would read
+    // `(call.args.key.startsWith("seen/")) && (true) || (true)`: a child that
+    // admits what its parent denies.
+    for escape in ["true) || (true", r#"true) || ("" == ""#, "(true"] {
+        assert!(
+            m.narrow(&parent, &Narrowing::allow(escape)).is_err(),
+            "`{escape}` must not narrow `allow`"
+        );
+        assert!(
+            m.narrow(&parent, &Narrowing::when(escape)).is_err(),
+            "`{escape}` must not narrow `when`"
+        );
+    }
+    // A clause that compiles standalone but is wider than the parent is
+    // harmless: the conjunction keeps the parent's bound.
+    let child = match m.narrow(&parent, &Narrowing::allow("true || true")) {
+        Ok(id) => id,
+        Err(e) => panic!("narrow: {e}"),
+    };
+    assert!(m.admit(&child, &other).is_err());
+    assert!(
+        m.admit(&child, &Call::new("get").arg("key", "seen/a"))
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_revoked_instance_cannot_be_narrowed_into_a_live_child() {
+    let mut m = local_storage();
+    let parent = mint(&mut m, "true");
+    m.revoke(&parent);
+    let call = Call::new("get").arg("key", "k");
+    assert_eq!(m.admit(&parent, &call), Err(CapabilityError::Unavailable));
+    match m.narrow(&parent, &Narrowing::allow("true")) {
+        Ok(child) => {
+            let admitted = m.admit(&child, &call);
+            panic!("a revoked instance was narrowed into a child that answers {admitted:?}");
+        }
+        Err(e) => assert!(e.to_string().contains("no instance"), "{e}"),
+    }
+}
+
+#[test]
 fn kind_mismatch_is_refused_at_mint() {
     let mut m = local_storage();
     let other = Capability::new(

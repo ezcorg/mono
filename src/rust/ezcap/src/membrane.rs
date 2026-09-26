@@ -192,6 +192,13 @@ impl Membrane {
     }
 
     /// Mint a child of `parent` whose scope is `parent && extra`.
+    ///
+    /// A revoked parent has nothing left to narrow: it is refused as if it
+    /// were unknown, so a child cannot outlive its parent's revocation. Each
+    /// clause of `extra` must compile on its own before it is conjoined:
+    /// conjunction is textual, and a clause that only parses once glued to
+    /// the parent (`true) || (true`) would escape its parentheses and widen
+    /// the child instead of narrowing it.
     pub fn narrow(
         &mut self,
         parent: &InstanceId,
@@ -200,10 +207,34 @@ impl Membrane {
         let parent_scope = self
             .instances
             .get(parent)
+            .filter(|inst| !inst.revoked)
             .ok_or_else(|| MembraneError::NoInstance(parent.0.clone()))?
             .scope
             .clone();
+        self.check_clause("when", extra.when.as_deref())?;
+        self.check_clause("allow", extra.allow.as_deref())?;
         self.insert(parent_scope.narrowed(extra), Some(parent.clone()))
+    }
+
+    /// Compile one clause of a narrowing standalone. An empty clause adds
+    /// nothing and is fine.
+    fn check_clause(&self, field: &'static str, clause: Option<&str>) -> Result<(), MembraneError> {
+        let Some(clause) = clause.map(str::trim).filter(|c| !c.is_empty()) else {
+            return Ok(());
+        };
+        if !crate::types::clause_is_closed(clause) {
+            return Err(MembraneError::Compile {
+                field,
+                message: "clause is not a closed expression".to_string(),
+            });
+        }
+        self.env
+            .compile(clause)
+            .map(|_| ())
+            .map_err(|e| MembraneError::Compile {
+                field,
+                message: e.to_string(),
+            })
     }
 
     fn insert(

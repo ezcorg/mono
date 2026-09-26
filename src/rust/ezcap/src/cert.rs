@@ -44,6 +44,10 @@ pub enum CertError {
     Audience,
     #[error("issued by another broker")]
     Issuer,
+    /// A clause in the root or a link is not a closed expression, so
+    /// conjoining it could widen rather than narrow (`true) || (true`).
+    #[error("{0}")]
+    Clause(String),
 }
 
 /// An Ed25519 public key. Displays as base64url (43 characters).
@@ -327,6 +331,14 @@ impl Certificate {
         {
             return Err(CertError::RootSignature);
         }
+        // Containment is syntactic only if every appended clause stays inside
+        // its own parentheses when conjoined; a link such as `true) || (true`
+        // would otherwise cancel every clause before it.
+        if !self.root.extra.is_closed() {
+            return Err(CertError::Clause(
+                "the root's clause is not a closed expression".to_string(),
+            ));
+        }
         let mut previous = self.signature;
         let mut narrowing = self.root.extra.clone();
         let mut attenuated_by = Vec::with_capacity(self.links.len());
@@ -340,6 +352,11 @@ impl Certificate {
                 .verify(&link.by, LINK_DOMAIN, &[&previous.0, &json(&body)])
             {
                 return Err(CertError::LinkSignature(i));
+            }
+            if !link.extra.is_closed() {
+                return Err(CertError::Clause(format!(
+                    "link {i}'s clause is not a closed expression"
+                )));
             }
             previous = link.signature;
             narrowing = narrowing.and(&link.extra);
@@ -523,6 +540,35 @@ mod tests {
         assert_eq!(widened.verify(1), Err(CertError::RootSignature));
         // Anyone can verify the chain: no key of the issuer's is needed.
         assert!(Certificate::decode(&ab.encode()).unwrap().verify(1).is_ok());
+    }
+
+    #[test]
+    fn a_link_cannot_escape_its_parentheses_to_undo_earlier_links() {
+        let (issuer, alice, bob) = keys();
+        let root = Certificate::issue(&issuer, "i", Audience::Any, 0, Narrowing::default());
+        let a = root.attenuate(
+            &alice,
+            Narrowing::allow(r#"call.args.path.startsWith("src/")"#),
+        );
+        // Bob's link is signed and in order, but conjoined textually it reads
+        // `(alice) && (true) || (true)`, which is `true`.
+        let ab = a.attenuate(&bob, Narrowing::allow("true) || (true"));
+        assert!(matches!(ab.verify(1), Err(CertError::Clause(_))));
+        // A string literal cannot hide the escape either.
+        let ab = a.attenuate(&bob, Narrowing::when(r#"true) || ("" == ""#));
+        assert!(matches!(ab.verify(1), Err(CertError::Clause(_))));
+        // The issuer's own clause is held to the same rule.
+        let widened = Certificate::issue(
+            &issuer,
+            "i",
+            Audience::Any,
+            0,
+            Narrowing::allow("true) || (true"),
+        );
+        assert!(matches!(widened.verify(1), Err(CertError::Clause(_))));
+        // Closed clauses with brackets inside strings still verify.
+        let fine = a.attenuate(&bob, Narrowing::allow(r#"call.args.path != ")""#));
+        assert!(fine.verify(1).is_ok());
     }
 
     #[test]

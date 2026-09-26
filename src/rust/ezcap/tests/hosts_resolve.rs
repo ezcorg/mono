@@ -40,17 +40,24 @@ fn witmproxy_vendors_the_crate_package_byte_for_byte() {
 
 /// icanhaz's `wit/deps` is git-ignored and populated by `wkg wit fetch` through
 /// the path override in its `wkg.toml`, so the copy only exists on a machine
-/// that has run the fetch. When it does, it must match too.
+/// that has run the fetch. When it does, it must match too. `wkg` re-indents
+/// what it fetches, so this comparison is token-wise: byte-for-byte equality
+/// is only asked of the committed copy.
 #[test]
 fn icanhaz_fetched_copy_matches_when_present() {
     let vendored = mono("src/apps/icanhaz/wit/deps/ezco-ezcap-0.1.0/package.wit");
     if !vendored.exists() {
         return;
     }
-    let canonical = std::fs::read(mono("src/rust/ezcap/wit/ezcap.wit")).unwrap_or_default();
-    let copy = std::fs::read(&vendored).unwrap_or_default();
+    let canonical =
+        std::fs::read_to_string(mono("src/rust/ezcap/wit/ezcap.wit")).unwrap_or_default();
+    let copy = std::fs::read_to_string(&vendored).unwrap_or_default();
+    assert!(!canonical.is_empty(), "crate package missing");
+    fn tokens(s: &str) -> Vec<&str> {
+        s.split_whitespace().collect()
+    }
     assert!(
-        copy == canonical,
+        tokens(&copy) == tokens(&canonical),
         "icanhaz's fetched ezco:ezcap differs from the crate's wit/ezcap.wit"
     );
     assert!(has_ezcap_types("src/apps/icanhaz/wit"));
