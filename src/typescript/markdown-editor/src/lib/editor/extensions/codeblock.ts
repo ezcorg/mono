@@ -1,6 +1,7 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import type { NodeType, Node as PMNode } from '@tiptap/pm/model';
+import { fileReadMeta } from './filesystem';
 import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, formatLineRange, lineRange, regionField, setThemeEffect, type FileVersions } from '@joinezco/codeblock'
 import { basename, dirname, joinPath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage'
 import { browserVfs } from '@joinezco/storage/browser'
@@ -158,6 +159,44 @@ const SHADOW_EXT: Record<string, string> = {
  * Null for a named fence, a language without services, or an editor with
  * no note to put it beside.
  */
+/**
+ * The stand-in files a note has no use for any more: `.<stem>.<n>.<ext>`
+ * beside it with `n` past the count of its unnamed fences of that
+ * language. Removed when the note is loaded, so a fence deleted from the
+ * note does not leave its file to a language service's project.
+ */
+export async function removeStaleStandIns(fs: VfsInterface, note: string, doc: PMNode, type: PMNode['type']): Promise<string[]> {
+    const counts = new Map<string, number>();
+    doc.forEach((child) => {
+        if (child.type !== type || child.attrs.file) return;
+        const ext = SHADOW_EXT[String(child.attrs.language ?? '').toLowerCase()];
+        if (ext) counts.set(ext, (counts.get(ext) ?? 0) + 1);
+    });
+    const stem = basename(note).replace(/\.[^.]*$/, '');
+    const folder = dirname(note);
+    const pattern = new RegExp(`^\\.${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.(\\d+)\\.([a-z]+)$`);
+    const removed: string[] = [];
+    let entries: [string, unknown][] = [];
+    try {
+        entries = (await fs.readDir(folder || '/')) as [string, unknown][];
+    } catch {
+        return removed;
+    }
+    for (const [name] of entries) {
+        const m = pattern.exec(name);
+        if (!m) continue;
+        if (Number(m[1]) <= (counts.get(m[2]) ?? 0)) continue;
+        const path = joinPath(folder, name);
+        try {
+            await fs.unlink(path);
+            removed.push(path);
+        } catch {
+            // Left for next time.
+        }
+    }
+    return removed;
+}
+
 function shadowPath(doc: PMNode, pos: number, node: PMNode, note: string | null | undefined): string | null {
     if (node.attrs.file || !note) return null;
     const ext = SHADOW_EXT[String(node.attrs.language ?? '').toLowerCase()];
@@ -183,6 +222,10 @@ export interface ExtendedCodeblockOptions {
     HTMLAttributes: Record<string, unknown>;
     /** Class prefix used when parsing/serializing the language (default `language-`). */
     languageClassPrefix: string;
+    /** Write a stand-in file beside the note for an unnamed fence of a
+     *  language with services (see `shadowPath`). Off by default: it puts
+     *  files in the host's filesystem. */
+    standIns: boolean;
     /** Finds files for each codeblock's toolbar (the editor's vault search). */
     search?: FileSearch;
     /** Creates, moves and deletes files for each codeblock's toolbar. */
@@ -204,6 +247,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // so embedded codeblocks soft-wrap by default. Override per-editor
             // via `ExtendedCodeblock.configure({ settings: { lineWrap: false } })`.
             settings: { lineWrap: true },
+            standIns: false,
             HTMLAttributes: {},
             languageClassPrefix: 'language-',
         };
@@ -408,13 +452,19 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 let selFrom = offset + main.from, selTo = offset + main.to
                 let pmSel = view.state.selection
 
-                if (update.docChanged || pmSel.from != selFrom || pmSel.to != selTo) {
+                // A file's text arriving as the block already has it (its
+                // fence body, or a stand-in written from it) changes nothing
+                // in the note: no transaction, so nothing to save.
+                const same = update.docChanged && update.state.doc.toString() === view.state.doc.nodeAt(pos)?.textContent
+                if (same && !cmView.hasFocus) return
+
+                if ((update.docChanged && !same) || pmSel.from != selFrom || pmSel.to != selTo) {
                     let tr = view.state.tr
 
                     // Ensure we're working within valid document bounds
                     const docLength = tr.doc.content.size
 
-                    update.changes.iterChanges((fromA, toA, fromB, toB, text) => {
+                    if (!same) update.changes.iterChanges((fromA, toA, fromB, toB, text) => {
                         const replaceFrom = offset + fromA
                         const replaceTo = offset + toA
 
@@ -437,6 +487,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     // had back over the file's.
                     if (update.transactions.length && update.transactions.every((t) => t.annotation(Transaction.addToHistory) === false)) {
                         tr.setMeta('addToHistory', false)
+                        tr.setMeta(fileReadMeta, true)
                     }
 
                     // Only set selection if the editor has focus or if this is a document change without focus
@@ -591,6 +642,10 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 const newLang = next.language ?? current.attrs.language ?? 'markdown';
                 const newLines = region ? formatLineRange(region) : null;
                 if (current.attrs.file === newFile && current.attrs.language === newLang && current.attrs.lines === newLines) return;
+                // The same language under another name (`ts` for `javascript`)
+                // is no change: a note is not rewritten for being opened.
+                const id = (lang: unknown) => extOrLanguageToLanguageId[String(lang ?? '').toLowerCase() as ExtensionOrLanguage] ?? lang;
+                if (current.attrs.file === newFile && current.attrs.lines === newLines && id(current.attrs.language) === id(newLang)) return;
 
                 const tr = view.state.tr.setNodeMarkup(pos, undefined, {
                     ...current.attrs,
@@ -718,7 +773,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 // file beside the note, written from the fence (the note is the
                 // source of truth) before the fence opens it.
                 const at = getPos();
-                shadow = editorFs && at !== undefined ? shadowPath(view.state.doc, at, node, editor.storage.persistence?.options?.filepath) : null;
+                shadow = this.options.standIns && editorFs && at !== undefined ? shadowPath(view.state.doc, at, node, editor.storage.persistence?.options?.filepath) : null;
                 if (shadow) {
                     try {
                         await fs.writeFile(shadow, node.textContent);
@@ -884,7 +939,28 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             },
         };
     },
+
+    onCreate() {
+        if (!this.options.standIns) return;
+        const editor = this.editor;
+        const type = this.type;
+        const persistence = (editor.storage as any).persistence as { options?: { fs?: VfsInterface; filepath?: string }; subscribe?: (l: (e: { type: string; path: string }) => void) => () => void } | undefined;
+        // Stand-ins a loaded note has no fence for any more go when it opens.
+        const off = persistence?.subscribe?.((event) => {
+            const fs = persistence.options?.fs;
+            if (event.type !== 'load' || !fs || persistence.options?.filepath !== event.path) return;
+            void removeStaleStandIns(fs, event.path, editor.state.doc, type).catch(() => {});
+        });
+        if (off) standInCleanups.set(editor, off);
+    },
+
+    onDestroy() {
+        standInCleanups.get(this.editor)?.();
+        standInCleanups.delete(this.editor);
+    },
 });
+
+const standInCleanups = new WeakMap<object, () => void>();
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {

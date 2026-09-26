@@ -111,12 +111,7 @@ Or only some of a file's lines, numbered as the file numbers them. Edits go back
 
 ### Comments
 
-Select some text and choose **Comment** (or press ⌘⌥M) to start a thread beside it. A thread is a footnote in the note, so it travels with the file and reads as one anywhere else.
-
-[^c-01K5DEMO00000001]: @theo 2026-09-23T10:00Z · open · [[#:~:text=travels%20with%20the%20file]]
-    Even to tools that know nothing of comments: they show a footnote.
-    - @alice 2026-09-23T10:05Z: And the version log keeps its history.
-      - @theo 2026-09-23T10:06Z: 👍
+Select some text and choose **Comment** (or press ⌘⌥M) to start one beside it. A comment is a document of its own that quotes a passage of this one, so it travels with the file and reads as a document anywhere else.
 
 &nbsp;
 

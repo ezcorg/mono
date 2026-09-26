@@ -1,178 +1,89 @@
 /**
- * Comments (comments RFC; the platform RFC's §4): threads written in the
- * note as footnotes, anchored by links to its text.
+ * Comments (comments RFC): every comment is a document. A note may hold
+ * reference blocks, an embed of a range of another document with text
+ * under it (`![[Plan#:~:text=ship%20it]]` and then the commentary); each is
+ * a comment on that range. A reply is a document referencing a range of a
+ * comment's text; a thread is what the index gathers by following
+ * references. Reactions (and resolution, a ✅) are per-identity state the
+ * host keeps (`Reactions`), never documents.
  *
- * - `CommentThread` is a footnote definition whose first line is a thread
- *   header. It holds the thread's source, written back byte for byte until
- *   a command changes it, and is hidden in the body: the margin shows it.
- * - `Comments` finds each thread's targets (text fragments, pins, block ids
- *   and headings; threads written in other notes come from the host's
- *   `CommentIndex`), highlights what they anchor, keeps text fragments
- *   pointing at their text as it is edited, and has the commands.
- *
- * Re-anchoring: an edit in the editor is mapped through, so a target whose
- * quoted text was changed is rewritten, in the same step, to quote what its
- * range holds now (or pinned, when no quote can be unique). A target found
- * only approximately (its text changed outside the editor) is rewritten to
- * the text it was found at. A thread written elsewhere is rewritten there,
- * through the index, when the note is saved.
+ * This extension finds, for the open note, every comment about it
+ * (`CommentIndex.about`), where each one's target is in the note (a text
+ * fragment, a pin, a block id or a heading), the replies under each and
+ * their reactions; highlights the targets; keeps a comment's link pointing
+ * at its text as the note is edited here (rewritten where the comment lives
+ * when the note is saved); and has the commands. Creating a comment makes a
+ * document, `comments/<note>/<author> <time>.md`, whose first line is the
+ * reference and whose body is the comment; "open" loads that document in
+ * the editor, which is where a longer comment is written.
  */
-import { Extension, Node, mergeAttributes, type Editor } from '@tiptap/core'
-import type { Mark as PMMark, Node as PMNode } from '@tiptap/pm/model'
+import { Extension, type Editor } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state'
 import type { Mapping } from '@tiptap/pm/transform'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import {
-    commentTime,
+    basename,
+    dirname,
+    findTextFragment,
+    formatReference,
     formatTextFragment,
-    formatThread,
-    isReaction,
-    newCommentId,
+    formatWikilink,
+    joinPath,
     normalizePath,
     parseTextFragment,
-    parseThreadDefinition,
-    parseThreadHeader,
-    stripComments,
     textFragmentFor,
     type CommentIndex,
     type CommentRef,
-    type Message,
-    type Thread,
+    type FileOperations,
+    type Reaction,
+    type Reactions,
+    type VfsInterface,
     type Wikilink,
 } from '@joinezco/storage'
-import type { MarkdownNodeSpec } from 'tiptap-markdown'
-import { footnoteDefinitionRule } from './footnote'
 import { docText, findBlockId, findFragment, findPin, locateTextFragment, textOffset, type DocText } from './fragment'
 import { documentId } from './front-matter'
 import { loadedDocumentMeta, type FileSystemStorage } from './filesystem'
 
-// ── The thread node ─────────────────────────────────────────────────────────
-
-const THREAD_LINE = /^\[\^([^\]\s]+)\]: (.*)$/
-
-/** A top-level footnote definition whose first line is a thread header: its
- *  lines (exactly those a footnote would take) as one token. */
-function commentThreadRule(state: any, startLine: number, endLine: number, silent: boolean): boolean {
-    if (state.level !== 0 || state.sCount[startLine] - state.blkIndent >= 4) return false
-    const lineStart = state.bMarks[startLine] + state.tShift[startLine]
-    const m = THREAD_LINE.exec(state.src.slice(lineStart, state.eMarks[startLine]))
-    if (!m || !parseThreadHeader(m[2])) return false
-    if (silent) return true
-    const count = state.tokens.length
-    if (!footnoteDefinitionRule(state, startLine, endLine, false)) return false
-    state.tokens.length = count
-    let last = state.line
-    while (last > startLine + 1 && state.isEmpty(last - 1)) last--
-    const token = state.push('ezco_comment_thread', 'div', 0)
-    token.meta = { label: m[1], source: state.src.slice(lineStart, state.eMarks[last - 1]) }
-    token.map = [startLine, state.line]
-    return true
-}
-
-function setupMarkdownIt(markdownit: any) {
-    if (markdownit.__ezcoComments) return
-    markdownit.__ezcoComments = true
-    const alt = { alt: ['paragraph', 'reference'] }
-    // Ahead of footnote definitions, so a thread is not taken for one.
-    try {
-        markdownit.block.ruler.before('ezco_footnote_def', 'ezco_comment_thread', commentThreadRule, alt)
-    } catch {
-        markdownit.block.ruler.before('reference', 'ezco_comment_thread', commentThreadRule, alt)
-    }
-    const esc = markdownit.utils.escapeHtml
-    markdownit.renderer.rules.ezco_comment_thread = (tokens: any[], idx: number) =>
-        `<div data-comment-thread="${esc(tokens[idx].meta.label)}" data-source="${esc(tokens[idx].meta.source)}"></div>`
-}
-
-export const CommentThread = Node.create({
-    name: 'commentThread',
-    group: 'block',
-    atom: true,
-    selectable: false,
-    draggable: false,
-
-    addAttributes() {
-        return {
-            label: {
-                default: '',
-                parseHTML: (el) => el.getAttribute('data-comment-thread') ?? '',
-                renderHTML: (attrs) => ({ 'data-comment-thread': attrs.label }),
-            },
-            /** The thread as written, from `[^` to its last line. */
-            source: {
-                default: '',
-                parseHTML: (el) => el.getAttribute('data-source') ?? '',
-                renderHTML: (attrs) => ({ 'data-source': attrs.source }),
-            },
-        }
-    },
-
-    parseHTML() {
-        return [{ tag: 'div[data-comment-thread]' }]
-    },
-
-    renderHTML({ HTMLAttributes }) {
-        return ['div', mergeAttributes(HTMLAttributes, { class: 'ezco-mde-comment-thread', hidden: '' })]
-    },
-
-    addStorage() {
-        return {
-            markdown: {
-                serialize(state: any, node: PMNode) {
-                    state.write(node.attrs.source)
-                    state.closeBlock(node)
-                },
-                parse: { setup: setupMarkdownIt },
-            } as MarkdownNodeSpec,
-        }
-    },
-})
-
 // ── What the plugin knows ───────────────────────────────────────────────────
 
-export interface CommentTarget {
-    link: Wikilink
-    /** Where it is in this note; null for the whole note, a place in
-     *  another note, or one not found. */
-    range: { from: number; to: number } | null
-    /** Found only approximately: its text changed outside the editor. */
-    approximate: boolean
-    /** In another note. */
-    elsewhere: boolean
-    /** Names a place in this note that is not there. */
-    orphaned: boolean
-}
-
-export interface CommentThreadInfo {
-    /** The note's own threads: the footnote label. One written elsewhere:
-     *  its note and its label (or line). */
-    id: string
-    thread: Thread
-    /** Where the note's own thread's node is; null for one written elsewhere. */
-    pos: number | null
-    /** Where a thread written elsewhere lives. */
-    ref: CommentRef | null
-    targets: CommentTarget[]
-    /** Where it sits in the note (its first target found here), or null. */
-    anchor: number | null
-    orphaned: boolean
-}
-
-/** A message in a thread: `[]` the thread's own, `[i]` its i-th reply,
- *  `[i, j]` that reply's j-th, and so on. */
-export type MessagePath = number[]
-
-/** What a deleted message's body says when its replies keep it in place. */
-export const DELETED_BODY = '[deleted]'
-
-interface Range {
+export interface Range {
     from: number
     to: number
 }
 
+export interface CommentTarget {
+    link: Wikilink
+    /** Where it is in this note; null for the whole note or one not found. */
+    range: Range | null
+    /** Found only approximately: its text changed outside the editor. */
+    approximate: boolean
+    /** Names a place in this note that is not there. */
+    orphaned: boolean
+}
+
+/** A comment: a reference in a document, with what answers it. */
+export interface CommentInfo {
+    /** The document and line the reference is at. */
+    id: string
+    ref: CommentRef
+    /** Who wrote it and when, as the document's name says (`theo 2026-09-26
+     *  14.02.md`); the document's name otherwise. */
+    author: string
+    time: string
+    body: string
+    target: CommentTarget
+    /** Documents referencing this comment's text (or its document). */
+    replies: CommentInfo[]
+    /** Every identity's reactions to it; a ✅ resolves it. */
+    reactions: Reaction[]
+    resolved: boolean
+    /** Where it sits in the note (its target found here), or null. */
+    anchor: number | null
+}
+
 interface CommentsState {
-    threads: CommentThreadInfo[]
-    external: CommentRef[]
+    comments: CommentInfo[]
     active: string | null
     /** Text chosen for a comment not yet written. */
     draft: { ranges: Range[] } | null
@@ -180,32 +91,63 @@ interface CommentsState {
 }
 
 interface CommentsMeta {
-    external?: CommentRef[]
+    /** What the index found (a read). */
+    found?: CommentInfo[]
     active?: string | null
     draft?: { ranges: Range[] } | null
-    reanchored?: true
 }
 
 export const commentsKey = new PluginKey<CommentsState>('comments')
 
-type Parsed = { label: string; thread: Thread } | null
+/** The mark of a resolved comment: a ✅ reaction from anyone. */
+export const RESOLVED = '✅'
+/** What a deleted comment's body says when replies keep it in place. */
+export const DELETED_BODY = '[deleted]'
+/** Where a note's comments go: `comments/<note>/`. */
+const COMMENTS_DIR = 'comments'
+
+/** The document name a comment is given: who and when. */
+export function commentFileName(author: string, now = new Date()): string {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${author} ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}.${pad(now.getMinutes())}.md`
+}
+
+/** Who and when, read back from a comment document's name. */
+export function authorOf(path: string): { author: string; time: string } {
+    const stem = basename(path).replace(/\.md$/i, '')
+    const m = /^(\S+) (\d{4}-\d{2}-\d{2}) (\d{2})\.(\d{2})$/.exec(stem)
+    return m ? { author: m[1], time: `${m[2]}T${m[3]}:${m[4]}` } : { author: stem, time: '' }
+}
+
+/** The folder a comment on `doc` goes in: the note's, or the folder the
+ *  commented document already sits in when it is itself a comment. */
+export function commentsFolderFor(doc: string): string {
+    const clean = normalizePath(doc)
+    const dir = dirname(clean)
+    if (dir === COMMENTS_DIR || dir.startsWith(`${COMMENTS_DIR}/`)) return dir
+    return joinPath(COMMENTS_DIR, basename(clean).replace(/\.md$/i, ''))
+}
+
+/** The link to `doc` (a vault path) as a wikilink target: the path without `.md`. */
+export const linkTarget = (doc: string) => normalizePath(doc).replace(/\.md$/i, '')
+
+/** A reaction's `ref` for a comment: its link as written, without brackets. */
+export const refKey = (link: Wikilink) => formatWikilink({ ...link, alias: null }).slice(2, -2)
 
 /**
- * Where a target is in this note. A text fragment is looked for as written;
- * when the note was read afresh (`approximate`), also where its text nearly
- * matches; while the note is edited here, where the quote was is mapped
- * through the edit instead (`mapped`), so a quote whose words are being
- * changed stays with them and is rewritten to what they are now.
+ * Where a target is in this note. A text fragment is looked for as
+ * written; when the note was read afresh (`approximate`), also where its
+ * text nearly matches; while the note is edited here, where the quote was
+ * is mapped through the edit instead (`mapped`), so a quote whose words
+ * are being changed stays with them and is rewritten to what they are now.
  */
-function locate(doc: PMNode, link: Wikilink, elsewhere: boolean, text: () => DocText, approximate: boolean, mapped: Range | null): CommentTarget {
-    const target = { link, range: null, approximate: false, elsewhere, orphaned: false }
-    if (elsewhere) return target
+function locate(doc: PMNode, link: Wikilink, text: () => DocText, approximate: boolean, mapped: Range | null): CommentTarget {
+    const target: CommentTarget = { link, range: null, approximate: false, orphaned: false }
     const fragment = link.fragment?.trim()
     if (!fragment) return target
     if (fragment.startsWith(':~:text=')) {
         const found = locateTextFragment(doc, fragment, undefined, text(), approximate)
         if (found) return { ...target, range: { from: found.from, to: found.to }, approximate: !found.exact }
-        // Not where it says, but where it was: the words changed here.
         if (mapped && mapped.to > mapped.from) return { ...target, range: mapped, approximate: true }
         return { ...target, orphaned: true }
     }
@@ -213,97 +155,34 @@ function locate(doc: PMNode, link: Wikilink, elsewhere: boolean, text: () => Doc
     return range ? { ...target, range: { from: range.from, to: range.to } } : { ...target, orphaned: true }
 }
 
-/**
- * Every thread about the note, with where each target is. `approximate`
- * when the note is read (its text may have changed elsewhere, and a quote
- * is looked for where it nearly matches); while it is edited here, a
- * target is exactly where its quote is, or nowhere (the RFC's §2: an edit
- * here is exact, mapped through; the search is for what came from outside).
- */
-function collect(
-    doc: PMNode,
-    external: CommentRef[],
-    parse: (source: string) => Parsed,
-    approximate: boolean,
-    /** The threads as they were, and the edit since: where a target was is
-     *  mapped through it when its quote is not found as written. */
-    previous?: { threads: CommentThreadInfo[]; mapping: Mapping },
-): CommentThreadInfo[] {
+/** The comments, their targets found in `doc`. */
+function place(doc: PMNode, comments: CommentInfo[], approximate: boolean, previous?: { comments: CommentInfo[]; mapping: Mapping }): CommentInfo[] {
     let flat: DocText | null = null
     const text = () => (flat ??= docText(doc))
-    const mapped = (id: string, i: number): Range | null => {
-        const was = previous?.threads.find((t) => t.id === id)?.targets[i]?.range
+    const mapped = (id: string): Range | null => {
+        const was = previous?.comments.find((c) => c.id === id)?.target.range
         if (!was || !previous) return null
         return { from: previous.mapping.map(was.from, 1), to: previous.mapping.map(was.to, -1) }
     }
-    const info = (id: string, thread: Thread, pos: number | null, ref: CommentRef | null, targets: CommentTarget[]): CommentThreadInfo => ({
-        id,
-        thread,
-        pos,
-        ref,
-        targets,
-        anchor: targets.find((t) => t.range)?.range?.from ?? null,
-        orphaned: targets.some((t) => t.orphaned),
+    return comments.map((c) => {
+        const target = locate(doc, c.ref.link, text, approximate, mapped(c.id))
+        return { ...c, target, anchor: target.range?.from ?? null }
     })
-    const out: CommentThreadInfo[] = []
-    doc.forEach((node, pos) => {
-        if (node.type.name !== 'commentThread') return
-        const parsed = parse(node.attrs.source)
-        if (!parsed) return
-        out.push(info(parsed.label, parsed.thread, pos, null, parsed.thread.targets.map((l, i) => locate(doc, l, !!l.target.trim(), text, approximate, mapped(parsed.label, i)))))
-    })
-    for (const ref of external) {
-        const id = externalId(ref)
-        const targets = ref.thread.targets.map((l, i) => locate(doc, l, !ref.about[i], text, approximate, mapped(id, i)))
-        out.push(info(externalId(ref), ref.thread, null, ref, targets))
-    }
-    return out
 }
 
-const externalId = (ref: CommentRef) => `${ref.source}#${ref.label ?? `L${ref.line}`}`
-
-function decorate(doc: PMNode, threads: CommentThreadInfo[], active: string | null, draft: CommentsState['draft']): DecorationSet {
+function decorate(doc: PMNode, comments: CommentInfo[], active: string | null, draft: CommentsState['draft']): DecorationSet {
     const decorations: Decoration[] = []
-    for (const t of threads) {
-        if (t.thread.status !== 'open' && t.id !== active) continue
-        for (const target of t.targets) {
-            if (!target.range || target.range.to <= target.range.from) continue
-            decorations.push(
-                Decoration.inline(target.range.from, target.range.to, {
-                    class: t.id === active ? 'ezco-mde-comment is-active' : 'ezco-mde-comment',
-                }),
-            )
-        }
+    for (const c of comments) {
+        if (!c.target.range || c.target.range.to <= c.target.range.from) continue
+        const classes = ['ezco-mde-comment']
+        if (c.id === active) classes.push('is-active')
+        if (c.resolved) classes.push('is-resolved')
+        decorations.push(Decoration.inline(c.target.range.from, c.target.range.to, { class: classes.join(' ') }))
     }
     for (const r of draft?.ranges ?? []) {
         if (r.to > r.from) decorations.push(Decoration.inline(r.from, r.to, { class: 'ezco-mde-comment is-draft' }))
     }
     return DecorationSet.create(doc, decorations)
-}
-
-// ── Changing threads ────────────────────────────────────────────────────────
-
-/** The message at `path`, or null. */
-export function messageAt(root: Message, path: MessagePath): Message | null {
-    let at: Message | undefined = root
-    for (const i of path) at = at?.replies[i]
-    return at ?? null
-}
-
-/** `root` with the message at `path` replaced by `change`'s answer (null
- *  removes a reply). */
-function updateMessage<T extends Message>(root: T, path: MessagePath, change: (m: Message) => Message | null): T {
-    if (!path.length) return (change(root) ?? root) as T
-    const [i, ...rest] = path
-    if (!root.replies[i]) return root
-    const replies = [...root.replies]
-    if (rest.length) replies[i] = updateMessage(replies[i], rest, change)
-    else {
-        const next = change(replies[i])
-        if (next) replies[i] = next
-        else replies.splice(i, 1)
-    }
-    return { ...root, replies }
 }
 
 /** Ids of every pin in the document. */
@@ -316,54 +195,23 @@ function pinIds(doc: PMNode): Set<string> {
     return ids
 }
 
-/** A pin id for thread `label`: the label, then `label-2`, `label-3`… */
-function freshPinId(label: string, taken: Set<string>): string {
-    let id = label
-    for (let n = 2; taken.has(id); n++) id = `${label}-${n}`
+/** A pin id: `c-` and the time, then `-2`, `-3`… */
+function freshPinId(taken: Set<string>): string {
+    const base = `c-${Date.now().toString(36)}`
+    let id = base
+    for (let n = 2; taken.has(id); n++) id = `${base}-${n}`
     taken.add(id)
     return id
 }
 
 /** A target for the text `range` holds: a text fragment unique in the note,
  *  or (when none can be) a pin put around it. */
-function anchorFor(tr: Transaction, range: Range, label: string, flat: DocText, taken: Set<string>): Wikilink {
+function anchorFor(tr: Transaction, range: Range, note: string, flat: DocText, taken: Set<string>): Wikilink {
     const f = textFragmentFor(flat.text, textOffset(flat, range.from), textOffset(flat, range.to))
-    if (f) return { target: '', fragment: formatTextFragment(f), alias: null }
-    const id = freshPinId(label, taken)
+    if (f) return { target: note, fragment: formatTextFragment(f), alias: null }
+    const id = freshPinId(taken)
     tr.addMark(range.from, range.to, tr.doc.type.schema.marks.span.create({ id }))
-    return { target: '', fragment: id, alias: null }
-}
-
-/** The span mark with `id` in the document, and where it is. */
-function pinMark(doc: PMNode, id: string): { mark: PMMark; from: number; to: number } | null {
-    const range = findPin(doc, id)
-    if (!range) return null
-    let mark: PMMark | null = null
-    doc.nodesBetween(range.from, range.to, (node) => {
-        mark ??= node.marks.find((m) => m.type.name === 'span' && m.attrs.id === id) ?? null
-        return !mark
-    })
-    return mark ? { mark, ...range } : null
-}
-
-const isPinTarget = (link: Wikilink) =>
-    !link.target.trim() && !!link.fragment && !link.fragment.startsWith(':~:') && !link.fragment.startsWith('^')
-
-/** Where a new thread goes: after the note's last footnote or thread, else
- *  after its last block with content. */
-function threadPosition(doc: PMNode): number {
-    let after = -1
-    doc.forEach((child, offset) => {
-        if (child.type.name === 'footnoteDefinition' || child.type.name === 'commentThread') after = offset + child.nodeSize
-    })
-    if (after >= 0) return after
-    let at = doc.content.size
-    for (let i = doc.childCount - 1; i >= 0; i--) {
-        const child = doc.child(i)
-        if (!(child.type.name === 'paragraph' && child.content.size === 0)) break
-        at -= child.nodeSize
-    }
-    return at
+    return { target: note, fragment: id, alias: null }
 }
 
 function openPath(editor: Editor): string | null {
@@ -371,99 +219,134 @@ function openPath(editor: Editor): string | null {
     return path ? normalizePath(path) : null
 }
 
+/** The comment at `id`, wherever it is in the tree. */
+export function commentAt(comments: CommentInfo[], id: string): CommentInfo | null {
+    for (const c of comments) {
+        if (c.id === id) return c
+        const inner = commentAt(c.replies, id)
+        if (inner) return inner
+    }
+    return null
+}
+
+// ── Reading: comments about a document, threaded ────────────────────────────
+
+/** The text of a comment document, read once per gathering. */
+type Texts = Map<string, Promise<string | null>>
+
+/**
+ * The comments about `doc`: every reference to it, each with the replies
+ * that reference its text (or its document) and its reactions, recursively,
+ * a document never followed twice.
+ */
+async function gather(
+    doc: string,
+    index: CommentIndex,
+    reactions: Reactions | undefined,
+    fs: VfsInterface | undefined,
+    texts: Texts,
+    seen: Set<string>,
+): Promise<CommentInfo[]> {
+    const refs = await index.about(doc).catch(() => [] as CommentRef[])
+    const out: CommentInfo[] = []
+    for (const ref of refs) {
+        const { author, time } = authorOf(ref.source)
+        const id = `${ref.source}#${ref.line}`
+        const on = reactions ? await reactions.on(ref.source).catch(() => [] as Reaction[]) : []
+        const key = refKey(ref.link)
+        const mine = on.filter((r) => r.to.ref === key)
+        const replies = seen.has(ref.source) ? [] : await gather(ref.source, index, reactions, fs, texts, new Set([...seen, ref.source]))
+        // A reply references this comment's text: keep the ones whose target
+        // falls in it (or names the whole document, when this is its only
+        // comment).
+        const siblings = await index.in(ref.source).catch(() => [] as CommentRef[])
+        const text = fs ? await (texts.get(ref.source) ?? texts.set(ref.source, fs.readFile(ref.source).catch(() => null)).get(ref.source)!) : null
+        const own = replies.filter((r) => {
+            const f = r.ref.link.fragment?.trim()
+            if (!f) return siblings.length <= 1 || siblings[0].line === ref.line
+            if (!f.startsWith(':~:text=') || text === null) return true
+            const parsed = parseTextFragment(f)
+            const found = parsed ? findTextFragment(text, parsed) : null
+            return !found || (found.from >= ref.start && found.to <= ref.end + 1)
+        })
+        out.push({
+            id,
+            ref,
+            author,
+            time,
+            body: ref.body,
+            target: { link: ref.link, range: null, approximate: false, orphaned: false },
+            replies: own,
+            reactions: mine,
+            resolved: mine.some((r) => r.emoji === RESOLVED),
+            anchor: null,
+        })
+    }
+    return out
+}
+
 // ── Export ──────────────────────────────────────────────────────────────────
 
 /** A W3C Web Annotation (https://www.w3.org/TR/annotation-model/). */
 export type WebAnnotation = Record<string, unknown>
 
-const isoTime = (time: string) => (time.length === 17 ? `${time.slice(0, 16)}:00Z` : time)
-
-function annotationsOf(editor: Editor, threads: CommentThreadInfo[]): WebAnnotation[] {
+function annotationsOf(editor: Editor, comments: CommentInfo[]): WebAnnotation[] {
     const flat = docText(editor.state.doc)
-    const id = documentId(editor)
-    const source = id ? `urn:ezco:note:${id}` : openPath(editor) ?? 'urn:ezco:note'
+    const noteId = documentId(editor)
+    const source = noteId ? `urn:ezco:note:${noteId}` : openPath(editor) ?? 'urn:ezco:note'
     const quote = (from: number, to: number) => {
         const start = textOffset(flat, from)
         const end = textOffset(flat, to)
         return {
             source,
             selector: [
-                {
-                    type: 'TextQuoteSelector',
-                    exact: flat.text.slice(start, end),
-                    prefix: flat.text.slice(Math.max(0, start - 32), start),
-                    suffix: flat.text.slice(end, end + 32),
-                },
+                { type: 'TextQuoteSelector', exact: flat.text.slice(start, end), prefix: flat.text.slice(Math.max(0, start - 32), start), suffix: flat.text.slice(end, end + 32) },
                 { type: 'TextPositionSelector', start, end },
             ],
         }
     }
-    const targetOf = (t: CommentTarget): unknown => {
-        if (t.range) return quote(t.range.from, t.range.to)
-        const f = t.link.fragment?.startsWith(':~:text=') ? parseTextFragment(t.link.fragment) : null
-        if (!f) return source
-        const selector = (exact: string, prefix: string, suffix: string) => ({ type: 'TextQuoteSelector', exact, prefix, suffix })
-        return {
-            source,
-            selector:
-                f.end === null
-                    ? selector(f.start, f.prefix, f.suffix)
-                    : { type: 'RangeSelector', startSelector: selector(f.start, f.prefix, ''), endSelector: selector(f.end, '', f.suffix) },
-        }
-    }
-    const base = (m: Message, annotationId: string) => ({
-        '@context': 'http://www.w3.org/ns/anno.jsonld',
-        id: annotationId,
-        type: 'Annotation',
-        creator: { type: 'Person', nickname: m.author },
-        created: isoTime(m.time),
-        body: { type: 'TextualBody', value: m.body, format: 'text/markdown' },
-    })
     const out: WebAnnotation[] = []
-    const replies = (m: Message, parent: string) => {
-        m.replies.forEach((r, i) => {
-            const rid = `${parent}.${i + 1}`
-            out.push({ ...base(r, rid), motivation: isReaction(r.body) ? 'assessing' : 'replying', target: parent })
-            replies(r, rid)
-        })
+    const base = (c: CommentInfo) => ({
+        '@context': 'http://www.w3.org/ns/anno.jsonld',
+        id: `urn:ezco:comment:${c.ref.source}#${c.ref.line}`,
+        type: 'Annotation',
+        creator: { type: 'Person', nickname: c.author },
+        ...(c.time ? { created: `${c.time}:00Z` } : {}),
+        body: { type: 'TextualBody', value: c.body, format: 'text/markdown' },
+    })
+    const walk = (c: CommentInfo, parent: string | null) => {
+        const id = `urn:ezco:comment:${c.ref.source}#${c.ref.line}`
+        out.push({ ...base(c), motivation: parent ? 'replying' : 'commenting', target: parent ?? (c.target.range ? quote(c.target.range.from, c.target.range.to) : source) })
+        for (const r of c.replies) walk(r, id)
     }
-    for (const t of threads) {
-        const aid = `${source}#${t.id}`
-        const targets = t.targets.filter((x) => !x.elsewhere).map(targetOf)
-        out.push({ ...base(t.thread, aid), motivation: 'commenting', target: targets.length === 1 ? targets[0] : targets.length ? targets : source })
-        replies(t.thread, aid)
-    }
+    for (const c of comments) walk(c, null)
     return out
 }
 
 // ── The extension ───────────────────────────────────────────────────────────
 
 export interface CommentsOptions {
-    /** The handle messages are written as. Without one, threads are shown
-     *  and not written. */
+    /** The handle comments are written as. Without one they are shown, not written. */
     author?: string
-    /** Threads written in other notes (a vault's `comments`). */
+    /** Comments about the note, wherever they live (a vault's `comments`). */
     index?: CommentIndex
+    /** Reactions and resolution, per identity (a vault's `reactions`). */
+    reactions?: Reactions
 }
 
 export interface CommentsStorage {
-    /** Every thread about the open note (its own, then those written
-     *  elsewhere), with where each target is. */
-    threads: () => CommentThreadInfo[]
-    /** The thread being looked at. */
+    /** Every comment about the open note, threaded. */
+    comments: () => CommentInfo[]
     active: () => string | null
-    /** Text chosen for a comment not yet written. */
     draft: () => { ranges: Range[] } | null
-    /** Look at a thread (null: none), its text brought into view. */
     focus: (id: string | null) => void
-    /** The threads as W3C Web Annotations. */
     exportAnnotations: () => WebAnnotation[]
-    /** The note as Markdown, without its threads or their pins. */
-    markdownWithoutComments: () => string
-    /** Read the threads written elsewhere again. */
+    /** Read the comments again. */
     refresh: () => Promise<void>
-    /** Who is writing (null: nobody; threads are read-only). */
+    /** Who is writing (null: nobody; comments are read-only). */
     author: () => string | null
+    /** Whether reactions can be made. */
+    canReact: () => boolean
 }
 
 declare module '@tiptap/core' {
@@ -472,25 +355,27 @@ declare module '@tiptap/core' {
             /** Choose the selection for a comment (the margin opens a draft). */
             startComment: () => ReturnType
             cancelComment: () => ReturnType
-            /** A new thread about `ranges` (the selection when none are
-             *  given; none, and no selection, is a comment on the note). */
-            addComment: (options: { body: string; ranges?: Range[] }) => ReturnType
-            replyToComment: (id: string, body: string, to?: MessagePath) => ReturnType
-            editComment: (id: string, body: string, at?: MessagePath) => ReturnType
-            /** Delete a message. One that others have answered stays as a
-             *  tombstone (`DELETED_BODY`) so their replies keep their place;
-             *  one nobody answered goes, and with it (`at` empty) the thread
-             *  and its pins. */
-            deleteComment: (id: string, at?: MessagePath) => ReturnType
+            /** A new comment document about `ranges` (the selection when none
+             *  are given; none, and no selection, is a comment on the note),
+             *  with `body`; `open` loads it in the editor. */
+            addComment: (options: { body: string; ranges?: Range[]; open?: boolean }) => ReturnType
+            /** A new document answering comment `id` (its text is what the
+             *  reply references); `open` loads it in the editor. */
+            replyToComment: (id: string, body: string, options?: { open?: boolean }) => ReturnType
+            editComment: (id: string, body: string) => ReturnType
+            /** Delete a comment. One others have answered stays as a
+             *  tombstone so the replies keep their place. */
+            deleteComment: (id: string) => ReturnType
+            /** Resolve (a ✅ reaction) or reopen (take one's ✅ away). */
             resolveComment: (id: string) => ReturnType
             reopenComment: (id: string) => ReturnType
-            /** Add the author's `emoji` to a message, or take it away. */
-            reactToComment: (id: string, emoji: string, to?: MessagePath) => ReturnType
-            /** Turn the thread's text-fragment targets into pins. */
-            pinComment: (id: string) => ReturnType
-            /** Point target `index` of the thread at `range` (the selection
-             *  by default): how an orphaned target is anchored again. */
-            anchorComment: (id: string, index: number, range?: Range) => ReturnType
+            /** Add the identity's `emoji` to a comment, or take it away. */
+            reactToComment: (id: string, emoji: string) => ReturnType
+            /** Load the comment's document in the editor, at the comment. */
+            openComment: (id: string) => ReturnType
+            /** Point comment `id` at `range` (the selection by default): how
+             *  an orphaned one is anchored again. */
+            anchorComment: (id: string, range?: Range) => ReturnType
             focusComment: (id: string | null) => ReturnType
         }
     }
@@ -500,80 +385,85 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
     name: 'comments',
 
     addOptions() {
-        return { author: undefined, index: undefined }
+        return { author: undefined, index: undefined, reactions: undefined }
     },
 
     addStorage() {
         return {
-            threads: () => [],
+            comments: () => [],
             active: () => null,
             draft: () => null,
             focus: () => {},
             exportAnnotations: () => [],
-            markdownWithoutComments: () => '',
             refresh: async () => {},
             author: () => null,
+            canReact: () => false,
         }
     },
 
     onBeforeCreate() {
         const editor = this.editor
         const state = () => commentsKey.getState(editor.state)
-        this.storage.threads = () => state()?.threads ?? []
+        this.storage.comments = () => state()?.comments ?? []
         this.storage.active = () => state()?.active ?? null
         this.storage.draft = () => state()?.draft ?? null
         this.storage.focus = (id) => {
             editor.commands.focusComment(id)
         }
-        this.storage.exportAnnotations = () => annotationsOf(editor, state()?.threads ?? [])
-        this.storage.markdownWithoutComments = () => stripComments((editor.storage as any).markdown.getMarkdown())
+        this.storage.exportAnnotations = () => annotationsOf(editor, state()?.comments ?? [])
         this.storage.author = () => this.options.author ?? null
+        this.storage.canReact = () => !!this.options.reactions?.identity
     },
 
     addCommands() {
+        const editor = this.editor
         const author = () => this.options.author ?? null
-        const threadsOf = (state: EditorState) => commentsKey.getState(state)?.threads ?? []
         const index = () => this.options.index
+        const reactions = () => this.options.reactions
         const refresh = () => this.storage.refresh()
+        const persistence = () => (editor.storage as any).persistence as FileSystemStorage | undefined
+        const files = (): FileOperations | undefined => {
+            const codeblock = editor.extensionManager.extensions.find((e) => e.name === 'ezcodeBlock')
+            return (codeblock?.options as { files?: FileOperations } | undefined)?.files
+        }
+        const find = (state: EditorState, id: string) => commentAt(commentsKey.getState(state)?.comments ?? [], id)
 
-        /** Change a thread (null: delete it) wherever it lives. */
+        /** A document at `folder` named for the author now, holding `link` and `body`. */
+        const write = async (folder: string, link: Wikilink, body: string, open: boolean) => {
+            const ops = files()
+            const fs = persistence()?.options.fs
+            if (!ops || !fs) throw new Error('Comments need the vault\'s files')
+            let path = joinPath(folder, commentFileName(author()!))
+            for (let n = 2; await fs.exists(path); n++) path = path.replace(/\.md$/, ` ${n}.md`)
+            await ops.create(path, formatReference(link, body) + '\n')
+            await refresh()
+            if (open) await persistence()?.loadFile(path, { focus: true })
+            return path
+        }
+
+        /** Change a comment where it lives (null deletes it). */
         const change =
-            (id: string, next: (thread: Thread, info: CommentThreadInfo) => Thread | null) =>
-            ({ state, tr, dispatch }: { state: EditorState; tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
-                if (!author()) return false
-                const info = threadsOf(state).find((t) => t.id === id)
-                if (!info) return false
-                const updated = next(info.thread, info)
-                if (info.pos === null) {
-                    const ix = index()
-                    if (!ix || !info.ref) return false
-                    if (dispatch) void ix.update(info.ref, updated).then(refresh, (error) => {
-                        console.error('The thread could not be changed where it lives', error)
+            (id: string, next: (c: CommentInfo) => { link: Wikilink; body: string } | null) =>
+            ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+                const ix = index()
+                const c = find(state, id)
+                if (!author() || !ix || !c) return false
+                if (dispatch) {
+                    void ix.update(c.ref, next(c)).then(refresh, (error) => {
+                        console.error('The comment could not be changed where it lives', error)
                         return refresh()
                     })
-                    return true
                 }
-                const node = tr.doc.nodeAt(info.pos)
-                if (!node || node.type.name !== 'commentThread') return false
-                if (!dispatch) return true
-                if (updated === null) {
-                    // Its pins go too, unless another thread points at them.
-                    const others = new Set(threadsOf(state).filter((t) => t.id !== id).flatMap((t) => t.thread.targets.filter(isPinTarget).map((l) => l.fragment!)))
-                    for (const link of info.thread.targets.filter(isPinTarget)) {
-                        if (others.has(link.fragment!)) continue
-                        const pin = pinMark(tr.doc, link.fragment!)
-                        if (pin) tr.removeMark(pin.from, pin.to, pin.mark)
-                    }
-                    tr.delete(info.pos, info.pos + node.nodeSize)
-                    if (commentsKey.getState(state)?.active === id) tr.setMeta(commentsKey, { active: null } satisfies CommentsMeta)
-                } else {
-                    tr.setNodeMarkup(info.pos, undefined, { ...node.attrs, source: formatThread(updated, node.attrs.label) })
-                }
-                dispatch(tr)
                 return true
             }
 
-        const message = (body: string): Message => ({ author: author()!, time: commentTime(), body: body.trim(), replies: [] })
+        const react = (id: string, emoji: string) => ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
+            const rx = reactions()
+            const c = find(state, id)
+            if (!rx?.identity || !c) return false
+            if (dispatch) void rx.toggle({ doc: c.ref.source, ref: refKey(c.ref.link) }, emoji).then(refresh, (error) => console.error('The reaction could not be made', error))
+            return true
+        }
 
         return {
             startComment:
@@ -591,78 +481,71 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     return true
                 },
             addComment:
-                ({ body, ranges }) =>
+                ({ body, ranges, open }) =>
                 ({ state, tr, dispatch }) => {
-                    if (!author() || !body.trim()) return false
-                    const chosen = ranges ?? (state.selection.empty ? [] : [{ from: state.selection.from, to: state.selection.to }])
+                    const note = openPath(editor)
+                    if (!author() || !note || (!body.trim() && !open)) return false
+                    const chosen = (ranges ?? (state.selection.empty ? [] : [{ from: state.selection.from, to: state.selection.to }])).filter((r) => r.to > r.from)
                     if (!dispatch) return true
-                    const label = newCommentId()
                     const flat = docText(tr.doc)
-                    const taken = pinIds(tr.doc)
-                    const targets = chosen.filter((r) => r.to > r.from).map((r) => anchorFor(tr, r, label, flat, taken))
-                    const thread: Thread = { ...message(body), status: 'open', targets }
-                    tr.insert(threadPosition(tr.doc), state.schema.nodes.commentThread.create({ label, source: formatThread(thread, label) }))
-                    tr.setMeta(commentsKey, { draft: null, active: label } satisfies CommentsMeta)
+                    const link = chosen.length ? anchorFor(tr, chosen[0], linkTarget(note), flat, pinIds(tr.doc)) : { target: linkTarget(note), fragment: null, alias: null }
+                    tr.setMeta(commentsKey, { draft: null } satisfies CommentsMeta)
                     dispatch(tr)
+                    // A pin was written into the note: it must be in the file
+                    // before the comment's document refers to it.
+                    void (async () => {
+                        await persistence()?.save()
+                        await write(commentsFolderFor(note), link, body.trim(), !!open)
+                    })().catch((error) => console.error('The comment could not be written', error))
                     return true
                 },
-            replyToComment: (id, body, to = []) =>
-                change(id, (t) => (body.trim() ? updateMessage(t, to, (m) => ({ ...m, replies: [...m.replies, message(body)] })) : t)),
-            editComment: (id, body, at = []) => change(id, (t) => updateMessage(t, at, (m) => ({ ...m, body: body.trim() }))),
-            deleteComment: (id, at = []) =>
-                change(id, (t) => {
-                    const target = messageAt(t, at)
-                    if (!target) return t
-                    // Answered by someone: the words go, the place stays.
-                    if (target.replies.some((r) => !isReaction(r.body))) {
-                        return updateMessage(t, at, (m) => ({ ...m, body: DELETED_BODY, replies: m.replies.filter((r) => !isReaction(r.body)) }))
-                    }
-                    return at.length ? updateMessage(t, at, () => null) : null
-                }),
-            resolveComment: (id) => change(id, (t) => ({ ...t, status: 'resolved' })),
-            reopenComment: (id) => change(id, (t) => ({ ...t, status: 'open' })),
-            reactToComment: (id, emoji, to = []) =>
-                change(id, (t) =>
-                    updateMessage(t, to, (m) => {
-                        const mine = m.replies.findIndex((r) => r.author === author() && r.body.trim() === emoji && !r.replies.length)
-                        return mine >= 0
-                            ? { ...m, replies: m.replies.filter((_, i) => i !== mine) }
-                            : { ...m, replies: [...m.replies, message(emoji)] }
-                    }),
-                ),
-            pinComment:
-                (id) =>
-                ({ state, tr, dispatch }) => {
-                    const info = threadsOf(state).find((t) => t.id === id)
-                    if (!author() || !info || info.pos === null) return false
-                    const node = tr.doc.nodeAt(info.pos)
-                    if (!node) return false
+            replyToComment:
+                (id, body, options = {}) =>
+                ({ state, dispatch }) => {
+                    const c = find(state, id)
+                    const fs = persistence()?.options.fs
+                    if (!author() || !c || !fs || (!body.trim() && !options.open)) return false
                     if (!dispatch) return true
-                    const taken = pinIds(tr.doc)
-                    const targets = info.thread.targets.map((link, i) => {
-                        const at = info.targets[i]
-                        if (!at?.range || !link.fragment?.startsWith(':~:text=')) return link
-                        const pin = freshPinId(node.attrs.label, taken)
-                        tr.addMark(at.range.from, at.range.to, state.schema.marks.span.create({ id: pin }))
-                        return { ...link, fragment: pin }
-                    })
-                    tr.setNodeMarkup(info.pos, undefined, { ...node.attrs, source: formatThread({ ...info.thread, targets }, node.attrs.label) })
-                    dispatch(tr)
+                    void (async () => {
+                        // The reply references the comment's text in its document.
+                        const text = await fs.readFile(c.ref.source)
+                        const refs = c.ref
+                        const bodyStart = text.indexOf(refs.body, refs.start)
+                        const f = refs.body && bodyStart >= 0 ? textFragmentFor(text, bodyStart, bodyStart + refs.body.length) : null
+                        const link: Wikilink = { target: linkTarget(c.ref.source), fragment: f ? formatTextFragment(f) : null, alias: null }
+                        await write(commentsFolderFor(c.ref.source), link, body.trim(), !!options.open)
+                    })().catch((error) => console.error('The reply could not be written', error))
+                    return true
+                },
+            editComment: (id, body) => change(id, (c) => ({ link: c.ref.link, body: body.trim() })),
+            deleteComment: (id) => change(id, (c) => (c.replies.length ? { link: c.ref.link, body: DELETED_BODY } : null)),
+            resolveComment: (id) => react(id, RESOLVED),
+            reopenComment: (id) => react(id, RESOLVED),
+            reactToComment: (id, emoji) => react(id, emoji),
+            openComment:
+                (id) =>
+                ({ state, dispatch }) => {
+                    const c = find(state, id)
+                    if (!c) return false
+                    if (dispatch) void persistence()?.loadFile(c.ref.source, { focus: true })
                     return true
                 },
             anchorComment:
-                (id, target, range) =>
+                (id, range) =>
                 ({ state, tr, dispatch }) => {
-                    const info = threadsOf(state).find((t) => t.id === id)
+                    const note = openPath(editor)
+                    const c = find(state, id)
                     const chosen = range ?? (state.selection.empty ? null : { from: state.selection.from, to: state.selection.to })
-                    if (!author() || !info || info.pos === null || !chosen || !info.thread.targets[target]) return false
-                    const node = tr.doc.nodeAt(info.pos)
-                    if (!node) return false
+                    if (!author() || !note || !c || !chosen) return false
                     if (!dispatch) return true
-                    const link = anchorFor(tr, chosen, node.attrs.label, docText(tr.doc), pinIds(tr.doc))
-                    const targets = info.thread.targets.map((l, i) => (i === target ? link : l))
-                    tr.setNodeMarkup(info.pos, undefined, { ...node.attrs, source: formatThread({ ...info.thread, targets }, node.attrs.label) })
+                    const link = anchorFor(tr, chosen, linkTarget(note), docText(tr.doc), pinIds(tr.doc))
                     tr.setMeta(commentsKey, { active: id } satisfies CommentsMeta)
+                    dispatch(tr)
+                    void (async () => {
+                        await persistence()?.save()
+                        await index()?.update(c.ref, { link, body: c.ref.body })
+                        await refresh()
+                    })().catch((error) => console.error('The comment could not be anchored', error))
                     return true
                 },
             focusComment:
@@ -683,136 +566,93 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
         const editor = this.editor
         const options = this.options
         const storage = this.storage
-        const cache = new Map<string, Parsed>()
-        const parse = (source: string): Parsed => {
-            if (!cache.has(source)) {
-                if (cache.size > 500) cache.clear()
-                cache.set(source, parseThreadDefinition(source))
-            }
-            return cache.get(source)!
-        }
 
         return [
             new Plugin<CommentsState>({
                 key: commentsKey,
                 state: {
-                    init: (_, state) => {
-                        const threads = collect(state.doc, [], parse, true)
-                        return { threads, external: [], active: null, draft: null, decorations: decorate(state.doc, threads, null, null) }
-                    },
+                    init: (_, state) => ({ comments: [], active: null, draft: null, decorations: DecorationSet.create(state.doc, []) }),
                     apply(tr, value, _old, state) {
                         const meta = tr.getMeta(commentsKey) as CommentsMeta | undefined
                         // Unchanged (a selection moved): the same value, which is
                         // how the margin knows there is nothing to draw.
                         if (!meta && !tr.docChanged) return value
-                        const external = meta?.external ?? value.external
                         let draft = value.draft
                         if (draft && tr.docChanged) {
                             draft = { ranges: draft.ranges.map((r) => ({ from: tr.mapping.map(r.from, 1), to: tr.mapping.map(r.to, -1) })) }
                         }
                         if (meta && 'draft' in meta) draft = meta.draft ?? null
-                        const recompute = tr.docChanged || !!meta?.external
-                        // The note read afresh (a file loaded, threads from the
-                        // index): a quote is found where it nearly is. Edited
-                        // here: where it is, exactly.
-                        const read = !!meta?.external || !!tr.getMeta(loadedDocumentMeta)
-                        const threads = recompute ? collect(state.doc, external, parse, read, read ? undefined : { threads: value.threads, mapping: tr.mapping }) : value.threads
+                        // Read afresh (from the index, or the file loaded): a
+                        // quote is found where it nearly is. Edited here: where
+                        // it is exactly, else where it was.
+                        const read = !!meta?.found || !!tr.getMeta(loadedDocumentMeta)
+                        const comments = meta?.found
+                            ? place(state.doc, meta.found, true)
+                            : tr.docChanged
+                              ? place(state.doc, value.comments, read, read ? undefined : { comments: value.comments, mapping: tr.mapping })
+                              : value.comments
                         let active = meta && 'active' in meta ? meta.active ?? null : value.active
-                        if (active && !threads.some((t) => t.id === active)) active = null
-                        return { threads, external, active, draft, decorations: decorate(state.doc, threads, active, draft) }
+                        if (active && !commentAt(comments, active)) active = null
+                        return { comments, active, draft, decorations: decorate(state.doc, comments, active, draft) }
                     },
                 },
                 props: {
                     decorations: (state) => commentsKey.getState(state)?.decorations,
-                    // A click on commented text looks at its thread (the caret
+                    // A click on commented text looks at its comment (the caret
                     // still goes where it was clicked).
                     handleClick(view, pos) {
                         const state = commentsKey.getState(view.state)
-                        const hit = state?.threads.find(
-                            (t) => (t.thread.status === 'open' || t.id === state.active) && t.targets.some((x) => x.range && x.range.from <= pos && pos <= x.range.to),
-                        )
+                        const hit = state?.comments.find((c) => c.target.range && c.target.range.from <= pos && pos <= c.target.range.to)
                         if ((hit?.id ?? null) !== state?.active) view.dispatch(view.state.tr.setMeta(commentsKey, { active: hit?.id ?? null } satisfies CommentsMeta))
                         return false
                     },
                 },
-                // A target whose quote is no longer what its text says (the
-                // words changed here, or it was found only approximately when
-                // the note was read) is rewritten to quote the text it is at.
-                appendTransaction(trs, _oldState, newState) {
-                    if (!trs.some((tr) => tr.docChanged) || trs.some((tr) => (tr.getMeta(commentsKey) as CommentsMeta | undefined)?.reanchored)) return null
-                    const after = commentsKey.getState(newState)?.threads ?? []
-                    let flat: DocText | null = null
-                    const text = () => (flat ??= docText(newState.doc))
-                    let taken: Set<string> | null = null
-                    const tr = newState.tr
-                    let changed = false
-                    for (const now of after) {
-                        if (now.pos === null) continue
-                        const node = newState.doc.nodeAt(now.pos)
-                        if (!node) continue
-                        let targets = now.thread.targets
-                        now.targets.forEach((target, i) => {
-                            if (target.elsewhere || !target.link.fragment?.startsWith(':~:text=')) return
-                            if (!target.range || !target.approximate) return
-                            const link = anchorFor(tr, target.range, node.attrs.label, text(), (taken ??= pinIds(newState.doc)))
-                            if (link.fragment === target.link.fragment) return
-                            targets = targets.map((l, k) => (k === i ? { ...l, fragment: link.fragment } : l))
-                        })
-                        if (targets !== now.thread.targets) {
-                            tr.setNodeMarkup(now.pos, undefined, { ...node.attrs, source: formatThread({ ...now.thread, targets }, node.attrs.label) })
-                            changed = true
-                        }
-                    }
-                    if (!changed) return null
-                    tr.setMeta(commentsKey, { reanchored: true } satisfies CommentsMeta)
-                    if (trs.some((t) => t.getMeta('addToHistory') === false)) tr.setMeta('addToHistory', false)
-                    return tr
-                },
                 view(view: EditorView) {
-                    // Threads written elsewhere: read when a note is loaded and
-                    // whenever the index changes; their text fragments are
-                    // rewritten there when this note is saved.
                     let token = 0
                     let destroyed = false
                     const read = async () => {
                         const path = openPath(editor)
                         const ix = options.index
                         const mine = ++token
-                        const refs = ix && path ? await ix.threadsAbout(path).catch(() => [] as CommentRef[]) : []
+                        const fs = ((editor.storage as any).persistence as FileSystemStorage | undefined)?.options?.fs
+                        const found = ix && path ? await gather(path, ix, options.reactions, fs, new Map(), new Set([path])) : []
                         if (mine !== token || destroyed) return
-                        const current = commentsKey.getState(view.state)?.external ?? []
-                        if (!refs.length && !current.length) return
-                        view.dispatch(view.state.tr.setMeta(commentsKey, { external: refs } satisfies CommentsMeta).setMeta('addToHistory', false))
+                        const current = commentsKey.getState(view.state)?.comments ?? []
+                        if (!found.length && !current.length) return
+                        view.dispatch(view.state.tr.setMeta(commentsKey, { found } satisfies CommentsMeta).setMeta('addToHistory', false))
                     }
-                    const reanchorElsewhere = async () => {
+                    // A comment whose text was changed here is pointed at what
+                    // the text is now, where the comment lives, when the note
+                    // is saved (its file is then what the fragment is made of).
+                    const reanchor = async () => {
                         const ix = options.index
-                        if (!ix || !options.author) return
+                        const note = openPath(editor)
+                        if (!ix || !options.author || !note) return
                         const state = commentsKey.getState(view.state)
                         const flat = docText(view.state.doc)
-                        for (const t of state?.threads ?? []) {
-                            if (!t.ref) continue
-                            let targets = t.thread.targets
-                            t.targets.forEach((target, i) => {
-                                if (!target.range || !target.approximate || !target.link.fragment?.startsWith(':~:text=')) return
-                                const f = textFragmentFor(flat.text, textOffset(flat, target.range.from), textOffset(flat, target.range.to))
-                                if (f) targets = targets.map((l, k) => (k === i ? { ...l, fragment: formatTextFragment(f) } : l))
-                            })
-                            if (targets !== t.thread.targets) await ix.update(t.ref, { ...t.thread, targets }).catch(() => null)
+                        for (const c of state?.comments ?? []) {
+                            const t = c.target
+                            if (!t.range || !t.approximate || !t.link.fragment?.startsWith(':~:text=')) continue
+                            const f = textFragmentFor(flat.text, textOffset(flat, t.range.from), textOffset(flat, t.range.to))
+                            if (!f) continue
+                            await ix.update(c.ref, { link: { ...c.ref.link, fragment: formatTextFragment(f) }, body: c.ref.body }).catch(() => null)
                         }
                     }
                     storage.refresh = read
                     const persistence = (editor.storage as any).persistence as FileSystemStorage | undefined
                     const offFile = persistence?.subscribe?.((event) => {
                         if (event.type === 'load') void read()
-                        if (event.type === 'save') void reanchorElsewhere()
+                        if (event.type === 'save') void reanchor().then(read)
                     })
                     const offIndex = options.index?.subscribe?.(() => void read())
+                    const offReactions = options.reactions?.subscribe?.(() => void read())
                     void read()
                     return {
                         destroy() {
                             destroyed = true
                             offFile?.()
                             offIndex?.()
+                            offReactions?.()
                         },
                     }
                 },

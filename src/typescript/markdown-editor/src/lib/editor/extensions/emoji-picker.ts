@@ -28,8 +28,9 @@ interface EmojiEntry {
     label: string
     /** Search keywords, e.g. ["grin", "happy", "smile"]. */
     tags?: string[]
-    /** Emojibase's category (0 is smileys and emotion). */
+    /** Emojibase's category (0 is smileys and emotion), and its place in it. */
     group?: number
+    order?: number
 }
 
 /** The first category, shown when nothing has been typed. */
@@ -37,7 +38,11 @@ const FIRST_GROUP = 0
 const FIRST_GROUP_LABEL = 'Smileys & emotion'
 function firstCategory(): EmojiEntry[] {
     if (!EMOJIS) return []
-    return EMOJIS.filter((e) => (e.group ?? FIRST_GROUP) === FIRST_GROUP).slice(0, MAX_RESULTS)
+    // The dataset lists components (flag letters, skin tones) first and out
+    // of order; the category is its own entries, in the order it gives them.
+    const inGroup = EMOJIS.filter((e) => e.group === FIRST_GROUP)
+    const chosen = inGroup.length ? inGroup : EMOJIS.filter((e) => e.group === undefined && !/regional indicator|skin tone/i.test(e.label))
+    return chosen.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).slice(0, MAX_RESULTS)
 }
 
 // ── Lazy dataset ────────────────────────────────────────────────────────────
@@ -238,6 +243,15 @@ export class EmojiMenu {
                 cell.setAttribute('aria-label', emoji)
                 cell.addEventListener('mousedown', (ev) => ev.preventDefault())
                 cell.addEventListener('click', () => this.pick(emoji))
+                // Under the pointer, this is the one cell lit: the grid's
+                // selection steps back until an arrow key or the pointer
+                // returns to it.
+                cell.addEventListener('mouseenter', () => {
+                    this.selectedIndex = -1
+                    this.updateSelection()
+                    cell.classList.add('is-selected')
+                })
+                cell.addEventListener('mouseleave', () => cell.classList.remove('is-selected'))
                 strip.append(cell)
             }
             this.dom.append(label, strip)
@@ -295,6 +309,7 @@ export class EmojiMenu {
             return false
         }
         const last = this.results.length - 1
+        if (this.selectedIndex < 0) this.selectedIndex = 0
         switch (event.key) {
             case 'ArrowRight':
                 event.preventDefault()
@@ -337,7 +352,7 @@ export class EmojiMenu {
     }
 
     private updateSelection() {
-        const cells = this.dom.querySelectorAll('.ezco-mde-emoji-cell')
+        const cells = this.dom.querySelectorAll('.ezco-mde-emoji-grid .ezco-mde-emoji-cell')
         cells.forEach((cell, i) => {
             cell.classList.toggle('is-selected', i === this.selectedIndex)
             if (i === this.selectedIndex) (cell as HTMLElement).scrollIntoView({ block: 'nearest' })

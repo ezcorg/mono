@@ -187,6 +187,10 @@ const unfollow = new WeakMap<Editor, () => void>()
  *  what reads the document afresh (comments finding their text) keys on it. */
 export const loadedDocumentMeta = 'ezcoLoadedDocument'
 
+/** On a transaction that only brings a file's text into a block that shows
+ *  it (a fence reading its file): not an edit of the note, so not saved. */
+export const fileReadMeta = 'ezcoFileRead'
+
 function setDocument(editor: Editor, content: string): void {
     editor
         .chain()
@@ -602,7 +606,8 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         })
     },
 
-    onUpdate() {
+    onUpdate({ transaction }) {
+        if (transaction.getMeta(fileReadMeta)) return
         const storage = this.storage as FileSystemStorage
         if (!storage.codeView) storage.documentVersion++
         if (storage.loadingFile) return // programmatic load, not a user edit

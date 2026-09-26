@@ -29,7 +29,6 @@ import { Embed } from './extensions/embed';
 import { ExtendedTaskItem } from './extensions/taskitem';
 import { MarkdownText } from './extensions/text';
 import { Span } from './extensions/span';
-import { CommentThread } from './extensions/comments';
 import { MARKDOWN_OPTIONS } from './extensions/markdown-options';
 
 /** The syntax options both setups take. */
@@ -56,10 +55,9 @@ export function syntaxExtensions(options: SyntaxOptions): AnyExtension[] {
         ...(options.math !== false ? [Mathematics.configure(options.math ?? {})] : []),
         ...(options.footnotes !== false ? [FootnoteReference, FootnoteDefinition] : []),
         ...(options.callouts !== false ? [CalloutTitle, Callout] : []),
-        // Bracketed spans (a comment's pin) and comment threads round-trip in
-        // every editor, whether or not it shows comments.
+        // Bracketed spans (a comment's pin) round-trip in every editor,
+        // whether or not it shows comments.
         Span,
-        CommentThread,
         // Front matter and math show rendered until the caret is in them.
         SourceView,
     ];

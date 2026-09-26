@@ -6,6 +6,9 @@
  * - an image (`![[diagram.png|300]]`): the image, sized by the alias;
  * - a note (`![[Plan]]`, `![[Plan#Goals]]`): the note, or the section under
  *   the named heading, rendered read-only, refreshed when the vault changes;
+ * - a range of a note (`![[Plan#:~:text=ship%20it]]`, a pin `#c-…`): the
+ *   passage, quoted, which is what a comment's reference block is; its
+ *   header opens the note at that passage;
  * - anything else: a card that opens the file (for `![[src/lib.rs#L40-L80]]`,
  *   naming the lines; a region of a file to read and edit in the note is a
  *   fence, ```` ```src/lib.rs#L40-L80 ````, see `codeblock.ts`).
@@ -14,7 +17,7 @@
  */
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { basename, extname, formatWikilink, frontMatterOf, isNote, matchWikilinkAt, type Wikilink as WikilinkParts } from '@joinezco/storage'
+import { basename, extname, findTextFragment, formatWikilink, frontMatterOf, isNote, matchWikilinkAt, parseTextFragment, type Wikilink as WikilinkParts } from '@joinezco/storage'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { IMAGE_EXTENSIONS, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
 import { wikilinkLabel, type WikilinkStorage } from './wikilink'
@@ -33,6 +36,30 @@ const optionalData = (name: string) => ({
     renderHTML: (attrs: Record<string, unknown>) =>
         attrs[name] === null || attrs[name] === undefined ? {} : { [`data-${name}`]: attrs[name] },
 })
+
+/** The passage of a note a range names: a text fragment found in its
+ *  text, or a pinned span `[…]{#id}`; null when it is not there. */
+export function passageOf(markdown: string, fragment: string): string | null {
+    if (fragment.startsWith(':~:text=')) {
+        const f = parseTextFragment(fragment)
+        const found = f ? findTextFragment(markdown, f) : null
+        return found ? markdown.slice(found.from, found.to) : null
+    }
+    const close = markdown.indexOf(`]{#${fragment}`)
+    if (close < 0) return null
+    let depth = 0
+    for (let i = close - 1; i >= 0; i--) {
+        if (markdown[i] === ']') depth++
+        else if (markdown[i] === '[') {
+            if (!depth) return markdown.slice(i + 1, close)
+            depth--
+        }
+    }
+    return null
+}
+
+/** Whether a fragment names a passage (not a heading). */
+const isPassage = (fragment: string | null): fragment is string => !!fragment && (fragment.startsWith(':~:text=') || /^c-/.test(fragment))
 
 /** The part of a note under the heading `fragment` names: that heading and
  *  everything up to the next heading of its level or above. */
@@ -188,9 +215,18 @@ export const Embed = Node.create({
                         const text = await fs.readFile(path)
                         if (mine !== token) return
                         const body = frontMatterOf(text) === null ? text : text.replace(/^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '')
-                        const section = parts.fragment ? sectionOf(body, parts.fragment) : body
                         const content = document.createElement('div')
                         content.className = 'ezco-mde-embed-content'
+                        if (isPassage(parts.fragment)) {
+                            // A quoted passage: what a comment is about. Its
+                            // header takes the reader to it.
+                            const passage = passageOf(body, parts.fragment)
+                            content.innerHTML = renderMarkdown(editor, passage ?? '*This passage is no longer in the note.*')
+                            dom.className = 'ezco-mde-embed ezco-mde-embed--note ezco-mde-embed--passage' + (passage === null ? ' is-orphaned' : '')
+                            dom.replaceChildren(header(parts.alias || wikilinkLabel({ target: parts.target, fragment: null, alias: null }), follow), content)
+                            return
+                        }
+                        const section = parts.fragment ? sectionOf(body, parts.fragment) : body
                         content.innerHTML = renderMarkdown(editor, section ?? `*No heading “${parts.fragment}” in this note.*`)
                         dom.className = 'ezco-mde-embed ezco-mde-embed--note'
                         dom.replaceChildren(header(parts.alias || wikilinkLabel({ ...parts, alias: null }), follow), content)

@@ -887,7 +887,9 @@ export const styleModule: StyleModule = new StyleModule({
         cursor: 'pointer',
         'font-family': '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
     },
-    '.ezco-mde-emoji-cell:hover, .ezco-mde-emoji-cell.is-selected': {
+    // One cell lit at a time: the pointer moves the selection (see
+    // emoji-picker.ts), so there is no separate hover colour.
+    '.ezco-mde-emoji-cell.is-selected': {
         background: 'var(--ezco-mde-accent)',
     },
     '.ezco-mde-emoji-footer': {
@@ -1859,6 +1861,11 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment.is-active': {
         background: 'color-mix(in srgb, #f5b400 42%, transparent)',
     },
+    // A resolved comment keeps a quiet mark, so it can be found and reopened.
+    '.ezco-mde-comment.is-resolved:not(.is-active)': {
+        background: 'transparent',
+        'border-bottom': '1px dotted var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+    },
     '.ezco-mde-comment.is-draft': {
         background: 'color-mix(in srgb, var(--ezco-mde-accent) 22%, transparent)',
         'border-bottom-color': 'var(--ezco-mde-accent)',
@@ -1868,12 +1875,16 @@ export const styleModule: StyleModule = new StyleModule({
         'min-width': 0,
         position: 'relative',
     },
+    // The cards are in the chrome's type (the panels', the menus'); a
+    // comment's text is in the note's, at the note's size, whether it is
+    // being read or written.
     '.ezco-mde-comment-margin': {
         position: 'relative',
-        width: '320px',
+        width: '360px',
         'box-sizing': 'border-box',
         padding: '0 12px 24px 8px',
-        'font-size': '0.875rem',
+        'font-family': 'Inter, system-ui, -apple-system, sans-serif',
+        'font-size': '13px',
         'line-height': 1.5,
         color: 'var(--ezco-mde-fg)',
     },
@@ -1898,10 +1909,55 @@ export const styleModule: StyleModule = new StyleModule({
         left: 0,
         right: 0,
         'box-sizing': 'border-box',
-        padding: '12px 14px',
-        'border-radius': '8px',
-        border: '1px solid var(--ezco-mde-divider)',
+        padding: '14px 16px',
+        'border-radius': '6px',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
         background: 'var(--ezco-mde-bg)',
+    },
+    // The comment's text: the note's content styles, at a size for a card,
+    // the same whether shown or being edited.
+    '.ezco-mde-comment-card .ezco-mde-body': {
+        flex: 'none',
+        'font-size': '15px',
+        'line-height': 1.55,
+        padding: 0,
+        margin: 0,
+        'max-width': 'none',
+        'min-height': 0,
+    },
+    '.ezco-mde-comment-card .ezco-mde-body > :first-child': {
+        'margin-top': 0,
+    },
+    '.ezco-mde-comment-card .ezco-mde-body > :last-child': {
+        'margin-bottom': 0,
+    },
+    // The edges of a floating card size it.
+    '.ezco-mde-comment-edge': {
+        position: 'absolute',
+        display: 'none',
+    },
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-edge': {
+        display: 'block',
+    },
+    '.ezco-mde-comment-edge.is-n, .ezco-mde-comment-edge.is-s': {
+        left: 0,
+        right: 0,
+        height: '6px',
+        cursor: 'ns-resize',
+    },
+    '.ezco-mde-comment-edge.is-e, .ezco-mde-comment-edge.is-w': {
+        top: 0,
+        bottom: 0,
+        width: '6px',
+        cursor: 'ew-resize',
+    },
+    '.ezco-mde-comment-edge.is-n': { top: '-3px' },
+    '.ezco-mde-comment-edge.is-s': { bottom: '-3px' },
+    '.ezco-mde-comment-edge.is-e': { right: '-3px' },
+    '.ezco-mde-comment-edge.is-w': { left: '-3px' },
+    '.ezco-mde-comment-card.is-resizing': {
+        transition: 'none',
+        'user-select': 'none',
     },
     '.ezco-mde-comment-card.is-placed': {
         transition: 'transform 140ms ease, box-shadow 140ms ease',
@@ -1911,8 +1967,7 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde-comment-card.is-active': {
         'z-index': 2,
-        'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',
-        'box-shadow': '0 4px 16px rgba(0, 0, 0, 0.12)',
+        'border-color': 'var(--ezco-mde-fg)',
     },
     '.ezco-mde-comment-card.is-resolved:not(.is-active)': {
         opacity: 0.7,
@@ -1921,7 +1976,8 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'flex',
         'align-items': 'baseline',
         'flex-wrap': 'wrap',
-        gap: '2px 6px',
+        gap: '2px 8px',
+        'margin-bottom': '4px',
     },
     '.ezco-mde-comment-author': {
         'font-weight': 600,
@@ -1957,9 +2013,9 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'flex',
         'align-items': 'center',
         'flex-wrap': 'wrap',
-        gap: '4px 10px',
-        'margin-top': '6px',
-        'font-size': '0.85em',
+        gap: '4px 12px',
+        'margin-top': '8px',
+        'font-size': '12.5px',
     },
     // The reactions lead the row; the first action stands a little apart.
     '.ezco-mde-comment-reaction + .ezco-mde-comment-action': {
@@ -2032,15 +2088,6 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-body': {
         'overflow-wrap': 'anywhere',
     },
-    '.ezco-mde-comment-body p, .ezco-mde-comment-body ul, .ezco-mde-comment-body ol, .ezco-mde-comment-body pre, .ezco-mde-comment-body blockquote': {
-        margin: '0.3em 0',
-    },
-    '.ezco-mde-comment-body > :first-child': {
-        'margin-top': 0,
-    },
-    '.ezco-mde-comment-body > :last-child': {
-        'margin-bottom': 0,
-    },
     '.ezco-mde-comment-body pre': {
         'white-space': 'pre-wrap',
         padding: '4px 6px',
@@ -2052,22 +2099,25 @@ export const styleModule: StyleModule = new StyleModule({
         cursor: 'pointer',
     },
     '.ezco-mde-comment-replies': {
-        'margin-top': '8px',
-        'padding-left': '12px',
+        'margin-top': '10px',
+        'padding-left': '14px',
         'border-left': '2px solid var(--ezco-mde-divider)',
     },
     '.ezco-mde-comment-message.is-reply + .ezco-mde-comment-message.is-reply': {
-        'margin-top': '12px',
+        'margin-top': '14px',
     },
     '.ezco-mde-comment-reaction': {
         font: 'inherit',
-        'font-size': '0.9em',
-        padding: '0 7px',
+        'font-size': '12.5px',
+        padding: '1px 8px',
         'border-radius': '999px',
         border: '1px solid var(--ezco-mde-divider)',
         background: 'transparent',
         color: 'inherit',
         cursor: 'pointer',
+    },
+    '.ezco-mde-comment-reaction:disabled': {
+        cursor: 'default',
     },
     '.ezco-mde-comment-reaction[aria-pressed="true"]': {
         'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 60%, transparent)',
@@ -2127,8 +2177,8 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-composer': {
         display: 'flex',
         'flex-direction': 'column',
-        gap: '6px',
-        'margin-top': '8px',
+        gap: '8px',
+        'margin-top': '10px',
     },
     '.ezco-mde-comment-composer-label': {
         color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
@@ -2149,23 +2199,13 @@ export const styleModule: StyleModule = new StyleModule({
         outline: '2px solid color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',
         'outline-offset': '-1px',
     },
-    '.ezco-mde-comment-input .ezco-mde-body.ezco-mde-comment-text': {
-        flex: 'none',
+    '.ezco-mde-comment-card .ezco-mde-comment-input .ezco-mde-body.ezco-mde-comment-text': {
         'min-height': '2.6em',
         'max-height': '40vh',
         'overflow-y': 'auto',
-        padding: '6px 8px',
-        // The note's type at a size for a card, between its 13px and the
-        // note's own.
-        'font-size': '15px',
-        'line-height': 1.4,
+        padding: '8px 10px',
         outline: 'none',
         'overflow-wrap': 'anywhere',
-    },
-    '.ezco-mde-comment-composer.is-full .ezco-mde-comment-input .ezco-mde-comment-text': {
-        'min-height': '60vh',
-        'max-height': 'none',
-        'font-size': 'inherit',
     },
     '.ezco-mde-comment-composer-actions .is-expand': {
         'margin-right': 'auto',
@@ -2195,7 +2235,7 @@ export const styleModule: StyleModule = new StyleModule({
         position: 'absolute',
         top: 0,
         right: '8px',
-        width: 'min(420px, calc(100% - 16px))',
+        width: 'min(440px, calc(100% - 16px))',
         padding: 0,
         // Over everything in the note, code blocks' pinned toolbars included.
         'z-index': 500,
@@ -2205,71 +2245,14 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-margin-head': {
         display: 'none',
     },
-    // While the full-size view is up, the cards step back.
-    '.ezco-mde-comment-margin.is-behind': {
-        visibility: 'hidden',
-    },
-    // A floating card is the reader's to move (by a message's head) and to
-    // size (by its corner).
+    // A floating card is the reader's to size, by any edge.
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-card': {
         'pointer-events': 'auto',
-        'box-shadow': '0 8px 28px rgba(0, 0, 0, 0.2)',
         'padding-right': '28px',
-        resize: 'both',
         overflow: 'auto',
         'min-width': '280px',
         'min-height': '72px',
         'max-height': '80vh',
-    },
-    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-head': {
-        cursor: 'grab',
-    },
-    '.ezco-mde-comment-card.is-dragging': {
-        transition: 'none',
-        'user-select': 'none',
-        cursor: 'grabbing',
-    },
-    // The full-size view: over the note, the thread beside a full editor.
-    '.ezco-mde-comment-authoring': {
-        position: 'absolute',
-        inset: 0,
-        'z-index': 600,
-        display: 'grid',
-        'grid-template-columns': 'minmax(240px, 320px) 1fr',
-        gap: '24px',
-        padding: '16px 24px',
-        'box-sizing': 'border-box',
-        overflow: 'auto',
-        background: 'var(--ezco-mde-bg)',
-        color: 'var(--ezco-mde-fg)',
-        'font-size': '0.875rem',
-        'line-height': 1.5,
-    },
-    '.ezco-mde-comment-authoring-thread': {
-        'min-width': 0,
-        'overflow-y': 'auto',
-    },
-    '.ezco-mde-comment-authoring-quote': {
-        margin: '0 0 12px',
-        padding: '4px 10px',
-        'border-left': '3px solid color-mix(in srgb, #f5b400 55%, transparent)',
-        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
-    },
-    '.ezco-mde-comment-authoring-main': {
-        display: 'flex',
-        'flex-direction': 'column',
-        'min-width': 0,
-    },
-    '.ezco-mde-comment-authoring-head': {
-        display: 'flex',
-        'justify-content': 'space-between',
-        'align-items': 'baseline',
-        'margin-bottom': '8px',
-        'font-weight': 600,
-        position: 'relative',
-    },
-    '.ezco-mde-comment-authoring-head .is-close': {
-        position: 'static',
     },
     '.ezco-mde-comment-card:focus-visible': {
         outline: '2px solid color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',

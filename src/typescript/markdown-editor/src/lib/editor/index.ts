@@ -35,7 +35,7 @@ import type { ImageOptions } from './extensions/image';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { Comments } from './extensions/comments';
 import { CommentMargin } from './extensions/comment-margin';
-import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
+import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type Reactions, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -97,7 +97,14 @@ export type MarkdownSetupOptions = {
     /** Embedded CodeMirror code blocks. Pass `{ settings }`, or `false` to omit
      *  the (heavy, multi-hundred-KB) extension entirely — code fences then fall
      *  back to whatever code-block node is otherwise registered. */
-    codeblock?: { settings?: Record<string, unknown> } | false;
+    codeblock?: {
+        settings?: Record<string, unknown>;
+        /** Give an unnamed fence of a language with services (`ts`, `py`,
+         *  `rs`, `go`) a hidden stand-in file beside the note, so completions
+         *  and diagnostics work: a file the editor writes into the host's
+         *  filesystem, so off unless the host asks. */
+        standIns?: boolean;
+    } | false;
     /** Slash-command menu. Pass a custom command list, or `false` to omit it. */
     slashCommands?: SlashCommand[] | false;
     /** `:`-triggered emoji picker (dataset lazy-loaded on first use). `false` omits it. */
@@ -152,9 +159,12 @@ export interface CommentsSetupOptions {
     /** The handle comments are written as. Without it threads are shown,
      *  not written. */
     author?: string;
-    /** Threads written in other notes (a vault's `comments`); the editor's
-     *  own vault's when it made one. */
+    /** Comments about the note, wherever they live (a vault's `comments`);
+     *  the editor's own vault's when it made one. */
     index?: CommentIndex;
+    /** Reactions and resolution, per identity (a vault's `reactions`); the
+     *  editor's own vault's, as `author`, when it made one. */
+    reactions?: Reactions;
     /** How threads are shown, or `false` for not at all (a host showing
      *  them its own way reads them from `editor.storage.comments`).
      *  `layout: 'float'` (the default) shows nothing beside the note: the
@@ -188,6 +198,7 @@ interface VaultServices {
     resolver?: LinkResolver;
     versions?: FileVersions;
     comments?: CommentIndex;
+    reactions?: Reactions;
     /** Be told when the vault changed. */
     subscribe?: (listener: () => void) => () => void;
     /** A vault the editor made for itself, to close with the editor. */
@@ -212,10 +223,11 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         resolver: options.links?.resolver,
         versions: options.versions,
         comments: options.comments ? options.comments.index : undefined,
+        reactions: options.comments ? options.comments.reactions : undefined,
         subscribe: hostSubscribe,
     };
     if (!given.fs || (given.search && given.files && given.resolver)) return given;
-    const vault = new Vault(given.fs);
+    const vault = new Vault(given.fs, { identity: options.comments ? options.comments.author : undefined });
     const index: LinkIndex | undefined = options.links?.index;
     const files = options.files ?? (index ? { ...fileOperations(vault.fs), rename: (a: string, b: string) => index.rename(a, b) } : vault.files);
     return {
@@ -224,9 +236,10 @@ function vaultServices(options: MarkdownSetupOptions): VaultServices {
         files,
         resolver: given.resolver ?? vault.links,
         // Versions only when the host asks: a folder given as `fs` alone gets
-        // no `.eznote/` of records it did not ask for.
+        // no `.vault/` of records it did not ask for.
         versions: given.versions,
         comments: given.comments ?? vault.comments,
+        reactions: given.reactions ?? vault.reactions,
         subscribe: hostSubscribe ?? ((listener) => vault.subscribe(listener)),
         owned: vault,
     };
@@ -363,6 +376,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         ...(options.codeblock !== false
             ? [ExtendedCodeblock.configure({
                 settings: options.codeblock?.settings ?? {},
+                standIns: options.codeblock?.standIns ?? false,
                 search: services.search,
                 files: services.files,
             })]
@@ -410,7 +424,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // highlighted, and a margin to read and write them in.
         ...(options.comments !== false
             ? [
-                Comments.configure({ author: options.comments?.author, index: services.comments }),
+                Comments.configure({ author: options.comments?.author, index: services.comments, reactions: services.reactions }),
                 ...(options.comments?.margin !== false
                     ? [
                         CommentMargin.configure({
@@ -589,8 +603,8 @@ export { Mathematics, MathInline, MathBlock, katexRenderer } from './extensions/
 export type { MathOptions, MathRenderer } from './extensions/math';
 export { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
 export { Span, parseSpanAttributes, formatSpanAttributes, type SpanAttributes } from './extensions/span';
-export { CommentThread, Comments, commentsKey, messageAt } from './extensions/comments';
-export type { CommentsOptions, CommentsStorage, CommentTarget, CommentThreadInfo, MessagePath, WebAnnotation } from './extensions/comments';
+export { Comments, commentsKey, commentAt, authorOf, commentFileName, commentsFolderFor, RESOLVED, DELETED_BODY } from './extensions/comments';
+export type { CommentsOptions, CommentsStorage, CommentTarget, CommentInfo, WebAnnotation } from './extensions/comments';
 export { CommentMargin, type CommentMarginOptions } from './extensions/comment-margin';
 export { Callout, CalloutTitle, calloutType } from './extensions/callout';
 export { SourceView } from './extensions/source-view';

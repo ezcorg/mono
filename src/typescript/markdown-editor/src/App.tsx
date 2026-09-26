@@ -114,7 +114,7 @@ function App() {
   // The demo's files (the package's own source, as a snapshot) as a vault:
   // one index behind the palette's search, wikilinks, backlinks and renames.
   async function loadVault() {
-    return new Vault(await browserVfs('codeblock', { snapshot: '/snapshot.bin' }));
+    return new Vault(await browserVfs('codeblock', { snapshot: '/snapshot.bin' }), { identity: 'theo' });
   }
 
   // Create the editor once. The custom/default distinction is purely
@@ -128,6 +128,9 @@ function App() {
       if (cancelled || !editorBodyRef.current) return;
       const { fs } = vault;
       await fs.writeFile('test.md', file);
+      // A comment on the demo note: a document referencing a passage of it.
+      await fs.writeFile('comments/test/alice 2026-09-23 10.05.md', '![[test#:~:text=travels%20with%20the%20file]]\nEven to tools that know nothing of comments: they show a quoted passage and a link.\n');
+      await fs.writeFile('comments/test/theo 2026-09-23 10.06.md', '![[comments/test/alice 2026-09-23 10.05#:~:text=they%20show%20a%20quoted%20passage]]\nAnd the version log keeps its history.\n');
       // Seed a non-Markdown file so the titlebar search can open it and show
       // the "code files render as a single codeblock" behavior (and round-trip
       // back to raw .ts on edit).
@@ -156,8 +159,10 @@ function App() {
           mount: () => sidebarMountRef.current,
           title: 'Document',
         },
+        // Unnamed fences get a stand-in file in the demo's own vault.
+        codeblock: { standIns: true },
         // Threads in the note, and in other notes of the vault, in the margin.
-        comments: { author: 'theo', index: vault.comments },
+        comments: { author: 'theo', index: vault.comments, reactions: vault.reactions },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
         },

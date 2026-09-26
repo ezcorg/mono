@@ -50,6 +50,31 @@ const numbers = (view: EditorView) =>
 const type = (view: EditorView, at: number, insert: string) => view.dispatch({ changes: { from: at, insert }, userEvent: 'input.type' })
 
 describe('A region of a file, as a fence', () => {
+    it('opens some lines of a file from the block’s toolbar (`path#L2-L3`), and links to lines from the menu', async () => {
+        const { editor, container, region } = await open(fence('src/lib.rs#L1-L2', 'fn one() {}\nfn two() {}'))
+        await waitFor(() => numbers(region()).join(',') === '1,2', 3000)
+        // The block's own toolbar (the note's palette is another `.cm-toolbar-input`).
+        const input = container.querySelector('.ProseMirror .cm-toolbar-input') as HTMLInputElement
+        input.focus()
+        input.value = 'src/lib.rs#L2-L3'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        // The file is offered; taking it opens the lines asked for.
+        const hit = () => [...container.querySelectorAll<HTMLElement>('.ProseMirror .cm-search-results *')].find((el) => el.textContent === 'src/lib.rs' && el.children.length === 0)
+        await waitFor(() => !!hit(), 8000)
+        const row = hit()!
+        row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        row.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await waitFor(() => {
+            const dom = container.querySelector<HTMLElement>('.ProseMirror .cm-editor')
+            const view = dom ? EditorView.findFromDOM(dom) : null
+            return !!view && numbers(view).join(',') === '2,3'
+        }, 8000)
+        expect(editor.state.doc.firstChild!.attrs).toMatchObject({ file: 'src/lib.rs', lines: 'L2-L3' })
+        expect(getMarkdownContent(editor)).toBe(fence('src/lib.rs#L2-L3', 'fn two() {}\nfn three() {}'))
+        // The field names the lines too, and reads back to them on Escape.
+        expect(input.value).toBe('src/lib.rs#L2-L3')
+    })
+
     it('reads and writes its info string, the file’s path and its lines', async () => {
         const note = fence('src/lib.rs#L2-L3', 'fn two() {}\nfn three() {}')
         const { editor } = await open(note)

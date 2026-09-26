@@ -1,286 +1,198 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { TextSelection } from '@tiptap/pm/state'
-import { Vault, memoryVfs, parseThreadDefinition, type Thread } from '@joinezco/storage'
-import { createEditor, MarkdownEditor, type MarkdownEditorOptions } from '../index'
+import { Vault, memoryVfs, type VfsInterface } from '@joinezco/storage'
+import { createEditor, MarkdownEditor } from '../index'
 import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
-import type { CommentsStorage } from './comments'
+import { RESOLVED, type CommentsStorage } from './comments'
 
 /**
- * Comments in a note (comments RFC): threads as footnotes, targets as links
- * to its text, found, highlighted, re-anchored and changed by commands.
+ * Comments are documents (comments RFC): a note's comments are the
+ * documents referencing ranges of it, each found at its text; a reply is a
+ * document referencing a comment's text; reactions are the identity's
+ * state. Through a vault, as a host gives them.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
+const created: Array<{ editor: MarkdownEditor; container: HTMLElement; vault: Vault }> = []
 afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
+    created.forEach(({ editor, container, vault }) => {
+        cleanupEditor(editor, container)
+        vault.close()
+    })
     created.length = 0
 })
 
-const THREAD = [
-    '[^c-01J9K]: @theo 2026-09-13T12:04Z · open · [[#:~:text=brown%20fox]] [[#c-01J9K]]',
-    '    Are both of these the same animal? See [[Zoology]].',
-    '    - @alice 2026-09-13T12:10Z: No, and the second one should be a cat.',
-    '      - @theo 2026-09-13T12:12Z: 👍',
-].join('\n')
+const NOTE = '# Animals\n\nThe quick brown fox jumps over the [lazy dog]{#c-01J9K}.\n'
+const COMMENT = '![[Animals#:~:text=brown%20fox]]\nAre both of these the same animal? See [[Zoology]].\n'
+const PINNED = '![[Animals#c-01J9K]]\nA cat, surely.\n'
+const REPLY = '![[comments/Animals/alice 2026-09-13 12.04#:~:text=the%20same%20animal]]\nNo, and the second one should be a cat.\n'
 
-const NOTE = ['# Animals', '', 'The quick brown fox jumps over the [lazy dog]{#c-01J9K}.', '', THREAD].join('\n')
-
-function open(content: string, options: Partial<MarkdownEditorOptions> = {}) {
-    const container = createTestContainer(`comments-${created.length}`)
-    const editor = createEditor({ element: container, content, comments: { author: 'theo', margin: false }, ...options })
-    created.push({ editor, container })
-    return { editor, container, comments: (editor.storage as any).comments as CommentsStorage }
+const FILES: Record<string, string> = {
+    'Animals.md': NOTE,
+    'Zoology.md': '# Zoology\n',
+    'comments/Animals/alice 2026-09-13 12.04.md': COMMENT,
+    'comments/Animals/bob 2026-09-13 12.10.md': PINNED,
+    'comments/Animals/theo 2026-09-13 12.12.md': REPLY,
 }
 
-/** The document range of `text` (its nth occurrence). */
-function rangeOf(editor: MarkdownEditor, text: string, nth = 0) {
-    let found: { from: number; to: number } | null = null
-    let seen = 0
-    editor.state.doc.descendants((node, pos) => {
-        if (found || !node.isText) return !found
-        let at = node.text!.indexOf(text)
-        while (at >= 0) {
-            if (seen++ === nth) {
-                found = { from: pos + at, to: pos + at + text.length }
-                return false
-            }
-            at = node.text!.indexOf(text, at + 1)
-        }
-        return true
+async function open(files = FILES, path = 'Animals.md', author: string | null = 'theo', expect = (editor: MarkdownEditor, comments: CommentsStorage) => editor.getText().includes('fox') && comments.comments().length > 0) {
+    const vault = await Vault.open(memoryVfs(files), { watch: false, identity: author ?? undefined })
+    const container = createTestContainer(`comments-${created.length}`)
+    const editor = createEditor({
+        element: container,
+        fs: { fs: vault.fs, filepath: path, autoSave: true },
+        links: { resolver: vault.links, index: vault.links },
+        search: vault.search,
+        files: vault.files,
+        comments: { author: author ?? undefined, index: vault.comments, reactions: vault.reactions, margin: false },
     })
-    if (!found) throw new Error(`no “${text}”`)
-    return found as { from: number; to: number }
+    created.push({ editor, container, vault })
+    const comments = (editor.storage as any).comments as CommentsStorage
+    await waitFor(() => expect(editor, comments), 4000)
+    return { editor, container, vault, comments, fs: vault.fs as VfsInterface }
 }
 
 const textAt = (editor: MarkdownEditor, r: { from: number; to: number } | null) => (r ? editor.state.doc.textBetween(r.from, r.to) : null)
+const byAuthor = (comments: CommentsStorage, author: string) => comments.comments().find((c) => c.author === author)!
 
-/** The note's threads as the Markdown now has them. */
-function threadsIn(editor: MarkdownEditor): Record<string, Thread> {
-    const out: Record<string, Thread> = {}
-    for (const block of getMarkdownContent(editor).split(/\n(?=\[\^)/)) {
-        const parsed = parseThreadDefinition(block.trimEnd())
-        if (parsed) out[parsed.label] = parsed.thread
-    }
-    return out
-}
-
-describe('A comment thread in a note', () => {
-    it('round-trips byte for byte, hidden in the body, its pin a span', () => {
-        const { editor, container } = open(NOTE + '\n\nA footnote.[^1]\n\n[^1]: An ordinary one.')
-        expect(getMarkdownContent(editor)).toBe(NOTE + '\n\nA footnote.[^1]\n\n[^1]: An ordinary one.')
-        const thread = container.querySelector('.ezco-mde-comment-thread') as HTMLElement
-        expect(thread.hidden).toBe(true)
-        expect(thread.getBoundingClientRect().height).toBe(0)
-        // The pin is a span mark; ordinary footnotes still number from 1.
-        expect(editor.state.doc.rangeHasMark(rangeOf(editor, 'lazy dog').from, rangeOf(editor, 'lazy dog').to, editor.schema.marks.span)).toBe(true)
-        expect(container.querySelector('.ezco-mde-footnote-ref')?.textContent).toBe('1')
+describe('Comments about a note', () => {
+    it('are the documents referencing it, each at its text, with their replies and reactions', async () => {
+        const { editor, vault, comments } = await open()
+        await vault.reactions.toggle({ doc: 'comments/Animals/alice 2026-09-13 12.04.md', ref: 'Animals#:~:text=brown%20fox' }, '👍')
+        await waitFor(() => byAuthor(comments, 'alice').reactions.length === 1, 3000)
+        const [a, b] = [byAuthor(comments, 'alice'), byAuthor(comments, 'bob')]
+        expect(comments.comments().length).toBe(2)
+        expect(textAt(editor, a.target.range)).toBe('brown fox')
+        expect(a.time).toBe('2026-09-13T12:04')
+        expect(a.body).toBe('Are both of these the same animal? See [[Zoology]].')
+        expect(a.replies.map((r) => [r.author, r.body])).toEqual([['theo', 'No, and the second one should be a cat.']])
+        expect(a.reactions.map((r) => [r.by, r.emoji])).toEqual([['theo', '👍']])
+        expect(a.resolved).toBe(false)
+        expect(textAt(editor, b.target.range)).toBe('lazy dog')
+        // Highlighted in the note.
+        expect([...editor.view.dom.querySelectorAll('.ezco-mde-comment')].map((e) => e.textContent)).toEqual(['brown fox', 'lazy dog'])
     })
 
-    it('has its targets found and highlighted', () => {
-        const { editor, container, comments } = open(NOTE)
-        const [t] = comments.threads()
-        expect(t.id).toBe('c-01J9K')
-        expect(t.thread.replies[0].author).toBe('alice')
-        expect(t.targets.map((x) => textAt(editor, x.range))).toEqual(['brown fox', 'lazy dog'])
-        expect(t.orphaned).toBe(false)
-        expect([...container.querySelectorAll('.ezco-mde-comment')].map((e) => e.textContent)).toEqual(['brown fox', 'lazy dog'])
+    it('are resolved by a ✅, and reopened by taking it away', async () => {
+        const { editor, comments } = await open()
+        editor.commands.resolveComment(byAuthor(comments, 'alice').id)
+        await waitFor(() => byAuthor(comments, 'alice').resolved, 3000)
+        expect(byAuthor(comments, 'alice').reactions.map((r) => r.emoji)).toEqual([RESOLVED])
+        expect(editor.view.dom.querySelector('.ezco-mde-comment.is-resolved')?.textContent).toBe('brown fox')
+        editor.commands.reopenComment(byAuthor(comments, 'alice').id)
+        await waitFor(() => !byAuthor(comments, 'alice').resolved, 3000)
+    })
+
+    it('are shown, not written, without an author', async () => {
+        const { editor, comments } = await open(FILES, 'Animals.md', null)
+        expect(comments.comments().length).toBe(2)
+        expect(comments.author()).toBeNull()
+        expect(editor.commands.addComment({ body: 'x' })).toBe(false)
+        expect(editor.commands.reactToComment(byAuthor(comments, 'alice').id, '👍')).toBe(false)
     })
 })
 
 describe('Writing comments', () => {
-    it('adds a thread on the selection, anchored by a text fragment, at the end of the note', () => {
-        const { editor, comments } = open('# Plan\n\nWe ship it on Friday.\n\nMore text.')
-        const r = rangeOf(editor, 'ship it')
-        editor.commands.setTextSelection(r)
-        expect(editor.commands.addComment({ body: 'Which Friday?' })).toBe(true)
-        const [t] = comments.threads()
-        expect(t.thread).toMatchObject({ author: 'theo', status: 'open', body: 'Which Friday?', targets: [{ target: '', fragment: ':~:text=ship%20it' }] })
-        expect(comments.active()).toBe(t.id)
-        const md = getMarkdownContent(editor)
-        expect(md.startsWith('# Plan\n\nWe ship it on Friday.\n\nMore text.\n\n[^c-')).toBe(true)
-        expect(md).toMatch(/\[\^c-[0-9A-Z]{16}\]: @theo \d{4}-\d\d-\d\dT\d\d:\d\dZ · open · \[\[#:~:text=ship%20it\]\]\n {4}Which Friday\?$/)
+    it('makes a document named for the author and the time, referencing the selection', async () => {
+        const { editor, fs, comments } = await open()
+        const from = editor.getText().indexOf('jumps') + 1
+        editor.commands.setTextSelection({ from, to: from + 'jumps'.length })
+        editor.commands.addComment({ body: 'A leap, really.' })
+        await waitFor(() => comments.comments().length === 3, 4000)
+        const mine = byAuthor(comments, 'theo')
+        expect(mine.ref.source).toMatch(/^comments\/Animals\/theo \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.md$/)
+        expect(await fs.readFile(mine.ref.source)).toBe('![[Animals#:~:text=jumps]]\nA leap, really.\n')
+        expect(textAt(editor, mine.target.range)).toBe('jumps')
     })
 
-    it('pins text that no quote can tell apart, and anchors several ranges to one thread', () => {
-        const { editor, comments } = open('la la la la la la la la la la la la la la la la\n\nThe end is near.')
-        const first = rangeOf(editor, 'la', 7)
-        const second = rangeOf(editor, 'end')
-        editor.commands.addComment({ body: 'Both.', ranges: [first, second] })
-        const [t] = comments.threads()
-        expect(t.thread.targets.map((l) => l.fragment)).toEqual([t.id, ':~:text=end'])
-        expect(t.targets.map((x) => textAt(editor, x.range))).toEqual(['la', 'end'])
-        expect(getMarkdownContent(editor)).toContain(`la la la la la la la [la]{#${t.id}} la`)
+    it('pins the text when no quote could tell it apart', async () => {
+        // Twenty of the same word: no context makes the tenth unique.
+        const words = Array.from({ length: 20 }, () => 'ha').join(' ')
+        const { editor, fs, comments } = await open({ 'Twice.md': `${words}\n` }, 'Twice.md', 'theo', (e) => e.getText().includes('ha'))
+        const from = 1 + 'ha '.length * 9
+        editor.commands.setTextSelection({ from, to: from + 2 })
+        editor.commands.addComment({ body: 'The tenth one.' })
+        await waitFor(() => comments.comments().length === 1, 4000)
+        expect(getMarkdownContent(editor)).toMatch(/^(ha ){9}\[ha\]\{#c-[a-z0-9-]+\}( ha){10}$/)
+        const doc = await fs.readFile(comments.comments()[0].ref.source)
+        expect(doc).toMatch(/^!\[\[Twice#c-[a-z0-9-]+\]\]\nThe tenth one\.\n$/)
+        expect(textAt(editor, comments.comments()[0].target.range)).toBe('ha')
     })
 
-    it('replies, reacts (a toggle), edits, resolves and reopens', () => {
-        const { editor, comments } = open(NOTE)
-        const id = 'c-01J9K'
-        editor.commands.replyToComment(id, 'I think so.')
-        editor.commands.replyToComment(id, 'A cat, then.', [0])
-        editor.commands.reactToComment(id, '🎉')
-        editor.commands.editComment(id, 'Are they the same animal?')
-        editor.commands.resolveComment(id)
-        let t = threadsIn(editor)[id]
-        expect(t.status).toBe('resolved')
-        expect(t.body).toBe('Are they the same animal?')
-        expect(t.replies.map((r) => [r.author, r.body])).toEqual([
-            ['alice', 'No, and the second one should be a cat.'],
-            ['theo', 'I think so.'],
-            ['theo', '🎉'],
-        ])
-        expect(t.replies[0].replies.map((r) => r.body)).toEqual(['👍', 'A cat, then.'])
-        // The same reaction again takes it away; so does deleting a reply.
-        editor.commands.reactToComment(id, '🎉')
-        editor.commands.deleteComment(id, [1])
-        editor.commands.reopenComment(id)
-        t = threadsIn(editor)[id]
-        expect(t.status).toBe('open')
-        expect(t.replies.map((r) => r.body)).toEqual(['No, and the second one should be a cat.'])
-        expect(comments.threads()[0].thread).toEqual(t)
+    it('answers a comment with a document referencing its text, and can open it in the editor', async () => {
+        const { editor, fs, comments } = await open()
+        editor.commands.replyToComment(byAuthor(comments, 'bob').id, 'Not a cat.')
+        await waitFor(() => byAuthor(comments, 'bob').replies.length === 1, 4000)
+        const reply = byAuthor(comments, 'bob').replies[0]
+        expect(await fs.readFile(reply.ref.source)).toBe('![[comments/Animals/bob 2026-09-13 12.10#:~:text=A%20cat%2C%20surely.]]\nNot a cat.\n')
+        // Opened: the editor is the editor of that document, its reference an
+        // embed that quotes the passage it answers.
+        editor.commands.openComment(reply.id)
+        await waitFor(() => (editor.storage as any).persistence.options.filepath === reply.ref.source, 4000)
+        await waitFor(() => !!editor.view.dom.querySelector('.ezco-mde-embed--passage'), 4000)
+        expect(editor.view.dom.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-content')?.textContent?.trim()).toBe('A cat, surely.')
     })
 
-    it('deletes a message nobody answered, and a thread with its pins once nothing is left of it', () => {
-        const { editor, comments } = open(NOTE)
-        // Alice's reply has only a reaction under it: it goes.
-        editor.commands.deleteComment('c-01J9K', [0])
-        expect(comments.threads()[0].thread.replies).toEqual([])
-        // The first message, now unanswered: the thread goes, its pin unwrapped.
-        editor.commands.deleteComment('c-01J9K')
-        expect(comments.threads()).toEqual([])
-        expect(getMarkdownContent(editor)).toBe('# Animals\n\nThe quick brown fox jumps over the lazy dog.')
+    it('edits a comment where it lives, deletes an unanswered one, and leaves a tombstone for an answered one', async () => {
+        const { editor, fs, comments } = await open()
+        editor.commands.editComment(byAuthor(comments, 'bob').id, 'A cat, **surely**.')
+        await waitFor(() => byAuthor(comments, 'bob').body === 'A cat, **surely**.', 4000)
+        expect(await fs.readFile('comments/Animals/bob 2026-09-13 12.10.md')).toBe('![[Animals#c-01J9K]]\nA cat, **surely**.\n')
+        editor.commands.deleteComment(byAuthor(comments, 'bob').id)
+        await waitFor(() => comments.comments().length === 1, 4000)
+        expect(await fs.exists('comments/Animals/bob 2026-09-13 12.10.md')).toBe(false)
+        // Alice's has a reply: it stays, deleted.
+        editor.commands.deleteComment(byAuthor(comments, 'alice').id)
+        await waitFor(() => byAuthor(comments, 'alice').body === '[deleted]', 4000)
+        expect(byAuthor(comments, 'alice').replies.length).toBe(1)
     })
 
-    it('leaves a message others answered as a tombstone, their replies in place', () => {
-        const { editor, comments } = open(NOTE)
-        editor.commands.deleteComment('c-01J9K')
-        const [t] = comments.threads()
-        expect(t.thread.body).toBe('[deleted]')
-        expect(t.thread.replies.map((r) => r.body)).toEqual(['No, and the second one should be a cat.'])
-        expect(getMarkdownContent(editor)).toContain('[^c-01J9K]: @theo 2026-09-13T12:04Z · open · [[#:~:text=brown%20fox]] [[#c-01J9K]]\n    [deleted]\n    - @alice')
-    })
-
-    it('writes nothing without an author', () => {
-        const { editor, comments } = open(NOTE, { comments: { margin: false } })
-        expect(comments.author()).toBeNull()
-        expect(editor.commands.replyToComment('c-01J9K', 'hi')).toBe(false)
-        editor.commands.setTextSelection(rangeOf(editor, 'quick'))
-        expect(editor.commands.addComment({ body: 'x' })).toBe(false)
-        expect(getMarkdownContent(editor)).toBe(NOTE)
+    it('reacts, and takes a reaction away', async () => {
+        const { editor, comments } = await open()
+        editor.commands.reactToComment(byAuthor(comments, 'alice').id, '🎉')
+        await waitFor(() => byAuthor(comments, 'alice').reactions.some((r) => r.emoji === '🎉'), 3000)
+        editor.commands.reactToComment(byAuthor(comments, 'alice').id, '🎉')
+        await waitFor(() => !byAuthor(comments, 'alice').reactions.some((r) => r.emoji === '🎉'), 3000)
     })
 })
 
 describe('Re-anchoring', () => {
-    it('follows an edit to the quoted text, in the same undo step', () => {
-        const { editor, comments } = open(NOTE)
-        const fox = rangeOf(editor, 'fox')
-        editor.view.dispatch(editor.state.tr.insertText('red ', fox.from))
-        const [t] = comments.threads()
-        expect(t.thread.targets[0].fragment).toBe(':~:text=brown%20red%20fox')
-        expect(textAt(editor, t.targets[0].range)).toBe('brown red fox')
-        expect(getMarkdownContent(editor)).toContain('· open · [[#:~:text=brown%20red%20fox]] [[#c-01J9K]]')
-        editor.commands.undo()
-        expect(getMarkdownContent(editor)).toBe(NOTE)
+    it('follows an edit to the quoted words, and rewrites the comment’s link where it lives when the note is saved', async () => {
+        const { editor, fs, comments } = await open()
+        const r = byAuthor(comments, 'alice').target.range!
+        editor.view.dispatch(editor.state.tr.insertText('e', r.from + 5))
+        await waitFor(() => textAt(editor, byAuthor(comments, 'alice').target.range) === 'browne fox', 2000)
+        await (editor.storage as any).persistence.save()
+        await waitFor(async () => (await fs.readFile('comments/Animals/alice 2026-09-13 12.04.md')).startsWith('![[Animals#:~:text=browne%20fox]]'), 4000)
     })
 
-    it('leaves targets alone for an edit elsewhere, and keeps an orphan’s quote', () => {
-        const { editor, comments } = open(NOTE)
-        editor.view.dispatch(editor.state.tr.insertText('Very ', rangeOf(editor, 'The quick').from))
-        expect(getMarkdownContent(editor)).toBe(NOTE.replace('The quick', 'Very The quick'))
-        // The quoted text deleted: the thread stays, its target orphaned.
-        const r = rangeOf(editor, 'brown fox')
-        editor.view.dispatch(editor.state.tr.delete(r.from, r.to))
-        const [t] = comments.threads()
-        expect(t.thread.targets[0].fragment).toBe(':~:text=brown%20fox')
-        expect(t.targets[0]).toMatchObject({ range: null, orphaned: true })
-        expect(t.orphaned).toBe(true)
-        // Anchored again on a selection.
-        editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, rangeOf(editor, 'jumps').from, rangeOf(editor, 'jumps').to)))
-        editor.commands.anchorComment('c-01J9K', 0)
-        expect(comments.threads()[0].thread.targets[0].fragment).toBe(':~:text=jumps')
-        expect(comments.threads()[0].orphaned).toBe(false)
-    })
-
-    it('finds a quote changed outside the editor, and rewrites it to what it found', async () => {
-        const fs = memoryVfs({ 'n.md': NOTE })
-        const container = createTestContainer('comments-reload')
-        const editor = createEditor({ element: container, fs: { fs, filepath: 'n.md', autoSave: true }, comments: { author: 'theo', margin: false } })
-        created.push({ editor, container })
-        await waitFor(() => editor.getText().includes('brown fox'), 3000)
-        // Another program changed the quoted words a little.
-        await fs.writeFile('n.md', NOTE.replace('quick brown fox', 'quick browne fox'))
+    it('finds a quote changed outside the editor when the note is read again', async () => {
+        const { editor, fs, comments } = await open()
+        await fs.writeFile('Animals.md', NOTE.replace('quick brown fox', 'quick browne fox'))
         await (editor.storage as any).persistence.refresh()
         await waitFor(() => editor.getText().includes('browne fox'), 3000)
-        const comments = (editor.storage as any).comments as CommentsStorage
-        const [t] = comments.threads()
-        expect(textAt(editor, t.targets[0].range)).toBe('browne fox')
-        expect(t.thread.targets[0].fragment).toBe(':~:text=browne%20fox')
-    })
-})
-
-describe('Threads written in other notes', () => {
-    const REVIEW = '# Review\n\n- @alice 2026-09-13T12:10Z · open · [[Plan#:~:text=ship%20it]]\n  Which release?\n'
-
-    async function openPlan() {
-        const vault = await Vault.open(memoryVfs({ 'Plan.md': '# Plan\n\nWe ship it on Friday.\n', 'reviews/r.md': REVIEW }), { watch: false })
-        const container = createTestContainer('comments-elsewhere')
-        const editor = createEditor({
-            element: container,
-            fs: { fs: vault.fs, filepath: 'Plan.md', autoSave: true },
-            links: { resolver: vault.links, index: vault.links },
-            search: vault.search,
-            files: vault.files,
-            comments: { author: 'theo', index: vault.comments, margin: false },
-        })
-        created.push({ editor, container })
-        const comments = (editor.storage as any).comments as CommentsStorage
-        await waitFor(() => comments.threads().length === 1, 3000)
-        return { vault, editor, comments }
-    }
-
-    it('are shown anchored in the note they are about, and changed where they live', async () => {
-        const { vault, editor, comments } = await openPlan()
-        const [t] = comments.threads()
-        expect(t.ref?.source).toBe('reviews/r.md')
-        expect(t.pos).toBeNull()
-        expect(textAt(editor, t.targets[0].range)).toBe('ship it')
-        editor.commands.replyToComment(t.id, 'The next one.')
-        await waitFor(async () => (await vault.fs.readFile('reviews/r.md')).includes('- @theo'), 3000)
-        expect(await vault.fs.readFile('reviews/r.md')).toMatch(/Which release\?\n {2}- @theo \S+: The next one\.\n$/)
-        // The note itself is untouched, and the index's answer comes back in.
-        expect(getMarkdownContent(editor)).toBe('# Plan\n\nWe ship it on Friday.')
-        await waitFor(() => comments.threads()[0]?.thread.replies.length === 1, 3000)
+        await waitFor(() => textAt(editor, byAuthor(comments, 'alice').target.range) === 'browne fox', 3000)
     })
 
-    it('are re-anchored where they live when the note is saved', async () => {
-        const { vault, editor, comments } = await openPlan()
-        const r = rangeOf(editor, 'ship it')
-        editor.view.dispatch(editor.state.tr.insertText('s', r.from + 5))
-        await (editor.storage as any).persistence.save()
-        await waitFor(async () => (await vault.fs.readFile('reviews/r.md')).includes('ship%20sit'), 3000)
-        await waitFor(() => textAt(editor, comments.threads()[0]?.targets[0].range ?? null) === 'ship sit', 3000)
+    it('says when a comment’s text is gone, and anchors it again on a selection', async () => {
+        const { editor, fs, comments } = await open()
+        const r = byAuthor(comments, 'alice').target.range!
+        editor.view.dispatch(editor.state.tr.delete(r.from, r.to))
+        await waitFor(() => byAuthor(comments, 'alice').target.orphaned, 2000)
+        const from = editor.getText().indexOf('lazy') + 1
+        editor.commands.setTextSelection({ from, to: from + 4 })
+        editor.commands.anchorComment(byAuthor(comments, 'alice').id)
+        await waitFor(async () => (await fs.readFile('comments/Animals/alice 2026-09-13 12.04.md')).startsWith('![[Animals#:~:text=lazy]]'), 4000)
+        await waitFor(() => textAt(editor, byAuthor(comments, 'alice').target.range) === 'lazy', 3000)
     })
 })
 
 describe('Export', () => {
-    it('strips comments, and writes W3C Web Annotations', () => {
-        const { comments } = open('---\nid: 01JNOTE\n---\n\n' + NOTE)
-        expect(comments.markdownWithoutComments()).toBe('---\nid: 01JNOTE\n---\n\n# Animals\n\nThe quick brown fox jumps over the lazy dog.\n')
-        const [thread, reply, reaction] = comments.exportAnnotations()
-        expect(thread).toMatchObject({
-            '@context': 'http://www.w3.org/ns/anno.jsonld',
-            id: 'urn:ezco:note:01JNOTE#c-01J9K',
-            type: 'Annotation',
-            motivation: 'commenting',
-            creator: { type: 'Person', nickname: 'theo' },
-            created: '2026-09-13T12:04:00Z',
-            body: { type: 'TextualBody', value: 'Are both of these the same animal? See [[Zoology]].', format: 'text/markdown' },
-        })
-        const [fox, dog] = thread.target as any[]
-        expect(fox.source).toBe('urn:ezco:note:01JNOTE')
-        expect(fox.selector[0]).toMatchObject({ type: 'TextQuoteSelector', exact: 'brown fox', suffix: ' jumps over the lazy dog.' })
-        expect(fox.selector[1].type).toBe('TextPositionSelector')
-        expect(dog.selector[0].exact).toBe('lazy dog')
-        expect(reply).toMatchObject({ motivation: 'replying', target: 'urn:ezco:note:01JNOTE#c-01J9K', creator: { nickname: 'alice' } })
-        expect(reaction).toMatchObject({ motivation: 'assessing', target: (reply as any).id, body: { value: '👍' } })
+    it('writes W3C Web Annotations', async () => {
+        const { comments } = await open()
+        const out = comments.exportAnnotations()
+        const alice = out.find((a) => (a.creator as { nickname: string }).nickname === 'alice')!
+        expect(alice).toMatchObject({ type: 'Annotation', motivation: 'commenting', created: '2026-09-13T12:04:00Z', body: { format: 'text/markdown' } })
+        expect((alice.target as { selector: { exact: string }[] }).selector[0]).toMatchObject({ type: 'TextQuoteSelector', exact: 'brown fox' })
+        const reply = out.find((a) => a.motivation === 'replying')!
+        expect(reply.target).toBe(alice.id)
     })
 })

@@ -24,13 +24,13 @@ const editor = createEditor({
     files: vault.files, // create / rename (links kept) / delete
     frontMatter: { assignId: () => newNoteId() }, // stable note ids
     fileTree: {}, // the vault as a tree, shown on ⌘⇧E and not before
-    comments: { author: 'theo', index: vault.comments }, // threads, opened from their text
+    comments: { author: 'theo', index: vault.comments, reactions: vault.reactions }, // documents, opened from their text
 })
 ```
 
 Nothing shows beside the note until asked for: the file tree (⌘⇧E), the
 backlinks (⌘⇧L), a note's properties (one small line at its top opens them) and
-its comments (a click on commented text opens that thread over the note's
+its comments (a click on commented text opens that comment over the note's
 edge) all keep out of the way until then. A host that wants a panel in view
 from the start says so (`fileTree: { open: true }`,
 `links: { panel: { open: true } }`, `comments: { margin: { layout: 'column' } }`).
@@ -62,64 +62,52 @@ applied as one transaction that keeps the caret, then saved.
 
 ## Comments
 
-A thread is a footnote whose first line says who started it, when, whether
-it is open and what it is about. What it is about is links into the note's
-text, the strings "copy link to highlight" makes, so a comment's anchor and
-a link to a passage are one thing ([the comments RFC](docs/comments-discussions-rfc.md)):
+A comment is a document that quotes a passage of another and says
+something under it: the reference is an embed of a range, the text is what
+follows it, and a reply is a document quoting a comment's text ([the
+comments RFC](docs/comments-discussions-rfc.md)):
 
 ```markdown
-The quick brown fox jumps over the [lazy dog]{#c-01JAB3C4D5EFGHJK}.
-
-[^c-01JAB3C4D5EFGHJK]: @theo 2026-09-13T12:04Z · open · [[#:~:text=brown%20fox]] [[#c-01JAB3C4D5EFGHJK]]
-    Are both of these the same animal?
-    - @alice 2026-09-13T12:10Z: No, and the second one should be a cat.
-      - @theo 2026-09-13T12:12Z: 👍
+![[Plan#:~:text=ship%20it]]
+Which release? The next one, I'd say.
 ```
 
-The editor finds each target (a quote as written, regardless of case, or
-approximately after an edit made elsewhere; a pin; a block id) and
-highlights it. Clicking the highlight opens the thread as a card over the
-note's edge, just under its text; Escape or a click elsewhere closes it. A
-host that wants every open thread in view asks for a column beside the note
-(`comments: { margin: { layout: 'column' } }`), cards level with their text.
-Anchors keep up with editing: a quote whose words are changed is rewritten,
-in the same undo step, to quote what is there now; text no quote can tell
-apart is pinned instead. Given `comments: { author, index }`, threads are
-written as `author` (select text, then Comment or ⌘⌥M). A comment or a
-reply is typed in the editor itself, in small: the note's own setup without
-its chrome, so code blocks open the same files, `[[links]]` resolve the same
-way, `:emoji:` and `/` work, and ⌘/Ctrl+Enter posts. A reply is written
-right under the message it answers; what is typed is kept as a draft in the
-browser until it is posted; "Open in editor" writes the same draft in a
-full-size view over the note, the thread and its passage beside it. Under
-each message one row holds its reactions (the four most given, the rest
-behind "+n"), React (the common reactions and recent ones in a row, the
-whole grid on request), Reply, Resolve or Reopen on the first message, and
-a menu with Edit (in place) and Delete. Deleting a message others have
-answered leaves a tombstone so their replies keep their place. A floating
-card can be dragged by a message's head and resized by its corner.
-Threads about the note that live in other notes (a review, a day's notes)
-come from `index`, a vault's `comments`, and are changed where they live.
-A comment is text in the note, so any message can be edited or deleted by
-whoever can edit the note: its author is a name written down, not a lock
-(signed authorship waits on device identity, RFC §9).
-`editor.storage.comments` has the threads, `exportAnnotations()` (W3C Web
-Annotations) and `markdownWithoutComments()`.
+The editor finds each comment's passage in the open note (a quote as
+written, regardless of case, or approximately after an edit made elsewhere;
+a pin; a block id) and highlights it. Clicking the highlight opens the
+comment as a card over the note's edge, its replies nested under it;
+Escape or a click elsewhere closes it; its edges size it. A host that wants
+every open comment in view asks for a column beside the note
+(`comments: { margin: { layout: 'column' } }`). Quotes keep up with
+editing: words changed here are re-quoted where the comment lives when the
+note is saved; text no quote can tell apart is pinned instead.
+
+Given `comments: { author, index, reactions }` (a vault's `comments` and
+`reactions`; the editor's own vault's with `fs` alone), comments are
+written as `author`: select text, then Comment or ⌘⌥M. A comment or a
+reply is typed in the editor itself, in small, right under what it answers,
+and posting makes its document, `comments/<note>/<author> <date> <time>.md`,
+whose name is read back as who and when. "Open in editor" makes the
+document with the draft and loads it: the editor is then the editor of the
+comment, whose first block quotes what it answers and opens it there. Under
+each comment one row holds its reactions (per-identity state in the vault,
+not documents; a ✅ resolves), React, Reply, Resolve or Reopen, and a menu
+with Edit, Delete and Open document. `editor.storage.comments` has the
+comments and `exportAnnotations()` (W3C Web Annotations).
 
 ## What it understands
 
 | Syntax | Notes |
 |---|---|
 | CommonMark + GFM | headings, lists (marker kept), task lists, tables (a cell's blocks on one line, a table without a header row under an empty one: never a marker in place of the table), quotes, code fences (CodeMirror, real LSP; a fence named by a file writes through to it). `<` and `>` are text, escaped only where `<` would open an autolink |
-| Unnamed fences ```` ```ts ```` | a fence of a language with language services (`ts`, `js`, `py`, `rs`, `go`) is opened as a hidden stand-in file beside the note (`.plan.1.ts` for the first `ts` fence of `plan.md`), so completions and diagnostics work without naming a file; the note stays as written, and the block's toolbar names the language, not the file |
-| File regions ```` ```src/lib.rs#L40-L80 ```` | some lines of a file, numbered as the file numbers them. The file is the source of truth: the fence's body is the lines as last seen, taken from the file when the note opens (found where they moved to, if they did); an edit goes back into the file where the lines are then, and the range follows the lines it holds. A save whose lines changed in the file meanwhile is kept as a conflict copy |
+| Unnamed fences ```` ```ts ```` | with `codeblock: { standIns: true }` (off by default: it writes into the host's filesystem), a fence of a language with language services (`ts`, `js`, `py`, `rs`, `go`) is opened as a hidden stand-in file beside the note (`.plan.1.ts` for the first `ts` fence of `plan.md`), so completions and diagnostics work without naming a file; the note stays as written, and the block's toolbar names the language, not the file |
+| File regions ```` ```src/lib.rs#L40-L80 ```` | some lines of a file, numbered as the file numbers them. A block's toolbar takes `path#L2-L3` to open those lines; its menu has "Show only these lines", "Show the whole file" and "Copy link to lines" (the `path#L…` a fence or an embed takes). The file is the source of truth: the fence's body is the lines as last seen, taken from the file when the note opens (found where they moved to, if they did); an edit goes back into the file where the lines are then, and the range follows the lines it holds. A save whose lines changed in the file meanwhile is kept as a conflict copy |
 | Wikilinks `[[note]]`, `[[note\|text]]`, `[[note#heading]]`, `[[#heading]]` | resolved by the host; a dangling link is dimmed and creates its note when followed; `[[` offers the vault's notes |
 | Embeds `![[target]]` | an image by name, a note or one of its sections (read-only), or a card that opens the file (`![[src/lib.rs#L40-L80]]` names its lines; to show and edit them, use a fence) |
 | Images `![alt](path)` | read from the vault as bytes; `\|200` in the alt sizes; pasted or dropped images are stored under `attachments/` |
 | Front matter | one small line at the top of the note ("2 properties") that opens into a table of them; "Edit YAML" beside it, or arrowing up into it, shows the YAML; `id:` assigned on first open when the host asks |
 | Math `$…$`, `$$…$$` | KaTeX by default (loaded on first use), any `MathRenderer` otherwise; prices stay text |
 | Footnotes `[^1]` | numbered by first use, definitions kept where written |
-| Comment threads `[^c-…]: @who TIME · open · [[#…]]` | shown in the margin, hidden in the note; written back byte for byte until changed (see Comments) |
 | Bracketed spans `[text]{#id .class key=value}` | Pandoc's and Djot's attributed text; a comment's pin |
 | Callouts `> [!note] Title` | kinds and aliases, fold markers, Obsidian's syntax |
 
@@ -150,7 +138,7 @@ theme's variables.
 - ⌘⇧L / Ctrl+Shift+L: show or hide the backlinks under the note (`links:
   { panel: { open: true } }` starts them open).
 - ⌘⌥M / Ctrl+Alt+M: comment on the selection. In a comment box, ⌘/Ctrl+Enter
-  posts and Escape cancels; in an open thread, Escape closes it.
+  posts and Escape cancels; in an open comment, Escape closes it.
 
 ## Develop
 
