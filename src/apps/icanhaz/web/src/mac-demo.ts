@@ -204,9 +204,11 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
         editor = createEditor({
             element: editorMount,
             fs: { fs, filepath, autoSave: true },
-            // The editor's own links panel, in the column under the outline;
+            // The editor's own links panel, in the column under the outline
+            // and shown from the start (the demo is about the backlinks
+            // capability; the editor hides the panel until ⌘⇧L otherwise);
             // renames from the toolbar go through the capability too.
-            links: { ...links, panel: { mount: () => linksMount } },
+            links: { ...links, panel: { mount: () => linksMount, open: true } },
             // Prose actions (rewrite, summarize, continue, ask) over the
             // daemon's inference capability, its grant asked for the first
             // time one runs.

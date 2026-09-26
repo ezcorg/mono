@@ -86,13 +86,16 @@ body {
    overriding those; only the hardcoded position/width need an element-level
    override (below). */
 .titlebar-toolbar {
+  /* Centred with auto margins, not a translate(-50%): a half-pixel transform
+     put the field's text (and its results) between device pixels, which
+     rendered blurry once the field was focused and composited on its own. */
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  /* The transform makes this its own stacking context; lift it above the
-     editor body so the results dropdown (and embedded codeblocks' own
-     positive z-indexes) never occlude it. */
+  inset: 0;
+  margin: auto;
+  height: 28px;
+  /* Its own stacking context, lifted above the editor body so the results
+     dropdown (and embedded codeblocks' own positive z-indexes) never occlude
+     it. */
   z-index: 50;
   width: min(380px, calc(100% - 220px));
   display: flex;
