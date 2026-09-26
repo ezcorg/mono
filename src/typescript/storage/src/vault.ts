@@ -7,12 +7,17 @@
  * through `vault.fs` (the same filesystem, observed), and, when the store
  * can report them, changes made by anything else (`watch`).
  *
- *     const vault = await Vault.open(hostFs)
+ *     const vault = await Vault.open(hostFs, { identity: 'theo' })
  *     createEditor({
  *         fs: { fs: vault.fs, … },
  *         links: { resolver: vault.links, index: vault.links },
  *         toolbar: { search: vault.search, files: vault.files },
  *     })
+ *     vault.comments // references (comments) by what they are about
+ *     vault.reactions // an identity's emoji on documents and references
+ *
+ * The vault's own state (versions, reactions) lives in `.vault/`, out of
+ * every index.
  */
 import { FileType, type VfsInterface } from './vfs.js'
 import { basename, dirname, extname, isHidden, isNote, normalizePath } from './path.js'
@@ -23,7 +28,8 @@ import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/re
 import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax.js'
 import { VersionLog, type VersionLogOptions } from './versions.js'
 import { Locks } from './lock.js'
-import { formatThread, spliceThread, threadsIn, type CommentIndex, type CommentRef, type ThreadSource } from './comments.js'
+import { formatReference, referencesIn, spliceReference, type CommentIndex, type CommentRef, type Reference } from './comments.js'
+import { ReactionStore, type Reactions } from './reactions.js'
 import type { LinkIndex, LinkRef, LinkResolution, LinkResolver, LinkSuggestion, LinkSyntax } from './links/types.js'
 
 export interface VaultOptions {
@@ -33,7 +39,14 @@ export interface VaultOptions {
     /** Leave a path out of every index (the default leaves out dot-files and
      *  dot-directories: `.git`, `.obsidian`, the vault's own state). */
     ignore?: (path: string) => boolean
-    /** The version log's options (a signer, say). */
+    /** Where the vault keeps its own state: the version log, and each
+     *  identity's reactions under `state/` (default `.vault`). */
+    dir?: string
+    /** The identity reactions are made as (`[A-Za-z0-9_.-]+`); without one
+     *  `reactions` is read-only. */
+    identity?: string
+    /** The version log's options (a signer, say; its `dir` defaults to the
+     *  vault's). */
     versions?: VersionLogOptions
 }
 
@@ -51,16 +64,20 @@ export class Vault {
     readonly files: FileOperations
     /** Every file's version log, with writes refused on a stale version. */
     readonly versions: VersionLog
-    /** Comment threads by the notes they are about, and changing them. */
+    /** References (comments) by the documents they are about, and changing
+     *  them where they live. */
     readonly comments: CommentIndex
+    /** Each identity's reactions on documents and their references. */
+    readonly reactions: Reactions
 
     private graph = new LinkGraph()
     private text = new SearchIndex()
-    /** The threads each note holds (notes with none are left out). */
-    private threads = new Map<string, ThreadSource[]>()
+    /** The references each note holds (notes with none are left out). */
+    private refs = new Map<string, Reference[]>()
     /** Comment updates to a note, one at a time: each reads what the one
      *  before it wrote. */
-    private threadWrites = new Locks()
+    private commentWrites = new Locks()
+    private reactionStore: ReactionStore
     private listeners = new Set<() => void>()
     private notifyScheduled = false
     private watchAbort = new AbortController()
@@ -82,8 +99,11 @@ export class Vault {
     ) {
         this.ignore = options.ignore ?? isHidden
         this.fs = this.observe(store)
+        const dir = options.dir ?? '.vault'
         // Over the observed filesystem, so what it writes is indexed.
-        this.versions = new VersionLog(this.fs, options.versions)
+        this.versions = new VersionLog(this.fs, { dir, ...options.versions })
+        this.reactionStore = new ReactionStore(this.fs, { dir, identity: options.identity ?? null })
+        this.reactions = this.reactionStore
         const ready = () => this.ready
         this.links = {
             backlinks: async (note) => (await ready(), this.graph.backlinks(note)),
@@ -100,8 +120,9 @@ export class Vault {
             },
         }
         this.comments = {
-            threadsAbout: async (note) => (await ready(), this.threadsAbout(note)),
-            update: (ref, next) => this.updateThread(ref, next),
+            about: async (note) => (await ready(), this.about(note)),
+            in: async (doc) => (await ready(), this.referencesOf(doc)),
+            update: (ref, next) => this.commentWrites.run(normalizePath(ref.source), () => this.updateReference(ref, next)),
             subscribe: (listener) => this.subscribe(listener),
         }
         const fs = this.fs
@@ -142,7 +163,7 @@ export class Vault {
     async rebuild(): Promise<void> {
         this.graph = new LinkGraph()
         this.text.clear()
-        this.threads.clear()
+        this.refs.clear()
         for await (const path of this.walk('')) {
             // A note that cannot be read is still there to link to.
             await this.indexFile(path).catch(() => this.addFile(path))
@@ -197,34 +218,44 @@ export class Vault {
         return this.graph.backlinks(note)
     }
 
-    /** Threads in other notes with a target resolving to `note`. */
-    threadsAbout(note: string): CommentRef[] {
+    /** References in other documents whose link resolves to `note`, by
+     *  source then line. */
+    about(note: string): CommentRef[] {
         const clean = normalizePath(note)
         const out: CommentRef[] = []
-        for (const [source, threads] of this.threads) {
+        for (const [source, refs] of this.refs) {
             if (source === clean) continue
-            for (const t of threads) {
-                const about = t.thread.targets.map((link) => !!link.target.trim() && this.resolve(link.target, source)?.path === clean)
-                if (about.some(Boolean)) out.push({ ...t, source, about })
+            for (const ref of refs) {
+                if (ref.link.target.trim() && this.resolve(ref.link.target, source)?.path === clean) out.push({ ...ref, source })
             }
         }
         return out.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line)
     }
 
-    /** Write `next` in place of the thread `ref` read, if it is still as read. */
-    private updateThread(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
-        return this.threadWrites.run(normalizePath(ref.source), () => this.spliceThread(ref, next))
+    /** The references `doc` holds, in order. */
+    referencesOf(doc: string): CommentRef[] {
+        const source = normalizePath(doc)
+        return (this.refs.get(source) ?? []).map((ref) => ({ ...ref, source }))
     }
 
-    private async spliceThread(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
-        const text = await this.fs.readFile(ref.source)
-        const found = threadsIn(text).find((t) => t.form === ref.form && t.label === ref.label && t.text === ref.text)
-        if (!found) throw new Error(`The thread in ${ref.source} changed since it was read`)
-        const updated = spliceThread(text, found, next === null ? null : formatThread(next, found.label))
-        await this.fs.writeFile(ref.source, updated)
+    /** Write `next` in place of the reference `ref` read, if it is still as
+     *  read; remove the document when removing it leaves only blank lines. */
+    private async updateReference(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
+        const source = normalizePath(ref.source)
+        const text = await this.fs.readFile(source)
+        const refs = referencesIn(text)
+        const found = refs.find((r) => r.start === ref.start && r.text === ref.text) ?? refs.find((r) => r.text === ref.text)
+        if (!found) throw new Error(`The reference in ${source} changed since it was read`)
+        const updated = spliceReference(text, found, next === null ? null : formatReference(next.link, next.body))
+        if (next === null && !updated.trim()) {
+            await this.fs.unlink(source)
+            await this.versions.remove(source)
+            return null
+        }
+        await this.fs.writeFile(source, updated)
         if (next === null) return null
-        const now = threadsIn(updated).find((t) => t.start === found.start)
-        return now ? { ...now, source: ref.source, about: ref.about } : null
+        const now = referencesIn(updated).find((r) => r.start === found.start)
+        return now ? { ...now, source } : null
     }
 
     unresolved(): LinkRef[] {
@@ -297,9 +328,9 @@ export class Vault {
             throw error
         }
         for (const [a, b] of moved) {
-            const threads = this.threads.get(a)
-            this.threads.delete(a)
-            if (threads && isNote(b)) this.threads.set(b, threads)
+            const refs = this.refs.get(a)
+            this.refs.delete(a)
+            if (refs && isNote(b)) this.refs.set(b, refs)
             this.graph.moveFile(a, b)
             this.text.remove(a)
             this.text.set(b, isNote(b) ? await this.store.readFile(b) : null)
@@ -408,22 +439,22 @@ export class Vault {
     private setNote(path: string, text: string): void {
         this.graph.setNote(path, text)
         this.text.set(path, text)
-        const threads = threadsIn(text)
+        const refs = referencesIn(text)
         const clean = normalizePath(path)
-        if (threads.length) this.threads.set(clean, threads)
-        else this.threads.delete(clean)
+        if (refs.length) this.refs.set(clean, refs)
+        else this.refs.delete(clean)
     }
 
     private addFile(path: string): void {
         this.graph.addFile(path)
         this.text.set(path, null)
-        this.threads.delete(normalizePath(path))
+        this.refs.delete(normalizePath(path))
     }
 
     private removeFile(path: string): void {
         this.graph.removeFile(path)
         this.text.remove(path)
-        this.threads.delete(normalizePath(path))
+        this.refs.delete(normalizePath(path))
     }
 
     private follow(): void {
@@ -433,6 +464,9 @@ export class Vault {
                 for await (const event of this.store.watch('/', { signal })) {
                     await this.ready
                     const path = normalizePath(event.filename)
+                    // The state directory is not indexed, but what was read
+                    // of it (an identity's reactions) is forgotten.
+                    if (path && this.reactionStore.invalidate(path)) continue
                     if (!path || this.ignore(path)) continue
                     await this.reindexUnder(path).catch(() => {})
                 }

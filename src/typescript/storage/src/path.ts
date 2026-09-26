@@ -58,7 +58,7 @@ export function relativePath(fromDir: string, target: string): string {
 }
 
 /** True for paths inside a dot-directory or naming a dot-file (vault state
- *  such as `.eznote/`, `.git/`, `.obsidian/`), which no index looks into. */
+ *  such as `.vault/`, `.git/`, `.obsidian/`), which no index looks into. */
 export function isHidden(path: string): boolean {
     return normalizePath(path).split('/').some((seg) => seg.startsWith('.'))
 }

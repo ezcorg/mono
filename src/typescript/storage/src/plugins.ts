@@ -8,7 +8,7 @@
  * the plugin gets a provider whose getters return a capability only if it
  * was granted: what was refused, or never wanted, is simply not there.
  *
- * The installed set is a document in the vault (`.eznote/plugins.toml`),
+ * The installed set is a document in the vault (`.vault/plugins.toml`),
  * each manifest kept beside it and pinned by its sha256, so a synced vault
  * cannot swap one silently: a manifest that no longer matches its hash is
  * not loaded.
@@ -126,7 +126,7 @@ const encoder = new TextEncoder()
 const hashOf = (text: string) => `sha256:${bytesToHex(sha256(encoder.encode(text)))}`
 
 export interface PluginHostOptions {
-    /** Where the log of what is installed lives (default `.eznote`). */
+    /** Where the log of what is installed lives (default `.vault`). */
     dir?: string
 }
 
@@ -139,7 +139,7 @@ export class PluginHost {
         private readonly granter: Granter,
         options: PluginHostOptions = {},
     ) {
-        this.dir = options.dir ?? '.eznote'
+        this.dir = options.dir ?? '.vault'
     }
 
     /** Install the plugin whose manifest is `text`: ask for what it wants,

@@ -83,13 +83,13 @@ describe('The plugin host', () => {
         const first = new PluginHost(fs, granter(['icanhaz:nocap/inference']).granter)
         const installed = await first.install(MANIFEST)
         expect(installed.hash).toMatch(/^sha256:[0-9a-f]{64}$/)
-        expect(await fs.readFile('.eznote/plugins.toml')).toContain(installed.hash)
+        expect(await fs.readFile('.vault/plugins.toml')).toContain(installed.hash)
 
         const again = new PluginHost(fs, granter(['icanhaz:nocap/inference']).granter)
         const loaded = await again.load()
         expect(loaded.map((p) => [p.manifest.id, p.hash])).toEqual([['ezco.snippets', installed.hash]])
         // A manifest changed behind the host is not trusted under the old hash.
-        await fs.writeFile(`.eznote/plugins/${installed.hash.slice('sha256:'.length)}/manifest.toml`, MANIFEST.replace('Theo', 'someone else'))
+        await fs.writeFile(`.vault/plugins/${installed.hash.slice('sha256:'.length)}/manifest.toml`, MANIFEST.replace('Theo', 'someone else'))
         expect(await new PluginHost(fs, granter([]).granter).load()).toEqual([])
     })
 

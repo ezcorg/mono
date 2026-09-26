@@ -29,25 +29,17 @@ export { SearchIndex, snippetOf, titleOf, type FileSearch, type SearchHit, type 
 export { fileOperations, pathTaken, type FileOperations, type CreateOptions } from './files.js'
 export { Vault, type VaultOptions, type VaultLinks } from './vault.js'
 export { newNoteId, frontMatterOf, noteIdOf } from './id.js'
+export { referencesIn, formatReference, spliceReference, type Reference, type CommentIndex, type CommentRef } from './comments.js'
 export {
-    commentTime,
-    formatThread,
-    formatThreadHeader,
-    isReaction,
-    newCommentId,
-    parseThread,
-    parseThreadDefinition,
-    parseThreadHeader,
-    spliceThread,
-    stripComments,
-    threadsIn,
-    type CommentIndex,
-    type CommentRef,
-    type Message,
-    type Thread,
-    type ThreadSource,
-    type ThreadStatus,
-} from './comments.js'
+    ReactionStore,
+    referenceKey,
+    reactionTime,
+    IDENTITY,
+    type Reaction,
+    type ReactionTarget,
+    type Reactions,
+    type ReactionsOptions,
+} from './reactions.js'
 export { findTextFragment, formatTextFragment, parseTextFragment, textFragmentFor, type TextFragment, type TextMatch } from './quote.js'
 export { VersionLog, conflictCopyPath, type FileVersion, type PutResult, type Signer, type VersionLogOptions } from './versions.js'
 export { serveVfs, remoteVfs, vfsPort, DISCONNECTED, type RemoteVfs, type PortLike } from './remote.js'

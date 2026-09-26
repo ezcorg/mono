@@ -1,11 +1,11 @@
 /**
  * Every file's version log: who wrote what, on top of what.
  *
- * The files stay the truth; the log is a record beside them, in `.eznote/`.
+ * The files stay the truth; the log is a record beside them, in `.vault/`.
  * A version is a file's bytes (stored once, by their blake3 hash, in
- * `.eznote/objects/`) and the versions it follows; its id is a hash over
+ * `.vault/objects/`) and the versions it follows; its id is a hash over
  * both, so a revert to earlier bytes is a new version. A file's versions and
- * its head are kept under `.eznote/versions/<path>/`.
+ * its head are kept under `.vault/versions/<path>/`.
  *
  * A write names the version it was made on: `put(path, base, bytes)` is
  * refused when `base` is no longer the file's head, and the refused bytes
@@ -56,7 +56,7 @@ export interface Signer {
 }
 
 export interface VersionLogOptions {
-    /** Where the log lives (default `.eznote`). */
+    /** Where the log lives (default `.vault`). */
     dir?: string
     signer?: Signer
     /** The clock (tests). */
@@ -97,7 +97,7 @@ export class VersionLog {
         private readonly fs: VfsInterface,
         private readonly options: VersionLogOptions = {},
     ) {
-        this.dir = normalizePath(options.dir ?? '.eznote')
+        this.dir = normalizePath(options.dir ?? '.vault')
         this.now = options.now ?? Date.now
     }
 
@@ -185,7 +185,7 @@ export class VersionLog {
 
     /**
      * The file's log removed (a folder's: every file's under it). The bytes
-     * stay in `.eznote/objects/`: they are shared by every version made of
+     * stay in `.vault/objects/`: they are shared by every version made of
      * them, wherever it was written.
      */
     async remove(path: string): Promise<void> {

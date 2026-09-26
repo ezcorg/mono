@@ -43,7 +43,15 @@ vault.fs // the same filesystem, observed: writes through it update the indexes
 vault.links // LinkIndex & LinkResolver
 vault.search // FileSearch
 vault.files // FileOperations; rename keeps every link meaning what it meant
+vault.versions // VersionLog
+vault.comments // CommentIndex: references by what they are about
+vault.reactions // Reactions: an identity's emoji on documents and references
 ```
+
+A vault keeps its own state in one dot-directory, `.vault/` by default
+(`Vault.open(fs, { dir })`): the version log, the installed plugins, and
+each identity's state under `.vault/state/<identity>/`. Dot-directories are
+out of every index.
 
 ## In the browser
 
@@ -82,10 +90,47 @@ from the root, then by path tail anywhere, closest first. A rename moves the
 file and rewrites links to it as qualified as they were written, fixes links
 inside the moved note, and lengthens a wikilink the new name would capture.
 
+## Comments
+
+A comment is a document that references a range of another document. Any
+note may hold **references**: a paragraph that is exactly one embed,
+`![[Plan#:~:text=ship%20it]]`, whose fragment is a text fragment (the
+anchor `textFragmentFor` makes and `findTextFragment` finds), a pin
+(`c-…`), a block id (`^abc`), a heading, or absent for the whole document.
+The Markdown under the embed, up to the next reference, the next heading
+or the end, is the comment's **body**; an embed with no body is a
+transclusion, not a comment.
+
+```markdown
+![[Plan#:~:text=ship%20it]]
+Which release?
+
+![[Plan#^abc]]
+Done, I think.
+```
+
+`referencesIn(markdown)` reads them (`comments.ts`; fenced code and front
+matter are skipped), `formatReference` and `spliceReference` write them
+back: one that did not change goes back byte for byte. `vault.comments`
+(a `CommentIndex`) answers `about(note)`, the references in other
+documents whose link resolves to it, and `in(doc)`, what a document
+comments on, and `update(ref, { link, body } | null)` changes or removes
+one where it lives, refusing when the text is no longer what was read;
+removing the last thing in a document removes the document. A rename
+rewrites the links in references like any other.
+
+A **reaction** is an identity's emoji on a document or one of its
+references, kept as per-identity state rather than as a document:
+`.vault/state/<identity>/reactions.jsonl`, one JSON line each
+(`{"at","doc","ref","emoji"}`; `ref` is the reference's link as
+`referenceKey` writes it, null for the document). `vault.reactions.on(doc)`
+reads every identity's; `toggle(to, emoji)` adds or takes away the vault's
+own, given as `Vault.open(fs, { identity })`; without one it is read-only.
+
 ## Versions
 
 `vault.versions` (a `VersionLog`, over any VFS) keeps every file's
-versions in `.eznote/`: the bytes once, by blake3 hash, and each version's
+versions in `.vault/`: the bytes once, by blake3 hash, and each version's
 parents. A write names the version it was made on:
 
 ```ts
@@ -102,7 +147,7 @@ when the log is given a `Signer`. A file's history goes with the file: a
 vault rename moves the log before the file (and back, if the store cannot
 move the file), `vault.files.remove` removes it with the file, and a log
 left behind by a file removed some other way is replaced when a file is
-renamed onto its name. The bytes in `.eznote/objects/` are shared by every
+renamed onto its name. The bytes in `.vault/objects/` are shared by every
 version made of them and stay.
 
 ## Models and plugins
@@ -113,7 +158,7 @@ requests built from a selection and its note. `PluginHost` reads plugin
 manifests (`manifest.toml`: `wants` by WIT path, slash commands, themes
 over the editor's variables), asks a `Granter` for each want, hands the
 plugin a provider exposing only what was granted, and keeps the installed
-set in `.eznote/plugins.toml`, pinned by sha256.
+set in `.vault/plugins.toml`, pinned by sha256.
 
 ## Notes
 

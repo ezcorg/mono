@@ -154,11 +154,11 @@ describe('A file’s version log', () => {
         expect(signed).toEqual([result.version.id])
     })
 
-    it('keeps its records in .eznote, out of the vault’s index', async () => {
+    it('keeps its records in .vault, out of the vault’s index', async () => {
         const vault = await Vault.open(memoryVfs({ 'a.md': '# A' }), { watch: false })
         const head = (await vault.versions.head('a.md')) as FileVersion
         await vault.versions.put('a.md', head.id, '# A, again')
-        expect(await vault.fs.exists('.eznote/versions')).toBe(true)
+        expect(await vault.fs.exists('.vault/versions')).toBe(true)
         expect(vault.paths()).toEqual(['a.md'])
         // A write through the log reaches the index like any other.
         expect((await vault.search.search('again')).map((h) => h.path)).toEqual(['a.md'])
@@ -183,7 +183,7 @@ describe.each(stores)('A file’s history goes with the file (%s)', (_, make) =>
         await fs.unlink('a.md')
         await log.remove('a.md')
         expect(await log.history('a.md')).toEqual([])
-        expect(await fs.exists('.eznote/versions/a.md/HEAD')).toBe(false)
+        expect(await fs.exists('.vault/versions/a.md/HEAD')).toBe(false)
         // The bytes are b.md's too.
         expect(text(await log.read(a))).toBe('same')
         // A new file at the name starts a history of its own.
@@ -196,8 +196,8 @@ describe.each(stores)('A file’s history goes with the file (%s)', (_, make) =>
         const log = new VersionLog(fs)
         for (const path of ['notes/a.md', 'notes/deep/b.md', 'c.md']) await log.head(path)
         await log.remove('notes')
-        expect(await fs.exists('.eznote/versions/notes/a.md/HEAD')).toBe(false)
-        expect(await fs.exists('.eznote/versions/notes/deep/b.md/HEAD')).toBe(false)
+        expect(await fs.exists('.vault/versions/notes/a.md/HEAD')).toBe(false)
+        expect(await fs.exists('.vault/versions/notes/deep/b.md/HEAD')).toBe(false)
         expect(await log.history('c.md')).toHaveLength(1)
     })
 
