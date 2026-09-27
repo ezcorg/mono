@@ -100,7 +100,7 @@ describe('referencesIn', () => {
 describe('formatReference and spliceReference', () => {
     it('write the embed and the trimmed body under it, which read back the same', () => {
         const text = formatReference({ target: 'Plan', fragment: ':~:text=ship%20it', alias: null }, '\n\nWhich release?\n\nSoon?\n\n')
-        expect(text).toBe('![[Plan#:~:text=ship%20it]]\nWhich release?\n\nSoon?')
+        expect(text).toBe('![[Plan#:~:text=ship%20it]]\n\nWhich release?\n\nSoon?')
         const [ref] = referencesIn(text)
         expect(ref.body).toBe('Which release?\n\nSoon?')
         expect(ref.text).toBe(text)
@@ -111,10 +111,15 @@ describe('formatReference and spliceReference', () => {
         let out = NOTE
         for (const ref of [...referencesIn(NOTE)].reverse()) out = spliceReference(out, ref, ref.text)
         expect(out).toBe(NOTE)
-        // And every one written in the canonical form changes only what differed.
+        // And every one written in the canonical form (a blank line between the
+        // reference and its body) changes only what differed.
         out = NOTE
         for (const ref of [...referencesIn(NOTE)].reverse()) out = spliceReference(out, ref, formatReference(ref.link, ref.body))
-        expect(out).toBe(NOTE.replace('![[Plan#^abc]]\n\nDone', '![[Plan#^abc]]\nDone'))
+        expect(out).toBe(
+            NOTE.replace('![[Plan#:~:text=ship%20it]]\nWhich', '![[Plan#:~:text=ship%20it]]\n\nWhich')
+                .replace('![[Plan#Goals]]\n- a', '![[Plan#Goals]]\n\n- a')
+                .replace('![[Other]]\nAbout', '![[Other]]\n\nAbout'),
+        )
     })
 
     it('replace one reference, and remove one with the blank line it leaves', () => {

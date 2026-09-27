@@ -126,7 +126,10 @@ export function formatReference(link: Wikilink, body: string): string {
     const lines = body.split(/\r?\n/)
     const { from, to } = trimBlankLines(lines)
     const head = formatWikilink(link, { embed: true })
-    return to > from ? `${head}\n${lines.slice(from, to).join('\n')}` : head
+    // A blank line between them: the embed is a paragraph of its own in
+    // any Markdown editor, and the text a paragraph after it (without one,
+    // an editor that keeps line breaks would read the two as one).
+    return to > from ? `${head}\n\n${lines.slice(from, to).join('\n')}` : head
 }
 
 /** `markdown` with the reference replaced by `replacement` (null: removed,

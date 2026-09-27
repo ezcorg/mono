@@ -377,9 +377,11 @@ describe('A vault’s comments', () => {
         const [, review] = await vault.comments.about('projects/Plan.md')
         const next = { link: review.link, body: 'Which release?\n\nThe next one, then.' }
         const written = await vault.comments.update(review, next)
-        expect(await vault.fs.readFile('reviews/2026-09-13.md')).toBe(REVIEW.replace('Which release?', 'Which release?\n\nThe next one, then.'))
+        expect(await vault.fs.readFile('reviews/2026-09-13.md')).toBe(
+            REVIEW.replace('![[Plan#:~:text=ship%20it]]\nWhich release?', '![[Plan#:~:text=ship%20it]]\n\nWhich release?\n\nThe next one, then.'),
+        )
         expect(written).toMatchObject({ ...next, source: 'reviews/2026-09-13.md', line: 3 })
-        expect(written!.text).toBe('![[Plan#:~:text=ship%20it]]\nWhich release?\n\nThe next one, then.')
+        expect(written!.text).toBe('![[Plan#:~:text=ship%20it]]\n\nWhich release?\n\nThe next one, then.')
         // The index has the new text.
         expect((await vault.comments.about('projects/Plan.md'))[1].body).toBe(next.body)
         // The old reading is stale now.

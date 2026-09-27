@@ -99,13 +99,18 @@ anchor `textFragmentFor` makes and `findTextFragment` finds), a pin
 (`c-…`), a block id (`^abc`), a heading, or absent for the whole document.
 The Markdown under the embed, up to the next reference, the next heading
 or the end, is the comment's **body**; an embed with no body is a
-transclusion, not a comment.
+transclusion, not a comment. Written back, a blank line separates the two
+(the embed is a paragraph of its own in any Markdown editor; without one,
+an editor that keeps line breaks reads the two as one paragraph); read,
+the blank line is optional.
 
 ```markdown
 ![[Plan#:~:text=ship%20it]]
+
 Which release?
 
 ![[Plan#^abc]]
+
 Done, I think.
 ```
 
