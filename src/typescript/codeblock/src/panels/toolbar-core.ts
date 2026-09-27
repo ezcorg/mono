@@ -961,8 +961,8 @@ export class ToolbarCore {
     private handleSearchResult(result: FileResult) {
         const query = this.input.value.trim();
         // The lines asked for go with the file (`a.ts#L3-L9` opens those lines).
-        const { file, lines } = ToolbarCore.splitLines(query);
-        const path = lines && file === result.id ? result.id + lines : result.id;
+        const { lines } = ToolbarCore.splitLines(query);
+        const path = lines ? result.id + lines : result.id;
         this.input.value = path;
         this.setResults([]);
         this.host.openFile(path, result.match === 'content' ? { find: query } : undefined);

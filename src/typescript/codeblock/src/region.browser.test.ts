@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EditorView } from '@codemirror/view';
 import { memoryVfs, Vault, type VfsInterface } from '@joinezco/storage';
+import { redo, undo } from '@codemirror/commands';
 import { createCodeblock, onFileEvent, openFileEffect, persistFile, regionField, setRegionEffect, whenFileLoaded, type FileEvent, type FileVersions } from './editor';
 import type { LineRange } from './utils/region';
 
@@ -45,6 +46,40 @@ async function until(condition: () => boolean | Promise<boolean>, timeout = 5000
 }
 
 describe('A region of a file in a code block', () => {
+    it('set by the reader is undone, and redone, by showing what was shown before', async () => {
+        const fs = memoryVfs({ 'src/lib.rs': LIB });
+        const view = mount(fs);
+        await whenFileLoaded(view, 'src/lib.rs');
+        expect(view.state.doc.toString()).toBe(LIB);
+
+        // "Show only these lines" (the menu, or `src/lib.rs#L3-L5` in the toolbar).
+        view.dispatch({ effects: [openFileEffect.of({ path: 'src/lib.rs' }), setRegionEffect.of({ from: 3, to: 5 })] });
+        await until(() => view.state.doc.toString() === 'fn main() {\n    let x = 1;\n}');
+        expect(view.state.field(regionField)).toEqual({ from: 3, to: 5 });
+
+        undo(view);
+        await until(() => view.state.doc.toString() === LIB);
+        expect(view.state.field(regionField)).toBeNull();
+
+        redo(view);
+        await until(() => view.state.doc.toString() === 'fn main() {\n    let x = 1;\n}');
+        expect(view.state.field(regionField)).toEqual({ from: 3, to: 5 });
+
+        // The region following its lines down the file (a line added above
+        // them, found when the edit is saved) is the file's doing, not the
+        // reader's: undo takes back the edit, then the region.
+        await fs.writeFile('src/lib.rs', '//! The crate.\n' + LIB);
+        type(view, endOf(view, 2), ' // changed');
+        await persistFile(view);
+        await until(() => view.state.field(regionField)?.from === 4);
+        undo(view);
+        await until(() => view.state.doc.toString() === 'fn main() {\n    let x = 1;\n}');
+        expect(view.state.field(regionField)).toEqual({ from: 4, to: 6 });
+        undo(view);
+        await until(() => view.state.doc.toString().startsWith('//! The crate.\n'));
+        expect(view.state.field(regionField)).toBeNull();
+    });
+
     it('shows those lines, numbered as the file numbers them, and puts an edit back in their place', async () => {
         const fs = memoryVfs({ 'src/lib.rs': LIB });
         const view = mount(fs, { range: { from: 3, to: 5 } });

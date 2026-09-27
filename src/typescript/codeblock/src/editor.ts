@@ -3,7 +3,7 @@ import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, showPanel, tool
 import { debounce } from "lodash";
 import { codeblockTheme } from "./themes/index";
 import { vscodeLightDark, vscodeStyleMod } from "./themes/vscode";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, invertedEffects } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
@@ -399,6 +399,16 @@ export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, langua
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         regionField,
+        // A region the reader set (the menu's "Show only these lines", a
+        // `#L3-L9` in the toolbar) is undone by opening the file again at
+        // what it showed before. The region following its lines in the
+        // file, and a load, are not the reader's doing and stay out of the
+        // history (they are dispatched as such).
+        invertedEffects.of((tr) => {
+            const path = tr.startState.field(currentFileField).path;
+            if (!path || !tr.effects.some((e) => e.is(setRegionEffect))) return [];
+            return [openFileEffect.of({ path }), setRegionEffect.of(tr.startState.field(regionField))];
+        }),
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
@@ -563,7 +573,7 @@ const codeblockView = ViewPlugin.define((view) => {
             shown = content;
             region = placed;
             const file = view.state.field(currentFileField);
-            if (file.path === path && !file.loading) safeDispatch(view, { effects: setRegionEffect.of(placed) });
+            if (file.path === path && !file.loading) safeDispatch(view, { effects: setRegionEffect.of(placed), annotations: Transaction.addToHistory.of(false) });
         }
         if (leaving) LSP.notifyFileChanged(path, FileChangeType.Changed);
         // The OPEN document is now persisted → send textDocument/didSave. This is what
@@ -636,6 +646,7 @@ const codeblockView = ViewPlugin.define((view) => {
                 view.dispatch({
                     changes: text === currentContent ? [] : { from: 0, to: view.state.doc.length, insert: text },
                     effects: moved ? setRegionEffect.of(moved) : [],
+                    annotations: Transaction.addToHistory.of(false),
                 });
             } finally {
                 receivingExternalUpdate = false;

@@ -7,8 +7,8 @@
  */
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, setRegionEffect, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
-import { lineRange } from "../utils/region";
+import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import { formatLineRange, lineRange, type LineRange } from "../utils/region";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
 import { goBack, goForward, canGoBack, canGoForward } from "../navigation";
@@ -179,9 +179,12 @@ function safeDispatch(view: EditorView, spec: any) {
 export const toolbarPanel = (view: EditorView): Panel => {
     let { filepath, language, search, files, anonymous } = view.state.facet(CodeblockFacet);
     /** What the field says for `path`: the language, for the stand-in file
-     *  of an unnamed block; else the path. */
-    const shownAs = (path: string | null, lang: string | null | undefined) =>
-        anonymous && path !== null && path === filepath ? (lang ?? language ?? '') : undefined;
+     *  of an unnamed block; the path with the lines shown (`a.ts#L3-L9`)
+     *  for a region; else the path. */
+    const shownAs = (path: string | null, lang: string | null | undefined, region: LineRange | null) => {
+        if (anonymous && path !== null && path === filepath) return lang ?? language ?? '';
+        return path !== null && region ? `${path}#${formatLineRange(region)}` : undefined;
+    };
 
     // --- Clear filesystem ---
     async function clearFilesystem() {
@@ -482,11 +485,13 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 }
             }
 
-            // Sync file path
-            if (prevFile.path !== nextFile.path) {
-                updateLspLogIcon();
+            // Sync file path (and the lines shown of it)
+            const prevRegion = update.startState.field(regionField, false) ?? null;
+            const nextRegion = update.state.field(regionField, false) ?? null;
+            if (prevFile.path !== nextFile.path || prevRegion !== nextRegion) {
+                if (prevFile.path !== nextFile.path) updateLspLogIcon();
                 if (!core.isNamingModeActive() && !lspLogOverlay && !core.isSettingsModeActive()) {
-                    core.setFilePath(nextFile.path, shownAs(nextFile.path, nextFile.language));
+                    core.setFilePath(nextFile.path, shownAs(nextFile.path, nextFile.language, nextRegion));
                 }
             }
         },
