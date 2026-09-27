@@ -160,7 +160,7 @@ describe('Comments float over the note', () => {
 describe('A column of comments', () => {
     it('puts each card level with its text, none over another', async () => {
         const { editor, container, comments } = await open(1100, 'column')
-        await waitFor(() => container.querySelectorAll('.ezco-mde-comment-card.is-placed').length === 3, 3000)
+        await waitFor(() => [...container.querySelectorAll<HTMLElement>('.ezco-mde-comment-card')].filter((c) => c.style.top !== '').length === 3, 3000)
         const cards = visibleCards(container)
         expect(cards.map((c) => comments.comments().find((x) => x.id === c.dataset.comment)!.body)).toEqual(['First.', 'Second, a longer comment that wraps onto a few lines in the margin to take room.', 'Third, same line.'])
         expect(Math.abs(cards[0].getBoundingClientRect().top - anchorTop(editor, comments, cards[0].dataset.comment!))).toBeLessThan(2)
@@ -226,7 +226,7 @@ describe('Writing', () => {
         await waitFor(() => comments.comments().length === 5, 4000)
         const mine = comments.comments().find((c) => c.author === 'theo')!
         expect(mine.body).toBe('Which *five*?')
-        expect(await vault.fs.readFile(mine.ref.source)).toBe('![[Review#:~:text=number%205]]\nWhich *five*?\n')
+        expect(await vault.fs.readFile(mine.ref.source)).toBe('![[Review#:~:text=number%205]]\n\nWhich *five*?\n')
         editor.commands.focusComment(mine.id)
         await waitFor(() => !!card(container, mine.id), 2000)
         const shown = card(container, mine.id).querySelector('.ezco-mde-comment-body') as HTMLElement

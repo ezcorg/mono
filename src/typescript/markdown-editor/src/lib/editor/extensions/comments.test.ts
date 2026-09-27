@@ -99,7 +99,7 @@ describe('Writing comments', () => {
         await waitFor(() => comments.comments().length === 3, 4000)
         const mine = byAuthor(comments, 'theo')
         expect(mine.ref.source).toMatch(/^comments\/Animals\/theo \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.md$/)
-        expect(await fs.readFile(mine.ref.source)).toBe('![[Animals#:~:text=jumps]]\nA leap, really.\n')
+        expect(await fs.readFile(mine.ref.source)).toBe('![[Animals#:~:text=jumps]]\n\nA leap, really.\n')
         expect(textAt(editor, mine.target.range)).toBe('jumps')
     })
 
@@ -113,7 +113,7 @@ describe('Writing comments', () => {
         await waitFor(() => comments.comments().length === 1, 4000)
         expect(getMarkdownContent(editor)).toMatch(/^(ha ){9}\[ha\]\{#c-[a-z0-9-]+\}( ha){10}$/)
         const doc = await fs.readFile(comments.comments()[0].ref.source)
-        expect(doc).toMatch(/^!\[\[Twice#c-[a-z0-9-]+\]\]\nThe tenth one\.\n$/)
+        expect(doc).toMatch(/^!\[\[Twice#c-[a-z0-9-]+\]\]\n\nThe tenth one\.\n$/)
         expect(textAt(editor, comments.comments()[0].target.range)).toBe('ha')
     })
 
@@ -122,7 +122,7 @@ describe('Writing comments', () => {
         editor.commands.replyToComment(byAuthor(comments, 'bob').id, 'Not a cat.')
         await waitFor(() => byAuthor(comments, 'bob').replies.length === 1, 4000)
         const reply = byAuthor(comments, 'bob').replies[0]
-        expect(await fs.readFile(reply.ref.source)).toBe('![[comments/Animals/bob 2026-09-13 12.10#:~:text=A%20cat%2C%20surely.]]\nNot a cat.\n')
+        expect(await fs.readFile(reply.ref.source)).toBe('![[comments/Animals/bob 2026-09-13 12.10#:~:text=A%20cat%2C%20surely.]]\n\nNot a cat.\n')
         // Opened: the editor is the editor of that document, its reference an
         // embed that quotes the passage it answers.
         editor.commands.openComment(reply.id)
@@ -135,7 +135,7 @@ describe('Writing comments', () => {
         const { editor, fs, comments } = await open()
         editor.commands.editComment(byAuthor(comments, 'bob').id, 'A cat, **surely**.')
         await waitFor(() => byAuthor(comments, 'bob').body === 'A cat, **surely**.', 4000)
-        expect(await fs.readFile('comments/Animals/bob 2026-09-13 12.10.md')).toBe('![[Animals#c-01J9K]]\nA cat, **surely**.\n')
+        expect(await fs.readFile('comments/Animals/bob 2026-09-13 12.10.md')).toBe('![[Animals#c-01J9K]]\n\nA cat, **surely**.\n')
         editor.commands.deleteComment(byAuthor(comments, 'bob').id)
         await waitFor(() => comments.comments().length === 1, 4000)
         expect(await fs.exists('comments/Animals/bob 2026-09-13 12.10.md')).toBe(false)

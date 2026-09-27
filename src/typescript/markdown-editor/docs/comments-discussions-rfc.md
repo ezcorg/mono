@@ -13,9 +13,11 @@ comment's text is what follows it:
 
 ```markdown
 ![[Plan#:~:text=ship%20it]]
+
 Which release? The next one, I'd say.
 
 ![[Plan#:~:text=on%20Friday]]
+
 Fridays are bad for releases.
 ```
 

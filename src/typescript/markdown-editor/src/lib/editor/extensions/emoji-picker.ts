@@ -369,7 +369,7 @@ export class EmojiMenu {
  * A popover beside `anchor` holding `content`, closed by Escape, a click
  * elsewhere, or the returned function.
  */
-function popover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void): () => void {
+function popover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void): { close: () => void; update: () => void } {
     let popup: TippyInstance | null = null
     let outside: ((e: MouseEvent) => void) | null = null
     let keys: ((e: KeyboardEvent) => void) | null = null
@@ -389,6 +389,14 @@ function popover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void
         placement: 'bottom-start',
         theme: 'ezco-mde-emoji',
         maxWidth: 'none',
+        // Kept on screen: shifted along either axis, or flipped above, when
+        // its place would overflow the viewport.
+        popperOptions: {
+            modifiers: [
+                { name: 'preventOverflow', options: { padding: 8, altAxis: true, tether: false } },
+                { name: 'flip', options: { padding: 8 } },
+            ],
+        },
         // Once in the document (not after a transition, which the theme may
         // not have).
         onMount: () => requestAnimationFrame(() => onMount?.()),
@@ -408,7 +416,12 @@ function popover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void
         if (outside) document.addEventListener('mousedown', outside)
         if (keys) document.addEventListener('keydown', keys, true)
     }, 0)
-    return close
+    return {
+        close,
+        // The content changed size (the whole grid took the row's place):
+        // the popover is placed again for it.
+        update: () => void popup?.popperInstance?.update(),
+    }
 }
 
 /**
@@ -426,7 +439,7 @@ export function openEmojiPicker(anchor: HTMLElement, onPick: (emoji: string) => 
         onClose: () => close(),
     })
     menu.query('')
-    close = popover(anchor, menu.dom, () => menu.focus())
+    close = popover(anchor, menu.dom, () => menu.focus()).close
     return close
 }
 
@@ -472,14 +485,16 @@ export function openReactionPicker(anchor: HTMLElement, onPick: (emoji: string) 
         menu.query('')
         root.replaceChildren(menu.dom)
         root.classList.add('is-full')
+        popup.update()
         menu.focus()
     })
     root.append(more)
     // The first reaction takes focus once shown, unless the whole grid was
     // asked for meanwhile (its search field has it then).
-    close = popover(anchor, root, () => {
+    const popup = popover(anchor, root, () => {
         if (!root.classList.contains('is-full')) (root.querySelector('button') as HTMLButtonElement | null)?.focus()
     })
+    close = popup.close
     return close
 }
 

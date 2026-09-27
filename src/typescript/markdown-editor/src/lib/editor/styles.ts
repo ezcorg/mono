@@ -1710,10 +1710,16 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-embed--note': {
         display: 'block',
         margin: '0.3em 0',
-        padding: '0.5em 0.9em',
+        padding: '0.4em 0 0.4em 0.9em',
         'border-left': '3px solid var(--ezco-mde-divider)',
-        'border-radius': '4px',
-        background: 'color-mix(in srgb, var(--ezco-mde-code-bg) 60%, transparent)',
+    },
+    // A quoted passage (what a comment is about): the passage in the
+    // note's muted colour, its note named above it.
+    '.ezco-mde-embed--passage .ezco-mde-embed-content': {
+        color: 'var(--ezco-mde-context-menu-item-color-muted, rgba(120, 120, 120, 0.9))',
+    },
+    '.ezco-mde-embed--passage.is-orphaned .ezco-mde-embed-content': {
+        'font-style': 'italic',
     },
     '.ezco-mde-embed-header': {
         display: 'block',
@@ -1908,11 +1914,22 @@ export const styleModule: StyleModule = new StyleModule({
         top: 0,
         left: 0,
         right: 0,
+        display: 'flex',
+        'flex-direction': 'column',
         'box-sizing': 'border-box',
-        padding: '14px 16px',
         'border-radius': '6px',
         border: '1px solid var(--ezco-mde-context-menu-border)',
         background: 'var(--ezco-mde-bg)',
+    },
+    // The card's content, which scrolls when the reader sized the card
+    // shorter than it (the card itself never scrolls: its resize edges lie
+    // just outside it).
+    '.ezco-mde-comment-inside': {
+        flex: '1 1 auto',
+        'min-height': 0,
+        'overflow-y': 'auto',
+        'overflow-x': 'hidden',
+        padding: '14px 16px',
     },
     // The comment's text: the note's content styles, at a size for a card,
     // the same whether shown or being edited.
@@ -1956,11 +1973,7 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-edge.is-e': { right: '-3px' },
     '.ezco-mde-comment-edge.is-w': { left: '-3px' },
     '.ezco-mde-comment-card.is-resizing': {
-        transition: 'none',
         'user-select': 'none',
-    },
-    '.ezco-mde-comment-card.is-placed': {
-        transition: 'transform 140ms ease, box-shadow 140ms ease',
     },
     '.ezco-mde-comment-card[hidden]': {
         display: 'none',
@@ -2245,14 +2258,17 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-margin-head': {
         display: 'none',
     },
-    // A floating card is the reader's to size, by any edge.
+    // A floating card is the reader's to size, by any edge; anchored at its
+    // right, against the note's edge.
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-card': {
         'pointer-events': 'auto',
-        'padding-right': '28px',
-        overflow: 'auto',
+        left: 'auto',
         'min-width': '280px',
         'min-height': '72px',
         'max-height': '80vh',
+    },
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-inside': {
+        'padding-right': '28px',
     },
     '.ezco-mde-comment-card:focus-visible': {
         outline: '2px solid color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',

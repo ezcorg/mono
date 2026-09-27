@@ -129,8 +129,9 @@ function App() {
       const { fs } = vault;
       await fs.writeFile('test.md', file);
       // A comment on the demo note: a document referencing a passage of it.
-      await fs.writeFile('comments/test/alice 2026-09-23 10.05.md', '![[test#:~:text=travels%20with%20the%20file]]\nEven to tools that know nothing of comments: they show a quoted passage and a link.\n');
-      await fs.writeFile('comments/test/theo 2026-09-23 10.06.md', '![[comments/test/alice 2026-09-23 10.05#:~:text=they%20show%20a%20quoted%20passage]]\nAnd the version log keeps its history.\n');
+      await fs.mkdir('comments/test', { recursive: true });
+      await fs.writeFile('comments/test/alice 2026-09-23 10.05.md', '![[test#:~:text=travels%20with%20the%20file]]\n\nEven to tools that know nothing of comments: they show a quoted passage and a link.\n');
+      await fs.writeFile('comments/test/theo 2026-09-23 10.06.md', '![[comments/test/alice 2026-09-23 10.05#:~:text=they%20show%20a%20quoted%20passage]]\n\nAnd the version log keeps its history.\n');
       // Seed a non-Markdown file so the titlebar search can open it and show
       // the "code files render as a single codeblock" behavior (and round-trip
       // back to raw .ts on edit).

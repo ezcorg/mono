@@ -52,6 +52,9 @@ export interface CommentMarginOptions {
 /** The note is not squeezed narrower than this to make room for a column. */
 const NOTE_MIN = 400
 const GAP = 8
+/** The least a reader can size a floating card to. */
+const MIN_WIDTH = 280
+const MIN_HEIGHT = 72
 /** Reactions shown on a comment before the rest fold behind "+n". */
 const REACTIONS_SHOWN = 4
 
@@ -145,12 +148,23 @@ function byline(c: CommentInfo): [string, string] {
     return c.time ? [`@${c.author}`, when(c.time)] : [c.author, '']
 }
 
+/** How far the reader's sizing moved a card from where the layout puts it
+ *  (`x` to the right of its anchor at the note's edge, `y` down), and
+ *  whether they sized it at all: a sized card is theirs, and the layout
+ *  leaves it where it is rather than moving it to fit. */
+interface Sizing {
+    x: number
+    y: number
+    sized: boolean
+}
+
 /**
- * Drag any edge of `dom` to size it (floating cards). The left and top
- * edges move the card as they size it, through `offset`, which the layout
- * adds to where it puts the card.
+ * Drag any edge of `dom` to size it (floating cards). The edge dragged
+ * follows the pointer and the other three stay: a card is anchored at its
+ * right edge, so the west edge only changes the width, the east edge moves
+ * the anchor with it, and the north edge moves the top as it shortens.
  */
-function resizable(dom: HTMLElement, offset: { x: number; y: number }, onResize: () => void): void {
+function resizable(dom: HTMLElement, offset: Sizing, onResize: () => void): void {
     for (const edge of ['n', 'e', 's', 'w'] as const) {
         const handle = el('div', `ezco-mde-comment-edge is-${edge}`)
         handle.addEventListener('pointerdown', (e) => {
@@ -158,18 +172,20 @@ function resizable(dom: HTMLElement, offset: { x: number; y: number }, onResize:
             e.preventDefault()
             e.stopPropagation()
             const start = { x: e.clientX, y: e.clientY, w: dom.offsetWidth, h: dom.offsetHeight, ox: offset.x, oy: offset.y }
+            offset.sized = true
+            dom.classList.add('is-sized')
             const move = (ev: PointerEvent) => {
                 const dx = ev.clientX - start.x
                 const dy = ev.clientY - start.y
-                if (edge === 'e') dom.style.width = `${Math.max(280, start.w + dx)}px`
-                if (edge === 's') dom.style.height = `${Math.max(72, start.h + dy)}px`
-                if (edge === 'w') {
-                    const w = Math.max(280, start.w - dx)
+                if (edge === 'e') {
+                    const w = Math.max(MIN_WIDTH, start.w + dx)
                     dom.style.width = `${w}px`
-                    offset.x = start.ox + (start.w - w)
+                    offset.x = start.ox + (w - start.w)
                 }
+                if (edge === 'w') dom.style.width = `${Math.max(MIN_WIDTH, start.w - dx)}px`
+                if (edge === 's') dom.style.height = `${Math.max(MIN_HEIGHT, start.h + dy)}px`
                 if (edge === 'n') {
-                    const h = Math.max(72, start.h - dy)
+                    const h = Math.max(MIN_HEIGHT, start.h - dy)
                     dom.style.height = `${h}px`
                     offset.y = start.oy + (start.h - h)
                 }
@@ -205,7 +221,7 @@ class Card {
     /** Comments whose reactions are all shown, not the first few. */
     private allReactions = new Set<string>()
     /** How far the reader's sizing moved the card. */
-    readonly offset = { x: 0, y: 0 }
+    readonly offset: Sizing = { x: 0, y: 0, sized: false }
     private key = ''
     info!: CommentInfo
 
@@ -215,7 +231,11 @@ class Card {
         this.dom.tabIndex = 0
         this.context = el('div', 'ezco-mde-comment-context')
         this.messages = el('div', 'ezco-mde-comment-messages')
-        this.dom.append(this.context, this.messages)
+        // What the card holds scrolls when the reader made the card shorter
+        // than it; the card itself never does (its edges lie outside it).
+        const inside = el('div', 'ezco-mde-comment-inside')
+        inside.append(this.context, this.messages)
+        this.dom.append(inside)
         resizable(this.dom, this.offset, () => this.margin.schedule())
         // Looking at the card is looking at its comment.
         this.dom.addEventListener('mousedown', (e) => {
@@ -523,7 +543,7 @@ function summary(c: CommentInfo): unknown {
 class Draft {
     readonly dom: HTMLElement
     private readonly composer: Composer
-    readonly offset = { x: 0, y: 0 }
+    readonly offset: Sizing = { x: 0, y: 0, sized: false }
 
     constructor(margin: Margin, author: string) {
         const { editor } = margin
@@ -551,7 +571,9 @@ class Draft {
                 if (editor.commands.addComment({ body: this.composer.value(), ranges: ranges(), open: true })) clearDraft(key)
             },
         })
-        this.dom.append(head, this.composer.dom)
+        const inside = el('div', 'ezco-mde-comment-inside')
+        inside.append(head, this.composer.dom)
+        this.dom.append(inside)
         resizable(this.dom, this.offset, () => margin.schedule())
         this.composer.focus()
     }
@@ -742,7 +764,7 @@ class Margin {
                 return 0
             }
         }
-        type Placed = { dom: HTMLElement; want: number; height: number; top: number; fixed: boolean; range: { from: number; to: number } | null; offset: { x: number; y: number } }
+        type Placed = { dom: HTMLElement; want: number; height: number; top: number; fixed: boolean; range: { from: number; to: number } | null; offset: Sizing }
         const placed: Placed[] = []
         for (const info of state.comments) {
             const card = this.cards.get(info.id)
@@ -769,13 +791,14 @@ class Margin {
         }
         // Floating over the note, a card never extends the scroll: under its
         // text when there is room before the scroll area's end, else above
-        // its text, else as low as fits.
+        // its text, else as low as fits. A card the reader sized stays where
+        // they put it.
         if (this.floating) {
             const scroller = scrollerOf(this.list)
             const listTop = scroller ? origin - scroller.getBoundingClientRect().top + scroller.scrollTop : origin + window.scrollY
             const limit = (scroller ? scroller.scrollHeight : document.documentElement.scrollHeight) - listTop
             for (const p of placed) {
-                if (p.top + p.height <= limit) continue
+                if (p.offset.sized || p.top + p.height <= limit) continue
                 let above = -1
                 try {
                     if (p.range) above = this.view.coordsAtPos(Math.min(p.range.from, this.view.state.doc.content.size)).top - origin - GAP - p.height
@@ -785,14 +808,12 @@ class Margin {
                 p.top = above >= 0 ? above : Math.max(0, limit - p.height)
             }
         }
+        // Placed with `top`/`right`, not a transform: text on a transformed
+        // layer renders soft in some engines, and a move is not animated.
         let bottom = 0
         for (const p of placed) {
-            p.dom.style.transform = `translate(${Math.round(p.offset.x)}px, ${Math.round(p.top + p.offset.y)}px)`
-            // A card's first place is taken at once; later moves glide.
-            if (!p.dom.classList.contains('is-placed')) {
-                void p.dom.offsetHeight
-                p.dom.classList.add('is-placed')
-            }
+            p.dom.style.top = `${Math.round(p.top + p.offset.y)}px`
+            p.dom.style.right = `${-Math.round(p.offset.x)}px`
             bottom = Math.max(bottom, p.top + p.height)
         }
         this.list.style.minHeight = this.floating ? '' : `${Math.ceil(bottom)}px`
