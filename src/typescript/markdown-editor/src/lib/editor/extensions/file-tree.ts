@@ -53,6 +53,12 @@ interface Entry {
     folder: boolean
 }
 
+/** The header's controls: a plus for a note, a folder with a plus for a folder. */
+const NEW_NOTE_ICON =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M8 3v10M3 8h10"/></svg>'
+const NEW_FOLDER_ICON =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H8L6.5 3.5h-4a1 1 0 0 0-1 1Z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M8 7.5v4M6 9.5h4"/></svg>'
+
 class FileTreeView {
     readonly dom: HTMLElement
     private list: HTMLElement
@@ -97,7 +103,7 @@ class FileTreeView {
         this.toggle.addEventListener('click', () => this.setShown(!this.shown))
         this.actions = document.createElement('span')
         this.actions.className = 'ezco-mde-files-actions'
-        this.actions.append(this.button('+', 'New note', () => void this.createNote()), this.button('⊞', 'New folder', () => void this.createFolder()))
+        this.actions.append(this.button(NEW_NOTE_ICON, 'New note', () => void this.createNote()), this.button(NEW_FOLDER_ICON, 'New folder', () => void this.createFolder()))
         header.append(this.toggle, this.actions)
         this.list = document.createElement('ul')
         this.list.className = 'ezco-mde-files-list'
@@ -182,11 +188,11 @@ class FileTreeView {
         return (this.options.ignore ?? isHidden)(path)
     }
 
-    private button(glyph: string, label: string, onClick: () => void): HTMLElement {
+    private button(icon: string, label: string, onClick: () => void): HTMLElement {
         const b = document.createElement('button')
         b.type = 'button'
         b.className = 'ezco-mde-files-action'
-        b.textContent = glyph
+        b.innerHTML = icon
         b.title = label
         b.setAttribute('aria-label', label)
         b.addEventListener('mousedown', (e) => e.preventDefault())

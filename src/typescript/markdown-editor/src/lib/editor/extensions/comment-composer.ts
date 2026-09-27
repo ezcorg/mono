@@ -7,8 +7,9 @@
  * none), with the note's content styles, so what is typed is Markdown
  * authored as in the note and what is posted is the Markdown the editor
  * would write. ⌘/Ctrl+Enter posts, Escape cancels. What is typed is
- * reported as it changes, so a host can keep a draft; "Open in editor"
- * hands the same draft to a full-size view.
+ * reported as it changes, so a host can keep a draft. In the field's
+ * corner, the open glyph (⌘/Ctrl+Shift+Enter) hands the draft to the
+ * editor itself: the comment as a note of its own.
  */
 import { Editor, Extension, type AnyExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -33,6 +34,10 @@ export interface ComposerOptions {
     /** Taller from the start (the full-size view). */
     full?: boolean
 }
+
+/** The open glyph: an arrow out of a box, as the cards draw it. */
+export const OPEN_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6.5 3H3.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V9.5M9.5 3H13v3.5M13 3 7.5 8.5"/></svg>'
 
 /** A hint in an empty composer, as the styles show it. */
 const placeholderPlugin = (text: string) =>
@@ -69,6 +74,11 @@ export class Composer {
             addKeyboardShortcuts() {
                 return {
                     'Mod-Enter': () => (submit(), true),
+                    'Mod-Shift-Enter': () => {
+                        if (!options.onExpand) return false
+                        options.onExpand()
+                        return true
+                    },
                     Escape: () => (options.onCancel(), true),
                 }
             },
@@ -109,13 +119,17 @@ export class Composer {
         const actions = document.createElement('div')
         actions.className = 'ezco-mde-comment-composer-actions'
         if (options.onExpand) {
+            // In the field's corner, where an editor's "open in full" sits.
             const expand = document.createElement('button')
             expand.type = 'button'
-            expand.className = 'ezco-mde-comment-action is-expand'
-            expand.textContent = 'Open in editor'
-            expand.title = 'Write this in a full-size editor, with the thread beside it'
+            expand.className = 'ezco-mde-comment-expand'
+            expand.innerHTML = OPEN_ICON
+            expand.title = 'Open in the editor: this comment as a note of its own (⌘/Ctrl+Shift+Enter)'
+            expand.setAttribute('aria-label', 'Open in editor')
+            expand.addEventListener('mousedown', (e) => e.preventDefault())
             expand.addEventListener('click', () => options.onExpand?.())
-            actions.append(expand)
+            this.field.append(expand)
+            this.field.classList.add('has-expand')
         }
         actions.append(cancel, post)
         this.dom.append(this.label, this.field, actions)

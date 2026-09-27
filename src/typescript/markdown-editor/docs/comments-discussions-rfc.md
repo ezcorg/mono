@@ -94,8 +94,8 @@ tell apart is pinned instead (the editor writes the span into the note).
   most given, the rest behind "+n"), React (the common reactions and the
   recently picked ones in a row, "…" for the whole grid, which opens on the
   recent row or the common reactions standing in for it and the first
-  category), Reply, Resolve or Reopen, and a menu with Edit, Delete and
-  Open document.
+  category), Reply, Resolve or Reopen, and at the right, as glyphs, Open
+  (the comment as a note in the editor), Edit and Delete.
 - **Writing.** A reply is written right under what it answers, in the
   editor itself in small: the note's `markdownSetup` without its chrome, so
   code blocks open the same files and `[[links]]`, `:emoji:` and `/` work.

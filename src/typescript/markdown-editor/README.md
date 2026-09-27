@@ -88,13 +88,16 @@ Given `comments: { author, index, reactions }` (a vault's `comments` and
 written as `author`: select text, then Comment or ⌘⌥M. A comment or a
 reply is typed in the editor itself, in small, right under what it answers,
 and posting makes its document, `comments/<note>/<author> <date> <time>.md`,
-whose name is read back as who and when. "Open in editor" makes the
-document with the draft and loads it: the editor is then the editor of the
-comment, whose first block quotes what it answers and opens it there. Under
-each comment one row holds its reactions (per-identity state in the vault,
-not documents; a ✅ resolves), React, Reply, Resolve or Reopen, and a menu
-with Edit, Delete and Open document. `editor.storage.comments` has the
-comments and `exportAnnotations()` (W3C Web Annotations).
+whose name is read back as who and when. The open glyph in the field's
+corner (⌘⇧↩) makes the document with the draft, even an empty one, and
+loads it: the editor is then the editor of the comment, the caret under
+the reference, whose first block quotes what it answers and opens the note
+there with the comment looked at. A document opened before anything was
+written, and left so, is removed again. Under each comment one row holds
+its reactions (per-identity state in the vault, not documents; a ✅
+resolves), React, Reply, Resolve or Reopen, and at its right the document's
+tools as glyphs: open as a note, Edit and Delete. `editor.storage.comments`
+has the comments and `exportAnnotations()` (W3C Web Annotations).
 
 ## What it understands
 

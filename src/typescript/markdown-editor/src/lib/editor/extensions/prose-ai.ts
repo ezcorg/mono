@@ -157,20 +157,22 @@ class Session {
         this.output.setAttribute('aria-live', 'polite')
         this.note = el('div', 'ezco-mde-ai-note')
         const actions = el('div', 'ezco-mde-ai-actions')
-        const button = (action: string, label: string) => {
-            const b = el('button', 'ezco-mde-ai-button')
+        const button = (action: string, label: string, kind = '') => {
+            const b = el('button', kind ? `ezco-mde-ai-button ${kind}` : 'ezco-mde-ai-button')
             b.type = 'button'
             b.dataset.action = action
             b.textContent = label
             b.addEventListener('mousedown', (e) => e.preventDefault())
             return b
         }
-        this.apply = button('apply', 'Replace')
+        this.apply = button('apply', 'Replace', 'is-primary')
         this.apply.disabled = true
         this.again = button('again', 'Try again')
         this.again.disabled = true
-        this.discardButton = button('discard', 'Discard')
-        actions.append(this.apply, this.again, this.discardButton)
+        this.discardButton = button('discard', 'Discard', 'is-quiet')
+        // Reading left to right: the way out, another try, then the one
+        // filled button that puts the answer in the note.
+        actions.append(this.discardButton, this.again, this.apply)
         this.dom.append(this.title, this.ask, this.output, this.note, actions)
 
         this.apply.addEventListener('click', () => this.accept())

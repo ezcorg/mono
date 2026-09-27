@@ -3,7 +3,7 @@ import { userEvent } from '@vitest/browser/context'
 import { Vault, memoryVfs } from '@joinezco/storage'
 import { createEditor, MarkdownEditor } from '../index'
 import { cleanupEditor, waitFor } from '../../../test/utils'
-import type { CommentsStorage } from './comments'
+import { authorOf, type CommentsStorage } from './comments'
 
 /**
  * Comments in a real browser: measured boxes, so a card that drifts from
@@ -109,8 +109,8 @@ describe('Comments float over the note', () => {
         expect(box.top - end).toBeLessThan(12)
         expect(box.right).toBeLessThanOrEqual(container.getBoundingClientRect().right)
         expect(editor.view.dom.getBoundingClientRect().width).toBe(noteWidth)
-        // No shadow, a plain border: the chrome's own look.
-        expect(getComputedStyle(visibleCards(container)[0]).boxShadow).toBe('none')
+        // Over the note, the chrome's shadow lifts it off the text.
+        expect(getComputedStyle(visibleCards(container)[0]).boxShadow).not.toBe('none')
         // Its replies, nested, with who and when.
         expect(visibleCards(container)[0].querySelectorAll('.ezco-mde-comment-message').length).toBe(3)
         expect(visibleCards(container)[0].querySelector('.ezco-mde-comment-author')?.textContent).toBe('@alice')
@@ -334,9 +334,7 @@ describe('Writing', () => {
         const bob = comments.comments().find((c) => c.id === second)!.replies[0].id
         editor.commands.focusComment(second)
         await waitFor(() => card(container, second).classList.contains('is-active'), 2000)
-        tool(messageOf(card(container, second), bob), 'More').click()
-        await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
-        tool(document.querySelector('.ezco-mde-comment-menu') as HTMLElement, 'Edit').click()
+        tool(messageOf(card(container, second), bob), 'Edit').click()
         await waitFor(() => !!composerIn(messageOf(card(container, second), bob)), 2000)
         expect(messageOf(card(container, second), bob).querySelector(':scope > .ezco-mde-comment-body')).toBeNull()
         const field = composerIn(messageOf(card(container, second), bob))!
@@ -346,16 +344,12 @@ describe('Writing', () => {
         await waitFor(() => comments.comments().find((c) => c.id === second)!.replies[0].body === 'A reply. Edited.', 4000)
         // Carol's answer to bob goes (nobody answered it).
         const carol = comments.comments().find((c) => c.id === second)!.replies[0].replies[0].id
-        tool(messageOf(card(container, second), carol), 'More').click()
-        await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
-        tool(document.querySelector('.ezco-mde-comment-menu') as HTMLElement, 'Delete').click()
+        tool(messageOf(card(container, second), carol), 'Delete').click()
         await waitFor(() => !!tool(messageOf(card(container, second), carol), 'Delete this comment'), 2000)
         tool(messageOf(card(container, second), carol), 'Delete this comment').click()
         await waitFor(() => comments.comments().find((c) => c.id === second)!.replies[0].replies.length === 0, 4000)
         // Bob's, answered before: only a tombstone now.
-        tool(messageOf(card(container, second), second), 'More').click()
-        await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
-        tool(document.querySelector('.ezco-mde-comment-menu') as HTMLElement, 'Delete').click()
+        tool(messageOf(card(container, second), second), 'Delete').click()
         await waitFor(() => !!tool(messageOf(card(container, second), second), 'Delete this comment'), 2000)
         tool(messageOf(card(container, second), second), 'Delete this comment').click()
         await waitFor(() => comments.comments().find((c) => c.id === second)?.body === '[deleted]', 4000)
@@ -378,7 +372,66 @@ describe('Writing', () => {
     it('offers nothing to write or react with without an author', async () => {
         const { container, comments } = await open(1100, 'column', FILES, null)
         const first = idOf(comments, 'First.')
-        expect([...card(container, first).querySelectorAll('.ezco-mde-comment-action')].map((b) => b.getAttribute('aria-label'))).toEqual(['More'])
+        expect([...card(container, first).querySelectorAll('.ezco-mde-comment-action')].map((b) => b.getAttribute('aria-label'))).toEqual(['Open document'])
+    })
+
+    it('opens an unwritten comment in the editor with somewhere to write, and looks at it on the way back', async () => {
+        const { editor, container, comments, vault } = await open(900, 'float')
+        let from = -1
+        editor.state.doc.descendants((node, pos) => {
+            if (from < 0 && node.isText && node.text!.includes('number 7')) from = pos + node.text!.indexOf('number 7')
+        })
+        editor.commands.setTextSelection({ from, to: from + 'number 7'.length })
+        editor.commands.startComment()
+        await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
+        // Nothing typed yet: the corner glyph opens the document in the editor.
+        tool(container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement, 'Open in editor').click()
+        await waitFor(() => /^comments\/Review\/theo /.test((editor.storage as any).persistence.options.filepath ?? ''), 4000)
+        const path = (editor.storage as any).persistence.options.filepath as string
+        // The caret is in a paragraph of its own under the reference, ready for the text.
+        await waitFor(() => editor.isFocused && editor.state.selection.$from.parent === editor.state.doc.lastChild, 2000)
+        expect(editor.state.doc.childCount).toBe(2)
+        expect(editor.state.doc.firstChild?.firstChild?.type.name).toBe('embed')
+        await userEvent.keyboard('Written in the editor itself.')
+        await (editor.storage as any).persistence.flushPendingSave()
+        expect(await vault.fs.readFile(path)).toContain('![[Review#:~:text=number%207]]\n\nWritten in the editor itself.')
+        // Back by the reference at the top: the note, with the comment looked at.
+        await waitFor(() => !!editor.view.dom.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-open'), 3000)
+        ;(editor.view.dom.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-open') as HTMLElement).click()
+        await waitFor(() => (editor.storage as any).persistence.options.filepath === 'Review.md', 4000)
+        await waitFor(() => comments.comments().some((c) => c.ref.source === path && c.target.range !== null), 4000)
+        const mine = comments.comments().find((c) => c.ref.source === path)!
+        expect(mine.body).toBe('Written in the editor itself.')
+        expect(mine.author).toBe('theo')
+        await waitFor(() => comments.active() === mine.id, 2000)
+        expect(editor.view.dom.querySelector('.ezco-mde-comment.is-active')?.textContent).toBe('number 7')
+        await waitFor(() => !!card(container, mine.id) && !card(container, mine.id).hidden, 2000)
+        // Escape closes it, and it stays closed.
+        card(container, mine.id).focus()
+        await userEvent.keyboard('{Escape}')
+        await waitFor(() => comments.active() === null, 2000)
+        await frames()
+        expect(comments.active()).toBeNull()
+    })
+
+    it('drops a reply opened in the editor and left with nothing written', async () => {
+        const { editor, container, comments, vault } = await open(900, 'float')
+        const first = idOf(comments, 'First.')
+        editor.commands.focusComment(first)
+        await waitFor(() => !!card(container, first), 2000)
+        tool(messageOf(card(container, first), first), 'Reply').click()
+        await waitFor(() => document.activeElement === composerIn(messageOf(card(container, first), first)), 2000)
+        await userEvent.keyboard('{Control>}{Shift>}{Enter}{/Shift}{/Control}')
+        await waitFor(() => /^comments\/Review\/theo /.test((editor.storage as any).persistence.options.filepath ?? ''), 4000)
+        const path = (editor.storage as any).persistence.options.filepath as string
+        expect(await vault.fs.exists(path)).toBe(true)
+        await (editor.storage as any).persistence.loadFile('Review.md')
+        await waitFor(async () => !(await vault.fs.exists(path)), 4000)
+        await waitFor(() => comments.comments().find((c) => c.id === first)!.replies.length === 0, 3000)
+    })
+
+    it('names a second comment made in the same minute after its author too', () => {
+        expect(authorOf('comments/Review/theo 2026-09-27 00.25 2.md')).toEqual({ author: 'theo', time: '2026-09-27T00:25' })
     })
 })
 

@@ -15,25 +15,24 @@
  * (each a document referencing the text above it). Every one shows who and
  * when (the document's name says), its text rendered as the note renders
  * text, and one row: its reactions (the four most given; the rest behind
- * "+n"), React, Reply, Resolve or Reopen, and a menu with Edit (in place),
- * Delete and Open (the comment's document, in the editor). A reply is
- * written right under what it answers, in the editor itself in small
- * (`Composer`), and kept as a draft in this browser until posted; "Open in
- * editor" makes the reply's document with the draft and loads it, which is
- * where a longer one is written. Resolving closes the card.
+ * "+n"), React, Reply, Resolve or Reopen, and at the right, as glyphs, Open
+ * (the comment's document, in the editor), Edit (in place) and Delete. A
+ * reply is written right under what it answers, in the editor itself in
+ * small (`Composer`), and kept as a draft in this browser until posted; the
+ * open glyph in the field's corner makes the reply's document with the
+ * draft and loads it, which is where a longer one is written. Resolving
+ * closes the card.
  */
 import { Extension, type AnyExtension, type Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { parseTextFragment, type Reaction } from '@joinezco/storage'
 import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage } from './comments'
-import { Composer } from './comment-composer'
+import { Composer, OPEN_ICON } from './comment-composer'
 import { clearDraft, draftKey, readDraft, renderMarkdown, when, writeDraft } from './comment-render'
 import { openReactionPicker } from './emoji-picker'
-import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { scrollerOf } from './rail'
 import type { FileSystemStorage } from './filesystem'
-import tippy, { type Instance as TippyInstance } from 'tippy.js'
 
 type Mount = HTMLElement | ((editorRoot: HTMLElement) => HTMLElement | null | void)
 
@@ -86,41 +85,14 @@ const button = (label: string, onClick: (b: HTMLButtonElement) => void, classNam
 const REACT_ICON =
     '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM5.5 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm5 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM5.3 9.6a.75.75 0 0 1 1.05.15c.4.53 1 .85 1.65.85s1.25-.32 1.65-.85a.75.75 0 1 1 1.2.9A3.55 3.55 0 0 1 8 12.1a3.55 3.55 0 0 1-2.85-1.45.75.75 0 0 1 .15-1.05Z"/></svg>'
 
-/** A menu of `items` under `anchor`; closes on a choice, Escape or a click
- *  elsewhere. */
-function openMenu(anchor: HTMLElement, items: ContextMenuItem[]): void {
-    let popup: TippyInstance | null = null
-    let outside: ((e: MouseEvent) => void) | null = null
-    const close = () => {
-        if (outside) document.removeEventListener('mousedown', outside)
-        outside = null
-        menu.disable()
-        popup?.destroy()
-        popup = null
-        menu.destroy()
-    }
-    const menu = new ContextMenu({
-        className: 'ezco-mde-comment-menu',
-        items: items.map((item) => ({ ...item, onSelect: () => (close(), item.onSelect()) })),
-        onClose: () => (close(), anchor.focus()),
-    })
-    const created = tippy(anchor, {
-        appendTo: () => document.body,
-        content: menu.dom,
-        showOnCreate: true,
-        interactive: true,
-        trigger: 'manual',
-        placement: 'bottom-start',
-        theme: 'ezco-mde-block-actions',
-        maxWidth: 'none',
-        onMount: () => requestAnimationFrame(() => menu.enable()),
-    }) as TippyInstance | TippyInstance[]
-    popup = Array.isArray(created) ? created[0] : created
-    outside = (e: MouseEvent) => {
-        if (!menu.dom.contains(e.target as Node) && !anchor.contains(e.target as Node)) close()
-    }
-    setTimeout(() => { if (outside) document.addEventListener('mousedown', outside) }, 0)
-}
+/** The glyphs of a message's tools, drawn as the React glyph is: a cross
+ *  (close), a pencil (edit), a bin (delete); the open glyph is the composer's. */
+const CLOSE_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 4l8 8M12 4l-8 8"/></svg>'
+const EDIT_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.2 13.3 2 14l.7-3.2Z"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M9.8 4.2 12 6.4"/></svg>'
+const DELETE_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M3 4.5h10M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M4.5 4.5l.6 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/></svg>'
 
 /** What an orphaned comment pointed at, to show in its place. */
 function quoteOf(fragment: string | null): string {
@@ -302,7 +274,11 @@ class Card {
         const author = this.margin.author()
 
         const context: Node[] = []
-        if (this.margin.floating) context.push(button('×', () => this.margin.close(), 'ezco-mde-comment-tool is-close', 'Close'))
+        if (this.margin.floating) {
+            const close = button('', () => this.margin.close(), 'ezco-mde-comment-tool is-close', 'Close')
+            close.innerHTML = CLOSE_ICON
+            context.push(close)
+        }
         if (info.target.orphaned) {
             const orphan = el('div', 'ezco-mde-comment-orphan')
             orphan.append(el('span', 'ezco-mde-comment-quote', quoteOf(info.target.link.fragment)), el('span', undefined, ' is no longer in the note.'))
@@ -401,15 +377,26 @@ class Card {
                         }, 'ezco-mde-comment-action', 'Resolve'),
                 )
             }
-            const items: ContextMenuItem[] = [{ label: 'Open document', onSelect: () => editor.commands.openComment(c.id) }]
-            if (author && !deleted) {
-                items.unshift({ label: 'Edit', onSelect: () => this.edit(c) })
-                items.push({ label: 'Delete', onSelect: () => {
-                    this.confirming = c.id
-                    this.render()
-                } })
+            // At the row's right, what is done with the document: open it
+            // as a note, and, when writing, edit it in place or delete it.
+            const tools = el('span', 'ezco-mde-comment-tools')
+            const tool = (icon: string, label: string, title: string, onClick: () => void) => {
+                const b = button('', onClick, 'ezco-mde-comment-action is-icon', label)
+                b.innerHTML = icon
+                b.title = title
+                return b
             }
-            row.append(button('···', (b) => openMenu(b, items), 'ezco-mde-comment-action is-icon', 'More'))
+            tools.append(tool(OPEN_ICON, 'Open document', 'Open this comment as a note', () => editor.commands.openComment(c.id)))
+            if (author && !deleted) {
+                tools.append(
+                    tool(EDIT_ICON, 'Edit', 'Edit', () => this.edit(c)),
+                    tool(DELETE_ICON, 'Delete', 'Delete', () => {
+                        this.confirming = c.id
+                        this.render()
+                    }),
+                )
+            }
+            row.append(tools)
         }
         box.append(row)
 

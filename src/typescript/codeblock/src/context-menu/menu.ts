@@ -91,6 +91,10 @@ export class ContextMenu {
             '--cm-search-result-bg-hover', '--cm-search-result-color-selected',
             '--cm-search-result-select-bg', '--cm-command-result-color',
             '--cm-tooltip-border',
+            // The frame a host gives the menu (see context-menu/styles.ts).
+            '--cm-menu-background', '--cm-menu-color', '--cm-menu-border', '--cm-menu-radius', '--cm-menu-padding',
+            '--cm-menu-shadow', '--cm-menu-item-padding', '--cm-menu-item-radius',
+            '--cm-menu-divider', '--cm-menu-divider-margin', '--cm-menu-divider-opacity',
         ]) {
             const val = editorStyle.getPropertyValue(prop);
             if (val) this.dom.style.setProperty(prop, val);

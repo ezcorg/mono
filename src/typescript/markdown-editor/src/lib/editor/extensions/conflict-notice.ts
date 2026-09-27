@@ -27,10 +27,12 @@ export const ConflictNotice = Extension.create({
         const open = document.createElement('button')
         open.type = 'button'
         open.dataset.action = 'open'
+        open.className = 'ezco-mde-conflict-button is-link'
         open.textContent = 'Open your version'
         const dismiss = document.createElement('button')
         dismiss.type = 'button'
         dismiss.dataset.action = 'dismiss'
+        dismiss.className = 'ezco-mde-conflict-button is-quiet'
         dismiss.textContent = 'Dismiss'
         dom.append(message, open, dismiss)
         ;(editor.view.dom as HTMLElement).before(dom)

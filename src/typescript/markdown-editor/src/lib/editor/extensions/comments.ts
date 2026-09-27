@@ -19,7 +19,7 @@
  */
 import { Extension, type Editor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection, type EditorState, type Selection, type Transaction } from '@tiptap/pm/state'
 import type { Mapping } from '@tiptap/pm/transform'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import {
@@ -32,6 +32,7 @@ import {
     joinPath,
     normalizePath,
     parseTextFragment,
+    referencesIn,
     textFragmentFor,
     type CommentIndex,
     type CommentRef,
@@ -112,10 +113,11 @@ export function commentFileName(author: string, now = new Date()): string {
     return `${author} ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}.${pad(now.getMinutes())}.md`
 }
 
-/** Who and when, read back from a comment document's name. */
+/** Who and when, read back from a comment document's name (`theo
+ *  2026-09-26 14.02.md`, or `… 14.02 2.md` for another in the same minute). */
 export function authorOf(path: string): { author: string; time: string } {
     const stem = basename(path).replace(/\.md$/i, '')
-    const m = /^(\S+) (\d{4}-\d{2}-\d{2}) (\d{2})\.(\d{2})$/.exec(stem)
+    const m = /^(\S+) (\d{4}-\d{2}-\d{2}) (\d{2})\.(\d{2})(?: \d+)?$/.exec(stem)
     return m ? { author: m[1], time: `${m[2]}T${m[3]}:${m[4]}` } : { author: stem, time: '' }
 }
 
@@ -183,6 +185,13 @@ function decorate(doc: PMNode, comments: CommentInfo[], active: string | null, d
         if (r.to > r.from) decorations.push(Decoration.inline(r.from, r.to, { class: 'ezco-mde-comment is-draft' }))
     }
     return DecorationSet.create(doc, decorations)
+}
+
+/** The comment whose text is exactly `selection`: what following a link to
+ *  the comment selects. */
+function exactly(comments: CommentInfo[], selection: Selection): CommentInfo | null {
+    if (selection.empty || !(selection instanceof TextSelection)) return null
+    return comments.find((c) => c.target.range && c.target.range.from === selection.from && c.target.range.to === selection.to) ?? null
 }
 
 /** Ids of every pin in the document. */
@@ -428,6 +437,44 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
         }
         const find = (state: EditorState, id: string) => commentAt(commentsKey.getState(state)?.comments ?? [], id)
 
+        /**
+         * Load a comment's document to write in it: the caret at the end of
+         * its text, in a paragraph put under the reference when there is
+         * none yet (a document that is only its reference has nowhere to
+         * type: the embed's paragraph must stay the embed alone for the line
+         * to read as a reference). Neither the paragraph nor the caret is an
+         * edit or a step undo takes back.
+         */
+        const openForWriting = async (path: string) => {
+            const p = persistence()
+            if (!p) return
+            await p.loadFile(path, { focus: false })
+            if (p.codeView || normalizePath(p.options.filepath ?? '') !== normalizePath(path)) return
+            const { state, view } = editor
+            const tr = state.tr
+            const last = state.doc.lastChild
+            const reference = !!last && last.isTextblock && last.childCount > 0 && last.content.content.every((n) => n.type.name === 'embed')
+            if (!last || !last.isTextblock || reference) tr.insert(state.doc.content.size, state.schema.nodes.paragraph.create())
+            tr.setSelection(TextSelection.atEnd(tr.doc)).setMeta('addToHistory', false).setMeta('preventUpdate', true).scrollIntoView()
+            view.dispatch(tr)
+            view.focus()
+        }
+
+        /** A document opened to be written before anything was: it goes
+         *  again if the editor leaves it with nothing under its reference. */
+        const discardIfLeftEmpty = (path: string, ops: FileOperations, fs: VfsInterface) => {
+            const p = persistence()
+            if (!p?.subscribe) return
+            const off = p.subscribe((event) => {
+                if (event.type !== 'close' && (event.type !== 'load' || normalizePath(event.path) === normalizePath(path))) return
+                off()
+                void fs
+                    .readFile(path)
+                    .then((text) => (referencesIn(text).length ? undefined : ops.remove(path)))
+                    .catch(() => undefined)
+            })
+        }
+
         /** A document at `folder` named for the author now, holding `link` and `body`. */
         const write = async (folder: string, link: Wikilink, body: string, open: boolean) => {
             const ops = files()
@@ -437,7 +484,10 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             for (let n = 2; await fs.exists(path); n++) path = path.replace(/\.md$/, ` ${n}.md`)
             await ops.create(path, formatReference(link, body) + '\n')
             await refresh()
-            if (open) await persistence()?.loadFile(path, { focus: true })
+            if (open) {
+                await openForWriting(path)
+                if (!body) discardIfLeftEmpty(path, ops, fs)
+            }
             return path
         }
 
@@ -527,7 +577,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                 ({ state, dispatch }) => {
                     const c = find(state, id)
                     if (!c) return false
-                    if (dispatch) void persistence()?.loadFile(c.ref.source, { focus: true })
+                    if (dispatch) void openForWriting(c.ref.source)
                     return true
                 },
             anchorComment:
@@ -572,11 +622,17 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                 key: commentsKey,
                 state: {
                     init: (_, state) => ({ comments: [], active: null, draft: null, decorations: DecorationSet.create(state.doc, []) }),
-                    apply(tr, value, _old, state) {
+                    apply(tr, value, old, state) {
                         const meta = tr.getMeta(commentsKey) as CommentsMeta | undefined
                         // Unchanged (a selection moved): the same value, which is
-                        // how the margin knows there is nothing to draw.
-                        if (!meta && !tr.docChanged) return value
+                        // how the margin knows there is nothing to draw. Unless
+                        // the selection became exactly a comment's text, which is
+                        // what following a link to the comment does: that looks
+                        // at the comment.
+                        if (!meta && !tr.docChanged) {
+                            const hit = tr.selectionSet && !value.active && !tr.selection.eq(old.selection) ? exactly(value.comments, tr.selection) : null
+                            return hit ? { ...value, active: hit.id, decorations: decorate(state.doc, value.comments, hit.id, value.draft) } : value
+                        }
                         let draft = value.draft
                         if (draft && tr.docChanged) {
                             draft = { ranges: draft.ranges.map((r) => ({ from: tr.mapping.map(r.from, 1), to: tr.mapping.map(r.to, -1) })) }
@@ -593,6 +649,9 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                               : value.comments
                         let active = meta && 'active' in meta ? meta.active ?? null : value.active
                         if (active && !commentAt(comments, active)) active = null
+                        // Read with the comment's text already selected (its link
+                        // followed before the index answered): look at it.
+                        if (!active && meta?.found) active = exactly(comments, tr.selection)?.id ?? null
                         return { comments, active, draft, decorations: decorate(state.doc, comments, active, draft) }
                     },
                 },

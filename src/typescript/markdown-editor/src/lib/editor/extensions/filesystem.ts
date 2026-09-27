@@ -326,10 +326,13 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         }
 
         /** Show `note` (read from the open file) in place of what is shown,
-         *  keeping the caret. */
+         *  keeping the caret. A file that differs from the document only at
+         *  its end (the newline a file ends with, a paragraph not yet
+         *  written in) is the same note: taking it would only move the
+         *  caret and drop that paragraph. */
         const takeExternal = (path: string, note: { content: string; version: string | null }) => {
             storage.version = note.version
-            if (note.content === getMarkdown(editor)) return
+            if (note.content.trimEnd() === getMarkdown(editor).trimEnd()) return
             const { from, to } = editor.state.selection
             storage.loadingFile = true
             try {
