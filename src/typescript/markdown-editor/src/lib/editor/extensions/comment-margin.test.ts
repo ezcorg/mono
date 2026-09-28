@@ -22,7 +22,7 @@ afterEach(() => {
 
 const paragraphs = Array.from({ length: 12 }, (_, i) => `Paragraph ${i + 1} says something worth a comment, number ${i + 1}.`)
 const NOTE = ['# Review', ...paragraphs].join('\n\n') + '\n'
-const comment = (author: string, minute: string, quote: string, body: string) => [`comments/Review/${author} 2026-09-13 12.${minute}.md`, `![[Review#:~:text=${encodeURIComponent(quote)}]]\n${body}\n`] as const
+const comment = (author: string, minute: string, quote: string, body: string) => [`comments/Review/${author} 2026-09-13 12.${minute}.md`, `![[Review#:~:text=${encodeURIComponent(quote)}]]\n\n${body}\n`] as const
 const FILES: Record<string, string> = Object.fromEntries([
     ['Review.md', NOTE],
     comment('alice', '01', 'Paragraph 2 says', 'First.'),
@@ -30,8 +30,8 @@ const FILES: Record<string, string> = Object.fromEntries([
     comment('alice', '02', 'worth a comment, number 3', 'Second, a longer comment that wraps onto a few lines in the margin to take room.'),
     comment('alice', '03', 'Paragraph 3 says', 'Third, same line.'),
     comment('alice', '04', 'Paragraph 10 says', 'Done already.'),
-    ['comments/Review/bob 2026-09-13 12.05.md', '![[comments/Review/alice 2026-09-13 12.02#:~:text=a%20longer%20comment]]\nA reply.\n'],
-    ['comments/Review/carol 2026-09-13 12.06.md', '![[comments/Review/bob 2026-09-13 12.05#:~:text=A%20reply.]]\nAnd one to that.\n'],
+    ['comments/Review/bob 2026-09-13 12.05.md', '![[comments/Review/alice 2026-09-13 12.02#:~:text=a%20longer%20comment]]\n\nA reply.\n'],
+    ['comments/Review/carol 2026-09-13 12.06.md', '![[comments/Review/bob 2026-09-13 12.05#:~:text=A%20reply.]]\n\nAnd one to that.\n'],
 ])
 
 type Layout = 'float' | 'column'
@@ -55,7 +55,9 @@ async function open(width: number, layout: Layout, files = FILES, author: string
     })
     created.push({ editor, container, vault })
     const comments = (editor.storage as any).comments as CommentsStorage
-    await waitFor(() => comments.comments().length === 4 && comments.comments().every((c) => c.target.range !== null), 5000)
+    // Every comment on the note (the documents referencing it), at its text.
+    const expected = Object.values(files).filter((text) => text.startsWith('![[Review#')).length
+    await waitFor(() => comments.comments().length === expected && comments.comments().every((c) => c.target.range !== null), 5000)
     await waitFor(() => comments.comments().some((c) => c.resolved), 3000)
     await frames()
     return { editor, container, comments, vault }
@@ -75,7 +77,25 @@ const overlap = (a: DOMRect, b: DOMRect) => a.top < b.bottom - 0.5 && b.top < a.
 const tool = (el: HTMLElement, label: string) =>
     [...el.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === label || b.textContent === label) as HTMLButtonElement
 const messageOf = (el: HTMLElement, id: string) => el.querySelector(`.ezco-mde-comment-message[data-comment="${id}"]`) as HTMLElement
-const composerIn = (message: HTMLElement) => message.querySelector(':scope > .ezco-mde-comment-composer .ezco-mde-comment-text') as HTMLElement | null
+const composerIn = (message: HTMLElement) =>
+    message.querySelector(':scope > .ezco-mde-comment-thread > .ezco-mde-comment-composer .ezco-mde-comment-text, :scope > .ezco-mde-comment-bubble > .ezco-mde-comment-composer .ezco-mde-comment-text') as HTMLElement | null
+/** Choose `label` from a message's "…" menu. */
+const viaMenu = async (message: HTMLElement, label: string) => {
+    tool(message, 'More').click()
+    await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
+    const item = [...document.querySelectorAll<HTMLElement>('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].find((b) => b.textContent?.trim() === label)
+    if (!item) throw new Error(`No "${label}" in the menu: ${[...document.querySelectorAll('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].map((b) => b.textContent).join(', ')}`)
+    item.click()
+    await waitFor(() => !document.querySelector('.ezco-mde-comment-menu'), 2000)
+}
+const menuLabels = async (message: HTMLElement) => {
+    tool(message, 'More').click()
+    await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
+    const labels = [...document.querySelectorAll<HTMLElement>('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].map((b) => b.textContent?.trim())
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => !document.querySelector('.ezco-mde-comment-menu'), 2000)
+    return labels
+}
 const clickText = async (editor: MarkdownEditor, comments: CommentsStorage, id: string) => {
     const r = comments.comments().find((c) => c.id === id)!.target.range!
     const at = editor.view.coordsAtPos(r.from + 2)
@@ -111,9 +131,17 @@ describe('Comments float over the note', () => {
         expect(editor.view.dom.getBoundingClientRect().width).toBe(noteWidth)
         // Over the note, the chrome's shadow lifts it off the text.
         expect(getComputedStyle(visibleCards(container)[0]).boxShadow).not.toBe('none')
-        // Its replies, nested, with who and when.
-        expect(visibleCards(container)[0].querySelectorAll('.ezco-mde-comment-message').length).toBe(3)
+        // The comment alone, who and when over it; its replies behind their count.
+        expect(visibleCards(container)[0].querySelectorAll('.ezco-mde-comment-message').length).toBe(1)
         expect(visibleCards(container)[0].querySelector('.ezco-mde-comment-author')?.textContent).toBe('@alice')
+        expect(tool(visibleCards(container)[0], 'Show 2 replies').textContent).toBe('2')
+        tool(visibleCards(container)[0], 'Show 2 replies').click()
+        await waitFor(() => visibleCards(container)[0].querySelectorAll('.ezco-mde-comment-message').length === 3, 2000)
+        // The thread nests: carol's answer under bob's, which folds it.
+        const bob = comments.comments().find((c) => c.id === second)!.replies[0].id
+        expect(messageOf(visibleCards(container)[0], bob).querySelector('.ezco-mde-comment-message')?.querySelector('.ezco-mde-comment-author')?.textContent).toBe('@carol')
+        tool(visibleCards(container)[0], 'Hide replies').click()
+        await waitFor(() => visibleCards(container)[0].querySelectorAll('.ezco-mde-comment-message').length === 1, 2000)
 
         visibleCards(container)[0].focus()
         await userEvent.keyboard('{Escape}')
@@ -129,31 +157,50 @@ describe('Comments float over the note', () => {
         editor.commands.focusComment(done)
         await waitFor(() => !!card(container, done), 2000)
         expect(card(container, done).textContent).toContain('Resolved')
-        tool(messageOf(card(container, done), done), 'Reopen').click()
+        await viaMenu(messageOf(card(container, done), done), 'Reopen')
         await waitFor(() => !comments.comments().find((c) => c.id === done)!.resolved, 3000)
     })
 
-    it('floats above code blocks’ toolbars', async () => {
+    it('floats above code blocks’ toolbars, as the selection menu does', async () => {
         const { container } = await open(900, 'float')
         expect(Number(getComputedStyle(margin(container)).zIndex)).toBeGreaterThan(401)
+        expect(Number(getComputedStyle(container.querySelector('.ezco-mde-selection-menu-btn') as HTMLElement).zIndex)).toBeGreaterThan(401)
     })
 
-    it('is sized by its edges, and stays where the reader put it', async () => {
-        const { editor, container, comments } = await open(900, 'float')
-        const first = idOf(comments, 'First.')
-        editor.commands.focusComment(first)
-        await waitFor(() => !!card(container, first), 2000)
-        await frames()
-        const before = card(container, first).getBoundingClientRect()
-        const edge = card(container, first).querySelector('.ezco-mde-comment-edge.is-w') as HTMLElement
-        const at = edge.getBoundingClientRect()
-        edge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: at.left + 3, clientY: at.top + 40, button: 0 }))
-        window.dispatchEvent(new PointerEvent('pointermove', { clientX: at.left - 100, clientY: at.top + 40 }))
-        window.dispatchEvent(new PointerEvent('pointerup', {}))
-        await frames()
-        const after = card(container, first).getBoundingClientRect()
-        expect(after.width).toBeGreaterThan(before.width + 90)
-        expect(Math.abs(after.right - before.right)).toBeLessThan(2)
+    it('tells overlapping comments apart, and looks at each in turn when their overlap is clicked', async () => {
+        const files = { ...FILES, ...Object.fromEntries([comment('dave', '07', 'Paragraph 2 says something', 'Overlapping.')]) }
+        const { editor, container, comments } = await open(900, 'float', files)
+        await waitFor(() => comments.comments().length === 5, 3000)
+        const overlap = editor.view.dom.querySelector('.ezco-mde-comment-stack') as HTMLElement
+        expect(overlap?.textContent).toBe('Paragraph 2 says')
+        const narrow = idOf(comments, 'First.')
+        const wide = idOf(comments, 'Overlapping.')
+        // The narrowest first, then the next, then round again.
+        const at = overlap.getBoundingClientRect()
+        const box = editor.view.dom.getBoundingClientRect()
+        // Clicks apart in time: two in quick succession are a double click.
+        const click = async () => {
+            await new Promise((r) => setTimeout(r, 600))
+            await userEvent.click(editor.view.dom, { position: { x: at.left - box.left + at.width / 2, y: at.top - box.top + at.height / 2 } })
+        }
+        await click()
+        await waitFor(() => comments.active() === narrow, 2000)
+        await click()
+        await waitFor(() => comments.active() === wide, 2000)
+        await click()
+        await waitFor(() => comments.active() === narrow, 2000)
+        void container
+    })
+
+    it('puts a comment on the whole of a document at its top, without highlighting it all', async () => {
+        const { editor, container, comments } = await open(1100, 'column')
+        // A reply's document: the answer to it quotes the whole of its text.
+        await (editor.storage as any).persistence.loadFile('comments/Review/bob 2026-09-13 12.05.md')
+        await waitFor(() => comments.comments().length === 1 && comments.comments()[0].author === 'carol', 4000)
+        expect(comments.comments()[0].target.whole).toBe(true)
+        expect(editor.view.dom.querySelector('.ezco-mde-comment')).toBeNull()
+        const carol = comments.comments()[0].id
+        await waitFor(() => !!card(container, carol) && card(container, carol).style.top === '0px', 3000)
     })
 })
 
@@ -240,6 +287,8 @@ describe('Writing', () => {
         editor.commands.focusComment(first)
         await waitFor(() => !!card(container, first), 2000)
         expect(card(container, first).querySelector('.ezco-mde-comment-composer')).toBeNull()
+        // With nothing to unfold, the count is where a reply starts.
+        expect(tool(messageOf(card(container, first), first), 'Reply').textContent).toBe('0')
         tool(messageOf(card(container, first), first), 'Reply').click()
         await waitFor(() => !!composerIn(messageOf(card(container, first), first)), 2000)
         const field = composerIn(messageOf(card(container, first), first))!
@@ -252,13 +301,15 @@ describe('Writing', () => {
         await waitFor(() => editor.isFocused, 2000)
         editor.commands.focusComment(first)
         await waitFor(() => !!card(container, first), 2000)
-        expect(tool(messageOf(card(container, first), first), 'Reply').textContent).toBe('Reply · draft')
-        tool(messageOf(card(container, first), first), 'Reply').click()
+        await viaMenu(messageOf(card(container, first), first), 'Reply')
         await waitFor(() => composerIn(messageOf(card(container, first), first))?.textContent === 'Half a thought', 2000)
         await write(composerIn(messageOf(card(container, first), first))!, ' and the rest.')
         await waitFor(() => comments.comments().find((c) => c.id === first)!.replies.length === 1, 4000)
         expect(comments.comments().find((c) => c.id === first)!.replies[0].body).toBe('Half a thought and the rest.')
         expect(localStorage.getItem(`ezco-mde-comment-draft:Review.md:${first}:reply`)).toBeNull()
+        // The thread stays open on the reply, with the field for the next.
+        await waitFor(() => !!messageOf(card(container, first), comments.comments().find((c) => c.id === first)!.replies[0].id), 2000)
+        expect(tool(card(container, first), 'Reply').textContent).toBe('Reply…')
     })
 
     it('opens a reply’s document in the editor, with the draft, from the composer', async () => {
@@ -323,7 +374,7 @@ describe('Writing', () => {
         tool(card(container, third), 'Show all 5 reactions').click()
         await waitFor(() => chips().length === 6, 2000)
         // Resolving closes the card.
-        tool(messageOf(card(container, third), third), 'Resolve').click()
+        await viaMenu(messageOf(card(container, third), third), 'Resolve')
         await waitFor(() => comments.comments().find((c) => c.id === third)!.resolved, 3000)
         expect(comments.active()).toBeNull()
     })
@@ -334,9 +385,11 @@ describe('Writing', () => {
         const bob = comments.comments().find((c) => c.id === second)!.replies[0].id
         editor.commands.focusComment(second)
         await waitFor(() => card(container, second).classList.contains('is-active'), 2000)
-        tool(messageOf(card(container, second), bob), 'Edit').click()
+        tool(card(container, second), 'Show 2 replies').click()
+        await waitFor(() => !!messageOf(card(container, second), bob), 2000)
+        await viaMenu(messageOf(card(container, second), bob), 'Edit')
         await waitFor(() => !!composerIn(messageOf(card(container, second), bob)), 2000)
-        expect(messageOf(card(container, second), bob).querySelector(':scope > .ezco-mde-comment-body')).toBeNull()
+        expect(messageOf(card(container, second), bob).querySelector(':scope > .ezco-mde-comment-bubble > .ezco-mde-comment-body')).toBeNull()
         const field = composerIn(messageOf(card(container, second), bob))!
         await waitFor(() => document.activeElement === field, 2000)
         await userEvent.keyboard(' Edited.')
@@ -344,35 +397,114 @@ describe('Writing', () => {
         await waitFor(() => comments.comments().find((c) => c.id === second)!.replies[0].body === 'A reply. Edited.', 4000)
         // Carol's answer to bob goes (nobody answered it).
         const carol = comments.comments().find((c) => c.id === second)!.replies[0].replies[0].id
-        tool(messageOf(card(container, second), carol), 'Delete').click()
+        await viaMenu(messageOf(card(container, second), carol), 'Delete')
         await waitFor(() => !!tool(messageOf(card(container, second), carol), 'Delete this comment'), 2000)
         tool(messageOf(card(container, second), carol), 'Delete this comment').click()
         await waitFor(() => comments.comments().find((c) => c.id === second)!.replies[0].replies.length === 0, 4000)
         // Bob's, answered before: only a tombstone now.
-        tool(messageOf(card(container, second), second), 'Delete').click()
+        await viaMenu(messageOf(card(container, second), second), 'Delete')
         await waitFor(() => !!tool(messageOf(card(container, second), second), 'Delete this comment'), 2000)
         tool(messageOf(card(container, second), second), 'Delete this comment').click()
         await waitFor(() => comments.comments().find((c) => c.id === second)?.body === '[deleted]', 4000)
         expect(messageOf(card(container, second), second).classList.contains('is-deleted')).toBe(true)
     })
 
-    it('folds a comment’s replies away and back', async () => {
+    it('unfolds a comment’s replies on their count, and folds a reply’s answers as a news site does', async () => {
         const { editor, container, comments } = await open(1100, 'column')
         const second = idOf(comments, 'Second, a longer comment that wraps onto a few lines in the margin to take room.')
         const bob = comments.comments().find((c) => c.id === second)!.replies[0].id
+        const carol = comments.comments().find((c) => c.id === second)!.replies[0].replies[0].id
         editor.commands.focusComment(second)
-        await waitFor(() => !!messageOf(card(container, second), bob), 2000)
+        await waitFor(() => !!card(container, second), 2000)
+        expect(messageOf(card(container, second), bob)).toBeNull()
+        tool(card(container, second), 'Show 2 replies').click()
+        await waitFor(() => !!messageOf(card(container, second), carol), 2000)
+        // [–] folds carol's answer under bob's; [+] brings it back.
+        expect(tool(messageOf(card(container, second), bob), 'Fold answers').textContent).toBe('[–]')
+        tool(messageOf(card(container, second), bob), 'Fold answers').click()
+        await waitFor(() => messageOf(card(container, second), carol) === null, 2000)
+        expect(tool(messageOf(card(container, second), bob), 'Show 1 answer').textContent).toBe('[+]')
+        tool(messageOf(card(container, second), bob), 'Show 1 answer').click()
+        await waitFor(() => messageOf(card(container, second), carol) !== null, 2000)
         tool(card(container, second), 'Hide replies').click()
         await waitFor(() => messageOf(card(container, second), bob) === null, 2000)
-        expect(tool(card(container, second), 'Show replies').textContent).toBe('▸ 1 reply')
-        tool(card(container, second), 'Show replies').click()
-        await waitFor(() => messageOf(card(container, second), bob) !== null, 2000)
     })
 
     it('offers nothing to write or react with without an author', async () => {
         const { container, comments } = await open(1100, 'column', FILES, null)
         const first = idOf(comments, 'First.')
-        expect([...card(container, first).querySelectorAll('.ezco-mde-comment-action')].map((b) => b.getAttribute('aria-label'))).toEqual(['Open document'])
+        expect([...card(container, first).querySelectorAll('.ezco-mde-comment-action')].map((b) => b.getAttribute('aria-label'))).toEqual(['No replies', 'More'])
+        expect(await menuLabels(messageOf(card(container, first), first))).toEqual(['Open document'])
+    })
+
+    it('keeps a comment as a draft, answers it with one, and publishes them together', async () => {
+        const { editor, container, comments, vault } = await open(900, 'float')
+        let from = -1
+        editor.state.doc.descendants((node, pos) => {
+            if (from < 0 && node.isText && node.text!.includes('number 8')) from = pos + node.text!.indexOf('number 8')
+        })
+        editor.commands.setTextSelection({ from, to: from + 'number 8'.length })
+        editor.commands.startComment()
+        await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
+        // The composer stands at the end of the text it is about.
+        await frames()
+        const composer = container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement
+        const end = editor.view.coordsAtPos(from + 'number 8'.length, -1)
+        expect(Math.abs(composer.getBoundingClientRect().left - end.left)).toBeLessThan(2)
+        expect(composer.getBoundingClientRect().top).toBeGreaterThanOrEqual(end.bottom)
+        const field = container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text') as HTMLElement
+        await waitFor(() => document.activeElement === field, 2000)
+        await userEvent.keyboard('Not yet.')
+        tool(composer, 'Draft').click()
+        await waitFor(() => comments.drafts().length === 1, 3000)
+        // Only this browser has it: marked so in the note and on its card, counted in the bar.
+        expect(editor.view.dom.querySelector('.ezco-mde-comment.is-pending')?.textContent).toBe('number 8')
+        expect(comments.comments().filter((c) => c.author === 'theo' && c.ref.source === '').length).toBe(1)
+        const bar = container.querySelector('.ezco-mde-comment-drafts') as HTMLElement
+        expect(bar.hidden).toBe(false)
+        expect(bar.textContent).toContain('1 draft')
+        const draft = comments.drafts()[0].id
+        editor.commands.focusComment(draft)
+        await waitFor(() => !!card(container, draft), 2000)
+        expect(card(container, draft).querySelector('.ezco-mde-comment-status')?.textContent).toBe('Draft')
+        expect(await menuLabels(messageOf(card(container, draft), draft))).toEqual(['Reply', 'Edit', 'Publish draft', 'Discard draft'])
+        // An answer to a draft is a draft too.
+        tool(messageOf(card(container, draft), draft), 'Reply').click()
+        await waitFor(() => !!composerIn(messageOf(card(container, draft), draft)), 2000)
+        await write(composerIn(messageOf(card(container, draft), draft))!, 'Nor this.')
+        await waitFor(() => comments.drafts().length === 2, 3000)
+        expect(comments.comments().find((c) => c.id === draft)!.replies[0].draft).toBe(true)
+        expect(bar.textContent).toContain('2 drafts')
+        // Published together: two documents, the reply referencing the comment's text.
+        tool(bar, 'Publish every draft').click()
+        await waitFor(() => comments.drafts().length === 0 && comments.comments().some((c) => c.body === 'Not yet.' && c.ref.source !== ''), 5000)
+        const mine = comments.comments().find((c) => c.body === 'Not yet.')!
+        expect(await vault.fs.readFile(mine.ref.source)).toBe('![[Review#:~:text=number%208]]\n\nNot yet.\n')
+        await waitFor(() => comments.comments().find((c) => c.body === 'Not yet.')!.replies.length === 1, 4000)
+        const reply = comments.comments().find((c) => c.body === 'Not yet.')!.replies[0]
+        expect(reply.body).toBe('Nor this.')
+        expect(reply.ref.link.fragment).toBe(':~:text=Not%20yet.')
+        expect(bar.hidden).toBe(true)
+        expect(editor.view.dom.querySelector('.ezco-mde-comment.is-pending')).toBeNull()
+        expect(localStorage.getItem('ezco-mde-comment-queue:Review.md')).toBeNull()
+    })
+
+    it('discards drafts, after asking', async () => {
+        const { editor, container, comments } = await open(900, 'float')
+        editor.commands.setTextSelection({ from: 2, to: 8 })
+        expect(editor.commands.addComment({ body: 'Gone soon.', draft: true })).toBe(true)
+        await waitFor(() => comments.drafts().length === 1, 3000)
+        const bar = container.querySelector('.ezco-mde-comment-drafts') as HTMLElement
+        tool(bar, 'Discard every draft').click()
+        await waitFor(() => bar.textContent?.includes('Discard them?'), 2000)
+        tool(bar, 'Keep them').click()
+        await waitFor(() => !bar.textContent?.includes('Discard them?'), 2000)
+        expect(comments.drafts().length).toBe(1)
+        tool(bar, 'Discard every draft').click()
+        await waitFor(() => bar.textContent?.includes('Discard them?'), 2000)
+        tool(bar, 'Discard every draft').click()
+        await waitFor(() => comments.drafts().length === 0, 3000)
+        expect(bar.hidden).toBe(true)
     })
 
     it('opens an unwritten comment in the editor with somewhere to write, and looks at it on the way back', async () => {

@@ -31,8 +31,14 @@ export interface ComposerOptions {
     onChange?: (markdown: string) => void
     /** Asked for the full-size view; without it there is no such control. */
     onExpand?: () => void
+    /** A second, quiet way to submit (keeping the comment as a draft),
+     *  named `secondaryLabel`; without it there is no such button. */
+    secondaryLabel?: string
+    onSecondary?: (markdown: string) => void
     /** Taller from the start (the full-size view). */
     full?: boolean
+    /** Small: by the text it is about, a field and its buttons. */
+    compact?: boolean
 }
 
 /** The open glyph: an arrow out of a box, as the cards draw it. */
@@ -61,7 +67,7 @@ export class Composer {
 
     constructor(private readonly options: ComposerOptions) {
         this.dom = document.createElement('form')
-        this.dom.className = 'ezco-mde-comment-composer' + (options.full ? ' is-full' : '')
+        this.dom.className = 'ezco-mde-comment-composer' + (options.full ? ' is-full' : '') + (options.compact ? ' is-compact' : '')
         this.label = document.createElement('div')
         this.label.className = 'ezco-mde-comment-composer-label'
         this.label.hidden = true
@@ -131,7 +137,20 @@ export class Composer {
             this.field.append(expand)
             this.field.classList.add('has-expand')
         }
-        actions.append(cancel, post)
+        actions.append(cancel)
+        if (options.secondaryLabel && options.onSecondary) {
+            const secondary = document.createElement('button')
+            secondary.type = 'button'
+            secondary.className = 'ezco-mde-comment-button'
+            secondary.textContent = options.secondaryLabel
+            secondary.title = 'Keep it here for now, to publish later'
+            secondary.addEventListener('click', () => {
+                const markdown = this.value().trim()
+                if (markdown) options.onSecondary?.(markdown)
+            })
+            actions.append(secondary)
+        }
+        actions.append(post)
         this.dom.append(this.label, this.field, actions)
         this.dom.addEventListener('submit', (e) => {
             e.preventDefault()

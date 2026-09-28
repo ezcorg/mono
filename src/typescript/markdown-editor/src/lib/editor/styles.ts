@@ -1135,7 +1135,9 @@ export const styleModule: StyleModule = new StyleModule({
         'border-radius': '6px',
         'box-shadow': '0 1px 4px rgba(0, 0, 0, 0.12)',
         cursor: 'pointer',
-        'z-index': 6,
+        // Over a code block's pinned toolbar (401), under the comments (500):
+        // a selection ending just above a block still gets its menu.
+        'z-index': 450,
         transition: 'background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, box-shadow 120ms ease-out, opacity 120ms ease-out',
     },
     '.ezco-mde-selection-menu-btn:hover': {
@@ -1973,21 +1975,40 @@ export const styleModule: StyleModule = new StyleModule({
     // (its content styles and, from the host, its face) at a size for a
     // card, the same whether read or written.
     // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // Comments (extensions/comments.ts, comment-margin.ts): commented text
+    // in the note, and the cards that show the comments, in the chrome's
+    // type and palette; a comment's own text in the note's.
+    // ─────────────────────────────────────────────────────────────
+    // Commented text: a tint of the comment colour, deeper for the one
+    // looked at, deeper again where two comments overlap.
     '.ezco-mde-comment': {
         background: 'color-mix(in srgb, var(--ezco-mde-comment-color) 22%, transparent)',
         'border-bottom': '2px solid color-mix(in srgb, var(--ezco-mde-comment-color) 55%, transparent)',
     },
+    '.ezco-mde-comment-stack': {
+        background: 'color-mix(in srgb, var(--ezco-mde-comment-color) 40%, transparent)',
+    },
     '.ezco-mde-comment.is-active': {
         background: 'color-mix(in srgb, var(--ezco-mde-comment-color) 42%, transparent)',
+    },
+    '.ezco-mde-comment.is-active.ezco-mde-comment-stack': {
+        background: 'color-mix(in srgb, var(--ezco-mde-comment-color) 60%, transparent)',
     },
     // A resolved comment keeps a quiet mark, so it can be found and reopened.
     '.ezco-mde-comment.is-resolved:not(.is-active)': {
         background: 'transparent',
         'border-bottom': '1px dotted var(--ezco-mde-context-menu-item-color-muted)',
     },
+    // Text a comment is being written about: the accent. A draft's, the
+    // accent dashed: only this browser has it.
     '.ezco-mde-comment.is-draft': {
         background: 'color-mix(in srgb, var(--ezco-mde-accent) 20%, transparent)',
         'border-bottom-color': 'var(--ezco-mde-accent)',
+    },
+    '.ezco-mde-comment.is-pending': {
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 12%, transparent)',
+        'border-bottom': '2px dashed color-mix(in srgb, var(--ezco-mde-accent) 70%, transparent)',
     },
     '.ezco-mde-comments': {
         flex: 'none',
@@ -1998,23 +2019,22 @@ export const styleModule: StyleModule = new StyleModule({
         position: 'relative',
         width: '360px',
         'box-sizing': 'border-box',
-        padding: '0 12px 24px 16px',
+        padding: '0 12px 24px 8px',
         'font-family': 'var(--ezco-mde-chrome-font)',
         'font-size': '13px',
-        'line-height': 1.45,
+        'line-height': 1.5,
         color: 'var(--ezco-mde-fg)',
     },
     '.ezco-mde-comment-margin[hidden]': {
         display: 'none',
     },
-    // The column's head: how many, as the panels name themselves, and the
-    // resolved ones on request.
+    // The column's head, as a panel's title.
     '.ezco-mde-comment-margin-head': {
         display: 'flex',
         'justify-content': 'space-between',
         'align-items': 'baseline',
         gap: '8px',
-        padding: '0.5rem 8px 8px',
+        padding: '4px 2px 8px',
     },
     '.ezco-mde-comment-margin-title': {
         'font-size': '11px',
@@ -2030,9 +2050,34 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-margin-head .ezco-mde-comment-link:hover': {
         color: 'var(--ezco-mde-fg)',
     },
+    // The note's drafts: how many, and the two things to do with them all.
+    '.ezco-mde-comment-drafts': {
+        display: 'flex',
+        'align-items': 'center',
+        gap: '4px',
+        width: 'max-content',
+        'max-width': '100%',
+        'box-sizing': 'border-box',
+        margin: '0 0 8px',
+        padding: '3px 4px 3px 10px',
+        'border-radius': '999px',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        'font-size': '12px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+    },
+    '.ezco-mde-comment-drafts[hidden]': {
+        display: 'none',
+    },
+    '.ezco-mde-comment-drafts-count': {
+        'font-weight': 500,
+        color: 'var(--ezco-mde-fg)',
+        'margin-right': '4px',
+    },
     '.ezco-mde-comment-list': {
         position: 'relative',
     },
+    // A card: the chrome's surface, holding one comment's messages.
     '.ezco-mde-comment-card': {
         position: 'absolute',
         top: 0,
@@ -2041,20 +2086,18 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'flex',
         'flex-direction': 'column',
         'box-sizing': 'border-box',
-        'border-radius': '8px',
+        'border-radius': '10px',
         border: '1px solid var(--ezco-mde-context-menu-border)',
         background: 'var(--ezco-mde-context-menu-bg)',
         outline: 'none',
     },
-    // The card's content, which scrolls when the reader sized the card
-    // shorter than it (the card itself never scrolls: its resize edges lie
-    // just outside it).
+    // The card's content, which scrolls when there is more than fits.
     '.ezco-mde-comment-inside': {
         flex: '1 1 auto',
         'min-height': 0,
         'overflow-y': 'auto',
         'overflow-x': 'hidden',
-        padding: '12px 14px 12px',
+        padding: '10px 12px',
     },
     // The comment's text: the note's content styles, at a size for a card,
     // the same whether shown or being edited.
@@ -2072,33 +2115,6 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde-comment-card .ezco-mde-body > :last-child': {
         'margin-bottom': 0,
-    },
-    // The edges of a floating card size it.
-    '.ezco-mde-comment-edge': {
-        position: 'absolute',
-        display: 'none',
-    },
-    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-edge': {
-        display: 'block',
-    },
-    '.ezco-mde-comment-edge.is-n, .ezco-mde-comment-edge.is-s': {
-        left: 0,
-        right: 0,
-        height: '6px',
-        cursor: 'ns-resize',
-    },
-    '.ezco-mde-comment-edge.is-e, .ezco-mde-comment-edge.is-w': {
-        top: 0,
-        bottom: 0,
-        width: '6px',
-        cursor: 'ew-resize',
-    },
-    '.ezco-mde-comment-edge.is-n': { top: '-3px' },
-    '.ezco-mde-comment-edge.is-s': { bottom: '-3px' },
-    '.ezco-mde-comment-edge.is-e': { right: '-3px' },
-    '.ezco-mde-comment-edge.is-w': { left: '-3px' },
-    '.ezco-mde-comment-card.is-resizing': {
-        'user-select': 'none',
     },
     '.ezco-mde-comment-card[hidden]': {
         display: 'none',
@@ -2118,13 +2134,31 @@ export const styleModule: StyleModule = new StyleModule({
         outline: '2px solid color-mix(in srgb, var(--ezco-mde-accent) 55%, transparent)',
         'outline-offset': '1px',
     },
-    // Who and when, on one line over the text.
+    // A message: who and when, the bubble, the row under it, its thread.
+    // The reader's own stand on the right, as a conversation's do.
+    '.ezco-mde-comment-message': {
+        position: 'relative',
+        display: 'flex',
+        'flex-direction': 'column',
+        'align-items': 'flex-start',
+        'min-width': 0,
+    },
+    '.ezco-mde-comment-message.is-mine': {
+        'align-items': 'flex-end',
+    },
+    '.ezco-mde-comment-message + .ezco-mde-comment-message': {
+        'margin-top': '10px',
+    },
+    '.ezco-mde-comment-context[hidden]': {
+        display: 'none',
+    },
     '.ezco-mde-comment-head': {
         display: 'flex',
         'align-items': 'baseline',
         'flex-wrap': 'wrap',
         gap: '2px 6px',
-        'margin-bottom': '5px',
+        margin: '0 8px 3px',
+        'font-size': '12px',
         'line-height': 1.3,
     },
     '.ezco-mde-comment-author': {
@@ -2132,9 +2166,9 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde-comment-time': {
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
-        'font-size': '12px',
     },
-    // "Resolved", as a chip in the chrome's neutral fill.
+    // "Resolved" and "Draft", as chips in the chrome's neutral fill; a
+    // draft's in the accent, dashed, as its text in the note.
     '.ezco-mde-comment-status': {
         padding: '0 7px',
         'border-radius': '999px',
@@ -2144,41 +2178,57 @@ export const styleModule: StyleModule = new StyleModule({
         background: 'var(--ezco-mde-code-bg)',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
-    '.ezco-mde-comment-message': {
-        position: 'relative',
+    '.ezco-mde-comment-status.is-pending': {
+        border: '1px dashed color-mix(in srgb, var(--ezco-mde-accent) 60%, transparent)',
+        'line-height': '15px',
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 10%, transparent)',
+        color: 'var(--ezco-mde-fg)',
     },
-    '.ezco-mde-comment-context[hidden]': {
-        display: 'none',
+    // The bubble: the text on the chrome's neutral fill, the reader's own
+    // on the accent's; the corner by the byline squared a little.
+    '.ezco-mde-comment-bubble': {
+        'max-width': '100%',
+        'box-sizing': 'border-box',
+        padding: '7px 11px',
+        'border-radius': '14px',
+        'border-top-left-radius': '4px',
+        background: 'var(--ezco-mde-code-bg)',
+        'overflow-wrap': 'anywhere',
     },
-    // A message's own composer (a reply under it, an edit in its place).
-    '.ezco-mde-comment-message > .ezco-mde-comment-composer': {
-        'margin-top': '8px',
+    '.ezco-mde-comment-message.is-mine > .ezco-mde-comment-bubble': {
+        'border-radius': '14px',
+        'border-top-right-radius': '4px',
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 14%, transparent)',
+    },
+    '.ezco-mde-comment-message.is-pending > .ezco-mde-comment-bubble': {
+        border: '1px dashed color-mix(in srgb, var(--ezco-mde-accent) 60%, transparent)',
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 8%, transparent)',
+    },
+    // Being edited: the composer stands where the bubble was.
+    '.ezco-mde-comment-bubble.is-editing': {
+        width: '100%',
+        padding: 0,
+        border: 0,
+        background: 'transparent',
+    },
+    '.ezco-mde-comment-bubble.is-editing > .ezco-mde-comment-composer': {
+        'margin-top': 0,
     },
     '.ezco-mde-comment-deleted': {
         'font-style': 'italic',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
-    // Under each message, what can be done to it: one quiet row in the
-    // chrome's muted colour, the reactions first, then the React glyph,
-    // then words. The first control's glyph or text starts at the text's
-    // left edge; its hover fill hangs into the padding.
-    '.ezco-mde-comment-actions': {
+    // Under the bubble, one quiet row in the chrome's muted colour: the
+    // reactions, React, how many replies, "…". A deletion is asked about
+    // in the same row.
+    '.ezco-mde-comment-under': {
         display: 'flex',
         'align-items': 'center',
         'flex-wrap': 'wrap',
-        gap: '2px 6px',
-        'margin-top': '6px',
+        gap: '2px 4px',
+        margin: '3px 4px 0',
         'min-height': '24px',
         'font-size': '12.5px',
-    },
-    '.ezco-mde-comment-actions > .ezco-mde-comment-action:first-child': {
-        'margin-left': '-6px',
-    },
-    '.ezco-mde-comment-actions > .ezco-mde-comment-action.is-icon:first-child': {
-        'margin-left': '-5px',
-    },
-    '.ezco-mde-comment-reaction + .ezco-mde-comment-action': {
-        'margin-left': '2px',
     },
     '.ezco-mde-comment-action': {
         display: 'inline-flex',
@@ -2199,24 +2249,36 @@ export const styleModule: StyleModule = new StyleModule({
         background: 'var(--ezco-mde-context-menu-item-bg-hover)',
         outline: 'none',
     },
+    '.ezco-mde-comment-action:disabled': {
+        cursor: 'default',
+        background: 'transparent',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+    },
     '.ezco-mde-comment-action.is-icon': {
         width: '24px',
         height: '24px',
         padding: 0,
     },
-    '.ezco-mde-comment-action.is-icon > svg': {
+    '.ezco-mde-comment-action.is-icon > svg, .ezco-mde-comment-action.is-replies > svg': {
         display: 'block',
+    },
+    '.ezco-mde-comment-action.is-replies': {
+        gap: '5px',
+        padding: '3px 7px 3px 5px',
+    },
+    '.ezco-mde-comment-action.is-replies[aria-expanded="true"]': {
+        color: 'var(--ezco-mde-fg)',
     },
     '.ezco-mde-comment-action.is-danger': {
         color: 'var(--ezco-mde-danger)',
     },
-    // The row's right: the document's tools (open as a note, edit, delete).
-    '.ezco-mde-comment-tools': {
-        display: 'inline-flex',
-        'align-items': 'center',
-        gap: '2px',
-        'margin-left': 'auto',
-        'margin-right': '-5px',
+    '.ezco-mde-comment-action.is-primary': {
+        background: 'var(--ezco-mde-accent)',
+        color: 'var(--ezco-mde-accent-fg, #fff)',
+    },
+    '.ezco-mde-comment-action.is-primary:hover, .ezco-mde-comment-action.is-primary:focus-visible': {
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 85%, var(--ezco-mde-fg))',
+        color: 'var(--ezco-mde-accent-fg, #fff)',
     },
     '.ezco-mde-comment-question': {
         color: 'var(--ezco-mde-fg)',
@@ -2252,26 +2314,20 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-tool.is-close > svg': {
         display: 'block',
     },
-    // The byline of the first message, and an orphan notice, keep clear of
-    // the close button.
-    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-messages > .ezco-mde-comment-message > .ezco-mde-comment-head, .ezco-mde-comment-margin.is-floating .ezco-mde-comment-context:not([hidden]) + .ezco-mde-comment-messages > .ezco-mde-comment-message > .ezco-mde-comment-head, .ezco-mde-comment-margin.is-floating .ezco-mde-comment-orphan, .ezco-mde-comment-margin.is-floating .ezco-mde-comment-card.is-draft .ezco-mde-comment-head': {
+    // The first byline, and an orphan notice, keep clear of the close button.
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-messages > .ezco-mde-comment-message > .ezco-mde-comment-head, .ezco-mde-comment-margin.is-floating .ezco-mde-comment-orphan, .ezco-mde-comment-margin.is-floating .ezco-mde-comment-card.is-draft .ezco-mde-comment-head': {
         'padding-right': '26px',
     },
-    // Replies fold under the message they answer.
+    // The fold of a reply's answers, as a news site folds threads.
     '.ezco-mde-comment-fold': {
-        display: 'inline-flex',
-        'align-items': 'center',
-        margin: '6px 0 0 -6px',
-        padding: '2px 6px',
-        border: 0,
-        'border-radius': '5px',
-        background: 'none',
         font: 'inherit',
-        'font-size': '12px',
-        'font-weight': 500,
+        'font-size': '11px',
+        padding: '0 2px',
+        border: 0,
+        'border-radius': '3px',
+        background: 'none',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
         cursor: 'pointer',
-        transition: 'background-color 120ms ease-out, color 120ms ease-out',
     },
     '.ezco-mde-comment-fold:hover, .ezco-mde-comment-fold:focus-visible': {
         color: 'var(--ezco-mde-fg)',
@@ -2291,13 +2347,41 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-link-color)',
         cursor: 'pointer',
     },
-    '.ezco-mde-comment-replies': {
-        'margin-top': '10px',
-        'padding-left': '12px',
+    // The thread under a message: its replies, indented under a hairline,
+    // then the field for the next.
+    '.ezco-mde-comment-thread': {
+        'align-self': 'stretch',
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '10px',
+        margin: '8px 0 0 10px',
+        'padding-left': '10px',
         'border-left': '2px solid var(--ezco-mde-divider)',
     },
-    '.ezco-mde-comment-message.is-reply + .ezco-mde-comment-message.is-reply': {
-        'margin-top': '12px',
+    '.ezco-mde-comment-thread > .ezco-mde-comment-message + .ezco-mde-comment-message': {
+        'margin-top': 0,
+    },
+    '.ezco-mde-comment-thread > .ezco-mde-comment-composer': {
+        'margin-top': 0,
+    },
+    // The field for the next reply: a bubble's shape, quiet until used.
+    '.ezco-mde-comment-reply-field': {
+        'align-self': 'stretch',
+        'text-align': 'left',
+        font: 'inherit',
+        'font-size': '13px',
+        padding: '6px 11px',
+        border: '1px solid var(--ezco-mde-divider)',
+        'border-radius': '14px',
+        background: 'transparent',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        cursor: 'text',
+        transition: 'border-color 120ms ease-out, color 120ms ease-out',
+    },
+    '.ezco-mde-comment-reply-field:hover, .ezco-mde-comment-reply-field:focus-visible': {
+        'border-color': 'var(--ezco-mde-context-menu-item-color-muted)',
+        color: 'var(--ezco-mde-fg)',
+        outline: 'none',
     },
     // A reaction: a small pill, filled with the accent when it is the reader's.
     '.ezco-mde-comment-reaction': {
@@ -2341,10 +2425,6 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-link:hover': {
         color: 'var(--ezco-mde-link-color-hover)',
     },
-    '.ezco-mde-comment-where': {
-        color: 'var(--ezco-mde-context-menu-item-color-muted)',
-        'margin-bottom': '4px',
-    },
     // What an orphaned comment pointed at, no longer in the note: a warning
     // in the callouts' manner.
     '.ezco-mde-comment-orphan': {
@@ -2362,11 +2442,20 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-quote': {
         'font-style': 'italic',
     },
+    // The composer: a small editor of the note's make, its text growing
+    // with what is written; taller when asked for; in its corner, the way
+    // to the editor itself. Under it, Cancel, Draft, and the one filled
+    // button, at the right.
     '.ezco-mde-comment-composer': {
         display: 'flex',
         'flex-direction': 'column',
         gap: '8px',
         'margin-top': '10px',
+        'align-self': 'stretch',
+    },
+    '.ezco-mde-comment-composer.is-compact': {
+        gap: '6px',
+        'margin-top': '4px',
     },
     '.ezco-mde-comment-composer-label': {
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
@@ -2375,9 +2464,6 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-composer-label[hidden]': {
         display: 'none',
     },
-    // The field is a small editor of the note's make, its text growing with
-    // what is written; taller when asked for. In its corner, the way to the
-    // editor itself.
     '.ezco-mde-comment-input': {
         position: 'relative',
     },
@@ -2434,39 +2520,50 @@ export const styleModule: StyleModule = new StyleModule({
         'pointer-events': 'none',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
-    // Under the field: Cancel and the one filled button, at the right.
     '.ezco-mde-comment-composer-actions': {
         display: 'flex',
         'justify-content': 'flex-end',
         'align-items': 'center',
         gap: '4px',
     },
-    // Floating (the default, or a column with no room): the thread being
-    // looked at, over the note's edge, just under its text, with the
-    // chrome's shadow to lift it off the note.
+    // Floating (the default, or a column with no room): over the note, the
+    // thread being looked at at the note's edge, just under its text, with
+    // the chrome's shadow to lift it off; the composer for a new comment by
+    // the end of its text; the drafts in the note's top corner.
     '.ezco-mde-comment-margin.is-floating': {
         position: 'absolute',
         top: 0,
+        left: '8px',
         right: '8px',
-        width: 'min(400px, calc(100% - 16px))',
+        width: 'auto',
         padding: 0,
         // Over everything in the note, code blocks' pinned toolbars included.
         'z-index': 500,
-        // Over the note: only the card itself takes clicks.
+        // Over the note: only the cards themselves take clicks.
         'pointer-events': 'none',
     },
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-margin-head': {
         display: 'none',
     },
-    // A floating card is the reader's to size, by any edge; anchored at its
-    // right, against the note's edge.
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-drafts': {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        margin: 0,
+        'z-index': 3,
+        'pointer-events': 'auto',
+        'box-shadow': 'var(--ezco-mde-chrome-shadow)',
+    },
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-card': {
         'pointer-events': 'auto',
         left: 'auto',
-        'min-width': '280px',
-        'min-height': '72px',
+        right: 0,
+        width: 'min(400px, 100%)',
         'max-height': '80vh',
         'box-shadow': 'var(--ezco-mde-chrome-shadow)',
+    },
+    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-card.is-draft': {
+        width: 'min(340px, 100%)',
     },
     // ─────────────────────────────────────────────────────────────
     // File tree (extensions/file-tree.ts): the vault's folders and files,

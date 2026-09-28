@@ -4,33 +4,41 @@
  * By default nothing shows beside the note: commented text is marked, and
  * clicking it (or `focusComment`) opens that one comment as a card over the
  * note's edge, by its text; Escape, or a click elsewhere, closes it
- * (`layout: 'float'`). A floating card's edges can be dragged to size it. A
- * host that wants every open comment in view asks for a column
- * (`layout: 'column'`): each a card level with its text, cards pushed apart
- * so none overlap, the one being looked at at its text and the others moved
- * out of its way, resolved ones folded away until asked for. Where a column
- * would leave the note too narrow it floats after all.
+ * (`layout: 'float'`). A host that wants every open comment in view asks
+ * for a column (`layout: 'column'`): each a card level with its text, cards
+ * pushed apart so none overlap, the one being looked at at its text and the
+ * others moved out of its way, resolved ones folded away until asked for.
+ * Where a column would leave the note too narrow it floats after all.
  *
- * A card is a comment and, nested under it, the comments that answer it
- * (each a document referencing the text above it). Every one shows who and
- * when (the document's name says), its text rendered as the note renders
- * text, and one row: its reactions (the four most given; the rest behind
- * "+n"), React, Reply, Resolve or Reopen, and at the right, as glyphs, Open
- * (the comment's document, in the editor), Edit (in place) and Delete. A
- * reply is written right under what it answers, in the editor itself in
- * small (`Composer`), and kept as a draft in this browser until posted; the
- * open glyph in the field's corner makes the reply's document with the
- * draft and loads it, which is where a longer one is written. Resolving
- * closes the card.
+ * A card shows a comment as a message: who and when over it, its text in a
+ * bubble (the reader's own on the right, in the accent; others' on the
+ * left), and under the bubble one quiet row: its reactions, React, how
+ * many replies it has, and "…" for the rest (Reply, Resolve, Edit, Delete,
+ * Open document). The replies stay out of the way until the count is
+ * clicked; then the thread unfolds under the message, each reply a
+ * message of its own, a reply with answers of its own folding them with
+ * [−]/[+], and a field at the end for the next reply. A reply is written
+ * in the editor itself, in small (`Composer`), and kept as a draft in this
+ * browser until posted; the open glyph in the field's corner makes the
+ * reply's document with the draft and loads it, which is where a longer
+ * one is written. Resolving closes the card.
+ *
+ * A new comment is written in a small composer by the end of the text it
+ * is about. It is posted at once, or kept as a draft: drafts are comments
+ * only this browser has, marked as such in the note and on their cards,
+ * and a bar over the note says how many there are and publishes or
+ * discards them all at once.
  */
 import { Extension, type AnyExtension, type Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
+import tippy, { type Instance as TippyInstance } from 'tippy.js'
 import { parseTextFragment, type Reaction } from '@joinezco/storage'
 import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage } from './comments'
-import { Composer, OPEN_ICON } from './comment-composer'
+import { Composer } from './comment-composer'
 import { clearDraft, draftKey, readDraft, renderMarkdown, when, writeDraft } from './comment-render'
 import { openReactionPicker } from './emoji-picker'
+import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { scrollerOf } from './rail'
 import type { FileSystemStorage } from './filesystem'
 
@@ -51,9 +59,6 @@ export interface CommentMarginOptions {
 /** The note is not squeezed narrower than this to make room for a column. */
 const NOTE_MIN = 400
 const GAP = 8
-/** The least a reader can size a floating card to. */
-const MIN_WIDTH = 280
-const MIN_HEIGHT = 72
 /** Reactions shown on a comment before the rest fold behind "+n". */
 const REACTIONS_SHOWN = 4
 
@@ -81,18 +86,25 @@ const button = (label: string, onClick: (b: HTMLButtonElement) => void, classNam
     return b
 }
 
-/** The React control's glyph: a face with a plus, as reactions are drawn. */
+/** A control drawn as a glyph. */
+const glyph = (icon: string, title: string, onClick: (b: HTMLButtonElement) => void, className = 'ezco-mde-comment-action is-icon') => {
+    const b = button('', onClick, className, title)
+    b.innerHTML = icon
+    return b
+}
+
+/** The React control's glyph: a face, as reactions are drawn. */
 const REACT_ICON =
     '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM5.5 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm5 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM5.3 9.6a.75.75 0 0 1 1.05.15c.4.53 1 .85 1.65.85s1.25-.32 1.65-.85a.75.75 0 1 1 1.2.9A3.55 3.55 0 0 1 8 12.1a3.55 3.55 0 0 1-2.85-1.45.75.75 0 0 1 .15-1.05Z"/></svg>'
-
-/** The glyphs of a message's tools, drawn as the React glyph is: a cross
- *  (close), a pencil (edit), a bin (delete); the open glyph is the composer's. */
+/** The replies control's glyph: a speech bubble, the count beside it. */
+const REPLIES_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M2.5 3.5h11v7H7.5l-3 2.5v-2.5h-2z"/></svg>'
+/** "…": the rest of what can be done, in a menu. */
+const MORE_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="3.5" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="12.5" cy="8" r="1.4" fill="currentColor"/></svg>'
+/** The way out of a floating card: a cross. */
 const CLOSE_ICON =
     '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 4l8 8M12 4l-8 8"/></svg>'
-const EDIT_ICON =
-    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.2 13.3 2 14l.7-3.2Z"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M9.8 4.2 12 6.4"/></svg>'
-const DELETE_ICON =
-    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M3 4.5h10M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M4.5 4.5l.6 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/></svg>'
 
 /** What an orphaned comment pointed at, to show in its place. */
 function quoteOf(fragment: string | null): string {
@@ -120,60 +132,63 @@ function byline(c: CommentInfo): [string, string] {
     return c.time ? [`@${c.author}`, when(c.time)] : [c.author, '']
 }
 
-/** How far the reader's sizing moved a card from where the layout puts it
- *  (`x` to the right of its anchor at the note's edge, `y` down), and
- *  whether they sized it at all: a sized card is theirs, and the layout
- *  leaves it where it is rather than moving it to fit. */
-interface Sizing {
-    x: number
-    y: number
-    sized: boolean
+/** How many answers `c` has, at every depth. */
+function count(c: CommentInfo): number {
+    return c.replies.reduce((n, r) => n + 1 + count(r), 0)
 }
 
 /**
- * Drag any edge of `dom` to size it (floating cards). The edge dragged
- * follows the pointer and the other three stay: a card is anchored at its
- * right edge, so the west edge only changes the width, the east edge moves
- * the anchor with it, and the north edge moves the top as it shortens.
+ * A menu of `items` under `anchor`, in the chrome's menu look, gone on a
+ * choice, Escape, or a click elsewhere; `onClose` hears when it is.
  */
-function resizable(dom: HTMLElement, offset: Sizing, onResize: () => void): void {
-    for (const edge of ['n', 'e', 's', 'w'] as const) {
-        const handle = el('div', `ezco-mde-comment-edge is-${edge}`)
-        handle.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return
-            e.preventDefault()
-            e.stopPropagation()
-            const start = { x: e.clientX, y: e.clientY, w: dom.offsetWidth, h: dom.offsetHeight, ox: offset.x, oy: offset.y }
-            offset.sized = true
-            dom.classList.add('is-sized')
-            const move = (ev: PointerEvent) => {
-                const dx = ev.clientX - start.x
-                const dy = ev.clientY - start.y
-                if (edge === 'e') {
-                    const w = Math.max(MIN_WIDTH, start.w + dx)
-                    dom.style.width = `${w}px`
-                    offset.x = start.ox + (w - start.w)
-                }
-                if (edge === 'w') dom.style.width = `${Math.max(MIN_WIDTH, start.w - dx)}px`
-                if (edge === 's') dom.style.height = `${Math.max(MIN_HEIGHT, start.h + dy)}px`
-                if (edge === 'n') {
-                    const h = Math.max(MIN_HEIGHT, start.h - dy)
-                    dom.style.height = `${h}px`
-                    offset.y = start.oy + (start.h - h)
-                }
-                onResize()
-            }
-            const up = () => {
-                window.removeEventListener('pointermove', move)
-                window.removeEventListener('pointerup', up)
-                dom.classList.remove('is-resizing')
-            }
-            dom.classList.add('is-resizing')
-            window.addEventListener('pointermove', move)
-            window.addEventListener('pointerup', up)
-        })
-        dom.append(handle)
+function openMenu(anchor: HTMLElement, items: ContextMenuItem[], onClose: () => void): () => void {
+    let done = false
+    let popup: TippyInstance | null = null
+    const outside = (e: MouseEvent) => {
+        if (!menu.dom.contains(e.target as Node) && !anchor.contains(e.target as Node)) close()
     }
+    const close = () => {
+        if (done) return
+        done = true
+        document.removeEventListener('mousedown', outside, true)
+        menu.disable()
+        popup?.destroy()
+        popup = null
+        menu.destroy()
+        onClose()
+    }
+    const menu = new ContextMenu({
+        className: 'ezco-mde-comment-menu',
+        items: items.map((item) => ({
+            ...item,
+            onSelect: () => {
+                close()
+                item.onSelect()
+            },
+        })),
+        onClose: () => close(),
+    })
+    const created = tippy(anchor, {
+        content: menu.dom,
+        showOnCreate: true,
+        interactive: true,
+        trigger: 'manual',
+        placement: 'bottom-end',
+        theme: 'ezco-mde-block-actions',
+        appendTo: () => document.body,
+        hideOnClick: false,
+        popperOptions: {
+            modifiers: [
+                { name: 'preventOverflow', options: { padding: 8 } },
+                { name: 'flip', options: { fallbackPlacements: ['top-end', 'bottom-start', 'top-start'] } },
+            ],
+        },
+        onShown: () => menu.focus(),
+    }) as TippyInstance | TippyInstance[]
+    popup = Array.isArray(created) ? created[0] : created
+    menu.enable()
+    document.addEventListener('mousedown', outside, true)
+    return close
 }
 
 // ── A card ──────────────────────────────────────────────────────────────────
@@ -188,12 +203,14 @@ class Card {
     private editing: { id: string; composer: Composer } | null = null
     /** The comment whose deletion is being asked about. */
     private confirming: string | null = null
-    /** Replies folded away, by the comment they are under. */
+    /** Comments whose thread is unfolded under them. */
+    private open = new Set<string>()
+    /** Replies whose own answers are folded away ([+]). */
     private folded = new Set<string>()
     /** Comments whose reactions are all shown, not the first few. */
     private allReactions = new Set<string>()
-    /** How far the reader's sizing moved the card. */
-    readonly offset: Sizing = { x: 0, y: 0, sized: false }
+    /** The "…" menu open, if one is. */
+    private menu: (() => void) | null = null
     private key = ''
     info!: CommentInfo
 
@@ -203,15 +220,13 @@ class Card {
         this.dom.tabIndex = 0
         this.context = el('div', 'ezco-mde-comment-context')
         this.messages = el('div', 'ezco-mde-comment-messages')
-        // What the card holds scrolls when the reader made the card shorter
-        // than it; the card itself never does (its edges lie outside it).
+        // What the card holds scrolls when there is more than fits.
         const inside = el('div', 'ezco-mde-comment-inside')
         inside.append(this.context, this.messages)
         this.dom.append(inside)
-        resizable(this.dom, this.offset, () => this.margin.schedule())
         // Looking at the card is looking at its comment.
         this.dom.addEventListener('mousedown', (e) => {
-            if ((e.target as HTMLElement).closest('a, button, [data-wikilink], .ezco-mde-comment-composer, .ezco-mde-comment-edge')) return
+            if ((e.target as HTMLElement).closest('a, button, [data-wikilink], .ezco-mde-comment-composer')) return
             this.lookAt()
         })
         this.dom.addEventListener('focusin', () => this.lookAt())
@@ -225,6 +240,10 @@ class Card {
             if (e.key !== 'Escape') return
             e.preventDefault()
             e.stopPropagation()
+            if (this.menu) {
+                this.menu()
+                return
+            }
             if (this.editing || this.confirming || this.replying) {
                 this.stopEditing()
                 this.stopReplying()
@@ -245,8 +264,9 @@ class Card {
         this.dom.classList.toggle('is-active', active)
         this.dom.classList.toggle('is-resolved', info.resolved)
         this.dom.classList.toggle('is-orphaned', info.target.orphaned)
+        this.dom.classList.toggle('is-pending', !!info.draft)
         const [who] = byline(info)
-        this.dom.setAttribute('aria-label', `Comment by ${who}`)
+        this.dom.setAttribute('aria-label', `${info.draft ? 'Draft comment' : 'Comment'} by ${who}`)
         if (!active) {
             this.stopEditing()
             this.stopReplying()
@@ -260,6 +280,7 @@ class Card {
             this.editing?.id ?? null,
             this.replying?.id ?? null,
             this.confirming,
+            [...this.open],
             [...this.folded],
             [...this.allReactions],
         ])
@@ -274,15 +295,11 @@ class Card {
         const author = this.margin.author()
 
         const context: Node[] = []
-        if (this.margin.floating) {
-            const close = button('', () => this.margin.close(), 'ezco-mde-comment-tool is-close', 'Close')
-            close.innerHTML = CLOSE_ICON
-            context.push(close)
-        }
+        if (this.margin.floating) context.push(glyph(CLOSE_ICON, 'Close', () => this.margin.close(), 'ezco-mde-comment-tool is-close'))
         if (info.target.orphaned) {
             const orphan = el('div', 'ezco-mde-comment-orphan')
             orphan.append(el('span', 'ezco-mde-comment-quote', quoteOf(info.target.link.fragment)), el('span', undefined, ' is no longer in the note.'))
-            if (author) orphan.append(button('Anchor to selection', () => editor.commands.anchorComment(this.id), 'ezco-mde-comment-link', 'Point this at the selected text instead'))
+            if (author && !info.draft) orphan.append(button('Anchor to selection', () => editor.commands.anchorComment(this.id), 'ezco-mde-comment-link', 'Point this at the selected text instead'))
             context.push(orphan)
         }
         this.context.replaceChildren(...context)
@@ -292,40 +309,57 @@ class Card {
         this.margin.schedule()
     }
 
-    /** A comment, its reactions and actions, the reply being written under
-     *  it, and the comments that answer it (nested). */
+    /** A comment as a message: who and when, the bubble, the row under it
+     *  (reactions, React, the reply count, "…"), and its thread. */
     private message(c: CommentInfo, depth: number, author: string | null): HTMLElement {
         const { editor } = this.margin
         const deleted = c.body === DELETED_BODY
         const box = el('div', depth ? 'ezco-mde-comment-message is-reply' : 'ezco-mde-comment-message')
         box.dataset.comment = c.id
         box.classList.toggle('is-deleted', deleted)
+        box.classList.toggle('is-mine', author !== null && c.author === author)
+        box.classList.toggle('is-pending', !!c.draft)
+
         const head = el('div', 'ezco-mde-comment-head')
         const [who, at] = byline(c)
+        if (depth && c.replies.length) {
+            // As threads fold on a news site: the answers under a reply.
+            const folded = this.folded.has(c.id)
+            head.append(
+                button(folded ? '[+]' : '[–]', () => {
+                    if (folded) this.folded.delete(c.id)
+                    else this.folded.add(c.id)
+                    this.render()
+                }, 'ezco-mde-comment-fold', folded ? `Show ${count(c)} ${count(c) === 1 ? 'answer' : 'answers'}` : 'Fold answers'),
+            )
+        }
         head.append(el('span', 'ezco-mde-comment-author', who))
         if (at) {
             const time = el('time', 'ezco-mde-comment-time', at)
             time.dateTime = c.time
             head.append(time)
         }
+        if (c.draft) head.append(el('span', 'ezco-mde-comment-status is-pending', 'Draft'))
         if (c.resolved) head.append(el('span', 'ezco-mde-comment-status', 'Resolved'))
         box.append(head)
 
-        // The text, rendered as the note renders text, or the composer
-        // editing it in its place.
+        // The text in its bubble, rendered as the note renders text, or the
+        // composer editing it in its place.
+        const bubble = el('div', 'ezco-mde-comment-bubble')
         if (this.editing?.id === c.id) {
-            box.append(this.editing.composer.dom)
+            bubble.classList.add('is-editing')
+            bubble.append(this.editing.composer.dom)
         } else {
             const body = el('div', 'ezco-mde-body ezco-mde-comment-body')
             if (deleted) body.append(el('span', 'ezco-mde-comment-deleted', 'Deleted'))
             else body.append(renderMarkdown(editor, c.body))
-            box.append(body)
+            bubble.append(body)
         }
+        box.append(bubble)
 
-        // One row: reactions, then what can be done. A deletion is asked
-        // about in the same row.
-        const reactions = reactionsOf(c)
-        const row = el('div', 'ezco-mde-comment-actions')
+        // Under the bubble: reactions, React, how many replies, and "…".
+        // A deletion is asked about in the same row.
+        const row = el('div', 'ezco-mde-comment-under')
         if (this.confirming === c.id) {
             row.classList.add('is-confirming')
             row.append(
@@ -340,13 +374,14 @@ class Card {
                 }, 'ezco-mde-comment-action', 'Keep it'),
             )
         } else {
+            const reactions = reactionsOf(c)
             const all = this.allReactions.has(c.id)
             const shown = all || reactions.length <= REACTIONS_SHOWN ? reactions : reactions.slice(0, REACTIONS_SHOWN - 1)
             const me = this.margin.identity()
-            for (const [emoji, who] of shown) {
-                const chip = button(`${emoji} ${who.length}`, () => editor.commands.reactToComment(c.id, emoji), 'ezco-mde-comment-reaction', who.map((r) => `@${r.by}`).join(', '))
-                chip.setAttribute('aria-pressed', String(!!me && who.some((r) => r.by === me)))
-                chip.disabled = !me
+            for (const [emoji, given] of shown) {
+                const chip = button(`${emoji} ${given.length}`, () => editor.commands.reactToComment(c.id, emoji), 'ezco-mde-comment-reaction', given.map((r) => `@${r.by}`).join(', '))
+                chip.setAttribute('aria-pressed', String(!!me && given.some((r) => r.by === me)))
+                chip.disabled = !me || !!c.draft
                 row.append(chip)
             }
             if (reactions.length > REACTIONS_SHOWN) {
@@ -358,67 +393,109 @@ class Card {
                     }, 'ezco-mde-comment-reaction is-more', all ? 'Show fewer reactions' : `Show all ${reactions.length} reactions`),
                 )
             }
-            if (me) {
-                const react = button('', (b) => openReactionPicker(b, (emoji) => editor.commands.reactToComment(c.id, emoji)), 'ezco-mde-comment-action is-icon', 'React')
-                react.innerHTML = REACT_ICON
-                row.append(react)
+            if (me && !c.draft) row.append(glyph(REACT_ICON, 'React', (b) => openReactionPicker(b, (emoji) => editor.commands.reactToComment(c.id, emoji))))
+            if (!depth) {
+                // The count opens the thread; with nothing to open, it
+                // starts the first reply.
+                const n = count(c)
+                const open = this.open.has(c.id)
+                const replies = button(String(n), () => {
+                    if (!n) {
+                        if (author) this.reply(c)
+                        return
+                    }
+                    if (open) this.open.delete(c.id)
+                    else this.open.add(c.id)
+                    this.render()
+                }, 'ezco-mde-comment-action is-replies', n ? (open ? 'Hide replies' : `Show ${n} ${n === 1 ? 'reply' : 'replies'}`) : author ? 'Reply' : 'No replies')
+                replies.insertAdjacentHTML('afterbegin', REPLIES_ICON)
+                replies.setAttribute('aria-expanded', String(open))
+                replies.disabled = !n && !author
+                row.append(replies)
             }
-            if (author) {
-                const draft = readDraft(this.draftKey(c.id))
-                row.append(button(draft ? 'Reply · draft' : 'Reply', () => this.reply(c), 'ezco-mde-comment-action', depth ? `Reply to ${who}` : 'Reply'))
+            const items = this.menuFor(c, depth, author, deleted)
+            if (items.length) {
+                const more = glyph(MORE_ICON, 'More', (b) => {
+                    if (this.menu) {
+                        this.menu()
+                        return
+                    }
+                    more.setAttribute('aria-expanded', 'true')
+                    this.menu = openMenu(b, items, () => {
+                        this.menu = null
+                        more.setAttribute('aria-expanded', 'false')
+                    })
+                })
+                more.setAttribute('aria-haspopup', 'menu')
+                more.setAttribute('aria-expanded', 'false')
+                row.append(more)
             }
-            if (me && !depth) {
-                row.append(
-                    c.resolved
-                        ? button('Reopen', () => editor.commands.reopenComment(c.id), 'ezco-mde-comment-action', 'Reopen')
-                        : button('Resolve', () => {
-                            editor.commands.resolveComment(c.id)
-                            this.margin.close()
-                        }, 'ezco-mde-comment-action', 'Resolve'),
-                )
-            }
-            // At the row's right, what is done with the document: open it
-            // as a note, and, when writing, edit it in place or delete it.
-            const tools = el('span', 'ezco-mde-comment-tools')
-            const tool = (icon: string, label: string, title: string, onClick: () => void) => {
-                const b = button('', onClick, 'ezco-mde-comment-action is-icon', label)
-                b.innerHTML = icon
-                b.title = title
-                return b
-            }
-            tools.append(tool(OPEN_ICON, 'Open document', 'Open this comment as a note', () => editor.commands.openComment(c.id)))
-            if (author && !deleted) {
-                tools.append(
-                    tool(EDIT_ICON, 'Edit', 'Edit', () => this.edit(c)),
-                    tool(DELETE_ICON, 'Delete', 'Delete', () => {
-                        this.confirming = c.id
-                        this.render()
-                    }),
-                )
-            }
-            row.append(tools)
         }
         box.append(row)
 
-        // The reply being written, right under what it answers.
-        if (this.replying?.id === c.id) box.append(this.replying.composer.dom)
-
-        if (c.replies.length) {
-            const folded = this.folded.has(c.id)
-            const toggle = button(`${folded ? '▸' : '▾'} ${c.replies.length} ${c.replies.length === 1 ? 'reply' : 'replies'}`, () => {
-                if (folded) this.folded.delete(c.id)
-                else this.folded.add(c.id)
-                this.render()
-            }, 'ezco-mde-comment-fold', folded ? 'Show replies' : 'Hide replies')
-            toggle.setAttribute('aria-expanded', String(!folded))
-            box.append(toggle)
-            if (!folded) {
-                const list = el('div', 'ezco-mde-comment-replies')
-                for (const r of c.replies) list.append(this.message(r, depth + 1, author))
-                box.append(list)
-            }
+        // The thread: a comment's, unfolded on request (or while answering
+        // it); a reply's answers, unless folded away.
+        const unfolded = depth ? !this.folded.has(c.id) : this.open.has(c.id) || this.replying?.id === c.id
+        if (unfolded) {
+            const thread = this.thread(c, depth, author)
+            if (thread.childElementCount) box.append(thread)
         }
         return box
+    }
+
+    /** The replies under `c`, each a message, and the reply being written
+     *  or the field for the next one. */
+    private thread(c: CommentInfo, depth: number, author: string | null): HTMLElement {
+        const list = el('div', 'ezco-mde-comment-thread')
+        for (const r of c.replies) list.append(this.message(r, depth + 1, author))
+        if (this.replying?.id === c.id) list.append(this.replying.composer.dom)
+        else if (!depth && author && this.open.has(c.id) && !(c.body === DELETED_BODY)) {
+            const kept = readDraft(this.draftKey(c.id))
+            list.append(button(kept ? 'Reply · draft' : 'Reply…', () => this.reply(c), 'ezco-mde-comment-reply-field', 'Reply'))
+        }
+        return list
+    }
+
+    /** What "…" offers for `c`: the rest of what can be done to it. */
+    private menuFor(c: CommentInfo, depth: number, author: string | null, deleted: boolean): ContextMenuItem[] {
+        const { editor } = this.margin
+        const me = this.margin.identity()
+        const items: ContextMenuItem[] = []
+        if (author && !deleted) items.push({ label: 'Reply', onSelect: () => this.reply(c) })
+        if (me && !depth && !c.draft) {
+            items.push(
+                c.resolved
+                    ? { label: 'Reopen', onSelect: () => editor.commands.reopenComment(c.id) }
+                    : {
+                          label: 'Resolve',
+                          onSelect: () => {
+                              editor.commands.resolveComment(c.id)
+                              this.margin.close()
+                          },
+                      },
+            )
+        }
+        if (author && !deleted) items.push({ label: 'Edit', onSelect: () => this.edit(c) })
+        if (c.draft) {
+            if (author) {
+                items.push(
+                    { label: 'Publish draft', onSelect: () => editor.commands.publishComments([c.id]) },
+                    { label: 'Discard draft', onSelect: () => editor.commands.discardComments([c.id]) },
+                )
+            }
+        } else {
+            if (author && !deleted) {
+                items.push({
+                    label: 'Delete',
+                    onSelect: () => {
+                        this.confirming = c.id
+                        this.render()
+                    },
+                })
+            }
+            items.push({ label: 'Open document', onSelect: () => editor.commands.openComment(c.id) })
+        }
+        return items
     }
 
     private draftKey(id: string) {
@@ -437,33 +514,44 @@ class Card {
         this.stopEditing()
         const [who] = byline(c)
         const draft = this.draftKey(c.id)
+        const posted = () => {
+            clearDraft(draft)
+            this.stopReplying()
+            if (c.id === this.id) this.open.add(c.id)
+            this.render()
+        }
         const composer = new Composer({
             editor,
             extensions: this.margin.composerExtensions(),
             placeholder: `Reply to ${who}…`,
-            submitLabel: 'Reply',
+            // An answer to a draft is a draft until both are published.
+            submitLabel: c.draft ? 'Draft' : 'Reply',
             initial: readDraft(draft) ?? '',
             onChange: (markdown) => writeDraft(draft, markdown),
             onSubmit: (body) => {
-                if (editor.commands.replyToComment(c.id, body)) {
-                    clearDraft(draft)
-                    this.stopReplying()
-                    this.render()
-                }
+                if (editor.commands.replyToComment(c.id, body, { draft: !!c.draft })) posted()
             },
+            ...(c.draft
+                ? {}
+                : {
+                      secondaryLabel: 'Draft',
+                      onSecondary: (body: string) => {
+                          if (editor.commands.replyToComment(c.id, body, { draft: true })) posted()
+                      },
+                      // The reply's document, made with what was written, opened
+                      // in the editor: where a longer one is written.
+                      onExpand: () => {
+                          const body = this.replying?.composer.value() ?? ''
+                          if (editor.commands.replyToComment(c.id, body, { open: true })) {
+                              clearDraft(draft)
+                              this.stopReplying()
+                          }
+                      },
+                  }),
             // Done for now: the draft is kept, the card closes.
             onCancel: () => {
                 this.stopReplying()
                 this.margin.close()
-            },
-            // The reply's document, made with what was written, opened in the
-            // editor: where a longer one is written.
-            onExpand: () => {
-                const body = this.replying?.composer.value() ?? ''
-                if (editor.commands.replyToComment(c.id, body, { open: true })) {
-                    clearDraft(draft)
-                    this.stopReplying()
-                }
             },
         })
         this.replying = { id: c.id, composer }
@@ -499,11 +587,15 @@ class Card {
                 this.render()
                 this.dom.focus()
             },
-            // The comment's own document, in the editor.
-            onExpand: () => {
-                this.stopEditing()
-                editor.commands.openComment(c.id)
-            },
+            // The comment's own document, in the editor (a draft has none).
+            ...(c.draft
+                ? {}
+                : {
+                      onExpand: () => {
+                          this.stopEditing()
+                          editor.commands.openComment(c.id)
+                      },
+                  }),
         })
         this.editing = { id: c.id, composer }
         this.render()
@@ -516,6 +608,7 @@ class Card {
     }
 
     destroy() {
+        this.menu?.()
         this.stopEditing()
         this.stopReplying()
         this.dom.remove()
@@ -524,13 +617,14 @@ class Card {
 
 /** What a card shows of a comment, for telling whether to draw it again. */
 function summary(c: CommentInfo): unknown {
-    return [c.ref.source, c.ref.line, c.ref.text, c.body, c.resolved, c.target.orphaned, c.reactions.map((r) => [r.by, r.emoji]), c.replies.map(summary)]
+    return [c.ref.source, c.ref.line, c.ref.text, c.body, c.resolved, c.target.orphaned, !!c.draft, c.reactions.map((r) => [r.by, r.emoji]), c.replies.map(summary)]
 }
 
+/** The composer for a new comment: small, by the end of the text it is
+ *  about; posted at once, or kept as a draft. */
 class Draft {
     readonly dom: HTMLElement
     private readonly composer: Composer
-    readonly offset: Sizing = { x: 0, y: 0, sized: false }
 
     constructor(margin: Margin, author: string) {
         const { editor } = margin
@@ -545,10 +639,15 @@ class Draft {
             extensions: margin.composerExtensions(),
             placeholder: 'Comment…',
             submitLabel: 'Comment',
+            compact: true,
             initial: readDraft(key) ?? '',
             onChange: (markdown) => writeDraft(key, markdown),
             onSubmit: (body) => {
                 if (editor.commands.addComment({ body, ranges: ranges() })) clearDraft(key)
+            },
+            secondaryLabel: 'Draft',
+            onSecondary: (body) => {
+                if (editor.commands.addComment({ body, ranges: ranges(), draft: true })) clearDraft(key)
             },
             onCancel: () => {
                 editor.commands.cancelComment()
@@ -561,7 +660,6 @@ class Draft {
         const inside = el('div', 'ezco-mde-comment-inside')
         inside.append(head, this.composer.dom)
         this.dom.append(inside)
-        resizable(this.dom, this.offset, () => margin.schedule())
         this.composer.focus()
     }
 
@@ -576,15 +674,20 @@ class Draft {
 class Margin {
     readonly dom: HTMLElement
     private readonly head: HTMLElement
+    /** The note's drafts: how many, published or discarded together. */
+    private readonly bar: HTMLElement
     private readonly list: HTMLElement
     private readonly cards = new Map<string, Card>()
     private draft: Draft | null = null
     private showResolved = false
+    /** Discarding the drafts is being asked about. */
+    private discarding = false
     /** Comments float over the note's edge (the default layout, or a column
      *  that would not fit). */
     floating: boolean
     private frame = 0
     private headKey = ''
+    private barKey = ''
     private readonly observer: ResizeObserver | null
     private extensions: AnyExtension[] | null = null
 
@@ -597,8 +700,10 @@ class Margin {
         this.dom = el('section', 'ezco-mde-comment-margin')
         this.dom.setAttribute('aria-label', 'Comments')
         this.head = el('header', 'ezco-mde-comment-margin-head')
+        this.bar = el('div', 'ezco-mde-comment-drafts')
+        this.bar.hidden = true
         this.list = el('div', 'ezco-mde-comment-list')
-        this.dom.append(this.head, this.list)
+        this.dom.append(this.head, this.bar, this.list)
         const root = (view.dom.closest('.ezco-mde') as HTMLElement | null) ?? view.dom
         const mount = options.mount
         const host = mount instanceof HTMLElement ? mount : typeof mount === 'function' ? mount(root) ?? null : null
@@ -648,10 +753,11 @@ class Margin {
         const state = commentsKey.getState(this.view.state)
         if (!state) return
         const resolved = state.comments.filter((c) => c.resolved).length
+        const drafts = this.comments.drafts().length
         const visible = this.floating
             ? state.comments.filter((c) => c.id === state.active)
             : state.comments.filter((c) => !c.resolved || this.showResolved || c.id === state.active)
-        this.dom.hidden = this.floating ? !state.active && !state.draft : !state.comments.length && !state.draft
+        this.dom.hidden = this.floating ? !state.active && !state.draft && !drafts : !state.comments.length && !state.draft && !drafts
         this.dom.classList.toggle('is-floating', this.floating)
 
         // The column's head: how many, and the resolved ones on request.
@@ -668,6 +774,36 @@ class Margin {
                         this.update()
                     }, 'ezco-mde-comment-link'),
                 )
+            }
+        }
+
+        // The drafts: published or discarded all at once.
+        if (!drafts) this.discarding = false
+        const barKey = `${drafts}/${this.discarding}`
+        if (barKey !== this.barKey) {
+            this.barKey = barKey
+            this.bar.hidden = !drafts
+            this.bar.replaceChildren()
+            if (drafts) {
+                this.bar.append(el('span', 'ezco-mde-comment-drafts-count', drafts === 1 ? '1 draft' : `${drafts} drafts`))
+                if (this.discarding) {
+                    this.bar.append(
+                        el('span', 'ezco-mde-comment-question', 'Discard them?'),
+                        button('Discard', () => this.editor.commands.discardComments(), 'ezco-mde-comment-action is-danger', 'Discard every draft'),
+                        button('Keep', () => {
+                            this.discarding = false
+                            this.update()
+                        }, 'ezco-mde-comment-action', 'Keep them'),
+                    )
+                } else {
+                    this.bar.append(
+                        button('Publish', () => this.editor.commands.publishComments(), 'ezco-mde-comment-action is-primary', 'Publish every draft'),
+                        button('Discard', () => {
+                            this.discarding = true
+                            this.update()
+                        }, 'ezco-mde-comment-action', 'Discard every draft'),
+                    )
+                }
             }
         }
 
@@ -737,13 +873,15 @@ class Margin {
         }
         const state = commentsKey.getState(this.view.state)
         if (!state) return
-        const origin = this.list.getBoundingClientRect().top
+        const box = this.list.getBoundingClientRect()
+        const origin = box.top
+        const size = this.view.state.doc.content.size
         // Beside the note, a card is level with its text; over it (floating),
-        // just below its text, so the text stays in view.
+        // just below its text, so the text stays in view. A comment on the
+        // whole note sits at the top.
         const at = (range: { from: number; to: number } | null) => {
             if (!range) return 0
             try {
-                const size = this.view.state.doc.content.size
                 return this.floating
                     ? this.view.coordsAtPos(Math.min(range.to, size), -1).bottom - origin + GAP
                     : this.view.coordsAtPos(Math.min(range.from, size)).top - origin
@@ -751,16 +889,28 @@ class Margin {
                 return 0
             }
         }
-        type Placed = { dom: HTMLElement; want: number; height: number; top: number; fixed: boolean; range: { from: number; to: number } | null; offset: Sizing }
+        // Over the note, the composer for a new comment stands at the end of
+        // the text it is about, as far left as that is (but on the note).
+        const endX = (range: { from: number; to: number } | null, dom: HTMLElement): number | null => {
+            if (!range || !this.floating) return null
+            try {
+                const end = this.view.coordsAtPos(Math.min(range.to, size), -1)
+                return Math.max(0, Math.min(end.left - box.left, box.width - dom.offsetWidth))
+            } catch {
+                return null
+            }
+        }
+        type Placed = { dom: HTMLElement; want: number; height: number; top: number; fixed: boolean; range: { from: number; to: number } | null; x: number | null }
         const placed: Placed[] = []
         for (const info of state.comments) {
             const card = this.cards.get(info.id)
             if (!card || card.dom.hidden) continue
-            placed.push({ dom: card.dom, want: at(info.target.range), height: card.dom.offsetHeight, top: 0, fixed: info.id === state.active && !state.draft, range: info.target.range, offset: card.offset })
+            const range = info.target.whole ? null : info.target.range
+            placed.push({ dom: card.dom, want: at(range), height: card.dom.offsetHeight, top: 0, fixed: info.id === state.active && !state.draft, range, x: null })
         }
         if (this.draft && state.draft) {
             const range = state.draft.ranges[0] ?? null
-            placed.push({ dom: this.draft.dom, want: at(range), height: this.draft.dom.offsetHeight, top: 0, fixed: true, range, offset: this.draft.offset })
+            placed.push({ dom: this.draft.dom, want: at(range), height: this.draft.dom.offsetHeight, top: 0, fixed: true, range, x: endX(range, this.draft.dom) })
         }
         placed.sort((a, b) => a.want - b.want || Number(b.fixed) - Number(a.fixed))
         const pin = placed.findIndex((p) => p.fixed)
@@ -778,29 +928,29 @@ class Margin {
         }
         // Floating over the note, a card never extends the scroll: under its
         // text when there is room before the scroll area's end, else above
-        // its text, else as low as fits. A card the reader sized stays where
-        // they put it.
+        // its text, else as low as fits.
         if (this.floating) {
             const scroller = scrollerOf(this.list)
             const listTop = scroller ? origin - scroller.getBoundingClientRect().top + scroller.scrollTop : origin + window.scrollY
             const limit = (scroller ? scroller.scrollHeight : document.documentElement.scrollHeight) - listTop
             for (const p of placed) {
-                if (p.offset.sized || p.top + p.height <= limit) continue
+                if (p.top + p.height <= limit) continue
                 let above = -1
                 try {
-                    if (p.range) above = this.view.coordsAtPos(Math.min(p.range.from, this.view.state.doc.content.size)).top - origin - GAP - p.height
+                    if (p.range) above = this.view.coordsAtPos(Math.min(p.range.from, size)).top - origin - GAP - p.height
                 } catch {
                     above = -1
                 }
                 p.top = above >= 0 ? above : Math.max(0, limit - p.height)
             }
         }
-        // Placed with `top`/`right`, not a transform: text on a transformed
-        // layer renders soft in some engines, and a move is not animated.
+        // Placed with `top` (and `left` for the composer), not a transform:
+        // text on a transformed layer renders soft in some engines.
         let bottom = 0
         for (const p of placed) {
-            p.dom.style.top = `${Math.round(p.top + p.offset.y)}px`
-            p.dom.style.right = `${-Math.round(p.offset.x)}px`
+            p.dom.style.top = `${Math.round(p.top)}px`
+            p.dom.style.left = p.x === null ? '' : `${Math.round(p.x)}px`
+            p.dom.style.right = p.x === null ? '' : 'auto'
             bottom = Math.max(bottom, p.top + p.height)
         }
         this.list.style.minHeight = this.floating ? '' : `${Math.ceil(bottom)}px`

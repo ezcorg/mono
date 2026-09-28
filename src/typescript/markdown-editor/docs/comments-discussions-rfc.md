@@ -80,44 +80,66 @@ tell apart is pinned instead (the editor writes the span into the note).
 ## 4. The editor
 
 - **Showing.** Commented text is highlighted, resolved text with a quiet
-  dotted mark, and that is all that shows by default. Clicking a highlight
-  (or `focusComment`) opens that one comment as a card over the note's edge,
-  by its text (`margin: { layout: 'float' }`); Escape or a click elsewhere
-  closes it; the card's edges size it and it stays as sized. A host may ask
-  for a column (`layout: 'column'`): every open comment beside the note,
-  level with its text, cards pushed apart, resolved ones folded away until
-  asked for; where the column would leave the note too narrow, it floats.
-  A floating card never extends the page.
-- **A card** is the comment and, nested, the comments answering it, each
-  with who and when, its text rendered with the note's own content styles
-  at the same size it is edited at, and one row: its reactions (the four
-  most given, the rest behind "+n"), React (the common reactions and the
-  recently picked ones in a row, "…" for the whole grid, which opens on the
-  recent row or the common reactions standing in for it and the first
-  category), Reply, Resolve or Reopen, and at the right, as glyphs, Open
-  (the comment as a note in the editor), Edit and Delete.
-- **Writing.** A reply is written right under what it answers, in the
-  editor itself in small: the note's `markdownSetup` without its chrome, so
-  code blocks open the same files and `[[links]]`, `:emoji:` and `/` work.
-  What is typed is a draft kept in the browser until posted; Cancel closes
-  the card and loses nothing. Posting makes the reply's document. **Open in
-  editor** makes the document with the draft and loads it: the editor is
-  then the editor of the comment, whose first block quotes what it answers
-  and opens it at that place. From the note, a card's menu opens the
-  comment's document; from the document, its reference opens the note at
-  the passage. The same at every level.
+  dotted mark, and that is all that shows by default. Where two comments'
+  text overlaps, the overlap is marked deeper, and a click on it looks at
+  the narrowest comment first, then the next, round again. A comment on the
+  whole of a document (a reply quotes the whole of the comment it answers,
+  so its document, opened, has the replies as comments on all of it)
+  highlights nothing: its card sits at the top. Clicking a highlight (or
+  `focusComment`) opens that one comment as a card over the note's edge, by
+  its text (`margin: { layout: 'float' }`); Escape or a click elsewhere
+  closes it. A host may ask for a column (`layout: 'column'`): every open
+  comment beside the note, level with its text, cards pushed apart, resolved
+  ones folded away until asked for; where the column would leave the note
+  too narrow, it floats. A floating card never extends the page.
+- **A card** shows the comment as a message: who and when over it, its
+  text in a bubble (rendered with the note's own content styles at the size
+  it is edited at; the reader's own messages on the right, in the accent,
+  others' on the left), and under the bubble one quiet row: its reactions
+  (the four most given, the rest behind "+n"), React (the common reactions
+  and the recently picked ones in a row, "…" for the whole grid), how many
+  replies it has, and "…" for the rest: Reply, Resolve or Reopen, Edit,
+  Delete, Open document (the comment as a note in the editor, where its
+  own replies are the comments). The replies stay out of the way until the
+  count is clicked; then the thread unfolds under the message, each reply
+  a message of its own, indented, a reply with answers of its own folding
+  them with [−]/[+] as a news site folds threads, and a field at the end
+  for the next reply. Cards move apart as threads unfold, so none covers
+  another.
+- **Writing.** A new comment is written in a small composer by the end of
+  the text it is about; a reply, under what it answers, in the editor
+  itself in small: the note's `markdownSetup` without its chrome, so code
+  blocks open the same files and `[[links]]`, `:emoji:` and `/` work. What
+  is typed is kept in the browser until posted; Cancel closes the card and
+  loses nothing. Posting makes the document. **Open in editor** makes the
+  document with what was written and loads it: the editor is then the
+  editor of the comment, whose first block quotes what it answers and opens
+  it at that place. From the note, a card's menu opens the comment's
+  document; from the document, its reference opens the note at the
+  passage. The same at every level.
+- **Drafts.** **Draft** keeps a comment in this browser instead of writing
+  its document (`ezco-mde-comment-queue:<note>` in `localStorage`): it is
+  marked as a draft in the note (a dashed underline in the accent) and on
+  its card, only its author sees it, and a reply to a draft is a draft too.
+  A bar over the note counts the note's drafts and publishes or discards
+  them all at once; a draft's "…" publishes or discards it alone (with the
+  drafts answering it). Publishing writes the documents in the order the
+  drafts were made, a reply's reference made from its parent's text as
+  just written, so a whole conversation can be authored first and put in
+  the vault together, or not at all.
 - **Deleting** a comment nobody answered removes its reference from its
   document (and the document, when nothing else is in it); one others have
   answered keeps its place as `[deleted]`, so their replies keep theirs.
   Every comment can be edited or deleted by whoever can edit the vault:
   authorship is a name, not a lock, until identities sign.
-- **Commands.** `startComment`, `addComment({ body, ranges?, open? })`,
-  `replyToComment(id, body, { open? })`, `editComment`, `deleteComment`,
+- **Commands.** `startComment`, `addComment({ body, ranges?, open?, draft? })`,
+  `replyToComment(id, body, { open?, draft? })`, `editComment`,
+  `deleteComment`, `publishComments(ids?)`, `discardComments(ids?)`,
   `resolveComment`, `reopenComment`, `reactToComment(id, emoji)`,
   `openComment`, `anchorComment`, `focusComment`. `editor.storage.comments`
-  has `comments()` (threaded, targets found), `exportAnnotations()` (W3C
-  Web Annotations: one per comment, `replying` ones targeting the comment
-  they answer).
+  has `comments()` (threaded, targets found; drafts among them, marked
+  `draft`), `drafts()`, `exportAnnotations()` (W3C Web Annotations: one
+  per comment, `replying` ones targeting the comment they answer).
 - **Who.** The host gives `comments: { author, index, reactions }`; without
   an author, comments are shown and not written; without `reactions`, none
   are shown or made. With only `fs`, the editor's own vault provides both,

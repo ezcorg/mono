@@ -75,29 +75,40 @@ Which release? The next one, I'd say.
 
 The editor finds each comment's passage in the open note (a quote as
 written, regardless of case, or approximately after an edit made elsewhere;
-a pin; a block id) and highlights it. Clicking the highlight opens the
-comment as a card over the note's edge, its replies nested under it;
-Escape or a click elsewhere closes it; its edges size it. A host that wants
-every open comment in view asks for a column beside the note
+a pin; a block id) and highlights it; where two comments' passages overlap,
+the overlap is marked deeper, and clicking it looks at each in turn. A
+comment on the whole of a document (a reply quotes the whole of the comment
+it answers) highlights nothing and sits at the top. Clicking a highlight
+opens the comment as a card over the note's edge: who and when, the text
+in a bubble (the reader's own on the right), and under it one quiet row
+with its reactions, React, how many replies it has, and "…" for the rest
+(Reply, Resolve, Edit, Delete, Open document). The count unfolds the
+thread under the message, each reply a message of its own, a reply with
+answers folding them with [−]/[+], and a field for the next reply at the
+end. Escape or a click elsewhere closes the card. A host that wants every
+open comment in view asks for a column beside the note
 (`comments: { margin: { layout: 'column' } }`). Quotes keep up with
 editing: words changed here are re-quoted where the comment lives when the
 note is saved; text no quote can tell apart is pinned instead.
 
 Given `comments: { author, index, reactions }` (a vault's `comments` and
 `reactions`; the editor's own vault's with `fs` alone), comments are
-written as `author`: select text, then Comment or ⌘⌥M. A comment or a
-reply is typed in the editor itself, in small, right under what it answers,
-and posting makes its document, `comments/<note>/<author> <date> <time>.md`,
-whose name is read back as who and when. The open glyph in the field's
-corner (⌘⇧↩) makes the document with the draft, even an empty one, and
-loads it: the editor is then the editor of the comment, the caret under
-the reference, whose first block quotes what it answers and opens the note
-there with the comment looked at. A document opened before anything was
-written, and left so, is removed again. Under each comment one row holds
-its reactions (per-identity state in the vault, not documents; a ✅
-resolves), React, Reply, Resolve or Reopen, and at its right the document's
-tools as glyphs: open as a note, Edit and Delete. `editor.storage.comments`
-has the comments and `exportAnnotations()` (W3C Web Annotations).
+written as `author`: select text, then Comment or ⌘⌥M, and a small
+composer opens at the end of the selection. A comment or a reply is typed
+in the editor itself, in small, and posting makes its document,
+`comments/<note>/<author> <date> <time>.md`, whose name is read back as who
+and when. **Draft** keeps it in this browser instead: a draft is marked as
+such in the note (a dashed underline) and on its card, its own replies are
+drafts too, and a bar over the note counts the note's drafts and publishes
+or discards them all at once (or one at a time, from a draft's "…"). The
+open glyph in the field's corner (⌘⇧↩) makes the document with what was
+written, even nothing, and loads it: the editor is then the editor of the
+comment, the caret under the reference, whose first block quotes what it
+answers and opens the note there with the comment looked at. A document
+opened before anything was written, and left so, is removed again.
+Reactions are per-identity state in the vault, not documents; a ✅
+resolves. `editor.storage.comments` has the comments, `drafts()` and
+`exportAnnotations()` (W3C Web Annotations).
 
 ## What it understands
 

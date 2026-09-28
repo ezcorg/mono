@@ -102,6 +102,16 @@ export function wordCount(text: string): number {
 const notes: Note[] = [];
 `;
 
+/** Where the demo notes which seeds it wrote last. */
+const SEEDS_KEY = 'ezco-demo-seeds';
+
+/** A short hash of `text` (FNV-1a), to tell the seeds apart. */
+function hashOf(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
+  return `${h.toString(16)}:${text.length}`;
+}
+
 function App() {
   const [markdownContent, setMarkdownContent] = useState('');
   const [variant, setVariant] = useState<Variant>('default');
@@ -127,15 +137,24 @@ function App() {
     loadVault().then(async (vault) => {
       if (cancelled || !editorBodyRef.current) return;
       const { fs } = vault;
-      await fs.writeFile('test.md', file);
-      // A comment on the demo note: a document referencing a passage of it.
-      await fs.mkdir('comments/test', { recursive: true });
-      await fs.writeFile('comments/test/alice 2026-09-23 10.05.md', '![[test#:~:text=travels%20with%20the%20file]]\n\nEven to tools that know nothing of comments: they show a quoted passage and a link.\n');
-      await fs.writeFile('comments/test/theo 2026-09-23 10.06.md', '![[comments/test/alice 2026-09-23 10.05#:~:text=they%20show%20a%20quoted%20passage]]\n\nAnd the version log keeps its history.\n');
-      // Seed a non-Markdown file so the titlebar search can open it and show
-      // the "code files render as a single codeblock" behavior (and round-trip
-      // back to raw .ts on edit).
-      await fs.writeFile('example.ts', exampleTs);
+      // The demo's own files: the note, a comment on it (a document
+      // referencing a passage of it) with a reply, and a non-Markdown file
+      // the titlebar search can open (code files render as one codeblock,
+      // and round-trip back to raw .ts on edit). Written once, and again
+      // only when they change here (or are gone), so that edits made in the
+      // demo stay across reloads, as the snapshot's do.
+      const seeds: [string, string][] = [
+        ['test.md', file],
+        ['comments/test/alice 2026-09-23 10.05.md', '![[test#:~:text=travels%20with%20the%20file]]\n\nEven to tools that know nothing of comments: they show a quoted passage and a link.\n'],
+        ['comments/test/theo 2026-09-23 10.06.md', '![[comments/test/alice 2026-09-23 10.05#:~:text=they%20show%20a%20quoted%20passage]]\n\nAnd the version log keeps its history.\n'],
+        ['example.ts', exampleTs],
+      ];
+      const stamp = hashOf(seeds.map(([path, content]) => `${path}\0${content}`).join('\n'));
+      if (localStorage.getItem(SEEDS_KEY) !== stamp || !(await fs.exists('test.md'))) {
+        await fs.mkdir('comments/test', { recursive: true });
+        for (const [path, content] of seeds) await fs.writeFile(path, content);
+        localStorage.setItem(SEEDS_KEY, stamp);
+      }
       if (cancelled) return;
 
       ed = createEditor({
