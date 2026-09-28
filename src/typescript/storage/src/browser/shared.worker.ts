@@ -20,10 +20,9 @@
  *                              snapshot restored into it first
  */
 import { hasOpfs } from './opfs.js'
-import { snapshotBytes, type SnapshotSource } from './snapshots.js'
+import { restoreFresh, type SnapshotSource } from './snapshots.js'
 import { memoryVfs } from '../memory.js'
 import { DISCONNECTED, peer, remoteVfs, serveVfs, type Peer, type RemoteVfs } from '../remote.js'
-import { restoreSnapshot } from '../snapshot.js'
 import type { VfsInterface, WatchEvent } from '../vfs.js'
 
 declare const self: { addEventListener(type: 'connect', listener: (event: MessageEvent) => void): void }
@@ -190,7 +189,7 @@ async function mount(page: Page, name: string, snapshot?: SnapshotSource): Promi
                 }
             }
         } else {
-            await restoreSnapshot(fs, await snapshotBytes(snapshot))
+            await restoreFresh(fs, snapshot)
         }
     }
     const { port1, port2 } = new MessageChannel()

@@ -11,10 +11,9 @@
  *   restore(name, snapshot)    restore a snapshot into the vault `name`
  */
 import { hasOpfs, opfsBucket, opfsVfs } from './opfs.js'
-import { snapshotBytes, type SnapshotSource } from './snapshots.js'
+import { restoreFresh, type SnapshotSource } from './snapshots.js'
 import { memoryVfs } from '../memory.js'
 import { peer, serveVfs, type PortLike } from '../remote.js'
-import { restoreSnapshot } from '../snapshot.js'
 import type { VfsInterface } from '../vfs.js'
 
 const vaults = new Map<string, Promise<VfsInterface>>()
@@ -30,7 +29,7 @@ function vault(name: string): Promise<VfsInterface> {
 }
 
 async function restore(name: string, snapshot: SnapshotSource): Promise<number> {
-    return restoreSnapshot(await vault(name), await snapshotBytes(snapshot))
+    return restoreFresh(await vault(name), snapshot)
 }
 
 const handlers = {

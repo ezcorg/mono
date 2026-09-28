@@ -150,11 +150,24 @@ describe('Browser vaults', () => {
         const first = await browserVfs(name, { snapshot: url })
         await first.writeFile('mine.md', 'kept')
         await first.writeFile('readme.md', 'edited')
-        // Opening again restores the snapshot's files and leaves the rest.
+        // Opening again with the same snapshot writes nothing: the edit stays.
         const again = await browserVfs(name, { snapshot: url })
-        expect(await again.readFile('readme.md')).toBe('# Demo')
+        expect(await again.readFile('readme.md')).toBe('edited')
         expect(await again.readFile('mine.md')).toBe('kept')
+        // A changed snapshot is restored, over the edit, leaving the rest.
+        const changed = await takeSnapshot(memoryVfs({ 'readme.md': '# Demo, again' }))
+        const url2 = URL.createObjectURL(new Blob([changed as Uint8Array<ArrayBuffer>]))
+        const third = await browserVfs(name, { snapshot: url2 })
+        expect(await third.readFile('readme.md')).toBe('# Demo, again')
+        expect(await third.readFile('mine.md')).toBe('kept')
         URL.revokeObjectURL(url)
+        URL.revokeObjectURL(url2)
+        // The same holds for bytes: the same bytes are not written twice.
+        const bytesName = fresh('snap-bytes-again')
+        const one = await browserVfs(bytesName, { snapshot })
+        await one.writeFile('readme.md', 'edited')
+        expect(await (await browserVfs(bytesName, { snapshot })).readFile('readme.md')).toBe('edited')
+        expect(await (await browserVfs(bytesName, { snapshot: changed })).readFile('readme.md')).toBe('# Demo, again')
     })
 
     it('persist: a vault opened again finds its files', async () => {

@@ -19,7 +19,10 @@ export interface BrowserVfsOptions {
     /**
      * Files to put in the vault as it opens: a snapshot (`takeSnapshot`) or
      * the URL of one, fetched by the worker. Files at the same paths are
-     * replaced; others are left alone.
+     * replaced; others are left alone. The snapshot restored last time,
+     * unchanged since (the server's ETag or Last-Modified, else the bytes),
+     * is neither fetched again nor written again: edits made to its files
+     * meanwhile stay until the snapshot itself changes.
      */
     snapshot?: Uint8Array | string | URL
 }
