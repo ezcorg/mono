@@ -21,3 +21,14 @@ jobs:
           nproc; free -g | head -2
       - name: build something through the cache
         run: nix build --print-out-paths nixpkgs#hello
+  smoke-macos:
+    runs-on: [nix, macos-vm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: environment
+        run: |
+          sw_vers -productVersion; nix --version
+          nix config show | grep -E '^(substituters|sandbox) '
+          sysctl -n hw.ncpu hw.memsize
+      - name: build something through the cache
+        run: nix build --print-out-paths nixpkgs#hello
