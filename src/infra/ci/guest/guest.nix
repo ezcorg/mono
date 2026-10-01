@@ -37,8 +37,15 @@
   # with a scrubbed PATH of /bin:/usr/bin, so cp, sed and friends must exist
   # there; test configs hardcode /usr/bin/google-chrome.
   services.envfs.enable = true;
+  # envfs resolves from the caller's PATH; Bazel's actions run with PATH
+  # scrubbed to /bin:/usr/bin, so the basics must exist as fallbacks.
   services.envfs.extraFallbackPathCommands = ''
-    ln -s ${pkgs.chromium}/bin/chromium $out/google-chrome
+    for d in ${lib.concatMapStringsSep " " (p: "${p}/bin") (with pkgs; [
+      bash coreutils gnused gnugrep gawk findutils diffutils gnutar gzip which python3
+    ])}; do
+      for f in "$d"/*; do ln -sf "$f" "$out/$(basename "$f")"; done
+    done
+    ln -sf ${pkgs.chromium}/bin/chromium $out/google-chrome
   '';
 
   # rig writes the env file after the VM is up; the path unit waits for it.

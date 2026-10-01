@@ -49,6 +49,7 @@ jobs:
         with:
           submodules: recursive   # memfs, lsp-client and tiptap-markdown are submodules
       - run: nix develop -c pnpm install --frozen-lockfile
+      - run: nix develop -c pnpm --filter "@joinezco/markdown-editor^..." run build   # its workspace dependencies
       - run: nix develop -c pnpm --dir src/typescript/markdown-editor exec playwright install chromium   # runs under nix-ld in the CI image
       - run: nix develop -c pnpm --dir src/typescript/markdown-editor run test:run
 
