@@ -1,0 +1,52 @@
+# Tests for pull requests, on the isolated Linux pool (pengutron). Each job
+# runs in a fresh NixOS VM with nothing but nix; the workspace dev shell
+# (flake.nix at the repo root) supplies every toolchain. Fork PRs need
+# approval before they run (repository Actions settings).
+name: pr tests
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  witmproxy:
+    runs-on: [nix, linux-vm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - run: nix develop -c src/scripts/check-witmproxy.sh
+
+  icanhaz:
+    runs-on: [nix, linux-vm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: nix develop -c pnpm install --frozen-lockfile
+      - run: nix develop -c pnpm --dir src/apps/icanhaz/web run typecheck
+      - run: nix develop -c pnpm --dir src/apps/icanhaz/web run build
+      - run: nix develop -c cargo test --manifest-path src/apps/icanhaz/host/Cargo.toml
+
+  eznote:
+    runs-on: [nix, linux-vm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: nix develop -c pnpm install --frozen-lockfile
+      - run: nix develop -c pnpm --dir src/apps/eznote run build
+
+  markdown-editor:
+    runs-on: [nix, linux-vm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: nix develop -c pnpm install --frozen-lockfile
+      - run: nix develop -c pnpm --dir src/typescript/markdown-editor run test:run
+
+  codeblock:
+    runs-on: [nix, linux-vm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: nix develop -c pnpm install --frozen-lockfile
+      - run: nix develop -c pnpm --dir src/typescript/codeblock run test

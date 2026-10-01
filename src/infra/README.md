@@ -41,6 +41,23 @@ Things that are easy to get wrong, all handled in the config but worth knowing:
 - A changed orchestrator or secret takes effect at the next
   `nixos-rebuild switch`, which restarts the pool services.
 
+## Workflows that use the pools
+
+| Workflow | Pool | What |
+|---|---|---|
+| `pr-tests.yml` | `linux-vm` | per-project tests on pull requests; fork PRs wait for approval |
+| `witmproxy.yml` (binaries) | `linux-vm-trusted`, `macos-vm-trusted` | release binaries; Linux is zig-linked against glibc 2.28 so it runs anywhere; pushes the dev shell closure to Attic |
+| `infra-smoke.yml` | `linux-vm`, `macos-vm` | one tiny job per pool, on demand |
+
+Every job enters the workspace dev shell (`flake.nix` at the repo root) with
+`nix develop -c …`; the VMs carry nothing else. Hosted GitHub runners remain
+for anything else (crates.io publish, the plugin releases, Windows).
+
+## Deploying a host
+
+`src/infra/deploy.sh pengutron` or `… galatron`: copies this directory to the
+host and switches there. The hosts keep no checkout of the monorepo.
+
 ## galatron (macOS)
 
 The same pool design on Tart, as a LaunchAgent under the logged-in user

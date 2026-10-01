@@ -127,30 +127,39 @@ jobs:
     needs: [meta, check, publish]
     strategy:
       fail-fast: false
+      # Built on our own hosts, in fresh VMs on the trusted pools: Linux on
+      # pengutron (zig-linked against glibc 2.28, so the binary is portable),
+      # both macOS targets on galatron. Toolchains come from the workspace dev
+      # shell (flake.nix); the trusted pool may push them to the Attic cache.
       matrix:
         include:
-          - os: ubuntu-latest
+          - runner: [nix, linux-vm-trusted]
             target: x86_64-unknown-linux-gnu
             artifact: witm-linux-x64
-          - os: macos-latest
+            zigbuild: 1
+          - runner: [nix, macos-vm-trusted]
             target: x86_64-apple-darwin
             artifact: witm-macos-x64
-          - os: macos-latest
+            zigbuild: 0
+          - runner: [nix, macos-vm-trusted]
             target: aarch64-apple-darwin
             artifact: witm-macos-arm64
-    runs-on: ${{ matrix.os }}
+            zigbuild: 0
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: ./.github/actions/rust
-        with:
-          targets: ${{ matrix.target }}
-          cache-key: ${{ matrix.target }}
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - run: src/scripts/build-witm.sh ${{ matrix.target }} ${{ matrix.artifact }} "${{ needs.meta.outputs.version }}"
+      - run: nix develop -c src/scripts/build-witm.sh ${{ matrix.target }} ${{ matrix.artifact }} "${{ needs.meta.outputs.version }}"
+        env:
+          ZIGBUILD: ${{ matrix.zigbuild }}
+      # Share the dev shell's closure (toolchains, libraries) with every other
+      # job through the cache. Only the trusted pools hold a push token.
+      - run: |
+          nix develop --profile .ci-shell -c true
+          attic push ci:mono .ci-shell || echo "cache push skipped"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}

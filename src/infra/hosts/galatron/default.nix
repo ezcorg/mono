@@ -48,11 +48,21 @@
     repo = "ezcorg/mono";
     user = "theo";
     attic = "http://pengutron.tailb1a1.ts.net:8080";
-    pools.macos = {
-      labels = [ "nix" "macos-vm" ];
-      atticTokenSecret = "attic/token-ci";
-      cpus = 4;
-      memory = 8192;
+    # Two VMs share 16 GB with the host; 6 GB each leaves the host 4 GB.
+    pools = {
+      macos = {
+        labels = [ "nix" "macos-vm" ];
+        atticTokenSecret = "attic/token-ci";
+        cpus = 4;
+        memory = 6144;
+      };
+      # Release builds on main: may push to the cache.
+      macos-trusted = {
+        labels = [ "nix" "macos-vm-trusted" ];
+        atticTokenSecret = "attic/token-ci-trusted";
+        cpus = 4;
+        memory = 6144;
+      };
     };
   };
 }
