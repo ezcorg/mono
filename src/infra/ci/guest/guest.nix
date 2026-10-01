@@ -20,9 +20,13 @@
   # Prebuilt dynamically-linked binaries that actions download (rustup
   # toolchains, node) expect an FHS loader; nix-ld provides one.
   programs.nix-ld.enable = true;
-  programs.nix-ld.libraries = with pkgs; [ stdenv.cc.cc zlib openssl ];
+  # Enough of an FHS for what jobs download themselves: rustup toolchains,
+  # node binaries, and a Playwright Chromium (hence chromium's own inputs).
+  programs.nix-ld.libraries = with pkgs; [ stdenv.cc.cc zlib openssl ] ++ chromium.browser.buildInputs;
 
-  environment.systemPackages = with pkgs; [ attic-client curl ];
+  environment.systemPackages = with pkgs; [ attic-client curl chromium ];
+  # Some test configs hardcode Google Chrome's path; give them chromium there.
+  systemd.tmpfiles.rules = [ "L+ /usr/bin/google-chrome - - - - ${pkgs.chromium}/bin/chromium" ];
 
   # rig writes the env file after the VM is up; the path unit waits for it.
   systemd.paths.ci-runner = {

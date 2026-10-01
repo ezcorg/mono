@@ -50,7 +50,11 @@
               # instead of the Nix store's.
               cargo-zigbuild
               zig_0_14
-            ] ++ lib.optionals stdenv.isDarwin [ libiconv ];
+              perl             # openssl-src (vendored by sqlcipher) configures with perl
+            ] ++ lib.optionals stdenv.isDarwin [ libiconv ]
+              # Browser for the vitest browser tests; the Linux CI image also
+              # exposes it as /usr/bin/google-chrome for configs that hardcode it.
+              ++ lib.optionals stdenv.isLinux [ chromium ];
             shellHook = ''
               export CARGO_NET_GIT_FETCH_WITH_CLI=true
             '';

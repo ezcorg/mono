@@ -45,11 +45,23 @@
     enable = true;
     repo = "ezcorg/mono";
     pools = {
-      # Pull requests and anything else untrusted: reads the cache, cannot write it.
+      # Pull requests and anything else untrusted: reads the cache, cannot write
+      # it. Three identical pools so PR jobs run in parallel (the host has 16
+      # cores and 62 GB; four VMs at 4 cores / 8 GB leave it plenty).
       linux = {
         labels = [ "nix" "linux-vm" ];
         atticTokenSecret = "attic/token-ci";
         atticGuestPort = 8080;
+      };
+      linux-2 = {
+        labels = [ "nix" "linux-vm" ];
+        atticTokenSecret = "attic/token-ci";
+        atticGuestPort = 8082;
+      };
+      linux-3 = {
+        labels = [ "nix" "linux-vm" ];
+        atticTokenSecret = "attic/token-ci";
+        atticGuestPort = 8083;
       };
       # Jobs on main: may push what they build to the cache.
       linux-trusted = {
