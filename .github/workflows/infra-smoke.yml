@@ -1,0 +1,34 @@
+# Example: a job on the isolated Linux pool. Copy into .github/workflows/.
+#
+# The runner is a fresh NixOS VM with nix, git and the Attic cache configured;
+# nothing else. Toolchains come from the project's flake. Pull requests should
+# target `linux-vm` (pull-only cache); jobs on main may use `linux-vm-trusted`,
+# whose token can push what it builds.
+name: infra smoke
+on:
+  workflow_dispatch:
+  push:
+    branches: [infra-smoke]   # manual dispatch only works once the file is on main
+jobs:
+  smoke:
+    runs-on: [nix, linux-vm]   # JIT runners carry only their custom labels, not self-hosted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: environment
+        run: |
+          nix --version
+          nix config show | grep -E '^(substituters|sandbox) '
+          nproc; free -g | head -2
+      - name: build something through the cache
+        run: nix build --print-out-paths nixpkgs#hello
+  smoke-macos:
+    runs-on: [nix, macos-vm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: environment
+        run: |
+          sw_vers -productVersion; nix --version
+          nix config show | grep -E '^(substituters|sandbox) '
+          sysctl -n hw.ncpu hw.memsize
+      - name: build something through the cache
+        run: nix build --print-out-paths nixpkgs#hello
