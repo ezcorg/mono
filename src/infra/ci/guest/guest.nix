@@ -35,20 +35,22 @@
   # Bazel runs actions with an empty environment; envfs cannot resolve a
   # command for a caller with no PATH. Forward the client's PATH into actions.
   environment.etc."bazel.bazelrc".text = "build --action_env=PATH\n";
-  # /bin and /usr/bin that resolve any command on the caller's PATH. Bazel
-  # (cel-cxx builds cel-cpp with it) execs /bin/bash and then runs its actions
-  # with a scrubbed PATH of /bin:/usr/bin, so cp, sed and friends must exist
-  # there; test configs hardcode /usr/bin/google-chrome.
-  services.envfs.enable = true;
-  # envfs resolves from the caller's PATH; Bazel's actions run with PATH
-  # scrubbed to /bin:/usr/bin, so the basics must exist as fallbacks.
-  services.envfs.extraFallbackPathCommands = ''
-    for d in ${lib.concatMapStringsSep " " (p: "${p}/bin") (with pkgs; [
-      bash coreutils gnused gnugrep gawk findutils diffutils gnutar gzip which python3
-    ])}; do
-      for f in "$d"/*; do ln -sf "$f" "$out/$(basename "$f")"; done
-    done
-    ln -sf ${pkgs.chromium}/bin/chromium $out/google-chrome
+  # Real symlinks in /bin and /usr/bin for tools that scripts and build
+  # systems address by absolute path or with a scrubbed environment. Bazel
+  # (cel-cxx builds cel-cpp with it) execs /bin/bash and runs its actions
+  # with no PATH at all, which rules out envfs; test configs hardcode
+  # /usr/bin/google-chrome.
+  system.activationScripts.fhsBin = let
+    fhs = pkgs.buildEnv {
+      name = "fhs-bin";
+      paths = with pkgs; [ bash coreutils gnused gnugrep gawk findutils diffutils gnutar gzip which python3 ];
+      pathsToLink = [ "/bin" ];
+    };
+  in ''
+    mkdir -p /bin /usr/bin
+    for f in ${fhs}/bin/*; do ln -sfn "$f" "/usr/bin/$(basename "$f")"; done
+    ln -sfn ${pkgs.bash}/bin/bash /bin/bash
+    ln -sfn ${pkgs.chromium}/bin/chromium /usr/bin/google-chrome
   '';
 
   # rig writes the env file after the VM is up; the path unit waits for it.
