@@ -30,7 +30,6 @@ jobs:
       - run: nix develop -c pnpm install --frozen-lockfile
       - run: nix develop -c pnpm --filter "@joinezco/icanhaz-web^..." run build   # its workspace dependencies
       - run: nix develop -c pnpm --dir src/apps/icanhaz/web run typecheck
-      - run: nix develop -c pnpm --dir src/apps/icanhaz/web run build
       - run: nix develop -c cargo test --manifest-path src/apps/icanhaz/host/Cargo.toml
 
   eznote:
@@ -60,4 +59,5 @@ jobs:
         with:
           submodules: recursive   # memfs, lsp-client and tiptap-markdown are submodules
       - run: nix develop -c pnpm install --frozen-lockfile
+      - run: nix develop -c pnpm --filter "@joinezco/codeblock^..." run build   # its workspace dependencies
       - run: nix develop -c pnpm --dir src/typescript/codeblock run test

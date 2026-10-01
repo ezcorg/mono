@@ -22,15 +22,24 @@
   programs.nix-ld.enable = true;
   # Enough of an FHS for what jobs download themselves: rustup toolchains,
   # node binaries, and a Playwright Chromium (hence chromium's own inputs).
-  programs.nix-ld.libraries = with pkgs; [ stdenv.cc.cc zlib openssl ] ++ chromium.browser.buildInputs;
+  programs.nix-ld.libraries = with pkgs; [
+    stdenv.cc.cc zlib openssl
+    # What Playwright's downloaded Chromium (headless shell) dlopens.
+    glib nss nspr dbus at-spi2-atk at-spi2-core cups libdrm mesa libgbm expat
+    libxkbcommon alsa-lib pango cairo gtk3 systemd fontconfig freetype
+    xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext xorg.libXfixes
+    xorg.libXrandr xorg.libxcb xorg.libXcursor xorg.libXi xorg.libXrender xorg.libXtst
+  ];
 
   environment.systemPackages = with pkgs; [ attic-client curl chromium ];
-  systemd.tmpfiles.rules = [
-    # Some test configs hardcode Google Chrome's path; give them chromium there.
-    "L+ /usr/bin/google-chrome - - - - ${pkgs.chromium}/bin/chromium"
-    # Bazel (cel-cxx builds cel-cpp with it) execs /bin/bash by absolute path.
-    "L+ /bin/bash - - - - ${pkgs.bash}/bin/bash"
-  ];
+  # /bin and /usr/bin that resolve any command on the caller's PATH. Bazel
+  # (cel-cxx builds cel-cpp with it) execs /bin/bash and then runs its actions
+  # with a scrubbed PATH of /bin:/usr/bin, so cp, sed and friends must exist
+  # there; test configs hardcode /usr/bin/google-chrome.
+  services.envfs.enable = true;
+  services.envfs.extraFallbackPathCommands = ''
+    ln -s ${pkgs.chromium}/bin/chromium $out/google-chrome
+  '';
 
   # rig writes the env file after the VM is up; the path unit waits for it.
   systemd.paths.ci-runner = {
