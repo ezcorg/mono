@@ -25,8 +25,12 @@
   programs.nix-ld.libraries = with pkgs; [ stdenv.cc.cc zlib openssl ] ++ chromium.browser.buildInputs;
 
   environment.systemPackages = with pkgs; [ attic-client curl chromium ];
-  # Some test configs hardcode Google Chrome's path; give them chromium there.
-  systemd.tmpfiles.rules = [ "L+ /usr/bin/google-chrome - - - - ${pkgs.chromium}/bin/chromium" ];
+  systemd.tmpfiles.rules = [
+    # Some test configs hardcode Google Chrome's path; give them chromium there.
+    "L+ /usr/bin/google-chrome - - - - ${pkgs.chromium}/bin/chromium"
+    # Bazel (cel-cxx builds cel-cpp with it) execs /bin/bash by absolute path.
+    "L+ /bin/bash - - - - ${pkgs.bash}/bin/bash"
+  ];
 
   # rig writes the env file after the VM is up; the path unit waits for it.
   systemd.paths.ci-runner = {
