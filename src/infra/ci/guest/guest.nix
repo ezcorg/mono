@@ -32,6 +32,9 @@
   ];
 
   environment.systemPackages = with pkgs; [ attic-client curl chromium ];
+  # Bazel runs actions with an empty environment; envfs cannot resolve a
+  # command for a caller with no PATH. Forward the client's PATH into actions.
+  environment.etc."bazel.bazelrc".text = "build --action_env=PATH\n";
   # /bin and /usr/bin that resolve any command on the caller's PATH. Bazel
   # (cel-cxx builds cel-cpp with it) execs /bin/bash and then runs its actions
   # with a scrubbed PATH of /bin:/usr/bin, so cp, sed and friends must exist
@@ -72,8 +75,12 @@
       WorkingDirectory = "/var/lib/runner";
       EnvironmentFile = "/run/rig/env";   # read by systemd as root; the file is 0600
       TimeoutStartSec = "infinity";
-      # Whatever happened, this VM has done its one job.
-      ExecStopPost = "+${pkgs.systemd}/bin/systemctl poweroff";
+      # Whatever happened, this VM has done its one job. Its journal goes to
+      # the console first, so `rig logs <vm>` on the host still shows it.
+      ExecStopPost = "+${pkgs.writeShellScript "ci-runner-done" ''
+        ${pkgs.systemd}/bin/journalctl -u ci-runner --no-pager -o cat > /dev/console 2>&1 || true
+        ${pkgs.systemd}/bin/systemctl poweroff
+      ''}";
     };
     script = ''
       set -euo pipefail
