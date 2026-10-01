@@ -128,4 +128,7 @@ while :; do
 
   log "$vm finished; deleting"
   tart delete "$vm" >/dev/null 2>&1 || log "warning: could not delete $vm"
+  # The guest powers off as soon as its job ends, sometimes before the
+  # runner's own deregistration reaches GitHub.
+  delete_registration "$vm"
 done

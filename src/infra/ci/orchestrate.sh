@@ -139,4 +139,7 @@ YAML
   log "$vm finished; deleting"
   rig delete -f "$yaml" || log "warning: could not delete $vm"
   rm -f "$envf" "$yaml"
+  # The guest powers off as soon as its job ends, sometimes before the
+  # runner's own deregistration reaches GitHub.
+  delete_registration "$vm"
 done
