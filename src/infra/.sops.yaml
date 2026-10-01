@@ -1,0 +1,11 @@
+# Who can decrypt secrets/*.yaml: the operator's key (~/.config/sops/age/keys.txt)
+# and each host, via its SSH host key (ssh-to-age -i /etc/ssh/ssh_host_ed25519_key.pub).
+keys:
+  - &theo      age16rm7c0uhkwv68wevajy6u0naj7er203lednsa44j3yk9vgngdsjqa47m69
+  - &pengutron age16m2djdwszt7k7nnjq6lrxaykaxkvpqwvu80mr2s05gzh3lkqs5aqzr5l5v
+  - &galatron  age1wyfnntzkmsk7ylzct4hu74nk2vfltdl7895a8zugmkcn4zltt9ds63rt0g
+creation_rules:
+  # One secrets file for both build hosts: the same GitHub token and Attic tokens.
+  - path_regex: secrets/pengutron\.yaml$
+    key_groups:
+      - age: [*theo, *pengutron, *galatron]

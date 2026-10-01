@@ -1,0 +1,48 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1787414105,
+        "narHash": "sha256-WncT27+3BOkgTaJZLnCsf3LcYf9RXMuR9ONSN4rzQ7s=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "a9e6d84f9c2f9012f5fe7d964a7851352300e61a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "rig": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "dir": "base",
+        "lastModified": 1790210597,
+        "narHash": "sha256-EsdkGEWq08j+VEcWI3EuRU5RSDak45GatItr6+u+3hY=",
+        "owner": "tbrockman",
+        "repo": "rig",
+        "rev": "5df0e2dc2a8fd5a52dd171bdab7894ee3a75283d",
+        "type": "github"
+      },
+      "original": {
+        "dir": "base",
+        "owner": "tbrockman",
+        "repo": "rig",
+        "rev": "5df0e2dc2a8fd5a52dd171bdab7894ee3a75283d",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "rig": "rig"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
