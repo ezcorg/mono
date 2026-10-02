@@ -55,16 +55,3 @@ export {
     type ProseAction,
     type ProseContext,
 } from './ai.js'
-export {
-    PluginHost,
-    readManifest,
-    type PluginManifest,
-    type Capability,
-    type Scope,
-    type Granter,
-    type CapabilityProvider,
-    type InstalledPlugin,
-    type SlashContribution,
-    type ThemeContribution,
-    type PluginHostOptions,
-} from './plugins.js'

@@ -35,7 +35,7 @@ import type { ImageOptions } from './extensions/image';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { Comments } from './extensions/comments';
 import { CommentMargin } from './extensions/comment-margin';
-import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type Reactions, type SlashContribution, type ThemeContribution, type VfsInterface } from '@joinezco/storage';
+import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type Reactions, type VfsInterface } from '@joinezco/storage';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -136,9 +136,6 @@ export type MarkdownSetupOptions = {
     search?: FileSearch;
     /** Creates, moves and deletes files for the toolbar and codeblocks. */
     files?: FileOperations;
-    /** What installed plugins contribute (a `PluginHost`'s
-     *  `contributions()`): their slash commands, and a theme to apply. */
-    plugins?: { slashCommands?: SlashContribution[]; theme?: ThemeContribution };
     /** A model, for prose actions (rewrite, summarize, continue, an
      *  instruction): icanhaz's `inference` capability, a provider's API, a
      *  local model. Without it none is offered. */
@@ -254,16 +251,6 @@ const ownedVault = (vault: Vault) =>
         },
     });
 
-/** A plugin's slash command: it puts its text (Markdown) at the caret. */
-function pluginSlashCommand(contribution: SlashContribution): SlashCommand {
-    return {
-        title: contribution.title,
-        description: contribution.description ?? '',
-        icon: '✚',
-        command: ({ editor, range }) => editor.chain().focus().deleteRange(range).insertContent(contribution.insert).run(),
-    };
-}
-
 /** Slash commands for prose actions, offered when there is a model. */
 const proseSlashCommands: SlashCommand[] = [
     {
@@ -328,7 +315,6 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     const commands = [
         ...base,
         ...(options.inference ? proseSlashCommands : []),
-        ...(options.plugins?.slashCommands ?? []).map(pluginSlashCommand),
     ];
     return [
         ...(given.owned ? [ownedVault(given.owned)] : []),
@@ -575,9 +561,6 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
     // wrapper (headless), it also keeps `.ezco-mde` so the theme vars resolve.
     editor.view.dom.classList.add('ezco-mde-body');
     if (!bodyHost) editor.view.dom.classList.add('ezco-mde');
-    // A plugin's theme: values for the editor's variables, on its root.
-    const themed = (editor.view.dom as HTMLElement).closest('.ezco-mde') as HTMLElement | null;
-    for (const [name, value] of Object.entries(options.plugins?.theme?.variables ?? {})) themed?.style.setProperty(name, value);
 
     mountStyles();
     return editor as MarkdownEditor;
