@@ -52,7 +52,12 @@
     # nixpkgs' bash has a built-in default PATH of /no-such-path, so with an
     # empty environment it would find nothing even in /usr/bin.
     ln -sfn ${pkgs.writeShellScript "bash-fhs" ''
-      export PATH="''${PATH:-/usr/bin:/bin}"
+      # bash itself sets PATH=/no-such-path when it starts with none.
+      case ":''${PATH:-}:" in
+        *:/no-such-path:*|::) PATH=/usr/bin:/bin ;;
+        *) PATH="$PATH:/usr/bin:/bin" ;;
+      esac
+      export PATH
       exec ${pkgs.bash}/bin/bash "$@"
     ''} /bin/bash
     ln -sfn ${pkgs.chromium}/bin/chromium /usr/bin/google-chrome
