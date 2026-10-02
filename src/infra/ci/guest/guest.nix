@@ -49,7 +49,12 @@
   in ''
     mkdir -p /bin /usr/bin
     for f in ${fhs}/bin/*; do ln -sfn "$f" "/usr/bin/$(basename "$f")"; done
-    ln -sfn ${pkgs.bash}/bin/bash /bin/bash
+    # nixpkgs' bash has a built-in default PATH of /no-such-path, so with an
+    # empty environment it would find nothing even in /usr/bin.
+    ln -sfn ${pkgs.writeShellScript "bash-fhs" ''
+      export PATH="''${PATH:-/usr/bin:/bin}"
+      exec ${pkgs.bash}/bin/bash "$@"
+    ''} /bin/bash
     ln -sfn ${pkgs.chromium}/bin/chromium /usr/bin/google-chrome
   '';
 
