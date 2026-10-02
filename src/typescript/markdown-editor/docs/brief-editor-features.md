@@ -17,16 +17,24 @@ HUMAN'S NOTE: Most of these documents were written by an LLM that may not have h
 
 ## The ground
 
-- `src/typescript/storage` (`@joinezco/storage`): the vault package, named
-  per the note above. The `VfsInterface` contract (text, bytes, rename,
-  watch) and its implementations (`memoryVfs`; `nodeVfs` under `/node`;
-  `browserVfs`, the OPFS behind a shared worker, under `/browser`; Tauri's
-  in eznote, icanhaz's in icanhaz-web), a filesystem over a message port
-  (`remoteVfs`, `serveVfs`), snapshots, the link grammar every parser
-  shares, `LinkResolver`/`LinkIndex`, `FileSearch`, `FileOperations`, and
-  `Vault`, which keeps links and text indexed over any VFS and renames
-  without breaking links. No DOM outside `/browser`. Node tests against a
-  fixture vault; the browser implementation's in Chromium.
+- `src/typescript/storage` (`@joinezco/storage`): files. The `VfsInterface`
+  contract (text, bytes, rename, watch) and its implementations
+  (`memoryVfs`; `nodeVfs` under `/node`; `browserVfs`, the OPFS behind a
+  shared worker, under `/browser`; Tauri's in eznote, icanhaz's in
+  icanhaz-web), a filesystem over a message port (`remoteVfs`,
+  `serveVfs`), snapshots, `FileOperations`, the `FileSearch` contract and
+  the per-file `VersionLog`. No Markdown, no DOM outside `/browser`; no
+  third-party dependency but blake3. Node tests; the browser
+  implementation's in Chromium.
+- `src/typescript/vault` (`@joinezco/vault`, split out of storage on
+  2026-10-01): notes. One parse of a note (`parseNote`, markdown-it's block
+  grammar as the editor configures it) feeding the link graph, the search
+  index and the comment index; the link grammar every parser shares,
+  `LinkResolver`/`LinkIndex`, Obsidian-compatible resolution with
+  resolutions kept and backlinks a lookup; comments as references, text
+  fragments, reactions, note ids; and `Vault`, which keeps all of it
+  current over any VFS and renames without breaking links. Node tests
+  against a fixture vault.
 - `src/typescript/markdown-editor`: a Tiptap editor with a byte-faithful
   Markdown round-trip. Wikilinks and embeds, images from VFS bytes, front
   matter with ids, footnotes, math, callouts, a links panel, a file tree,
@@ -85,7 +93,7 @@ Chrome at `/usr/bin/google-chrome` or `CHROME_PATH`.
    signed reactions; all wait on device identity (RFC §9). Until then a
    comment's author is the name its document carries, and the UI gates
    nothing on it. The pieces: a comment is a document referencing a range
-   of another (`@joinezco/storage`'s `comments.ts`: `referencesIn`, the
+   of another (`@joinezco/vault`'s `comments.ts`: `referencesIn`, the
    index `vault.comments`), reactions and resolution are per-identity state
    (`reactions.ts`, `vault.reactions`, under `.vault/state/`), anchors are
    text fragments or pins (`quote.ts`, `span.ts`), and the editor's
@@ -115,8 +123,9 @@ or an affordance in the text, never a default column.
   round-trip test for syntax, a browser test for something the daemon is
   involved in). Do not pad a timeout; find the cause.
 - **The editor does not know icanhaz.** It consumes interfaces
-  (`VfsInterface`, `LinkResolver`, `LinkIndex`, `FileSearch`,
-  `FileOperations` from `@joinezco/storage`; `RemoteLspProvider`); the
+  (`VfsInterface`, `FileSearch`, `FileOperations` from `@joinezco/storage`;
+  `LinkResolver`, `LinkIndex`, `CommentIndex`, `Reactions` from
+  `@joinezco/vault`; its own `Inference`; `RemoteLspProvider`); the
   icanhaz web package implements them. Keep that direction.
 - **Commits**: one concern each, a message that says what changed and why,
   ending with the attribution line the repo's guidance gives.

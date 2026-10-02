@@ -7,13 +7,14 @@ text it was parsed from.
 It owns the syntax and editing of one document. Everything that spans
 documents (what a link points at, backlinks, search, moving files) comes from
 the host as an interface, most often a `Vault` from
-[`@joinezco/storage`](../storage), so the same editor runs over OPFS in a
+[`@joinezco/vault`](../vault) over a [`@joinezco/storage`](../storage)
+filesystem, so the same editor runs over OPFS in a
 browser, the host disk in eznote, or a granted directory through the icanhaz
 daemon.
 
 ```ts
 import { createEditor } from '@joinezco/markdown-editor'
-import { Vault, newNoteId } from '@joinezco/storage'
+import { Vault, newNoteId } from '@joinezco/vault'
 
 const vault = await Vault.open(fs) // any VfsInterface
 const editor = createEditor({
@@ -131,14 +132,13 @@ set (`minimalSetup()` a lean one) for `new Editor({ extensions })`, and
 `createEditor()` also builds the default layout (toolbar slot, left column,
 block-action gutter).
 
-## Models and plugins
+## Models
 
-Given `inference` (storage's interface; icanhaz-web's `editorInference`
-makes the daemon's capability one), the selection and slash menus offer
-Rewrite, Summarize, Continue writing and Ask…: the answer streams into a
-panel under the text and goes in only when accepted. `plugins` takes a
-`PluginHost`'s contributions: slash commands that insert text, and a
-theme's variables.
+Given `inference` (the editor's `Inference` interface, a streamed
+completion; icanhaz-web's `editorInference` makes the daemon's capability
+one), the selection and slash menus offer Rewrite, Summarize, Continue
+writing and Ask…: the answer streams into a panel under the text and goes
+in only when accepted.
 
 ## Keys
 

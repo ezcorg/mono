@@ -7,7 +7,7 @@ The editor fills the window; the search toolbar (⌘P: files by name, notes
 by what they say, and the editor's commands) and a light/system/dark theme
 toggle live in the titlebar, and the notes folder shows as a tree beside the
 note. Notes are real files on disk in `~/Documents/eznote/`, autosaved as you
-type, and the folder is a vault (`@joinezco/storage`): `[[wikilinks]]`
+type, and the folder is a vault (`@joinezco/vault`): `[[wikilinks]]`
 resolve and create notes, what links to a note is listed under it, renaming
 a note rewrites every link to it, and each note is given a stable `id:` in
 its front matter the first time it is opened.
