@@ -14,7 +14,7 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { PROSE_ACTIONS, completeText, type Inference, type ProseAction } from '@joinezco/storage'
+import { PROSE_ACTIONS, completeText, type Inference, type ProseAction } from '../inference'
 
 export interface ProseAIOptions {
     /** The model. Without one, no action is offered. */

@@ -1,6 +1,5 @@
 /**
- * Asking a model about prose (RFC §2, §6: AI actions belong to the vault
- * package, their interface to whoever provides the model).
+ * Asking a model about prose (RFC §2.4).
  *
  * `Inference` is what a host hands the editor for a model: icanhaz's
  * `inference` capability, a provider's HTTP API, a model on the device. It
@@ -131,10 +130,6 @@ export const PROSE_ACTIONS: ProseAction[] = [
         }),
     },
 ]
-
-export function proseAction(id: string): ProseAction | undefined {
-    return PROSE_ACTIONS.find((action) => action.id === id)
-}
 
 /** The whole text of an answer; `onText` hears each piece as it comes. An
  *  abort stops the stream and rejects with an `AbortError`. */

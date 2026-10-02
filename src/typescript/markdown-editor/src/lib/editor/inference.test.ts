@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { completeText, proseAction, PROSE_ACTIONS, type CompletionRequest, type Inference } from './ai.js'
+import { completeText, PROSE_ACTIONS, type CompletionRequest, type Inference } from './inference'
+
+const proseAction = (id: string) => PROSE_ACTIONS.find((action) => action.id === id)
 
 /** A model that answers with `reply` in pieces, and remembers what it was asked. */
 function scripted(reply: string) {

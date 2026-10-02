@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import type { CompletionRequest, Inference } from '@joinezco/storage'
+import type { CompletionRequest, Inference } from '../inference'
 import { createEditor, MarkdownEditor } from '../index'
 import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
 

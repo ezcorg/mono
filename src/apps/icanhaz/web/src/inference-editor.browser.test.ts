@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { completeText } from "@joinezco/storage";
+import { completeText } from "@joinezco/markdown-editor";
 import { createEditor } from "@joinezco/markdown-editor";
 import { connect } from "./wrpc";
 import { editorInference, requestInferenceGrant } from "./inference";

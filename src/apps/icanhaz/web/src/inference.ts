@@ -1,5 +1,5 @@
 //! A model for the editor: the daemon's `inference` capability as the
-//! editor's `Inference` (`@joinezco/storage`'s interface). The editor asks;
+//! editor's `Inference` (`@joinezco/markdown-editor`'s interface). The editor asks;
 //! nothing it does knows it is icanhaz behind the answer.
 //!
 //! The grant is asked for the first time a model is wanted (the consent card
@@ -7,7 +7,7 @@
 //! each completion streams `[kind u8][len u32 BE][payload]` frames: text
 //! deltas (0), then a usage record (1). An abort closes the call.
 
-import type { CompletionEvent, CompletionRequest, Inference } from "@joinezco/storage";
+import type { CompletionEvent, CompletionRequest, Inference } from "@joinezco/markdown-editor";
 import type { Transport } from "./wrpc";
 import { requestScoped } from "./generated/broker";
 import { open, sessionComplete, sessionModels } from "./generated/inference";

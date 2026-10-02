@@ -35,7 +35,8 @@ import type { ImageOptions } from './extensions/image';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { Comments } from './extensions/comments';
 import { CommentMargin } from './extensions/comment-margin';
-import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type Inference, type LinkIndex, type LinkResolver, type Reactions, type VfsInterface } from '@joinezco/storage';
+import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type LinkIndex, type LinkResolver, type Reactions, type VfsInterface } from '@joinezco/storage';
+import type { Inference } from './inference';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
