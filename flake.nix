@@ -57,6 +57,8 @@
               ++ lib.optionals stdenv.isLinux [ chromium ];
             shellHook = ''
               export CARGO_NET_GIT_FETCH_WITH_CLI=true
+              # Tools the scripts `cargo install` on demand (wasmsign2, wkg).
+              export PATH="$HOME/.cargo/bin:$PATH"
             '';
           };
         });
