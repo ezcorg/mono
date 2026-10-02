@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { frontMatterOf, newNoteId, noteIdOf } from './id.js'
+import { frontMatterOf, newNoteId, noteIdOf } from './note.js'
 
 describe('note ids', () => {
     it('are 26-character ULIDs that sort by time', () => {

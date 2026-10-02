@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { undo } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
-import { memoryVfs, Vault, type VfsInterface } from '@joinezco/storage';
+import { memoryVfs, type VfsInterface } from '@joinezco/storage';
+import { Vault } from '@joinezco/vault';
 import { opfsBucket, opfsVfs, removeOpfsBucket } from '@joinezco/storage/browser';
 import { closeFile, createCodeblock, currentFileField, onFileEvent, openFileEffect, persistFile, whenFileLoaded, type FileEvent } from './editor';
 

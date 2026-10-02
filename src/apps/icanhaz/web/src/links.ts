@@ -9,15 +9,8 @@
 //! `LinkResolver` (`@joinezco/storage`'s contracts), and `editorLinks` makes
 //! the capability into both.
 
-import {
-    decodeDestination,
-    dirname,
-    joinPath,
-    newNotePath,
-    type LinkIndex,
-    type LinkResolver,
-    type VfsInterface,
-} from "@joinezco/storage";
+import { dirname, joinPath, type VfsInterface } from "@joinezco/storage";
+import { decodeDestination, newNotePath, type LinkIndex, type LinkResolver } from "@joinezco/vault";
 import type { Transport } from "./wrpc";
 import { request, requestScoped } from "./generated/broker";
 import { open, indexBacklinks, indexUnresolved, indexRename, type Link } from "./generated/links";

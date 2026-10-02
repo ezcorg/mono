@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Vault } from './vault.js'
-import { memoryVfs } from './memory.js'
+import { memoryVfs } from '@joinezco/storage'
 import { ReactionStore, referenceKey } from './reactions.js'
 
 const NOTES = {

@@ -1,7 +1,7 @@
 {
   "name": "@joinezco/storage",
   "version": "0.0.1",
-  "description": "Folders of documents behind environment-agnostic interfaces: the VFS contract, its implementations (memory, Node, the browser's OPFS), and the indexes derived from a vault (links, full text).",
+  "description": "Folders of files behind one environment-agnostic contract: the VFS (text, bytes, directories, rename, watch), its implementations (memory, Node, the browser's OPFS, any of them over a message port), snapshots, file operations, and a per-file version log. No Markdown, no DOM outside /browser.",
   "type": "module",
   "sideEffects": [
     "./dist/browser/*.worker.js"
@@ -35,7 +35,6 @@
     "test:run": "vitest run"
   },
   "devDependencies": {
-    "@types/markdown-it": "^14.1.2",
     "@types/node": "^25.9.5",
     "@vitest/browser-playwright": "^4.1.11",
     "playwright": "^1.63.0",
@@ -43,8 +42,6 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "@noble/hashes": "^1.8.0",
-    "markdown-it": "^14.1.0",
-    "minisearch": "^7.2.0"
+    "@noble/hashes": "^1.8.0"
   }
 }

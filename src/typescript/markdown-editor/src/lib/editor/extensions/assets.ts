@@ -4,7 +4,8 @@
  * a URL a browser can fetch) and shown through object URLs.
  */
 import type { Editor } from '@tiptap/core'
-import { decodeDestination, dirname, extname, joinPath, normalizePath, type LinkResolution, type LinkSyntax, type VfsInterface } from '@joinezco/storage'
+import { dirname, extname, joinPath, normalizePath, type VfsInterface } from '@joinezco/storage'
+import { decodeDestination, type LinkResolution, type LinkSyntax } from '@joinezco/vault'
 import type { WikilinkStorage } from './wikilink'
 
 const MIME: Record<string, string> = {

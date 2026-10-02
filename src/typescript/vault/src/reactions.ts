@@ -9,13 +9,11 @@
  *     {"at":"2026-09-26T14:02Z","doc":"Plan.md","ref":"Plan#:~:text=ship%20it","emoji":"👍"}
  *
  * `ref` is the reference's link as `formatWikilink` writes it, without the
- * brackets (`referenceKey`), or null for the document itself. The identity
+ * brackets or an alias (`referenceKey`), or null for the document itself. The identity
  * is the folder's name (`[A-Za-z0-9_.-]+`). Reading takes in every
  * identity's file; toggling rewrites the identity's own.
  */
-import { FileType, type VfsInterface } from './vfs.js'
-import { joinPath, normalizePath } from './path.js'
-import { Locks } from './lock.js'
+import { FileType, Locks, joinPath, normalizePath, type VfsInterface } from '@joinezco/storage'
 import { formatWikilink, type Wikilink } from './links/syntax.js'
 
 export interface ReactionTarget {
@@ -59,9 +57,10 @@ export interface ReactionsOptions {
 export const IDENTITY = /^[A-Za-z0-9_.-]+$/
 
 /** A reference's link as reactions name it: `formatWikilink` without the
- *  brackets (`Plan#:~:text=ship%20it`). */
+ *  brackets or the alias (`Plan#:~:text=ship%20it`), so a reference keeps
+ *  its reactions however its link is displayed. */
 export function referenceKey(link: Wikilink): string {
-    return formatWikilink(link).slice(2, -2)
+    return formatWikilink({ ...link, alias: null }).slice(2, -2)
 }
 
 /** A reaction's time, as the file writes it: UTC to the minute. */

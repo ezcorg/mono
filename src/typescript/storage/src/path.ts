@@ -62,11 +62,3 @@ export function relativePath(fromDir: string, target: string): string {
 export function isHidden(path: string): boolean {
     return normalizePath(path).split('/').some((seg) => seg.startsWith('.'))
 }
-
-/** Extensions that are notes: parsed for links, indexed as text, opened as prose. */
-export const NOTE_EXTENSIONS: ReadonlySet<string> = new Set(['md', 'markdown', 'mdx'])
-
-/** True when `path` is a Markdown note. */
-export function isNote(path: string): boolean {
-    return NOTE_EXTENSIONS.has(extname(path))
-}

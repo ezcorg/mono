@@ -17,7 +17,8 @@
  * for nothing.
  */
 import { Editor, Extension } from '@tiptap/core'
-import { basename, dirname, normalizePath, type LinkIndex, type LinkRef } from '@joinezco/storage'
+import { basename, dirname, normalizePath } from '@joinezco/storage'
+import { type LinkIndex, type LinkRef } from '@joinezco/vault'
 import type { SidebarMount } from './sidebar'
 import type { FileSystemStorage } from './filesystem'
 import type { WikilinkStorage } from './wikilink'

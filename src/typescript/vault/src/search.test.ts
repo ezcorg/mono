@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { dirname as nodeDirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fileOperations, memoryVfs, normalizePath, walk } from '@joinezco/storage'
+import { nodeVfs } from '@joinezco/storage/node'
 import { Vault } from './vault.js'
-import { memoryVfs } from './memory.js'
-import { nodeVfs } from './node.js'
 import { snippetOf, titleOf } from './search.js'
-import { fileOperations } from './files.js'
-import { walk } from './vfs.js'
-import { normalizePath } from './path.js'
 
 const FIXTURE = join(nodeDirname(fileURLToPath(import.meta.url)), '__fixtures__', 'vault')
 
@@ -91,6 +88,6 @@ describe('file operations', () => {
     it('in a vault, a rename keeps links, and the count says how many it rewrote', async () => {
         const vault = await Vault.open(await fixtureCopy(), { watch: false })
         expect(await vault.files.rename('projects/roadmap.md', 'projects/road.md')).toBe(2)
-        expect(vault.backlinks('projects/road.md').map((l) => l.source)).toEqual(['index.md', 'projects/plan.md'])
+        expect((await vault.links.backlinks('projects/road.md')).map((l) => l.source)).toEqual(['index.md', 'projects/plan.md'])
     })
 })

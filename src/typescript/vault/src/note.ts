@@ -1,9 +1,19 @@
 /**
- * Note identity: an `id:` in a note's front matter, generated once and kept
- * through renames and moves (RFC §3). Ids are ULIDs: 26 characters of
- * Crockford base32, time first, so they sort by creation and never collide
- * in practice across devices.
+ * What makes a file a note, and a note's identity: an `id:` in its front
+ * matter, generated once and kept through renames and moves (RFC §3). Ids
+ * are ULIDs: 26 characters of Crockford base32, time first, so they sort by
+ * creation and never collide in practice across devices.
  */
+import { extname } from '@joinezco/storage'
+import { frontMatterClose, splitLines } from './parse.js'
+
+/** Extensions that are notes: parsed for links, indexed as text, opened as prose. */
+export const NOTE_EXTENSIONS: ReadonlySet<string> = new Set(['md', 'markdown', 'mdx'])
+
+/** True when `path` is a Markdown note. */
+export function isNote(path: string): boolean {
+    return NOTE_EXTENSIONS.has(extname(path))
+}
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
@@ -25,8 +35,9 @@ export function newNoteId(now: number = Date.now()): string {
 /** The front matter block at the start of a note: its YAML text (without
  *  the `---` fences), or null when the note has none. */
 export function frontMatterOf(text: string): string | null {
-    const m = /^---\r?\n(?:([\s\S]*?)\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text)
-    return m ? m[1] ?? '' : null
+    const { lines } = splitLines(text)
+    const close = frontMatterClose(lines)
+    return close > 0 ? lines.slice(1, close).join('\n') : null
 }
 
 /** A note's `id:` from its front matter, or null. */

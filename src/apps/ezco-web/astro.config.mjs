@@ -44,6 +44,7 @@ export default defineConfig({
                 '@joinezco/codeblock',
                 '@joinezco/shared',
                 '@joinezco/storage',
+                '@joinezco/vault',
             ],
         },
     },

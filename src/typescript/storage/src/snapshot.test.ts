@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { fileURLToPath } from 'node:url'
 import { decodeCbor, encodeCbor } from './cbor.js'
 import { memoryVfs } from './memory.js'
-import { nodeVfs } from './node.js'
 import { restoreSnapshot, takeSnapshot } from './snapshot.js'
 import { FileType, walk, type VfsInterface } from './vfs.js'
-
-const FIXTURE = fileURLToPath(new URL('./__fixtures__/vault', import.meta.url))
 
 async function contents(fs: VfsInterface): Promise<Record<string, number[]>> {
     const out: Record<string, number[]> = {}
@@ -16,7 +12,13 @@ async function contents(fs: VfsInterface): Promise<Record<string, number[]>> {
 
 describe('Snapshots', () => {
     it('carry a vault into another store byte for byte, gzipped', async () => {
-        const source = nodeVfs(FIXTURE)
+        // Text, bytes that are not text, and a hidden folder.
+        const source = memoryVfs({
+            'index.md': '# Index\n\n[[projects/plan]]\n',
+            'projects/plan.md': '# Plan\n\n![[attachments/diagram.png]]\n',
+            'attachments/diagram.png': new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 255, 0x0d, 0x0a]),
+            '.obsidian/app.json': '{}',
+        })
         const snapshot = await takeSnapshot(source)
         expect([snapshot[0], snapshot[1]]).toEqual([0x1f, 0x8b])
         const target = memoryVfs()

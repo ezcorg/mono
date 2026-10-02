@@ -24,26 +24,8 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, TextSelection, type EditorState, type Selection, type Transaction } from '@tiptap/pm/state'
 import type { Mapping } from '@tiptap/pm/transform'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
-import {
-    basename,
-    dirname,
-    findTextFragment,
-    formatReference,
-    formatTextFragment,
-    formatWikilink,
-    joinPath,
-    normalizePath,
-    parseTextFragment,
-    referencesIn,
-    textFragmentFor,
-    type CommentIndex,
-    type CommentRef,
-    type FileOperations,
-    type Reaction,
-    type Reactions,
-    type VfsInterface,
-    type Wikilink,
-} from '@joinezco/storage'
+import { basename, dirname, joinPath, normalizePath, type FileOperations, type VfsInterface } from '@joinezco/storage'
+import { findTextFragment, formatReference, formatTextFragment, parseTextFragment, referenceKey, referencesIn, textFragmentFor, type CommentIndex, type CommentRef, type Reaction, type Reactions, type Wikilink } from '@joinezco/vault'
 import { docText, findBlockId, findFragment, findPin, locateTextFragment, textOffset, type DocText } from './fragment'
 import { documentId } from './front-matter'
 import { loadedDocumentMeta, type FileSystemStorage } from './filesystem'
@@ -143,7 +125,7 @@ export function commentsFolderFor(doc: string): string {
 export const linkTarget = (doc: string) => normalizePath(doc).replace(/\.md$/i, '')
 
 /** A reaction's `ref` for a comment: its link as written, without brackets. */
-export const refKey = (link: Wikilink) => formatWikilink({ ...link, alias: null }).slice(2, -2)
+export const refKey = referenceKey
 
 /**
  * Where a target is in this note. A text fragment is looked for as

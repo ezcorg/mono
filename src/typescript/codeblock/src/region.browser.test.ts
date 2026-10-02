@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EditorView } from '@codemirror/view';
-import { memoryVfs, Vault, type VfsInterface } from '@joinezco/storage';
+import { memoryVfs, type VfsInterface } from '@joinezco/storage';
+import { Vault } from '@joinezco/vault';
 import { redo, undo } from '@codemirror/commands';
 import { createCodeblock, onFileEvent, openFileEffect, persistFile, regionField, setRegionEffect, whenFileLoaded, type FileEvent, type FileVersions } from './editor';
 import type { LineRange } from './utils/region';

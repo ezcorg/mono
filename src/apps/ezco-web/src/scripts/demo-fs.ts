@@ -1,5 +1,6 @@
 import { browserVfs } from "@joinezco/storage/browser";
-import { Vault, type VfsInterface } from "@joinezco/storage";
+import { type VfsInterface } from "@joinezco/storage";
+import { Vault } from "@joinezco/vault";
 import { files } from "../data/demo-files.js";
 
 // The `ezco-demo` vault (the origin's OPFS, through storage's workers) as

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
 import { browserVfs } from '@joinezco/storage/browser';
-import { Vault } from '@joinezco/storage';
+import { Vault } from '@joinezco/vault';
 import './App.css'
 import { file } from './example';
 

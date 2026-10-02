@@ -3,12 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname as nodeDirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { dirname, fileOperations, memoryVfs, normalizePath, walk, type FileVersion, type VfsInterface } from '@joinezco/storage'
+import { nodeVfs } from '@joinezco/storage/node'
 import { Vault } from './vault.js'
-import { fileOperations } from './files.js'
-import { memoryVfs } from './memory.js'
-import { nodeVfs } from './node.js'
-import { walk, type VfsInterface } from './vfs.js'
-import { dirname, isNote, normalizePath } from './path.js'
+import { isNote } from './note.js'
 import { caseInsensitive } from './testing/case-insensitive.js'
 
 const FIXTURE = join(nodeDirname(fileURLToPath(import.meta.url)), '__fixtures__', 'vault')
@@ -31,8 +29,8 @@ async function snapshot(vault: Vault) {
     const notes = vault.paths().filter(isNote)
     return {
         files: vault.paths(),
-        backlinks: Object.fromEntries(notes.map((n) => [n, vault.backlinks(n)])),
-        unresolved: vault.unresolved(),
+        backlinks: Object.fromEntries(await Promise.all(notes.map(async (n) => [n, await vault.links.backlinks(n)]))),
+        unresolved: await vault.links.unresolved(),
     }
 }
 
@@ -72,21 +70,21 @@ describe('the link index, rebuilt from a fixture vault', () => {
             'projects/plan.md',
             'projects/roadmap.md',
         ])
-        expect(vault.backlinks('index.md')).toEqual([
+        expect((await vault.links.backlinks('index.md'))).toEqual([
             { source: 'archive/2025/plan.md', target: 'index.md', line: 3 },
             { source: 'projects/plan.md', target: 'index.md', line: 5 },
             { source: 'projects/plan.md', target: 'index.md', line: 5 },
         ])
-        expect(vault.backlinks('projects/plan.md')).toEqual([
+        expect((await vault.links.backlinks('projects/plan.md'))).toEqual([
             { source: 'index.md', target: 'projects/plan.md', line: 3 },
             { source: 'index.md', target: 'projects/plan.md', line: 7 },
             { source: 'index.md', target: 'projects/plan.md', line: 7 },
             { source: 'projects/roadmap.md', target: 'projects/plan.md', line: 3 },
         ])
-        expect(vault.backlinks('archive/2025/plan.md').map((l) => l.source)).toEqual(['projects/roadmap.md'])
-        expect(vault.backlinks('projects/roadmap.md').map((l) => l.source)).toEqual(['index.md', 'projects/plan.md'])
-        expect(vault.backlinks('attachments/diagram.png').map((l) => l.line)).toEqual([9, 9])
-        expect(vault.unresolved()).toEqual([
+        expect((await vault.links.backlinks('archive/2025/plan.md')).map((l) => l.source)).toEqual(['projects/roadmap.md'])
+        expect((await vault.links.backlinks('projects/roadmap.md')).map((l) => l.source)).toEqual(['index.md', 'projects/plan.md'])
+        expect((await vault.links.backlinks('attachments/diagram.png')).map((l) => l.line)).toEqual([9, 9])
+        expect((await vault.links.unresolved())).toEqual([
             { source: 'index.md', target: 'missing note.md', line: 7 },
             { source: 'projects/plan.md', target: 'projects/ghost.md', line: 7 },
         ])
@@ -150,7 +148,7 @@ describe('renaming keeps every link meaning what it meant', () => {
         expect(index).toContain('See [[plan]] and [[Plan#Goals|the goals]], the [roadmap](work/roadmap.md)')
         expect(await store.readFile('work/plan.md')).toBe(before)
         expect(vault.paths()).toContain('work/roadmap.md')
-        expect(vault.backlinks('work/roadmap.md').map((l) => l.source)).toEqual(['index.md', 'work/plan.md'])
+        expect((await vault.links.backlinks('work/roadmap.md')).map((l) => l.source)).toEqual(['index.md', 'work/plan.md'])
     })
 
     it('lengthens a wikilink the new name would otherwise capture', async () => {
@@ -158,12 +156,12 @@ describe('renaming keeps every link meaning what it meant', () => {
         await store.mkdir('notes', { recursive: true })
         await store.writeFile('notes/x.md', 'Current: [[plan]]\n')
         const vault = await Vault.open(store, { watch: false })
-        expect(vault.resolve('plan', 'notes/x.md')?.path).toBe('projects/plan.md')
+        expect((await vault.links.resolve('plan', 'notes/x.md'))?.path).toBe('projects/plan.md')
         // The archived plan moves beside x.md, where `[[plan]]` would now find it.
         await vault.rename('archive/2025/plan.md', 'notes/plan.md')
         expect(await store.readFile('notes/x.md')).toBe('Current: [[projects/plan]]\n')
         expect(await store.readFile('projects/roadmap.md')).toContain('then [[notes/plan]]')
-        expect(vault.resolve('projects/plan', 'notes/x.md')?.path).toBe('projects/plan.md')
+        expect((await vault.links.resolve('projects/plan', 'notes/x.md'))?.path).toBe('projects/plan.md')
     })
 
     it('moves an attachment, rewriting image paths and leaving name links that still resolve', async () => {
@@ -194,9 +192,9 @@ describe('renaming keeps every link meaning what it meant', () => {
             'index.md': '| note | link |\n|---|---|\n| p | [[plan\\|The plan]] |\n\nSee [m](Meeting%20\\(2026\\).md).\n',
         })
         const vault = await Vault.open(store, { watch: false })
-        expect(vault.backlinks('plan.md').map((l) => l.source)).toEqual(['index.md'])
-        expect(vault.backlinks('Meeting (2026).md').map((l) => l.source)).toEqual(['index.md'])
-        expect(vault.unresolved()).toEqual([])
+        expect((await vault.links.backlinks('plan.md')).map((l) => l.source)).toEqual(['index.md'])
+        expect((await vault.links.backlinks('Meeting (2026).md')).map((l) => l.source)).toEqual(['index.md'])
+        expect((await vault.links.unresolved())).toEqual([])
         await vault.rename('plan.md', 'next.md')
         await vault.rename('Meeting (2026).md', 'Meeting 2026.md')
         const index = await store.readFile('index.md')
@@ -230,15 +228,15 @@ describe('keeping current', () => {
         const vault = await Vault.open(memoryVfs({ 'a.md': 'to [[b]]' }), { watch: false })
         let notified = 0
         vault.subscribe(() => notified++)
-        expect(vault.unresolved().map((l) => l.target)).toEqual(['b.md'])
+        expect((await vault.links.unresolved()).map((l) => l.target)).toEqual(['b.md'])
         await vault.fs.writeFile('b.md', '# B')
         await vault.fs.writeFile('c.md', 'also [[b]]')
         await tick()
         expect(notified).toBe(1)
-        expect(vault.unresolved()).toEqual([])
-        expect(vault.backlinks('b.md').map((l) => l.source)).toEqual(['a.md', 'c.md'])
+        expect((await vault.links.unresolved())).toEqual([])
+        expect((await vault.links.backlinks('b.md')).map((l) => l.source)).toEqual(['a.md', 'c.md'])
         await vault.fs.unlink('b.md')
-        expect(vault.unresolved().map((l) => l.source)).toEqual(['a.md', 'c.md'])
+        expect((await vault.links.unresolved()).map((l) => l.source)).toEqual(['a.md', 'c.md'])
     })
 
     it('follows changes made outside it, through the store’s watch', async () => {
@@ -247,7 +245,7 @@ describe('keeping current', () => {
         const changed = new Promise<void>((resolve) => vault.subscribe(resolve))
         await store.writeFile('b.md', '# B')
         await changed
-        expect(vault.backlinks('b.md').map((l) => l.source)).toEqual(['a.md'])
+        expect((await vault.links.backlinks('b.md')).map((l) => l.source)).toEqual(['a.md'])
         vault.close()
     })
 
@@ -257,7 +255,7 @@ describe('keeping current', () => {
         expect(await vault.rename('a/plan.md', 'b/plan.md')).toBe(0)
         expect(await store.readFile('x.md')).toBe('See [[plan]].')
         await tick()
-        expect(vault.backlinks('b/plan.md').map((l) => l.source)).toEqual(['x.md'])
+        expect((await vault.links.backlinks('b/plan.md')).map((l) => l.source)).toEqual(['x.md'])
         vault.close()
     })
 
@@ -280,7 +278,7 @@ describe('keeping current', () => {
         expect(vault.paths()).toEqual(['a.md', 'b.md'])
         expect(listed.some((p) => p.startsWith('.git'))).toBe(false)
         // b.md could not be read, but [[b]] still finds it.
-        expect(vault.unresolved()).toEqual([])
+        expect((await vault.links.unresolved())).toEqual([])
     })
 
     it('hears changes made while it is first read', async () => {
@@ -309,7 +307,7 @@ describe('keeping current', () => {
         expect(vault.paths().some((f) => f.startsWith('.obsidian'))).toBe(false)
         await vault.fs.mkdir('.vault', { recursive: true })
         await vault.fs.writeFile('.vault/state.md', '[[index]]')
-        expect(vault.backlinks('index.md').some((l) => l.source.startsWith('.'))).toBe(false)
+        expect((await vault.links.backlinks('index.md')).some((l) => l.source.startsWith('.'))).toBe(false)
     })
 })
 
@@ -446,7 +444,7 @@ describe.each(stores)('a file’s history goes with the file (%s)', (_, make) =>
         expect(await vault.rename('a.md', 'b.md')).toBe(1)
         expect(await store.readFile('c.md')).toBe('See [[b]].')
         expect(vault.paths()).toEqual(['b.md', 'c.md'])
-        expect(vault.backlinks('b.md').map((l) => l.source)).toEqual(['c.md'])
+        expect((await vault.links.backlinks('b.md')).map((l) => l.source)).toEqual(['c.md'])
         expect((await vault.versions.history('b.md')).map((v) => v.id)).toEqual([a.id])
     })
 
@@ -469,5 +467,26 @@ describe.each(stores)('a file’s history goes with the file (%s)', (_, make) =>
         expect(await vault.versions.history('b.md')).toEqual([])
         // And a write on that version is still on the head.
         expect((await vault.versions.put('a.md', head.id, '# A2')).ok).toBe(true)
+    })
+})
+
+describe('The version log in a vault', () => {
+    it('keeps its records in .vault, out of the vault’s index', async () => {
+        const vault = await Vault.open(memoryVfs({ 'a.md': '# A' }), { watch: false })
+        const head = (await vault.versions.head('a.md')) as FileVersion
+        await vault.versions.put('a.md', head.id, '# A, again')
+        expect(await vault.fs.exists('.vault/versions')).toBe(true)
+        expect(vault.paths()).toEqual(['a.md'])
+        // A write through the log reaches the index like any other.
+        expect((await vault.search.search('again')).map((h) => h.path)).toEqual(['a.md'])
+    })
+
+    it('follows a file the vault renames', async () => {
+        const vault = await Vault.open(memoryVfs({ 'a.md': '# A', 'b.md': 'See [[a]].' }), { watch: false })
+        const head = (await vault.versions.head('a.md'))!
+        await vault.rename('a.md', 'c.md')
+        const next = await vault.versions.put('c.md', head.id, '# C')
+        expect(next.ok).toBe(true)
+        expect((await vault.versions.history('c.md')).map((v) => v.path)).toEqual(['c.md', 'a.md'])
     })
 })

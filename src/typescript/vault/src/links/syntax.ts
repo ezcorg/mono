@@ -1,7 +1,8 @@
 /**
  * The link grammar of a note, in one place: the editor's Markdown parser and
  * the vault's link index both use it, so what the editor renders as a link is
- * exactly what the index counts.
+ * exactly what the index counts. Block structure (which lines are code,
+ * where front matter ends) is `parse.ts`'s; this file reads one line.
  *
  * Wikilinks (Obsidian's syntax, which Foam, Logseq and Quartz share):
  *
@@ -13,8 +14,6 @@
  * where a bare pipe would end the cell). All three are kept exactly as
  * written, so formatting a parsed link gives the source back.
  */
-import MarkdownIt from 'markdown-it'
-
 export interface Wikilink {
     /** The note or file named, as written (`plan`, `notes/plan`, `img.png`).
      *  Empty for a link into the current note (`[[#heading]]`). */
@@ -108,62 +107,20 @@ export function isExternalTarget(target: string): boolean {
 }
 
 /**
- * Every link in a note: wikilinks and embeds, inline Markdown links and
- * images, and reference definitions (`[id]: path`). Code (fenced or
- * indented, wherever it sits: in a list item, in a quote), inline code and
- * backslash-escaped brackets are skipped; external destinations are left
- * out. Front matter, when closed, is scanned for wikilinks only (Obsidian
- * treats a property value of `"[[Note]]"` as a link).
+ * The links on one line of a note, appended to `out`: wikilinks and embeds,
+ * inline Markdown links and images, and a reference definition
+ * (`[id]: path`). Links are found in a masked copy of the line (inline code
+ * and escaped brackets blanked, so they are not mistaken for links) and
+ * read from the source line (so an escape inside one, `[[plan\|alias]]` in
+ * a table or `\(` in a destination, means what it does to the editor's
+ * parser); the two have the same length. In front matter
+ * (`wikilinksOnly`) nothing is masked and only wikilinks are read.
  */
-export function scanLinks(text: string): ScannedLink[] {
-    const out: ScannedLink[] = []
-    const lines = text.split('\n')
-    const starts: number[] = []
-    let offset = 0
-    for (const raw of lines) {
-        starts.push(offset)
-        offset += raw.length + 1
-    }
-    const line = (i: number) => lines[i].replace(/\r$/, '')
-
-    // Front matter: `---` on the first line, up to the first `---` or `...`.
-    // Unclosed, the `---` is a rule, as it is to the editor.
-    let body = 0
-    if (lines.length > 1 && line(0) === '---') {
-        const close = lines.findIndex((_, i) => i > 0 && (line(i) === '---' || line(i) === '...'))
-        if (close > 0) {
-            for (let i = 1; i < close; i++) scanWikilinks(line(i), line(i), starts[i], i + 1, out)
-            body = close + 1
-        }
-    }
-
-    const code = codeLines(lines.slice(body).join('\n'))
-    for (let i = body; i < lines.length; i++) {
-        if (code.has(i - body)) continue
-        const source = line(i)
-        const masked = maskCode(source)
-        scanWikilinks(masked, source, starts[i], i + 1, out)
-        scanMarkdownLinks(masked, source, starts[i], i + 1, out)
-    }
-    return out.sort((a, b) => a.start - b.start)
-}
-
-let blocks: MarkdownIt | null = null
-
-/** The lines of `body` (0-based) that are code, by the editor's block
- *  grammar: markdown-it with raw HTML off, as the editor configures it. */
-function codeLines(body: string): Set<number> {
-    if (!blocks) {
-        blocks = new MarkdownIt('default', { html: false })
-        // Block structure is all this needs.
-        blocks.core.ruler.disable(['inline', 'linkify', 'replacements', 'smartquotes', 'text_join'], true)
-    }
-    const code = new Set<number>()
-    for (const token of blocks.parse(body, {})) {
-        if ((token.type !== 'fence' && token.type !== 'code_block') || !token.map) continue
-        for (let l = token.map[0]; l < token.map[1]; l++) code.add(l)
-    }
-    return code
+export function scanLine(line: string, lineStart: number, lineNo: number, out: ScannedLink[], options: { wikilinksOnly?: boolean } = {}): void {
+    if (options.wikilinksOnly) return scanWikilinks(line, line, lineStart, lineNo, out)
+    const masked = maskCode(line)
+    scanWikilinks(masked, line, lineStart, lineNo, out)
+    scanMarkdownLinks(masked, line, lineStart, lineNo, out)
 }
 
 /** `line` with inline code spans and backslash escapes blanked out (same
@@ -197,11 +154,6 @@ function maskCode(line: string): string {
     }
     return out
 }
-
-// Links are found in the masked copy of a line (so code and escaped
-// brackets are not mistaken for links) and read from the source line (so an
-// escape inside one, `[[plan\|alias]]` in a table or `\(` in a destination,
-// means what it does to the editor's parser). The two have the same length.
 
 function scanWikilinks(masked: string, line: string, lineStart: number, lineNo: number, out: ScannedLink[]) {
     let from = 0
@@ -361,32 +313,6 @@ function pushDestination(
         end: lineStart + end,
         angled,
     })
-}
-
-/**
- * `text` with some links' targets replaced. `replace` returns the new target
- * as it should be written (already relative and, for Markdown links, already
- * encoded), or null to leave a link alone. Everything else is kept byte for
- * byte. Returns the new text and how many links changed.
- */
-export function rewriteLinks(
-    text: string,
-    replace: (link: ScannedLink) => string | null,
-): { text: string; count: number } {
-    let out = ''
-    let last = 0
-    let count = 0
-    // In target order, not link order: a link inside another's text
-    // (`[![thumb](a.png)](b.png)`) starts later but its target comes first.
-    // Targets never overlap, so splicing them in order is safe.
-    for (const link of scanLinks(text).sort((a, b) => a.targetStart - b.targetStart)) {
-        const next = replace(link)
-        if (next === null || next === link.target) continue
-        out += text.slice(last, link.targetStart) + next
-        last = link.targetEnd
-        count++
-    }
-    return { text: out + text.slice(last), count }
 }
 
 /** A Markdown destination as the path it names: backslash escapes of

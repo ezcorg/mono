@@ -21,18 +21,8 @@ import { Editor, InputRule, Node, mergeAttributes } from '@tiptap/core'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import tippy, { type Instance as TippyInstance } from 'tippy.js'
-import {
-    formatWikilink,
-    isNote,
-    matchWikilinkAt,
-    normalizePath,
-    parseWikilink,
-    type LinkResolution,
-    type LinkResolver,
-    type LinkSuggestion,
-    type LinkSyntax,
-    type Wikilink as WikilinkParts,
-} from '@joinezco/storage'
+import { normalizePath } from '@joinezco/storage'
+import { formatWikilink, isNote, matchWikilinkAt, parseWikilink, type LinkResolution, type LinkResolver, type LinkSuggestion, type LinkSyntax, type Wikilink as WikilinkParts } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { revealFragment } from './fragment'
 

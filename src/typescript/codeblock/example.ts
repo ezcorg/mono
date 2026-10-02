@@ -1,6 +1,6 @@
 import { createCodeblock } from "./src/editor";
 import { browserVfs } from "@joinezco/storage/browser";
-import { Vault } from "@joinezco/storage";
+import { Vault } from "@joinezco/vault";
 
 // Lazy loaders for TypeScript lib .d.ts files (Vite resolves these at build time)
 const tsLibLoaders = import.meta.glob<string>(

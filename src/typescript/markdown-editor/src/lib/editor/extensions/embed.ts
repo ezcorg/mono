@@ -17,7 +17,8 @@
  */
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { basename, extname, findTextFragment, formatWikilink, frontMatterOf, isNote, matchWikilinkAt, parseTextFragment, type Wikilink as WikilinkParts } from '@joinezco/storage'
+import { basename, extname } from '@joinezco/storage'
+import { findTextFragment, formatWikilink, frontMatterOf, isNote, matchWikilinkAt, parseTextFragment, type Wikilink as WikilinkParts } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { IMAGE_EXTENSIONS, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
 import { wikilinkLabel, type WikilinkStorage } from './wikilink'

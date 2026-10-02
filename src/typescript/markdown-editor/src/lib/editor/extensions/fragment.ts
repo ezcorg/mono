@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
-import { findTextFragment as matchTextFragment, parseTextFragment } from '@joinezco/storage'
+import { findTextFragment as matchTextFragment, parseTextFragment } from '@joinezco/vault'
 import { slugify } from './slug-utils'
 
 /**

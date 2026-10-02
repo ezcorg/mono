@@ -9,7 +9,8 @@ import {
   newScratchPath,
 } from "./lib/tauri-vfs";
 import { localHandle } from "./lib/identity";
-import { Vault, newNoteId, type VfsInterface } from "@joinezco/storage";
+import { type VfsInterface } from "@joinezco/storage";
+import { Vault, newNoteId } from "@joinezco/vault";
 import "./App.css";
 
 /** System-wide hotkey that summons the window and opens a fresh scratch note. */

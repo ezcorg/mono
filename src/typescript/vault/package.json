@@ -1,0 +1,37 @@
+{
+  "name": "@joinezco/vault",
+  "version": "0.0.1",
+  "description": "A folder of Markdown notes as a knowledge base: one parse of a note feeding the link index, full-text search and the comment index; Obsidian-compatible link resolution; text fragments; reactions; and the Vault that keeps every index current over any @joinezco/storage filesystem.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^25.9.5",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@joinezco/storage": "workspace:*",
+    "markdown-it": "^14.1.0",
+    "minisearch": "^7.2.0"
+  }
+}

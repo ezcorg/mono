@@ -67,7 +67,7 @@ export default defineConfig({
     // Vite serves its source directly. Its transitive deps must be listed with
     // the "package > dep" syntax so Vite can resolve them through the excluded package.
     optimizeDeps: {
-        exclude: ['@joinezco/codeblock', '@joinezco/storage'],
+        exclude: ['@joinezco/codeblock', '@joinezco/storage', '@joinezco/vault'],
         include: [
             '@joinezco/codeblock > @codemirror/autocomplete',
             '@joinezco/codeblock > @codemirror/commands',
@@ -106,8 +106,8 @@ export default defineConfig({
             '@joinezco/codeblock > @volar/language-service',
             '@joinezco/codeblock > comlink',
             '@joinezco/codeblock > lodash',
-            '@joinezco/storage > minisearch',
-            '@joinezco/storage > markdown-it',
+            '@joinezco/vault > markdown-it',
+            '@joinezco/vault > minisearch',
             '@joinezco/storage > @noble/hashes/blake3',
             '@joinezco/storage > @noble/hashes/utils',
             '@joinezco/codeblock > path-browserify',

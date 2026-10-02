@@ -6,7 +6,7 @@
  * documents in the order the drafts were made, so a reply's parent is
  * there before it.
  */
-import type { Wikilink } from '@joinezco/storage'
+import type { Wikilink } from '@joinezco/vault'
 
 export interface QueuedComment {
     /** `draft:…`, unique in this browser. */

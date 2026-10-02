@@ -6,8 +6,7 @@ import { memoryVfs } from './memory.js'
 import { nodeVfs } from './node.js'
 import { dirname } from './path.js'
 import type { VfsInterface } from './vfs.js'
-import { VersionLog, conflictCopyPath, type FileVersion } from './versions.js'
-import { Vault } from './vault.js'
+import { VersionLog, conflictCopyPath } from './versions.js'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 
@@ -152,25 +151,6 @@ describe('A file’s version log', () => {
         if (!result.ok) throw new Error('expected a write')
         expect(result.version).toMatchObject({ author: 'device-1', signature: 'AQID' })
         expect(signed).toEqual([result.version.id])
-    })
-
-    it('keeps its records in .vault, out of the vault’s index', async () => {
-        const vault = await Vault.open(memoryVfs({ 'a.md': '# A' }), { watch: false })
-        const head = (await vault.versions.head('a.md')) as FileVersion
-        await vault.versions.put('a.md', head.id, '# A, again')
-        expect(await vault.fs.exists('.vault/versions')).toBe(true)
-        expect(vault.paths()).toEqual(['a.md'])
-        // A write through the log reaches the index like any other.
-        expect((await vault.search.search('again')).map((h) => h.path)).toEqual(['a.md'])
-    })
-
-    it('follows a file the vault renames', async () => {
-        const vault = await Vault.open(memoryVfs({ 'a.md': '# A', 'b.md': 'See [[a]].' }), { watch: false })
-        const head = (await vault.versions.head('a.md'))!
-        await vault.rename('a.md', 'c.md')
-        const next = await vault.versions.put('c.md', head.id, '# C')
-        expect(next.ok).toBe(true)
-        expect((await vault.versions.history('c.md')).map((v) => v.path)).toEqual(['c.md', 'a.md'])
     })
 })
 

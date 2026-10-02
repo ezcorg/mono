@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { Vault, memoryVfs } from '@joinezco/storage'
+import { memoryVfs } from '@joinezco/storage'
+import { Vault } from '@joinezco/vault'
 import { createEditor, openDocuments, MarkdownEditor } from '../index'
 import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
 

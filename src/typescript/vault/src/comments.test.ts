@@ -30,6 +30,7 @@ const NOTE = [
     '![[Plan#Goals]]',
     '- a list as a body',
     '- of two items',
+    '',
     '![[diagram.png]]',
     '',
     '![[Other]]',
@@ -44,7 +45,7 @@ describe('referencesIn', () => {
             [{ target: 'Plan', fragment: ':~:text=ship%20it', alias: null }, 'Which release?\n\nAnd is it the one we agreed on?', 9],
             [{ target: 'Plan', fragment: '^abc', alias: null }, 'Done, I think:\n\n```md\n![[Not#a-reference]]\n# not a heading either\n```', 14],
             [{ target: 'Plan', fragment: 'Goals', alias: null }, '- a list as a body\n- of two items', 26],
-            [{ target: 'Other', fragment: null, alias: null }, 'About the whole of Other.', 31],
+            [{ target: 'Other', fragment: null, alias: null }, 'About the whole of Other.', 32],
         ])
     })
 
@@ -61,6 +62,10 @@ describe('referencesIn', () => {
     it('ends a body at the next reference, the next heading, or the end', () => {
         expect(referencesIn('![[A]]\none\n![[B]]\ntwo').map((r) => r.body)).toEqual(['one', 'two'])
         expect(referencesIn('![[A]]\none\n\n# H\n\nnot a body').map((r) => r.body)).toEqual(['one'])
+        // A setext heading is a heading too, as it is to the editor.
+        expect(referencesIn('![[A]]\none\n\nLater\n=====\nnot a body').map((r) => r.body)).toEqual(['one'])
+        // A heading inside a quote or a list is not at the top level: the body goes on.
+        expect(referencesIn('![[A]]\none\n> # quoted\ntwo').map((r) => r.body)).toEqual(['one\n> # quoted\ntwo'])
         expect(referencesIn('![[A]]\none\n\n\n').map((r) => r.body)).toEqual(['one'])
         // A bare embed (a transclusion) still ends the body before it.
         expect(referencesIn('![[A]]\none\n\n![[img.png]]\n\n# H\ntwo').map((r) => r.body)).toEqual(['one'])
@@ -72,6 +77,10 @@ describe('referencesIn', () => {
         expect(referencesIn('![[Plan]]\n\n')).toEqual([])
         expect(referencesIn('See ![[Plan]]\nand more')).toEqual([])
         expect(referencesIn('- ![[Plan]]\n  a caption')).toEqual([])
+        // An embed line right after a list item continues the item (lazy
+        // continuation), as the editor reads it: it opens no reference.
+        expect(referencesIn('![[A]]\n- item\n![[B]]\ntwo').map((r) => r.body)).toEqual(['- item\n![[B]]\ntwo'])
+        expect(referencesIn('- item\n![[Plan]]\nbody')).toEqual([])
         expect(referencesIn('```\n![[Plan]]\nbody\n```\n')).toEqual([])
         expect(referencesIn('~~~\n![[Plan]]\nbody\n~~~\n')).toEqual([])
         // A wikilink that is not an embed is a link.

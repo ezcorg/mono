@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
-import { Vault, memoryVfs } from '@joinezco/storage'
+import { memoryVfs } from '@joinezco/storage'
+import { Vault } from '@joinezco/vault'
 import { createEditor, MarkdownEditor } from '../index'
 import { cleanupEditor, waitFor } from '../../../test/utils'
 import { authorOf, type CommentsStorage } from './comments'

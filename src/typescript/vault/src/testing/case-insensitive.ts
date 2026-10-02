@@ -3,8 +3,7 @@
  * entry however it is spelled, and names keep the spelling they were
  * created or renamed with.
  */
-import type { VfsInterface } from '../vfs.js'
-import { basename, dirname, joinPath, normalizePath } from '../path.js'
+import { basename, dirname, joinPath, normalizePath, type VfsInterface } from '@joinezco/storage'
 
 export function caseInsensitive(fs: VfsInterface): VfsInterface {
     /** `path` as the entries on disk spell it (segments not found as given). */

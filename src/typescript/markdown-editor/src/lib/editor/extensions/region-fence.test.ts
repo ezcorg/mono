@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { EditorView } from '@codemirror/view'
 import { persistFile, regionField } from '@joinezco/codeblock'
-import { Vault, memoryVfs } from '@joinezco/storage'
+import { memoryVfs } from '@joinezco/storage'
+import { Vault } from '@joinezco/vault'
 import { createEditor, MarkdownEditor } from '../index'
 import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
 

@@ -3,11 +3,13 @@
  * another document. Any note may hold **references**, and everything is a
  * document; the vault's index gathers them (`CommentIndex`).
  *
- * A reference is a paragraph that is exactly one embed, `![[target#fragment]]`
- * (the wikilink grammar: the fragment may be a text fragment `:~:text=…`, a
- * pin `c-…`, a block id `^abc`, a heading, or absent for the whole
- * document), and its **body** is the Markdown after it, up to the next
- * reference paragraph, the next heading, or the end of the document:
+ * A reference is a line of a top-level paragraph that is exactly one embed,
+ * `![[target#fragment]]` (the wikilink grammar: the fragment may be a text
+ * fragment `:~:text=…`, a pin `c-…`, a block id `^abc`, a heading, or
+ * absent for the whole document), and its **body** is the Markdown after
+ * it, up to the next reference, the next top-level heading, or the end of
+ * the document. Written, a blank line separates the embed from its body;
+ * read, it is optional, so the embed may share a paragraph with its body:
  *
  *     ![[Plan#:~:text=ship%20it]]
  *     Which release?
@@ -15,11 +17,14 @@
  *     ![[Plan#^abc]]
  *     Done, I think.
  *
- * A bare embed with no body is a transclusion, not a comment. Fenced code
- * never starts or ends a reference (a body may hold a code block); front
- * matter is skipped.
+ * A bare embed with no body is a transclusion, not a comment. Code never
+ * starts or ends a reference (a body may hold a code block), nor does an
+ * embed or a heading inside a quote or a list; front matter is skipped.
+ * What is a paragraph, a heading or code is the one parse every index
+ * reads (`parseNote`), so the editor and the index agree.
  */
 import { formatWikilink, matchWikilinkAt, type Wikilink } from './links/syntax.js'
+import { parseNote, type ParsedNote } from './parse.js'
 
 /** A reference as it sits in a document. */
 export interface Reference {
@@ -37,10 +42,6 @@ export interface Reference {
     /** The reference's text as written, `markdown.slice(start, end)`. */
     text: string
 }
-
-const ATX_HEADING = /^#{1,6}(?:\s|$)/
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/
-const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/
 
 /** The link of a line that is exactly one embed (trailing whitespace
  *  allowed), or null. */
@@ -64,59 +65,37 @@ function trimBlankLines(lines: string[]): { from: number; to: number } {
  * `body` does not).
  */
 export function referencesIn(markdown: string): Reference[] {
-    const raw = markdown.split('\n')
-    const lines = raw.map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l))
-    const offsets: number[] = []
-    let at = 0
-    for (const l of raw) {
-        offsets.push(at)
-        at += l.length + 1
-    }
-    let first = 0
-    if (lines.length > 1 && lines[0] === '---') {
-        const close = lines.findIndex((l, k) => k > 0 && (l === '---' || l === '...'))
-        if (close > 0) first = close + 1
-    }
-    // Each line outside fenced code that starts a reference (an embed) or
-    // ends one (a heading), and the lines that are code.
-    const code = new Set<number>()
-    let fence: string | null = null
-    for (let i = first; i < lines.length; i++) {
-        if (fence) {
-            code.add(i)
-            const f = FENCE_CLOSE.exec(lines[i])
-            if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null
-        } else {
-            const f = FENCE_OPEN.exec(lines[i])
-            if (f) {
-                fence = f[1]
-                code.add(i)
-            }
+    return referencesOf(parseNote(markdown))
+}
+
+/** The references of a note already parsed (what `referencesIn` does with
+ *  the parse). */
+export function referencesOf(note: ParsedNote): Reference[] {
+    const { lines, offsets, text: markdown } = note
+    // Where a body stops short of the next reference: a top-level heading.
+    const stops = note.headings.filter((h) => h.depth === 0).map((h) => h.from)
+    const opens: { link: Wikilink; at: number }[] = []
+    for (const paragraph of note.paragraphs) {
+        for (let at = paragraph.from; at < paragraph.to; at++) {
+            const link = embedLine(lines[at])
+            if (link) opens.push({ link, at })
         }
     }
     const out: Reference[] = []
-    let open: { link: Wikilink; at: number } | null = null
-    const close = (to: number) => {
-        if (!open) return
-        const body = lines.slice(open.at + 1, to)
-        const { from, to: end } = trimBlankLines(body)
-        if (end > from) {
-            const start = offsets[open.at]
-            const last = open.at + 1 + end - 1
-            const stop = offsets[last] + lines[last].length
-            out.push({ link: open.link, body: body.slice(from, end).join('\n'), start, end: stop, line: open.at + 1, text: markdown.slice(start, stop) })
-        }
-        open = null
+    let stop = 0
+    for (let k = 0; k < opens.length; k++) {
+        const { link, at } = opens[k]
+        while (stop < stops.length && stops[stop] <= at) stop++
+        let end = opens[k + 1]?.at ?? lines.length
+        if (stop < stops.length && stops[stop] < end) end = stops[stop]
+        const body = lines.slice(at + 1, end)
+        const { from, to } = trimBlankLines(body)
+        if (to <= from) continue
+        const start = offsets[at]
+        const last = at + to
+        const finish = offsets[last] + lines[last].length
+        out.push({ link, body: body.slice(from, to).join('\n'), start, end: finish, line: at + 1, text: markdown.slice(start, finish) })
     }
-    for (let i = first; i < lines.length; i++) {
-        if (code.has(i)) continue
-        const link = embedLine(lines[i])
-        if (link) {
-            close(i)
-            open = { link, at: i }
-        } else if (ATX_HEADING.test(lines[i])) close(i)
-    }
-    close(lines.length)
     return out
 }
 

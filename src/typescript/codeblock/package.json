@@ -39,7 +39,8 @@
     "puppeteer-core": "^24.43.1",
     "tsx": "^4.23.13",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@joinezco/vault": "workspace:*"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

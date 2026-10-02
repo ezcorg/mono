@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { decodeDestination, formatWikilink, parseWikilink, rewriteLinks, scanLinks } from './syntax.js'
+import { decodeDestination, formatWikilink, parseWikilink } from './syntax.js'
+import { rewriteLinks, scanLinks } from '../parse.js'
 
 describe('wikilink grammar', () => {
     const forms = [

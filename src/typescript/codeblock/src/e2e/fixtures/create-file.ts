@@ -1,6 +1,6 @@
 import { createCodeblock } from "../../editor";
 import { browserVfs } from "@joinezco/storage/browser";
-import { Vault } from "@joinezco/storage";
+import { Vault } from "@joinezco/vault";
 
 async function init() {
     // Use FSA (OPFS) with unique bucket name for test isolation

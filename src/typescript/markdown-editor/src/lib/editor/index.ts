@@ -35,7 +35,8 @@ import type { ImageOptions } from './extensions/image';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { Comments } from './extensions/comments';
 import { CommentMargin } from './extensions/comment-margin';
-import { Vault, fileOperations, type CommentIndex, type FileOperations, type FileSearch, type LinkIndex, type LinkResolver, type Reactions, type VfsInterface } from '@joinezco/storage';
+import { fileOperations, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage';
+import { Vault, type CommentIndex, type LinkIndex, type LinkResolver, type Reactions } from '@joinezco/vault';
 import type { Inference } from './inference';
 import { defaultSlashCommands } from './commands';
 
@@ -117,7 +118,7 @@ export type MarkdownSetupOptions = {
     /** Links between notes. The editor parses and renders wikilinks on its
      *  own; what they point at comes from the host's `resolver`, and the
      *  backlinks panel from its `index` (a `Vault`'s `links` from
-     *  `@joinezco/storage` is both). */
+     *  `@joinezco/vault` is both). */
     links?: LinksOptions;
     /** Front matter (a note's YAML properties). Pass `{ assignId }` to give
      *  notes opened without an `id:` one; `false` leaves front matter as text. */

@@ -15,7 +15,7 @@
  * An unresolved wikilink still has a path: the note it would create, beside
  * the linking note.
  */
-import { basename, dirname, extname, joinPath, normalizePath, relativePath } from '../path.js'
+import { basename, dirname, extname, joinPath, normalizePath, relativePath } from '@joinezco/storage'
 import { decodeDestination, encodeDestination } from './syntax.js'
 import type { LinkResolution } from './types.js'
 

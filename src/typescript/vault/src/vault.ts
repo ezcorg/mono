@@ -5,7 +5,9 @@
  * The files are the truth; everything here is rebuilt from them. `open`
  * walks the vault once; after that the index follows every write made
  * through `vault.fs` (the same filesystem, observed), and, when the store
- * can report them, changes made by anything else (`watch`).
+ * can report them, changes made by anything else (`watch`). A note is
+ * parsed once per change (`parseNote`), and the link graph, the search
+ * index and the comment index all read that one parse.
  *
  *     const vault = await Vault.open(hostFs, { identity: 'theo' })
  *     createEditor({
@@ -19,18 +21,28 @@
  * The vault's own state (versions, reactions) lives in `.vault/`, out of
  * every index.
  */
-import { FileType, type VfsInterface } from './vfs.js'
-import { basename, dirname, extname, isHidden, isNote, normalizePath } from './path.js'
-import { SearchIndex, type FileSearch } from './search.js'
-import { pathTaken, type FileOperations } from './files.js'
-import { LinkGraph, syntaxOf } from './links/graph.js'
+import {
+    FileType,
+    Locks,
+    VersionLog,
+    dirname,
+    isHidden,
+    normalizePath,
+    pathTaken,
+    type FileOperations,
+    type FileSearch,
+    type VersionLogOptions,
+    type VfsInterface,
+} from '@joinezco/storage'
+import { SearchIndex } from './search.js'
+import { LinkGraph, linkName, syntaxOf } from './links/graph.js'
 import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve.js'
-import { rewriteLinks, scanLinks, type ScannedLink } from './links/syntax.js'
-import { VersionLog, type VersionLogOptions } from './versions.js'
-import { Locks } from './lock.js'
-import { formatReference, referencesIn, spliceReference, type CommentIndex, type CommentRef, type Reference } from './comments.js'
+import type { ScannedLink } from './links/syntax.js'
+import { parseNote, rewriteLinks } from './parse.js'
+import { isNote } from './note.js'
+import { formatReference, referencesIn, referencesOf, spliceReference, type CommentIndex, type CommentRef, type Reference } from './comments.js'
 import { ReactionStore, type Reactions } from './reactions.js'
-import type { LinkIndex, LinkRef, LinkResolution, LinkResolver, LinkSuggestion, LinkSyntax } from './links/types.js'
+import type { LinkIndex, LinkResolution, LinkResolver, LinkSyntax } from './links/types.js'
 
 export interface VaultOptions {
     /** Follow changes made outside `vault.fs` through the store's `watch`.
@@ -109,8 +121,8 @@ export class Vault {
             backlinks: async (note) => (await ready(), this.graph.backlinks(note)),
             unresolved: async () => (await ready(), this.graph.unresolved()),
             rename: async (oldPath, newPath) => (await ready(), this.rename(oldPath, newPath)),
-            resolve: async (target, from, syntax) => (await ready(), this.resolve(target, from, syntax)),
-            suggest: async (query, from, limit) => (await ready(), this.suggest(query, from, limit)),
+            resolve: async (target, from, syntax) => (await ready(), this.resolveTarget(target, from, syntax)),
+            suggest: async (query, from, limit) => (await ready(), this.graph.suggest(query, from ? normalizePath(from) : null, limit)),
             subscribe: (listener) => this.subscribe(listener),
         }
         this.search = {
@@ -121,7 +133,7 @@ export class Vault {
         }
         this.comments = {
             about: async (note) => (await ready(), this.about(note)),
-            in: async (doc) => (await ready(), this.referencesOf(doc)),
+            in: async (doc) => (await ready(), this.heldBy(doc)),
             update: (ref, next) => this.commentWrites.run(normalizePath(ref.source), () => this.updateReference(ref, next)),
             subscribe: (listener) => this.subscribe(listener),
         }
@@ -206,34 +218,27 @@ export class Vault {
         return [...this.graph.files.all()].sort()
     }
 
-    resolve(target: string, from: string | null, syntax: LinkSyntax = 'wikilink'): LinkResolution | null {
+    private resolveTarget(target: string, from: string | null, syntax: LinkSyntax = 'wikilink'): LinkResolution | null {
         return resolveLink(target, from ? normalizePath(from) : null, syntax, this.graph.files)
     }
 
-    suggest(query: string, from: string | null, limit?: number): LinkSuggestion[] {
-        return this.graph.suggest(query, from ? normalizePath(from) : null, limit)
-    }
-
-    backlinks(note: string): LinkRef[] {
-        return this.graph.backlinks(note)
-    }
-
     /** References in other documents whose link resolves to `note`, by
-     *  source then line. */
-    about(note: string): CommentRef[] {
+     *  source then line: among the notes the graph knows link to it, the
+     *  references that do. */
+    private about(note: string): CommentRef[] {
         const clean = normalizePath(note)
         const out: CommentRef[] = []
-        for (const [source, refs] of this.refs) {
+        for (const source of this.graph.sources(clean)) {
             if (source === clean) continue
-            for (const ref of refs) {
-                if (ref.link.target.trim() && this.resolve(ref.link.target, source)?.path === clean) out.push({ ...ref, source })
+            for (const ref of this.refs.get(source) ?? []) {
+                if (ref.link.target.trim() && this.resolveTarget(ref.link.target, source)?.path === clean) out.push({ ...ref, source })
             }
         }
         return out.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line)
     }
 
     /** The references `doc` holds, in order. */
-    referencesOf(doc: string): CommentRef[] {
+    private heldBy(doc: string): CommentRef[] {
         const source = normalizePath(doc)
         return (this.refs.get(source) ?? []).map((ref) => ({ ...ref, source }))
     }
@@ -256,10 +261,6 @@ export class Vault {
         if (next === null) return null
         const now = referencesIn(updated).find((r) => r.start === found.start)
         return now ? { ...now, source } : null
-    }
-
-    unresolved(): LinkRef[] {
-        return this.graph.unresolved()
     }
 
     /**
@@ -309,7 +310,7 @@ export class Vault {
             const text = await this.store.readFile(note)
             this.setNote(note, text)
             const pins = new Map<number, string>()
-            for (const link of scanLinks(text)) {
+            for (const link of this.graph.linksOf(note)) {
                 const r = link.target.trim() ? this.graph.resolve(link, note) : null
                 if (r?.exists && affects(note, link, r.path)) pins.set(link.targetStart, after(r.path))
             }
@@ -333,7 +334,7 @@ export class Vault {
             if (refs && isNote(b)) this.refs.set(b, refs)
             this.graph.moveFile(a, b)
             this.text.remove(a)
-            this.text.set(b, isNote(b) ? await this.store.readFile(b) : null)
+            this.text.set(b, isNote(b) ? parseNote(await this.store.readFile(b)) : null)
         }
 
         // After: rewrite whatever no longer resolves where it did.
@@ -434,13 +435,15 @@ export class Vault {
         else this.addFile(path)
     }
 
-    // Every change to what is indexed goes through these, so the link graph
-    // and the search index never disagree.
+    // Every change to what is indexed goes through these, so the link graph,
+    // the search index and the comment index never disagree: one parse, read
+    // by all three.
     private setNote(path: string, text: string): void {
-        this.graph.setNote(path, text)
-        this.text.set(path, text)
-        const refs = referencesIn(text)
         const clean = normalizePath(path)
+        const note = parseNote(text)
+        this.graph.setNote(clean, note.links)
+        this.text.set(clean, note)
+        const refs = referencesOf(note)
         if (refs.length) this.refs.set(clean, refs)
         else this.refs.delete(clean)
     }
@@ -486,11 +489,5 @@ export class Vault {
             for (const listener of this.listeners) listener()
         }, 0)
     }
-}
-
-/** The name a wikilink matches by: the last segment, lower-cased, without `.md`. */
-function linkName(pathOrTarget: string): string {
-    const name = basename(pathOrTarget).toLowerCase()
-    return extname(name) === 'md' ? name.slice(0, -3) : name
 }
 
