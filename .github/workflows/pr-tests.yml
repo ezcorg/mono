@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive   # memfs, lsp-client and tiptap-markdown are submodules
+          submodules: recursive   # lsp-client and tiptap-markdown are submodules
       - run: nix develop -c pnpm install --frozen-lockfile
       - run: nix develop -c pnpm --filter "@joinezco/icanhaz-web^..." run build   # its workspace dependencies
       - run: nix develop -c pnpm --dir src/apps/icanhaz/web run typecheck
@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive   # memfs, lsp-client and tiptap-markdown are submodules
+          submodules: recursive   # lsp-client and tiptap-markdown are submodules
       - run: nix develop -c pnpm install --frozen-lockfile
       - run: nix develop -c pnpm --filter "eznote^..." run build   # its workspace dependencies
       - run: nix develop -c pnpm --dir src/apps/eznote run build
@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive   # memfs, lsp-client and tiptap-markdown are submodules
+          submodules: recursive   # lsp-client and tiptap-markdown are submodules
       - run: nix develop -c pnpm install --frozen-lockfile
       - run: nix develop -c pnpm --filter "@joinezco/markdown-editor^..." run build   # its workspace dependencies
       - run: nix develop -c pnpm --dir src/typescript/markdown-editor exec playwright install chromium   # runs under nix-ld in the CI image
@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive   # memfs, lsp-client and tiptap-markdown are submodules
+          submodules: recursive   # lsp-client and tiptap-markdown are submodules
       - run: nix develop -c pnpm install --frozen-lockfile
       - run: nix develop -c pnpm --filter "@joinezco/codeblock^..." run build   # its workspace dependencies
       - run: nix develop -c pnpm --dir src/typescript/codeblock run test

@@ -1,6 +1,3 @@
-[submodule "src/typescript/memfs"]
-	path = src/typescript/memfs
-	url = https://github.com/ezcorg/memfs
 [submodule "src/rust/hello-wasip3-http"]
 	path = src/rust/hello-wasip3-http
 	url = https://github.com/ezcorg/hello-wasip3-http
