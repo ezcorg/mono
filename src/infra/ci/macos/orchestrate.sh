@@ -119,8 +119,11 @@ while :; do
       -o ExitOnForwardFailure=yes -N "${forwards[@]}" "admin@$ip" &
   fwd_pid=$!
 
+  # The gate first: once ~/.ci-env is in place the runner may start at once.
+  ssh_vm "$ip" 'cat > ~/job-gate.sh && chmod 755 ~/job-gate.sh' < "$JOB_GATE"
   # ci-run.sh sources this file; exported lines reach the runner, and so the
-  # job (a job opts in to sccache with RUSTC_WRAPPER=sccache).
+  # job (a job opts in to sccache with RUSTC_WRAPPER=sccache). Written, then
+  # renamed: the image's agent starts the runner as soon as the file appears.
   {
     echo "JIT_CONFIG=$jit"
     echo "ATTIC_URL=http://127.0.0.1:17080"
@@ -133,9 +136,20 @@ while :; do
     # The runner runs the gate before each job's first step; on a trusted
     # pool it refuses what is not main or a tag of a trusted repository.
     echo "export ACTIONS_RUNNER_HOOK_JOB_STARTED=/Users/admin/job-gate.sh CI_TRUSTED_REPOS=${CI_TRUSTED_REPOS:-}"
-  } | ssh_vm "$ip" 'umask 077; cat > ~/.ci-env'
-  ssh_vm "$ip" 'cat > ~/job-gate.sh && chmod 755 ~/job-gate.sh' < "$JOB_GATE"
-  ssh_vm "$ip" 'nohup ~/ci-run.sh > ~/ci-run.log 2>&1 &'
+  } | ssh_vm "$ip" 'umask 077; cat > ~/.ci-env.new && mv ~/.ci-env.new ~/.ci-env'
+  # The image's LaunchAgent starts the runner inside admin's login session,
+  # where jobs get a user's keychain and GUI. Without the agent (an older
+  # image), or when the VM has not logged in within two minutes, start it over
+  # SSH as before; ci-run.sh runs once, whichever starts it.
+  session=""
+  if ssh_vm "$ip" 'test -f ~/Library/LaunchAgents/org.ezcorg.ci-runner.plist'; then
+    for _ in $(seq 1 24); do
+      [ "$(ssh_vm "$ip" 'stat -f %Su /dev/console' 2>/dev/null)" = admin ] && { session=1; break; }
+      sleep 5
+    done
+    [ -n "$session" ] || log "warning: $vm did not log in; its runner starts outside a login session"
+  fi
+  [ -n "$session" ] || ssh_vm "$ip" 'nohup ~/ci-run.sh > ~/ci-run.log 2>&1 &'
 
   # The guest shuts itself down after its one job; tart run then exits. The
   # job clock starts when GitHub marks the runner busy; idle waits are free.

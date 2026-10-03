@@ -112,7 +112,27 @@ The same pool design on Tart, as a LaunchAgent under the logged-in user
 - Determinate Nix on macOS 27 must be installed from a terminal with Full Disk
   Access (Terminal.app at the keyboard); SSH sessions fail on `/etc/fstab`.
 - Build the image with `nix run .#ci-macos-image` on galatron; it starts from
-  the `tahoe-base` Tart image and produces `ci-macos`.
+  the `tahoe-base` Tart image and produces `ci-macos`, with Apple's Developer
+  ID G2 intermediate and root in its System keychain: outside a login session
+  codesign does not complete a signer's chain from a job's own keychain
+  (`unable to build chain to self-signed root`, `errSecInternalComponent`),
+  and from the System keychain it always does.
+- Jobs run in admin's login session, like a user's own work: the image keeps
+  automatic login working with its random password, and a LaunchAgent
+  (`org.ezcorg.ci-runner`) starts the runner there once the orchestrator has
+  written `~/.ci-env`. So jobs get the user's keychain search list and a GUI
+  (UI tests, simulators). Permissions macOS asks a person for (screen
+  recording, accessibility) are not granted. A VM that has not logged in
+  within two minutes, or an image without the agent, gets its runner over SSH
+  as before, with a warning in the pool's log.
+- macOS runs at most two macOS VMs at once, and the pools hold both: stop one
+  pool while the image builds, then start it again. Its next VM uses the new
+  image; so does the other pool's, once its current VM has had its job.
+  ```bash
+  launchctl bootout gui/$(id -u)/org.nixos.ci-pool-macos     # and `tart stop` its VM if it lingers
+  nix run .#ci-macos-image
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.nixos.ci-pool-macos.plist
+  ```
 - `sudo darwin-rebuild switch --flake .#galatron` applies changes.
 
 ## Applying

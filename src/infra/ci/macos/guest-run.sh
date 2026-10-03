@@ -1,7 +1,11 @@
 #!/bin/bash
 # Inside the VM: one job, then power off. build-image.sh installs this as
-# ~/ci-run.sh; the orchestrator writes ~/.ci-env and starts it over SSH.
+# ~/ci-run.sh. The orchestrator writes ~/.ci-env, and the image's LaunchAgent
+# (org.ezcorg.ci-runner) starts this in admin's login session; without one,
+# the orchestrator starts it over SSH.
 set -uo pipefail
+# Once per VM, whichever starts it first.
+mkdir "$HOME/.ci-run.lock" 2>/dev/null || exit 0
 # shellcheck disable=SC1090
 . "$HOME/.ci-env"
 export PATH="/nix/var/nix/profiles/default/bin:$HOME/.nix-profile/bin:/opt/homebrew/bin:$PATH"
