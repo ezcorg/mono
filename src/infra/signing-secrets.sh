@@ -35,7 +35,8 @@ put() {
   jq -Rs . | sops set --value-stdin "$file" "$1"
 }
 get() { sops -d --extract "$1" "$file" 2>/dev/null; }
-minisign() { if command -v minisign >/dev/null; then command minisign "$@"; else nix run nixpkgs#minisign -- "$@"; fi; }
+# type -P, not command -v, which would find this function itself.
+minisign() { if type -P minisign >/dev/null; then command minisign "$@"; else nix run nixpkgs#minisign -- "$@"; fi; }
 
 apple() {
   [ $# -eq 4 ] || usage

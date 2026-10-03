@@ -4,6 +4,7 @@
 # which supplies the environment and credentials below.
 #
 #   POOL, ORG, LABELS, IMAGE, CPUS, MEMORY, DISK, MAX_JOB_SECONDS, SCCACHE_RW_MODE
+#   CI_TRUSTED_REPOS                           empty, or a trusted pool's repositories (job-gate.sh)
 #   $CREDENTIALS_DIRECTORY/github-token        creates JIT configs (org permission: self-hosted runners, write)
 #   $CREDENTIALS_DIRECTORY/attic-token         optional; pull, or pull+push for trusted pools
 #   $CREDENTIALS_DIRECTORY/sccache-key         optional; AWS_* lines for the sccache store, read-only or read-write
@@ -78,6 +79,8 @@ while :; do
       echo "JIT_CONFIG=$jit"
       echo "ATTIC_URL=http://127.0.0.1:17080"
       [ -n "$attic_token" ] && echo "ATTIC_TOKEN=$attic_token"
+      # The image's job gate reads this; empty lets every job through.
+      echo "CI_TRUSTED_REPOS=${CI_TRUSTED_REPOS:-}"
       # The guest's environment is the runner's, so jobs see these; a job
       # opts in with RUSTC_WRAPPER=sccache.
       if [ -r "$CREDENTIALS_DIRECTORY/sccache-key" ]; then

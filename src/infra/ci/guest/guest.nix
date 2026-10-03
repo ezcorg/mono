@@ -3,6 +3,7 @@
 #   ATTIC_URL     the cache, http://127.0.0.1:17080 (relayed, below)
 #   ATTIC_TOKEN   optional; pull, or pull+push on the trusted pool
 #   SCCACHE_*, AWS_*   optional; the sccache store at 127.0.0.1:17090, for jobs
+#   CI_TRUSTED_REPOS   on a trusted pool: what its job gate lets through (job-gate.sh)
 { pkgs, lib, ... }:
 
 let
@@ -101,6 +102,10 @@ in
       RUNNER_ROOT = "/var/lib/runner/root";
       # Node for JavaScript actions ships inside the runner package.
       RUNNER_ALLOW_RUNASROOT = "0";
+      # Before any step of a job: on a trusted pool, refuse what is not main
+      # or a tag of a trusted repository (job-gate.sh). Lets all through
+      # without CI_TRUSTED_REPOS.
+      ACTIONS_RUNNER_HOOK_JOB_STARTED = "${./job-gate.sh}";
     };
     serviceConfig = {
       Type = "oneshot";

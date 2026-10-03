@@ -11,6 +11,8 @@
 #   SCCACHE_HOST        optional; the sccache store (host:port) as this host reaches it; the VM sees 127.0.0.1:17090
 #   SCCACHE_KEY_FILE    optional; AWS_* lines for the store, read-only or read-write
 #   SCCACHE_RW_MODE     READ_ONLY or READ_WRITE
+#   JOB_GATE            the job gate (ci/guest/job-gate.sh), copied into each VM
+#   CI_TRUSTED_REPOS    empty, or a trusted pool's repositories
 #   STATE_DIR           per-pool scratch (env files)
 #
 # Same shape as ci/orchestrate.sh on Linux; only "make a VM" and "reach it"
@@ -128,7 +130,11 @@ while :; do
       echo "export SCCACHE_S3_USE_SSL=false SCCACHE_S3_RW_MODE=$SCCACHE_RW_MODE"
       sed 's/^/export /' "$SCCACHE_KEY_FILE"
     fi
+    # The runner runs the gate before each job's first step; on a trusted
+    # pool it refuses what is not main or a tag of a trusted repository.
+    echo "export ACTIONS_RUNNER_HOOK_JOB_STARTED=/Users/admin/job-gate.sh CI_TRUSTED_REPOS=${CI_TRUSTED_REPOS:-}"
   } | ssh_vm "$ip" 'umask 077; cat > ~/.ci-env'
+  ssh_vm "$ip" 'cat > ~/job-gate.sh && chmod 755 ~/job-gate.sh' < "$JOB_GATE"
   ssh_vm "$ip" 'nohup ~/ci-run.sh > ~/ci-run.log 2>&1 &'
 
   # The guest shuts itself down after its one job; tart run then exits. The

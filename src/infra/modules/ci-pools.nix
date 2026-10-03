@@ -41,6 +41,17 @@ let
           environment.
         '';
       };
+      trustedRepos = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "ezcorg/mono" "ezcorg/dij" ];
+        description = ''
+          Make this a trusted pool: its VMs run only jobs from these
+          repositories, and only from main (pushes and manual runs) or tags;
+          anything else fails before its first step (ci/guest/job-gate.sh).
+          Empty: any job, as for the pull-request pools.
+        '';
+      };
       sccacheWrite = lib.mkOption {
         type = lib.types.bool;
         default = false;
@@ -138,6 +149,7 @@ in {
         DISK = p.disk;
         MAX_JOB_SECONDS = toString p.maxJobSeconds;
         SCCACHE_RW_MODE = if p.sccacheWrite then "READ_WRITE" else "READ_ONLY";
+        CI_TRUSTED_REPOS = lib.concatStringsSep "," p.trustedRepos;
         HOME = "/var/lib/ci";
       };
       serviceConfig = {

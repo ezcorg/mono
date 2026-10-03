@@ -39,8 +39,12 @@ Things that are easy to get wrong, all handled in the config but worth knowing:
 - The runners join the org's Default runner group. Public repositories (mono
   is one) can use them only while that group allows public repositories:
   `gh api -X PATCH orgs/ezcorg/actions/runner-groups/1 -F allows_public_repositories=true`.
-  The trusted labels are a convention: any workflow the org runs can ask for
-  them, so fork pull requests should need approval.
+  Any workflow in the org can ask for any label (GitHub Free has that one
+  group), so the trusted pools enforce who they serve themselves: a job-started
+  hook (`ci/guest/job-gate.sh`, the pools' `trustedRepos`) fails a job before
+  its first step unless it comes from ezcorg/mono or ezcorg/dij and from
+  `main` (a push, or a manual run of `main`) or a pushed tag. Pull requests,
+  other branches and other repositories get the pull-request pools only.
 - One host-side vsock listener per service serves every VM, which is why the
   relays are systemd units here rather than a `rig forward` per VM (rig keys
   that listener on the port, so two forwards of one port collide). Any VM on
@@ -178,3 +182,65 @@ exported files can go. Rotating means storing the new ones and pushing again.
 On macOS, export `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt` first (sops looks in `~/Library/Application Support` by default).
 `sops secrets/pengutron.yaml` edits in place. Adding a host: put its
 `ssh-to-age` key in `.sops.yaml` and run `sops updatekeys`.
+
+## Rotating secrets
+
+| Secret | Where | Expires |
+|---|---|---|
+| `github/runner-pat` | `secrets/pengutron.yaml` | when set at creation (fine-grained, at most a year) |
+| `attic/token-ci`, `attic/token-ci-trusted` | `secrets/pengutron.yaml` | a year after minting (`--validity 1y`) |
+| `attic/env` (Attic's signing secret) | `secrets/pengutron.yaml` | never; on compromise |
+| `sccache/key-ro`, `sccache/key-rw`, `garage/env` | `secrets/pengutron.yaml` | never; on compromise |
+| Developer ID certificate, notary key, minisign key | `secrets/release.yaml` | certificate: five years; the Apple Developer membership: yearly |
+| age keys (operator, hosts) | `.sops.yaml` | never; on loss or compromise |
+
+Note the dates as you mint things: nothing here warns before a token
+expires. An expired runner token shows as `could not get a JIT runner
+config` in a pool's log (`journalctl -u ci-pool-linux`, or
+`~/Library/Logs/ci-pool-macos.log` on galatron) and no jobs run; an
+expired Attic token as `attic: cache not configured` in jobs, which then
+fetch from cache.nixos.org.
+
+What takes a new value when: on pengutron a changed secret restarts the
+pools that load it (`restartUnits`), but not `atticd` or `garage`, which
+need `sudo systemctl restart`. On galatron each pool's orchestrator reads
+its tokens once at start, so after `deploy.sh galatron`:
+`launchctl kickstart -k gui/$(id -u)/org.nixos.ci-pool-macos` and the same
+for `org.nixos.ci-pool-macos-trusted`.
+
+- **Runner token.** Regenerate it (github.com/settings/personal-access-tokens;
+  same permissions, a new value, and approval again if ezcorg requires it),
+  replace `github/runner-pat` with `sops secrets/pengutron.yaml`, deploy
+  both hosts and kick galatron's pools.
+- **Attic client tokens.** Mint new ones (first-time setup, step 4), replace
+  them in `secrets/pengutron.yaml`, deploy both hosts and kick galatron's
+  pools. An old token stays valid until it expires: Attic cannot revoke one
+  token. To revoke them all at once, rotate `attic/env`.
+- **`attic/env`.** Set `ATTIC_SERVER_TOKEN_HS256_SECRET_BASE64=$(openssl rand
+  64 | base64 | tr -d '\n')`, deploy pengutron, `sudo systemctl restart
+  atticd`. Every token is now invalid: mint the client tokens again, as
+  above.
+- **sccache keys.** Remove the old one from sops (`sops unset
+  secrets/pengutron.yaml '["sccache"]["key-ro"]'`, and/or `key-rw`), run
+  `./sccache-secrets.sh` (it generates what is missing), deploy both hosts
+  and kick galatron's pools, then on pengutron `sudo garage key delete --yes
+  sccache-ro` (and/or `sccache-rw`) and `~/infra/sccache-setup.sh`, which
+  imports the new key. In between, jobs build without sccache.
+- **`garage/env`.** A new `GARAGE_RPC_SECRET`, deploy pengutron, `sudo
+  systemctl restart garage`. One node, so nothing else changes.
+- **Developer ID certificate, notary key.** Before the certificate expires
+  (or after revoking it at developer.apple.com, or the key in App Store
+  Connect): `./signing-secrets.sh apple …` with the new files, which
+  replaces the old values, then `./signing-secrets.sh push`.
+- **minisign key.** `sops unset secrets/release.yaml '["minisign"]'`, then
+  `./signing-secrets.sh minisign <dij checkout>/minisign.pub` and `push`, and
+  commit the new `minisign.pub` in dij. Releases signed before verify only
+  with the old public key; keep it with them (their release notes).
+- **Age keys.** Back up the operator's key (`~/.config/sops/age/keys.txt`):
+  `secrets/release.yaml` is encrypted to it alone. A reinstalled host gets a
+  new key from its SSH host key: replace it in `.sops.yaml` and run `sops
+  updatekeys secrets/pengutron.yaml`. Dropping a compromised key the same way
+  stops it reading new versions, not what it already read: rotate every
+  secret in that file too.
+- **galatron's guest SSH key** (`~/.ssh/ci-guest`): delete it and rebuild the
+  image (`nix run .#ci-macos-image` makes a new one).

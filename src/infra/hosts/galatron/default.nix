@@ -64,6 +64,7 @@
         atticTokenSecret = "attic/token-ci-trusted";
         sccacheKeySecret = "sccache/key-rw";
         sccacheWrite = true;
+        trustedRepos = [ "ezcorg/mono" "ezcorg/dij" ];
         cpus = 4;
         memory = 6144;
       };

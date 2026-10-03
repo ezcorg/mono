@@ -20,6 +20,11 @@ let
         description = "sops secret with this pool's Garage key for the sccache store; see modules/ci-pools.nix.";
       };
       sccacheWrite = lib.mkOption { type = lib.types.bool; default = false; };
+      trustedRepos = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Make this a trusted pool; see modules/ci-pools.nix.";
+      };
       maxJobSeconds = lib.mkOption { type = lib.types.int; default = 6 * 3600; };
     };
   };
@@ -84,6 +89,9 @@ in {
           GUEST_KEY = cfg.guestKey;
           GITHUB_TOKEN_FILE = config.sops.secrets.${cfg.githubTokenSecret}.path;
           STATE_DIR = "/Users/${cfg.user}/Library/Application Support/ci-pool-${name}";
+          # The Linux image's job gate, copied into each VM.
+          JOB_GATE = "${../../ci/guest/job-gate.sh}";
+          CI_TRUSTED_REPOS = lib.concatStringsSep "," p.trustedRepos;
         } // lib.optionalAttrs (p.atticTokenSecret != null) {
           ATTIC_TOKEN_FILE = config.sops.secrets.${p.atticTokenSecret}.path;
         } // lib.optionalAttrs (cfg.sccache != null && p.sccacheKeySecret != null) {
