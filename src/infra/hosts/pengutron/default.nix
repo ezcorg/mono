@@ -43,7 +43,8 @@
 
   services.ci-pools = {
     enable = true;
-    repo = "ezcorg/mono";
+    # Runners belong to the org: any ezcorg repository (mono, dij) can use them.
+    org = "ezcorg";
     pools = {
       # Pull requests and anything else untrusted: reads the cache, cannot write
       # it. Three identical pools so PR jobs run in parallel (the host has 16

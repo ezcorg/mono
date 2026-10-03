@@ -45,7 +45,7 @@
 
   services.ci-pools-tart = {
     enable = true;
-    repo = "ezcorg/mono";
+    org = "ezcorg";
     user = "theo";
     attic = "http://pengutron.tailb1a1.ts.net:8080";
     # Two VMs share 16 GB with the host; 6 GB each leaves the host 4 GB.

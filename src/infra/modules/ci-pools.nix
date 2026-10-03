@@ -41,11 +41,19 @@ let
 in {
   options.services.ci-pools = {
     enable = lib.mkEnableOption "rig-backed ephemeral CI runner pools";
-    repo = lib.mkOption { type = lib.types.str; example = "ezcorg/mono"; };
+    org = lib.mkOption {
+      type = lib.types.str;
+      example = "ezcorg";
+      description = ''
+        GitHub organization the runners register with (its Default runner
+        group). Any of its repositories can target the pools' labels; public
+        ones only if the group allows public repositories.
+      '';
+    };
     githubTokenSecret = lib.mkOption {
       type = lib.types.str;
       default = "github/runner-pat";
-      description = "sops secret: a token allowed to create JIT runner configs on the repo.";
+      description = "sops secret: a token allowed to create JIT runner configs for the org (Self-hosted runners: read and write).";
     };
     pools = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule poolOpts);
@@ -81,7 +89,7 @@ in {
       requires = [ "incus.service" ];
       environment = {
         POOL = name;
-        REPO = cfg.repo;
+        ORG = cfg.org;
         LABELS = lib.concatStringsSep "," p.labels;
         IMAGE = p.image;
         CPUS = toString p.cpus;

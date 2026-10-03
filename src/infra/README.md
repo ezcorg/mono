@@ -14,7 +14,8 @@ Declarative config for the build hosts. One flake, one directory per host.
 ## How CI runs on pengutron
 
 Each pool (`services.ci-pools.pools.<name>`) is a systemd service that keeps
-one rig VM booted and registered with GitHub as a single-use runner. The VM
+one rig VM booted and registered with the ezcorg organization as a single-use
+runner, so any ezcorg repository's jobs can land on it. The VM
 runs one job, powers off, and is deleted; a fresh clone replaces it. rig's
 isolation holds: the VM has no route to the host or the LAN. The Attic cache
 reaches it over a vsock tunnel (`rig forward --to-guest`), not the network.
@@ -30,6 +31,11 @@ Things that are easy to get wrong, all handled in the config but worth knowing:
 
 - Just-in-time runners carry only the labels we give them; GitHub does not add
   `self-hosted`. Target `runs-on: [nix, linux-vm]`, not `self-hosted`.
+- The runners join the org's Default runner group. Public repositories (mono
+  is one) can use them only while that group allows public repositories:
+  `gh api -X PATCH orgs/ezcorg/actions/runner-groups/1 -F allows_public_repositories=true`.
+  The trusted labels are a convention: any workflow the org runs can ask for
+  them, so fork pull requests should need approval.
 - Each pool tunnels Attic into its guests on a different port (`atticGuestPort`),
   because rig keys its host-side vsock listener on the guest port.
 - Under rig's ACL a NixOS host drops guest DHCP unless DHCP is marked notrack
@@ -48,6 +54,9 @@ Things that are easy to get wrong, all handled in the config but worth knowing:
 | `pr-tests.yml` | `linux-vm` | per-project tests on pull requests; fork PRs wait for approval |
 | `witmproxy.yml` (binaries) | `linux-vm-trusted`, `macos-vm-trusted` | release binaries; Linux is zig-linked against glibc 2.28 so it runs anywhere; pushes the dev shell closure to Attic |
 | `infra-smoke.yml` | `linux-vm`, `macos-vm` | one tiny job per pool, on demand |
+
+Other ezcorg repositories use the same labels: ezcorg/dij's `ci.yml` and
+`release.yml` (with its own flake's dev shell).
 
 Every job enters the workspace dev shell (`flake.nix` at the repo root) with
 `nix develop -c …`; the VMs carry nothing else. Hosted GitHub runners remain
@@ -99,8 +108,9 @@ sudo nixos-rebuild switch --flake ./src/infra#pengutron      # on pengutron, fro
    Jobs pull from it automatically. Nothing pushes yet: a trusted job pushes
    with `attic push ci:mono <paths>` or by running `attic watch-store ci:mono`
    for the duration of the build.
-5. Put a GitHub token that can create JIT runner configs on the repo
-   (fine-grained: Administration read/write on `ezcorg/mono`) in
+5. Put a GitHub token that can create JIT runner configs for the org
+   (fine-grained, resource owner `ezcorg`: Organization permissions →
+   Self-hosted runners, read and write; no repository permissions) in
    `secrets/pengutron.yaml` under `github/runner-pat`.
 6. Switch again; `systemctl status ci-pool-linux` should show a VM starting.
 

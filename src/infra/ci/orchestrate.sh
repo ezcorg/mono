@@ -3,8 +3,8 @@
 # we delete it and make the next one. Run by systemd (modules/ci-pools.nix),
 # which supplies the environment and credentials below.
 #
-#   POOL, REPO, LABELS, IMAGE, CPUS, MEMORY, DISK, MAX_JOB_SECONDS, ATTIC_GUEST_PORT
-#   $CREDENTIALS_DIRECTORY/github-token        creates JIT configs (repo admin scope)
+#   POOL, ORG, LABELS, IMAGE, CPUS, MEMORY, DISK, MAX_JOB_SECONDS, ATTIC_GUEST_PORT
+#   $CREDENTIALS_DIRECTORY/github-token        creates JIT configs (org permission: self-hosted runners, write)
 #   $CREDENTIALS_DIRECTORY/attic-token         optional; pull, or pull+push for trusted pools
 #   $RUNTIME_DIRECTORY                         per-VM manifest and env files (tmpfs)
 #
@@ -28,7 +28,7 @@ labels_json=$(printf '%s' "$LABELS" | jq -R 'split(",")')
 gh_api() { # gh_api <method> <path> [curl args...]
   local m=$1 path=$2; shift 2
   curl -sSf -X "$m" -H "Authorization: Bearer $gh_token" -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO$path" "$@"
+    -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/orgs/$ORG$path" "$@"
 }
 runner_busy() { # true once GitHub has handed this runner a job
   [ "$(gh_api GET "/actions/runners?name=$1" 2>/dev/null | jq -r '.runners[0].busy // false')" = "true" ]
@@ -59,7 +59,7 @@ while :; do
       -H "Authorization: Bearer $gh_token" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
-      "https://api.github.com/repos/$REPO/actions/runners/generate-jitconfig" \
+      "https://api.github.com/orgs/$ORG/actions/runners/generate-jitconfig" \
       -d "$(jq -cn --arg name "$vm" --argjson labels "$labels_json" \
             '{name: $name, runner_group_id: 1, labels: $labels, work_folder: "_work"}')" \
       | jq -er .encoded_jit_config); then

@@ -20,7 +20,10 @@ let
 in {
   options.services.ci-pools-tart = {
     enable = lib.mkEnableOption "Tart-backed ephemeral CI runner pools";
-    repo = lib.mkOption { type = lib.types.str; };
+    org = lib.mkOption {
+      type = lib.types.str;
+      description = "GitHub organization the runners register with; see modules/ci-pools.nix.";
+    };
     user = lib.mkOption {
       type = lib.types.str;
       description = "The logged-in user the pools run as; Tart needs a user session.";
@@ -57,7 +60,7 @@ in {
           PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin";
           HOME = "/Users/${cfg.user}";
           POOL = name;
-          REPO = cfg.repo;
+          ORG = cfg.org;
           LABELS = lib.concatStringsSep "," p.labels;
           IMAGE = p.image;
           CPUS = toString p.cpus;

@@ -3,10 +3,10 @@
 # we make the next one. Run by launchd as the logged-in user
 # (modules/darwin/ci-pools-tart.nix), which supplies:
 #
-#   POOL, REPO, LABELS, IMAGE, CPUS, MEMORY (MiB), MAX_JOB_SECONDS
+#   POOL, ORG, LABELS, IMAGE, CPUS, MEMORY (MiB), MAX_JOB_SECONDS
 #   ATTIC_HOST_URL      Attic as this host reaches it; the VM sees it as 127.0.0.1:8080
 #   GUEST_KEY           SSH private key whose public half the image trusts
-#   GITHUB_TOKEN_FILE   creates JIT configs (repo admin scope)
+#   GITHUB_TOKEN_FILE   creates JIT configs (org permission: self-hosted runners, write)
 #   ATTIC_TOKEN_FILE    optional; pull, or pull+push for trusted pools
 #   STATE_DIR           per-pool scratch (env files)
 #
@@ -31,7 +31,7 @@ ssh_vm() { # ssh_vm <ip> <command...>
 gh_api() { # gh_api <method> <path> [curl args...]
   local m=$1 path=$2; shift 2
   curl -sSf -X "$m" -H "Authorization: Bearer $gh_token" -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO$path" "$@"
+    -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/orgs/$ORG$path" "$@"
 }
 runner_busy() { # true once GitHub has handed this runner a job
   [ "$(gh_api GET "/actions/runners?name=$1" 2>/dev/null | jq -r '.runners[0].busy // false')" = "true" ]
@@ -56,7 +56,7 @@ while :; do
   if ! jit=$(curl -sSf -X POST \
       -H "Authorization: Bearer $gh_token" -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
-      "https://api.github.com/repos/$REPO/actions/runners/generate-jitconfig" \
+      "https://api.github.com/orgs/$ORG/actions/runners/generate-jitconfig" \
       -d "$(jq -cn --arg name "$vm" --argjson labels "$labels_json" \
             '{name: $name, runner_group_id: 1, labels: $labels, work_folder: "_work"}')" \
       | jq -er .encoded_jit_config); then
