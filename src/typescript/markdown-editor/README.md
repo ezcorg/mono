@@ -34,7 +34,9 @@ backlinks (⌘⇧L), a note's properties (one small line at its top opens them) 
 its comments (a click on commented text opens that comment over the note's
 edge) all keep out of the way until then. A host that wants a panel in view
 from the start says so (`fileTree: { open: true }`,
-`links: { panel: { open: true } }`, `comments: { margin: { layout: 'column' } }`).
+`links: { panel: { open: true } }`, `comments: { margin: { layout: 'column' } }`
+or `'panel'`). The column the outline and the file tree share folds away on
+the chevron in its corner, or ⌘⌥B.
 
 With `fs` alone the editor keeps a vault of its own over it, so wikilinks,
 search and renames work without the host building one.
@@ -79,36 +81,61 @@ written, regardless of case, or approximately after an edit made elsewhere;
 a pin; a block id) and highlights it; where two comments' passages overlap,
 the overlap is marked deeper, and clicking it looks at each in turn. A
 comment on the whole of a document (a reply quotes the whole of the comment
-it answers) highlights nothing and sits at the top. Clicking a highlight
-opens the comment as a card over the note's edge: who and when, the text
-in a bubble (the reader's own on the right), and under it one quiet row
-with its reactions, React, how many replies it has, and "…" for the rest
-(Reply, Resolve, Edit, Delete, Open document). The count unfolds the
-thread under the message, each reply a message of its own, a reply with
-answers folding them with [−]/[+], and a field for the next reply at the
-end. Escape or a click elsewhere closes the card. A host that wants every
-open comment in view asks for a column beside the note
-(`comments: { margin: { layout: 'column' } }`). Quotes keep up with
+it answers) highlights nothing and sits at the top.
+
+Clicking a highlight opens the comment as a bubble over the note's edge,
+under its text (above it when there is no room under): who and when, and
+its text shown exactly as the note shows text (a read-only editor of the
+note's make, so a fence named by a file holds the file's lines, fences
+inside it included). Under the bubble, standing on their own, are its
+reactions and the reply count. The chevron in the bubble's corner opens on
+the reactions to give (the common and recent ones, the whole grid behind
+the last cell) and then the actions in groups: Edit and Reply, Resolve,
+Composer panel (one's own comments only) and Open as file, Delete, Show
+all comments and Dismiss. Long text folds after a few lines, with "Show
+more" under it. A comment's first replies show under it, each a bubble of
+its own, indented under what it answers; a reply's own answers stay behind
+its count. [−] after any byline collapses that message and everything
+under it to the byline; [+] brings it back. Nothing
+holds the bubbles: they stand on the note, and a bubble never runs past the
+note's frame (what is more scrolls inside it). Escape, Dismiss or a click
+elsewhere closes it. Every comment at once: "Show all comments", ⌘⇧M or
+the palette's "Comments panel" puts them in a panel beside the note, a
+list that scrolls on its own under a fixed head, where a click on a comment
+takes the note to its text; the same puts it away. A host can start
+there (`comments: { margin: { layout: 'panel' } }`) or with a column, each
+bubble level with its text (`layout: 'column'`). Quotes keep up with
 editing: words changed here are re-quoted where the comment lives when the
 note is saved; text no quote can tell apart is pinned instead.
 
 Given `comments: { author, index, reactions }` (a vault's `comments` and
 `reactions`; the editor's own vault's with `fs` alone), comments are
-written as `author`: select text, then Comment or ⌘⌥M, and a small
-composer opens at the end of the selection. A comment or a reply is typed
-in the editor itself, in small, and posting makes its document,
-`comments/<note>/<author> <date> <time>.md`, whose name is read back as who
-and when. **Draft** keeps it in this browser instead: a draft is marked as
-such in the note (a dashed underline) and on its card, its own replies are
-drafts too, and a bar over the note counts the note's drafts and publishes
-or discards them all at once (or one at a time, from a draft's "…"). The
-open glyph in the field's corner (⌘⇧↩) makes the document with what was
-written, even nothing, and loads it: the editor is then the editor of the
-comment, the caret under the reference, whose first block quotes what it
-answers and opens the note there with the comment looked at. A document
-opened before anything was written, and left so, is removed again.
-Reactions are per-identity state in the vault, not documents; a ✅
-resolves. `editor.storage.comments` has the comments, `drafts()` and
+written as `author`: select text, then Comment or ⌘⌥M, and a composer opens
+by the end of the selection. A comment, a reply (right under the comment it
+answers) or an edit is typed in a bubble, in the editor's own syntax, its
+Cancel and its one filled button under the bubble; ⌘/Ctrl+Enter posts. What is
+typed and not posted is a draft, kept in this browser on its own and back
+in the field when it is opened again. Posting makes the comment's document,
+`comments/<note>/<author> <date> <time>.md`, whose name is read back as
+who and when.
+
+A comment written in full goes to the **composer panel** (in a bubble's
+menu, or ⌘⇧↩ in a composer): the comment's document in an editor beside
+the note, over its right edge, saved as it is typed. The note stays in
+view: select text in it and press ⌘⌥M (or Comment) and the selection is
+quoted into the sheet, where the answer goes under it, so one comment can
+take up several passages. When the pointer leaves the sheet it fades and
+slides to the edge, leaving a handle that brings it back; Escape closes it,
+and a document closed with nothing written under its reference is removed
+again. Open as file loads the document in the editor itself instead.
+
+A quoted passage, wherever it is shown (the composer panel, a comment document
+opened as a note, a reply's reference), is a portal into the other
+document: the words in full, their paragraph around them in the muted
+colour when the passage sits in plain prose, named over them with who
+wrote the document (a comment's) and the lines they are on; its header
+opens the note there. Reactions are per-identity state in the vault, not
+documents; a ✅ resolves. `editor.storage.comments` has the comments and
 `exportAnnotations()` (W3C Web Annotations).
 
 ## What it understands
@@ -152,8 +179,13 @@ in only when accepted.
   to rename, Delete (asks first), Escape to close it and return to the note.
 - ⌘⇧L / Ctrl+Shift+L: show or hide the backlinks under the note (`links:
   { panel: { open: true } }` starts them open).
-- ⌘⌥M / Ctrl+Alt+M: comment on the selection. In a comment box, ⌘/Ctrl+Enter
-  posts and Escape cancels; in an open comment, Escape closes it.
+- ⌘⌥M / Ctrl+Alt+M: comment on the selection (while a sheet is open, quote
+  it there). In a comment box, ⌘/Ctrl+Enter posts, ⌘⇧↩ opens the sheet and
+  Escape cancels; in an open comment, Escape closes it.
+- ⌘⌥B / Ctrl+Alt+B: fold the column beside the note (the outline, the file
+  tree) away, or bring it back.
+- ⌘⇧M / Ctrl+Shift+M: every comment in a panel beside the note, or the
+  panel put away.
 
 ## Develop
 

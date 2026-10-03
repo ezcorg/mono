@@ -34,9 +34,11 @@ import type { MathOptions } from './extensions/math';
 import type { ImageOptions } from './extensions/image';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { Comments } from './extensions/comments';
-import { CommentMargin } from './extensions/comment-margin';
-import { fileOperations, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage';
-import { Vault, type CommentIndex, type LinkIndex, type LinkResolver, type Reactions } from '@joinezco/vault';
+import { CommentMargin, type CommentLayout } from './extensions/comment-margin';
+import { RailToggle } from './extensions/rail';
+import { revealFragment } from './extensions/fragment';
+import { fileOperations, normalizePath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage';
+import { Vault, type CommentIndex, type LinkIndex, type LinkResolution, type LinkResolver, type Reactions } from '@joinezco/vault';
 import type { Inference } from './inference';
 import { defaultSlashCommands } from './commands';
 
@@ -152,6 +154,9 @@ export type MarkdownSetupOptions = {
     /** Comment threads (the comments RFC). A note's threads are read and
      *  shown whatever is given here; `false` leaves them in the note unshown. */
     comments?: CommentsSetupOptions | false;
+    /** The notice over the note when a save was refused for a conflict
+     *  (default on). `false` for an editor that only shows a document. */
+    conflictNotice?: boolean;
 }
 
 export interface CommentsSetupOptions {
@@ -164,14 +169,15 @@ export interface CommentsSetupOptions {
     /** Reactions and resolution, per identity (a vault's `reactions`); the
      *  editor's own vault's, as `author`, when it made one. */
     reactions?: Reactions;
-    /** How threads are shown, or `false` for not at all (a host showing
+    /** How comments are shown, or `false` for not at all (a host showing
      *  them its own way reads them from `editor.storage.comments`).
      *  `layout: 'float'` (the default) shows nothing beside the note: the
-     *  thread whose text is clicked opens over the note's edge, by its text.
-     *  `layout: 'column'` keeps every open thread in a column beside the
-     *  note, level with its text (`createEditor` makes the column; `mount`
-     *  puts it elsewhere). */
-    margin?: { mount?: SidebarOptions['mount']; layout?: 'float' | 'column' } | false;
+     *  comment whose text is clicked opens over the note's edge, by its
+     *  text. `layout: 'column'` keeps every comment in a column beside the
+     *  note, level with its text; `layout: 'panel'` in a list beside the
+     *  note that scrolls on its own (`createEditor` makes the column;
+     *  `mount` puts it elsewhere). */
+    margin?: { mount?: SidebarOptions['mount']; layout?: CommentLayout } | false;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -253,6 +259,17 @@ const ownedVault = (vault: Vault) =>
         },
     });
 
+/** Every comment in a panel beside the note, or the panel put away. */
+const commentsPanelCommand: SlashCommand = {
+    title: 'Comments panel',
+    description: 'Every comment beside the note, in a list (⌘⇧M)',
+    icon: '💬',
+    command: ({ editor, range }) => {
+        editor.chain().focus().deleteRange(range).run();
+        editor.commands.toggleCommentsPanel();
+    },
+};
+
 /** Slash commands for prose actions, offered when there is a model. */
 const proseSlashCommands: SlashCommand[] = [
     {
@@ -317,11 +334,46 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     const commands = [
         ...base,
         ...(options.inference ? proseSlashCommands : []),
+        // The comments panel, where comments are shown: the palette's way to
+        // every comment at once (⌘⇧M does the same).
+        ...(options.comments !== false && options.comments?.margin !== false ? [commentsPanelCommand] : []),
     ];
+    // What every editor inside this one (a comment's text in a card, the
+    // sheet, an embedded note) is built from: this setup without the chrome
+    // around the note. A link followed inside opens in the note's editor.
+    const hostOf = (inner: Editor): Editor | undefined => (inner.storage as any).hostEditor as Editor | undefined;
+    const openInHost = async (resolution: LinkResolution, fragment: string | null, inner: Editor) => {
+        const host = hostOf(inner);
+        if (options.links?.open) return options.links.open(resolution, fragment, host ?? inner);
+        const p = (host?.storage as any)?.persistence as FileSystemStorage | undefined;
+        if (!host || typeof p?.loadFile !== 'function') return;
+        if (normalizePath(p.options.filepath ?? '') !== normalizePath(resolution.path)) await p.loadFile(resolution.path, { create: !resolution.exists });
+        if (fragment) revealFragment(host, fragment);
+    };
+    const innerSetup = (): AnyExtension[] =>
+        markdownSetup({
+            fs: services.fs ? { fs: services.fs, autoSave: false } : undefined,
+            search: services.search,
+            files: services.files,
+            links: { resolver: services.resolver, open: openInHost },
+            codeblock: options.codeblock,
+            inference: options.inference,
+            frontMatter: false,
+            footnotes: false,
+            callouts: false,
+            toolbar: false,
+            blockActions: false,
+            selectionMenu: false,
+            linkMenu: false,
+            comments: false,
+            conflictNotice: false,
+            fileTree: undefined,
+            sidebar: undefined,
+        });
     return [
         ...(given.owned ? [ownedVault(given.owned)] : []),
         ProseAI.configure({ inference: options.inference }),
-        ConflictNotice,
+        ...(options.conflictNotice === false ? [] : [ConflictNotice]),
         FileSystem.configure({
             ...options.fs,
             fs: services.fs,
@@ -330,7 +382,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             bind: (storage) => (persistence = storage),
         }),
         ExtendedLink.configure({}),
-        ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver } }),
+        ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver }, embeds: { render: innerSetup } }),
         StarterKit.configure({
             // Our own code block (extensions/codeblock.ts), bullet list
             // (extensions/lists.ts, disambiguated dash input), paragraph
@@ -418,31 +470,17 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
                         CommentMargin.configure({
                             mount: options.comments?.margin?.mount,
                             layout: options.comments?.margin?.layout ?? 'float',
-                            // A comment is written in this editor, in small: the
-                            // same syntax and code blocks over the same files,
-                            // without the chrome around the note.
-                            composer: () =>
-                                markdownSetup({
-                                    fs: services.fs ? { fs: services.fs, autoSave: false } : undefined,
-                                    search: services.search,
-                                    files: services.files,
-                                    links: { resolver: services.resolver, open: options.links?.open },
-                                    codeblock: options.codeblock,
-                                    inference: options.inference,
-                                    frontMatter: false,
-                                    footnotes: false,
-                                    callouts: false,
-                                    toolbar: false,
-                                    blockActions: false,
-                                    comments: false,
-                                    fileTree: undefined,
-                                    sidebar: undefined,
-                                }),
+                            // A comment is written and shown in this editor, in
+                            // small: the same syntax and code blocks over the
+                            // same files, without the chrome around the note.
+                            composer: innerSetup,
                         }),
                     ]
                     : []),
             ]
             : []),
+        // The rail's fold, when there is a rail to fold (an outline, a file tree).
+        ...(sidebar || options.fileTree ? [RailToggle] : []),
         // The outline is opt-in (generated only when `sidebar` is set).
         ...(sidebar
             ? [Sidebar.configure({
@@ -496,11 +534,11 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         // (a built one keeps its 48px even when empty).
         if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
         bodyHost = make('ezco-mde-body-host')
-        // A column for comments, right of the note, when asked for: by
-        // default threads float over the note's edge and take no room.
-        if (options.comments !== false && options.comments?.margin !== false && options.comments?.margin?.layout === 'column') {
-            commentsHost = make('ezco-mde-comments')
-        }
+        // A column for comments, right of the note, when asked for (a column
+        // level with the text, or a panel that scrolls on its own): by
+        // default comments float over the note's edge and take no room.
+        const layout = options.comments !== false && options.comments?.margin !== false ? options.comments?.margin?.layout : undefined
+        if (layout === 'column' || layout === 'panel') commentsHost = make('ezco-mde-comments')
         content.append(...[navHost, gutter, bodyHost, commentsHost].filter((el): el is HTMLElement => !!el))
         wrapper.append(toolbarSlot, content)
         userEl.appendChild(wrapper)

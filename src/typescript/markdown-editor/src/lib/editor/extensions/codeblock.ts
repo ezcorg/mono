@@ -75,16 +75,19 @@ function isDarkMode(reference?: Element | null): boolean {
 
 /**
  * Measure the editor's base paragraph font size in px (resolving
- * `--ezco-mde-text-base`), so an embedded codeblock can default to the same
- * size — keeping prose and code at one scale unless a consumer overrides it.
- * Returns null if it can't be measured.
+ * `--ezco-mde-text-base` where the editor is: a comment bubble or an
+ * embedded note sets its own), so an embedded codeblock can default to the
+ * same size — keeping prose and code at one scale unless a consumer
+ * overrides it. Returns null if it can't be measured.
  */
-function measureBaseFontPx(): number | null {
+function measureBaseFontPx(near: HTMLElement | null): number | null {
     if (typeof document === 'undefined') return null;
     const probe = document.createElement('span');
     probe.style.cssText =
         'position:absolute;visibility:hidden;pointer-events:none;font-size:var(--ezco-mde-text-base)';
-    document.body.appendChild(probe);
+    // Beside the editable, not in it (the editor would take the probe for an
+    // edit), where the same variables apply.
+    (near?.parentElement ?? document.body).appendChild(probe);
     const px = parseFloat(getComputedStyle(probe).fontSize);
     probe.remove();
     return Number.isFinite(px) && px > 0 ? px : null;
@@ -232,6 +235,17 @@ export interface ExtendedCodeblockOptions {
     files?: FileOperations;
 }
 
+/** Backticks for a fence around `code`: three, or one more than the
+ *  longest bare run opening a line in it (backticks and nothing else, which
+ *  is what a closing fence is), so a fence inside stays inside. A run with
+ *  a language or a path after it (````ts`) can only open a fence, never
+ *  close one, and needs nothing. */
+export function fenceFor(code: string): string {
+    let longest = 2;
+    for (const run of code.match(/^ {0,3}`{3,}[ \t]*$/gm) ?? []) longest = Math.max(longest, run.trim().length);
+    return '`'.repeat(longest + 1);
+}
+
 export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
     name: 'ezcodeBlock', // Unique name for your node
     group: 'block', // Belongs to the 'block' group (like paragraph, heading)
@@ -293,14 +307,17 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             markdown: {
                 serialize(state, node) {
 
+                    // A fence longer than any the code holds (a file of Markdown
+                    // with fences in it), so the code stays one block when read.
+                    const fence = fenceFor(node.textContent);
                     if (node.attrs.file) {
-                        state.write(`\`\`\`${node.attrs.file}${node.attrs.lines ? `#${node.attrs.lines}` : ''}\n`);
+                        state.write(`${fence}${node.attrs.file}${node.attrs.lines ? `#${node.attrs.lines}` : ''}\n`);
                     } else {
-                        state.write("```" + (node.attrs.language || "") + "\n");
+                        state.write(fence + (node.attrs.language || "") + "\n");
                     }
                     state.text(node.textContent, false);
                     state.ensureNewLine();
-                    state.write("```");
+                    state.write(fence);
                     state.closeBlock(node);
                 },
                 parse: {
@@ -663,6 +680,10 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 }
             };
 
+            // In an editor that only shows (a comment's text in a card, an
+            // embedded note), the code is only shown too: nothing typed, and
+            // a fence named by a file never written through to it.
+            const shown = editor.isEditable ? [] : [EditorState.readOnly.of(true), EditorView.editable.of(false)];
             // Create initial state without codeblock extension
             const initialState = EditorState.create({
                 doc: node.textContent || '',
@@ -670,6 +691,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     keymap.of(codemirrorKeymap()),
                     basicSetup,
                     EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
+                    ...shown,
                 ]
             });
 
@@ -789,7 +811,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 // than in the prose font, so we nudge it down to balance the
                 // two. An explicit `settings.fontSize` (configured on the
                 // extension) still wins.
-                const baseFontPx = measureBaseFontPx();
+                const baseFontPx = measureBaseFontPx(editor.view.dom as HTMLElement);
                 const resolvedSettings = baseFontPx
                     ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
                     : codeblockSettings;
@@ -797,6 +819,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 cm.setState(EditorState.create({
                     doc: node.textContent || '',
                     extensions: [
+                        ...shown,
                         keymap.of(codemirrorKeymap()),
                         basicSetup,
                         EditorView.updateListener.of((update) => forwardUpdate(cm, update)),

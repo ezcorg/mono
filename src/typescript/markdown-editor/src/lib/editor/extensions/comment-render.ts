@@ -1,61 +1,91 @@
 /**
- * A comment's Markdown shown as HTML, with nothing in it that would run: a
- * message may come from anyone the vault syncs with, and Markdown lets
- * HTML through. Shared by the margin's cards and the full-size view.
+ * A comment's Markdown shown as the note shows it: a read-only editor of
+ * the note's own make (the host's extensions, so the same code blocks over
+ * the same files, the same links), so what a card or an embed shows is
+ * exactly what the editor would show, a fence inside a fence included.
+ * Nothing in it runs: the schema is the sanitizer, and raw HTML is text to
+ * the note's parser. Shared by the margin's cards, the sheet and the embed.
+ *
+ * A view knows the editor it is shown in (`hostEditor` on its storage), so
+ * a link followed inside it opens in the note's editor, not in the view.
  */
-import type { Editor } from '@tiptap/core'
+import { Editor, Extension, type AnyExtension } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { minimalSetup } from '../minimal'
+import { locateTextFragment } from './fragment'
 
-const ALLOWED = new Set([
-    'P', 'BR', 'STRONG', 'EM', 'B', 'I', 'S', 'DEL', 'CODE', 'PRE', 'A', 'UL', 'OL', 'LI', 'BLOCKQUOTE',
-    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'SPAN', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD', 'SUP', 'SUB', 'IMG',
-])
-const DROPPED = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'TEMPLATE', 'LINK', 'META', 'BASE', 'FORM', 'SVG', 'MATH'])
-const KEPT_ATTRIBUTES: Record<string, string[]> = {
-    A: ['href', 'title'],
-    IMG: ['src', 'alt', 'title'],
-    SPAN: ['data-wikilink', 'data-target', 'data-fragment', 'data-alias'],
-    TH: ['align'],
-    TD: ['align'],
-    OL: ['start'],
+export interface ReadOnlyView {
+    dom: HTMLElement
+    editor: Editor
+    destroy(): void
 }
 
-function sanitize(root: DocumentFragment | Element): void {
-    for (const node of [...root.children]) {
-        if (DROPPED.has(node.tagName)) {
-            node.remove()
-            continue
-        }
-        sanitize(node)
-        if (!ALLOWED.has(node.tagName)) {
-            node.replaceWith(...node.childNodes)
-            continue
-        }
-        const kept = KEPT_ATTRIBUTES[node.tagName] ?? []
-        for (const attr of [...node.attributes]) if (!kept.includes(attr.name)) node.removeAttribute(attr.name)
-        const url = node.getAttribute('href') ?? node.getAttribute('src')
-        if (url !== null && !/^(?:https?:|mailto:|#|blob:)/i.test(url.trim())) {
-            node.removeAttribute('href')
-            node.removeAttribute('src')
-        }
-        if (node.tagName === 'A') {
-            node.setAttribute('target', '_blank')
-            node.setAttribute('rel', 'noopener noreferrer')
-        }
-    }
+export interface ReadOnlyOptions {
+    /** The extensions to build the view from (the note's setup without its
+     *  chrome); a lean set otherwise. */
+    extensions?: AnyExtension[]
+    /** Classes on the editable, besides `ezco-mde-body`. */
+    className?: string
+    /** A text fragment (`:~:text=…`) to mark in the text, as the quoted
+     *  part of a passage shown with what is around it. */
+    highlight?: string | null
 }
 
-/** `markdown` rendered with the note's parser, sanitized. */
-export function renderMarkdown(editor: Editor, markdown: string): DocumentFragment {
-    const md = (editor.storage as any).markdown?.parser?.md
-    const template = document.createElement('template')
-    if (md) template.innerHTML = md.render(markdown)
-    else {
-        const p = document.createElement('p')
-        p.textContent = markdown
-        template.content.append(p)
+/** The extensions a view of a note's text is built from when the host
+ *  gave none: the syntax, links resolved as the host resolves them. */
+export function fallbackExtensions(host: Editor): AnyExtension[] {
+    const wikilink = host.extensionManager.extensions.find((e) => e.name === 'wikilink')
+    return minimalSetup({
+        links: { resolver: wikilink?.options.resolver, open: wikilink?.options.open },
+        frontMatter: false,
+        footnotes: false,
+        callouts: false,
+    })
+}
+
+/** The quoted part of a passage, marked. */
+const highlightOf = (fragment: string) =>
+    Extension.create({
+        name: 'quotedHighlight',
+        addProseMirrorPlugins() {
+            return [
+                new Plugin({
+                    key: new PluginKey('quotedHighlight'),
+                    props: {
+                        decorations(state) {
+                            const found = locateTextFragment(state.doc, fragment, undefined, undefined, true)
+                            if (!found) return DecorationSet.empty
+                            return DecorationSet.create(state.doc, [Decoration.inline(found.from, found.to, { class: 'ezco-mde-embed-quoted' })])
+                        },
+                    },
+                }),
+            ]
+        },
+    })
+
+/** `markdown`, shown read-only as the note would show it. */
+export function renderReadOnly(host: Editor, markdown: string, options: ReadOnlyOptions = {}): ReadOnlyView {
+    const dom = document.createElement('div')
+    dom.className = 'ezco-mde-readonly'
+    const extensions = [...(options.extensions ?? fallbackExtensions(host))]
+    if (options.highlight) extensions.push(highlightOf(options.highlight))
+    const editor = new Editor({
+        element: dom,
+        extensions,
+        content: markdown,
+        editable: false,
+        editorProps: { attributes: { class: `ezco-mde-body ${options.className ?? ''}`.trim() } },
+    })
+    ;(editor.storage as any).hostEditor = host
+    return {
+        dom,
+        editor,
+        destroy() {
+            editor.destroy()
+            dom.remove()
+        },
     }
-    sanitize(template.content)
-    return template.content
 }
 
 /** `2026-09-13T12:04Z` as the reader's clock shows it; the year when it is
@@ -68,9 +98,9 @@ export function when(time: string): string {
 }
 
 // ── Drafts ──────────────────────────────────────────────────────────────────
-// What is being written is kept in this browser (never in the note, never
-// seen by anyone else) until it is posted, so a card closed or a note
-// reopened does not lose it.
+// What is being written is a draft: kept in this browser (never in the
+// note, never seen by anyone else) until it is posted, so a card closed or
+// a note reopened does not lose it. Nothing has to be asked for.
 
 const DRAFT_PREFIX = 'ezco-mde-comment-draft:'
 

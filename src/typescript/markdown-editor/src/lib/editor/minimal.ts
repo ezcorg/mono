@@ -39,6 +39,9 @@ export interface SyntaxOptions {
     footnotes?: boolean;
     callouts?: boolean;
     images?: Partial<ImageOptions>;
+    /** Embeds (`![[note]]`): `render` gives the extensions an embedded
+     *  note's text is shown with (the note's own, without its chrome). */
+    embeds?: { render?: () => AnyExtension[] };
 }
 
 /** The document and its syntax beyond CommonMark: the nodes both setups share. */
@@ -49,7 +52,7 @@ export function syntaxExtensions(options: SyntaxOptions): AnyExtension[] {
         options.frontMatter !== false ? FrontMatterDocument : Document,
         MarkdownText,
         Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
-        Embed,
+        Embed.configure({ render: options.embeds?.render }),
         Image.configure(options.images ?? {}),
         ...(options.frontMatter !== false ? [FrontMatter.configure(options.frontMatter ?? {})] : []),
         ...(options.math !== false ? [Mathematics.configure(options.math ?? {})] : []),

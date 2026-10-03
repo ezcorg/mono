@@ -191,7 +191,9 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
         }
     },
 
-    onCreate() {
+    // Before the view exists: content given at creation (an embedded note's
+    // text, a comment's in a card) resolves its links as it is first shown.
+    onBeforeCreate() {
         const editor = this.editor
         const storage = this.storage
         const resolver = this.options.resolver

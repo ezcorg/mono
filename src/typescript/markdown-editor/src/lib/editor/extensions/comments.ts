@@ -14,10 +14,11 @@
  * at its text as the note is edited here (rewritten where the comment lives
  * when the note is saved); and has the commands. Creating a comment makes a
  * document, `comments/<note>/<author> <time>.md`, whose first line is the
- * reference and whose body is the comment; "open" loads that document in
- * the editor, which is where a longer comment is written. A comment can
- * be kept as a draft instead, in this browser, and published later with
- * the others (`comment-drafts.ts`).
+ * reference and whose body is the comment; "open" puts that document in a
+ * sheet beside the note (`comment-sheet.ts`), where a longer comment is
+ * written and other passages of the note are quoted into it, or loads it
+ * in the editor itself. What is typed and not yet posted is a draft, kept
+ * in this browser on its own.
  */
 import { Extension, type Editor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
@@ -29,7 +30,6 @@ import { findTextFragment, formatReference, formatTextFragment, parseTextFragmen
 import { docText, findBlockId, findFragment, findPin, locateTextFragment, textOffset, type DocText } from './fragment'
 import { documentId } from './front-matter'
 import { loadedDocumentMeta, type FileSystemStorage } from './filesystem'
-import { draftId, localStamp, readQueue, withAnswers, writeQueue, type QueuedComment } from './comment-drafts'
 
 // ── What the plugin knows ───────────────────────────────────────────────────
 
@@ -70,8 +70,6 @@ export interface CommentInfo {
     resolved: boolean
     /** Where it sits in the note (its target found here), or null. */
     anchor: number | null
-    /** Kept in this browser, not published yet. */
-    draft?: boolean
 }
 
 interface CommentsState {
@@ -189,7 +187,6 @@ function decorate(doc: PMNode, comments: CommentInfo[], active: string | null, d
         const classes = ['ezco-mde-comment']
         if (c.id === active) classes.push('is-active')
         if (c.resolved) classes.push('is-resolved')
-        if (c.draft) classes.push('is-pending')
         decorations.push(Decoration.inline(r.from, r.to, { class: classes.join(' ') }))
         ranges.push(r)
     }
@@ -212,38 +209,6 @@ function overlaps(ranges: Range[]): [number, number][] {
         const last = out[out.length - 1]
         if (last && last[1] === a) last[1] = b
         else out.push([a, b])
-    }
-    return out
-}
-
-/** A draft as a comment: its author is who is writing, its time when it
- *  was written; nothing answers it yet but other drafts. */
-function draftInfo(q: QueuedComment, author: string): CommentInfo {
-    const link: Wikilink = q.link ?? { target: '', fragment: null, alias: null }
-    return {
-        id: q.id,
-        ref: { source: '', line: 0, link, body: q.body, start: 0, end: 0, text: '' },
-        author,
-        time: q.at,
-        body: q.body,
-        target: { link, range: null, approximate: false, orphaned: false, whole: !q.link },
-        replies: [],
-        reactions: [],
-        resolved: false,
-        anchor: null,
-        draft: true,
-    }
-}
-
-/** `found`, with the note's drafts among them: each under the comment it
- *  answers when that is here, else on the note. */
-function withDrafts(found: CommentInfo[], note: string, author: string): CommentInfo[] {
-    const out = [...found]
-    for (const q of readQueue(note)) {
-        const info = draftInfo(q, author)
-        const parent = q.replyTo ? commentAt(out, q.replyTo) : null
-        if (parent) parent.replies = [...parent.replies, info]
-        else out.push(info)
     }
     return out
 }
@@ -407,8 +372,6 @@ export interface CommentsOptions {
 export interface CommentsStorage {
     /** Every comment about the open note, threaded. */
     comments: () => CommentInfo[]
-    /** The note's drafts, kept in this browser until published. */
-    drafts: () => CommentInfo[]
     active: () => string | null
     draft: () => { ranges: Range[] } | null
     focus: (id: string | null) => void
@@ -424,35 +387,32 @@ export interface CommentsStorage {
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {
         comments: {
-            /** Choose the selection for a comment (the margin opens a draft). */
+            /** Choose the selection for a comment (the margin opens a composer
+             *  by it); while a sheet is open, quote the selection into it. */
             startComment: () => ReturnType
             cancelComment: () => ReturnType
             /** A new comment document about `ranges` (the selection when none
              *  are given; none, and no selection, is a comment on the note),
-             *  with `body`; `open` loads it in the editor; `draft` keeps it
-             *  in this browser instead, to publish later. */
-            addComment: (options: { body: string; ranges?: Range[]; open?: boolean; draft?: boolean }) => ReturnType
+             *  with `body`; `open` opens it to write in full: in the sheet
+             *  (`true`), or as the note in the editor (`'note'`). */
+            addComment: (options: { body: string; ranges?: Range[]; open?: boolean | 'note' }) => ReturnType
             /** A new document answering comment `id` (its text is what the
-             *  reply references); `open` loads it in the editor; `draft`
-             *  keeps it in this browser. */
-            replyToComment: (id: string, body: string, options?: { open?: boolean; draft?: boolean }) => ReturnType
+             *  reply references); `open` opens it as `addComment` does. */
+            replyToComment: (id: string, body: string, options?: { open?: boolean | 'note' }) => ReturnType
             editComment: (id: string, body: string) => ReturnType
             /** Delete a comment. One others have answered stays as a
-             *  tombstone so the replies keep their place. A draft is simply
-             *  dropped, with the drafts answering it. */
+             *  tombstone so the replies keep their place. */
             deleteComment: (id: string) => ReturnType
-            /** Write the note's drafts (all, or `ids` and the drafts answering
-             *  them) as documents, in the order they were made. */
-            publishComments: (ids?: string[]) => ReturnType
-            /** Drop the note's drafts (all, or `ids` and their answers). */
-            discardComments: (ids?: string[]) => ReturnType
             /** Resolve (a ✅ reaction) or reopen (take one's ✅ away). */
             resolveComment: (id: string) => ReturnType
             reopenComment: (id: string) => ReturnType
             /** Add the identity's `emoji` to a comment, or take it away. */
             reactToComment: (id: string, emoji: string) => ReturnType
-            /** Load the comment's document in the editor, at the comment. */
+            /** Open the comment's document in the sheet beside the note, to
+             *  write in full (in the editor itself where there is no margin). */
             openComment: (id: string) => ReturnType
+            /** Load the comment's document as the note in the editor. */
+            openCommentAsNote: (id: string) => ReturnType
             /** Point comment `id` at `range` (the selection by default): how
              *  an orphaned one is anchored again. */
             anchorComment: (id: string, range?: Range) => ReturnType
@@ -471,7 +431,6 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
     addStorage() {
         return {
             comments: () => [],
-            drafts: () => [],
             active: () => null,
             draft: () => null,
             focus: () => {},
@@ -486,17 +445,6 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
         const editor = this.editor
         const state = () => commentsKey.getState(editor.state)
         this.storage.comments = () => state()?.comments ?? []
-        this.storage.drafts = () => {
-            const out: CommentInfo[] = []
-            const walk = (list: CommentInfo[]) => {
-                for (const c of list) {
-                    if (c.draft) out.push(c)
-                    walk(c.replies)
-                }
-            }
-            walk(state()?.comments ?? [])
-            return out
-        }
         this.storage.active = () => state()?.active ?? null
         this.storage.draft = () => state()?.draft ?? null
         this.storage.focus = (id) => {
@@ -568,17 +516,29 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             await ops.create(path, formatReference(link, body) + '\n')
             return path
         }
-        const write = async (folder: string, link: Wikilink, body: string, open: boolean) => {
+        /** The margin, when there is one: it holds the sheet. */
+        const margin = () => (editor.storage as any).commentMargin as { open?: (path: string) => void; sheet?: { quote(link: Wikilink): void } | null } | undefined
+        /** Write the comment in full: in the sheet; without a margin, as the
+         *  note in the editor (one left with nothing written goes again). */
+        const openInFull = async (path: string, body: string) => {
+            const m = margin()
+            if (m?.open) return m.open(path)
+            await openAsNote(path, body)
+        }
+        /** The document as the note in the editor; one left with nothing written goes again. */
+        const openAsNote = async (path: string, body: string) => {
+            await openForWriting(path)
+            if (!body) {
+                const ops = files()
+                const fs = persistence()?.options.fs
+                if (ops && fs) discardIfLeftEmpty(path, ops, fs)
+            }
+        }
+        const write = async (folder: string, link: Wikilink, body: string, open: boolean | 'note') => {
             const path = await writeDocument(folder, link, body)
             await refresh()
-            if (open) {
-                await openForWriting(path)
-                if (!body) {
-                    const ops = files()
-                    const fs = persistence()?.options.fs
-                    if (ops && fs) discardIfLeftEmpty(path, ops, fs)
-                }
-            }
+            if (open === 'note') await openAsNote(path, body)
+            else if (open) await openInFull(path, body)
             return path
         }
 
@@ -590,77 +550,14 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             return { target: linkTarget(c.ref.source), fragment: f ? formatTextFragment(f) : null, alias: null }
         }
 
-        // ── Drafts: comments kept in this browser until published ──
-        const queued = () => {
-            const note = openPath(editor)
-            return note ? readQueue(note) : []
-        }
-        const keep = (items: QueuedComment[]) => {
-            const note = openPath(editor)
-            if (note) writeQueue(note, items)
-        }
-        const enqueue = (item: Omit<QueuedComment, 'id' | 'at'>) => {
-            keep([...queued(), { ...item, id: draftId(), at: localStamp() }])
-            void refresh()
-        }
-        /** Write the drafts `ids` (all when none are named) and the drafts
-         *  answering them, parents first; each leaves the queue as its
-         *  document is written. A reply whose parent is not here stays. */
-        const publish = async (ids?: string[]) => {
-            const fs = persistence()?.options.fs
-            const items = queued()
-            const chosen = withAnswers(items, ids ?? items.map((q) => q.id))
-            const written = new Map<string, { path: string; link: Wikilink; body: string }>()
-            for (const q of items) {
-                if (!chosen.has(q.id)) continue
-                let { link, folder } = q
-                if (q.replyTo) {
-                    const parent = written.get(q.replyTo)
-                    if (parent) {
-                        // The parent's document as just written: its text is there.
-                        const text = formatReference(parent.link, parent.body) + '\n'
-                        const start = text.indexOf(parent.body)
-                        const f = parent.body && start >= 0 ? textFragmentFor(text, start, start + parent.body.length) : null
-                        link = { target: linkTarget(parent.path), fragment: f ? formatTextFragment(f) : null, alias: null }
-                        folder = commentsFolderFor(parent.path)
-                    } else {
-                        const c = find(editor.state, q.replyTo)
-                        if (!c || c.draft || !fs) continue
-                        link = await replyLink(c, fs)
-                        folder = commentsFolderFor(c.ref.source)
-                    }
-                }
-                if (!link) continue
-                const path = await writeDocument(folder, link, q.body)
-                written.set(q.id, { path, link, body: q.body })
-                keep(queued().filter((x) => x.id !== q.id))
-            }
-            await refresh()
-        }
-        const discard = (ids?: string[]) => {
-            const items = queued()
-            const chosen = withAnswers(items, ids ?? items.map((q) => q.id))
-            keep(items.filter((q) => !chosen.has(q.id)))
-            void refresh()
-        }
-
-        /** Change a comment where it lives (null deletes it); a draft, in the queue. */
+        /** Change a comment where it lives (null deletes it). */
         const change =
             (id: string, next: (c: CommentInfo) => { link: Wikilink; body: string } | null) =>
             ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
                 const ix = index()
                 const c = find(state, id)
-                if (!author() || !c || (!c.draft && !ix)) return false
-                if (c.draft) {
-                    if (!dispatch) return true
-                    const to = next(c)
-                    if (to) {
-                        keep(queued().map((q) => (q.id === id ? { ...q, body: to.body } : q)))
-                        void refresh()
-                    } else discard([id])
-                    return true
-                }
-                if (dispatch && ix) {
+                if (!author() || !c || !ix) return false
+                if (dispatch) {
                     void ix.update(c.ref, next(c)).then(refresh, (error) => {
                         console.error('The comment could not be changed where it lives', error)
                         return refresh()
@@ -672,7 +569,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
         const react = (id: string, emoji: string) => ({ state, dispatch }: { state: EditorState; dispatch?: (tr: Transaction) => void }) => {
             const rx = reactions()
             const c = find(state, id)
-            if (!rx?.identity || !c || c.draft) return false
+            if (!rx?.identity || !c) return false
             if (dispatch) void rx.toggle({ doc: c.ref.source, ref: refKey(c.ref.link) }, emoji).then(refresh, (error) => console.error('The reaction could not be made', error))
             return true
         }
@@ -683,6 +580,19 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                 ({ state, tr, dispatch }) => {
                     if (!author() || state.selection.empty) return false
                     const { from, to } = state.selection
+                    const sheet = margin()?.sheet
+                    const note = openPath(editor)
+                    if (sheet && note) {
+                        // A comment is being written in full: the selection
+                        // is quoted into it (a pin, if one is needed, saved
+                        // with the note before the quote refers to it).
+                        if (!dispatch) return true
+                        const link = anchorFor(tr, { from, to }, linkTarget(note), docText(tr.doc), pinIds(tr.doc))
+                        dispatch(tr)
+                        void persistence()?.save()
+                        sheet.quote(link)
+                        return true
+                    }
                     dispatch?.(tr.setMeta(commentsKey, { draft: { ranges: [{ from, to }] }, active: null } satisfies CommentsMeta))
                     return true
                 },
@@ -693,7 +603,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     return true
                 },
             addComment:
-                ({ body, ranges, open, draft }) =>
+                ({ body, ranges, open }) =>
                 ({ state, tr, dispatch }) => {
                     const note = openPath(editor)
                     if (!author() || !note || (!body.trim() && !open)) return false
@@ -703,12 +613,6 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     const link = chosen.length ? anchorFor(tr, chosen[0], linkTarget(note), flat, pinIds(tr.doc)) : { target: linkTarget(note), fragment: null, alias: null }
                     tr.setMeta(commentsKey, { draft: null } satisfies CommentsMeta)
                     dispatch(tr)
-                    if (draft) {
-                        // Kept here for now; a pin, if one was put in the note,
-                        // is saved with the note as any edit is.
-                        enqueue({ link, folder: commentsFolderFor(note), replyTo: null, body: body.trim() })
-                        return true
-                    }
                     // A pin was written into the note: it must be in the file
                     // before the comment's document refers to it.
                     void (async () => {
@@ -723,16 +627,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     const c = find(state, id)
                     const fs = persistence()?.options.fs
                     if (!author() || !c || !fs || (!body.trim() && !options.open)) return false
-                    // A draft can only be answered with a draft: its document,
-                    // which the reply would reference, is not there yet.
-                    if (c.draft && !options.draft) return false
                     if (!dispatch) return true
-                    if (options.draft) {
-                        // The reference is made when it is published, from the
-                        // parent's text then (a draft parent has none yet).
-                        enqueue({ link: null, folder: '', replyTo: c.id, body: body.trim() })
-                        return true
-                    }
                     void (async () => {
                         // The reply references the comment's text in its document.
                         const link = await replyLink(c, fs)
@@ -741,21 +636,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     return true
                 },
             editComment: (id, body) => change(id, (c) => ({ link: c.ref.link, body: body.trim() })),
-            deleteComment: (id) => change(id, (c) => (c.replies.some((r) => !r.draft) ? { link: c.ref.link, body: DELETED_BODY } : null)),
-            publishComments:
-                (ids) =>
-                ({ dispatch }) => {
-                    if (!author() || !openPath(editor)) return false
-                    if (dispatch) void publish(ids).catch((error) => console.error('The drafts could not be published', error))
-                    return true
-                },
-            discardComments:
-                (ids) =>
-                ({ dispatch }) => {
-                    if (!author() || !openPath(editor)) return false
-                    if (dispatch) discard(ids)
-                    return true
-                },
+            deleteComment: (id) => change(id, (c) => (c.replies.length ? { link: c.ref.link, body: DELETED_BODY } : null)),
             resolveComment: (id) => react(id, RESOLVED),
             reopenComment: (id) => react(id, RESOLVED),
             reactToComment: (id, emoji) => react(id, emoji),
@@ -763,7 +644,15 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                 (id) =>
                 ({ state, dispatch }) => {
                     const c = find(state, id)
-                    if (!c || c.draft) return false
+                    if (!c) return false
+                    if (dispatch) void openInFull(c.ref.source, c.body)
+                    return true
+                },
+            openCommentAsNote:
+                (id) =>
+                ({ state, dispatch }) => {
+                    const c = find(state, id)
+                    if (!c) return false
                     if (dispatch) void openForWriting(c.ref.source)
                     return true
                 },
@@ -871,7 +760,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                         const fs = ((editor.storage as any).persistence as FileSystemStorage | undefined)?.options?.fs
                         const gathered = ix && path ? await gather(path, ix, options.reactions, fs, new Map(), new Set([path])) : []
                         if (mine !== token || destroyed) return
-                        const found = path && options.author ? withDrafts(gathered, path, options.author) : gathered
+                        const found = gathered
                         const current = commentsKey.getState(view.state)?.comments ?? []
                         if (!found.length && !current.length) return
                         view.dispatch(view.state.tr.setMeta(commentsKey, { found } satisfies CommentsMeta).setMeta('addToHistory', false))

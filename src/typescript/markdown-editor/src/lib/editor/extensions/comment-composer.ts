@@ -6,10 +6,13 @@
  * `:emoji:` and slash commands work; `minimalSetup` when a host gives
  * none), with the note's content styles, so what is typed is Markdown
  * authored as in the note and what is posted is the Markdown the editor
- * would write. ⌘/Ctrl+Enter posts, Escape cancels. What is typed is
- * reported as it changes, so a host can keep a draft. In the field's
- * corner, the open glyph (⌘/Ctrl+Shift+Enter) hands the draft to the
- * editor itself: the comment as a note of its own.
+ * would write. ⌘/Ctrl+Enter posts, Escape cancels, ⌘/Ctrl+Shift+Enter hands
+ * what was written to the sheet. What is typed is reported as it changes,
+ * so a host can keep it as a draft.
+ *
+ * The composer is two pieces its host places: the `field` (the small
+ * editor) and its `actions` (Cancel and the one filled button), so a card
+ * puts the field in a bubble and the actions under it.
  */
 import { Editor, Extension, type AnyExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -29,21 +32,9 @@ export interface ComposerOptions {
     onCancel: () => void
     /** What is typed, as it changes. */
     onChange?: (markdown: string) => void
-    /** Asked for the full-size view; without it there is no such control. */
+    /** ⌘/Ctrl+Shift+Enter: the comment written in full, in the sheet. */
     onExpand?: () => void
-    /** A second, quiet way to submit (keeping the comment as a draft),
-     *  named `secondaryLabel`; without it there is no such button. */
-    secondaryLabel?: string
-    onSecondary?: (markdown: string) => void
-    /** Taller from the start (the full-size view). */
-    full?: boolean
-    /** Small: by the text it is about, a field and its buttons. */
-    compact?: boolean
 }
-
-/** The open glyph: an arrow out of a box, as the cards draw it. */
-export const OPEN_ICON =
-    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6.5 3H3.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V9.5M9.5 3H13v3.5M13 3 7.5 8.5"/></svg>'
 
 /** A hint in an empty composer, as the styles show it. */
 const placeholderPlugin = (text: string) =>
@@ -60,17 +51,13 @@ const placeholderPlugin = (text: string) =>
     })
 
 export class Composer {
-    readonly dom: HTMLFormElement
+    /** The small editor. */
+    readonly field: HTMLElement
+    /** Cancel, and the one filled button. */
+    readonly actions: HTMLElement
     readonly editor: Editor
-    private readonly label: HTMLElement
-    private readonly field: HTMLElement
 
     constructor(private readonly options: ComposerOptions) {
-        this.dom = document.createElement('form')
-        this.dom.className = 'ezco-mde-comment-composer' + (options.full ? ' is-full' : '') + (options.compact ? ' is-compact' : '')
-        this.label = document.createElement('div')
-        this.label.className = 'ezco-mde-comment-composer-label'
-        this.label.hidden = true
         this.field = document.createElement('div')
         this.field.className = 'ezco-mde-comment-input'
 
@@ -111,65 +98,33 @@ export class Composer {
             editorProps: { attributes: { 'aria-label': 'Comment', class: 'ezco-mde-body ezco-mde-comment-text' } },
             onUpdate: () => options.onChange?.(this.value()),
         })
+        // A link followed in the composer opens in the note's editor.
+        ;(this.editor.storage as any).hostEditor = options.editor
 
         const post = document.createElement('button')
-        post.type = 'submit'
+        post.type = 'button'
         post.className = 'ezco-mde-comment-button is-primary'
         post.textContent = options.submitLabel
         post.title = '⌘/Ctrl+Enter'
+        post.addEventListener('click', submit)
         const cancel = document.createElement('button')
         cancel.type = 'button'
         cancel.className = 'ezco-mde-comment-button'
         cancel.textContent = 'Cancel'
         cancel.addEventListener('click', () => options.onCancel())
-        const actions = document.createElement('div')
-        actions.className = 'ezco-mde-comment-composer-actions'
-        if (options.onExpand) {
-            // In the field's corner, where an editor's "open in full" sits.
-            const expand = document.createElement('button')
-            expand.type = 'button'
-            expand.className = 'ezco-mde-comment-expand'
-            expand.innerHTML = OPEN_ICON
-            expand.title = 'Open in the editor: this comment as a note of its own (⌘/Ctrl+Shift+Enter)'
-            expand.setAttribute('aria-label', 'Open in editor')
-            expand.addEventListener('mousedown', (e) => e.preventDefault())
-            expand.addEventListener('click', () => options.onExpand?.())
-            this.field.append(expand)
-            this.field.classList.add('has-expand')
-        }
-        actions.append(cancel)
-        if (options.secondaryLabel && options.onSecondary) {
-            const secondary = document.createElement('button')
-            secondary.type = 'button'
-            secondary.className = 'ezco-mde-comment-button'
-            secondary.textContent = options.secondaryLabel
-            secondary.title = 'Keep it here for now, to publish later'
-            secondary.addEventListener('click', () => {
-                const markdown = this.value().trim()
-                if (markdown) options.onSecondary?.(markdown)
-            })
-            actions.append(secondary)
-        }
-        actions.append(post)
-        this.dom.append(this.label, this.field, actions)
-        this.dom.addEventListener('submit', (e) => {
-            e.preventDefault()
-            this.submit()
-        })
+        this.actions = document.createElement('div')
+        this.actions.className = 'ezco-mde-comment-composer-actions'
+        this.actions.append(cancel, post)
         // The composer's keys and clicks are its own: not the card's (which
         // would close on Escape or change what is looked at), nor the note's.
-        for (const type of ['mousedown', 'click', 'keydown'] as const) this.dom.addEventListener(type, (e) => e.stopPropagation())
+        for (const piece of [this.field, this.actions]) {
+            for (const type of ['mousedown', 'click', 'keydown'] as const) piece.addEventListener(type, (e) => e.stopPropagation())
+        }
     }
 
     private submit() {
         const markdown = this.value().trim()
         if (markdown) this.options.onSubmit(markdown)
-    }
-
-    /** A line over the field: whom this answers, or that it edits. */
-    say(label: string) {
-        this.label.textContent = label
-        this.label.hidden = !label
     }
 
     value(): string {
@@ -188,6 +143,7 @@ export class Composer {
 
     destroy() {
         this.editor.destroy()
-        this.dom.remove()
+        this.field.remove()
+        this.actions.remove()
     }
 }

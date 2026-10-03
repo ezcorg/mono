@@ -7,8 +7,12 @@
  * (so it sits to the left when the host lays the two out in a flex row); a
  * consumer can place it anywhere via the `mount` option (mirrors the toolbar).
  *
- * Clicking an entry smoothly scrolls its heading into view; as the document
- * scrolls, the entry for the current section is highlighted.
+ * Clicking an entry smoothly scrolls its heading into view and lights that
+ * entry, which stays lit until the reader scrolls again (a heading near the
+ * end cannot reach the top of a short document, and the entry nearest the
+ * top would otherwise light instead); as the document scrolls, the entry
+ * for the current section is highlighted, the last one when the end is
+ * reached.
  */
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -128,6 +132,12 @@ class SidebarView {
     private signature = ''
     private scroller: HTMLElement
     private scrollTarget: EventTarget
+    /** The entry clicked, lit until the reader scrolls; and until when the
+     *  scroll the click started is the one heard. */
+    private pinned: number | null = null
+    private pinUntil = 0
+    /** Whether the reader scrolled after the click's own scroll ended. */
+    private scrolledSincePin = false
     private rafPending = false
     private destroyed = false
     private onScroll: () => void
@@ -164,6 +174,7 @@ class SidebarView {
             this.scroller === document.scrollingElement
         this.scrollTarget = docScroller ? window : this.scroller
         this.onScroll = () => {
+            if (this.pinned !== null && Date.now() >= this.pinUntil) this.scrolledSincePin = true
             if (this.rafPending) return
             this.rafPending = true
             requestAnimationFrame(() => {
@@ -259,7 +270,11 @@ class SidebarView {
             a.addEventListener('mousedown', (e) => e.preventDefault())
             a.addEventListener('click', (e) => {
                 e.preventDefault()
+                this.pinned = this.entries.indexOf(entry)
+                this.pinUntil = Date.now() + 1200
+                this.scrolledSincePin = false
                 this.goTo(entry.pos)
+                this.updateActive()
             })
 
             li.appendChild(a)
@@ -280,9 +295,18 @@ class SidebarView {
         }
     }
 
-    /** Highlight the entry for the heading currently at the top of the view. */
+    /** Highlight the entry for the heading currently at the top of the view;
+     *  the one clicked, while its scroll lasts and until the next; the last
+     *  in view when the end has been reached. */
     private updateActive() {
         if (this.entries.length === 0) return
+        if (this.pinned !== null) {
+            if (Date.now() < this.pinUntil || !this.scrolledSincePin) {
+                this.entries.forEach((e, i) => e.row.classList.toggle('is-active', i === this.pinned))
+                return
+            }
+            this.pinned = null
+        }
         const scrollerTop = this.scroller === document.documentElement ||
             this.scroller === document.scrollingElement
             ? 0
@@ -304,6 +328,18 @@ class SidebarView {
             if (!dom) continue
             if (dom.getBoundingClientRect().top <= threshold + 1) activeIndex = i
             else break
+        }
+        // At the end of the document, the last heading in view is the one
+        // being read, whether or not it reached the top.
+        if (this.scroller.scrollTop + this.scroller.clientHeight >= this.scroller.scrollHeight - 2) {
+            const bottom = scrollerTop + this.scroller.clientHeight
+            for (let i = this.entries.length - 1; i > activeIndex; i--) {
+                const dom = this.view.nodeDOM(this.entries[i].pos) as HTMLElement | null
+                if (dom && dom.getBoundingClientRect().top < bottom) {
+                    activeIndex = i
+                    break
+                }
+            }
         }
 
         this.entries.forEach((e, i) =>

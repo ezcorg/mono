@@ -5,17 +5,22 @@
  *
  * - an image (`![[diagram.png|300]]`): the image, sized by the alias;
  * - a note (`![[Plan]]`, `![[Plan#Goals]]`): the note, or the section under
- *   the named heading, rendered read-only, refreshed when the vault changes;
+ *   the named heading, shown read-only as the note itself would show it
+ *   (`renderReadOnly`), refreshed when the vault changes;
  * - a range of a note (`![[Plan#:~:text=ship%20it]]`, a pin `#c-…`): the
- *   passage, quoted, which is what a comment's reference block is; its
- *   header opens the note at that passage;
+ *   passage, quoted, which is what a comment's reference block is: a
+ *   portal into the other document, named over it with who wrote it (a
+ *   comment's document) and the lines the passage is on, and, when the
+ *   passage sits in a plain paragraph, that paragraph around it in the
+ *   muted colour, the quoted words alone in full. Its header opens the
+ *   note at the passage;
  * - anything else: a card that opens the file (for `![[src/lib.rs#L40-L80]]`,
  *   naming the lines; a region of a file to read and edit in the note is a
  *   fence, ```` ```src/lib.rs#L40-L80 ````, see `codeblock.ts`).
  *
  * The node serializes to exactly the source it came from.
  */
-import { Editor, Node, mergeAttributes } from '@tiptap/core'
+import { Node, mergeAttributes, type AnyExtension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { basename, extname } from '@joinezco/storage'
 import { findTextFragment, formatWikilink, frontMatterOf, isNote, matchWikilinkAt, parseTextFragment, type Wikilink as WikilinkParts } from '@joinezco/vault'
@@ -24,6 +29,14 @@ import { IMAGE_EXTENSIONS, objectUrlFor, resolveAsset, sizeOf, vaultOf } from '.
 import { wikilinkLabel, type WikilinkStorage } from './wikilink'
 import { slugify } from './slug-utils'
 import { lineRange } from '@joinezco/codeblock'
+import { authorOf } from './comments'
+import { renderReadOnly, type ReadOnlyView } from './comment-render'
+
+export interface EmbedOptions {
+    /** The extensions an embedded note's text is shown with: the note's
+     *  own, without its chrome; a lean set otherwise. */
+    render?: () => AnyExtension[]
+}
 
 const attrsOf = (node: PMNode): WikilinkParts => ({
     target: node.attrs.target ?? '',
@@ -38,13 +51,13 @@ const optionalData = (name: string) => ({
         attrs[name] === null || attrs[name] === undefined ? {} : { [`data-${name}`]: attrs[name] },
 })
 
-/** The passage of a note a range names: a text fragment found in its
- *  text, or a pinned span `[…]{#id}`; null when it is not there. */
-export function passageOf(markdown: string, fragment: string): string | null {
+/** Where the passage a range names is in a note's text: a text fragment
+ *  found in it, or a pinned span `[…]{#id}`; null when it is not there. */
+export function passageRange(markdown: string, fragment: string): { from: number; to: number } | null {
     if (fragment.startsWith(':~:text=')) {
         const f = parseTextFragment(fragment)
         const found = f ? findTextFragment(markdown, f) : null
-        return found ? markdown.slice(found.from, found.to) : null
+        return found ? { from: found.from, to: found.to } : null
     }
     const close = markdown.indexOf(`]{#${fragment}`)
     if (close < 0) return null
@@ -52,11 +65,53 @@ export function passageOf(markdown: string, fragment: string): string | null {
     for (let i = close - 1; i >= 0; i--) {
         if (markdown[i] === ']') depth++
         else if (markdown[i] === '[') {
-            if (!depth) return markdown.slice(i + 1, close)
+            if (!depth) return { from: i + 1, to: close }
             depth--
         }
     }
     return null
+}
+
+/** The passage of a note a range names, or null when it is not there. */
+export function passageOf(markdown: string, fragment: string): string | null {
+    const range = passageRange(markdown, fragment)
+    return range ? markdown.slice(range.from, range.to) : null
+}
+
+/** What is around a passage, when that is plain enough to show with it:
+ *  the paragraph it sits in (blank lines to blank lines) when that is prose,
+ *  not a heading, a list, a quote, a fence, a table or a reference, is not
+ *  long, and holds more than the passage. Null otherwise. */
+export function contextOf(markdown: string, range: { from: number; to: number }): string | null {
+    const before = markdown.lastIndexOf('\n\n', Math.max(0, range.from - 1))
+    const start = before < 0 ? 0 : before + 2
+    const after = markdown.indexOf('\n\n', range.to)
+    const end = after < 0 ? markdown.length : after
+    const paragraph = markdown.slice(start, end)
+    // A passage across paragraphs is shown as it is: no one paragraph is its context.
+    if (markdown.slice(range.from, range.to).includes('\n\n')) return null
+    if (paragraph.length > 800) return null
+    if (/^\s*(?:#{1,6}\s|>|[-*+]\s|\d+[.)]\s|```|~~~|\||!\[\[|\[\^|---|\$\$)/.test(paragraph)) return null
+    if (paragraph.trim() === markdown.slice(range.from, range.to).trim()) return null
+    return paragraph
+}
+
+/** `lines 12–14`, or `line 12`, for a range of a text. */
+function linesOf(markdown: string, range: { from: number; to: number }): string {
+    const line = (at: number) => markdown.slice(0, at).split('\n').length
+    const a = line(range.from)
+    const b = line(Math.max(range.from, range.to - 1))
+    return a === b ? `line ${a}` : `lines ${a}–${b}`
+}
+
+/** What a portal says over its content: who wrote the document, when it is
+ *  a comment's, and the lines a passage is on. */
+function metaOf(path: string, markdown: string, range: { from: number; to: number } | null): string {
+    const { author, time } = authorOf(path)
+    const parts: string[] = []
+    if (time) parts.push(`@${author}`)
+    if (range) parts.push(linesOf(markdown, range))
+    return parts.join(' · ')
 }
 
 /** Whether a fragment names a passage (not a heading). */
@@ -87,18 +142,16 @@ export function sectionOf(markdown: string, fragment: string): string | null {
     return start < 0 ? null : lines.slice(start).join('\n').trimEnd()
 }
 
-function renderMarkdown(editor: Editor, markdown: string): string {
-    const md = (editor.storage as any).markdown?.parser?.md
-    if (!md) return ''
-    return md.render(markdown)
-}
-
-export const Embed = Node.create({
+export const Embed = Node.create<EmbedOptions>({
     name: 'embed',
     group: 'inline',
     inline: true,
     atom: true,
     selectable: true,
+
+    addOptions() {
+        return { render: undefined }
+    },
 
     addAttributes() {
         return {
@@ -162,6 +215,7 @@ export const Embed = Node.create({
 
     addNodeView() {
         const editor = this.editor
+        const options = this.options
         return ({ node }) => {
             let current = node
             const dom = document.createElement('span')
@@ -169,9 +223,19 @@ export const Embed = Node.create({
             dom.contentEditable = 'false'
             let url: string | null = null
             let token = 0
+            /** The other document's text, shown as the note shows text. */
+            let shown: ReadOnlyView | null = null
             const release = () => {
                 if (url) URL.revokeObjectURL(url)
                 url = null
+            }
+            const show = (markdown: string, highlight: string | null = null): HTMLElement => {
+                shown?.destroy()
+                shown = renderReadOnly(editor, markdown, { extensions: options.render?.(), className: 'ezco-mde-embed-body', highlight })
+                const content = document.createElement('div')
+                content.className = 'ezco-mde-embed-content'
+                content.append(shown.dom)
+                return content
             }
             const follow = () => {
                 const parts = attrsOf(current)
@@ -207,6 +271,8 @@ export const Embed = Node.create({
                         const { width, height } = sizeOf(parts.alias === null ? null : `|${parts.alias}`)
                         if (width) img.style.width = `${width}px`
                         if (height) img.style.height = `${height}px`
+                        shown?.destroy()
+                        shown = null
                         dom.className = 'ezco-mde-embed ezco-mde-embed--image'
                         dom.replaceChildren(img)
                         return
@@ -216,21 +282,23 @@ export const Embed = Node.create({
                         const text = await fs.readFile(path)
                         if (mine !== token) return
                         const body = frontMatterOf(text) === null ? text : text.replace(/^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '')
-                        const content = document.createElement('div')
-                        content.className = 'ezco-mde-embed-content'
                         if (isPassage(parts.fragment)) {
-                            // A quoted passage: what a comment is about. Its
-                            // header takes the reader to it.
-                            const passage = passageOf(body, parts.fragment)
-                            content.innerHTML = renderMarkdown(editor, passage ?? '*This passage is no longer in the note.*')
-                            dom.className = 'ezco-mde-embed ezco-mde-embed--note ezco-mde-embed--passage' + (passage === null ? ' is-orphaned' : '')
-                            dom.replaceChildren(header(parts.alias || wikilinkLabel({ target: parts.target, fragment: null, alias: null }), follow), content)
+                            // A quoted passage: what a comment is about, a
+                            // portal into its document. Its header takes
+                            // the reader to it.
+                            const range = passageRange(body, parts.fragment)
+                            const context = range && parts.fragment.startsWith(':~:text=') ? contextOf(body, range) : null
+                            const markdown = !range ? '*This passage is no longer in the note.*' : context ?? body.slice(range.from, range.to)
+                            dom.className = 'ezco-mde-embed ezco-mde-embed--note ezco-mde-embed--passage' + (range ? '' : ' is-orphaned') + (context ? ' has-context' : '')
+                            dom.replaceChildren(
+                                header(parts.alias || wikilinkLabel({ target: parts.target, fragment: null, alias: null }), follow, metaOf(path, body, range)),
+                                show(markdown, context ? parts.fragment : null),
+                            )
                             return
                         }
                         const section = parts.fragment ? sectionOf(body, parts.fragment) : body
-                        content.innerHTML = renderMarkdown(editor, section ?? `*No heading “${parts.fragment}” in this note.*`)
                         dom.className = 'ezco-mde-embed ezco-mde-embed--note'
-                        dom.replaceChildren(header(parts.alias || wikilinkLabel({ ...parts, alias: null }), follow), content)
+                        dom.replaceChildren(header(parts.alias || wikilinkLabel({ ...parts, alias: null }), follow, metaOf(path, body, null)), show(section ?? `*No heading “${parts.fragment}” in this note.*`))
                         return
                     }
                     const range = lineRange(parts.fragment)
@@ -259,6 +327,8 @@ export const Embed = Node.create({
                 destroy() {
                     token++
                     release()
+                    shown?.destroy()
+                    shown = null
                     off()
                 },
             }
@@ -271,7 +341,7 @@ function lines(range: { from: number; to: number }): string {
     return range.from === range.to ? `line ${range.from}` : `lines ${range.from}–${range.to}`
 }
 
-function header(title: string, open: () => void): HTMLElement {
+function header(title: string, open: () => void, meta = ''): HTMLElement {
     const bar = document.createElement('span')
     bar.className = 'ezco-mde-embed-header'
     const button = document.createElement('button')
@@ -282,6 +352,12 @@ function header(title: string, open: () => void): HTMLElement {
     button.addEventListener('mousedown', (e) => e.preventDefault())
     button.addEventListener('click', open)
     bar.append(button)
+    if (meta) {
+        const span = document.createElement('span')
+        span.className = 'ezco-mde-embed-meta'
+        span.textContent = meta
+        bar.append(span)
+    }
     return bar
 }
 

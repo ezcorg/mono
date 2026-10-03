@@ -20,10 +20,19 @@ export interface ContextMenuItem {
     onSelect: () => void
 }
 
+/** A line between groups of items. */
+export interface ContextMenuSeparator {
+    type: 'separator'
+}
+
+export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator
+
+export const isSeparator = (entry: ContextMenuEntry): entry is ContextMenuSeparator => 'type' in entry && entry.type === 'separator'
+
 export type ContextMenuCloseReason = 'escape' | 'tab'
 
 export interface ContextMenuOptions {
-    items: ContextMenuItem[]
+    items: ContextMenuEntry[]
     className?: string
     /** Fires when the user dismisses the menu without selecting an
      *  item — currently via Escape or Tab. Consumers can use the
@@ -99,7 +108,16 @@ export class ContextMenu {
         root.setAttribute('role', 'menu')
         root.tabIndex = -1
 
-        this.options.items.forEach((item, index) => {
+        this.options.items.forEach((entry) => {
+            if (isSeparator(entry)) {
+                const line = document.createElement('div')
+                line.className = 'ezco-mde-context-menu-separator'
+                line.setAttribute('role', 'separator')
+                root.appendChild(line)
+                return
+            }
+            const item = entry
+            const index = this.itemButtons.length
             const btn = document.createElement('button')
             btn.type = 'button'
             btn.className = 'ezco-mde-context-menu-item'
@@ -113,7 +131,9 @@ export class ContextMenu {
             if (item.icon !== undefined) {
                 const icon = document.createElement('span')
                 icon.className = 'ezco-mde-context-menu-item-icon'
-                icon.textContent = item.icon
+                // A glyph (SVG markup) or a character.
+                if (item.icon.startsWith('<svg')) icon.innerHTML = item.icon
+                else icon.textContent = item.icon
                 btn.appendChild(icon)
             }
 
