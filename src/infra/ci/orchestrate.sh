@@ -3,10 +3,14 @@
 # we delete it and make the next one. Run by systemd (modules/ci-pools.nix),
 # which supplies the environment and credentials below.
 #
-#   POOL, ORG, LABELS, IMAGE, CPUS, MEMORY, DISK, MAX_JOB_SECONDS, ATTIC_GUEST_PORT
+#   POOL, ORG, LABELS, IMAGE, CPUS, MEMORY, DISK, MAX_JOB_SECONDS, SCCACHE_RW_MODE
 #   $CREDENTIALS_DIRECTORY/github-token        creates JIT configs (org permission: self-hosted runners, write)
 #   $CREDENTIALS_DIRECTORY/attic-token         optional; pull, or pull+push for trusted pools
+#   $CREDENTIALS_DIRECTORY/sccache-key         optional; AWS_* lines for the sccache store, read-only or read-write
 #   $RUNTIME_DIRECTORY                         per-VM manifest and env files (tmpfs)
+#
+# Attic (127.0.0.1:17080) and the sccache store (127.0.0.1:17090) are already in
+# every guest: the host relays them over vsock (modules/ci-pools.nix).
 #
 # The only GitHub-specific line is the generate-jitconfig call. Another CI
 # system means another way to get a one-job credential into the env file.
@@ -72,8 +76,18 @@ while :; do
     umask 077
     {
       echo "JIT_CONFIG=$jit"
-      echo "ATTIC_URL=http://127.0.0.1:$ATTIC_GUEST_PORT"
+      echo "ATTIC_URL=http://127.0.0.1:17080"
       [ -n "$attic_token" ] && echo "ATTIC_TOKEN=$attic_token"
+      # The guest's environment is the runner's, so jobs see these; a job
+      # opts in with RUSTC_WRAPPER=sccache.
+      if [ -r "$CREDENTIALS_DIRECTORY/sccache-key" ]; then
+        echo "SCCACHE_BUCKET=sccache"
+        echo "SCCACHE_ENDPOINT=http://127.0.0.1:17090"
+        echo "SCCACHE_REGION=garage"
+        echo "SCCACHE_S3_USE_SSL=false"
+        echo "SCCACHE_S3_RW_MODE=$SCCACHE_RW_MODE"
+        cat "$CREDENTIALS_DIRECTORY/sccache-key"
+      fi
     } > "$envf"
     cat > "$yaml" <<YAML
 guest:
@@ -95,20 +109,6 @@ YAML
     continue
   fi
 
-  # Attic, over vsock: the guest's 127.0.0.1:$ATTIC_GUEST_PORT becomes the
-  # host's 8080. The guest's NIC cannot reach the host, so this is the only
-  # path to the cache. rig's host-side vsock listener is keyed on the guest
-  # port, which is why each pool has its own.
-  fwd_pid=""
-  for _ in $(seq 1 12); do
-    rig forward "$vm" "$ATTIC_GUEST_PORT" --to-guest --host-port 8080 &
-    fwd_pid=$!
-    sleep 5
-    if kill -0 "$fwd_pid" 2>/dev/null; then break; fi
-    fwd_pid=""
-  done
-  [ -n "$fwd_pid" ] || log "warning: attic forward to $vm did not come up; job runs without the cache"
-
   # The job clock starts when GitHub marks the runner busy; an idle warm VM
   # waits as long as it takes.
   deadline=""
@@ -128,14 +128,6 @@ YAML
     sleep 5
   done
 
-  # rig forward tears down on Ctrl-C (SIGINT), not SIGTERM. Give it a moment,
-  # then insist; a wait on a process that ignores the signal never returns.
-  if [ -n "$fwd_pid" ]; then
-    kill -INT "$fwd_pid" 2>/dev/null || true
-    for _ in $(seq 1 10); do kill -0 "$fwd_pid" 2>/dev/null || break; sleep 1; done
-    kill -KILL "$fwd_pid" 2>/dev/null || true
-    wait "$fwd_pid" 2>/dev/null || true
-  fi
   log "$vm finished; deleting"
   rig delete -f "$yaml" || log "warning: could not delete $vm"
   rm -f "$envf" "$yaml"

@@ -47,12 +47,14 @@
     enable = true;
     org = "ezcorg";
     user = "theo";
-    attic = "http://pengutron.tailb1a1.ts.net:8080";
+    attic = "http://pengutron.tailb1a1.ts.net:17080";
+    sccache = "pengutron.tailb1a1.ts.net:17090";
     # Two VMs share 16 GB with the host; 6 GB each leaves the host 4 GB.
     pools = {
       macos = {
         labels = [ "nix" "macos-vm" ];
         atticTokenSecret = "attic/token-ci";
+        sccacheKeySecret = "sccache/key-ro";
         cpus = 4;
         memory = 6144;
       };
@@ -60,6 +62,8 @@
       macos-trusted = {
         labels = [ "nix" "macos-vm-trusted" ];
         atticTokenSecret = "attic/token-ci-trusted";
+        sccacheKeySecret = "sccache/key-rw";
+        sccacheWrite = true;
         cpus = 4;
         memory = 6144;
       };

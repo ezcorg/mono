@@ -4,6 +4,10 @@
 #
 # Everything GitHub-specific is in the orchestrator's one API call; the image
 # and this module do not care which CI system hands out jobs.
+#
+# Guests have no route to this host. The services they need (Attic, the sccache
+# store) sit at fixed ports on their 127.0.0.1, relayed over vsock: this module
+# runs the host half, the guest image (ci/guest/guest.nix) the other.
 { config, lib, pkgs, ... }:
 
 let
@@ -27,17 +31,32 @@ let
         default = null;
         description = "sops secret name holding an Attic client token for this pool (pull-only for untrusted pools).";
       };
-      maxJobSeconds = lib.mkOption { type = lib.types.int; default = 6 * 3600; };
-      atticGuestPort = lib.mkOption {
-        type = lib.types.port;
-        default = 8080;
+      sccacheKeySecret = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
         description = ''
-          Port inside the guest at which Attic appears. rig forward keys its
-          host-side vsock listener on this number, so each pool needs its own.
+          sops secret holding this pool's Garage key for the sccache store, as
+          AWS_ACCESS_KEY_ID=… and AWS_SECRET_ACCESS_KEY=… lines (read-only for
+          untrusted pools). Jobs see it, with the store's address, in their
+          environment.
         '';
       };
+      sccacheWrite = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether jobs write to the sccache store. Garage enforces the key's permissions either way; this only stops sccache trying.";
+      };
+      maxJobSeconds = lib.mkOption { type = lib.types.int; default = 6 * 3600; };
     };
   };
+
+  # Every sops secret a pool loads, mapped to the units of the pools that load
+  # it: a changed secret restarts each of them.
+  poolSecrets = lib.zipAttrs (lib.concatLists (lib.mapAttrsToList (name: p:
+    map (secret: { ${secret} = "ci-pool-${name}.service"; })
+      (lib.filter (s: s != null) [ cfg.githubTokenSecret p.atticTokenSecret p.sccacheKeySecret ]))
+    cfg.pools));
+  relayUnits = lib.mapAttrsToList (name: _: "ci-vsock-${name}.service") cfg.hostServices;
 in {
   options.services.ci-pools = {
     enable = lib.mkEnableOption "rig-backed ephemeral CI runner pools";
@@ -59,6 +78,19 @@ in {
       type = lib.types.attrsOf (lib.types.submodule poolOpts);
       default = { };
     };
+    hostServices = lib.mkOption {
+      type = lib.types.attrsOf lib.types.port;
+      default = { attic = 17080; sccache = 17090; };
+      description = ''
+        Services on this host that every guest reaches at 127.0.0.1:<port>.
+        This host relays vsock port <port> to its own 127.0.0.1:<port>; the
+        guest image relays the other half (ci/guest/guest.nix), so keep the two
+        in step. Any VM on this host can connect: the services authenticate.
+        The ports are uncommon on purpose, and outside the Linux and macOS
+        ephemeral ranges: in a guest the relay holds its port, and a job's own
+        dev server or test fixture is likely to want 8080 or a service's default.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -73,19 +105,28 @@ in {
 
     # Credentials are loaded when a pool service starts, so a changed secret
     # must restart the pools that use it.
-    sops.secrets = {
-      ${cfg.githubTokenSecret}.restartUnits =
-        lib.mapAttrsToList (name: _: "ci-pool-${name}.service") cfg.pools;
-    }
-    // lib.mapAttrs' (name: p: lib.nameValuePair p.atticTokenSecret {
-         restartUnits = [ "ci-pool-${name}.service" ];
-       }) (lib.filterAttrs (_: p: p.atticTokenSecret != null) cfg.pools);
+    sops.secrets = lib.mapAttrs (_: units: { restartUnits = units; }) poolSecrets;
 
-    systemd.services = lib.mapAttrs' (name: p: lib.nameValuePair "ci-pool-${name}" {
+    # The host half of the guests' 127.0.0.1 services. A vsock listener takes
+    # connections from every VM, so one relay per service serves all pools at
+    # the same port.
+    boot.kernelModules = [ "vhost_vsock" ];
+
+    systemd.services = lib.mapAttrs' (name: port: lib.nameValuePair "ci-vsock-${name}" {
+      description = "Guests' 127.0.0.1:${toString port}: this host's ${name}, over vsock";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        ExecStart = "${pkgs.socat}/bin/socat VSOCK-LISTEN:${toString port},reuseaddr,fork TCP:127.0.0.1:${toString port}";
+        DynamicUser = true;
+        Restart = "always";
+        RestartSec = 5;
+      };
+    }) cfg.hostServices
+    // lib.mapAttrs' (name: p: lib.nameValuePair "ci-pool-${name}" {
       description = "CI pool ${name}: one fresh rig VM per job";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" "incus.service" "atticd.service" ];
-      wants = [ "network-online.target" ];
+      after = [ "network-online.target" "incus.service" "atticd.service" ] ++ relayUnits;
+      wants = [ "network-online.target" ] ++ relayUnits;
       requires = [ "incus.service" ];
       environment = {
         POOL = name;
@@ -96,7 +137,7 @@ in {
         MEMORY = p.memory;
         DISK = p.disk;
         MAX_JOB_SECONDS = toString p.maxJobSeconds;
-        ATTIC_GUEST_PORT = toString p.atticGuestPort;
+        SCCACHE_RW_MODE = if p.sccacheWrite then "READ_WRITE" else "READ_ONLY";
         HOME = "/var/lib/ci";
       };
       serviceConfig = {
@@ -110,7 +151,9 @@ in {
         # Secrets stay root-owned on disk; systemd hands copies to the service.
         LoadCredential = [ "github-token:${config.sops.secrets.${cfg.githubTokenSecret}.path}" ]
           ++ lib.optional (p.atticTokenSecret != null)
-               "attic-token:${config.sops.secrets.${p.atticTokenSecret}.path}";
+               "attic-token:${config.sops.secrets.${p.atticTokenSecret}.path}"
+          ++ lib.optional (p.sccacheKeySecret != null)
+               "sccache-key:${config.sops.secrets.${p.sccacheKeySecret}.path}";
       };
     }) cfg.pools;
   };

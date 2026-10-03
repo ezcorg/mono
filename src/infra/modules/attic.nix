@@ -1,8 +1,9 @@
 # Attic: the binary cache both build hosts read from and trusted jobs push to.
 #
-# Reachable on port 8080 over the tailnet only. rig guests cannot reach the
-# host's addresses at all (that is the point of rig), so the orchestrator
-# tunnels 127.0.0.1:8080 into each VM over vsock instead.
+# Reachable on port 17080 over the tailnet only. rig guests cannot reach the
+# host's addresses at all (that is the point of rig), so every guest sees it at
+# 127.0.0.1:17080 instead: over vsock on pengutron (modules/ci-pools.nix), over
+# SSH on galatron.
 #
 # After the first switch, mint client tokens (see README):
 #   sudo atticd-atticadm make-token --sub ci --validity 1y --pull mono
@@ -16,9 +17,12 @@
     enable = true;
     environmentFile = config.sops.secrets."attic/env".path;
     settings = {
-      listen = "0.0.0.0:8080";
-      # What `attic use` tells clients to talk to; the tailnet name.
-      api-endpoint = "http://pengutron.tailb1a1.ts.net:8080/";
+      listen = "0.0.0.0:17080";
+      # What `attic use` and `attic push` switch to after the first request.
+      # Every client is a guest or this host, and each sees Attic here; the
+      # tailnet name would send a guest's push where it has no route. Reach
+      # it from elsewhere with `ssh -L 17080:127.0.0.1:17080 pengutron`.
+      api-endpoint = "http://127.0.0.1:17080/";
       storage = {
         type = "local";
         path = "/var/lib/atticd/storage";

@@ -45,30 +45,29 @@
     enable = true;
     # Runners belong to the org: any ezcorg repository (mono, dij) can use them.
     org = "ezcorg";
-    pools = {
-      # Pull requests and anything else untrusted: reads the cache, cannot write
-      # it. Three identical pools so PR jobs run in parallel (the host has 16
-      # cores and 62 GB; four VMs at 4 cores / 8 GB leave it plenty).
-      linux = {
+    pools = let
+      # Pull requests and anything else untrusted: reads the caches, cannot
+      # write them.
+      untrusted = {
         labels = [ "nix" "linux-vm" ];
         atticTokenSecret = "attic/token-ci";
-        atticGuestPort = 8080;
+        sccacheKeySecret = "sccache/key-ro";
       };
-      linux-2 = {
-        labels = [ "nix" "linux-vm" ];
-        atticTokenSecret = "attic/token-ci";
-        atticGuestPort = 8082;
-      };
-      linux-3 = {
-        labels = [ "nix" "linux-vm" ];
-        atticTokenSecret = "attic/token-ci";
-        atticGuestPort = 8083;
-      };
-      # Jobs on main: may push what they build to the cache.
+    in {
+      # Three identical pools so PR jobs run in parallel. With the trusted
+      # pool that is 20 vCPUs on 16 cores and 40 GB of 62: idle VMs cost little.
+      linux = untrusted;
+      linux-2 = untrusted;
+      linux-3 = untrusted;
+      # Jobs on main and releases: may write what they build to the caches.
+      # Bigger, since they queue for one VM and are CPU-bound.
       linux-trusted = {
         labels = [ "nix" "linux-vm-trusted" ];
         atticTokenSecret = "attic/token-ci-trusted";
-        atticGuestPort = 8081;
+        sccacheKeySecret = "sccache/key-rw";
+        sccacheWrite = true;
+        cpus = 8;
+        memory = "16GiB";
       };
     };
   };

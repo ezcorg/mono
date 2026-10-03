@@ -5,10 +5,11 @@ Declarative config for the build hosts. One flake, one directory per host.
 | Path | |
 |---|---|
 | `flake.nix` | `nixosConfigurations.pengutron`; `packages.rig`, `packages.ci-orchestrate` |
-| `hosts/pengutron/` | the Linux build host: Attic, Incus + rig, CI pools |
-| `modules/` | `attic.nix`, `incus-rig.nix`, `ci-pools.nix`, `common.nix` |
+| `hosts/pengutron/` | the Linux build host: Attic, the sccache store, Incus + rig, CI pools |
+| `modules/` | `attic.nix`, `sccache-store.nix`, `incus-rig.nix`, `ci-pools.nix`, `common.nix` |
 | `ci/guest/` | the CI VM image (its own flake, on rig's base) |
 | `ci/orchestrate.sh` | one fresh VM per job; the host side of a pool |
+| `sccache-secrets.sh`, `sccache-setup.sh` | the sccache store's secrets, and its one-time setup on pengutron |
 | `secrets/` | sops-encrypted; `.sops.yaml` says who can read them |
 
 ## How CI runs on pengutron
@@ -17,13 +18,16 @@ Each pool (`services.ci-pools.pools.<name>`) is a systemd service that keeps
 one rig VM booted and registered with the ezcorg organization as a single-use
 runner, so any ezcorg repository's jobs can land on it. The VM
 runs one job, powers off, and is deleted; a fresh clone replaces it. rig's
-isolation holds: the VM has no route to the host or the LAN. The Attic cache
-reaches it over a vsock tunnel (`rig forward --to-guest`), not the network.
+isolation holds: the VM has no route to the host or the LAN. The services it
+needs sit at fixed ports on its own 127.0.0.1, relayed over vsock: Attic at
+17080, the sccache store at 17090 (`hostServices` in `modules/ci-pools.nix`
+and the image's half in `ci/guest/guest.nix`).
 
-Two pools: `linux` (labels `nix`, `linux-vm`) with a pull-only Attic token,
-and `linux-trusted` (`nix`, `linux-vm-trusted`) whose token may push. Point
-pull-request jobs at the first and main-branch jobs at the second, so nothing
-untrusted can write to the cache.
+Untrusted pools (`linux`, `linux-2`, `linux-3`: labels `nix`, `linux-vm`)
+hold a pull-only Attic token and a read-only sccache key; the trusted one
+(`linux-trusted`: `nix`, `linux-vm-trusted`, and bigger) may write both.
+Point pull-request jobs at the first and main-branch and release jobs at the
+second, so nothing untrusted can write to a cache.
 
 The only GitHub-specific piece is one API call in `orchestrate.sh`.
 
@@ -36,8 +40,12 @@ Things that are easy to get wrong, all handled in the config but worth knowing:
   `gh api -X PATCH orgs/ezcorg/actions/runner-groups/1 -F allows_public_repositories=true`.
   The trusted labels are a convention: any workflow the org runs can ask for
   them, so fork pull requests should need approval.
-- Each pool tunnels Attic into its guests on a different port (`atticGuestPort`),
-  because rig keys its host-side vsock listener on the guest port.
+- One host-side vsock listener per service serves every VM, which is why the
+  relays are systemd units here rather than a `rig forward` per VM (rig keys
+  that listener on the port, so two forwards of one port collide). Any VM on
+  the host can connect; Attic and Garage authenticate. The ports are uncommon
+  on purpose: in a guest the relay holds them, and jobs want 8080 for
+  themselves. A `rig forward` of 17080 or 17090 would collide with the relays.
 - Under rig's ACL a NixOS host drops guest DHCP unless DHCP is marked notrack
   before bridge conntrack runs; `modules/incus-rig.nix` has the rule and the
   reasoning, and rig's runbook now documents it.
@@ -61,6 +69,22 @@ Other ezcorg repositories use the same labels: ezcorg/dij's `ci.yml` and
 Every job enters the workspace dev shell (`flake.nix` at the repo root) with
 `nix develop -c …`; the VMs carry nothing else. Hosted GitHub runners remain
 for anything else (crates.io publish, the plugin releases, Windows).
+
+## Caches a job can use
+
+- **Attic** at `127.0.0.1:17080`, already a substituter for nix in every
+  guest. A trusted job pushes with `attic push ci:mono <paths>`, e.g. its dev
+  shell: `nix develop --profile .ci-shell -c true && attic push ci:mono .ci-shell`.
+  Attic advertises `127.0.0.1:17080` as its endpoint, true on pengutron and in
+  every guest; from elsewhere, `ssh -L 17080:127.0.0.1:17080 pengutron`.
+- **sccache's store** (Garage, `modules/sccache-store.nix`) at
+  `127.0.0.1:17090`. Jobs find its address and their pool's key in their
+  environment (`SCCACHE_*`, `AWS_*`); the untrusted pools' key is read-only,
+  and Garage enforces it whatever the job asks for. A job opts in with
+  `RUSTC_WRAPPER=sccache`, and only once `sccache --start-server` succeeds:
+  sccache refuses to start when its store is unreachable, and every compile
+  through it would then fail. Objects expire 30 days after they are written;
+  a quota caps the bucket at 150 GiB.
 
 ## Deploying a host
 
@@ -104,7 +128,7 @@ sudo nixos-rebuild switch --flake ./src/infra#pengutron      # on pengutron, fro
    sudo atticd-atticadm make-token --sub ci-trusted --validity 1y --pull mono --push mono
    ```
    Create the cache itself once, with the trusted token:
-   `attic login local http://127.0.0.1:8080 <token> && attic cache create mono`.
+   `attic login local http://127.0.0.1:17080 <token> && attic cache create mono`.
    Jobs pull from it automatically. Nothing pushes yet: a trusted job pushes
    with `attic push ci:mono <paths>` or by running `attic watch-store ci:mono`
    for the duration of the build.
@@ -112,7 +136,15 @@ sudo nixos-rebuild switch --flake ./src/infra#pengutron      # on pengutron, fro
    (fine-grained, resource owner `ezcorg`: Organization permissions →
    Self-hosted runners, read and write; no repository permissions) in
    `secrets/pengutron.yaml` under `github/runner-pat`.
-6. Switch again; `systemctl status ci-pool-linux` should show a VM starting.
+6. The sccache store. Before the switch that enables it, generate its
+   secrets into `secrets/pengutron.yaml` with `./sccache-secrets.sh` (where
+   sops can decrypt; it leaves secrets that exist alone). After the switch,
+   run `~/infra/sccache-setup.sh` on pengutron: a one-node Garage layout, the
+   `sccache` bucket with a 150 GiB quota, the two keys from `/run/secrets`
+   with read-only and read-write access, and a rule expiring objects 30 days
+   after they were written (Garage evicts nothing itself; at its quota the
+   cache would only stop growing). Both scripts are safe to run again.
+7. Switch again; `systemctl status ci-pool-linux` should show a VM starting.
 
 ## Secrets
 

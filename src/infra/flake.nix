@@ -44,6 +44,7 @@
           sops-nix.nixosModules.sops
           ./modules/common.nix
           ./modules/attic.nix
+          ./modules/sccache-store.nix
           ./modules/incus-rig.nix
           ./modules/ci-pools.nix
           ./hosts/pengutron

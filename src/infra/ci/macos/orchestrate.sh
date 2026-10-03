@@ -4,10 +4,13 @@
 # (modules/darwin/ci-pools-tart.nix), which supplies:
 #
 #   POOL, ORG, LABELS, IMAGE, CPUS, MEMORY (MiB), MAX_JOB_SECONDS
-#   ATTIC_HOST_URL      Attic as this host reaches it; the VM sees it as 127.0.0.1:8080
+#   ATTIC_HOST_URL      Attic as this host reaches it; the VM sees it as 127.0.0.1:17080
 #   GUEST_KEY           SSH private key whose public half the image trusts
 #   GITHUB_TOKEN_FILE   creates JIT configs (org permission: self-hosted runners, write)
 #   ATTIC_TOKEN_FILE    optional; pull, or pull+push for trusted pools
+#   SCCACHE_HOST        optional; the sccache store (host:port) as this host reaches it; the VM sees 127.0.0.1:17090
+#   SCCACHE_KEY_FILE    optional; AWS_* lines for the store, read-only or read-write
+#   SCCACHE_RW_MODE     READ_ONLY or READ_WRITE
 #   STATE_DIR           per-pool scratch (env files)
 #
 # Same shape as ci/orchestrate.sh on Linux; only "make a VM" and "reach it"
@@ -92,16 +95,27 @@ while :; do
   fi
   log "$vm up at $ip"
 
-  # Attic, over the SSH session: the guest's 127.0.0.1:8080 becomes Attic as
-  # this host sees it. Nothing is opened on the host's own interfaces.
+  # Attic and the sccache store, over the SSH session: the guest's
+  # 127.0.0.1:17080 and :17090 become them as this host sees them, the same
+  # ports as on pengutron's guests. Nothing is opened on the host's own
+  # interfaces.
+  forwards=(-R "17080:$attic_host_port")
+  [ -n "${SCCACHE_HOST:-}" ] && forwards+=(-R "17090:$SCCACHE_HOST")
   ssh -i "$GUEST_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-      -o ExitOnForwardFailure=yes -N -R "8080:$attic_host_port" "admin@$ip" &
+      -o ExitOnForwardFailure=yes -N "${forwards[@]}" "admin@$ip" &
   fwd_pid=$!
 
+  # ci-run.sh sources this file; exported lines reach the runner, and so the
+  # job (a job opts in to sccache with RUSTC_WRAPPER=sccache).
   {
     echo "JIT_CONFIG=$jit"
-    echo "ATTIC_URL=http://127.0.0.1:8080"
+    echo "ATTIC_URL=http://127.0.0.1:17080"
     [ -n "$attic_token" ] && echo "ATTIC_TOKEN=$attic_token"
+    if [ -n "${SCCACHE_HOST:-}" ] && [ -r "${SCCACHE_KEY_FILE:-}" ]; then
+      echo "export SCCACHE_BUCKET=sccache SCCACHE_ENDPOINT=http://127.0.0.1:17090 SCCACHE_REGION=garage"
+      echo "export SCCACHE_S3_USE_SSL=false SCCACHE_S3_RW_MODE=$SCCACHE_RW_MODE"
+      sed 's/^/export /' "$SCCACHE_KEY_FILE"
+    fi
   } | ssh_vm "$ip" 'umask 077; cat > ~/.ci-env'
   ssh_vm "$ip" 'nohup ~/ci-run.sh > ~/ci-run.log 2>&1 &'
 

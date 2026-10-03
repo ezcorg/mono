@@ -1,10 +1,32 @@
 # One job, then power off. The host injects /run/rig/env (tmpfs) after boot:
 #   JIT_CONFIG    a single-use GitHub runner registration
-#   ATTIC_URL     the cache, tunnelled in over vsock by the orchestrator
+#   ATTIC_URL     the cache, http://127.0.0.1:17080 (relayed, below)
 #   ATTIC_TOKEN   optional; pull, or pull+push on the trusted pool
+#   SCCACHE_*, AWS_*   optional; the sccache store at 127.0.0.1:17090, for jobs
 { pkgs, lib, ... }:
 
+let
+  # The host's services, at fixed ports on this guest's 127.0.0.1: each is a
+  # relay to vsock port <port> on the host (CID 2), which relays it on to the
+  # service (modules/ci-pools.nix, hostServices, which says why these ports).
+  # Keep the two in step.
+  hostServices = { attic = 17080; sccache = 17090; };
+  relayUnits = lib.mapAttrsToList (name: _: "host-${name}.service") hostServices;
+in
 {
+  imports = [{
+    systemd.services = lib.mapAttrs' (name: port: lib.nameValuePair "host-${name}" {
+      description = "127.0.0.1:${toString port} is the host's ${name}, over vsock";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        ExecStart = "${pkgs.socat}/bin/socat TCP-LISTEN:${toString port},bind=127.0.0.1,reuseaddr,fork VSOCK-CONNECT:2:${toString port}";
+        DynamicUser = true;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    }) hostServices;
+  }];
+
   users.users.runner = {
     isNormalUser = true;
     home = "/var/lib/runner";
@@ -71,8 +93,8 @@
 
   systemd.services.ci-runner = {
     description = "Run one CI job, then power off";
-    wants = [ "network-online.target" ];
-    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ] ++ relayUnits;
+    after = [ "network-online.target" ] ++ relayUnits;
     path = with pkgs; [ bashInteractive coreutils git gnutar gzip curl nix attic-client github-runner ];
     environment = {
       HOME = "/var/lib/runner";
@@ -96,24 +118,16 @@
     };
     script = ''
       set -euo pipefail
-      # The host opens the cache tunnel a few seconds after injecting the
-      # env file, so wait for it rather than racing it.
+      # The cache is optional: a job without it is slower, not broken. Attic
+      # advertises 127.0.0.1:17080 as its endpoint, which is right here too.
       if [ -n "''${ATTIC_TOKEN:-}" ]; then
-        for _ in $(seq 1 24); do
+        for _ in $(seq 1 12); do
           if attic login ci "$ATTIC_URL" "$ATTIC_TOKEN" 2>/dev/null && attic use ci:mono; then
             break
           fi
           sleep 5
         done
-        # `attic use` writes the server's public endpoint; this guest reaches
-        # the cache only through the tunnel, so point nix at that instead.
-        if attic cache info ci:mono >/dev/null 2>&1; then
-          host=$(echo "$ATTIC_URL" | sed -E 's#^https?://##; s#/.*##; s#:.*##')
-          sed -i -E "s#https?://[^/ ]+(/mono)#$ATTIC_URL\\1#g" "$HOME/.config/nix/nix.conf"
-          sed -i -E "s#^machine [^ ]+#machine $host#" "$HOME/.config/nix/netrc"
-        else
-          echo "attic: cache not configured, continuing"
-        fi
+        attic cache info ci:mono >/dev/null 2>&1 || echo "attic: cache not configured, continuing"
       fi
       mkdir -p "$RUNNER_ROOT" _work
       exec run.sh --jitconfig "$JIT_CONFIG"

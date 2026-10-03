@@ -14,6 +14,12 @@ let
       cpus = lib.mkOption { type = lib.types.int; default = 4; };
       memory = lib.mkOption { type = lib.types.int; default = 8192; description = "MiB"; };
       atticTokenSecret = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
+      sccacheKeySecret = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "sops secret with this pool's Garage key for the sccache store; see modules/ci-pools.nix.";
+      };
+      sccacheWrite = lib.mkOption { type = lib.types.bool; default = false; };
       maxJobSeconds = lib.mkOption { type = lib.types.int; default = 6 * 3600; };
     };
   };
@@ -30,7 +36,13 @@ in {
     };
     attic = lib.mkOption {
       type = lib.types.str;
-      description = "Attic URL as reachable from this host; tunnelled into each VM as 127.0.0.1:8080.";
+      description = "Attic URL as reachable from this host; tunnelled into each VM as 127.0.0.1:17080.";
+    };
+    sccache = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "pengutron.tailb1a1.ts.net:17090";
+      description = "The sccache store (host:port) as reachable from this host; tunnelled into each VM as 127.0.0.1:17090.";
     };
     githubTokenSecret = lib.mkOption { type = lib.types.str; default = "github/runner-pat"; };
     guestKey = lib.mkOption {
@@ -46,7 +58,9 @@ in {
       ${cfg.githubTokenSecret} = { owner = cfg.user; };
     }
     // lib.mapAttrs' (_: p: lib.nameValuePair p.atticTokenSecret { owner = cfg.user; })
-         (lib.filterAttrs (_: p: p.atticTokenSecret != null) cfg.pools);
+         (lib.filterAttrs (_: p: p.atticTokenSecret != null) cfg.pools)
+    // lib.mapAttrs' (_: p: lib.nameValuePair p.sccacheKeySecret { owner = cfg.user; })
+         (lib.filterAttrs (_: p: p.sccacheKeySecret != null) cfg.pools);
 
     launchd.user.agents = lib.mapAttrs' (name: p: lib.nameValuePair "ci-pool-${name}" {
       serviceConfig = {
@@ -72,6 +86,10 @@ in {
           STATE_DIR = "/Users/${cfg.user}/Library/Application Support/ci-pool-${name}";
         } // lib.optionalAttrs (p.atticTokenSecret != null) {
           ATTIC_TOKEN_FILE = config.sops.secrets.${p.atticTokenSecret}.path;
+        } // lib.optionalAttrs (cfg.sccache != null && p.sccacheKeySecret != null) {
+          SCCACHE_HOST = cfg.sccache;
+          SCCACHE_KEY_FILE = config.sops.secrets.${p.sccacheKeySecret}.path;
+          SCCACHE_RW_MODE = if p.sccacheWrite then "READ_WRITE" else "READ_ONLY";
         };
       };
     }) cfg.pools;
