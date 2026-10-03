@@ -10,6 +10,7 @@ Declarative config for the build hosts. One flake, one directory per host.
 | `ci/guest/` | the CI VM image (its own flake, on rig's base) |
 | `ci/orchestrate.sh` | one fresh VM per job; the host side of a pool |
 | `sccache-secrets.sh`, `sccache-setup.sh` | the sccache store's secrets, and its one-time setup on pengutron |
+| `signing-secrets.sh` | release signing secrets: into `secrets/release.yaml`, and from there to GitHub |
 | `secrets/` | sops-encrypted; `.sops.yaml` says who can read them |
 
 ## How CI runs on pengutron
@@ -73,8 +74,10 @@ for anything else (crates.io publish, the plugin releases, Windows).
 ## Caches a job can use
 
 - **Attic** at `127.0.0.1:17080`, already a substituter for nix in every
-  guest. A trusted job pushes with `attic push ci:mono <paths>`, e.g. its dev
-  shell: `nix develop --profile .ci-shell -c true && attic push ci:mono .ci-shell`.
+  guest, ranked above cache.nixos.org. A trusted job pushes its dev shell's
+  whole closure, paths cache.nixos.org also has included, so the next guest
+  gets all of it from here: `nix develop --profile .ci-shell -c true &&
+  attic push --ignore-upstream-cache-filter ci:mono .ci-shell`.
   Attic advertises `127.0.0.1:17080` as its endpoint, true on pengutron and in
   every guest; from elsewhere, `ssh -L 17080:127.0.0.1:17080 pengutron`.
 - **sccache's store** (Garage, `modules/sccache-store.nix`) at
@@ -127,11 +130,18 @@ sudo nixos-rebuild switch --flake ./src/infra#pengutron      # on pengutron, fro
    sudo atticd-atticadm make-token --sub ci --validity 1y --pull mono
    sudo atticd-atticadm make-token --sub ci-trusted --validity 1y --pull mono --push mono
    ```
-   Create the cache itself once, with the trusted token:
-   `attic login local http://127.0.0.1:17080 <token> && attic cache create mono`.
-   Jobs pull from it automatically. Nothing pushes yet: a trusted job pushes
-   with `attic push ci:mono <paths>` or by running `attic watch-store ci:mono`
-   for the duration of the build.
+   Create the cache once, with a short-lived admin token, ranked above
+   cache.nixos.org (priority 40; lower wins) so guests take from it what it
+   has:
+   ```bash
+   attic login admin http://127.0.0.1:17080 "$(sudo atticd-atticadm make-token --sub admin \
+     --validity 10m --pull mono --create-cache mono --configure-cache mono --configure-cache-retention mono)"
+   attic cache create admin:mono --priority 30
+   ```
+   (An existing cache: `attic cache configure admin:mono --priority 30`. It
+   always sends a retention setting too, hence `--configure-cache-retention`.)
+   Jobs pull from it automatically; trusted jobs push (see "Caches a job can
+   use").
 5. Put a GitHub token that can create JIT runner configs for the org
    (fine-grained, resource owner `ezcorg`: Organization permissions →
    Self-hosted runners, read and write; no repository permissions) in
@@ -145,6 +155,23 @@ sudo nixos-rebuild switch --flake ./src/infra#pengutron      # on pengutron, fro
    after they were written (Garage evicts nothing itself; at its quota the
    cache would only stop growing). Both scripts are safe to run again.
 7. Switch again; `systemctl status ci-pool-linux` should show a VM starting.
+
+## Release signing
+
+`secrets/release.yaml` holds what release workflows sign with, encrypted to
+the operator's key alone: no host needs it. It is the source of truth; the
+GitHub secrets the workflows read are copies, made by `signing-secrets.sh`.
+
+```bash
+./signing-secrets.sh apple DeveloperID.p12 AuthKey_<KEYID>.p8 <KEYID> <ISSUER>   # asks for the .p12's password
+./signing-secrets.sh minisign ../../../dij/minisign.pub    # once; writes the public key for dij to commit
+./signing-secrets.sh push                                   # to ezcorg/dij; other repositories as arguments
+```
+
+The `.p12` is the Developer ID Application certificate with its private key,
+exported from Keychain Access; the `.p8` an App Store Connect API key (Team
+key, Developer access), with its key and issuer IDs. Once stored, the
+exported files can go. Rotating means storing the new ones and pushing again.
 
 ## Secrets
 

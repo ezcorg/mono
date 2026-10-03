@@ -9,3 +9,8 @@ creation_rules:
   - path_regex: secrets/pengutron\.yaml$
     key_groups:
       - age: [*theo, *pengutron, *galatron]
+  # Release signing (signing-secrets.sh): the operator alone. No host needs
+  # these; GitHub holds the copies release workflows read.
+  - path_regex: secrets/release\.yaml$
+    key_groups:
+      - age: [*theo]
