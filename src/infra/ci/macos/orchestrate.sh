@@ -25,6 +25,9 @@ labels_json=$(printf '%s' "$LABELS" | jq -R 'split(",")')
 mkdir -p "$STATE_DIR"
 attic_host_port=$(echo "$ATTIC_HOST_URL" | sed -E 's#^https?://##; s#/.*##')
 
+# Whether this host reaches a service (host:port) within a few seconds.
+reachable() { /usr/bin/nc -z -G 5 "${1%:*}" "${1##*:}" >/dev/null 2>&1; }
+
 ssh_vm() { # ssh_vm <ip> <command...>
   local ip=$1; shift
   ssh -i "$GUEST_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -98,9 +101,18 @@ while :; do
   # Attic and the sccache store, over the SSH session: the guest's
   # 127.0.0.1:17080 and :17090 become them as this host sees them, the same
   # ports as on pengutron's guests. Nothing is opened on the host's own
-  # interfaces.
-  forwards=(-R "17080:$attic_host_port")
-  [ -n "${SCCACHE_HOST:-}" ] && forwards+=(-R "17090:$SCCACHE_HOST")
+  # interfaces. A service this host cannot reach stays out: through the
+  # tunnel every guest attempt would wait out a connect timeout (Attic's
+  # retries add up to half an hour before the runner starts), and a job
+  # without a cache is only slower.
+  attic=""; sccache=""
+  if reachable "$attic_host_port"; then attic=1; else log "warning: Attic ($attic_host_port) unreachable; $vm runs without it"; fi
+  if [ -n "${SCCACHE_HOST:-}" ]; then
+    if reachable "$SCCACHE_HOST"; then sccache=1; else log "warning: sccache store ($SCCACHE_HOST) unreachable; $vm runs without it"; fi
+  fi
+  forwards=()
+  [ -n "$attic" ] && forwards+=(-R "17080:$attic_host_port")
+  [ -n "$sccache" ] && forwards+=(-R "17090:$SCCACHE_HOST")
   ssh -i "$GUEST_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
       -o ExitOnForwardFailure=yes -N "${forwards[@]}" "admin@$ip" &
   fwd_pid=$!
@@ -110,8 +122,8 @@ while :; do
   {
     echo "JIT_CONFIG=$jit"
     echo "ATTIC_URL=http://127.0.0.1:17080"
-    [ -n "$attic_token" ] && echo "ATTIC_TOKEN=$attic_token"
-    if [ -n "${SCCACHE_HOST:-}" ] && [ -r "${SCCACHE_KEY_FILE:-}" ]; then
+    [ -n "$attic" ] && [ -n "$attic_token" ] && echo "ATTIC_TOKEN=$attic_token"
+    if [ -n "$sccache" ] && [ -r "${SCCACHE_KEY_FILE:-}" ]; then
       echo "export SCCACHE_BUCKET=sccache SCCACHE_ENDPOINT=http://127.0.0.1:17090 SCCACHE_REGION=garage"
       echo "export SCCACHE_S3_USE_SSL=false SCCACHE_S3_RW_MODE=$SCCACHE_RW_MODE"
       sed 's/^/export /' "$SCCACHE_KEY_FILE"
