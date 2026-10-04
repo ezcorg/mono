@@ -117,8 +117,9 @@ The same pool design on Tart, as a LaunchAgent under the logged-in user
   codesign does not complete a signer's chain from a job's own keychain
   (`unable to build chain to self-signed root`, `errSecInternalComponent`),
   and from the System keychain it always does.
-- Jobs run in admin's login session, like a user's own work: the image keeps
-  automatic login working with its random password, and a LaunchAgent
+- Jobs run in admin's login session, like a user's own work: the base image
+  logs admin in automatically (password `admin`, which is why the image keeps
+  it; SSH takes only our key), and a LaunchAgent
   (`org.ezcorg.ci-runner`) starts the runner there once the orchestrator has
   written `~/.ci-env`. So jobs get the user's keychain search list and a GUI
   (UI tests, simulators). Permissions macOS asks a person for (screen

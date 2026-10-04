@@ -5,9 +5,11 @@
 #
 # What goes in: Determinate Nix (multi-user, admin trusted), the GitHub
 # actions runner, attic, ci-run.sh and the LaunchAgent that starts it in
-# admin's login session (automatic login, with a random password), our SSH
-# key, Apple's Developer ID G2 intermediate and root in the System keychain;
-# password login over SSH off; sleep off.
+# admin's login session, our SSH key (the only one admin trusts), Apple's
+# Developer ID G2 intermediate and root in the System keychain; password login
+# over SSH off; sleep off. admin keeps the base image's password: automatic
+# login and the login keychain use it, and with SSH key-only and sudo
+# passwordless it guards nothing else.
 # What stays out: toolchains. Jobs get those from each project's flake.
 #
 # Env (all optional):
@@ -38,17 +40,22 @@ tart run "$work" --no-graphics --no-audio >"$runlog" 2>&1 &
 run_pid=$!
 trap 'kill $run_pid 2>/dev/null; wait $run_pid 2>/dev/null; tart delete "$work" >/dev/null 2>&1' EXIT
 
-# Cirrus base images: user admin, password admin, passwordless sudo.
-sshopts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
-         -o PreferredAuthentications=password -o PubkeyAuthentication=no -o ConnectTimeout=10)
-sshp() { sshpass -p admin ssh "${sshopts[@]}" "admin@$ip" "$@"; }
-# Files go over ssh's stdin; scp's password handling under sshpass is unreliable here.
-putf() { sshp "cat > $2" < "$1"; }
+# Cirrus base images: user admin, password admin, passwordless sudo. A fresh
+# base VM now and then refuses the right password ("Permission denied", 3 of
+# 55 logins in one test), so the password is used once, in the retry loop
+# below, to install our key; every later step goes over the key.
+sshopts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10)
+sshp() { sshpass -p admin ssh "${sshopts[@]}" -o PreferredAuthentications=password -o PubkeyAuthentication=no "admin@$ip" "$@"; }
+sshk() { ssh "${sshopts[@]}" -o BatchMode=yes -o IdentitiesOnly=yes -i "$key" "admin@$ip" "$@"; }
+# Files go over ssh's stdin.
+putf() { sshk "cat > $2" < "$1"; }
 ip=""
 for _ in $(seq 1 60); do
   ip=$(tart ip "$work" 2>/dev/null || true)
   case "$ip" in
-    *.*.*.*) if sshp true 2>"$work.ssh-err"; then break; fi ;;
+    *.*.*.*)
+      if sshp 'umask 077 && mkdir -p ~/.ssh && cat > ~/.ssh/authorized_keys' < "$key.pub" 2>"$work.ssh-err" &&
+         sshk true 2>>"$work.ssh-err"; then break; fi ;;
   esac
   ip=""; sleep 5
 done
@@ -62,13 +69,11 @@ rm -f "$work.ssh-err"
 log "builder at $ip"
 
 putf "$guest_dir/guest-run.sh" ci-run.sh
-putf "$key.pub" ci-guest.pub
 for cert in DeveloperIDG2CA.cer AppleIncRootCertificate.cer; do putf "$guest_dir/$cert" "$cert"; done
 
-sshp bash -s <<REMOTE
+sshk bash -s <<REMOTE
 set -euo pipefail
 echo "--- ssh: key only"
-mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat ~/ci-guest.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && rm ~/ci-guest.pub
 sudo sed -i '' -E 's/^#?PasswordAuthentication .*/PasswordAuthentication no/; s/^#?KbdInteractiveAuthentication .*/KbdInteractiveAuthentication no/' /etc/ssh/sshd_config
 chmod +x ~/ci-run.sh
 echo "--- Apple's Developer ID chain, in the System keychain"
@@ -97,14 +102,6 @@ echo "--- actions runner $runner_ver"
 mkdir -p ~/actions-runner && cd ~/actions-runner
 curl -sSfL -o runner.tgz "https://github.com/actions/runner/releases/download/v$runner_ver/actions-runner-osx-arm64-$runner_ver.tar.gz"
 tar xzf runner.tgz && rm runner.tgz
-echo "--- random admin password, kept logging in (ssh is key-only; sudo stays passwordless)"
-# The base image logs admin in automatically with the password it was built
-# with (admin). The account, its login keychain and the automatic login all
-# take the new one, or the VM would stay at the login window with no session.
-pw=\$(openssl rand -hex 24)
-sudo dscl . -passwd /Users/admin admin "\$pw"
-security set-keychain-password -o admin -p "\$pw" ~/Library/Keychains/login.keychain-db
-sudo sysadminctl -autologin set -userName admin -password "\$pw"
 echo "--- the runner, started in the login session"
 # Jobs then run as a logged-in user's work does: the user's keychain search
 # list for codesign, the GUI for UI tests and simulators. The agent waits for
@@ -130,9 +127,13 @@ plutil -lint ~/Library/LaunchAgents/org.ezcorg.ci-runner.plist
 echo "--- done"
 REMOTE
 
-# Stop from the host: a shutdown issued over ssh ends the session with a
-# non-zero status, which would abort this script before the rename.
-tart stop "$work"
+# Shut down from inside, so the last steps reach the disk: `tart stop` alone
+# cut the VM off before macOS had written them (the image lost its
+# LaunchAgent). The shutdown ends the ssh session with a non-zero status,
+# hence `|| true`; tart run exits once the VM is off.
+sshk 'sync; sudo shutdown -h now' >/dev/null 2>&1 || true
+for _ in $(seq 1 60); do kill -0 "$run_pid" 2>/dev/null || break; sleep 2; done
+if kill -0 "$run_pid" 2>/dev/null; then log "$work still running after shutdown; stopping it"; tart stop "$work"; fi
 wait "$run_pid" 2>/dev/null || true
 trap - EXIT
 tart delete "$image" >/dev/null 2>&1 || true

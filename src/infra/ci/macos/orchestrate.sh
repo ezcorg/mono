@@ -148,6 +148,8 @@ while :; do
       sleep 5
     done
     [ -n "$session" ] || log "warning: $vm did not log in; its runner starts outside a login session"
+  else
+    log "warning: $vm's image has no runner LaunchAgent; its runner starts outside a login session"
   fi
   [ -n "$session" ] || ssh_vm "$ip" 'nohup ~/ci-run.sh > ~/ci-run.log 2>&1 &'
 
