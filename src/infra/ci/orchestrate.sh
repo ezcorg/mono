@@ -89,7 +89,9 @@ while :; do
         echo "SCCACHE_REGION=garage"
         echo "SCCACHE_S3_USE_SSL=false"
         echo "SCCACHE_S3_RW_MODE=$SCCACHE_RW_MODE"
-        cat "$CREDENTIALS_DIRECTORY/sccache-key"
+        # Line by line: the key file has no final newline, and a line after
+        # it would join its secret.
+        while IFS= read -r line || [ -n "$line" ]; do echo "$line"; done < "$CREDENTIALS_DIRECTORY/sccache-key"
       fi
     } > "$envf"
     cat > "$yaml" <<YAML

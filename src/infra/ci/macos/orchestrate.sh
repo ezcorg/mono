@@ -131,7 +131,9 @@ while :; do
     if [ -n "$sccache" ] && [ -r "${SCCACHE_KEY_FILE:-}" ]; then
       echo "export SCCACHE_BUCKET=sccache SCCACHE_ENDPOINT=http://127.0.0.1:17090 SCCACHE_REGION=garage"
       echo "export SCCACHE_S3_USE_SSL=false SCCACHE_S3_RW_MODE=$SCCACHE_RW_MODE"
-      sed 's/^/export /' "$SCCACHE_KEY_FILE"
+      # Line by line: the key file has no final newline, and the next line
+      # would join its secret.
+      while IFS= read -r line || [ -n "$line" ]; do echo "export $line"; done < "$SCCACHE_KEY_FILE"
     fi
     # The runner runs the gate before each job's first step; on a trusted
     # pool it refuses what is not main or a tag of a trusted repository.
