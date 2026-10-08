@@ -111,5 +111,13 @@
   # from probing it (power, and the occasional hang on this generation).
   boot.blacklistedKernelModules = [ "nouveau" ];
 
+  # This firmware hangs on the kernel's default (ACPI) reset: a `reboot`
+  # finished userspace cleanly and then sat on a black screen until the power
+  # button. The EFI reset method goes through in seconds (tested 2026-10-08).
+  boot.kernelParams = [ "reboot=efi" ];
+  # And should a reboot ever hang again, the hardware watchdog resets the
+  # box after two minutes rather than systemd's default ten.
+  systemd.watchdog.rebootTime = "2min";
+
   system.stateVersion = "26.05";
 }

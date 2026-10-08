@@ -106,6 +106,9 @@ An MSI GE73VR (i7-7700HQ, 16 GB, no battery, lid shut) whose only job is to
 be hardware: untrusted devices are plugged into it and another host, over
 the tailnet, does the reverse engineering. No RE tools live on it.
 
+- **Rebooting**: the firmware hangs on the ACPI reset, so the kernel runs
+  with `reboot=efi`; if a reboot ever sits on a black screen anyway, the
+  hardware watchdog resets it after two minutes.
 - **Reach it** as `theo@untrustotron` (Tailscale SSH, or sshd with the key), or
   on the Wi-Fi LAN as a fallback. sshd is not reachable from the lab port.
 - **USB**: `sudo usbip list -l`, `sudo usbip bind -b <busid>` on untrustotron;
