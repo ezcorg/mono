@@ -1,10 +1,10 @@
-# Build-host infrastructure: the NixOS CI host (pengutron) and, later, the
-# macOS one (galatron) via nix-darwin. See README.md.
+# Host infrastructure: the NixOS CI host (pengutron), the macOS one (galatron)
+# via nix-darwin, and the bench laptop (untrustotron). See README.md.
 #
 #   nix flake check ./src/infra
 #   sudo nixos-rebuild switch --flake ./src/infra#pengutron      # on pengutron
 {
-  description = "ezcorg build hosts";
+  description = "ezcorg hosts";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -48,6 +48,17 @@
           ./modules/incus-rig.nix
           ./modules/ci-pools.nix
           ./hosts/pengutron
+        ];
+      };
+
+      # untrustotron: the bench laptop other hosts reverse-engineer through.
+      #   src/infra/deploy.sh untrustotron
+      nixosConfigurations.untrustotron = nixpkgs.lib.nixosSystem {
+        system = linux;
+        specialArgs = { inherit self; };
+        modules = [
+          ./modules/common.nix
+          ./hosts/untrustotron
         ];
       };
 

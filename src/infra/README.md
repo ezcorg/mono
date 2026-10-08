@@ -1,11 +1,12 @@
 # infra
 
-Declarative config for the build hosts. One flake, one directory per host.
+Declarative config for the hosts. One flake, one directory per host.
 
 | Path | |
 |---|---|
-| `flake.nix` | `nixosConfigurations.pengutron`; `packages.rig`, `packages.ci-orchestrate` |
+| `flake.nix` | `nixosConfigurations.pengutron`, `nixosConfigurations.untrustotron`, `darwinConfigurations.galatron`; `packages.rig`, `packages.ci-orchestrate` |
 | `hosts/pengutron/` | the Linux build host: Attic, the sccache store, Incus + rig, CI pools |
+| `hosts/untrustotron/` | the bench laptop: a tagged tailnet node other hosts reverse-engineer through (USB/IP, serial, a lab port) |
 | `modules/` | `attic.nix`, `sccache-store.nix`, `incus-rig.nix`, `ci-pools.nix`, `common.nix` |
 | `ci/guest/` | the CI VM image (its own flake, on rig's base) |
 | `ci/orchestrate.sh` | one fresh VM per job; the host side of a pool |
@@ -95,8 +96,73 @@ for anything else (crates.io publish, the plugin releases, Windows).
 
 ## Deploying a host
 
-`src/infra/deploy.sh pengutron` or `… galatron`: copies this directory to the
-host and switches there. The hosts keep no checkout of the monorepo.
+`src/infra/deploy.sh pengutron`, `… galatron` or `… untrustotron`: copies this
+directory to the host and switches there. The hosts keep no checkout of the
+monorepo.
+
+## untrustotron (the bench laptop)
+
+An MSI GE73VR (i7-7700HQ, 16 GB, no battery, lid shut) whose only job is to
+be hardware: untrusted devices are plugged into it and another host, over
+the tailnet, does the reverse engineering. No RE tools live on it.
+
+- **Reach it** as `theo@untrustotron` (Tailscale SSH, or sshd with the key), or
+  on the Wi-Fi LAN as a fallback. sshd is not reachable from the lab port.
+- **USB**: `sudo usbip list -l`, `sudo usbip bind -b <busid>` on untrustotron;
+  then `usbip attach -r untrustotron -b <busid>` on the host doing the work
+  (port 3240, admitted on tailscale0 only). Serial adapters can also be used
+  in place, `picocom` is there and `theo` is in `dialout`.
+- **The lab port** is the wired `enp5s0`. NetworkManager leaves it unmanaged
+  and the kernel ignores router advertisements on it, so a hostile device
+  there gets no DHCP from us and cannot hand us a route or a resolver.
+  Address it by hand per experiment (`sudo ip addr add 10.0.0.1/24 dev
+  enp5s0; sudo ip link set enp5s0 up`) and capture with `tcpdump`. Nothing is
+  forwarded between it and anything else.
+- **Wi-Fi** is the uplink. Its NetworkManager profile is state copied in at
+  install time (below), not config: the PSK lives only on the laptop. A new
+  network: `nmcli dev wifi connect <ssid> password <psk>` at the console.
+- **Tailnet standing**: the node carries `tag:untrustotron` and the policy must
+  make that tag a destination only. In the admin console:
+  ```jsonc
+  "tagOwners": { "tag:untrustotron": ["autogroup:admin"] },
+  "acls": [
+    // no rule may have tag:untrustotron as a src. If the policy still has the
+    // default {"src": ["*"], "dst": ["*:*"]}, replace its src with the
+    // members and tags that should see everything (autogroup:member, ...).
+    { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:untrustotron:22,3240"] },
+  ],
+  "ssh": [
+    { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:untrustotron"], "users": ["theo"] },
+  ]
+  ```
+  Then mint an auth key for `tag:untrustotron` (Settings → Keys: pre-authorized,
+  tagged, single use), put it in `/var/lib/tailscale-authkey` on untrustotron
+  (`sudo install -m 600 /dev/stdin /var/lib/tailscale-authkey`, paste, ^D)
+  and `sudo systemctl start tailscaled-autoconnect` (the unit is skipped
+  while the file is absent). Or, at the console, `sudo tailscale up
+  --advertise-tags=tag:untrustotron --ssh` and follow the login URL. The previous OS on
+  this laptop was the `theo-msi` node: remove it in the console.
+
+### Installing untrustotron (done 2026-10-07; here for a reinstall)
+
+From the minimal NixOS installer, on the same Wi-Fi, with this directory
+rsynced to `~/infra` on it. The GPT from the previous OS is kept (1 GiB ESP
++ ext4; `hardware.nix` names the partitions by PARTUUID), so there is no
+partitioning step.
+
+```bash
+sudo mkfs.vfat -F 32 -n BOOT /dev/nvme0n1p1 && sudo mkfs.ext4 -F -L nixos /dev/nvme0n1p2
+sudo mount /dev/nvme0n1p2 /mnt && sudo mkdir -p /mnt/boot && sudo mount -o umask=077 /dev/nvme0n1p1 /mnt/boot
+sudo nixos-install --no-root-passwd --option experimental-features "nix-command flakes" --flake "path:$HOME/infra#untrustotron"
+# the Wi-Fi profile the installer is using, straight into the new root
+sudo mkdir -p -m 700 /mnt/etc/NetworkManager/system-connections
+sudo cp -p /etc/NetworkManager/system-connections/*.nmconnection /mnt/etc/NetworkManager/system-connections/
+sudo nixos-enter --root /mnt -c 'passwd theo'           # sudo asks for it
+sudo cp -r ~/infra /mnt/home/theo/infra && sudo nixos-enter --root /mnt -c 'chown -R theo:users /home/theo'
+sudo reboot
+```
+
+Afterwards: the tailnet steps above, and `deploy.sh untrustotron` for changes.
 
 ## galatron (macOS)
 

@@ -1,4 +1,4 @@
-# Settings every build host shares.
+# Settings every NixOS host shares.
 { pkgs, ... }:
 
 {
