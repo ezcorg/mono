@@ -72,7 +72,10 @@ body {
   background: rgba(127, 127, 127, 0.08);
 }
 
-/* Clearance for the native traffic-light buttons (top-left on macOS). */
+/* Clearance for the native traffic-light buttons (top-left on macOS). They
+   are drawn at `trafficLightPosition` (tauri.conf.json): 14px in, 14px down,
+   so their 12px discs centre on the bar's 20px middle line, level with the
+   28px search field and theme toggle. */
 .titlebar-lights-spacer {
   flex: none;
   width: 68px;
@@ -202,12 +205,12 @@ body {
   overflow-y: auto;
 }
 
+/* As wide as the window: the editor keeps its own measure (the note's text
+   column), and gives what is left to the comments panel when that fits. */
 .editor-host {
-  max-width: 900px;
-  margin: 0 auto;
-  /* The block-action gutter is now a default column inside the editor (the
-     library's `.ezco-mde` wrapper owns it), so no manual left gutter here. */
-  padding: 0 32px 0 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 /* The editable fills the inset host; vertical padding lives here so the focus

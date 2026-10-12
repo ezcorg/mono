@@ -142,8 +142,10 @@ function App() {
       // An unnamed \`\`\`ts fence gets a hidden stand-in file beside the note,
       // so its language services work.
       codeblock: { standIns: true },
-      // The notes folder as a tree, in the editor's left column.
+      // The notes folder as a tree, and the note's outline, in the editor's
+      // left column (⌘⌥B folds it away).
       fileTree: {},
+      sidebar: {},
       // Comments are documents written as the local user; reactions are
       // the user's state in the vault.
       comments: { author: handle, index: vault.comments, reactions: vault.reactions },
