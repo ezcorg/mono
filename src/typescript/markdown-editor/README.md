@@ -30,13 +30,18 @@ const editor = createEditor({
 ```
 
 Nothing shows beside the note until asked for: the file tree (⌘⇧E), the
-backlinks (⌘⇧L), a note's properties (one small line at its top opens them) and
-its comments (a click on commented text opens that comment over the note's
-edge) all keep out of the way until then. A host that wants a panel in view
+backlinks (⌘⇧L) and a note's properties (one small line at its top opens
+them) all keep out of the way until then. A host that wants a panel in view
 from the start says so (`fileTree: { open: true }`,
-`links: { panel: { open: true } }`, `comments: { margin: { layout: 'column' } }`
-or `'panel'`). The column the outline and the file tree share folds away on
-the chevron in its corner, or ⌘⌥B.
+`links: { panel: { open: true } }`). The column the outline and the file tree
+share folds away on the chevron in its corner, or ⌘⌥B. The note's text keeps
+to a column of some seventy-five characters (`--ezco-mde-measure`); the row
+of rail, gutter, column and comments is centred as one in a wider host, so
+the gutter stays at the text's edge. The note's comments take what is past
+the column, in a panel beside the note, and float over the note's edge, one
+at a time on a click on commented text, where there is no such room (or
+when the panel has been put away); asked for all the same, the panel slides
+over the note's edge instead.
 
 With `fs` alone the editor keeps a vault of its own over it, so wikilinks,
 search and renames work without the host building one.
@@ -87,26 +92,36 @@ Clicking a highlight opens the comment as a bubble over the note's edge,
 under its text (above it when there is no room under): who and when, and
 its text shown exactly as the note shows text (a read-only editor of the
 note's make, so a fence named by a file holds the file's lines, fences
-inside it included). Under the bubble, standing on their own, are its
-reactions and the reply count. The chevron in the bubble's corner opens on
-the reactions to give (the common and recent ones, the whole grid behind
-the last cell) and then the actions in groups: Edit and Reply, Resolve,
-Composer panel (one's own comments only) and Open as file, Delete, Show
-all comments and Dismiss. Long text folds after a few lines, with "Show
-more" under it. A comment's first replies show under it, each a bubble of
-its own, indented under what it answers; a reply's own answers stay behind
-its count. [−] after any byline collapses that message and everything
-under it to the byline; [+] brings it back. Nothing
-holds the bubbles: they stand on the note, and a bubble never runs past the
-note's frame (what is more scrolls inside it). Escape, Dismiss or a click
-elsewhere closes it. Every comment at once: "Show all comments", ⌘⇧M or
-the palette's "Comments panel" puts them in a panel beside the note, a
-list that scrolls on its own under a fixed head, where a click on a comment
-takes the note to its text; the same puts it away. A host can start
-there (`comments: { margin: { layout: 'panel' } }`) or with a column, each
-bubble level with its text (`layout: 'column'`). Quotes keep up with
-editing: words changed here are re-quoted where the comment lives when the
-note is saved; text no quote can tell apart is pinned instead.
+inside it included). Under the text, in the bubble, are its reactions,
+React (the common and recent reactions by the control, the whole grid
+behind them) and, at the row's end, the reply count. The chevron in the
+bubble's corner opens on the reactions to give too, and then the actions
+in groups: Edit and Reply, Resolve, Composer panel (one's own comments
+only) and Open as file, Delete, Show in comments panel and Dismiss. Long
+text folds after a few lines, with "Show more" under it. The reply count is
+the handle of the comment's thread: pressed, its pill grows into a frame
+around the row and the replies under it, each a bubble of its own, and
+shrinks back into the pill when they are folded away; a reply being
+written goes last in the frame. A reply's own answers stay behind its own
+count. [−] after any byline collapses that message and everything under it
+to the byline; [+] brings it back. Nothing holds the bubbles: they stand on
+the note, and a bubble never runs past the note's frame (what is more
+scrolls inside it). Escape, Dismiss or a click elsewhere closes it. With
+room past the note's text column, every comment shows from the start in a
+panel beside the note, a list that scrolls on its own under a fixed head.
+There a bubble is the way to its text: a click takes the note to it, the
+text's first line level with the top of the bubble (the list meeting it
+where the note cannot), and as the note is read past commented text that
+comment's bubble is the current one, stepped out a little from the others
+with the accent's hairline. The panel's × (or ⌘⇧M) puts it away, and it
+stays away, across notes and sessions, until "Show in comments panel" (or
+⌘⇧M) brings it back; asked for where there is no room beside the note, it
+slides over the note's right edge instead, as the composer panel does, and
+rests at the edge, with a handle, when the pointer leaves it. A host can
+keep comments over the note (`comments: { margin: { layout: 'float' } }`) or
+have a column, each bubble level with its text (`layout: 'column'`). Quotes
+keep up with editing: words changed here are re-quoted where the comment
+lives when the note is saved; text no quote can tell apart is pinned instead.
 
 Given `comments: { author, index, reactions }` (a vault's `comments` and
 `reactions`; the editor's own vault's with `fs` alone), comments are
@@ -148,7 +163,8 @@ documents; a ✅ resolves. `editor.storage.comments` has the comments and
 | Wikilinks `[[note]]`, `[[note\|text]]`, `[[note#heading]]`, `[[#heading]]` | resolved by the host; a dangling link is dimmed and creates its note when followed; `[[` offers the vault's notes |
 | Embeds `![[target]]` | an image by name, a note or one of its sections (read-only), or a card that opens the file (`![[src/lib.rs#L40-L80]]` names its lines; to show and edit them, use a fence) |
 | Images `![alt](path)` | read from the vault as bytes; `\|200` in the alt sizes; pasted or dropped images are stored under `attachments/` |
-| Front matter | one small line at the top of the note ("2 properties") that opens into a table of them; "Edit YAML" beside it, or arrowing up into it, shows the YAML; `id:` assigned on first open when the host asks |
+| Front matter | the YAML in a code block of its own (as the note's fences are, without the toolbar), folded to one small line at the top of the note ("2 properties · id, title") when it is not being edited; a click on the line, arrowing up into it, or "Edit properties" in its gutter menu opens it, and leaving it folds it again, unless "Collapse when not editing" in that menu is turned off (the choice is kept); `id:` assigned on first open when the host asks |
+| Blank lines | blocks are spaced by the editor; a run of blank lines between two paragraphs, typed or pasted, is kept all the same, each past the first an empty paragraph (written as `&nbsp;`) |
 | Math `$…$`, `$$…$$` | KaTeX by default (loaded on first use), any `MathRenderer` otherwise; prices stay text |
 | Footnotes `[^1]` | numbered by first use, definitions kept where written |
 | Bracketed spans `[text]{#id .class key=value}` | Pandoc's and Djot's attributed text; a comment's pin |
@@ -158,6 +174,19 @@ Every extension is exported on its own; `markdownSetup()` returns the default
 set (`minimalSetup()` a lean one) for `new Editor({ extensions })`, and
 `createEditor()` also builds the default layout (toolbar slot, left column,
 block-action gutter).
+
+In the gutter every block has its glyph (what it is: ¶, H2, •, </>, ---),
+soft until pointed at, the active block's at full strength beside the
+indicator's line, which alone follows the caret from block to block. A
+glyph opens the block's menu (⌘/ from the keyboard): what its type can
+become or do, then Comment (the block quoted, the composer by it) and Fold,
+which folds the block to one line of its first words and a count; the
+line, its glyph in the gutter, or the caret moving into it opens it again.
+Folds are the view's, not the note's. A selection spanning blocks folds, or
+is commented on, together.
+
+The outline lights the section being read as the note scrolls, and scrolls
+itself to keep that entry in view when it is longer than its column.
 
 ## Models
 
@@ -190,7 +219,7 @@ in only when accepted.
 ## Develop
 
 ```sh
-pnpm dev          # the demo page (the package's own files as a vault)
+pnpm dev          # the demo page (the package's own files as a vault; its window is dragged narrower by its edges)
 pnpm test:run     # vitest in browser mode
 pnpm typecheck
 pnpm build        # dist/, which dependents consume

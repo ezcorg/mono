@@ -71,6 +71,40 @@ const glyph = (icon: string, title: string, onClick: () => void): HTMLButtonElem
     return b
 }
 
+/**
+ * Put `clip` (fixed on the page) over the part of `root` in view: within
+ * the area it scrolls in, and within the window. What stands over the
+ * note's edge (the sheet, the comments panel with no room beside the note)
+ * lives in such a frame, which clips it as it slides. Returns the frame's
+ * size.
+ */
+export function frameOver(clip: HTMLElement, root: HTMLElement): { width: number; height: number } {
+    const r = root.getBoundingClientRect()
+    const scroller = scrollerOf(root)
+    let top = r.top
+    let bottom = r.bottom
+    let left = r.left
+    let right = r.right
+    if (scroller) {
+        const s = scroller.getBoundingClientRect()
+        top = Math.max(top, s.top)
+        bottom = Math.min(bottom, s.bottom)
+        left = Math.max(left, s.left)
+        right = Math.min(right, s.right)
+    }
+    top = Math.max(top, 0)
+    bottom = Math.min(bottom, window.innerHeight)
+    left = Math.max(left, 0)
+    right = Math.min(right, window.innerWidth)
+    const width = Math.max(0, right - left)
+    const height = Math.max(0, bottom - top)
+    clip.style.top = `${Math.round(top)}px`
+    clip.style.left = `${Math.round(left)}px`
+    clip.style.width = `${Math.round(width)}px`
+    clip.style.height = `${Math.round(height)}px`
+    return { width, height }
+}
+
 export class Sheet {
     readonly dom: HTMLElement
     /** The sheet's clip: the note's frame, over the page, clipping the sheet. */
@@ -249,28 +283,7 @@ export class Sheet {
     /** The frame over the note's frame: the part of the editor in view,
      *  within the area it scrolls in. The sheet stands at its right edge. */
     private fit() {
-        const r = this.root.getBoundingClientRect()
-        const scroller = scrollerOf(this.root)
-        let top = r.top
-        let bottom = r.bottom
-        let left = r.left
-        let right = r.right
-        if (scroller) {
-            const s = scroller.getBoundingClientRect()
-            top = Math.max(top, s.top)
-            bottom = Math.min(bottom, s.bottom)
-            left = Math.max(left, s.left)
-            right = Math.min(right, s.right)
-        }
-        top = Math.max(top, 0)
-        bottom = Math.min(bottom, window.innerHeight)
-        left = Math.max(left, 0)
-        right = Math.min(right, window.innerWidth)
-        const width = Math.max(0, right - left)
-        this.clip.style.top = `${Math.round(top)}px`
-        this.clip.style.left = `${Math.round(left)}px`
-        this.clip.style.width = `${Math.round(width)}px`
-        this.clip.style.height = `${Math.round(Math.max(0, bottom - top))}px`
+        const { width } = frameOver(this.clip, this.root)
         this.dom.style.width = `${Math.round(Math.min(width, Math.min(560, Math.max(320, width * 0.55))))}px`
     }
 

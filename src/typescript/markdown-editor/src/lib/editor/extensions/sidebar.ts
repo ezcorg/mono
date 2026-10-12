@@ -12,7 +12,8 @@
  * end cannot reach the top of a short document, and the entry nearest the
  * top would otherwise light instead); as the document scrolls, the entry
  * for the current section is highlighted, the last one when the end is
- * reached.
+ * reached, and an outline longer than its column scrolls to keep the lit
+ * entry in view.
  */
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -345,6 +346,24 @@ class SidebarView {
         this.entries.forEach((e, i) =>
             e.row.classList.toggle('is-active', i === activeIndex),
         )
+        this.keepInView(this.entries[activeIndex].row)
+    }
+
+    /** The lit entry in view in the outline's own scroller (the rail), when
+     *  the outline is longer than it: never by moving the note. */
+    private keepInView(row: HTMLElement) {
+        let scroller: HTMLElement | null = null
+        for (let node = this.nav.parentElement; node && node !== document.body; node = node.parentElement) {
+            if (/(auto|scroll|overlay)/.test(getComputedStyle(node).overflowY)) {
+                scroller = node
+                break
+            }
+        }
+        if (!scroller || scroller === this.scroller || scroller.scrollHeight <= scroller.clientHeight) return
+        const frame = scroller.getBoundingClientRect()
+        const box = row.getBoundingClientRect()
+        if (box.top < frame.top) scroller.scrollTo({ top: scroller.scrollTop + (box.top - frame.top) - 8, behavior: 'smooth' })
+        else if (box.bottom > frame.bottom) scroller.scrollTo({ top: scroller.scrollTop + (box.bottom - frame.bottom) + 8, behavior: 'smooth' })
     }
 
     update() {

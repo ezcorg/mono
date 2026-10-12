@@ -80,6 +80,25 @@ describe('Markdown block-level paste', () => {
         expect(code?.textContent).toBe('line one\n  line two')
     })
 
+    it('pastes paragraphs as paragraphs, keeping the blank lines between them: each past the first an empty paragraph', () => {
+        pasteText('One.\n\n\n\nTwo.\n\nThree.\n\n\n')
+        expect(editor.state.doc.content.childCount).toBe(5)
+        expect([...Array(5)].map((_, i) => [editor.state.doc.child(i).type.name, editor.state.doc.child(i).textContent])).toEqual([
+            ['paragraph', 'One.'],
+            ['paragraph', ''],
+            ['paragraph', ''],
+            ['paragraph', 'Two.'],
+            ['paragraph', 'Three.'],
+        ])
+        expect(editor.storage.markdown.getMarkdown()).toBe('One.\n\n\u00A0\n\n\u00A0\n\nTwo.\n\nThree.')
+    })
+
+    it('leaves the blank lines inside a pasted fence to the code', () => {
+        pasteText('Intro\n\n\n```\na\n\n\nb\n```')
+        expect([...Array(3)].map((_, i) => editor.state.doc.child(i).type.name)).toEqual(['paragraph', 'paragraph', 'ezcodeBlock'])
+        expect(editor.state.doc.child(2).textContent).toBe('a\n\n\nb')
+    })
+
     it('transforms a pasted "# Heading" into an h1', () => {
         pasteText('# Hello')
         expect(editor.state.doc.firstChild!.type.name).toBe('heading')

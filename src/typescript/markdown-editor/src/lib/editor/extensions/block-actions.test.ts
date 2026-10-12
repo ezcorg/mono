@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { actionsForNode } from './block-actions'
 import { MarkdownEditor } from '../index'
-import { createTestContainer, createTestEditor, cleanupEditor } from '../../../test/utils'
+import { createTestContainer, createTestEditor, cleanupEditor, waitFor } from '../../../test/utils'
 
 /**
  * Exercises every block-action a node type offers (run via `actionsForNode`),
@@ -64,7 +64,7 @@ describe('Block actions', () => {
             editor.commands.setTextSelection(Math.min(pos + 1, editor.state.doc.content.size - 1))
         }
 
-        const actions = actionsForNode(node)
+        const actions = actionsForNode(node, editor)
         const action = actions.find((a) => a.label === label)
         if (!action) {
             throw new Error(
@@ -335,5 +335,105 @@ describe('Block actions', () => {
         const blocks = editor.getJSON().content ?? []
         expect(blocks.length).toBeGreaterThanOrEqual(2)
         expect(blocks.slice(0, 2).every((b) => b.type === 'heading' && b.attrs?.level === 2)).toBe(true)
+    })
+
+    // ── The gutter ───────────────────────────────────────────────
+    const frames = async (n = 2) => {
+        for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
+    }
+    const glyphs = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>('.ezco-mde-gutter .ezco-mde-block-icon')]
+
+    it('shows a glyph for every block in the gutter, soft, the active block’s strong beside the indicator’s line; a glyph opens its block’s menu', async () => {
+        const editor = await makeEditor('# Title\n\nA paragraph.\n\n* an item')
+        const container = created[created.length - 1].container
+        await frames()
+        // One per block (the editor may keep a paragraph after the list).
+        expect(glyphs(container).length).toBe(editor.state.doc.childCount)
+        expect(glyphs(container).slice(0, 3).map((g) => g.textContent)).toEqual(['H1', '¶', '•'])
+        // Soft, all but the active block's (the note takes focus as it is made).
+        expect(glyphs(container).filter((g) => !g.classList.contains('is-active')).every((g) => parseFloat(getComputedStyle(g).opacity) < 0.5)).toBe(true)
+        // A glyph stays where its block is: nothing of it slides between lines.
+        expect(getComputedStyle(glyphs(container)[0]).transitionProperty).not.toContain('top')
+        // Each within its block's first line (the active block's is hidden: not measured).
+        const blocks = [...editor.view.dom.children].map((b) => b.getBoundingClientRect())
+        glyphs(container).forEach((g, i) => {
+            if (g.classList.contains('is-active')) return
+            const top = g.getBoundingClientRect().top
+            expect(top).toBeGreaterThanOrEqual(blocks[i].top - 1)
+            expect(top).toBeLessThan(blocks[i].top + Math.max(blocks[i].height, 20))
+        })
+        // The active block's glyph stands at full strength; the indicator
+        // beside it is its line alone, its own glyph not shown.
+        editor.commands.focus()
+        editor.commands.setTextSelection(findNode(editor, 'paragraph')!.pos + 1)
+        await frames()
+        expect(glyphs(container).map((g) => g.classList.contains('is-active'))).toEqual(glyphs(container).map((_, i) => i === 1))
+        await waitFor(() => parseFloat(getComputedStyle(glyphs(container)[1]).opacity) > 0.8, 2000)
+        expect(getComputedStyle(container.querySelector('.ezco-mde-block-action-btn-icon') as HTMLElement).visibility).toBe('hidden')
+        // Clicking the list's glyph makes the list active and opens its menu.
+        glyphs(container)[2].click()
+        await frames()
+        expect(editor.state.selection.$from.node(1).type.name).toBe('bulletList')
+        const menu = document.querySelector('.ezco-mde-block-action-menu')
+        // (An item's text is its glyph and its label.)
+        const labels = [...menu!.querySelectorAll('.ezco-mde-context-menu-item')].map((i) => i.textContent?.trim() ?? '')
+        expect(labels.some((l) => l.endsWith('Ordered list'))).toBe(true)
+        expect(labels.some((l) => l.endsWith('Fold'))).toBe(true)
+        ;(editor.storage as any).blockActions.blockActionsView.closeMenu()
+    })
+
+    it('folds a block to one line, and the blocks a selection spans; the line, the caret, or its glyph opens it again', async () => {
+        const editor = await makeEditor('# Title\n\nFirst paragraph here.\n\nSecond.\n\nThird.')
+        const container = created[created.length - 1].container
+        const markdown = editor.storage.markdown.getMarkdown()
+        const paragraphs = () => [...editor.view.dom.querySelectorAll('p')]
+        editor.commands.focus()
+        runAction(editor, 'paragraph', 'Fold')
+        await frames()
+        // Hidden, not gone; one line in its place; the caret out of it.
+        expect(getComputedStyle(paragraphs()[0]).display).toBe('none')
+        expect(editor.storage.markdown.getMarkdown()).toBe(markdown)
+        const fold = () => editor.view.dom.querySelector('.ezco-mde-fold') as HTMLElement | null
+        expect(fold()?.querySelector('.ezco-mde-fold-text')?.textContent).toBe('First paragraph here.')
+        expect(fold()?.querySelector('.ezco-mde-fold-count')?.textContent).toBe('1 block')
+        expect(editor.state.selection.$from.parent.textContent).toBe('Second.')
+        expect(glyphs(container).map((g) => g.textContent)).toEqual(['H1', '▸', '¶', '¶'])
+        fold()!.click()
+        await frames()
+        expect(fold()).toBeNull()
+        expect(getComputedStyle(paragraphs()[0]).display).not.toBe('none')
+        // Three blocks spanned, folded together; the caret arrowed into it opens it.
+        const second = paragraphs()[1]
+        editor.commands.setTextSelection({ from: editor.view.posAtDOM(paragraphs()[0], 0) + 1, to: editor.view.posAtDOM(second, 0) + 2 })
+        expect(editor.commands.foldSelection()).toBe(true)
+        await frames()
+        expect(fold()?.querySelector('.ezco-mde-fold-count')?.textContent).toBe('2 blocks')
+        expect(paragraphs().slice(0, 2).every((p) => getComputedStyle(p).display === 'none')).toBe(true)
+        expect(editor.state.selection.$from.parent.textContent).toBe('Third.')
+        editor.commands.setTextSelection(editor.view.posAtDOM(paragraphs()[0], 0) + 1)
+        await frames()
+        expect(fold()).toBeNull()
+        // A fold's glyph in the gutter opens it too.
+        runAction(editor, 'heading', 'Fold')
+        await frames()
+        expect(glyphs(container)[0].textContent).toBe('▸')
+        glyphs(container)[0].click()
+        await frames()
+        expect(fold()).toBeNull()
+        expect(editor.view.dom.querySelector('h1')).not.toBeNull()
+    })
+
+    it('offers a comment on a block when there is an author, quoting the block', async () => {
+        const container = createTestContainer(`ba-${created.length}`)
+        const editor = await createTestEditor(container, { content: 'One.\n\nTwo.', comments: { author: 'theo' } })
+        created.push({ editor, container })
+        const para = findNode(editor, 'paragraph')!
+        const labels = actionsForNode(para.node, editor).map((a) => a.label)
+        expect(labels.slice(-3)).toEqual(['Comment', 'Fold', 'Delete'])
+        expect(actionsForNode(para.node).map((a) => a.label)).not.toContain('Comment')
+        runAction(editor, 'paragraph', 'Comment')
+        await frames()
+        const draft = (editor.storage as any).comments.draft()
+        expect(draft?.ranges).toEqual([{ from: para.pos + 1, to: para.pos + 1 + 'One.'.length }])
     })
 })

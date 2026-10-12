@@ -9,8 +9,6 @@ This editor supports **Markdown** syntax.
 
 Use \`/settings\` to configure, \`ctrl + enter\` to trigger a completion
 
-&nbsp;
-
 * [ ] \`TODO: actually use settings\`
 * [ ] \`TODO: actually use llms\`
 
@@ -46,8 +44,6 @@ Use \`/settings\` to configure, \`ctrl + enter\` to trigger a completion
 | Cell 1   | Cell 2   | Cell 3   |
 | Cell 4   | Cell 5   | Cell 6   |
 
-&nbsp;
-
 - [ ] \`TODO: fix pasting typical md syntax not producing tables\`
 
 ### Codeblocks
@@ -60,15 +56,11 @@ function greet(name) {
 greet('World');
 \`\`\`
 
-&nbsp;
-
 - [ ] \`TODO: support registering/calling execution handlers for each file extension/mime\` (e.g. allowing to run files)
 
 #### Language server support
 
 Lazily-loaded language server support for Typescript/Javascript, Python, Rust, and Go.
-
-&nbsp;
 
 \`\`\`python
 def add(a, b):
@@ -77,8 +69,6 @@ def add(a, b):
 
 print(add(5, 3))
 \`\`\`
-
-&nbsp;
 
 * [ ] \`TODO: support LSPs\`
 
@@ -95,25 +85,17 @@ print(add(5, 3))
 
 Reference and change files in a document-local filesystem.
 
-&nbsp;
-
 \`\`\`src/App.tsx
 \`\`\`
-
-&nbsp;
 
 Or only some of a file's lines, numbered as the file numbers them. Edits go back into the file where those lines are, even if they have moved since.
 
 \`\`\`example.ts#L9-L11
 \`\`\`
 
-&nbsp;
-
 ### Comments
 
 Select some text and choose **Comment** (or press ⌘⌥M) to start one beside it. A comment is a document of its own that quotes a passage of this one, so it travels with the file and reads as a document anywhere else.
-
-&nbsp;
 
 Try editing the content!
 `;

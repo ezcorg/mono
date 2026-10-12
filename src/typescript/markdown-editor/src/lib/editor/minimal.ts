@@ -100,7 +100,11 @@ export function minimalSetup(
         TaskList,
         ExtendedTaskItem.configure({ nested: true }),
         TableKit.configure({ table: false }),
-        MarkdownTable.configure({ resizable: true, allowTableNodeSelection: true }),
+        // Columns are not resizable: Markdown keeps no widths, and the
+        // resizing plugin's own table node view makes Tiptap build every
+        // node view (each fence's CodeMirror) a second time when it adds
+        // its plugins after the view is made.
+        MarkdownTable.configure({ resizable: false, allowTableNodeSelection: true }),
         ...(options.extensions || []),
     ];
 }

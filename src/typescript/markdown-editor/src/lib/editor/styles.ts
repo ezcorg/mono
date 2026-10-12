@@ -86,6 +86,10 @@ export const styleModule: StyleModule = new StyleModule({
         display: 'flex',
         'flex-direction': 'row',
         'align-items': 'stretch',
+        // The row (the rail, the gutter, the note's column, the comments)
+        // centred as one in a wider host: the gutter keeps to the note's
+        // edge, and what is left over goes to the sides.
+        'justify-content': 'center',
         'min-height': 0,
         'min-width': 0,
         flex: 1,
@@ -234,9 +238,13 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde .cm-tooltip.cm-tooltip-autocomplete > ul > li': {
         'border-radius': '4px',
     },
+    // The note's column: as wide as there is room for, up to the measure
+    // (the gutter beside it, the comments past it; comment-margin.ts reads
+    // this `max-width` as what the note keeps for itself).
     '.ezco-mde-body-host': {
-        flex: 1,
+        flex: '1 1 auto',
         'min-width': 0,
+        'max-width': 'var(--ezco-mde-measure)',
         // What floats over the note (a comment card, a model's answer) is
         // placed against the note's column.
         position: 'relative',
@@ -245,6 +253,10 @@ export const styleModule: StyleModule = new StyleModule({
         // places the caret instead of only the lines of text being clickable.
         display: 'flex',
         'flex-direction': 'column',
+    },
+    '.ezco-mde-body-host > .ezco-mde-body': {
+        width: '100%',
+        'box-sizing': 'border-box',
     },
     // Empty slots take no space (toolbar mounted elsewhere; outline disabled).
     '.ezco-mde-nav:empty, .ezco-mde-toolbar-slot:empty': {
@@ -315,6 +327,9 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-text-xs': 'calc(var(--ezco-mde-base-font-size) / var(--ezco-mde-type-ratio))',
         '--ezco-mde-text-sm': 'calc(var(--ezco-mde-text-xs) * var(--ezco-mde-type-ratio))',
         '--ezco-mde-text-base': 'var(--ezco-mde-base-font-size)',
+        // The note's text column: some seventy-five characters of the base
+        // type. A host that wants another measure sets this (`80ch`, `100%`).
+        '--ezco-mde-measure': 'calc(var(--ezco-mde-text-base) * 38)',
         '--ezco-mde-text-lg': 'calc(var(--ezco-mde-text-base) * var(--ezco-mde-type-ratio))',
         '--ezco-mde-text-xl': 'calc(var(--ezco-mde-text-lg) * var(--ezco-mde-type-ratio))',
         '--ezco-mde-text-2xl': 'calc(var(--ezco-mde-text-xl) * var(--ezco-mde-type-ratio))',
@@ -601,6 +616,12 @@ export const styleModule: StyleModule = new StyleModule({
             position: 'relative',
             'padding-left': 'var(--ezco-mde-list-gutter)',
         },
+        // Items a little apart, and within an item its nested list, second
+        // paragraph or quote a little under its text: a list reads as items,
+        // not as a block of lines. (A task item's label is placed, not in
+        // the flow: it parts nothing.)
+        '& li + li': { 'margin-top': '0.35em' },
+        '& li > :not(label) + *, & li > div > * + *': { 'margin-top': '0.35em' },
         // Decoration pinned to the item's left edge → identical start-x.
         '& ul > li::before, & ol > li::before': {
             position: 'absolute',
@@ -671,6 +692,21 @@ export const styleModule: StyleModule = new StyleModule({
             position: 'static',
             'padding-left': 0,
         },
+        // Nor the room between the note's list items (a search result in a
+        // code block's toolbar, a completion, is a list item too).
+        '& .cm-editor li + li, & .cm-editor li > * + *': {
+            'margin-top': 0,
+        },
+        // Code keeps its spaces whether or not it can be typed in: the
+        // ProseMirror stylesheet gives anything `contenteditable="false"`
+        // `white-space: normal`, which would fold a shown code block's
+        // indentation (the same precedence as CodeMirror's own rule, later).
+        '& .cm-editor .cm-content': {
+            'white-space': 'pre',
+        },
+        '& .cm-editor .cm-content.cm-lineWrapping': {
+            'white-space': 'break-spaces',
+        },
         // Likewise keep the editor's content typography (the `& p` / `& h1…`
         // font sizes below) from leaking into CodeMirror tooltips — LSP
         // hover docs and diagnostics render markdown as <p>/<h*>/<code>/<li>,
@@ -695,58 +731,49 @@ export const styleModule: StyleModule = new StyleModule({
         // block. So we set `margin-top` on the *following* sibling,
         // varied by what each side is.
         //
-        // Selectors use `& > …` directly: `editor.view.dom` is the
-        // ProseMirror element, and `createEditor` adds the `.ezco-mde`
-        // class onto that same element — so `.ezco-mde` and
-        // `.ProseMirror` always live on one element, not nested. A
-        // descendant selector like `.ezco-mde .ProseMirror > h2` would
-        // match nothing.
+        // Selectors use `&.ezco-mde-body > …`: `editor.view.dom` is the
+        // ProseMirror element, and `createEditor` adds `.ezco-mde-body`
+        // onto that same element. The class is doubled for specificity
+        // (0,2,0): the resets above (`& p`, `& .cm-editor`: 0,1,1 and
+        // more) would otherwise win over `& > * + *` (0,1,0), and the
+        // paragraphs would pack with no space between them.
         //
         // Benefits: no margin-collapsing surprises, `:last-child`
         // resets become unnecessary, the document hugs its bottom
         // edge, and converting a paragraph ↔ heading ↔ list ↔ quote
         // doesn't shift the document below.
         // ─────────────────────────────────────────────────────────────
-        '& > * + *': { 'margin-top': '1em' },
-        // Body content that immediately follows a heading hugs it — a
-        // heading "owns" its body, so the intro paragraph / list / etc.
-        // should feel attached, not floating below. Scoped to non-heading
-        // followers so a sub-heading after a heading still gets its full
-        // top margin from the `* + h*` rules below.
-        '& > :is(h1, h2, h3, h4, h5, h6) + :not(h1, h2, h3, h4, h5, h6)':
-            {
-                'margin-top': '1em',
-            },
-        // Inset blocks want extra breathing room above (overrides the
-        // base 1em — these read as standalone surfaces).
-        '& > * + .cm-editor, & > * + .tableWrapper, & > * + blockquote, & > * + .ezco-mde-callout':
-            {
-                'margin-top': '1.5em',
-            },
-        // Headings always claim their own top margin, even when
-        // following another heading. Declared last so they win over
-        // the `h* + *` tightening (same specificity, later cascade).
-        '& > * + h1': { 'margin-top': '1.5em' },
-        '& > * + h2': { 'margin-top': '1.2em' },
-        '& > * + h3': { 'margin-top': '1em' },
-        '& > * + h4, & > * + h5, & > * + h6': { 'margin-top': '0.8em' },
-        // Codeblocks sit flush against the previous block unless that
-        // previous block is a heading — a heading "introduces" the
-        // code surface and earns the inset margin (kept at the
-        // 1.5em set by the `& > * + .cm-editor` rule above). Other
-        // adjacent blocks (paragraphs, lists, another codeblock)
-        // pack against the codeblock without a gap.
-        //
-        // Specificity: `.ezco-mde` (0,1,0) + `:not(h*)` (0,0,1) +
-        // `.cm-editor` (0,1,0) = 0,2,1, which beats the
-        // `& > * + .cm-editor` rule's 0,2,0 — so this override
-        // applies whenever the preceding sibling is *not* a heading.
-        '& > :not(h1, h2, h3, h4, h5, h6) + .cm-editor': {
-            'margin-top': 0,
+        // One line of space between blocks: the note reads with room
+        // between its paragraphs without blank lines typed in for it (a
+        // blank line typed in is an empty paragraph, and adds its own).
+        '&.ezco-mde-body > * + *': { 'margin-top': '1em' },
+        // A heading owns what follows it: its body sits close under it.
+        // Scoped to non-heading followers so a sub-heading after a heading
+        // still gets its full top margin from the `* + h*` rules below.
+        '&.ezco-mde-body > :is(h1, h2, h3, h4, h5, h6) + :not(h1, h2, h3, h4, h5, h6)': {
+            'margin-top': '0.6em',
         },
+        // Inset blocks (code, tables, quotes, callouts) read as surfaces of
+        // their own and get a little more room above (0,3,0: over the
+        // heading rule's 0,2,2); under a heading, the heading's closeness
+        // still holds (0,3,1: over both).
+        '&.ezco-mde-body > * + :is(.cm-editor, .tableWrapper, blockquote, .ezco-mde-callout)': {
+            'margin-top': '1.25em',
+        },
+        '&.ezco-mde-body > :is(h1, h2, h3, h4, h5, h6) + :is(.cm-editor, .tableWrapper, blockquote, .ezco-mde-callout)': {
+            'margin-top': '0.75em',
+        },
+        // Headings always claim their own top margin, even when following
+        // another heading (0,2,1: over the base, and the `h* + :not(h*)`
+        // tightening does not reach a heading).
+        '&.ezco-mde-body > * + h1': { 'margin-top': '1.75em' },
+        '&.ezco-mde-body > * + h2': { 'margin-top': '1.5em' },
+        '&.ezco-mde-body > * + h3': { 'margin-top': '1.25em' },
+        '&.ezco-mde-body > * + h4, &.ezco-mde-body > * + h5, &.ezco-mde-body > * + h6': { 'margin-top': '1em' },
         // Front matter is the note's header, not a block before it: whatever
-        // follows (usually the title) sits close under the properties.
-        '& > .ezco-mde-front-matter + *': {
+        // follows (usually the title) sits close under the properties (0,3,0,
+        // last: over the inset rule too).
+        '&.ezco-mde-body > .ezco-mde-front-matter + *': {
             'margin-top': '0.75rem',
         },
     },
@@ -827,6 +854,89 @@ export const styleModule: StyleModule = new StyleModule({
         // scroll frame) is visibly choppy.
         position: 'sticky',
         top: '6px',
+    },
+    // A glyph for every block (block-actions.ts), level with its first
+    // line in the gutter: what the block is, soft until pointed at, the
+    // active block's at full strength. A fold's glyph (folding.ts) stands a
+    // little stronger: it is the way back.
+    '.ezco-mde-block-icon': {
+        position: 'absolute',
+        width: '24px',
+        height: '14px',
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        padding: 0,
+        border: 0,
+        'border-radius': '3px',
+        background: 'transparent',
+        color: 'var(--ezco-mde-block-action-btn-color)',
+        'font-family': 'var(--cm-font-family)',
+        'font-size': '13px',
+        'line-height': 1,
+        opacity: 0.35,
+        cursor: 'pointer',
+        // Only its strength moves: the glyph is where its block is, at once.
+        transition: 'opacity 120ms ease-out',
+        'z-index': 4,
+    },
+    '.ezco-mde-block-icon:hover, .ezco-mde-block-icon:focus-visible': {
+        opacity: 0.9,
+        outline: 'none',
+    },
+    '.ezco-mde-block-icon.is-fold': {
+        opacity: 0.7,
+    },
+    // The active block's glyph stands at full strength beside the
+    // indicator's line, which is all the indicator shows for one block (its
+    // own glyph would slide between lines as the caret moves).
+    '.ezco-mde-block-icon.is-active': {
+        opacity: 0.9,
+    },
+    '.ezco-mde-block-action-btn:not([data-block-type="spanning"]) > .ezco-mde-block-action-btn-icon': {
+        visibility: 'hidden',
+    },
+    // A folded block is only hidden (the note still has it); in its place,
+    // one line: the first words of what is folded and how many blocks,
+    // in the chrome's type, dashed as a thing that is not the note's own.
+    '.ezco-mde-body > .ezco-mde-folded': {
+        display: 'none !important',
+    },
+    '.ezco-mde-body > .ezco-mde-fold': {
+        display: 'flex',
+        'align-items': 'baseline',
+        gap: '10px',
+        'box-sizing': 'border-box',
+        'max-width': '100%',
+        padding: '3px 10px',
+        border: '1px dashed var(--ezco-mde-context-menu-border)',
+        'border-radius': '6px',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+        'font-family': 'var(--ezco-mde-chrome-font)',
+        'font-size': '13px',
+        'line-height': 1.5,
+        cursor: 'pointer',
+        'user-select': 'none',
+        transition: 'color 120ms ease-out, border-color 120ms ease-out',
+    },
+    '.ezco-mde-body > .ezco-mde-fold:hover': {
+        color: 'var(--ezco-mde-fg)',
+        'border-color': 'var(--ezco-mde-context-menu-item-color-muted)',
+    },
+    '.ezco-mde-fold-text': {
+        flex: '1 1 auto',
+        'min-width': 0,
+        overflow: 'hidden',
+        'white-space': 'nowrap',
+        'text-overflow': 'ellipsis',
+    },
+    '.ezco-mde-fold-count': {
+        flex: 'none',
+        padding: '0 7px',
+        'border-radius': '999px',
+        'font-size': '11px',
+        'line-height': '17px',
+        background: 'var(--ezco-mde-code-bg)',
     },
     // Codeblocks have their own sticky toolbar at the top of the
     // block. Align the indicator icon's stuck position with that
@@ -1570,87 +1680,53 @@ export const styleModule: StyleModule = new StyleModule({
         'font-size': '0.9em',
     },
 
-    // Front matter (extensions/front-matter.ts): a properties table; the YAML
-    // when the caret is in it.
+    // Front matter (extensions/front-matter.ts): the YAML in a code block
+    // of its own (no toolbar), folded to one small line at the top of the
+    // note, "2 properties · id, title", when it is not being edited. Muted,
+    // in the chrome's type; the line is the way in.
     '.ezco-mde-body .ezco-mde-front-matter': {
         'font-family': 'var(--ezco-mde-chrome-font)',
         'font-size': '13px',
     },
-    // One small line at the top of the note: "▸ 2 properties" opens the
-    // table, "▾ 2 properties" closes it, "Edit YAML" beside it shows the
-    // source. Muted, in the chrome's type, and nothing else in it is a
-    // control.
-    '.ezco-mde-props-bar': {
+    '.ezco-mde-front-matter-line': {
         display: 'flex',
         'align-items': 'baseline',
-        gap: '12px',
-        padding: '0 0 4px',
-    },
-    '.ezco-mde-props-toggle, .ezco-mde-props-edit': {
+        gap: '8px',
+        'max-width': '100%',
         margin: 0,
-        padding: 0,
+        padding: '2px 0',
         border: 0,
         background: 'transparent',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
         font: 'inherit',
         'font-size': '11px',
         'letter-spacing': '0.04em',
+        'text-align': 'left',
         cursor: 'pointer',
     },
-    '.ezco-mde-props-toggle:hover, .ezco-mde-props-toggle:focus-visible, .ezco-mde-props-edit:hover, .ezco-mde-props-edit:focus-visible': {
+    '.ezco-mde-front-matter-line:hover, .ezco-mde-front-matter-line:focus-visible': {
         color: 'var(--ezco-mde-fg)',
         outline: 'none',
     },
-    '.ezco-mde-props-edit[hidden]': {
-        display: 'none',
+    '.ezco-mde-front-matter-count': {
+        flex: 'none',
     },
-    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-props-host': {
-        display: 'none',
-    },
-    '.ezco-mde-body .ezco-mde-front-matter:not(.is-collapsed) > .ezco-mde-source-preview': {
-        'padding-bottom': '0.6rem',
-        'border-bottom': '1px solid var(--ezco-mde-divider)',
-    },
-    '.ezco-mde-body .ezco-mde-front-matter > pre.ezco-mde-source-text': {
-        margin: 0,
-        padding: '0.5em 0.7em',
-        background: 'var(--ezco-mde-code-bg)',
-        'border-radius': '6px',
-        'white-space': 'pre-wrap',
-    },
-    '.ezco-mde-props': {
-        display: 'grid',
-        'grid-template-columns': 'minmax(6em, max-content) 1fr',
-        'column-gap': '1.2em',
-        'row-gap': '0.25em',
-    },
-    '.ezco-mde-prop': {
-        display: 'contents',
-    },
-    '.ezco-mde-prop-key': {
-        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+    '.ezco-mde-front-matter-keys': {
+        'min-width': 0,
+        overflow: 'hidden',
+        'text-overflow': 'ellipsis',
         'white-space': 'nowrap',
+        opacity: 0.75,
     },
-    '.ezco-mde-prop-value': {
-        'overflow-wrap': 'anywhere',
+    '.ezco-mde-front-matter-keys[hidden]': {
+        display: 'none',
     },
-    '.ezco-mde-prop-value.is-empty, .ezco-mde-props-empty': {
-        opacity: 0.5,
+    '.ezco-mde-body .ezco-mde-front-matter:not(.is-collapsed) > .ezco-mde-front-matter-line': {
+        display: 'none',
     },
-    '.ezco-mde-prop-chip': {
-        display: 'inline-block',
-        margin: '0 0.35em 0.2em 0',
-        padding: '0 0.5em',
-        'border-radius': '999px',
-        background: 'var(--ezco-mde-code-bg)',
-    },
-    '.ezco-mde-props-error': {
-        color: 'var(--ezco-mde-danger)',
-        'margin-bottom': '0.3em',
-    },
-    '.ezco-mde-props-raw': {
-        margin: 0,
-        'white-space': 'pre-wrap',
+    // CodeMirror's own base theme makes its root flex with `!important`.
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed > .cm-editor': {
+        display: 'none !important',
     },
 
     // Math (extensions/math.ts): typeset, and its TeX between its dollars when
@@ -2155,8 +2231,10 @@ export const styleModule: StyleModule = new StyleModule({
         // Clear: the bubbles are what shows, on the note or beside it.
         background: 'transparent',
     },
+    // Hidden (no comments yet) it is gone whatever its layout: a panel's
+    // own `display` is declared later, so this is marked to win.
     '.ezco-mde-comment-margin[hidden]': {
-        display: 'none',
+        display: 'none !important',
     },
     // The column's head, as a panel's title.
     '.ezco-mde-comment-margin-head': {
@@ -2217,7 +2295,20 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-card.is-resolved:not(.is-active)': {
         opacity: 0.7,
     },
-    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card.is-active .ezco-mde-comment-bubble.is-anchor': {
+    // Beside the note, a comment's bubble is the way to its text: a click
+    // takes the note there, level with the bubble. The current one (the one
+    // looked at, or the one whose text is being read past) stands out a
+    // little from the others, its hairline the accent's.
+    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-bubble.is-anchor': {
+        cursor: 'pointer',
+    },
+    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card': {
+        transition: 'transform 160ms ease-out',
+    },
+    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card.is-current': {
+        transform: 'translateX(-4px)',
+    },
+    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card.is-current .ezco-mde-comment-bubble.is-anchor': {
         'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 45%, transparent)',
     },
     '.ezco-mde-comment-card:focus-visible .ezco-mde-comment-bubble.is-anchor': {
@@ -2397,9 +2488,9 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-link-color)',
         cursor: 'pointer',
     },
-    // Under the bubble, standing on their own: the reactions, React, the
-    // reply count, or a composer's buttons, each a chip with a surface of
-    // its own (they stand on the note). A deletion is asked about there too.
+    // Under the bubble, standing on their own: a composer's buttons, or a
+    // deletion asked about, each a chip with a surface of its own (they
+    // stand on the note).
     '.ezco-mde-comment-under': {
         display: 'flex',
         'align-items': 'center',
@@ -2408,11 +2499,71 @@ export const styleModule: StyleModule = new StyleModule({
         margin: '5px 0 0',
         'font-size': '12.5px',
     },
+    '.ezco-mde-comment-under:empty': {
+        display: 'none',
+    },
     '.ezco-mde-comment-under > .ezco-mde-comment-composer-actions': {
         'margin-left': 'auto',
     },
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-under :is(.ezco-mde-comment-action, .ezco-mde-comment-reaction, .ezco-mde-comment-button)': {
         'box-shadow': 'var(--ezco-mde-bubble-shadow)',
+    },
+    // In the bubble, under the text: the reactions, React at their right,
+    // and at the row's end the reply count, the handle of the thread. The
+    // foot reaches into the bubble's padding, so that the frame around an
+    // open thread (below) has room, while the chips keep to the text's edge.
+    '.ezco-mde-comment-foot': {
+        position: 'relative',
+        'box-sizing': 'border-box',
+        margin: '3px -6px -4px',
+        padding: '4px 6px',
+        'font-size': '12.5px',
+    },
+    '.ezco-mde-comment-foot-row': {
+        position: 'relative',
+        'z-index': 1,
+        display: 'flex',
+        'align-items': 'center',
+        'flex-wrap': 'wrap',
+        gap: '4px',
+        'min-height': '24px',
+    },
+    '.ezco-mde-comment-foot-row > .ezco-mde-comment-action.is-replies': {
+        'margin-left': 'auto',
+    },
+    // The frame of an open thread: it grows out of the count's pill
+    // (comment-margin.ts moves it) to stand around the row and the replies
+    // under it, and back into the pill when the thread is closed.
+    '.ezco-mde-comment-thread-frame': {
+        position: 'absolute',
+        inset: 0,
+        'box-sizing': 'border-box',
+        border: '1px solid color-mix(in srgb, var(--ezco-mde-accent) 45%, transparent)',
+        'border-radius': '10px',
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 5%, transparent)',
+        'pointer-events': 'none',
+        'z-index': 0,
+    },
+    '.ezco-mde-comment-foot:not(.is-open) > .ezco-mde-comment-thread-frame': {
+        display: 'none',
+    },
+    // Clipped while it moves: what the frame has not yet reached is not shown.
+    '.ezco-mde-comment-foot.is-moving': {
+        overflow: 'hidden',
+    },
+    // The thread: the replies, each a bubble of its own, the reply being
+    // written last of them.
+    '.ezco-mde-comment-thread': {
+        position: 'relative',
+        'z-index': 1,
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '8px',
+        margin: 0,
+        padding: '8px 0 2px',
+    },
+    '.ezco-mde-comment-thread > .ezco-mde-comment-message + .ezco-mde-comment-message, .ezco-mde-comment-thread > .ezco-mde-comment-message.is-composer': {
+        'margin-top': 0,
     },
     '.ezco-mde-comment-under .ezco-mde-comment-button': {
         'border-radius': '999px',
@@ -2455,12 +2606,29 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-action.is-icon > svg, .ezco-mde-comment-action.is-replies > svg': {
         display: 'block',
     },
+    // The reply count: the handle of the thread. Open, it takes the accent
+    // and its caret turns; the thread's frame grows out of it.
     '.ezco-mde-comment-action.is-replies': {
-        gap: '5px',
-        padding: '0 9px 0 7px',
+        gap: '4px',
+        padding: '0 6px 0 7px',
+        transition: 'background-color 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out',
+    },
+    '.ezco-mde-comment-replies-caret': {
+        display: 'inline-flex',
+        transition: 'transform 200ms ease-out',
+    },
+    '.ezco-mde-comment-replies-caret > svg': {
+        display: 'block',
+        width: '12px',
+        height: '12px',
     },
     '.ezco-mde-comment-action.is-replies[aria-expanded="true"]': {
         color: 'var(--ezco-mde-fg)',
+        'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 60%, transparent)',
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 14%, transparent)',
+    },
+    '.ezco-mde-comment-action.is-replies[aria-expanded="true"] > .ezco-mde-comment-replies-caret': {
+        transform: 'rotate(180deg)',
     },
     '.ezco-mde-comment-action.is-danger': {
         color: 'var(--ezco-mde-danger)',
@@ -2515,21 +2683,10 @@ export const styleModule: StyleModule = new StyleModule({
         background: 'var(--ezco-mde-context-menu-item-bg-hover)',
         outline: 'none',
     },
-    // The thread under a message: its replies, indented (the indentation is
-    // the thread; there is no line), then the field for the next.
-    '.ezco-mde-comment-thread': {
-        'align-self': 'stretch',
-        display: 'flex',
-        'flex-direction': 'column',
-        gap: '8px',
-        margin: '6px 0 0',
-        'padding-left': '14px',
-    },
-    '.ezco-mde-comment-thread > .ezco-mde-comment-message + .ezco-mde-comment-message': {
-        'margin-top': 0,
-    },
-    '.ezco-mde-comment-thread > .ezco-mde-comment-message:first-child': {
-        'margin-top': 0,
+    '@media (prefers-reduced-motion: reduce)': {
+        '.ezco-mde-comment-replies-caret, .ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card': {
+            transition: 'none',
+        },
     },
     // A reaction: a small pill, filled with the accent when it is the reader's.
     '.ezco-mde-comment-reaction': {
@@ -2677,6 +2834,45 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-margin.is-panel .ezco-mde-comment-inside': {
         overflow: 'visible',
         'max-height': 'none',
+    },
+    // The panel with no room beside the note: over the note's right edge
+    // instead, as the sheet is, in a frame the size of the note's own that
+    // clips it as it slides in; away to the edge, faded, with a handle, when
+    // the pointer leaves it (comment-margin.ts).
+    '.ezco-mde-comment-overlay-frame': {
+        position: 'fixed',
+        'z-index': 600,
+        overflow: 'hidden',
+        'pointer-events': 'none',
+    },
+    '.ezco-mde-comment-margin.is-overlay': {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        height: '100%',
+        'max-height': 'none',
+        'pointer-events': 'auto',
+        padding: '0 8px 0 30px',
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        'border-right': 0,
+        'border-radius': '10px 0 0 10px',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        'box-shadow': 'var(--ezco-mde-chrome-shadow)',
+        transition: 'transform 220ms ease, opacity 220ms ease',
+    },
+    '.ezco-mde-comment-margin.is-overlay.is-entering': {
+        transform: 'translateX(100%)',
+    },
+    '.ezco-mde-comment-margin.is-overlay.is-away': {
+        opacity: 0.55,
+        transform: 'translateX(calc(100% - 30px))',
+    },
+    '.ezco-mde-comment-margin.is-overlay.is-away > .ezco-mde-comment-sheet-handle': {
+        opacity: 1,
+        'pointer-events': 'auto',
+    },
+    '.ezco-mde-comment-margin.is-overlay > .ezco-mde-comment-margin-head': {
+        'padding-top': '10px',
     },
     // ─────────────────────────────────────────────────────────────
     // The sheet (extensions/comment-sheet.ts): a comment written in full,

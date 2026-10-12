@@ -1,9 +1,10 @@
 import { Editor, Extension } from '@tiptap/core'
-import { NodeSelection, Plugin, PluginKey, TextSelection, type Selection } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
+import { foldsOf, type Fold } from './folding'
 
 /** Where the block-action indicator should mount (same shape as the toolbar /
  *  sidebar `mount`). */
@@ -46,7 +47,11 @@ interface BlockAction {
     run: (ctx: { editor: Editor; pos: number; node: PMNode }) => void
 }
 
+/** The glyph of a fold in the gutter (folding.ts). */
+const FOLD_ICON = '▸'
+
 const TYPE_ICONS: Record<string, string> = {
+    frontMatter: '---',
     paragraph: '¶',
     heading: 'H',
     bulletList: '•',
@@ -263,7 +268,41 @@ function collectParagraphs(listNode: PMNode): PMNode[] {
     return out
 }
 
-export function actionsForNode(node: PMNode): BlockAction[] {
+/** Whether a comment can be written in `editor` (there is an author). */
+function canComment(editor: Editor | undefined): boolean {
+    return !!(editor?.storage as { comments?: { author?: () => string | null } } | undefined)?.comments?.author?.()
+}
+
+/**
+ * What a block's menu offers: what its type can become or do, then what
+ * any block can: a comment on it (the block quoted, the composer by it)
+ * and folding it to one line; Delete last.
+ */
+export function actionsForNode(node: PMNode, editor?: Editor): BlockAction[] {
+    const actions = typeActions(node, editor)
+    const extras: BlockAction[] = []
+    const name = node.type.name
+    if (canComment(editor) && name !== 'frontMatter') {
+        extras.push({
+            label: 'Comment',
+            icon: '❝',
+            run: ({ editor, pos, node }) => {
+                const { doc } = editor.state
+                const selection = node.isLeaf || node.isAtom ? NodeSelection.create(doc, pos) : TextSelection.between(doc.resolve(pos + 1), doc.resolve(pos + node.nodeSize - 1))
+                editor.view.dispatch(editor.state.tr.setSelection(selection))
+                editor.commands.startComment()
+            },
+        })
+    }
+    if (name !== 'frontMatter' && name !== 'horizontalRule') {
+        extras.push({ label: 'Fold', icon: FOLD_ICON, run: ({ editor, pos, node }) => editor.commands.foldBlocks(pos, pos + node.nodeSize) })
+    }
+    if (!extras.length) return actions
+    const last = actions[actions.length - 1]
+    return last?.label.startsWith('Delete') ? [...actions.slice(0, -1), ...extras, last] : [...actions, ...extras]
+}
+
+function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
     const remove: BlockAction = {
         label: 'Delete',
         icon: '✕',
@@ -289,6 +328,16 @@ export function actionsForNode(node: PMNode): BlockAction[] {
     }
 
     switch (node.type.name) {
+        case 'frontMatter': {
+            // The note's properties: open them, choose whether they fold
+            // away when not being edited (the mark says they do), or drop them.
+            const folds = (editor?.storage as { frontMatter?: { autoCollapse: boolean } } | undefined)?.frontMatter?.autoCollapse ?? true
+            return [
+                { label: 'Edit properties', icon: '✎', run: ({ editor }) => editor.commands.editFrontMatter() },
+                { label: `${folds ? '✓ ' : ''}Collapse when not editing`, icon: '⇅', run: ({ editor }) => editor.commands.setFrontMatterAutoCollapse(!folds) },
+                remove,
+            ]
+        }
         case 'paragraph':
             return [
                 { label: 'Heading 1', icon: 'H1', run: ({ editor }) => editor.chain().focus().setHeading({ level: 1 }).run() },
@@ -503,6 +552,11 @@ class BlockActionsView {
     // Using `blockType` alone for icon caching would freeze the
     // displayed glyph at the first heading level encountered.
     private lastIconText: string | null = null
+    // A glyph for every block of the note, always in the gutter: what the
+    // block is, soft until it is the active one (which the indicator shows
+    // instead), and the handle to its menu. A fold's glyph opens the fold.
+    private icons: HTMLButtonElement[] = []
+    private iconsFrame = 0
 
     constructor(view: EditorView, editor: Editor, options: BlockActionsOptions) {
         this.view = view
@@ -562,7 +616,10 @@ class BlockActionsView {
         this.wrapper.appendChild(this.btn)
 
         if (typeof ResizeObserver !== 'undefined') {
-            this.resizeObserver = new ResizeObserver(() => this.reposition())
+            this.resizeObserver = new ResizeObserver(() => {
+                this.reposition()
+                this.scheduleIcons()
+            })
             this.resizeObserver.observe(view.dom)
         }
 
@@ -594,15 +651,118 @@ class BlockActionsView {
         document.addEventListener('mousedown', this.onDocumentMouseDown)
 
         // Initial position
-        requestAnimationFrame(() => this.reposition())
+        requestAnimationFrame(() => {
+            this.reposition()
+            this.scheduleIcons()
+        })
     }
 
     update(view: EditorView) {
         this.view = view
         this.reposition()
+        this.scheduleIcons()
+    }
+
+    /** The glyphs laid out again, once, in the next frame. */
+    private scheduleIcons() {
+        if (this.iconsFrame) return
+        this.iconsFrame = requestAnimationFrame(() => {
+            this.iconsFrame = 0
+            this.layoutIcons()
+        })
+    }
+
+    /** A glyph level with the first line of each top-level block (one for a
+     *  fold, at its line), the active block's hidden behind the indicator. */
+    private layoutIcons() {
+        if (!this.view.dom.isConnected) return
+        const { doc } = this.view.state
+        const folds = foldsOf(this.view.state)
+        const wrapperRect = this.wrapper.getBoundingClientRect()
+        const base = this.wrapper.scrollTop - wrapperRect.top
+        type Entry = { glyph: string; top: number; pos: number; type: string; fold: Fold | null }
+        const entries: Entry[] = []
+        doc.forEach((node, offset) => {
+            const fold = folds.find((f) => offset >= f.from && offset < f.to)
+            if (fold) {
+                if (fold.from !== offset) return
+                const line = this.view.dom.querySelector<HTMLElement>(`.ezco-mde-fold[data-from="${fold.from}"]`)
+                if (!line) return
+                const rect = line.getBoundingClientRect()
+                entries.push({ glyph: FOLD_ICON, top: rect.top + base + Math.max(0, Math.round(rect.height / 2 - 6.5)), pos: offset, type: 'fold', fold })
+                return
+            }
+            const dom = this.view.nodeDOM(offset) as HTMLElement | null
+            if (!dom || typeof dom.getBoundingClientRect !== 'function') return
+            const rect = dom.getBoundingClientRect()
+            if (!rect.height) return
+            entries.push({ glyph: iconForNode(node), top: rect.top + base + computeIconOffsetY(dom), pos: offset, type: node.type.name, fold: null })
+        })
+        while (this.icons.length > entries.length) this.icons.pop()!.remove()
+        const activeShown = this.btn.style.opacity === '1' && this.activePos >= 0
+        entries.forEach((entry, i) => {
+            let icon = this.icons[i]
+            if (!icon) {
+                icon = document.createElement('button')
+                icon.type = 'button'
+                icon.className = 'ezco-mde-block-icon'
+                icon.contentEditable = 'false'
+                icon.addEventListener('mousedown', (e) => e.preventDefault())
+                icon.addEventListener('click', (e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    this.iconClicked(e.currentTarget as HTMLButtonElement)
+                })
+                this.wrapper.appendChild(icon)
+                this.icons.push(icon)
+            }
+            icon.dataset.pos = String(entry.pos)
+            icon.dataset.blockType = entry.type
+            if (icon.textContent !== entry.glyph) icon.textContent = entry.glyph
+            const title = entry.fold ? 'Unfold' : 'Block actions'
+            if (icon.title !== title) {
+                icon.title = title
+                icon.setAttribute('aria-label', title)
+            }
+            const top = `${Math.round(entry.top)}px`
+            if (icon.style.top !== top) icon.style.top = top
+            icon.classList.toggle('is-fold', !!entry.fold)
+            icon.classList.toggle('is-active', !entry.fold && activeShown && entry.pos === this.activePos)
+            if (this.columnMode) {
+                if (icon.style.right !== '16px') {
+                    icon.style.right = '16px'
+                    icon.style.left = 'auto'
+                }
+            } else if (icon.style.left !== '-40px') icon.style.left = '-40px'
+        })
+    }
+
+    /** A glyph clicked: a fold's opens the fold; a block's makes the block
+     *  the active one (the selection goes into it) and opens its menu there. */
+    private iconClicked(icon: HTMLButtonElement) {
+        const pos = Number(icon.dataset.pos)
+        if (!Number.isFinite(pos)) return
+        if (icon.dataset.blockType === 'fold') {
+            this.editor.commands.unfold(pos)
+            this.editor.view.focus()
+            return
+        }
+        const { doc } = this.view.state
+        const node = doc.nodeAt(pos)
+        if (!node) return
+        if (this.isOpen) this.closeMenu()
+        const selection = node.isLeaf || node.isAtom || node.type.name === 'ezcodeBlock' ? NodeSelection.create(doc, pos) : Selection.near(doc.resolve(pos + 1), 1)
+        this.view.dispatch(this.view.state.tr.setSelection(selection).scrollIntoView())
+        this.view.focus()
+        this.reposition()
+        const rect = icon.getBoundingClientRect()
+        this.openMenu('click-point', { x: rect.left, y: rect.bottom })
     }
 
     destroy() {
+        if (this.iconsFrame) cancelAnimationFrame(this.iconsFrame)
+        for (const icon of this.icons) icon.remove()
+        this.icons = []
         this.activeMenu?.destroy()
         this.activeMenu = null
         this.popup?.destroy()
@@ -794,6 +954,26 @@ class BlockActionsView {
             })
         }
 
+        // What any blocks can: a comment on the selection, the blocks folded.
+        if (canComment(editor)) {
+            items.push({
+                label: 'Comment',
+                icon: '❝',
+                onSelect: () => {
+                    this.closeMenu()
+                    editor.chain().focus().startComment().run()
+                },
+            })
+        }
+        items.push({
+            label: 'Fold',
+            icon: FOLD_ICON,
+            onSelect: () => {
+                this.closeMenu()
+                editor.commands.foldBlocks(span.from, span.to)
+                editor.view.focus()
+            },
+        })
         // Deleting the whole range always applies.
         items.push({
             label: 'Delete',
@@ -822,8 +1002,12 @@ class BlockActionsView {
     }
 
     private reposition() {
+        const wasShown = this.btn.style.opacity === '1'
         if (!this.hasFocusInside()) {
-            this.btn.style.opacity = '0'
+            if (wasShown) {
+                this.btn.style.opacity = '0'
+                this.scheduleIcons()
+            }
             return
         }
 
@@ -903,6 +1087,8 @@ class BlockActionsView {
             this.lastIconText = iconText
         }
 
+        // The glyphs follow: the active block's hides behind the indicator.
+        if (!wasShown || this.activePos !== blockPos) this.scheduleIcons()
         this.activeNode = blockNode
         this.activePos = blockPos
     }
@@ -959,7 +1145,7 @@ class BlockActionsView {
                 this.savedSelection = null
                 return
             }
-            const actions = actionsForNode(this.activeNode)
+            const actions = actionsForNode(this.activeNode, this.editor)
             const activeNode = this.activeNode
             const activePos = this.activePos
             items = actions.map((action) => ({

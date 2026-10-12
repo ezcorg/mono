@@ -30,11 +30,53 @@ import { DOMParser } from '@tiptap/pm/model'
  *  - Pasted rich HTML (e.g. a styled selection from a web page) →
  *    falls through to PM's HTML branch; we only handle paste when
  *    the HTML is the browser's plain-text wrapper.
+ *  - Pasted paragraphs (text with a blank line in it) → paragraphs, and
+ *    the blank lines past the one between two paragraphs are kept, each
+ *    an empty paragraph (Markdown alone would fold the run into one
+ *    break, and the spacing someone typed in would be gone).
  */
 
 /** Recognise block-level markdown constructs at the start of any line. */
 const BLOCK_MARKDOWN_RE =
     /^(?:\s{0,3})(?:[*\-+]\s|\d+\.\s|#{1,6}\s|>\s?|```|~~~|---|===)/m
+/** A blank line: what parts two paragraphs. */
+const PARAGRAPH_BREAK_RE = /\n[ \t]*\n/
+
+/**
+ * `text` with its blank lines past the first of a run each made an empty
+ * paragraph, written as the paragraph node writes one (a non-breaking
+ * space, which the parser reads back as an empty paragraph). The lines of
+ * a fence are the code's and are left alone; blank lines before the first
+ * paragraph and after the last are nothing.
+ */
+export function spaced(text: string): string {
+    const out: string[] = []
+    let fence: RegExp | null = null
+    let blank = 0
+    const part = () => {
+        if (blank && out.length) {
+            for (let i = 1; i < blank; i++) out.push('', '\u00A0')
+            out.push('')
+        }
+        blank = 0
+    }
+    for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+        if (fence) {
+            out.push(line)
+            if (fence.test(line)) fence = null
+            continue
+        }
+        if (!line.trim()) {
+            blank++
+            continue
+        }
+        part()
+        out.push(line)
+        const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+        if (open) fence = new RegExp(`^ {0,3}${open[1][0]}{${open[1].length},}[ \\t]*$`)
+    }
+    return out.join('\n')
+}
 
 /**
  * Detect HTML that is just the browser's wrapper around plain text
@@ -71,17 +113,18 @@ export const MarkdownBlockPaste = Extension.create({
                         if (html && !isPlainTextWrapperHTML(html)) return false
 
                         // Only re-parse when the plain text contains
-                        // block-level markdown. Inline-only pastes
-                        // (single line of prose, "**bold**", a URL, etc.)
-                        // are better served by PM's default behaviour —
-                        // tiptap-markdown's inline parser still picks up
-                        // bold/italic/etc. via its own paste rules.
-                        if (!BLOCK_MARKDOWN_RE.test(text)) return false
+                        // block-level markdown or more than one paragraph.
+                        // Inline-only pastes (single line of prose,
+                        // "**bold**", a URL, etc.) are better served by
+                        // PM's default behaviour — tiptap-markdown's inline
+                        // parser still picks up bold/italic/etc. via its
+                        // own paste rules.
+                        if (!BLOCK_MARKDOWN_RE.test(text) && !PARAGRAPH_BREAK_RE.test(text)) return false
 
                         const parser = (editor.storage as any).markdown?.parser
                         if (!parser) return false
 
-                        const parsedHtml = parser.parse(text)
+                        const parsedHtml = parser.parse(spaced(text))
                         const container = document.createElement('div')
                         container.innerHTML = parsedHtml
 

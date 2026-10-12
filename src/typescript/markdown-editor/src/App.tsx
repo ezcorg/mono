@@ -7,6 +7,53 @@ import { file } from './example';
 
 type Variant = 'custom' | 'default';
 
+/** Where the window's width is kept between reloads. */
+const WIDTH_KEY = 'ezco-demo-window-width';
+const MIN_WIDTH = 480;
+
+/** The window's width in the reader's hands: dragged by either edge
+ *  (centred, so the other edge mirrors it), kept across reloads, and given
+ *  back to the page's full width by a double-click on an edge. */
+function useResizableWidth() {
+  const [width, setWidth] = useState<number | null>(() => {
+    const kept = Number(localStorage.getItem(WIDTH_KEY));
+    return kept >= MIN_WIDTH ? kept : null;
+  });
+  const [held, setHeld] = useState<'left' | 'right' | null>(null);
+
+  useEffect(() => {
+    if (width === null) localStorage.removeItem(WIDTH_KEY);
+    else localStorage.setItem(WIDTH_KEY, String(Math.round(width)));
+  }, [width]);
+
+  const grab = (side: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    const window_ = target.parentElement!;
+    const page = window_.parentElement!;
+    const start = window_.getBoundingClientRect().width;
+    const most = page.getBoundingClientRect().width;
+    const x0 = e.clientX;
+    target.setPointerCapture(e.pointerId);
+    setHeld(side);
+    const move = (ev: PointerEvent) => {
+      const dx = (ev.clientX - x0) * (side === 'right' ? 2 : -2);
+      setWidth(Math.round(Math.max(MIN_WIDTH, Math.min(most, start + dx))));
+    };
+    const up = () => {
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
+      setHeld(null);
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', up);
+    e.preventDefault();
+  };
+
+  return { width, held, grab, reset: () => setWidth(null) };
+}
+
 /** A simulated macOS window — the editor renders inside it as the
  *  fullscreen input component. The variant drives the chrome's styling.
  *  The library's file-search toolbar is mounted into the titlebar (in place
@@ -15,15 +62,33 @@ function MacWindow({
   variant,
   toolbarMountRef,
   titlebarExtra,
+  size,
   children,
 }: {
   variant: Variant;
   toolbarMountRef: React.Ref<HTMLDivElement>;
   titlebarExtra?: React.ReactNode;
+  size: ReturnType<typeof useResizableWidth>;
   children: React.ReactNode;
 }) {
+  const edge = (side: 'left' | 'right') => (
+    <div
+      className={`mac-resize mac-resize--${side}${size.held === side ? ' is-held' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the window"
+      title="Drag to resize; double-click for the full width"
+      onPointerDown={size.grab(side)}
+      onDoubleClick={size.reset}
+    />
+  );
   return (
-    <div className={`mac-window mac-window--${variant}`}>
+    <div
+      className={`mac-window mac-window--${variant}`}
+      style={size.width === null ? undefined : ({ '--mac-window-width': `${size.width}px` } as React.CSSProperties)}
+    >
+      {edge('left')}
+      {edge('right')}
       <div className="mac-titlebar">
         <span className="mac-lights" aria-hidden="true">
           <span className="mac-light mac-light--close" />
@@ -116,6 +181,7 @@ function App() {
   const [markdownContent, setMarkdownContent] = useState('');
   const [variant, setVariant] = useState<Variant>('default');
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  const size = useResizableWidth();
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MarkdownEditor | null>(null);
   const toolbarMountRef = useRef<HTMLDivElement>(null);
@@ -212,7 +278,7 @@ function App() {
   }, [themeMode]);
 
   return (
-    <div className="dev-page">
+    <div className={`dev-page${size.held ? ' is-resizing' : ''}`}>
       <header className="dev-header">
         <div className="dev-title">
           <code>@joinezco/markdown-editor</code>
@@ -248,6 +314,7 @@ function App() {
         variant={variant}
         toolbarMountRef={toolbarMountRef}
         titlebarExtra={<ThemeToggle mode={themeMode} onChange={setThemeMode} />}
+        size={size}
       >
         {/* .mac-body is the scroll container with a left gutter; the editor
             mounts into the inset .mac-editor so the block-action indicator

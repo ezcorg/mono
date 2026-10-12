@@ -1,30 +1,37 @@
 /**
  * Where a note's comments are read and answered (comments RFC).
  *
- * By default nothing shows beside the note: commented text is marked, and
- * clicking it (or `focusComment`) opens that one comment over the note's
- * edge, under its text (above it when there is no room under); Escape,
- * Dismiss in its menu, or a click elsewhere closes it (`layout: 'float'`).
- * Every comment can be had in view instead: a column beside the note, each
- * level with its text (`layout: 'column'`), or a panel, a list beside the
- * note that scrolls on its own (`layout: 'panel'`), which the reader can
- * also ask for from a bubble's menu or ⌘⇧M and put away again. Where a
- * column or a panel would leave the note too narrow, the comments float
- * after all.
+ * By default every comment shows in a panel beside the note, a list that
+ * scrolls on its own, when there is room past the note's text column
+ * (`layout: 'panel'`); the reader can put it away from its × or ⌘⇧M, and
+ * ask for it again from a bubble's menu. With no room beside the note, the
+ * panel asked for slides over the note's right edge instead, as the sheet
+ * does, and rests at the edge when the pointer leaves it. Otherwise nothing
+ * shows beside the note: commented text is marked, and clicking it (or
+ * `focusComment`) opens that one comment over the note's edge, under its
+ * text (above it when there is no room under); Escape, Dismiss in its
+ * menu, or a click elsewhere closes it (`layout: 'float'`). Or every
+ * comment stands in a column beside the note, each level with its text
+ * (`layout: 'column'`; floating after all where the note would be too
+ * narrow).
  *
  * A comment is a bubble: who and when, its text as the note shows text (a
  * read-only editor of the note's make, so a fence in a fence shows as the
- * note shows it), and under the bubble, standing on their own, its
- * reactions and the reply count. A chevron in the bubble's corner holds
- * the rest: first the reactions to give (the common and recent ones, and
- * the whole grid behind the last), then the actions in groups: Edit and
- * Reply, Resolve, the composer panel and the file, Delete, the comments
- * panel and Dismiss. Long text folds after a few lines, with the fold to
- * open it. [−] after a byline collapses that message and everything under
- * it to the byline; [+] brings it back. Replies are bubbles indented under
- * their comment: the indentation is the thread. A comment's first replies
- * are shown; a reply's own are behind its count. In a panel, a click on a
- * comment takes the note to its text.
+ * note shows it), and under the text its reactions, React, and the reply
+ * count. A chevron in the bubble's corner holds the rest: first the
+ * reactions to give (the common and recent ones, and the whole grid behind
+ * the last), then the actions in groups: Edit and Reply, Resolve, the
+ * composer panel and the file, Delete, the comments panel and Dismiss.
+ * Long text folds after a few lines, with the fold to open it. [−] after
+ * a byline collapses that message and everything under it to the byline;
+ * [+] brings it back. The reply count is the handle of the thread: pressed,
+ * its pill grows into a frame around the row and the replies under it,
+ * each a bubble of its own, and shrinks back into the pill when they are
+ * folded away. A comment's first replies are shown; a reply's own are
+ * behind its count. Beside the note, a bubble is the way to its text: a
+ * click takes the note there, the text level with the bubble, and as the
+ * note is read past commented text, that comment's bubble is the current
+ * one, stepping out a little from the others.
  *
  * Writing happens in a bubble: a reply in a composer right under the
  * comment it answers, an edit in the bubble itself, which keeps its shape
@@ -43,8 +50,8 @@ import { parseTextFragment, type Reaction, type Wikilink } from '@joinezco/vault
 import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage } from './comments'
 import { Composer } from './comment-composer'
 import { clearDraft, draftKey, readDraft, renderReadOnly, when, writeDraft, type ReadOnlyView } from './comment-render'
-import { Sheet } from './comment-sheet'
-import { QUICK_REACTIONS, openEmojiPicker, recentEmoji, rememberEmoji } from './emoji-picker'
+import { Sheet, frameOver } from './comment-sheet'
+import { QUICK_REACTIONS, openEmojiPicker, openReactionPicker, recentEmoji, rememberEmoji } from './emoji-picker'
 import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
 import { scrollerOf } from './rail'
 import type { FileSystemStorage } from './filesystem'
@@ -57,10 +64,12 @@ export interface CommentMarginOptions {
     /** Where a column or a panel goes (`createEditor` gives it the column
      *  beside the note; without a mount the margin makes one). */
     mount?: Mount
-    /** `float` (default): the comment looked at, over the note's edge.
-     *  `column`: every comment beside the note, level with its text.
-     *  `panel`: every comment in a list beside the note that scrolls on
-     *  its own. */
+    /** `panel` (default): every comment in a list beside the note that
+     *  scrolls on its own, when there is room beside the note's text
+     *  column; `float`: the comment looked at, over the note's edge;
+     *  `column`: every comment beside the note, level with its text. A
+     *  panel or column floats where there is no room for it. The reader's
+     *  choice (the panel shown or put away) is kept over the host's. */
     layout?: CommentLayout
     /** The extensions a comment is written and shown with (the note's setup
      *  without its chrome, from `createEditor`); `minimalSetup` without. */
@@ -86,8 +95,11 @@ declare module '@tiptap/core' {
     }
 }
 
-/** The note is not squeezed narrower than this to make room beside it. */
+/** The note keeps its text column whole (`--ezco-mde-measure`), and never
+ *  less than this, before anything beside it gets room. */
 const NOTE_MIN = 400
+/** Where the reader's choice of the panel is kept, across notes and sessions. */
+const PANEL_KEY = 'ezco-mde-comments-panel'
 /** A column or panel beside the note: this wide, narrower when the note
  *  would otherwise be squeezed, never narrower than the least. */
 const SIDE_WIDTH = 360
@@ -95,6 +107,17 @@ const SIDE_MIN = 240
 const GAP = 8
 /** Reactions shown on a comment before the rest fold behind "+n". */
 const REACTIONS_SHOWN = 4
+/** Where in the frame the note is read: a comment whose text is nearest
+ *  this line, from the top, is the current one as the note scrolls. */
+const READING = 0.3
+/** How long after an alignment the scroll is the editor's, not the reader's. */
+const QUIET = 1500
+/** How long the pointer is gone before the overlaid panel rests at the edge. */
+const REST_AFTER = 350
+/** How long a thread's frame takes to grow out of its count, or back. */
+const MORPH = 220
+const EASE = 'cubic-bezier(0.2, 0.7, 0.2, 1)'
+const stillness = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] => {
     const e = document.createElement(tag)
@@ -188,6 +211,25 @@ function count(c: CommentInfo): number {
 
 const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word.replace(/y$/, 'ie')}s`}`
 
+/** The layout the reader chose over the host's, if they did. */
+function keptLayout(): CommentLayout | null {
+    try {
+        const kept = localStorage.getItem(PANEL_KEY)
+        return kept === 'panel' || kept === 'float' || kept === 'column' ? kept : null
+    } catch {
+        return null
+    }
+}
+
+function keepLayout(layout: CommentLayout | null) {
+    try {
+        if (layout) localStorage.setItem(PANEL_KEY, layout)
+        else localStorage.removeItem(PANEL_KEY)
+    } catch {
+        // Nothing kept: the host's layout next time.
+    }
+}
+
 /**
  * A menu of `items` under `anchor`, in the chrome's menu look, gone on a
  * choice, Escape, or a click elsewhere; `onClose` hears when it is.
@@ -249,7 +291,7 @@ function openMenu(anchor: HTMLElement, items: ContextMenuEntry[], onClose: () =>
 
 /** The chevron in a bubble's corner, with `items` behind it (and `before`
  *  them, when given, the reactions to give). */
-function chevron(items: () => ContextMenuEntry[], holder: { menu: (() => void) | null }, before?: (close: () => void) => HTMLElement): HTMLButtonElement {
+function chevron(items: () => ContextMenuEntry[], holder: { menu: (() => void) | null }, before?: (close: () => void, anchor: HTMLElement) => HTMLElement): HTMLButtonElement {
     const more = glyph(CHEVRON_ICON, 'Comment menu', (b) => {
         if (holder.menu) {
             holder.menu()
@@ -260,7 +302,7 @@ function chevron(items: () => ContextMenuEntry[], holder: { menu: (() => void) |
         holder.menu = openMenu(b, items(), () => {
             holder.menu = null
             more.setAttribute('aria-expanded', 'false')
-        }, before?.(close))
+        }, before?.(close, b))
     }, 'ezco-mde-comment-menu-button')
     more.setAttribute('aria-haspopup', 'menu')
     more.setAttribute('aria-expanded', 'false')
@@ -287,7 +329,7 @@ function reactionsBlock(mine: Set<string>, anchor: HTMLElement, give: (emoji: st
         cell.setAttribute('aria-pressed', String(mine.has(emoji)))
         block.append(cell)
     }
-    // The whole grid, with search, from the menu's anchor once the menu is gone.
+    // The whole grid, with search, by the menu's chevron once the menu is gone.
     block.append(
         glyph(REACT_ICON, 'More emoji', () => {
             close()
@@ -340,10 +382,20 @@ class Card {
     private allReactions = new Set<string>()
     /** Comments whose long text is shown in full. */
     private expanded = new Set<string>()
+    /** The messages whose thread is shown, by the last render and by this
+     *  one: a thread shown now that was not grows out of its count. */
+    private shown = new Set<string>()
+    private folds = new Set<string>()
+    /** The feet whose thread opened in this render, to grow. */
+    private openings: HTMLElement[] = []
+    /** Drawn once already: a thread open from the start does not grow. */
+    private drawn = false
     /** The menu open, if one is. */
     readonly holder: { menu: (() => void) | null } = { menu: null }
     /** The read-only views showing the texts, gone with the next render. */
     private views: ReadOnlyView[] = []
+    /** Watches the texts for growth, to fold them again. */
+    private readonly sizes: ResizeObserver | null = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.clamp())
     private key = ''
     info!: CommentInfo
 
@@ -358,14 +410,19 @@ class Card {
         inside.append(this.context, this.messages)
         this.dom.append(inside)
         // Looking at the card is looking at its comment; beside the note, a
-        // click on it takes the note to the comment's text as well.
+        // click on it (or Enter) takes the note to the comment's text as well.
         this.dom.addEventListener('mousedown', (e) => {
             if ((e.target as HTMLElement).closest('a, button, [data-wikilink], .ezco-mde-comment-input, .ezco-mde-readonly')) return
             this.lookAt()
-            if (!this.margin.floating) this.margin.reveal(this.id)
+            if (!this.margin.floating) this.margin.goTo(this.id)
         })
         this.dom.addEventListener('focusin', () => this.lookAt())
         this.dom.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.target === this.dom && !this.margin.floating) {
+                e.preventDefault()
+                this.margin.goTo(this.id)
+                return
+            }
             if (e.key !== 'Escape') return
             e.preventDefault()
             e.stopPropagation()
@@ -411,7 +468,7 @@ class Card {
             active,
             this.margin.author(),
             this.margin.floating,
-            this.margin.switched,
+            this.margin.panel,
             this.editing?.id ?? null,
             this.replying?.id ?? null,
             this.confirming,
@@ -431,6 +488,7 @@ class Card {
         const author = this.margin.author()
         for (const view of this.views) view.destroy()
         this.views = []
+        this.sizes?.disconnect()
 
         const context: Node[] = []
         if (info.target.orphaned) {
@@ -442,8 +500,19 @@ class Card {
         this.context.replaceChildren(...context)
         this.context.hidden = !context.length
 
+        this.shown = this.folds
+        this.folds = new Set()
+        this.openings = []
         this.messages.replaceChildren(this.message(info, 0, author))
+        // A thread opened by this render grows out of its count, once the
+        // card has been seen as it was (not one open from the start).
+        if (this.drawn) for (const foot of this.openings) this.grow(foot)
+        this.drawn = true
+        this.openings = []
         requestAnimationFrame(() => this.clamp())
+        // A text grows after it is shown (a quoted passage arrives once its
+        // document is read): the fold is measured again.
+        if (this.sizes) for (const view of this.views) this.sizes.observe(view.dom)
         this.margin.schedule()
     }
 
@@ -469,8 +538,9 @@ class Card {
     }
 
     /** A comment as a bubble: [−], who and when, the menu's chevron; the
-     *  text; under the bubble its reactions, React and the reply count; the
-     *  reply being written to it; and its thread. */
+     *  text; under it its reactions, React and the reply count, and the
+     *  thread the count opens, the reply being written to it last. Under
+     *  the bubble, a composer's buttons while the text is edited. */
     private message(c: CommentInfo, depth: number, author: string | null): HTMLElement {
         const { editor } = this.margin
         const deleted = c.body === DELETED_BODY
@@ -513,9 +583,9 @@ class Card {
         if (collapsed && count(c)) head.append(el('span', 'ezco-mde-comment-folded-hint', plural(count(c), 'reply')))
         const mine = author !== null && c.author === author
         const me = this.margin.identity()
-        const items = editing ? this.sheetItems(c) : this.menuFor(c, depth, author, mine, deleted)
-        const reactions = me && !editing && !deleted ? (close: () => void) => reactionsBlock(new Set(c.reactions.filter((r) => r.by === me).map((r) => r.emoji)), this.dom, (emoji) => editor.commands.reactToComment(c.id, emoji), close) : undefined
-        if (items.length || reactions) head.append(chevron(() => items, this.holder, reactions))
+        const items = () => (editing ? this.sheetItems(c) : this.menuFor(c, depth, author, mine, deleted))
+        const reactions = me && !editing && !deleted ? (close: () => void, anchor: HTMLElement) => reactionsBlock(new Set(c.reactions.filter((r) => r.by === me).map((r) => r.emoji)), anchor, (emoji) => editor.commands.reactToComment(c.id, emoji), close) : undefined
+        if (items().length || reactions) head.append(chevron(items, this.holder, reactions))
         bubble.append(head)
         box.append(bubble)
         if (collapsed) return box
@@ -542,26 +612,14 @@ class Card {
         more.hidden = !this.expanded.has(c.id)
         bubble.append(content, more)
 
-        // Under the bubble, on their own: the composer's buttons while the
-        // text is edited; else the reactions, React, and the reply count. A
-        // deletion is asked about there too.
-        const row = el('div', 'ezco-mde-comment-under')
-        if (editing) {
-            row.append(this.editing!.composer.actions)
-        } else if (this.confirming === c.id) {
-            row.classList.add('is-confirming')
-            row.append(
-                el('span', 'ezco-mde-comment-question', 'Delete this comment?'),
-                button('Delete', () => {
-                    this.confirming = null
-                    editor.commands.deleteComment(c.id)
-                }, 'ezco-mde-comment-action is-danger', 'Delete this comment'),
-                button('Keep', () => {
-                    this.confirming = null
-                    this.render()
-                }, 'ezco-mde-comment-action', 'Keep it'),
-            )
-        } else {
+        // In the bubble, under the text: the reactions, React at their
+        // right, and the reply count at the row's end, the handle of the
+        // thread. The thread it opens (this message's replies, each a
+        // message of its own, and last the reply being written) stands
+        // under the row, in a frame grown out of the count.
+        if (!editing && this.confirming !== c.id) {
+            const foot = el('div', 'ezco-mde-comment-foot')
+            const row = el('div', 'ezco-mde-comment-foot-row')
             const reactions = reactionsOf(c)
             const all = this.allReactions.has(c.id)
             const shown = all || reactions.length <= REACTIONS_SHOWN ? reactions : reactions.slice(0, REACTIONS_SHOWN - 1)
@@ -580,39 +638,140 @@ class Card {
                     }, 'ezco-mde-comment-reaction is-more', all ? 'Show fewer reactions' : `Show all ${reactions.length} reactions`),
                 )
             }
-            // The count shows or hides the replies right under this message
-            // (a reply's own answers stay behind their own count); with
-            // nothing to show, it starts the first reply.
+            // React: the common and recent reactions by the control, the
+            // whole grid behind them.
+            if (me && !deleted) row.append(glyph(REACT_ICON, 'React', (b) => openReactionPicker(b, (emoji) => editor.commands.reactToComment(c.id, emoji)), 'ezco-mde-comment-action is-icon is-react'))
+            // The reply count: it shows or hides the replies right under
+            // this message (a reply's own answers stay behind their own
+            // count); with nothing to show, it starts the first reply.
             const n = c.replies.length
             const open = this.threadOpen(c, depth)
+            const replying = this.replying?.id === c.id
+            const opened = open && (n > 0 || replying)
             const replies = button(String(n), () => {
-                if (!n) {
+                if (!n && !replying) {
                     if (author) this.reply(c)
                     return
                 }
-                this.threads.set(c.id, !open)
-                this.render()
-            }, 'ezco-mde-comment-action is-replies', n ? (open ? 'Hide replies' : `Show ${plural(n, 'reply')}`) : author ? 'Reply' : 'No replies')
+                if (opened) this.closeThread(c.id, foot)
+                else {
+                    this.threads.set(c.id, true)
+                    this.render()
+                }
+            }, 'ezco-mde-comment-action is-replies', n ? (opened ? 'Hide replies' : `Show ${plural(n, 'reply')}`) : author ? 'Reply' : 'No replies')
             replies.insertAdjacentHTML('afterbegin', REPLIES_ICON)
-            replies.setAttribute('aria-expanded', String(open && n > 0))
+            replies.insertAdjacentHTML('beforeend', `<span class="ezco-mde-comment-replies-caret">${CHEVRON_ICON}</span>`)
+            replies.setAttribute('aria-expanded', String(opened))
             replies.disabled = !n && !author
             row.append(replies)
+            foot.append(row)
+            if (opened) {
+                foot.classList.add('is-open')
+                const thread = el('div', 'ezco-mde-comment-thread')
+                for (const r of c.replies) thread.append(this.message(r, depth + 1, author))
+                if (replying && author) {
+                    const composer = this.replying!.composer
+                    thread.append(composerBlock(composer, author, () => this.longForms(() => this.replyInFull(c, true), () => this.replyInFull(c, 'note')), this.holder))
+                }
+                foot.append(thread, el('div', 'ezco-mde-comment-thread-frame'))
+                this.folds.add(c.id)
+                if (!this.shown.has(c.id)) this.openings.push(foot)
+            }
+            bubble.append(foot)
         }
-        box.append(row)
 
-        // The reply being written: right under the comment it answers.
-        if (this.replying?.id === c.id && author) {
-            const composer = this.replying.composer
-            box.append(composerBlock(composer, author, () => this.longForms(() => this.replyInFull(c, true), () => this.replyInFull(c, 'note')), this.holder))
+        // Under the bubble, on their own: the composer's buttons while the
+        // text is edited, or a deletion asked about.
+        const row = el('div', 'ezco-mde-comment-under')
+        if (editing) {
+            row.append(this.editing!.composer.actions)
+        } else if (this.confirming === c.id) {
+            row.classList.add('is-confirming')
+            row.append(
+                el('span', 'ezco-mde-comment-question', 'Delete this comment?'),
+                button('Delete', () => {
+                    this.confirming = null
+                    editor.commands.deleteComment(c.id)
+                }, 'ezco-mde-comment-action is-danger', 'Delete this comment'),
+                button('Keep', () => {
+                    this.confirming = null
+                    this.render()
+                }, 'ezco-mde-comment-action', 'Keep it'),
+            )
         }
-
-        // The thread: this message's replies, each a message of its own.
-        if (c.replies.length && this.threadOpen(c, depth)) {
-            const thread = el('div', 'ezco-mde-comment-thread')
-            for (const r of c.replies) thread.append(this.message(r, depth + 1, author))
-            box.append(thread)
-        }
+        if (row.childNodes.length) box.append(row)
         return box
+    }
+
+    /** The parts of a thread's foot that move: its count, its frame, its thread. */
+    private partsOf(foot: HTMLElement) {
+        return {
+            pill: foot.querySelector<HTMLElement>(':scope > .ezco-mde-comment-foot-row > .is-replies'),
+            row: foot.querySelector<HTMLElement>(':scope > .ezco-mde-comment-foot-row'),
+            frame: foot.querySelector<HTMLElement>(':scope > .ezco-mde-comment-thread-frame'),
+            thread: foot.querySelector<HTMLElement>(':scope > .ezco-mde-comment-thread'),
+        }
+    }
+
+    /** The thread under `foot` just opened: its frame grows out of the
+     *  count's pill to stand around the row and the replies, which come
+     *  in as it does; the foot takes its height as the frame grows. */
+    private grow(foot: HTMLElement) {
+        const { pill, row, frame, thread } = this.partsOf(foot)
+        if (!pill || !row || !frame || !thread || stillness() || typeof foot.animate !== 'function') return
+        const box = foot.getBoundingClientRect()
+        const from = pill.getBoundingClientRect()
+        if (!box.height || !from.height) return
+        foot.classList.add('is-moving')
+        const closed = box.height - thread.getBoundingClientRect().height
+        const timing = { duration: MORPH, easing: EASE }
+        const moving = [
+            foot.animate([{ height: `${closed}px` }, { height: `${box.height}px` }], timing),
+            frame.animate(
+                [
+                    { left: `${from.left - box.left}px`, top: `${from.top - box.top}px`, width: `${from.width}px`, height: `${from.height}px`, borderRadius: '999px' },
+                    { left: '0px', top: '0px', width: `${box.width}px`, height: `${box.height}px`, borderRadius: '10px' },
+                ],
+                timing,
+            ),
+            thread.animate([{ opacity: 0 }, { opacity: 0, offset: 0.3 }, { opacity: 1 }], timing),
+        ]
+        Promise.all(moving.map((a) => a.finished.catch(() => undefined))).then(() => foot.classList.remove('is-moving'))
+        this.margin.schedule()
+    }
+
+    /** Hide the thread under `id`: its frame shrinks back into the count,
+     *  the replies going as it does; then they are gone. */
+    private closeThread(id: string, foot: HTMLElement) {
+        let done = false
+        const finish = () => {
+            if (done) return
+            done = true
+            this.threads.set(id, false)
+            this.render()
+        }
+        const { pill, row, frame, thread } = this.partsOf(foot)
+        if (!pill || !row || !frame || !thread || stillness() || typeof foot.animate !== 'function') return finish()
+        const box = foot.getBoundingClientRect()
+        const to = pill.getBoundingClientRect()
+        if (!box.height || !to.height) return finish()
+        foot.classList.add('is-moving')
+        const closed = box.height - thread.getBoundingClientRect().height
+        const timing = { duration: MORPH, easing: EASE, fill: 'forwards' as const }
+        const moving = [
+            foot.animate([{ height: `${box.height}px` }, { height: `${closed}px` }], timing),
+            frame.animate(
+                [
+                    { left: '0px', top: '0px', width: `${box.width}px`, height: `${box.height}px`, borderRadius: '10px' },
+                    { left: `${to.left - box.left}px`, top: `${to.top - box.top}px`, width: `${to.width}px`, height: `${to.height}px`, borderRadius: '999px' },
+                ],
+                timing,
+            ),
+            thread.animate([{ opacity: 1 }, { opacity: 0, offset: 0.6 }, { opacity: 0 }], timing),
+        ]
+        pill.setAttribute('aria-expanded', 'false')
+        Promise.all(moving.map((a) => a.finished.catch(() => undefined))).then(finish)
+        setTimeout(finish, MORPH * 2)
     }
 
     /** What the chevron offers for `c`, in groups: to answer or change it
@@ -658,8 +817,8 @@ class Card {
         }
         if (!depth) {
             const last: ContextMenuItem[] = []
-            if (this.margin.switched) last.push({ label: 'Hide comments panel', icon: PANEL_ICON, onSelect: () => this.margin.togglePanel() })
-            else if (this.margin.floating) last.push({ label: 'Show all comments', icon: PANEL_ICON, onSelect: () => this.margin.togglePanel() })
+            if (this.margin.panel) last.push({ label: 'Hide comments panel', icon: PANEL_ICON, onSelect: () => this.margin.togglePanel() })
+            else if (this.margin.floating) last.push({ label: 'Show in comments panel', icon: PANEL_ICON, onSelect: () => this.margin.togglePanel() })
             if (this.margin.floating) last.push({ label: 'Dismiss', icon: DISMISS_ICON, onSelect: () => this.margin.close() })
             if (last.length) groups.push(last)
         }
@@ -715,6 +874,8 @@ class Card {
         this.stopReplying()
         this.stopEditing()
         this.collapsed.delete(c.id)
+        // The reply is written in the thread, so the thread shows.
+        this.threads.set(c.id, true)
         const [who] = byline(c)
         const draft = this.draftKey(c.id)
         const posted = () => {
@@ -798,6 +959,7 @@ class Card {
         this.holder.menu?.()
         this.stopEditing()
         this.stopReplying()
+        this.sizes?.disconnect()
         for (const view of this.views) view.destroy()
         this.views = []
         this.dom.remove()
@@ -873,16 +1035,79 @@ class Margin {
     private layout: CommentLayout
     /** A column the margin made for itself (the host gave none). */
     private column: HTMLElement | null = null
-    /** Comments float over the note's edge (the layout, or a column or
-     *  panel that would not fit). */
+    /** Comments float over the note's edge (the layout, or a column that
+     *  would not fit). */
     floating: boolean
-    /** A panel: a list beside the note that scrolls on its own. */
-    private get panel() {
+    /** The panel over the note's right edge: asked for, with no room beside
+     *  the note. */
+    overlay = false
+    /** The reader asked for the panel (not the host, not a kept choice):
+     *  with no room beside the note, it goes over the note's edge rather
+     *  than nowhere. */
+    private wanted = false
+    /** The overlay's frame on the page, and its handle at the edge. */
+    private clip: HTMLElement | null = null
+    private handle: HTMLButtonElement | null = null
+    private restTimer = 0
+    /** A panel: a list beside the note (or over its edge) that scrolls on its own. */
+    get panel() {
         return this.layout === 'panel' && !this.floating
     }
-    /** The reader asked for the panel (so it can be put away). */
+    /** The comment the reader is at: the one looked at, or, as the note
+     *  scrolls, the one whose text is nearest the reading line. */
+    private current: string | null = null
+    private lastActive: string | null = null
+    /** Until when the scroll is the editor's (an alignment), not the reader's. */
+    private quietUntil = 0
+    private spyFrame = 0
+    private scrollTarget: EventTarget | null = null
+    private readonly onScroll = () => {
+        if (this.spyFrame) return
+        this.spyFrame = requestAnimationFrame(() => {
+            this.spyFrame = 0
+            this.spy()
+        })
+    }
+    /** The host's layout: the panel, unless it said otherwise. */
+    private get base(): CommentLayout {
+        return this.options.layout ?? 'panel'
+    }
+    /** The reader chose over the host's layout. */
     get switched() {
-        return this.layout !== (this.options.layout ?? 'float')
+        return this.layout !== this.base
+    }
+    /** What the note keeps for itself: its column at its measure. */
+    private noteMin(): number {
+        const host = this.view.dom.parentElement
+        const measure = parseFloat(getComputedStyle(host ?? this.view.dom).maxWidth)
+        return Number.isFinite(measure) ? Math.max(NOTE_MIN, measure) : NOTE_MIN
+    }
+    /** The room for the note's column and a column or panel beside it:
+     *  what is left of the row once the rail and the gutter have theirs. */
+    private room(): number {
+        const host = this.view.dom.parentElement
+        if (!host) return 0
+        const row = host.parentElement
+        if (!row?.classList.contains('ezco-mde-content')) return host.clientWidth + (this.floating || this.overlay ? 0 : this.dom.offsetWidth)
+        let taken = 0
+        for (const child of row.children) {
+            if (child === host || child === this.column || child.contains(this.dom)) continue
+            taken += (child as HTMLElement).offsetWidth
+        }
+        return row.clientWidth - taken
+    }
+    /** Whether there is room beside the note for a column or panel. */
+    fits(): boolean {
+        return this.room() - SIDE_MIN >= this.noteMin()
+    }
+    /** How the layout is shown now: beside the note at this width, or over
+     *  its edge (a panel), or floating (a column). */
+    private decide(): { floating: boolean; overlay: boolean; width: string } {
+        if (this.layout === 'float') return { floating: true, overlay: false, width: '' }
+        const room = this.room()
+        const noteMin = this.noteMin()
+        if (room - SIDE_MIN >= noteMin) return { floating: false, overlay: false, width: `${Math.round(Math.min(SIDE_WIDTH, Math.max(SIDE_MIN, room - noteMin)))}px` }
+        return this.layout === 'panel' && this.wanted ? { floating: false, overlay: true, width: '' } : { floating: true, overlay: false, width: '' }
     }
     private frame = 0
     private headKey = ''
@@ -897,7 +1122,7 @@ class Margin {
         private readonly options: CommentMarginOptions,
         private readonly storage: CommentMarginStorage,
     ) {
-        this.layout = options.layout ?? 'float'
+        this.layout = keptLayout() ?? this.base
         this.floating = this.layout === 'float'
         this.dom = el('section', 'ezco-mde-comment-margin')
         this.dom.setAttribute('aria-label', 'Comments')
@@ -914,8 +1139,14 @@ class Margin {
         this.update()
     }
 
-    /** The margin where its layout puts it: over the note, or beside it. */
+    /** The margin where its layout puts it: over the note, beside it, or
+     *  over its edge. */
     private place() {
+        if (this.overlay) {
+            this.placeOver()
+            return
+        }
+        this.unplaceOver()
         if (this.floating) {
             // Over the note it is as wide as the note; a width kept from a
             // column or panel would pen the cards in.
@@ -943,10 +1174,95 @@ class Margin {
         else this.view.dom.after(this.dom)
     }
 
-    /** Every comment in a panel, or back to the host's layout. */
+    /** The panel over the note's right edge, in a frame the size of the
+     *  note's own that clips it as it slides in; its own `.ezco-mde`, so
+     *  the theme's variables reach it on the page. */
+    private placeOver() {
+        if (this.clip) return
+        const root = (this.view.dom.closest('.ezco-mde') as HTMLElement | null) ?? this.view.dom
+        this.clip = el('div', 'ezco-mde-comment-overlay-frame')
+        this.dom.classList.add('ezco-mde', 'is-entering')
+        const theme = root.closest('[data-theme]')?.getAttribute('data-theme')
+        if (theme) this.dom.dataset.theme = theme
+        this.handle = el('button', 'ezco-mde-comment-sheet-handle')
+        this.handle.type = 'button'
+        this.handle.title = 'Show the comments'
+        this.handle.setAttribute('aria-label', 'Show the comments')
+        this.handle.append(el('span', 'ezco-mde-comment-sheet-handle-label', 'Comments'))
+        this.handle.addEventListener('mousedown', (e) => e.preventDefault())
+        this.handle.addEventListener('click', () => this.wake())
+        this.dom.prepend(this.handle)
+        this.dom.addEventListener('pointerenter', this.wake)
+        this.dom.addEventListener('pointerleave', this.rest)
+        this.dom.addEventListener('focusin', this.wake)
+        this.dom.addEventListener('focusout', this.restIfLeft)
+        this.clip.append(this.dom)
+        document.body.append(this.clip)
+        window.addEventListener('scroll', this.schedule, true)
+        window.addEventListener('resize', this.schedule)
+        if (this.column) {
+            this.column.remove()
+            this.column = null
+        }
+        this.fit()
+        // In from the edge: laid out at the edge first, then let in.
+        requestAnimationFrame(() => requestAnimationFrame(() => this.dom.classList.remove('is-entering')))
+    }
+
+    private unplaceOver() {
+        if (!this.clip) return
+        clearTimeout(this.restTimer)
+        this.dom.removeEventListener('pointerenter', this.wake)
+        this.dom.removeEventListener('pointerleave', this.rest)
+        this.dom.removeEventListener('focusin', this.wake)
+        this.dom.removeEventListener('focusout', this.restIfLeft)
+        window.removeEventListener('scroll', this.schedule, true)
+        window.removeEventListener('resize', this.schedule)
+        this.handle?.remove()
+        this.handle = null
+        this.dom.classList.remove('ezco-mde', 'is-entering', 'is-away')
+        delete this.dom.dataset.theme
+        this.dom.remove()
+        this.clip.remove()
+        this.clip = null
+    }
+
+    /** The overlay's frame over the note's frame, the panel at its right edge. */
+    private fit() {
+        if (!this.clip) return
+        const root = (this.view.dom.closest('.ezco-mde') as HTMLElement | null) ?? this.view.dom
+        const { width } = frameOver(this.clip, root)
+        this.dom.style.width = `${Math.round(Math.min(width, Math.max(SIDE_MIN, Math.min(SIDE_WIDTH, width * 0.85))))}px`
+    }
+
+    private readonly wake = () => {
+        clearTimeout(this.restTimer)
+        this.dom.classList.remove('is-away')
+    }
+
+    private readonly rest = () => {
+        clearTimeout(this.restTimer)
+        this.restTimer = window.setTimeout(() => {
+            if (this.overlay && !this.dom.matches(':hover') && !this.dom.contains(document.activeElement)) this.dom.classList.add('is-away')
+        }, REST_AFTER)
+    }
+
+    private readonly restIfLeft = (e: FocusEvent) => {
+        if (!this.dom.contains(e.relatedTarget as Node | null) && !this.dom.matches(':hover')) this.rest()
+    }
+
+    /** Every comment in a panel, or the panel put away (the host's layout,
+     *  or floating when that is the panel); the choice kept. */
     togglePanel(): boolean {
-        this.layout = this.switched ? this.options.layout ?? 'float' : 'panel'
-        this.floating = this.layout === 'float'
+        // Shown as a panel (beside the note or over its edge): put away;
+        // else (floating, whatever the layout, for want of room): the panel.
+        this.layout = this.panel ? (this.base === 'panel' ? 'float' : this.base) : 'panel'
+        this.wanted = this.layout === 'panel'
+        keepLayout(this.switched ? this.layout : null)
+        const { floating, overlay, width } = this.decide()
+        this.floating = floating
+        this.overlay = overlay
+        this.dom.style.width = width
         this.scrolledTo = null
         this.place()
         this.headKey = ''
@@ -987,6 +1303,112 @@ class Margin {
             const box = scroller.getBoundingClientRect()
             scroller.scrollTo({ top: scroller.scrollTop + (top - box.top) - scroller.clientHeight / 2, behavior: 'smooth' })
         } else window.scrollTo({ top: window.scrollY + top - window.innerHeight / 2, behavior: 'smooth' })
+    }
+
+    /** Take the note to the text of comment `id`: level with its bubble in
+     *  a panel; in view beside a column (whose cards stand level with their
+     *  text already). */
+    goTo(id: string) {
+        if (this.panel) this.align(id)
+        else this.reveal(id)
+    }
+
+    /** Scroll the note so that the text of comment `id` starts level with
+     *  the top of its bubble: what is read and what is said about it on one
+     *  line. The panel beside the note scrolls with it until it sticks at
+     *  the top of the frame (over the note's edge it stays put), which the
+     *  scroll allows for; what the note cannot do (its end reached, or the
+     *  panel moving with it), the list does, the bubble brought to the text
+     *  instead. */
+    private align(id: string) {
+        const card = this.cards.get(id)
+        const range = commentsKey.getState(this.view.state)?.comments.find((c) => c.id === id)?.target.range
+        if (!card || !range) return
+        this.scrolledTo = id
+        this.setCurrent(id)
+        const bubble = card.dom.querySelector<HTMLElement>('.ezco-mde-comment-bubble.is-anchor') ?? card.dom
+        let text: number
+        try {
+            text = this.view.coordsAtPos(range.from, 1).top
+        } catch {
+            return
+        }
+        const scroller = scrollerOf(this.view.dom)
+        const frameTop = scroller ? scroller.getBoundingClientRect().top : 0
+        const now = scroller ? scroller.scrollTop : window.scrollY
+        const most = scroller ? scroller.scrollHeight - scroller.clientHeight : document.documentElement.scrollHeight - window.innerHeight
+        const panelTop = this.dom.getBoundingClientRect().top
+        const columnTop = this.overlay ? panelTop : (this.dom.parentElement?.getBoundingClientRect().top ?? panelTop)
+        const inPanel = bubble.getBoundingClientRect().top - panelTop
+        // Where the panel's top is once the note is scrolled to `s`: where
+        // its column puts it, or stuck at the frame's top.
+        const panelAt = (s: number) => (this.overlay ? panelTop : Math.max(frameTop, columnTop + now - s))
+        const to = Math.max(0, Math.min(most, text + now - frameTop - inPanel))
+        this.quietUntil = Date.now() + QUIET
+        if (to !== now) {
+            if (scroller) scroller.scrollTo({ top: to, behavior: 'smooth' })
+            else window.scrollTo({ top: to, behavior: 'smooth' })
+        }
+        const left = text + now - to - (panelAt(to) + inPanel)
+        if (Math.abs(left) > 1) this.list.scrollTo({ top: Math.max(0, this.list.scrollTop - left), behavior: 'smooth' })
+    }
+
+    /** As the note scrolls: the comment whose text is nearest the reading
+     *  line, among those in view, is the current one. */
+    private spy() {
+        if (this.floating || this.dom.hidden || Date.now() < this.quietUntil || !this.view.dom.isConnected) return
+        const state = commentsKey.getState(this.view.state)
+        if (!state) return
+        const scroller = scrollerOf(this.view.dom)
+        const frameTop = scroller ? scroller.getBoundingClientRect().top : 0
+        const frameHeight = scroller ? scroller.clientHeight : window.innerHeight
+        const line = frameTop + frameHeight * READING
+        let best: { id: string; away: number } | null = null
+        for (const c of state.comments) {
+            const card = this.cards.get(c.id)
+            const range = c.target.whole ? null : c.target.range
+            if (!card || card.dom.hidden || !range) continue
+            let top: number
+            let bottom: number
+            try {
+                top = this.view.coordsAtPos(range.from, 1).top
+                bottom = this.view.coordsAtPos(range.to, -1).bottom
+            } catch {
+                continue
+            }
+            if (bottom < frameTop || top > frameTop + frameHeight) continue
+            const away = Math.abs(top - line)
+            if (!best || away < best.away) best = { id: c.id, away }
+        }
+        if (best) this.setCurrent(best.id)
+    }
+
+    /** Mark comment `id` the current one, and keep its card in view in a panel. */
+    private setCurrent(id: string | null) {
+        if (id === this.current) return
+        this.current = id
+        for (const [cid, card] of this.cards) card.dom.classList.toggle('is-current', cid === id)
+        const card = id ? this.cards.get(id) : null
+        if (card && this.panel) this.keepInView(card.dom)
+    }
+
+    /** `dom` in view in the panel's list: the list scrolled, never the note
+     *  (`scrollIntoView` would scroll the note too, and undo an alignment
+     *  under way). */
+    private keepInView(dom: HTMLElement) {
+        const list = this.list.getBoundingClientRect()
+        const box = dom.getBoundingClientRect()
+        if (box.top < list.top) this.list.scrollTo({ top: this.list.scrollTop + (box.top - list.top) - GAP, behavior: 'smooth' })
+        else if (box.bottom > list.bottom) this.list.scrollTo({ top: this.list.scrollTop + (box.bottom - list.bottom) + GAP, behavior: 'smooth' })
+    }
+
+    /** Hear the note's scroll (its scroller may be mounted after the margin). */
+    private listen() {
+        const target: EventTarget = scrollerOf(this.view.dom) ?? window
+        if (target === this.scrollTarget) return
+        this.scrollTarget?.removeEventListener('scroll', this.onScroll)
+        this.scrollTarget = target
+        target.addEventListener('scroll', this.onScroll, { passive: true })
     }
 
     /** Done looking: no card, the caret back in the note. */
@@ -1070,11 +1492,12 @@ class Margin {
         this.dom.hidden = this.floating ? !state.active && !state.draft : !state.comments.length && !state.draft
         this.dom.classList.toggle('is-floating', this.floating)
         this.dom.classList.toggle('is-panel', this.panel)
+        this.dom.classList.toggle('is-overlay', this.overlay)
 
         // The column's head: how many, the resolved ones on request, and the
-        // way to put a panel the reader asked for away.
+        // way to put a panel away.
         const open = state.comments.length - resolved
-        const headKey = `${this.floating}/${this.switched}/${open}/${resolved}/${this.showResolved}`
+        const headKey = `${this.floating}/${this.panel}/${open}/${resolved}/${this.showResolved}`
         if (headKey !== this.headKey) {
             this.headKey = headKey
             const title = el('span', 'ezco-mde-comment-margin-title', plural(open, 'comment'))
@@ -1087,7 +1510,7 @@ class Margin {
                     }, 'ezco-mde-comment-link'),
                 )
             }
-            if (this.switched) this.head.append(glyph(DISMISS_ICON, 'Hide comments panel', () => this.togglePanel(), 'ezco-mde-comment-tool is-close'))
+            if (this.panel) this.head.append(glyph(DISMISS_ICON, 'Hide comments panel', () => this.togglePanel(), 'ezco-mde-comment-tool is-close'))
         }
 
         const seen = new Set<string>()
@@ -1101,6 +1524,15 @@ class Margin {
             }
             card.update(info, state.active === info.id)
             seen.add(info.id)
+        }
+        // The comment looked at is the current one; an overlaid panel comes
+        // back from the edge to show it.
+        if (state.active !== this.lastActive) {
+            this.lastActive = state.active
+            if (state.active) {
+                this.setCurrent(state.active)
+                if (this.overlay) this.wake()
+            }
         }
         for (const [id, card] of this.cards) {
             if (seen.has(id)) continue
@@ -1123,7 +1555,7 @@ class Margin {
         this.schedule()
     }
 
-    schedule() {
+    readonly schedule = () => {
         if (this.frame) return
         this.frame = requestAnimationFrame(() => {
             this.frame = 0
@@ -1138,17 +1570,17 @@ class Margin {
      *  panel: in the note's order. Every card fits the frame. */
     private layout_() {
         if (this.dom.hidden || !this.view.dom.isConnected) return
-        // A column or panel beside the note takes what the note can spare,
-        // down to SIDE_MIN; one that would squeeze the note below NOTE_MIN
-        // even then floats instead.
-        const host = this.view.dom.parentElement
-        if (this.layout !== 'float' && host) {
-            const available = host.clientWidth + (this.floating ? 0 : this.dom.offsetWidth)
-            const floating = available - SIDE_MIN < NOTE_MIN
-            if (!floating) this.dom.style.width = `${Math.round(Math.min(SIDE_WIDTH, Math.max(SIDE_MIN, available - NOTE_MIN)))}px`
-            else this.dom.style.width = ''
-            if (floating !== this.floating) {
+        this.listen()
+        if (this.overlay) this.fit()
+        // A column or panel beside the note takes what is past the note's
+        // column, down to SIDE_MIN; one that would squeeze the column even
+        // then goes over the note's edge (a panel) or floats (a column).
+        if (this.layout !== 'float') {
+            const { floating, overlay, width } = this.decide()
+            if (!overlay) this.dom.style.width = width
+            if (floating !== this.floating || overlay !== this.overlay) {
                 this.floating = floating
+                this.overlay = overlay
                 this.place()
                 this.headKey = ''
                 this.update()
@@ -1203,7 +1635,8 @@ class Margin {
             const active = state.draft ? 'new' : state.active
             if (active && active !== this.scrolledTo) {
                 this.scrolledTo = active
-                placed.find((p) => p.id === active)?.dom.scrollIntoView({ block: 'nearest' })
+                const dom = placed.find((p) => p.id === active)?.dom
+                if (dom) this.keepInView(dom)
             }
             return
         }
@@ -1271,6 +1704,9 @@ class Margin {
 
     destroy() {
         if (this.frame) cancelAnimationFrame(this.frame)
+        if (this.spyFrame) cancelAnimationFrame(this.spyFrame)
+        this.scrollTarget?.removeEventListener('scroll', this.onScroll)
+        this.unplaceOver()
         this.observer?.disconnect()
         for (const card of this.cards.values()) card.destroy()
         this.cards.clear()
@@ -1292,7 +1728,7 @@ export const CommentMargin = Extension.create<CommentMarginOptions, CommentMargi
     name: 'commentMargin',
 
     addOptions() {
-        return { mount: undefined, layout: 'float', composer: undefined }
+        return { mount: undefined, layout: 'panel', composer: undefined }
     },
 
     addStorage() {

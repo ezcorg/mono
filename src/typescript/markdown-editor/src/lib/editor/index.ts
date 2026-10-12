@@ -22,6 +22,7 @@ import { InlineCodeExit } from './extensions/inline-code';
 import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions, BlockActionsOptions } from './extensions/block-actions';
+import { Folding } from './extensions/folding';
 import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
@@ -259,17 +260,6 @@ const ownedVault = (vault: Vault) =>
         },
     });
 
-/** Every comment in a panel beside the note, or the panel put away. */
-const commentsPanelCommand: SlashCommand = {
-    title: 'Comments panel',
-    description: 'Every comment beside the note, in a list (⌘⇧M)',
-    icon: '💬',
-    command: ({ editor, range }) => {
-        editor.chain().focus().deleteRange(range).run();
-        editor.commands.toggleCommentsPanel();
-    },
-};
-
 /** Slash commands for prose actions, offered when there is a model. */
 const proseSlashCommands: SlashCommand[] = [
     {
@@ -334,9 +324,6 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     const commands = [
         ...base,
         ...(options.inference ? proseSlashCommands : []),
-        // The comments panel, where comments are shown: the palette's way to
-        // every comment at once (⌘⇧M does the same).
-        ...(options.comments !== false && options.comments?.margin !== false ? [commentsPanelCommand] : []),
     ];
     // What every editor inside this one (a comment's text in a card, the
     // sheet, an embedded note) is built from: this setup without the chrome
@@ -424,7 +411,11 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         TaskList,
         ExtendedTaskItem.configure({ nested: true }),
         TableKit.configure({ table: false }),
-        MarkdownTable.configure({ resizable: true, allowTableNodeSelection: true }),
+        // Columns are not resizable: Markdown keeps no widths, and the
+        // resizing plugin's own table node view makes Tiptap build every
+        // node view (each fence's CodeMirror) a second time when it adds
+        // its plugins after the view is made.
+        MarkdownTable.configure({ resizable: false, allowTableNodeSelection: true }),
         ...(options.slashCommands !== false
             ? [SlashCommands.configure({ commands })]
             : []),
@@ -448,7 +439,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             })]
             : []),
         ...(blockActions !== false
-            ? [BlockActions.configure({ mount: blockActions?.mount })]
+            ? [BlockActions.configure({ mount: blockActions?.mount }), Folding]
             : []),
         ...(options.selectionMenu !== false ? [SelectionMenu] : []),
         ...(options.linkMenu !== false ? [LinkMenu] : []),
@@ -469,7 +460,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
                     ? [
                         CommentMargin.configure({
                             mount: options.comments?.margin?.mount,
-                            layout: options.comments?.margin?.layout ?? 'float',
+                            layout: options.comments?.margin?.layout ?? 'panel',
                             // A comment is written and shown in this editor, in
                             // small: the same syntax and code blocks over the
                             // same files, without the chrome around the note.
@@ -534,10 +525,11 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         // (a built one keeps its 48px even when empty).
         if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
         bodyHost = make('ezco-mde-body-host')
-        // A column for comments, right of the note, when asked for (a column
-        // level with the text, or a panel that scrolls on its own): by
-        // default comments float over the note's edge and take no room.
-        const layout = options.comments !== false && options.comments?.margin !== false ? options.comments?.margin?.layout : undefined
+        // A column for comments, right of the note: the panel that scrolls
+        // on its own (the default, when there is room past the note's text
+        // column) or a column level with the text. With `layout: 'float'`
+        // comments float over the note's edge and take no room.
+        const layout = options.comments !== false && options.comments?.margin !== false ? options.comments?.margin?.layout ?? 'panel' : undefined
         if (layout === 'column' || layout === 'panel') commentsHost = make('ezco-mde-comments')
         content.append(...[navHost, gutter, bodyHost, commentsHost].filter((el): el is HTMLElement => !!el))
         wrapper.append(toolbarSlot, content)
@@ -587,9 +579,15 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         },
         content: options.content || '',
         onUpdate: options.onUpdate || (() => { }),
+        // The note takes focus when it is made, where its selection is,
+        // unless the host says otherwise (`false`): it is what the host is
+        // for. Passed through as given: `undefined` is what Tiptap focuses
+        // on without moving the selection (`true` would move it to the start).
         autofocus: options.autofocus,
-        editable: options.editable,
-        injectCSS: options.injectCSS,
+        // `editable`, `injectCSS` and the rest come with the consumer's
+        // options below, only when given: passed as `undefined` they would
+        // override Tiptap's defaults (an `editable: undefined` made
+        // `editor.isEditable` false, and every code block read-only).
         ...restOptions,
         // Mount ProseMirror into the wrapper's body host (or the consumer's
         // element if no wrapper was built). With neither (headless), leave
@@ -661,6 +659,7 @@ export type { ToolbarOptions, ToolbarMount } from './extensions/toolbar';
 export { Sidebar } from './extensions/sidebar';
 export type { SidebarOptions, SidebarMount } from './extensions/sidebar';
 export { BlockActions } from './extensions/block-actions';
+export { Folding, foldsOf, foldAt, type Fold } from './extensions/folding';
 export type { BlockActionsOptions, BlockActionsMount } from './extensions/block-actions';
 export { defaultSlashCommands } from './commands';
 export { slugify, computeHeadingSlugs } from './extensions/slug-utils';

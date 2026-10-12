@@ -3,14 +3,17 @@
  * It is where a note keeps its properties, and its identity (`id:`, RFC §3).
  *
  * The node holds the YAML exactly as written and serializes it back
- * untouched. It shows as one small line at the top of the note, "2
- * properties", that opens on a click into a table of them (wikilinks in
- * values are followable) and closes on another; "Edit YAML" beside it, or
- * arrowing up from the note's first line, shows the YAML itself, edited as
- * text (see `source-view.ts`). Nothing else on it is a control: clicking
- * the table changes nothing. Whether the table is open is remembered per
- * editor, from note to note. The document admits it only as its first node:
- * `FrontMatterDocument` replaces the default document for that.
+ * untouched. It shows as the note's code blocks do: the YAML in a code
+ * editor (`@joinezco/codeblock`, as a YAML file, without the toolbar),
+ * which collapses to one small line at the top of the note, "2
+ * properties · id, title", when it is not being edited. A click on the
+ * line, arrowing up from the note's first line, or the "Edit properties"
+ * block action opens it with the caret in the YAML; leaving it (a click in
+ * the note, Escape, arrowing down past its last line) collapses it again.
+ * The collapsing is the reader's to turn off, from the block's own action
+ * in the gutter ("Collapse when not editing"); the choice is kept. The
+ * document admits it only as its first node: `FrontMatterDocument`
+ * replaces the default document for that.
  *
  * With `assignId`, a note opened without an `id:` is given one (as an edit,
  * so autosave writes it, and outside the undo history). That is the host's
@@ -19,17 +22,60 @@
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
-import { Plugin, PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
-import { normalizePath } from '@joinezco/storage'
-import { isNote, matchWikilinkAt } from '@joinezco/vault'
+import { Plugin, PluginKey, Selection, TextSelection, type EditorState } from '@tiptap/pm/state'
+import { EditorView, keymap, type KeyBinding, type ViewUpdate } from '@codemirror/view'
+import { EditorState as CMState } from '@codemirror/state'
+import { basicSetup, codeblock } from '@joinezco/codeblock'
+import { memoryVfs, normalizePath } from '@joinezco/storage'
+import { isNote } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
-import { enter, sourceViewDOM, sourceViewKey, sourceViewSpec } from './source-view'
-import { wikilinkLabel, type WikilinkStorage } from './wikilink'
+import { codeblockRegistry, isDarkMode, measureBaseFontPx } from './codeblock'
 import type { FileSystemStorage } from './filesystem'
 
 export interface FrontMatterOptions {
     /** Give a note opened without an `id:` a new one. */
     assignId?: () => string
+}
+
+export interface FrontMatterStorage {
+    /** Whether the YAML folds to one line when it is not being edited. */
+    autoCollapse: boolean
+    /** The views showing front matter, told when `autoCollapse` changes. */
+    refresh: Set<() => void>
+    markdown: MarkdownNodeSpec
+}
+
+declare module '@tiptap/core' {
+    interface Commands<ReturnType> {
+        frontMatter: {
+            /** Open the front matter with the caret at the end of its YAML. */
+            editFrontMatter: () => ReturnType
+            /** Fold the YAML away when it is not being edited, or keep it open. */
+            setFrontMatterAutoCollapse: (on: boolean) => ReturnType
+        }
+    }
+}
+
+/** Transactions that put the caret in the front matter on purpose. */
+export const frontMatterKey = new PluginKey('frontMatter')
+/** Where the reader's choice to keep the YAML open is kept. */
+const COLLAPSE_KEY = 'ezco-mde-front-matter'
+
+function keptAutoCollapse(): boolean {
+    try {
+        return localStorage.getItem(COLLAPSE_KEY) !== 'open'
+    } catch {
+        return true
+    }
+}
+
+function keepAutoCollapse(on: boolean) {
+    try {
+        if (on) localStorage.removeItem(COLLAPSE_KEY)
+        else localStorage.setItem(COLLAPSE_KEY, 'open')
+    } catch {
+        // Not kept: folding again next time.
+    }
 }
 
 /** The document, with room for front matter before its blocks. */
@@ -46,10 +92,18 @@ export function documentId(editor: Editor): string | null {
     return value || null
 }
 
-let yamlModule: Promise<typeof import('yaml')> | null = null
-const loadYaml = () => (yamlModule ??= import('yaml'))
+/** The top-level keys of `yaml`, as far as its lines say (no parse: the
+ *  line is a summary, and the YAML may be mid-edit). */
+export function topLevelKeys(yaml: string): string[] {
+    const keys: string[] = []
+    for (const line of yaml.split('\n')) {
+        const m = /^([A-Za-z0-9_.-]+)[ \t]*:(?:[ \t]|$)/.exec(line)
+        if (m) keys.push(m[1])
+    }
+    return keys
+}
 
-export const FrontMatter = Node.create<FrontMatterOptions>({
+export const FrontMatter = Node.create<FrontMatterOptions, FrontMatterStorage>({
     name: 'frontMatter',
     content: 'text*',
     marks: '',
@@ -93,12 +147,10 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
         return ['pre', mergeAttributes(HTMLAttributes, { 'data-front-matter': '' }), 0]
     },
 
-    extendNodeSchema(extension) {
-        return extension.name === 'frontMatter' ? sourceViewSpec : {}
-    },
-
     addStorage() {
         return {
+            autoCollapse: keptAutoCollapse(),
+            refresh: new Set<() => void>(),
             markdown: {
                 serialize(state: any, node: PMNode) {
                     state.write('---\n')
@@ -163,11 +215,58 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
                     // is left as it is: only a caret is moved.
                     if (!newState.selection.empty) return null
                     if (!inFrontMatter(newState, type) || inFrontMatter(oldState, type)) return null
-                    const deliberate = transactions.some((tr) => tr.getMeta(sourceViewKey) || tr.getMeta('pointer'))
+                    const deliberate = transactions.some((tr) => tr.getMeta(frontMatterKey) || tr.getMeta('pointer'))
                     return deliberate ? null : newState.tr.setSelection(bodyStart(newState))
                 },
             }),
         ]
+    },
+
+    addCommands() {
+        const type = this.type
+        const storage = this.storage
+        return {
+            editFrontMatter:
+                () =>
+                ({ state, tr, dispatch, view }) => {
+                    const first = state.doc.firstChild
+                    if (first?.type !== type) return false
+                    if (dispatch) {
+                        tr.setSelection(TextSelection.create(tr.doc, first.nodeSize - 1)).setMeta(frontMatterKey, 'enter')
+                        // The selection reaches the node's view (which hands it
+                        // to the YAML) only through an editor that holds the
+                        // focus: one that does not is given it, once the
+                        // selection is in place.
+                        requestAnimationFrame(() => {
+                            if (!view.isDestroyed && !view.dom.contains(document.activeElement)) view.focus()
+                        })
+                    }
+                    return true
+                },
+            setFrontMatterAutoCollapse:
+                (on) =>
+                () => {
+                    if (storage.autoCollapse !== on) {
+                        storage.autoCollapse = on
+                        keepAutoCollapse(on)
+                        for (const refresh of storage.refresh) refresh()
+                    }
+                    return true
+                },
+        }
+    },
+
+    addKeyboardShortcuts() {
+        return {
+            // Up from the first line of the note: into the YAML, at its end.
+            ArrowUp: () => {
+                const { state, view } = this.editor
+                const { $from, empty } = state.selection
+                if (!empty || $from.depth < 1 || $from.index(0) !== 1 || state.doc.firstChild?.type !== this.type) return false
+                if (!view.endOfTextblock('up')) return false
+                return this.editor.commands.editFrontMatter()
+            },
+        }
     },
 
     onCreate() {
@@ -195,74 +294,213 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
 
     addNodeView() {
         const editor = this.editor
+        const storage = this.storage
         return ({ node, getPos, view }) => {
-            const { dom, preview, contentDOM } = sourceViewDOM(view, getPos, { outer: 'div', source: 'pre' }, { enterOnClick: false })
-            dom.classList.add('ezco-mde-front-matter')
-            // One line: the toggle ("▸ 2 properties"), and while open, the way
-            // to the YAML. The table sits under it.
-            const bar = document.createElement('div')
-            bar.className = 'ezco-mde-props-bar'
-            const toggle = document.createElement('button')
-            toggle.type = 'button'
-            toggle.className = 'ezco-mde-props-toggle'
-            const edit = document.createElement('button')
-            edit.type = 'button'
-            edit.className = 'ezco-mde-props-edit'
-            edit.textContent = 'Edit YAML'
-            edit.title = 'Edit the properties as YAML'
-            const table = document.createElement('div')
-            table.className = 'ezco-mde-props-host'
-            bar.append(toggle, edit)
-            preview.append(bar, table)
-            let count = 0
-            const show = (open: boolean) => {
-                dom.classList.toggle('is-collapsed', !open)
-                toggle.setAttribute('aria-expanded', String(open))
-                toggle.textContent = `${open ? '▾' : '▸'} ${count ? `${count} ${count === 1 ? 'property' : 'properties'}` : 'Properties'}`
-                edit.hidden = !open
-            }
-            const isOpen = () => propertiesOpen.get(editor) ?? false
-            show(isOpen())
-            toggle.addEventListener('mousedown', (e) => e.preventDefault())
-            toggle.addEventListener('click', () => {
-                propertiesOpen.set(editor, !isOpen())
-                show(isOpen())
-            })
-            edit.addEventListener('mousedown', (e) => e.preventDefault())
-            edit.addEventListener('click', () => {
-                const pos = getPos()
-                const target = pos === undefined ? null : view.state.doc.nodeAt(pos)
-                if (pos !== undefined && target) {
-                    enter(view, pos, target, true)
-                    view.focus()
-                }
-            })
+            const dom = document.createElement('div')
+            dom.className = 'ezco-mde-front-matter'
+            dom.contentEditable = 'false'
+            // The one line it folds to: how many properties, and their names.
+            const line = document.createElement('button')
+            line.type = 'button'
+            line.className = 'ezco-mde-front-matter-line'
+            line.title = 'Edit the properties'
+            const count = document.createElement('span')
+            count.className = 'ezco-mde-front-matter-count'
+            const keys = document.createElement('span')
+            keys.className = 'ezco-mde-front-matter-keys'
+            line.append(count, keys)
+            dom.append(line)
+
             let current = node
-            let token = 0
-            const render = () => {
-                const mine = ++token
-                const yaml = current.textContent
-                void loadYaml().then(({ parseDocument }) => {
-                    if (mine !== token) return
-                    renderProperties(table, yaml, parseDocument, editor)
-                    count = table.querySelectorAll('.ezco-mde-prop').length
-                    show(isOpen())
-                })
+            let updating = false
+            let collapsed = storage.autoCollapse
+            const summarize = () => {
+                const names = topLevelKeys(current.textContent)
+                count.textContent = names.length ? `${names.length} ${names.length === 1 ? 'property' : 'properties'}` : 'No properties'
+                keys.textContent = names.join(', ')
+                keys.hidden = !names.length
             }
-            render()
+            const show = (open: boolean) => {
+                collapsed = !open
+                dom.classList.toggle('is-collapsed', collapsed)
+                line.setAttribute('aria-expanded', String(open))
+                if (open) cm.requestMeasure()
+            }
+
+            // The YAML to the note: each change as it is made, and the
+            // caret with it (marked, so the caret is let stay).
+            const forward = (update: ViewUpdate) => {
+                if (updating) return
+                const pos = getPos()
+                if (pos === undefined) return
+                let offset = pos + 1
+                const { main } = update.state.selection
+                const selFrom = offset + main.from
+                const selTo = offset + main.to
+                const pmSel = view.state.selection
+                // The YAML arriving as the note already has it (the code
+                // block setting up) changes nothing in the note.
+                if (update.docChanged && update.state.doc.toString() === view.state.doc.nodeAt(pos)?.textContent && !cm.hasFocus) return
+                if (!update.docChanged && (!cm.hasFocus || (pmSel.from === selFrom && pmSel.to === selTo))) return
+                const tr = view.state.tr
+                update.changes.iterChanges((fromA, toA, fromB, toB, text) => {
+                    if (text.length) tr.replaceWith(offset + fromA, offset + toA, view.state.schema.text(text.toString()))
+                    else tr.delete(offset + fromA, offset + toA)
+                    offset += toB - fromB - (toA - fromA)
+                })
+                if (cm.hasFocus) {
+                    const size = tr.doc.content.size
+                    tr.setSelection(TextSelection.create(tr.doc, Math.min(selFrom, size), Math.min(selTo, size)))
+                }
+                view.dispatch(tr.setMeta(frontMatterKey, 'sync'))
+            }
+
+            /** Out of the YAML: the caret at the start of the note's body. */
+            const leave = () => {
+                const pos = getPos()
+                if (pos === undefined) return false
+                const after = pos + current.nodeSize
+                view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(after), 1)).scrollIntoView())
+                view.focus()
+                return true
+            }
+            const keys_: KeyBinding[] = [
+                {
+                    key: 'ArrowDown',
+                    run: () => {
+                        const { main } = cm.state.selection
+                        return main.empty && cm.state.doc.lineAt(main.head).to === cm.state.doc.length ? leave() : false
+                    },
+                },
+                { key: 'ArrowRight', run: () => (cm.state.selection.main.empty && cm.state.selection.main.to === cm.state.doc.length ? leave() : false) },
+                { key: 'Escape', run: leave },
+                {
+                    // Nothing in it: Backspace takes the block away.
+                    key: 'Backspace',
+                    run: () => {
+                        if (cm.state.doc.length) return false
+                        const pos = getPos()
+                        if (pos === undefined) return false
+                        const tr = view.state.tr.delete(pos, pos + current.nodeSize)
+                        view.dispatch(tr.setSelection(Selection.near(tr.doc.resolve(pos), 1)))
+                        view.focus()
+                        return true
+                    },
+                },
+                { key: 'Mod-z', run: () => editor.commands.undo() },
+                { key: 'Mod-Shift-z', run: () => editor.commands.redo() },
+                { key: 'Mod-y', run: () => editor.commands.redo() },
+            ]
+            const persistence = (editor.storage as any).persistence as FileSystemStorage | undefined
+            const base = measureBaseFontPx(view.dom as HTMLElement)
+            const cm = new EditorView({
+                state: CMState.create({
+                    doc: node.textContent,
+                    extensions: [
+                        keymap.of(keys_),
+                        basicSetup,
+                        EditorView.updateListener.of(forward),
+                        codeblock({
+                            content: node.textContent,
+                            fs: persistence?.options.fs ?? memoryVfs(),
+                            language: 'yaml',
+                            toolbar: false,
+                            dark: isDarkMode(view.dom),
+                            settings: { lineWrap: true, ...(base ? { fontSize: Math.max(base - 2, 1) } : {}) },
+                        }),
+                    ],
+                }),
+            })
+            dom.append(cm.dom)
+            codeblockRegistry.register(cm)
+
+            // Left (a click in the note, Escape, the caret arrowed out): folded
+            // again, unless the reader keeps it open. Focus gone to the block's
+            // own menu is not leaving: the fold waits for where it goes next.
+            const left = (e: FocusEvent) => {
+                const to = e.relatedTarget as HTMLElement | null
+                if (!storage.autoCollapse || (to && dom.contains(to))) return
+                if (to?.closest('.ezco-mde-block-action-menu, .ezco-mde-block-action-btn')) {
+                    const next = (ev: FocusEvent) => {
+                        const target = ev.target as HTMLElement | null
+                        if (target && dom.contains(target)) return
+                        if (target?.closest('.ezco-mde-block-action-menu, .ezco-mde-block-action-btn')) {
+                            document.addEventListener('focusin', next, { once: true })
+                            return
+                        }
+                        if (storage.autoCollapse && !cm.hasFocus) show(false)
+                    }
+                    document.addEventListener('focusin', next, { once: true })
+                    return
+                }
+                show(false)
+            }
+            cm.contentDOM.addEventListener('focusout', left)
+            const open = () => {
+                show(true)
+                cm.focus()
+            }
+            line.addEventListener('mousedown', (e) => e.preventDefault())
+            line.addEventListener('click', () => {
+                const pos = getPos()
+                if (pos === undefined) return
+                view.focus()
+                view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos + current.nodeSize - 1)).setMeta(frontMatterKey, 'enter'))
+                open()
+            })
+            const refresh = () => show(!storage.autoCollapse || cm.hasFocus)
+            storage.refresh.add(refresh)
+            summarize()
+            show(!storage.autoCollapse)
+
             return {
                 dom,
-                contentDOM,
                 update(next) {
                     if (next.type !== current.type) return false
-                    const changed = next.textContent !== current.textContent
+                    const was = current.textContent
                     current = next
-                    if (changed) render()
+                    const text = next.textContent
+                    if (text !== was && text !== cm.state.doc.toString()) {
+                        // What changed, not the whole: the caret and history stay.
+                        const cur = cm.state.doc.toString()
+                        let start = 0
+                        let curEnd = cur.length
+                        let newEnd = text.length
+                        while (start < curEnd && cur.charCodeAt(start) === text.charCodeAt(start)) start++
+                        while (curEnd > start && newEnd > start && cur.charCodeAt(curEnd - 1) === text.charCodeAt(newEnd - 1)) {
+                            curEnd--
+                            newEnd--
+                        }
+                        updating = true
+                        cm.dispatch({ changes: { from: start, to: curEnd, insert: text.slice(start, newEnd) } })
+                        updating = false
+                    }
+                    if (text !== was) summarize()
                     return true
                 },
-                ignoreMutation: (m) => !contentDOM.contains(m.target) && m.type !== 'selection',
+                // The caret sent in (arrowed up into it, or the line clicked):
+                // the YAML opens with it where it was sent.
+                setSelection(anchor, head) {
+                    open()
+                    updating = true
+                    const size = cm.state.doc.length
+                    cm.dispatch({ selection: { anchor: Math.min(anchor, size), head: Math.min(head, size) } })
+                    updating = false
+                },
+                selectNode() {
+                    open()
+                },
+                stopEvent() {
+                    return true
+                },
+                ignoreMutation() {
+                    return true
+                },
                 destroy() {
-                    token++
+                    storage.refresh.delete(refresh)
+                    cm.contentDOM.removeEventListener('focusout', left)
+                    codeblockRegistry.unregister(cm)
+                    cm.destroy()
                 },
             }
         }
@@ -270,10 +508,6 @@ export const FrontMatter = Node.create<FrontMatterOptions>({
 })
 
 const unsubscribers = new WeakMap<Editor, () => void>()
-
-/** Whether the properties table is open, per editor (it follows the reader
- *  from note to note, not the note). */
-const propertiesOpen = new WeakMap<Editor, boolean>()
 
 function inFrontMatter(state: EditorState, type: PMNode['type']): boolean {
     const { $head } = state.selection
@@ -305,105 +539,4 @@ function ensureId(editor: Editor, type: PMNode['type'], assignId: () => string) 
         tr.insert(0, type.create(null, state.schema.text(`id: ${assignId()}`)))
     }
     editor.view.dispatch(tr.setMeta('addToHistory', false))
-}
-
-/** The properties table: one row per top-level key. */
-function renderProperties(
-    el: HTMLElement,
-    yaml: string,
-    parseDocument: typeof import('yaml').parseDocument,
-    editor: Editor,
-) {
-    el.replaceChildren()
-    el.classList.remove('is-invalid')
-    let value: unknown
-    try {
-        const doc = parseDocument(yaml)
-        if (doc.errors.length) throw doc.errors[0]
-        value = doc.toJS()
-    } catch (e) {
-        el.classList.add('is-invalid')
-        const raw = document.createElement('pre')
-        raw.className = 'ezco-mde-props-raw'
-        raw.textContent = yaml
-        const error = document.createElement('div')
-        error.className = 'ezco-mde-props-error'
-        error.textContent = `Not valid YAML: ${(e as Error).message.split('\n')[0]}`
-        el.append(error, raw)
-        return
-    }
-    const table = document.createElement('div')
-    table.className = 'ezco-mde-props'
-    table.setAttribute('role', 'table')
-    table.setAttribute('aria-label', 'Properties')
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-        for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-            const row = document.createElement('div')
-            row.className = 'ezco-mde-prop'
-            row.setAttribute('role', 'row')
-            const k = document.createElement('span')
-            k.className = 'ezco-mde-prop-key'
-            k.setAttribute('role', 'rowheader')
-            k.textContent = key
-            const cell = document.createElement('span')
-            cell.className = 'ezco-mde-prop-value'
-            cell.setAttribute('role', 'cell')
-            appendValue(cell, v, editor)
-            row.append(k, cell)
-            table.append(row)
-        }
-    }
-    if (!table.childElementCount) {
-        const empty = document.createElement('div')
-        empty.className = 'ezco-mde-props-empty'
-        empty.textContent = yaml.trim() ? yaml : 'Properties'
-        table.append(empty)
-    }
-    el.append(table)
-}
-
-function appendValue(cell: HTMLElement, value: unknown, editor: Editor) {
-    if (value === null || value === undefined || value === '') {
-        cell.classList.add('is-empty')
-        cell.textContent = '—'
-        return
-    }
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            const chip = document.createElement('span')
-            chip.className = 'ezco-mde-prop-chip'
-            appendValue(chip, item, editor)
-            cell.append(chip)
-        }
-        return
-    }
-    if (typeof value === 'object') {
-        cell.textContent = JSON.stringify(value)
-        return
-    }
-    appendText(cell, String(value), editor)
-}
-
-/** Text, with any wikilinks in it as links the reader can follow. */
-function appendText(cell: HTMLElement, text: string, editor: Editor) {
-    let last = 0
-    for (let i = text.indexOf('[['); i >= 0; i = text.indexOf('[[', i + 1)) {
-        const m = matchWikilinkAt(text, i)
-        if (!m) continue
-        if (i > last) cell.append(text.slice(last, i))
-        const a = document.createElement('a')
-        a.className = 'ezco-mde-wikilink'
-        a.setAttribute('role', 'link')
-        a.textContent = wikilinkLabel(m.link)
-        a.addEventListener('mousedown', (e) => e.preventDefault())
-        a.addEventListener('click', (e) => {
-            e.preventDefault()
-            const wikilink = (editor.storage as any).wikilink as WikilinkStorage | undefined
-            void wikilink?.follow(m.link.target, m.link.fragment)
-        })
-        cell.append(a)
-        last = m.end
-        i = m.end - 1
-    }
-    if (last < text.length) cell.append(text.slice(last))
 }

@@ -61,7 +61,7 @@ export const codeblockRegistry = CodeblockRegistry.getInstance();
  * codeblock matches it by default. An explicit `data-theme` on the editor
  * (or any ancestor) wins; otherwise we follow the OS colour-scheme.
  */
-function isDarkMode(reference?: Element | null): boolean {
+export function isDarkMode(reference?: Element | null): boolean {
     if (typeof document !== 'undefined') {
         const themed = (reference ?? document.body)?.closest?.('[data-theme]') as HTMLElement | null;
         const explicit = themed?.getAttribute('data-theme');
@@ -80,7 +80,7 @@ function isDarkMode(reference?: Element | null): boolean {
  * same size — keeping prose and code at one scale unless a consumer
  * overrides it. Returns null if it can't be measured.
  */
-function measureBaseFontPx(near: HTMLElement | null): number | null {
+export function measureBaseFontPx(near: HTMLElement | null): number | null {
     if (typeof document === 'undefined') return null;
     const probe = document.createElement('span');
     probe.style.cssText =
@@ -682,8 +682,11 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
 
             // In an editor that only shows (a comment's text in a card, an
             // embedded note), the code is only shown too: nothing typed, and
-            // a fence named by a file never written through to it.
-            const shown = editor.isEditable ? [] : [EditorState.readOnly.of(true), EditorView.editable.of(false)];
+            // a fence named by a file never written through to it. The
+            // option, not `editor.isEditable`: the node views of a note given
+            // at creation are built before the editor has its view, when
+            // `isEditable` is still false.
+            const shown = editor.options.editable === false ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [];
             // Create initial state without codeblock extension
             const initialState = EditorState.create({
                 doc: node.textContent || '',
