@@ -2,7 +2,7 @@ use crate::db::Migrate as _;
 use crate::{
     Db, Runtime,
     cli::load_plugins_from_directory,
-    config::PluginScopedConfig,
+    config::{Instance, PluginScopedConfig},
     plugins::{WitmPlugin, registry::PluginRegistry},
     test_utils::test_component_path,
     wasm::bindgen::Event,
@@ -30,7 +30,7 @@ fn create_test_config(temp_path: &Path) -> PluginScopedConfig {
     config.db.db_password = Some("test_password".into());
     config.tls.cert_dir = temp_path.join("certs");
     config
-        .with_resolved_paths()
+        .with_resolved_paths(&Instance::default())
         .expect("Failed to resolve paths in test config")
 }
 
@@ -41,7 +41,7 @@ async fn test_witm_plugin_add_local_wasm() -> Result<()> {
     let temp_path = temp_dir.path();
 
     let config = create_test_config(temp_path);
-    let plugin_handler = plugin::PluginHandler::new(config, true);
+    let plugin_handler = plugin::PluginHandler::new(config, Instance::default(), true);
 
     // Test path to the signed WASM component
     let wasm_path = test_component_path()?;
@@ -100,7 +100,7 @@ async fn test_witm_plugin_add_nonexistent_file() {
     let temp_path = temp_dir.path();
 
     let config = create_test_config(temp_path);
-    let plugin_handler = plugin::PluginHandler::new(config, true);
+    let plugin_handler = plugin::PluginHandler::new(config, Instance::default(), true);
 
     // Test with non-existent file
     let result = plugin_handler
@@ -132,7 +132,7 @@ async fn test_witm_plugin_add_non_wasm_file() {
     std::fs::write(&dummy_file, "This is not a WASM file").unwrap();
 
     let config = create_test_config(temp_path);
-    let plugin_handler = plugin::PluginHandler::new(config, true);
+    let plugin_handler = plugin::PluginHandler::new(config, Instance::default(), true);
 
     // Test with non-WASM file
     let result = plugin_handler
@@ -160,7 +160,7 @@ async fn test_witm_plugin_remove_by_name() -> Result<()> {
     let temp_path = temp_dir.path();
 
     let config = create_test_config(temp_path);
-    let plugin_handler = plugin::PluginHandler::new(config, true);
+    let plugin_handler = plugin::PluginHandler::new(config, Instance::default(), true);
 
     // Test path to the signed WASM component
     let wasm_path = test_component_path()?;
@@ -227,7 +227,7 @@ async fn test_witm_plugin_remove_by_namespace_name() -> Result<()> {
     let temp_path = temp_dir.path();
 
     let config = create_test_config(temp_path);
-    let plugin_handler = plugin::PluginHandler::new(config, true);
+    let plugin_handler = plugin::PluginHandler::new(config, Instance::default(), true);
 
     // Test path to the signed WASM component
     let wasm_path = test_component_path()?;
@@ -294,7 +294,7 @@ async fn test_witm_plugin_remove_nonexistent() {
     let temp_path = temp_dir.path();
 
     let config = create_test_config(temp_path);
-    let plugin_handler = plugin::PluginHandler::new(config, true);
+    let plugin_handler = plugin::PluginHandler::new(config, Instance::default(), true);
 
     // Test removing a nonexistent plugin
     let result = plugin_handler

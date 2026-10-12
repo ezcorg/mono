@@ -13295,6 +13295,7 @@ dependencies = [
  "hyper-util",
  "icanhaz-broker",
  "jsonwebtoken",
+ "libc",
  "libsqlite3-sys",
  "notify 8.2.0",
  "opentelemetry",

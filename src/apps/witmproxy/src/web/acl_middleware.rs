@@ -109,43 +109,42 @@ pub async fn acl_check(
     }
 }
 
-/// Derive an ACL resource string from the request path and method.
-/// Maps REST endpoints to colon-delimited resource patterns.
-fn derive_resource_from_request(req: &Request) -> String {
-    let path = req.uri().path();
-    let method = req.method().as_str();
+/// Derive the resource a request is about from its path and method. A
+/// typed resource, not a string: an id with a colon in it (a Tailscale
+/// tenant) is one id, not three fields.
+fn derive_resource_from_request(req: &Request) -> acl::Resource {
+    use acl::{Action, Kind, Resource};
 
-    let action = match method {
-        "GET" | "HEAD" => "read",
-        "POST" => "write",
-        "PUT" | "PATCH" => "write",
-        "DELETE" => "delete",
-        _ => "read",
+    let path = req.uri().path();
+    let action = match req.method().as_str() {
+        "GET" | "HEAD" => Action::Read,
+        "POST" | "PUT" | "PATCH" => Action::Write,
+        "DELETE" => Action::Delete,
+        _ => Action::Read,
     };
 
-    // Global plugin routes live outside /api/manage/. Map them to an explicit
-    // `plugins:` resource instead of the catch-all `unknown:*` (which could be
-    // matched by an unrelated 3-segment wildcard grant).
-    // /api/plugins             -> plugins:*:action
-    // /api/plugins/:ns/:name   -> plugins:<ns>/<name>:action
+    // Global plugin routes live outside /api/manage/. Map them to a
+    // `plugins` resource instead of `Unknown`, which only an all-wildcard
+    // grant reaches.
+    // /api/plugins             -> plugins, the collection
+    // /api/plugins/:ns/:name   -> plugins, "<ns>/<name>"
     if let Some(rest) = path.strip_prefix("/api/plugins") {
         let segs: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
         return match segs.as_slice() {
-            [] => format!("plugins:*:{}", action),
-            [name] => format!("plugins:{}:{}", name, action),
-            [ns, name, ..] => format!("plugins:{}/{}:{}", ns, name, action),
+            [] => Resource::all(Kind::Plugins, action),
+            [name] => Resource::new(Kind::Plugins, Some(*name), action),
+            [ns, name, ..] => Resource::new(Kind::Plugins, Some(format!("{ns}/{name}")), action),
         };
     }
 
-    // Parse management API paths
-    // /api/manage/tenants -> tenants:*:action
-    // /api/manage/tenants/:id -> tenants:<id>:action
-    // /api/manage/groups -> groups:*:action
-    // /api/manage/groups/:id -> groups:<id>:action
-    // /api/manage/groups/:id/members -> groups:<id>:manage
-    // /api/manage/groups/:id/permissions -> groups:<id>:manage
-    // /api/manage/tenants/:id/plugins/:ns/:name/... -> plugins:<ns>/<name>:configure
-
+    // /api/manage/tenants                        -> tenants, the collection
+    // /api/manage/tenants/:id                    -> tenants, id
+    // /api/manage/tenants/:id/plugins/...        -> tenants, id, configure
+    // /api/manage/tenants/:id/ip-mappings/...    -> tenants, id, configure
+    // /api/manage/tenants/:id/policy             -> tenants, id, configure
+    // /api/manage/groups                         -> groups, the collection
+    // /api/manage/groups/:id                     -> groups, id
+    // /api/manage/groups/:id/members|permissions -> groups, id, manage
     let segments: Vec<&str> = path
         .trim_start_matches("/api/manage/")
         .split('/')
@@ -153,14 +152,16 @@ fn derive_resource_from_request(req: &Request) -> String {
         .collect();
 
     match segments.as_slice() {
-        ["tenants"] => format!("tenants:*:{}", action),
-        ["tenants", id] => format!("tenants:{}:{}", id, action),
-        ["tenants", id, "plugins", ..] => format!("tenants:{}:configure", id),
-        ["tenants", id, "ip-mappings", ..] => format!("tenants:{}:configure", id),
-        ["groups"] => format!("groups:*:{}", action),
-        ["groups", id] => format!("groups:{}:{}", id, action),
-        ["groups", id, "members"] => format!("groups:{}:manage", id),
-        ["groups", id, "permissions"] => format!("groups:{}:manage", id),
-        _ => format!("unknown:*:{}", action),
+        ["tenants"] => Resource::all(Kind::Tenants, action),
+        ["tenants", id] => Resource::new(Kind::Tenants, Some(*id), action),
+        ["tenants", id, "plugins", ..]
+        | ["tenants", id, "ip-mappings", ..]
+        | ["tenants", id, "policy"] => Resource::new(Kind::Tenants, Some(*id), Action::Configure),
+        ["groups"] => Resource::all(Kind::Groups, action),
+        ["groups", id] => Resource::new(Kind::Groups, Some(*id), action),
+        ["groups", id, "members"] | ["groups", id, "permissions"] => {
+            Resource::new(Kind::Groups, Some(*id), Action::Manage)
+        }
+        _ => Resource::all(Kind::Unknown, action),
     }
 }

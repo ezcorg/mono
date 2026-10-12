@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use conf::Conf;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::GlobalArgs;
-use crate::config::{TlsConfig, app_dir_for};
+use crate::config::Instance;
 
 /// How to reach the management API, for commands that talk to a running
 /// daemon. Both flags are optional: without them the server and token saved
@@ -30,32 +30,36 @@ pub struct DaemonArgs {
     pub auth: DaemonAuthArgs,
 }
 
-/// What a daemon on this machine left behind in its app directory: the
-/// management address in `services.json` and the CA it serves TLS with.
+/// What an instance's daemon on this machine left behind: the management
+/// address in its `services.json` and the CA it serves TLS with. Carries the
+/// instance, since the login stored for that daemon is the instance's too.
 pub struct LocalDaemon {
+    pub instance: Instance,
     pub web_url: Option<String>,
     pub root_cert: Option<reqwest::Certificate>,
 }
 
 impl LocalDaemon {
-    /// Looks next to the given certificate directory.
-    pub fn from_tls(tls: &TlsConfig) -> Self {
-        let app_dir = app_dir_for(&tls.cert_dir);
-        let web_url = std::fs::read_to_string(app_dir.join("services.json"))
+    /// `services.json` from the instance's root, the CA from `cert_dir`.
+    pub fn new(instance: &Instance, cert_dir: &Path) -> Self {
+        let web_url = std::fs::read_to_string(instance.services_file())
             .ok()
             .and_then(|c| serde_json::from_str::<super::Services>(&c).ok())
             .map(|s| format!("https://{}", s.web));
-        let root_cert = std::fs::read(crate::cert::ca::get_root_cert_path(&tls.cert_dir))
+        let root_cert = std::fs::read(crate::cert::ca::get_root_cert_path(cert_dir))
             .ok()
             .and_then(|pem| reqwest::Certificate::from_pem(&pem).ok());
-        Self { web_url, root_cert }
+        Self {
+            instance: instance.clone(),
+            web_url,
+            root_cert,
+        }
     }
 
-    /// Looks in the default locations (for commands that take no TLS config).
-    pub fn from_default_paths() -> Self {
-        let mut tls = TlsConfig::default();
-        let _ = tls.resolve_paths();
-        Self::from_tls(&tls)
+    /// The instance's daemon with the instance's default certificate
+    /// directory (for commands that take no TLS config).
+    pub fn for_instance(instance: &Instance) -> Self {
+        Self::new(instance, &instance.cert_dir())
     }
 }
 
@@ -96,7 +100,8 @@ pub(crate) fn resolve_endpoint(
     Some((server, token))
 }
 
-/// Stored authentication credentials.
+/// Stored authentication credentials: one file per instance, since each
+/// instance is its own server with its own accounts.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthStore {
     pub token: String,
@@ -104,17 +109,16 @@ pub struct AuthStore {
 }
 
 impl AuthStore {
-    /// Path to the auth storage file.
-    pub fn path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".witmproxy")
-            .join("auth.json")
+    /// Path to the instance's auth storage file: `~/.witmproxy/auth.json` for
+    /// the default instance, `~/.witmproxy/instances/<name>/auth.json`
+    /// otherwise.
+    pub fn path(instance: &Instance) -> PathBuf {
+        instance.auth_file()
     }
 
-    /// Load stored auth credentials.
-    pub fn load() -> Result<Option<Self>> {
-        let path = Self::path();
+    /// Load the instance's stored auth credentials.
+    pub fn load(instance: &Instance) -> Result<Option<Self>> {
+        let path = Self::path(instance);
         if !path.exists() {
             return Ok(None);
         }
@@ -123,9 +127,9 @@ impl AuthStore {
         Ok(Some(store))
     }
 
-    /// Save auth credentials.
-    pub fn save(&self) -> Result<()> {
-        let path = Self::path();
+    /// Save auth credentials for the instance.
+    pub fn save(&self, instance: &Instance) -> Result<()> {
+        let path = Self::path(instance);
         if let Some(parent) = path.parent() {
             crate::util::fs_secure::create_dir_secure(parent)?;
         }
@@ -135,9 +139,9 @@ impl AuthStore {
         Ok(())
     }
 
-    /// Remove stored auth credentials.
-    pub fn remove() -> Result<()> {
-        let path = Self::path();
+    /// Remove the instance's stored auth credentials.
+    pub fn remove(instance: &Instance) -> Result<()> {
+        let path = Self::path(instance);
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
@@ -176,10 +180,11 @@ impl ApiClient {
         })
     }
 
-    /// Build a client from the command's auth flags, the stored login and
-    /// the local daemon. `None` when no server is known.
+    /// Build a client from the command's auth flags, the login stored for
+    /// the daemon's instance and the local daemon. `None` when no server is
+    /// known.
     pub fn resolve(args: &DaemonAuthArgs, local: LocalDaemon) -> Result<Option<Self>> {
-        let stored = AuthStore::load()?;
+        let stored = AuthStore::load(&local.instance)?;
         let Some((server, token)) =
             resolve_endpoint(args, stored.as_ref(), local.web_url.as_deref())
         else {
@@ -454,5 +459,41 @@ mod tests {
         let r = resolve_endpoint(&args(None, None), None, Some("https://127.0.0.1:1"));
         assert_eq!(r, Some(("https://127.0.0.1:1".into(), None)));
         assert_eq!(resolve_endpoint(&args(None, Some("t")), None, None), None);
+    }
+
+    /// The default instance's login lives where it always did; a named
+    /// instance's lives under `instances/<name>`, so two daemons' tokens
+    /// never overwrite each other.
+    #[test]
+    fn auth_store_path_is_per_instance() {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        assert_eq!(
+            AuthStore::path(&Instance::default()),
+            home.join(".witmproxy").join("auth.json")
+        );
+        assert_eq!(
+            AuthStore::path(&Instance::named("agent-1").unwrap()),
+            home.join(".witmproxy")
+                .join("instances")
+                .join("agent-1")
+                .join("auth.json")
+        );
+    }
+
+    /// `resolve` reads the login of the daemon's instance, so a token saved
+    /// for one instance is not offered to another.
+    #[test]
+    fn stored_login_is_read_for_the_daemons_instance() {
+        let a = Instance::named("auth-test-a").unwrap();
+        let b = Instance::named("auth-test-b").unwrap();
+        // Only exercise the path logic: the store files under $HOME are the
+        // operator's, so never write them from a test.
+        assert_ne!(AuthStore::path(&a), AuthStore::path(&b));
+        let local = LocalDaemon {
+            instance: a.clone(),
+            web_url: Some("https://127.0.0.1:1".into()),
+            root_cert: None,
+        };
+        assert_eq!(local.instance, a);
     }
 }

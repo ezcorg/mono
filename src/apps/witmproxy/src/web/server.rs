@@ -2,6 +2,8 @@ use super::{AppState, download_certificate, index_page};
 use crate::cert::CertificateAuthority;
 use crate::config::AppConfig;
 use crate::plugins::registry::PluginRegistry;
+use crate::proxy::egress::Egress;
+use crate::proxy::tenant_resolver::TenantResolver;
 use crate::web::{acl_middleware::acl_check, auth::jwt_auth, auth_endpoints, management};
 use anyhow::Result;
 use rust_embed::RustEmbed;
@@ -29,6 +31,12 @@ pub struct WebServer {
     config: AppConfig,
     config_path: Option<std::path::PathBuf>,
     db_pool: Option<SqlitePool>,
+    /// The proxy's tenant resolver, so a management edit to a tenant or its
+    /// addresses reaches the resolver's cache at once rather than when the
+    /// cache expires.
+    tenant_resolver: Option<Arc<dyn TenantResolver>>,
+    /// The proxy's policy stack, which the tenant policy endpoints edit.
+    egress: Option<Arc<Egress>>,
     shutdown_notify: Arc<Notify>,
     handle: Option<ServerHandle>,
 }
@@ -50,14 +58,30 @@ impl WebServer {
             config_path: None,
             plugin_registry,
             db_pool: None,
+            tenant_resolver: None,
+            egress: None,
             shutdown_notify: Arc::new(Notify::new()),
             handle: None,
         }
     }
 
+    /// Give the management API the proxy's policy stack, so a tenant policy
+    /// set here binds the proxy's next dial.
+    pub fn with_egress(mut self, egress: Arc<Egress>) -> Self {
+        self.egress = Some(egress);
+        self
+    }
+
     /// Set the database pool for management API endpoints.
     pub fn with_db_pool(mut self, pool: SqlitePool) -> Self {
         self.db_pool = Some(pool);
+        self
+    }
+
+    /// Give the management API the proxy's tenant resolver, so changes to
+    /// tenants and their addresses take effect on the next connection.
+    pub fn with_tenant_resolver(mut self, resolver: Arc<dyn TenantResolver>) -> Self {
+        self.tenant_resolver = Some(resolver);
         self
     }
 
@@ -161,6 +185,12 @@ impl WebServer {
         if let Some(ref pool) = self.db_pool {
             app = app.hoop(affix_state::inject(pool.clone()));
         }
+        if let Some(ref resolver) = self.tenant_resolver {
+            app = app.hoop(affix_state::inject(Arc::clone(resolver)));
+        }
+        if let Some(ref egress) = self.egress {
+            app = app.hoop(affix_state::inject(Arc::clone(egress)));
+        }
 
         // Global plugin-management routes only need the plugin registry (already
         // in AppState), not the web DB pool — register them whenever the plugin
@@ -178,6 +208,11 @@ impl WebServer {
                 .push(
                     Router::with_path("/api/plugins/{namespace}/{name}/enabled")
                         .put(set_plugin_enabled)
+                        .options(preflight),
+                )
+                .push(
+                    Router::with_path("/api/plugins/{namespace}/{name}/config")
+                        .put(set_plugin_config)
                         .options(preflight),
                 )
                 .push(
@@ -244,6 +279,13 @@ impl WebServer {
                         .options(preflight),
                 )
                 .push(
+                    Router::with_path("/api/manage/tenants/{id}/policy")
+                        .get(management::get_tenant_policy)
+                        .put(management::set_tenant_policy)
+                        .delete(management::delete_tenant_policy)
+                        .options(preflight),
+                )
+                .push(
                     Router::with_path("/api/manage/groups/{id}")
                         .delete(management::delete_group)
                         .options(preflight),
@@ -264,6 +306,7 @@ impl WebServer {
                 .push(
                     Router::with_path("/api/manage/tenants")
                         .get(management::list_tenants)
+                        .post(management::create_tenant)
                         .options(preflight),
                 )
                 .push(
@@ -580,6 +623,49 @@ async fn set_plugin_enabled(
             warn!("Failed to set plugin enabled state: {}", e);
             Err(salvo::http::StatusError::internal_server_error()
                 .brief("Failed to update plugin enabled state"))
+        }
+    }
+}
+
+/// PUT /api/plugins/{namespace}/{name}/config -- set the plugin's
+/// configuration for everyone: the values its anonymous (untenanted) traffic
+/// is handled with, and what a tenant's own configuration overrides. Each
+/// value is typed as the plugin declares the input; one it does not declare
+/// is refused. Takes effect on the next event.
+#[endpoint(security(("bearer" = [])), status_codes(200, 400, 401, 403, 404, 500))]
+async fn set_plugin_config(
+    namespace: PathParam<String>,
+    name: PathParam<String>,
+    body: salvo::oapi::extract::JsonBody<management::SetPluginConfigRequest>,
+    depot: &mut Depot,
+) -> Result<&'static str, salvo::http::StatusError> {
+    let registry = depot
+        .obtain::<AppState>()
+        .map(|s| s.plugin_registry.clone())
+        .map_err(|e| crate::web::internal_error("Internal server error", e))?;
+    let registry = registry.ok_or_else(|| {
+        salvo::http::StatusError::bad_request().brief("Plugin system is disabled")
+    })?;
+
+    let ns = namespace.into_inner();
+    let plugin_name = name.into_inner();
+    let values: Vec<(String, String)> = body.into_inner().config.into_iter().collect();
+
+    match registry
+        .set_plugin_configuration(&ns, &plugin_name, &values)
+        .await
+    {
+        Ok(crate::plugins::registry::Configured::Updated) => Ok("Plugin configuration updated"),
+        Ok(crate::plugins::registry::Configured::NoSuchPlugin) => {
+            Err(salvo::http::StatusError::not_found().brief("Plugin not found"))
+        }
+        Ok(crate::plugins::registry::Configured::Refused(why)) => {
+            Err(salvo::http::StatusError::bad_request().brief(why))
+        }
+        Err(e) => {
+            warn!("Failed to set plugin configuration: {}", e);
+            Err(salvo::http::StatusError::internal_server_error()
+                .brief("Failed to update plugin configuration"))
         }
     }
 }

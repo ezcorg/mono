@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use cel_cxx::Env;
@@ -11,7 +11,9 @@ use wasmtime::component::{Component, InstancePre, Resource};
 use wasmtime_wasi_http::WasiHttpView;
 use wasmtime_wasi_http::p3::Request as WasiRequest;
 
+use crate::db::tenants::{Tenant, TenantPluginConfig, TenantPluginOverride};
 use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
+use crate::proxy::tenant::TenantContext;
 use crate::wasm::Logger;
 use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::PluginError as GuestPluginError;
 use crate::{
@@ -27,6 +29,15 @@ use crate::{
     },
 };
 use std::future;
+
+/// What [`PluginRegistry::set_plugin_configuration`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Configured {
+    Updated,
+    NoSuchPlugin,
+    /// A value the plugin's declared inputs do not admit; nothing was written.
+    Refused(String),
+}
 
 pub struct PluginRegistry {
     /// Copy-on-write plugin map: readers take an `Arc` snapshot and never hold
@@ -62,6 +73,30 @@ pub struct PluginRegistry {
     /// One breach recorder per plugin id, so limit-breach counts accumulate
     /// across events rather than resetting per request.
     breaches: Mutex<HashMap<String, Arc<BreachRecorder>>>,
+    /// Each tenant's plugin policy as last read from the database, kept for
+    /// [`TENANT_POLICY_TTL`] so an event costs no queries. An absent policy
+    /// (a tenant the database does not know, or has disabled) is cached too.
+    tenant_policies: Mutex<HashMap<String, CachedTenantPolicy>>,
+}
+
+/// How long a tenant's plugin policy is reused before the database is read
+/// again. Short enough that an edit at the management API is live within a
+/// couple of seconds; the handlers that make such edits also drop the entry
+/// outright (see [`PluginRegistry::invalidate_tenant_policy`]).
+pub const TENANT_POLICY_TTL: Duration = Duration::from_secs(2);
+
+/// What one tenant gets of the plugin set: the overrides that decide which
+/// plugins run for it, and the configuration values that replace the global
+/// ones when each is created.
+struct TenantPolicy {
+    overrides: Vec<TenantPluginOverride>,
+    config: Vec<TenantPluginConfig>,
+}
+
+struct CachedTenantPolicy {
+    /// `None` is the anonymous policy: the tenant is unknown or disabled.
+    policy: Option<Arc<TenantPolicy>>,
+    expires_at: Instant,
 }
 
 impl WasmEvent {
@@ -137,6 +172,7 @@ impl PluginRegistry {
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),
             breaches: Mutex::new(HashMap::new()),
+            tenant_policies: Mutex::new(HashMap::new()),
         })
     }
 
@@ -537,6 +573,68 @@ impl PluginRegistry {
         Ok(())
     }
 
+    /// Set values in a plugin's global configuration (what anonymous traffic
+    /// is handled with, and what a tenant's own values override): each one
+    /// typed as the plugin declares the input, persisted, then a freshly
+    /// loaded copy of the plugin swapped into the map so the next event sees
+    /// it. A value for an input the plugin does not declare refuses the
+    /// whole change, and nothing is written.
+    pub async fn set_plugin_configuration(
+        &self,
+        namespace: &str,
+        name: &str,
+        values: &[(String, String)],
+    ) -> Result<Configured> {
+        let id = format!("{namespace}/{name}");
+        let Some(plugin) = self.plugins().get(&id).cloned() else {
+            return Ok(Configured::NoSuchPlugin);
+        };
+        let mut typed = Vec::with_capacity(values.len());
+        for (input, raw) in values {
+            let Some(schema) = plugin.input_schema.iter().find(|s| &s.name == input) else {
+                let declared: Vec<&str> = plugin
+                    .input_schema
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect();
+                return Ok(Configured::Refused(format!(
+                    "{id} has no setting named `{input}`; it declares: {}",
+                    if declared.is_empty() {
+                        "none".to_string()
+                    } else {
+                        declared.join(", ")
+                    }
+                )));
+            };
+            match crate::plugins::inputs::coerce_input(schema, raw) {
+                Ok(value) => typed.push((input.clone(), serde_json::to_string(&value)?)),
+                Err(e) => return Ok(Configured::Refused(format!("{id}: `{input}`: {e}"))),
+            }
+        }
+        for (input, value_json) in &typed {
+            sqlx::query(
+                "INSERT OR REPLACE INTO plugin_configuration (namespace, name, input_name, input_value) VALUES (?, ?, ?, ?)",
+            )
+            .bind(namespace)
+            .bind(name)
+            .bind(input)
+            .bind(value_json)
+            .execute(&self.db.pool)
+            .await?;
+        }
+        let row =
+            sqlx::query("SELECT component, enabled FROM plugins WHERE namespace = ? AND name = ?")
+                .bind(namespace)
+                .bind(name)
+                .fetch_one(&self.db.pool)
+                .await?;
+        let mut db = self.db.clone();
+        let reloaded =
+            WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env, &self.grants).await?;
+        self.replace_plugin(&reloaded.id(), Some(reloaded));
+        Ok(Configured::Updated)
+    }
+
     /// Toggle a plugin's enabled flag: persists to the DB, then swaps a
     /// freshly loaded copy of the plugin into the in-memory map. Returns
     /// `Ok(false)` if no such plugin exists.
@@ -859,34 +957,158 @@ impl PluginRegistry {
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
     ) -> Option<Arc<WitmPlugin>> {
-        Self::find_first_unexecuted_in(&self.plugins(), event, executed_plugins)
+        Self::find_first_unexecuted_in(&self.plugins(), event, executed_plugins, None)
     }
 
     /// Snapshot-based lookup so a whole event chain sees one consistent view.
+    /// `effective` is the tenant's plugin set when the event has a tenant;
+    /// `None` means anonymous, for whom the globally enabled plugins run.
     fn find_first_unexecuted_in(
         plugins: &HashMap<String, Arc<WitmPlugin>>,
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
+        effective: Option<&HashSet<String>>,
     ) -> Option<Arc<WitmPlugin>> {
         plugins
             .values()
-            .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
+            .find(|p| !executed_plugins.contains(&p.id()) && Self::runs_for(p, event, effective))
             .cloned()
     }
 
-    /// Check if any plugins can handle an event
+    /// Whether `plugin` handles `event` for the traffic `effective` describes.
+    /// A tenant's set replaces the global enabled flag entirely: a plugin
+    /// that is off for everyone runs for a tenant whose override turns it
+    /// on, and one that is on for everyone does not run for a tenant whose
+    /// override turns it off. The scope is the plugin's own either way.
+    fn runs_for(
+        plugin: &WitmPlugin,
+        event: &dyn Event,
+        effective: Option<&HashSet<String>>,
+    ) -> bool {
+        match effective {
+            Some(set) => set.contains(&plugin.id()) && plugin.matches_scope(event),
+            None => plugin.can_handle(event),
+        }
+    }
+
+    /// Whether any plugin handles `event` for anonymous traffic: the
+    /// globally enabled plugins, as [`PluginRegistry::can_handle_for`] would
+    /// answer for [`TenantContext::anonymous`], without a database round trip.
     pub fn can_handle(&self, event: &dyn Event) -> bool {
         self.plugins().values().any(|p| p.can_handle(event))
+    }
+
+    /// Whether any plugin handles `event` for `tenant`. For a CONNECT this is
+    /// the decision to intercept, so a tenant whose override enables a
+    /// globally disabled plugin gets its connections intercepted, and nobody
+    /// else does.
+    ///
+    /// The scopes are evaluated before the returned future is polled, and
+    /// the future holds only their verdicts: an event is not `Sync`, and a
+    /// future that kept a reference to one across the policy lookup could
+    /// not be spawned.
+    pub fn can_handle_for<'a>(
+        &'a self,
+        event: &dyn Event,
+        tenant: &'a TenantContext,
+    ) -> impl std::future::Future<Output = bool> + Send + 'a {
+        let plugins = self.plugins();
+        let in_scope: HashSet<String> = plugins
+            .values()
+            .filter(|p| p.matches_scope(event))
+            .map(|p| p.id())
+            .collect();
+        async move {
+            if in_scope.is_empty() {
+                return false;
+            }
+            match self.tenant_policy(tenant).await {
+                Some(policy) => Self::effective_plugins_in(&plugins, &policy.overrides)
+                    .iter()
+                    .any(|id| in_scope.contains(id)),
+                None => plugins
+                    .values()
+                    .any(|p| p.enabled && in_scope.contains(&p.id())),
+            }
+        }
+    }
+
+    /// The plugin policy `tenant` gets: `None` for anonymous traffic, and
+    /// for a tenant the database does not know or has disabled, both of
+    /// which get the global plugin set and configuration. Read from the
+    /// database at most once per [`TENANT_POLICY_TTL`] per tenant. A
+    /// database error is logged and treated as anonymous for one TTL, so a
+    /// failing database costs one query per tenant per interval rather than
+    /// one per event.
+    async fn tenant_policy(&self, tenant: &TenantContext) -> Option<Arc<TenantPolicy>> {
+        let id = tenant.tenant_id.as_deref()?;
+        let now = Instant::now();
+        let cached = Self::lock_cache(&self.tenant_policies)
+            .get(id)
+            .filter(|c| c.expires_at > now)
+            .map(|c| c.policy.clone());
+        if let Some(policy) = cached {
+            return policy;
+        }
+        let policy = match self.load_tenant_policy(id).await {
+            Ok(policy) => policy,
+            Err(e) => {
+                warn!(
+                    tenant = %id,
+                    error = %e,
+                    "could not read the tenant's plugin policy; using the global one"
+                );
+                None
+            }
+        };
+        Self::lock_cache(&self.tenant_policies).insert(
+            id.to_string(),
+            CachedTenantPolicy {
+                policy: policy.clone(),
+                expires_at: now + TENANT_POLICY_TTL,
+            },
+        );
+        policy
+    }
+
+    async fn load_tenant_policy(&self, id: &str) -> Result<Option<Arc<TenantPolicy>>> {
+        let pool = &self.db.pool;
+        let Some(tenant) = Tenant::by_id(pool, id).await? else {
+            debug!(tenant = %id, "unknown tenant; using the global plugin policy");
+            return Ok(None);
+        };
+        if !tenant.enabled {
+            debug!(tenant = %id, "disabled tenant; using the global plugin policy");
+            return Ok(None);
+        }
+        let overrides = tenant.plugin_overrides(pool).await?;
+        let config = tenant.plugin_config(pool).await?;
+        Ok(Some(Arc::new(TenantPolicy { overrides, config })))
+    }
+
+    /// Forget the cached plugin policy of one tenant, so the next event it
+    /// sends reads the database. For the handlers that edit a tenant's
+    /// overrides, configuration or enabled flag.
+    pub fn invalidate_tenant_policy(&self, tenant_id: &str) {
+        Self::lock_cache(&self.tenant_policies).remove(tenant_id);
     }
 
     /// Returns the set of plugin IDs that are effective for a given tenant.
     /// Applies per-tenant enable/disable overrides on top of global enabled state.
     pub fn effective_plugins_for_tenant(
         &self,
-        overrides: &[crate::db::tenants::TenantPluginOverride],
+        overrides: &[TenantPluginOverride],
+    ) -> HashSet<String> {
+        Self::effective_plugins_in(&self.plugins(), overrides)
+    }
+
+    /// [`PluginRegistry::effective_plugins_for_tenant`] over one snapshot of
+    /// the plugin map, so an event chain's view is consistent.
+    fn effective_plugins_in(
+        plugins: &HashMap<String, Arc<WitmPlugin>>,
+        overrides: &[TenantPluginOverride],
     ) -> HashSet<String> {
         let mut effective = HashSet::new();
-        let plugins = self.plugins();
         for (id, plugin) in plugins.iter() {
             let mut enabled = plugin.enabled;
             // Check for tenant-specific override
@@ -906,27 +1128,40 @@ impl PluginRegistry {
     }
 
     /// Resolve configuration for a plugin, merging tenant-specific config over global defaults.
-    /// Tenant config values are stored as JSON strings in the database.
+    ///
+    /// A tenant value is stored as the text the management API received. It
+    /// is read as a JSON-encoded [`ActualInput`] when it is one (the form the
+    /// global configuration is stored in), else typed as the plugin's
+    /// manifest declares the input (the way `witm plugin configure` types a
+    /// command-line value), else passed as a string for the plugin to parse.
     pub fn resolve_config(
         &self,
         plugin: &WitmPlugin,
-        tenant_config: &[crate::db::tenants::TenantPluginConfig],
+        tenant_config: &[TenantPluginConfig],
     ) -> Vec<UserInput> {
         use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::ActualInput;
 
         let mut config = plugin.configuration.clone();
         for tc in tenant_config {
             if tc.plugin_namespace == plugin.namespace && tc.plugin_name == plugin.name {
-                // Try to deserialize the JSON value into ActualInput
+                let declared = plugin.input_schema.iter().find(|s| s.name == tc.input_name);
                 let value = match serde_json::from_str::<ActualInput>(&tc.input_value) {
                     Ok(v) => v,
-                    Err(e) => {
-                        warn!(
-                            "Failed to deserialize tenant config value for {}/{} input '{}': {}. Falling back to string.",
-                            tc.plugin_namespace, tc.plugin_name, tc.input_name, e
-                        );
-                        ActualInput::Str(tc.input_value.clone())
-                    }
+                    Err(_) => match declared
+                        .map(|s| crate::plugins::inputs::coerce_input(s, &tc.input_value))
+                    {
+                        Some(Ok(v)) => v,
+                        Some(Err(e)) => {
+                            warn!(
+                                tenant = %tc.tenant_id,
+                                plugin = %plugin.id(),
+                                input = %tc.input_name,
+                                "tenant configuration value is not the type the plugin declares ({e}); passing it as a string"
+                            );
+                            ActualInput::Str(tc.input_value.clone())
+                        }
+                        None => ActualInput::Str(tc.input_value.clone()),
+                    },
                 };
 
                 if let Some(existing) = config.iter_mut().find(|c| c.name == tc.input_name) {
@@ -944,12 +1179,39 @@ impl PluginRegistry {
 
     /// Handle a generic event, passing it through all registered plugins, and returning the final [Event] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
     /// Validates that the final [Event] matches the expected output type for its event kind, returning an error if not
-    #[tracing::instrument(skip(self, event), fields(event_kind = ?event.kind()))]
+    ///
+    /// For anonymous traffic: the globally enabled plugins, each created with
+    /// its global configuration. Events with a tenant go through
+    /// [`PluginRegistry::handle_event_for`].
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
+        self.handle_event_for(event, &TenantContext::anonymous())
+            .await
+    }
+
+    /// [`PluginRegistry::handle_event`] for one tenant's traffic: the plugins
+    /// its overrides leave effective run, each created with its configuration
+    /// resolved over the global one ([`PluginRegistry::resolve_config`]). An
+    /// anonymous, unknown or disabled tenant gets the global policy.
+    #[tracing::instrument(
+        skip(self, event, tenant),
+        fields(event_kind = ?event.kind(), tenant = ?tenant.tenant_id)
+    )]
+    pub async fn handle_event_for(
+        &self,
+        event: Box<dyn Event>,
+        tenant: &TenantContext,
+    ) -> Result<(WasmEvent, Store<Host>)> {
         // One snapshot for the whole event: a consistent view of the plugin
-        // set, with no lock held while guests execute.
+        // set, with no lock held while guests execute. The tenant's policy
+        // is read once alongside it, for the same reason.
         let plugins = self.plugins();
-        let any_plugins = plugins.values().any(|p| p.can_handle(&*event));
+        let policy = self.tenant_policy(tenant).await;
+        let effective = policy
+            .as_ref()
+            .map(|p| Self::effective_plugins_in(&plugins, &p.overrides));
+        let any_plugins = plugins
+            .values()
+            .any(|p| Self::runs_for(p, &*event, effective.as_ref()));
         if !any_plugins {
             debug!(
                 "No plugins with matching capability and scope; skipping plugin processing for event of kind: {:?}",
@@ -969,9 +1231,12 @@ impl PluginRegistry {
         let mut store = self.new_store()?;
         let mut executed_plugins = HashSet::new();
 
-        while let Some(plugin) =
-            Self::find_first_unexecuted_in(&plugins, &*current_event, &executed_plugins)
-        {
+        while let Some(plugin) = Self::find_first_unexecuted_in(
+            &plugins,
+            &*current_event,
+            &executed_plugins,
+            effective.as_ref(),
+        ) {
             tracing::info!(
                 plugin.id = %plugin.id(),
                 plugin.namespace = %plugin.namespace,
@@ -1056,7 +1321,12 @@ impl PluginRegistry {
                 plugin_id.as_str(),
             );
             let cap_resource = store.data_mut().table.push(provider)?;
-            let config = plugin.configuration.clone();
+            // The tenant's values over the global ones; the global ones alone
+            // for anonymous traffic.
+            let config = match &policy {
+                Some(policy) => self.resolve_config(&plugin, &policy.config),
+                None => plugin.configuration.clone(),
+            };
 
             let (step, next_store) = self
                 .run_plugin_in_store(
@@ -1771,6 +2041,138 @@ mod tests {
         // Verify nothing was removed
         assert_eq!(removed.len(), 0);
         assert_eq!(registry.plugins().len(), 0);
+        Ok(())
+    }
+
+    /// `set_plugin_configuration` types each value as the plugin declares
+    /// the input, persists it, and swaps a plugin carrying it into the map;
+    /// an input the plugin does not declare, or a value its type does not
+    /// admit, refuses the change and writes nothing.
+    #[tokio::test]
+    async fn set_plugin_configuration_types_persists_and_swaps() -> Result<(), anyhow::Error> {
+        use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
+            ActualInput, InputSchema, InputType,
+        };
+
+        let (registry, _temp_dir) = create_plugin_registry().await?;
+        let component_bytes = std::fs::read(test_component_path()?)?;
+        let component = Some(wasmtime::component::Component::from_binary(
+            &registry.runtime.engine,
+            &component_bytes,
+        )?);
+        let input = |name: &str, input_type: InputType| InputSchema {
+            name: name.into(),
+            input_type,
+            optional: false,
+            default: None,
+            description: None,
+        };
+        // The identity is the component's own: a configuration change reloads
+        // the plugin from its component, as an enable toggle does.
+        let plugin = WitmPlugin {
+            limits: Default::default(),
+            name: "wasm-test-component".into(),
+            component_bytes,
+            namespace: "ezco".into(),
+            version: "0.0.0".into(),
+            author: "author".into(),
+            description: "description".into(),
+            license: "mit".into(),
+            enabled: true,
+            url: "https://example.com".into(),
+            publickey: vec![],
+            // One capability: the bulk insert of none is refused by sqlx.
+            capabilities: vec![Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
+                    },
+                },
+                when: None,
+                token: None,
+            }],
+            configuration: vec![],
+            input_schema: vec![
+                input("rules", InputType::Secret),
+                input("limit", InputType::Number),
+            ],
+            metadata: std::collections::HashMap::new(),
+            component,
+        };
+        registry.register_plugin_for_test(plugin).await?;
+
+        let set = |values: Vec<(&str, &str)>| {
+            let values: Vec<(String, String)> = values
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let registry = &registry;
+            async move {
+                registry
+                    .set_plugin_configuration("ezco", "wasm-test-component", &values)
+                    .await
+            }
+        };
+        assert_eq!(
+            set(vec![("rules", "[]"), ("limit", "3")]).await?,
+            Configured::Updated
+        );
+        let plugin = registry
+            .plugins()
+            .get("ezco/wasm-test-component")
+            .cloned()
+            .expect("still registered");
+        let value = |name: &str| {
+            plugin
+                .configuration
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.value.clone())
+        };
+        assert!(
+            matches!(value("rules"), Some(ActualInput::Secret(ref s)) if s == "[]"),
+            "configuration after the set: {:?}",
+            plugin.configuration
+        );
+        assert!(
+            matches!(value("limit"), Some(ActualInput::Number(n)) if (n - 3.0).abs() < f64::EPSILON)
+        );
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT input_name FROM plugin_configuration WHERE namespace = 'ezco' AND name = 'wasm-test-component' ORDER BY input_name",
+        )
+        .fetch_all(&registry.db.pool)
+        .await?;
+        assert_eq!(rows, [("limit".to_string(),), ("rules".to_string(),)]);
+
+        // Refused, and the stored values untouched. (The reloaded plugin's
+        // declared inputs are its component's, which declares none, so the
+        // second is refused as undeclared rather than mistyped.)
+        assert!(matches!(
+            set(vec![("nope", "1")]).await?,
+            Configured::Refused(_)
+        ));
+        assert!(matches!(
+            set(vec![("limit", "many")]).await?,
+            Configured::Refused(_)
+        ));
+        let plugin = registry
+            .plugins()
+            .get("ezco/wasm-test-component")
+            .cloned()
+            .unwrap();
+        assert!(matches!(
+            plugin.configuration.iter().find(|c| c.name == "limit").map(|c| &c.value),
+            Some(ActualInput::Number(n)) if (*n - 3.0).abs() < f64::EPSILON
+        ));
+        assert_eq!(
+            registry
+                .set_plugin_configuration("ezco", "missing", &[])
+                .await?,
+            Configured::NoSuchPlugin
+        );
         Ok(())
     }
 }

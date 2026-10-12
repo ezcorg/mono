@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, UpdateConfig, system_app_dir};
+use crate::config::{AppConfig, Instance, UpdateConfig, system_app_dir};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -438,11 +438,13 @@ async fn update_via_cargo_install(version: &semver::Version) -> Result<()> {
 
 pub struct UpdateHandler {
     update: UpdateConfig,
+    /// The instance whose daemon the restart hint is about.
+    instance: Instance,
 }
 
 impl UpdateHandler {
-    pub fn new(update: UpdateConfig) -> Self {
-        Self { update }
+    pub fn new(update: UpdateConfig, instance: Instance) -> Self {
+        Self { update, instance }
     }
 
     pub async fn handle(&self, force: bool, from_source: bool) -> Result<()> {
@@ -527,10 +529,13 @@ impl UpdateHandler {
         eprintln!("Successfully updated witm to {}.", latest);
 
         // Hint about daemon restart
-        let app_dir = system_app_dir();
-        if crate::cli::service::is_daemon_running(&app_dir) {
+        if crate::cli::service::is_daemon_running(&self.instance.root()) {
+            let flag = match self.instance.name() {
+                None => self.instance.scope_flag().to_string(),
+                Some(name) => format!("{} --instance {name}", self.instance.scope_flag()),
+            };
             eprintln!("Note: The witmproxy daemon is running. Restart it to use the new version:");
-            eprintln!("  witm service restart");
+            eprintln!("  witm service restart{flag}");
         }
 
         Ok(())
@@ -541,9 +546,10 @@ impl UpdateHandler {
 // 4i. Daemon auto-update loop
 // ---------------------------------------------------------------------------
 
-/// The daemon auto-update loop takes the full [`AppConfig`]: after swapping
-/// the binary it re-runs `service install`, which persists the config file.
-pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
+/// The daemon auto-update loop takes the full [`AppConfig`] and the instance
+/// it runs as: after swapping the binary it re-runs `service install` for
+/// that instance, which persists the config file and rewrites the unit.
+pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig, instance: Instance) {
     // Wait 60s after startup to avoid startup churn
     tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
 
@@ -618,6 +624,7 @@ pub async fn auto_update_loop(interval_seconds: u64, config: AppConfig) {
                             // The service manager will kill this process when the service restarts.
                             let handler = crate::cli::service::ServiceHandler::new(
                                 config.clone(),
+                                instance.clone(),
                                 false,
                                 None,
                                 false,

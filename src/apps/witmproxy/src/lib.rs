@@ -13,6 +13,7 @@ pub mod db;
 pub mod events;
 pub mod http;
 pub mod plugins;
+pub mod policy;
 pub mod proxy;
 pub mod util;
 pub mod wasm;
@@ -34,6 +35,7 @@ pub use config::{
 pub use db::Db;
 pub use plugins::registry::PluginRegistry;
 pub use proxy::ProxyServer;
+use proxy::tenant_resolver::TenantResolver;
 pub use wasm::Runtime;
 pub use web::WebServer;
 
@@ -50,6 +52,12 @@ pub struct WitmProxy {
     config: AppConfig,
     config_path: Option<std::path::PathBuf>,
     db_pool: Option<sqlx::SqlitePool>,
+    /// Who a proxy connection belongs to; `None` treats every client as
+    /// anonymous.
+    tenant_resolver: Option<Arc<dyn TenantResolver>>,
+    /// Who may dial what, shared by the proxy (which asks it) and the
+    /// management API (which edits tenants' policies in it).
+    egress: Option<Arc<proxy::egress::Egress>>,
     proxy_server: Option<ProxyServer>,
     web_server: Option<WebServer>,
     shutdown_notify: Arc<Notify>,
@@ -73,10 +81,17 @@ impl WitmProxy {
             config,
             config_path: None,
             db_pool: None,
+            tenant_resolver: None,
+            egress: None,
             proxy_server: None,
             web_server: None,
             shutdown_notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// The policy stack, once started.
+    pub fn egress(&self) -> Option<Arc<proxy::egress::Egress>> {
+        self.egress.clone()
     }
 
     /// Get the current configuration
@@ -106,6 +121,13 @@ impl WitmProxy {
         self
     }
 
+    /// Resolve each proxy connection's tenant with `resolver`, so plugins
+    /// run per tenant rather than for everyone alike.
+    pub fn with_tenant_resolver(mut self, resolver: Arc<dyn TenantResolver>) -> Self {
+        self.tenant_resolver = Some(resolver);
+        self
+    }
+
     /// Get the proxy server listen address (only available after start() is called)
     pub fn proxy_listen_addr(&self) -> Option<SocketAddr> {
         self.proxy_server.as_ref().and_then(|s| s.listen_addr())
@@ -121,6 +143,32 @@ impl WitmProxy {
         let _ = rustls::crypto::ring::default_provider().install_default();
         info!("Hi there! Starting up witmproxy for ya");
 
+        // The policy: the instance's floor from the configuration, and every
+        // tenant's from the database, validated against that floor. A
+        // tenant policy that no longer compiles or passes its checks is left
+        // out, loudly: that tenant is then judged by the floor alone.
+        let egress = Arc::new(proxy::egress::Egress::from_config(&self.config.proxy)?);
+        if let Some(pool) = &self.db_pool {
+            for (tenant_id, json) in db::tenants::all_policies(pool).await? {
+                let loaded = serde_json::from_str::<policy::PolicyDoc>(&json)
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .and_then(|doc| {
+                        policy::Policy::compile(&doc, policy::Origin::Tenant(tenant_id.clone()))
+                            .map_err(|e| anyhow::anyhow!("{e}"))
+                    })
+                    .and_then(|p| {
+                        p.validate(Some(egress.floor()))
+                            .map(|()| p)
+                            .map_err(|e| anyhow::anyhow!("{e}"))
+                    });
+                match loaded {
+                    Ok(p) => egress.set_tenant(&tenant_id, p),
+                    Err(e) => warn!("tenant {tenant_id}: stored policy not loaded: {e}"),
+                }
+            }
+        }
+        self.egress = Some(Arc::clone(&egress));
+
         // Start web server for certificate distribution and management API
         let mut web_server = WebServer::new(
             self.ca.clone(),
@@ -133,6 +181,10 @@ impl WitmProxy {
         if let Some(ref pool) = self.db_pool {
             web_server = web_server.with_db_pool(pool.clone());
         }
+        if let Some(resolver) = &self.tenant_resolver {
+            web_server = web_server.with_tenant_resolver(Arc::clone(resolver));
+        }
+        web_server = web_server.with_egress(Arc::clone(&egress));
         web_server.start().await?;
         let web_addr = web_server
             .listen_addr()
@@ -145,7 +197,11 @@ impl WitmProxy {
             self.ca.clone(),
             self.plugin_registry.clone(),
             self.config.clone(),
-        )?;
+        )?
+        .with_egress(Arc::clone(&egress));
+        if let Some(resolver) = &self.tenant_resolver {
+            proxy_server = proxy_server.with_tenant_resolver(Arc::clone(resolver));
+        }
         // Tell the proxy where its own management server is so it can
         // short-circuit traffic targeting that port back to loopback.
         proxy_server.set_management_addr(web_addr);

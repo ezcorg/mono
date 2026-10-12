@@ -278,12 +278,27 @@ pub async fn convert_reqwest_to_hyper_response(
         .map_err(|e| ProxyError::Generic(format!("Failed to build hyper response: {}", e)))
 }
 
-/// Create a configured reqwest client for upstream requests
+/// Create a configured reqwest client for upstream requests, one that
+/// connects anywhere its host can: the system resolver, no policy.
 pub fn client(ca: CertificateAuthority) -> ProxyResult<UpstreamClient> {
+    build_upstream_client(&ca, None)
+}
+
+/// The upstream client with `resolver` deciding what each name is: the
+/// policy's [`crate::proxy::egress::FilteringResolver`] for a client the
+/// proxy fronts, the system's (`None`) for one it does not judge.
+pub fn build_upstream_client(
+    ca: &CertificateAuthority,
+    resolver: Option<std::sync::Arc<dyn reqwest::dns::Resolve>>,
+) -> ProxyResult<UpstreamClient> {
     let ca_cert = Certificate::from_der(&ca.get_root_certificate_der()?)
         .map_err(|e| ProxyError::Cert(e.to_string().into()))?;
 
-    let client = reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder();
+    if let Some(resolver) = resolver {
+        builder = builder.dns_resolver(resolver);
+    }
+    let client = builder
         // HTTP/2 compatible connection pooling
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .pool_max_idle_per_host(10) // Allow more connections for HTTP/2 multiplexing

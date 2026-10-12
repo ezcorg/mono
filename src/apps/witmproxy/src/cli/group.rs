@@ -3,6 +3,7 @@ use conf::{Conf, Subcommands};
 
 use super::GlobalArgs;
 use crate::cli::api_client::{ApiClient, DaemonArgs, DaemonAuthArgs, LocalDaemon};
+use crate::config::Instance;
 
 #[derive(Subcommands)]
 #[conf(serde)]
@@ -124,12 +125,19 @@ impl GroupCommands {
     }
 }
 
-pub struct GroupHandler;
+/// Talks to one instance's daemon (or the server logged in to for it).
+pub struct GroupHandler {
+    instance: Instance,
+}
 
 impl GroupHandler {
+    pub fn new(instance: Instance) -> Self {
+        Self { instance }
+    }
+
     pub async fn handle(&self, command: &GroupCommands) -> Result<()> {
         let client =
-            ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
+            ApiClient::resolve_required(command.auth(), LocalDaemon::for_instance(&self.instance))?;
 
         match command {
             GroupCommands::List(_) => {

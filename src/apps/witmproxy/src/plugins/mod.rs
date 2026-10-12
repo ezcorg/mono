@@ -273,11 +273,18 @@ impl WitmPlugin {
         Ok(())
     }
 
+    /// Whether this plugin handles `event` for anonymous traffic: it is
+    /// globally enabled and [`WitmPlugin::matches_scope`].
     pub fn can_handle(&self, event: &dyn Event) -> bool {
-        // A globally-disabled plugin never handles events.
-        if !self.enabled {
-            return false;
-        }
+        self.enabled && self.matches_scope(event)
+    }
+
+    /// Whether `event` falls within a granted event capability's scope,
+    /// regardless of whether the plugin is globally enabled. The registry
+    /// decides who a plugin runs for (a tenant override can switch on a
+    /// plugin that is off for everyone else); this answers only whether the
+    /// plugin asked for events like this one.
+    pub fn matches_scope(&self, event: &dyn Event) -> bool {
         self.capabilities
             .iter()
             // Have we been granted the associated event capability?
