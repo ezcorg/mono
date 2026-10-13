@@ -274,7 +274,15 @@ function convertList(
     const { schema } = state
     const rebuilt = rebuildListNode(node, targetListType, schema, listAttrs)
     if (!rebuilt) return
+    const { from, to } = state.selection
     const tr = state.tr.replaceRangeWith(pos, pos + node.nodeSize, rebuilt)
+    // The rebuilt list has the old one's shape (items of another kind hold
+    // the same content), so the caret's positions mean the same place in
+    // it: put it back there, rather than after the list, where the
+    // replacement's mapping sends it.
+    if (from >= pos && to <= pos + node.nodeSize && rebuilt.nodeSize === node.nodeSize) {
+        tr.setSelection(TextSelection.between(tr.doc.resolve(from), tr.doc.resolve(to)))
+    }
     editor.view.dispatch(tr)
 }
 

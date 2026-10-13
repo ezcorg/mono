@@ -41,8 +41,15 @@ export default defineConfig({
     // Regular app build for dev mode
     outDir: 'dist-app'
   },
+  // One CodeMirror: the codemirror-json-schema fork's own node_modules hold
+  // copies of these, and an extension made by another copy of
+  // @codemirror/state is not recognised by the editor's.
+  resolve: {
+    dedupe: ['@codemirror/state', '@codemirror/view', '@codemirror/language', '@codemirror/lint', '@codemirror/autocomplete', '@lezer/common', '@lezer/highlight'],
+  },
   optimizeDeps: {
-    exclude: ['@joinezco/codeblock', '@joinezco/storage', '@joinezco/vault', '@joinezco/config']
+    exclude: ['@joinezco/codeblock', '@joinezco/storage', '@joinezco/vault', '@joinezco/config'],
+    include: ['@joinezco/codemirror-json-schema', '@joinezco/codemirror-json-schema/yaml'],
   },
   plugins: [
     snapshot({

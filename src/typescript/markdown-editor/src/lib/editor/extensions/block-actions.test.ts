@@ -1,13 +1,16 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { userEvent } from '@vitest/browser/context'
+import type { JSONContent } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { actionsForNode } from './block-actions'
 import { MarkdownEditor } from '../index'
-import { createTestContainer, createTestEditor, cleanupEditor, waitFor } from '../../../test/utils'
+import { createTestContainer, createTestEditor, cleanupEditor, getMarkdownContent, menuItem, menuLabels, waitFor } from '../../../test/utils'
 
 /**
  * Exercises every block-action a node type offers (run via `actionsForNode`),
  * asserting each produces the expected transformation, plus the multi-block
- * "spanning" selection behaviour.
+ * "spanning" selection behaviour; then the menu as a person reaches it: a
+ * glyph pressed in the gutter, an item pressed or chosen with the keys.
  */
 describe('Block actions', () => {
     const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
@@ -240,12 +243,27 @@ describe('Block actions', () => {
     })
 
     // ── Code block ───────────────────────────────────────────────
-    it('code block: copy contents (no throw) and delete', async () => {
-        let editor = await makeEditor('```js\nconst a = 1;\n```')
-        // Copy writes to the clipboard (swallows rejection in headless); it
-        // must not throw and must leave the block intact.
-        expect(() => runAction(editor, 'ezcodeBlock', 'Copy contents')).not.toThrow()
-        expect(findNode(editor, 'ezcodeBlock')).not.toBeNull()
+    it('code block: copy contents writes the source to the clipboard and keeps the block; delete removes it', async () => {
+        let editor = await makeEditor('```js\nconst a = 1;\nconst b = 2;\n```')
+        const markdown = getMarkdownContent(editor)
+        // The browser's clipboard is not readable here: the write is caught
+        // on its way, and restored after.
+        const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
+        try {
+            runAction(editor, 'ezcodeBlock', 'Copy contents')
+            expect(writeText).toHaveBeenCalledTimes(1)
+            expect(writeText).toHaveBeenCalledWith('const a = 1;\nconst b = 2;')
+            expect(findNode(editor, 'ezcodeBlock')).not.toBeNull()
+            expect(getMarkdownContent(editor)).toBe(markdown)
+            // A rejected write (no permission) is swallowed, the block untouched.
+            writeText.mockRejectedValueOnce(new DOMException('Write permission denied.', 'NotAllowedError'))
+            runAction(editor, 'ezcodeBlock', 'Copy contents')
+            await new Promise((r) => setTimeout(r, 0))
+            expect(writeText).toHaveBeenCalledTimes(2)
+            expect(getMarkdownContent(editor)).toBe(markdown)
+        } finally {
+            writeText.mockRestore()
+        }
 
         editor = await makeEditor('```js\nconst a = 1;\n```')
         runAction(editor, 'ezcodeBlock', 'Delete')
@@ -261,34 +279,58 @@ describe('Block actions', () => {
     })
 
     // ── Table ────────────────────────────────────────────────────
-    it('table: runs every action and keeps a valid document', async () => {
+    it('table: each action leaves the cells it should, run from the first header cell', async () => {
         const md = '| A | B |\n| --- | --- |\n| 1 | 2 |'
-        const rowCount = (e: MarkdownEditor) => {
-            let n = 0
-            e.state.doc.descendants((node) => { if (node.type.name === 'tableRow') n++ })
-            return n
+        /** The table's cells, row by row, as text. */
+        const cells = (e: MarkdownEditor): string[][] | null => {
+            const table = findNode(e, 'table')
+            if (!table) return null
+            const rows: string[][] = []
+            table.node.forEach((row) => {
+                const texts: string[] = []
+                row.forEach((cell) => texts.push(cell.textContent))
+                rows.push(texts)
+            })
+            return rows
         }
-
-        let editor = await makeEditor(md)
-        const rowsBefore = rowCount(editor)
+        /** Whether the first row is all header cells. */
+        const headed = (e: MarkdownEditor): boolean => {
+            const first = findNode(e, 'table')!.node.firstChild!
+            let all = true
+            first.forEach((cell) => { if (cell.type.name !== 'tableHeader') all = false })
+            return all
+        }
+        // (The cursor goes into the first paragraph, which is the A header cell's.)
+        const cases: Array<[string, string[][] | null, boolean | null]> = [
+            ['Add row above', [['', ''], ['A', 'B'], ['1', '2']], false],
+            ['Add row below', [['A', 'B'], ['', ''], ['1', '2']], true],
+            ['Add column before', [['', 'A', 'B'], ['', '1', '2']], true],
+            ['Add column after', [['A', '', 'B'], ['1', '', '2']], true],
+            ['Delete row', [['1', '2']], false],
+            ['Delete column', [['B'], ['2']], true],
+            ['Toggle header row', [['A', 'B'], ['1', '2']], false],
+            ['Delete table', null, null],
+        ]
+        for (const [label, expected, header] of cases) {
+            const editor = await makeEditor(md)
+            expect(cells(editor)).toEqual([['A', 'B'], ['1', '2']])
+            expect(headed(editor)).toBe(true)
+            runAction(editor, 'table', label, 'paragraph')
+            expect(cells(editor), label).toEqual(expected)
+            if (header !== null) expect(headed(editor), label).toBe(header)
+            // The note is still a note (and the caret in it, the action's chain focusing).
+            expect(() => editor.state.doc.check()).not.toThrow()
+            expect(editor.isFocused).toBe(true)
+        }
+        // Toggled twice, the header row is back; a row added above it then
+        // serializes as the table's first row, the header after.
+        const editor = await makeEditor(md)
+        runAction(editor, 'table', 'Toggle header row', 'paragraph')
+        runAction(editor, 'table', 'Toggle header row', 'paragraph')
+        expect(headed(editor)).toBe(true)
+        expect(getMarkdownContent(editor).trimEnd()).toBe(md)
         runAction(editor, 'table', 'Add row below', 'paragraph')
-        expect(rowCount(editor)).toBe(rowsBefore + 1)
-
-        editor = await makeEditor(md)
-        runAction(editor, 'table', 'Add row above', 'paragraph')
-        expect(rowCount(editor)).toBe(rowsBefore + 1)
-
-        // The column / header / delete-row actions must all run without
-        // error and leave the table well-formed (or removed, for delete).
-        for (const label of ['Add column before', 'Add column after', 'Delete row', 'Delete column', 'Toggle header row']) {
-            editor = await makeEditor(md)
-            expect(() => runAction(editor, 'table', label, 'paragraph')).not.toThrow()
-            expect(editor.state.doc.check === undefined || editor.state.doc).toBeTruthy()
-        }
-
-        editor = await makeEditor(md)
-        runAction(editor, 'table', 'Delete table', 'paragraph')
-        expect(findNode(editor, 'table')).toBeNull()
+        expect(getMarkdownContent(editor).trimEnd()).toBe('| A | B |\n| --- | --- |\n|  |  |\n| 1 | 2 |')
     })
 
     // ── Multi-block (spanning) selection ─────────────────────────
@@ -448,6 +490,119 @@ describe('Block actions', () => {
         expect(labels.some((l) => l.endsWith('Numbered list'))).toBe(true)
         expect(labels.some((l) => l.endsWith('Fold'))).toBe(true)
         ;(editor.storage as any).blockActions.blockActionsView.closeMenu()
+    })
+
+    // ── The menu, as a person reaches it ─────────────────────────
+    const menu = () => document.querySelector<HTMLElement>('.ezco-mde-block-action-menu')
+    /** The label of the item holding the focus, if one does. */
+    const focused = () => (document.activeElement as HTMLElement | null)?.closest('.ezco-mde-context-menu-item')?.querySelector('.ezco-mde-context-menu-item-label')?.textContent ?? null
+    /** The glyph of block `index` (not the active one, whose glyph stands
+     *  under the indicator) pressed: its menu open, the first item focused. */
+    const openGlyph = async (container: HTMLElement, index: number): Promise<HTMLElement> => {
+        await frames()
+        await userEvent.click(glyphs(container)[index])
+        await waitFor(() => !!menu(), 2000)
+        await waitFor(() => focused() !== null, 2000)
+        return menu()!
+    }
+    /** The indicator (the active block's own handle) pressed: its menu open. */
+    const openIndicator = async (container: HTMLElement): Promise<HTMLElement> => {
+        const indicator = container.querySelector('.ezco-mde-block-action-btn') as HTMLElement
+        await waitFor(() => indicator.style.opacity === '1', 2000)
+        await userEvent.click(indicator)
+        await waitFor(() => !!menu(), 2000)
+        await waitFor(() => focused() !== null, 2000)
+        return menu()!
+    }
+
+    it('a glyph pressed opens its block’s menu; an item pressed converts the block and the note keeps the focus', async () => {
+        const editor = await makeEditor('# Title\n\n* one\n* two')
+        const container = created[created.length - 1].container
+        const open = await openGlyph(container, 1)
+        expect(menuLabels(open)).toEqual(['Dashed list', 'Numbered list', 'Lettered list', 'Task list', 'Lift to paragraphs', 'Fold', 'Delete'])
+        expect(focused()).toBe('Dashed list')
+        // Under the glyph, in its column.
+        const glyph = glyphs(container)[1].getBoundingClientRect()
+        expect(open.getBoundingClientRect().top).toBeGreaterThanOrEqual(glyph.bottom - 1)
+        await userEvent.click(menuItem('Numbered list', open)!)
+        await waitFor(() => !menu(), 2000)
+        expect(editor.getJSON().content?.[1]?.type).toBe('orderedList')
+        expect(getMarkdownContent(editor)).toBe('# Title\n\n1. one\n2. two')
+        expect(editor.isFocused).toBe(true)
+        // The list's glyph says so now. Back in the list (see the case below
+        // for where the caret went), the list is the active block and its
+        // handle is the indicator: pressed, it opens the way back.
+        await frames()
+        expect(glyphs(container)[1].textContent).toBe('1.')
+        editor.commands.setTextSelection(findNode(editor, 'orderedList')!.pos + 3)
+        const again = await openIndicator(container)
+        expect(menuLabels(again)).toEqual(['Lettered list', 'Bullet list', 'Dashed list', 'Task list', 'Lift to paragraphs', 'Fold', 'Delete'])
+        await userEvent.click(menuItem('Task list', again)!)
+        await waitFor(() => !menu(), 2000)
+        // (A task list writes itself loose, `* [ ]`: lists.test.ts.)
+        const tasks: JSONContent = editor.getJSON().content![1]
+        expect(tasks.type).toBe('taskList')
+        expect(tasks.content!.map((i) => [i.type, i.attrs?.checked, i.content?.[0]?.content?.[0]?.text])).toEqual([['taskItem', false, 'one'], ['taskItem', false, 'two']])
+    })
+
+    // Bug: `convertList` replaces the list with `replaceRangeWith` and never
+    // maps the caret into the new list, so it lands in the block after it.
+    it('a list converted from its menu keeps the caret in the list', async () => {
+        const editor = await makeEditor('# Title\n\n* one\n* two')
+        const container = created[created.length - 1].container
+        const open = await openGlyph(container, 1)
+        expect(editor.state.selection.$from.parent.textContent).toBe('one')
+        await userEvent.click(menuItem('Numbered list', open)!)
+        await waitFor(() => !menu(), 2000)
+        expect(getMarkdownContent(editor)).toBe('# Title\n\n1. one\n2. two')
+        expect(editor.state.selection.$from.node(1).type.name).toBe('orderedList')
+        expect(editor.state.selection.$from.parent.textContent).toBe('one')
+    })
+
+    it('the arrows move the focused item (Home and End to the ends), Enter runs it', async () => {
+        const editor = await makeEditor('# Title\n\nA paragraph.')
+        const container = created[created.length - 1].container
+        await openGlyph(container, 1)
+        expect(focused()).toBe('Heading 1')
+        await userEvent.keyboard('{ArrowDown}')
+        expect(focused()).toBe('Heading 2')
+        await userEvent.keyboard('{ArrowDown}{ArrowDown}')
+        expect(focused()).toBe('Bullet list')
+        await userEvent.keyboard('{ArrowUp}')
+        expect(focused()).toBe('Heading 3')
+        await userEvent.keyboard('{End}')
+        expect(focused()).toBe('Delete')
+        await userEvent.keyboard('{ArrowDown}')
+        expect(focused()).toBe('Heading 1')
+        await userEvent.keyboard('{Home}{ArrowUp}')
+        expect(focused()).toBe('Delete')
+        // The keys went to the menu, not the note.
+        expect(editor.state.doc.textContent).toBe('TitleA paragraph.')
+        await userEvent.keyboard('{Home}{ArrowDown}{ArrowDown}{Enter}')
+        await waitFor(() => !menu(), 2000)
+        expect(getMarkdownContent(editor)).toBe('# Title\n\n### A paragraph.')
+        expect(editor.isFocused).toBe(true)
+        expect(editor.state.selection.$from.parent.type.name).toBe('heading')
+    })
+
+    it('Escape closes the menu and puts the caret back where it was, the note focused and unchanged', async () => {
+        const editor = await makeEditor('# Title\n\nA paragraph.')
+        const container = created[created.length - 1].container
+        const markdown = getMarkdownContent(editor)
+        await openGlyph(container, 1)
+        // The glyph put the caret into its block before opening.
+        const at = editor.state.selection.from
+        expect(editor.state.selection.$from.parent.textContent).toBe('A paragraph.')
+        expect(editor.isFocused).toBe(false)
+        await userEvent.keyboard('{Escape}')
+        await waitFor(() => !menu(), 2000)
+        expect(editor.isFocused).toBe(true)
+        expect(editor.state.selection.from).toBe(at)
+        expect(editor.state.selection.empty).toBe(true)
+        expect(getMarkdownContent(editor)).toBe(markdown)
+        // Typing goes on in the note, at the caret.
+        await userEvent.keyboard('X')
+        expect(editor.state.selection.$from.parent.textContent).toBe('XA paragraph.')
     })
 
     it('folds a block to one line, and the blocks a selection spans; the line, the caret, or its glyph opens it again', async () => {

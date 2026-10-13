@@ -49,6 +49,10 @@ export default defineConfig({
     },
     // Resolve configuration for tests
     resolve: {
+        // One CodeMirror: the fork's own node_modules hold copies of these,
+        // and an extension made by another copy of @codemirror/state is not
+        // recognised by the editor's.
+        dedupe: ['@codemirror/state', '@codemirror/view', '@codemirror/language', '@codemirror/lint', '@codemirror/autocomplete', '@lezer/common', '@lezer/highlight'],
         alias: {
             '@': path.resolve(__dirname, './src'),
             '@/lib': path.resolve(__dirname, './src/lib'),
@@ -71,9 +75,11 @@ export default defineConfig({
         include: [
             '@joinezco/config > yaml',
             '@joinezco/config > zod',
-            // The settings file's schema support, loaded when one is opened.
-            'codemirror-json-schema',
-            'codemirror-json-schema/yaml',
+            // The settings file's schema support (the fork, a workspace
+            // package: pre-bundled only because it is named here), loaded
+            // when one is opened.
+            '@joinezco/codemirror-json-schema',
+            '@joinezco/codemirror-json-schema/yaml',
             '@joinezco/codeblock > @codemirror/autocomplete',
             '@joinezco/codeblock > @codemirror/commands',
             '@joinezco/codeblock > @codemirror/lang-cpp',

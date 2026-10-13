@@ -1,10 +1,13 @@
 import type { JSONContent } from '@tiptap/core'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { userEvent } from '@vitest/browser/context'
 import { MarkdownEditor } from '../index'
 import {
     createTestContainer,
     createTestEditor,
     cleanupEditor,
+    getMarkdownContent,
+    waitFor,
 } from '../../../test/utils'
 
 describe('MarkdownEditor Extensions', () => {
@@ -36,25 +39,31 @@ describe('MarkdownEditor Extensions', () => {
             expect(uncheckedTasks[1].textContent).toContain('Another unchecked')
         })
 
-        it('should toggle task completion', () => {
+        it('toggles a task on a click of its checkbox, and back', async () => {
             editor.commands.setContent('- [ ] Task to toggle')
-            editor.commands.focus()
+            await new Promise((r) => requestAnimationFrame(r))
+            const item = () => editor.view.dom.querySelector('li[data-type="taskItem"]') as HTMLElement
+            const checked = () => {
+                const json: JSONContent = editor.getJSON()
+                return json.content?.[0]?.content?.[0]?.attrs?.checked
+            }
+            const checkbox = item().querySelector('input[type="checkbox"]') as HTMLInputElement
+            expect(checkbox.checked).toBe(false)
+            expect(item().getAttribute('data-checked')).toBe('false')
 
-            // Find the task item and verify initial state
-            const initialTaskElement = editor.view.dom.querySelector('[data-checked="false"]')
-            expect(initialTaskElement).toBeTruthy()
-            expect(initialTaskElement?.textContent).toContain('Task to toggle')
+            await userEvent.click(checkbox)
+            await waitFor(() => item().getAttribute('data-checked') === 'true', 2000)
+            expect(checkbox.checked).toBe(true)
+            expect(checked()).toBe(true)
+            // (Written back with the marker it was written with.)
+            expect(getMarkdownContent(editor).trim()).toBe('- [x] Task to toggle')
+            expect(item().textContent).toContain('Task to toggle')
 
-            // Simulate task toggle (this would normally be done by clicking)
-            editor.commands.setContent('- [x] Task to toggle')
-
-            const toggledTaskElement = editor.view.dom.querySelector('[data-checked="true"]')
-            expect(toggledTaskElement).toBeTruthy()
-            expect(toggledTaskElement?.textContent).toContain('Task to toggle')
-
-            // Verify the unchecked task no longer exists
-            const uncheckedTask = editor.view.dom.querySelector('[data-checked="false"]')
-            expect(uncheckedTask).toBeNull()
+            await userEvent.click(checkbox)
+            await waitFor(() => item().getAttribute('data-checked') === 'false', 2000)
+            expect(checkbox.checked).toBe(false)
+            expect(checked()).toBe(false)
+            expect(getMarkdownContent(editor).trim()).toBe('- [ ] Task to toggle')
         })
 
         it('should handle nested task lists', () => {
@@ -111,29 +120,7 @@ describe('MarkdownEditor Extensions', () => {
             expect(dataCells?.[2].textContent?.trim()).toBe('Cell 3')
         })
 
-        it('should handle table navigation', () => {
-            const tableMarkdown = `| A | B |
-|---|---|
-| 1 | 2 |`
-
-            editor.commands.setContent(tableMarkdown)
-            editor.commands.focus()
-
-            // Position cursor in first cell
-            const firstCell = editor.view.dom.querySelector('td')
-            if (firstCell) {
-                firstCell.focus()
-            }
-
-            // Test that table structure is maintained
-            const table = editor.view.dom.querySelector('table')
-            expect(table).toBeTruthy()
-
-            const cells = table?.querySelectorAll('td')
-            expect(cells?.length).toBe(2)
-            expect(cells?.[0].textContent?.trim()).toBe('1')
-            expect(cells?.[1].textContent?.trim()).toBe('2')
-        })
+        // Moving between cells with Tab, Enter and the arrows: table.test.ts.
     })
 
     describe('Link Extension', () => {
@@ -146,18 +133,20 @@ describe('MarkdownEditor Extensions', () => {
             expect(link?.textContent).toBe('Google')
         })
 
-        it('should auto-detect URLs', () => {
-            editor.commands.setContent('Visit https://example.com for more info.')
-
-            // Check if URL is present in the content (may or may not be auto-linked depending on extension)
-            const content = editor.view.dom.textContent
-            expect(content).toContain('https://example.com')
-
-            // If auto-linking is enabled, check for link element
-            const autoLink = editor.view.dom.querySelector('a[href="https://example.com"]')
-            if (autoLink) {
-                expect(autoLink.textContent).toBe('https://example.com')
-            }
+        it('links a URL typed as a word of its own, once the space after it is typed', async () => {
+            editor.commands.setContent('Visit')
+            await new Promise((r) => requestAnimationFrame(r))
+            editor.commands.focus('end')
+            await userEvent.keyboard(' https://example.com')
+            // Still being typed: not a link yet.
+            expect(editor.view.dom.querySelector('a')).toBeNull()
+            await userEvent.keyboard(' for more info.')
+            const link = editor.view.dom.querySelector('a[href="https://example.com"]')
+            expect(link).not.toBeNull()
+            expect(link!.textContent).toBe('https://example.com')
+            expect(editor.view.dom.textContent).toBe('Visit https://example.com for more info.')
+            // The link ends with the URL: what followed is text.
+            expect(getMarkdownContent(editor)).toBe('Visit <https://example.com> for more info.')
         })
 
         it('should handle email links', () => {
@@ -213,18 +202,7 @@ describe('MarkdownEditor Extensions', () => {
         })
     })
 
-    describe('Slash Commands Extension', () => {
-        it('should trigger slash commands', () => {
-            editor.commands.focus()
-            editor.commands.setTextSelection(0)
-
-            // Type slash to trigger command menu
-            const { from } = editor.state.selection
-            editor.commands.insertContentAt(from, '/')
-
-            // TODO:
-        })
-    })
+    // The slash menu (typed, filtered, arrowed, run, closed): slash-commands.test.ts.
 
     describe('File System Integration', () => {
         it('should handle file references in code blocks', () => {

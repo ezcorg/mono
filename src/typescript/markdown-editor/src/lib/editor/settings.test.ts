@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { getJSONSchema } from 'codemirror-json-schema'
+import { getJSONSchema } from '@joinezco/codemirror-json-schema'
 import { createEditor, settingsOf, MarkdownEditor } from './index'
 import { createTestContainer, cleanupEditor, waitFor } from '../../test/utils'
 

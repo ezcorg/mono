@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
+import { userEvent } from '@vitest/browser/context'
 import { createEditor, MarkdownEditor } from '../index'
 import { createTestContainer, cleanupEditor, getMarkdownContent } from '../../../test/utils'
 
@@ -50,5 +51,92 @@ describe('Tables', () => {
         const again = createEditor({ content: getMarkdownContent(editor) })
         expect(getMarkdownContent(again)).toBe(getMarkdownContent(editor))
         again.destroy()
+    })
+})
+
+describe('Keys in a table', () => {
+    const TABLE = 'Before.\n\n| a | b |\n| --- | --- |\n| x | y |\n\nAfter.'
+    const frames = async (n = 2) => {
+        for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
+    }
+    /** An editor on the table, mounted (Tiptap mounts after a tick) and focused, the caret at the end of `text`. */
+    async function caretAfter(text: string) {
+        const container = createTestContainer(`table-keys-${created.length}`)
+        const editor = createEditor({ element: container, content: TABLE })
+        created.push({ editor, container })
+        await frames()
+        editor.commands.focus()
+        await frames()
+        let at = -1
+        editor.state.doc.descendants((node, pos) => {
+            if (at < 0 && node.isText && node.text === text) at = pos + node.nodeSize
+        })
+        editor.commands.setTextSelection(at)
+        return editor
+    }
+    const blockText = (editor: MarkdownEditor) => editor.state.selection.$from.parent.textContent
+    const rowCount = (editor: MarkdownEditor) => {
+        let n = 0
+        editor.state.doc.descendants((node) => { if (node.type.name === 'tableRow') n++ })
+        return n
+    }
+    /** The row the caret's cell is in (the first is 0), or null outside a table. */
+    const rowOf = (editor: MarkdownEditor) => {
+        const { $from } = editor.state.selection
+        for (let d = $from.depth; d > 0; d--) if ($from.node(d).type.name === 'tableRow') return $from.index(d - 1)
+        return null
+    }
+
+    it('Tab moves to the next cell and Shift-Tab back', async () => {
+        const editor = await caretAfter('x')
+        expect(blockText(editor)).toBe('x')
+        await userEvent.keyboard('{Tab}')
+        expect(blockText(editor)).toBe('y')
+        expect(editor.state.selection.empty || editor.state.selection.$from.parent.textContent === 'y').toBe(true)
+        await userEvent.keyboard('{Shift>}{Tab}{/Shift}')
+        expect(blockText(editor)).toBe('x')
+        expect(rowCount(editor)).toBe(2)
+        expect(getMarkdownContent(editor)).toBe(TABLE)
+    })
+
+    it('Tab in the last cell adds a row and moves into its first cell', async () => {
+        const editor = await caretAfter('y')
+        await userEvent.keyboard('{Tab}')
+        expect(rowCount(editor)).toBe(3)
+        expect(rowOf(editor)).toBe(2)
+        expect(blockText(editor)).toBe('')
+        await userEvent.keyboard('z')
+        expect(getMarkdownContent(editor)).toBe('Before.\n\n| a | b |\n| --- | --- |\n| x | y |\n| z |  |\n\nAfter.')
+    })
+
+    it('Enter in a cell starts a new paragraph in that cell, not a new row; written on the cell’s one line', async () => {
+        const editor = await caretAfter('x')
+        await userEvent.keyboard('{Enter}')
+        expect(rowCount(editor)).toBe(2)
+        expect(rowOf(editor)).toBe(1)
+        const cell = editor.state.selection.$from.node(-1)
+        expect(cell.type.name).toBe('tableCell')
+        expect(cell.childCount).toBe(2)
+        await userEvent.keyboard('z')
+        expect(getMarkdownContent(editor)).toBe('Before.\n\n| a | b |\n| --- | --- |\n| x z | y |\n\nAfter.')
+    })
+
+    it('ArrowDown from the last row leaves for the paragraph after the table, ArrowUp from the header for the one before', async () => {
+        const editor = await caretAfter('x')
+        await userEvent.keyboard('{ArrowDown}')
+        expect(rowOf(editor)).toBeNull()
+        expect(blockText(editor)).toBe('After.')
+        const up = await caretAfter('a')
+        await userEvent.keyboard('{ArrowUp}')
+        expect(rowOf(up)).toBeNull()
+        expect(blockText(up)).toBe('Before.')
+        // Within the table, the arrows walk the rows.
+        const inner = await caretAfter('a')
+        await userEvent.keyboard('{ArrowDown}')
+        expect(rowOf(inner)).toBe(1)
+        expect(blockText(inner)).toBe('x')
+        await userEvent.keyboard('{ArrowUp}')
+        expect(rowOf(inner)).toBe(0)
+        expect(blockText(inner)).toBe('a')
     })
 })

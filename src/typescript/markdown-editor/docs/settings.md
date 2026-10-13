@@ -67,9 +67,9 @@ Every setting is reachable three ways, all of them the same files:
    default, so a choice made on a laptop stays the laptop's), last the
    file to open.
 2. **The file as code**: `Open the settings file` loads the scope's file
-   in the editor's code view, where `codemirror-json-schema` (Theo's fork,
-   from the clone beside the monorepo until it is published) gives
-   completion, checking and hover from the schema.
+   in the editor's code view, where `@joinezco/codemirror-json-schema`
+   (the fork, a workspace submodule) gives completion, checking and hover
+   from the schema.
 3. **The chrome itself**: the panel's switches ("Anchor comments to
    text", "Show resolved", "Hide comments panel"), the front matter's
    "Collapse when not editing". These write the device scope.
@@ -165,6 +165,5 @@ already reports.
   line wrap, font size, line numbers) are still a CodeMirror state field,
   per block. Bridging them to a `codeblock` section of the editor's schema
   would give one place for both.
-- The `file:` dependency on the fork is temporary: the published package
-  replaces it, and the `optimizeDeps` entries for it in `vitest.config.ts`
-  can go with it.
+- The fork is a workspace submodule for now; a published package would
+  replace it, with the `optimizeDeps` entries for it in `vitest.config.ts`.

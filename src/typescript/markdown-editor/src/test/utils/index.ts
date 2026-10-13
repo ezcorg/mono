@@ -208,3 +208,23 @@ export function cleanupEditor(editor: MarkdownEditor | undefined, container: HTM
     }
     removeTestContainer(container)
 }
+
+/**
+ * The item of a `ContextMenu` (the block, selection and comment menus)
+ * labelled `label` within `root`: its label span when it has one, else its
+ * text's end (an item's text starts with its glyph). `undefined` when the
+ * menu has no such item.
+ */
+export function menuItem(label: string, root: ParentNode = document): HTMLElement | undefined {
+    return [...root.querySelectorAll<HTMLElement>('.ezco-mde-context-menu-item')].find((item) => {
+        const own = item.querySelector('.ezco-mde-context-menu-item-label')?.textContent?.trim()
+        return own !== undefined ? own === label : (item.textContent?.trim().endsWith(label) ?? false)
+    })
+}
+
+/** The labels of a `ContextMenu`'s items within `root`, in order. */
+export function menuLabels(root: ParentNode = document): string[] {
+    return [...root.querySelectorAll<HTMLElement>('.ezco-mde-context-menu-item')].map(
+        (item) => (item.querySelector('.ezco-mde-context-menu-item-label') ?? item).textContent?.trim() ?? '',
+    )
+}

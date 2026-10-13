@@ -23,12 +23,11 @@ changing the editor's UI.
 - `pnpm shot out.png --eval "…"` (`scripts/shot.mjs`): a screenshot of the
   demo after running a snippet against `editor`, at a given width, dark or
   light. The way to look at what you changed.
-- `@joinezco/config` (`../config`) and `@joinezco/vault` are consumed from
-  their `dist`: after editing either, `pnpm build` there. The settings
-  file's schema support comes from `codemirror-json-schema`, a `file:`
-  dependency on the fork cloned beside the monorepo
-  (`~/dev/codemirror-json-schema`, its `dist` built) until it is
-  published; `pnpm install` picks up a rebuild of it.
+- `@joinezco/config` (`../config`), `@joinezco/vault` and
+  `@joinezco/codemirror-json-schema` (the fork, a submodule at
+  `../codemirror-json-schema`, behind the settings file's completion and
+  checking) are consumed from their `dist`: after editing any of them,
+  `pnpm build` there.
 
 ## Verify UI work in a browser, before and after
 
@@ -149,3 +148,13 @@ demo. So, for any change that shows:
 - zod's `.parse({})` on the editor's schema throws (nested objects have no
   default of their own); the defaults come from `defaultsOf` over the JSON
   schema instead.
+- tiptap-markdown gives only `bulletList` and `orderedList` a `tight`
+  attribute and writes task lists with its one `bulletListMarker`, so the
+  task list is ours (`TaskList` in `lists.ts`): marker, tightness, our
+  serializer, its task-list plugin applied once through `setupOnce`.
+- The root `package.json` pins one CodeMirror for the workspace
+  (`pnpm.overrides` for `@codemirror/state`, `view`, `language`,
+  `@lezer/common`): the codemirror-json-schema fork's own node_modules
+  held newer minors, and an extension made by another copy of
+  `@codemirror/state` is not recognised by the editor's. Vite's
+  `resolve.dedupe` in both configs is the belt to those braces.

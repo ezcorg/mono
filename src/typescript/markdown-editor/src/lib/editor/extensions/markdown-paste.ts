@@ -1,6 +1,6 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { DOMParser } from '@tiptap/pm/model'
+import { DOMParser, Slice } from '@tiptap/pm/model'
 
 /**
  * Block-level markdown paste.
@@ -134,10 +134,16 @@ export const MarkdownBlockPaste = Extension.create({
                         // (the schema's hard break stands in for line breaks
                         // when whitespace is kept). Code keeps its whitespace
                         // anyway: the parser keeps all of it in a `code` node.
-                        const slice = DOMParser.fromSchema(view.state.schema).parseSlice(
+                        const parsed = DOMParser.fromSchema(view.state.schema).parseSlice(
                             container,
                             { context: view.state.selection.$from },
                         )
+                        // Text ending in a blank line ends with a block
+                        // break: the slice is closed at its end, so what
+                        // follows the caret becomes a paragraph of its own
+                        // rather than the tail of the last block pasted (a
+                        // list's last item, say).
+                        const slice = /\n[ \t]*\n[ \t]*$/.test(text.replace(/\r\n?/g, '\n')) ? new Slice(parsed.content, parsed.openStart, 0) : parsed
                         view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
                         return true
                     },

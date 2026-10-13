@@ -93,7 +93,8 @@ describe('Lists as written', () => {
         expect(kids(item).map((n) => n.type)).toEqual(['paragraph', 'orderedList', 'orderedList', 'taskList'])
         expect(kids(item)[2].attrs?.type).toBe('a')
         expect(kids(kids(kids(item)[3])[0]).map((n) => n.type)).toEqual(['paragraph', 'bulletList'])
-        expect(md(editor)).toBe('- a\n  1. b\n  2. c\n\n\n  a. d\n  * [ ] e\n\n    * f')
+        // The task list as written too: its dash, and tight.
+        expect(md(editor)).toBe('- a\n  1. b\n  2. c\n\n\n  a. d\n  - [ ] e\n    * f')
     })
 
     it('sets two lists of different kinds no further apart than their items', async () => {

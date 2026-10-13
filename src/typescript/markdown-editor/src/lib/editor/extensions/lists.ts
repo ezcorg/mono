@@ -4,6 +4,8 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { findWrapping } from '@tiptap/pm/transform'
 import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import StockTaskList from '@tiptap/extension-task-list'
+import taskListPlugin from 'markdown-it-task-lists'
 import { eachToken, setupOnce } from './markdown-it'
 
 /**
@@ -130,6 +132,12 @@ function listRule(find: RegExp, targetOf: (match: RegExpMatchArray) => ListTarge
             const wrapping = blockRange && findWrapping(blockRange, listType, target.listAttrs ?? null)
             if (!wrapping) return null
             tr.wrap(blockRange, wrapping)
+            // The item as the marker says (`- [x] ` makes a done task): the
+            // wrapping gave it the item type's defaults.
+            if (target.itemAttrs) {
+                const item = tr.doc.resolve(blockRange.start + 1).nodeAfter
+                if (item) tr.setNodeMarkup(blockRange.start + 1, undefined, { ...item.attrs, ...target.itemAttrs })
+            }
             // Joined to the list of the same kind right before it.
             const before = tr.doc.resolve(range.from - 1).nodeBefore
             if (before && isOfKind(before, before.firstChild!, target) && continues(before, target)) tr.join(range.from - 1, 2)
@@ -509,6 +517,51 @@ export const OrderedList = Node.create({
             // `a. ` or `a) `: lettered, from that letter.
             listRule(/^([a-z])([.)])\s$/, (match) => ({ list: 'orderedList', item: 'listItem', listAttrs: { start: letterIndex(match[1]), type: 'a', delimiter: match[2] } })),
         ]
+    },
+})
+
+/**
+ * The task list, written back as it was written: tiptap-markdown gives
+ * only bullet and numbered lists a `tight` attribute and writes every task
+ * list with its one `bulletListMarker`, so `- [ ] a` on two lines came back
+ * as `* [ ] a` with a blank line between. This one keeps the marker (the
+ * bullet list's `data-marker` rule tags task lists too, since they are
+ * bullet lists to markdown-it) and the tightness, and serializes as the
+ * bullet list does; the parse is tiptap-markdown's (its task-list plugin,
+ * applied once), with `data-type` set for the node to be found.
+ */
+export const TaskList = StockTaskList.extend({
+    addAttributes() {
+        return {
+            ...this.parent?.(),
+            marker: {
+                default: 'bullet',
+                parseHTML: (element: HTMLElement) => (element.getAttribute('data-marker') === 'dash' ? 'dash' : 'bullet'),
+                renderHTML: (attributes: Record<string, unknown>) => (attributes.marker === 'dash' ? { 'data-marker': 'dash' } : {}),
+            },
+            tight: {
+                default: true,
+                parseHTML: (element: HTMLElement) => element.getAttribute('data-tight') === 'true' || !element.querySelector('p'),
+                renderHTML: (attributes: Record<string, unknown>) => (attributes.tight ? { class: 'tight', 'data-tight': 'true' } : {}),
+            },
+        }
+    },
+
+    addStorage() {
+        return {
+            markdown: {
+                serialize(state, node) {
+                    const marker = node.attrs.marker === 'dash' ? '-' : '*'
+                    return state.renderList(node, '  ', () => `${marker} `)
+                },
+                parse: {
+                    setup: (markdownit: any) => setupOnce(markdownit, 'taskList', () => markdownit.use(taskListPlugin)),
+                    updateDOM(element: HTMLElement) {
+                        for (const list of element.querySelectorAll('.contains-task-list')) list.setAttribute('data-type', 'taskList')
+                    },
+                },
+            } as MarkdownNodeSpec,
+        }
     },
 })
 

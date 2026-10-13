@@ -7,7 +7,6 @@
 import { AnyExtension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Document from '@tiptap/extension-document';
-import TaskList from '@tiptap/extension-task-list';
 import { TableKit } from '@tiptap/extension-table'
 import { MarkdownTable } from './extensions/table'
 import { Markdown } from 'tiptap-markdown';
@@ -15,7 +14,7 @@ import { ExtendedLink } from './extensions/link';
 import { InlineCodeExit } from './extensions/inline-code';
 import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
-import { BulletList, OrderedList, OrderedListStart, DashListKeymap } from './extensions/lists';
+import { BulletList, OrderedList, OrderedListStart, DashListKeymap, TaskList } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import { Wikilink, WikilinkOptions } from './extensions/wikilink';
