@@ -240,6 +240,9 @@ function App() {
         codeblock: { standIns: true },
         // Threads in the note, and in other notes of the vault, in the margin.
         comments: { author: 'theo', index: vault.comments, reactions: vault.reactions },
+        // The reader's settings, as files in the demo's vault (`.settings/theo/`),
+        // with a scope for this editor instance.
+        settings: { instance: 'demo' },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
         },

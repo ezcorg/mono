@@ -16,6 +16,8 @@ import { ToolbarCore, type ToolbarHost, type HostCommand } from '@joinezco/codeb
 import type { FileOperations, FileSearch, VfsInterface } from '@joinezco/storage'
 import type { SlashCommand } from './slash-commands'
 import { revealFragment } from './fragment'
+import { applySettingsEntry, confirmSettingsInput, settingsEntries, settingsOf, FILE_KEY } from '../settings'
+import type { Scope } from '@joinezco/config'
 
 /** Where the toolbar DOM should be placed. */
 export type ToolbarMount = Mount
@@ -191,11 +193,44 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                     if (!fs) return { update() {}, destroy() {} }
 
                     const editor = extension.editor
+                    // The settings mode: the reader's settings as entries
+                    // (settings.ts), the scope a change goes to cycled at
+                    // the top, and the file to open as code.
+                    const settings = settingsOf(editor)
+                    let scope: Scope = settings?.chromeScope ?? 'global'
+                    const settingsHost: Pick<ToolbarHost, 'buildSettingsEntries' | 'handleSettingsEntry' | 'confirmSettingsEdit'> = settings
+                        ? {
+                            buildSettingsEntries: (filter) => {
+                                if (!settings.scopes().includes(scope)) scope = settings.scopes()[0]
+                                return settingsEntries(settings, scope, filter)
+                            },
+                            handleSettingsEntry: (entry) => {
+                                if (entry.settingKey === FILE_KEY) {
+                                    void settings.ready.then(async () => {
+                                        const path = await settings.config?.ensure(scope)
+                                        if (!path) return
+                                        // Out of the settings mode (as Escape would), then the file.
+                                        core.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+                                        await (editor.storage as any).persistence?.loadFile?.(path)
+                                    })
+                                    return
+                                }
+                                void applySettingsEntry(settings, scope, entry).then((next) => {
+                                    scope = next
+                                    core.refreshSettingsEntries()
+                                })
+                            },
+                            confirmSettingsEdit: (key, raw) => {
+                                void confirmSettingsInput(settings, scope, key, raw).then(() => core.refreshSettingsEntries())
+                            },
+                        }
+                        : {}
                     const host = {
                         fs,
                         search,
                         files,
                         filepath,
+                        ...settingsHost,
                         openFile(path, options) {
                             // A content hit: reveal the text the search matched.
                             const reveal = () => {

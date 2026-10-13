@@ -2478,7 +2478,7 @@ export const styleModule: StyleModule = new StyleModule({
     // (The classes in this order: the panel's own card rule, further on,
     // has them the other way round, and the two keys must differ.)
     '.is-panel.ezco-mde-comment-margin .ezco-mde-comment-card': {
-        transform: 'translateX(calc(-32px * var(--ezco-mde-comment-near, 0)))',
+        transform: 'translateX(calc(-1 * var(--ezco-mde-comment-step, 32px) * var(--ezco-mde-comment-near, 0)))',
     },
     '.ezco-mde-comment-margin.is-panel .ezco-mde-comment-card.is-current .ezco-mde-comment-bubble.is-anchor': {
         'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 45%, transparent)',

@@ -21,6 +21,7 @@
  * in this browser on its own.
  */
 import { Extension, type Editor } from '@tiptap/core'
+import { settingsOf } from '../settings'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, TextSelection, type EditorState, type Selection, type Transaction } from '@tiptap/pm/state'
 import type { Mapping } from '@tiptap/pm/transform'
@@ -778,7 +779,8 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     handleClick(view, pos) {
                         const state = commentsKey.getState(view.state)
                         if (!state) return false
-                        if (!options.openOnClick) {
+                        // The reader's choice over the host's.
+                        if (!(settingsOf(editor)?.chosen('comments.openOnClick') ?? options.openOnClick)) {
                             const on = state.comments.some((c) => c.target.range && !c.target.whole && c.target.range.from <= pos && pos <= c.target.range.to)
                             if (!on && state.active) view.dispatch(view.state.tr.setMeta(commentsKey, { active: null } satisfies CommentsMeta))
                             return false

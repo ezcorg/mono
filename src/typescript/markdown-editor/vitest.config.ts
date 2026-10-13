@@ -67,8 +67,13 @@ export default defineConfig({
     // Vite serves its source directly. Its transitive deps must be listed with
     // the "package > dep" syntax so Vite can resolve them through the excluded package.
     optimizeDeps: {
-        exclude: ['@joinezco/codeblock', '@joinezco/storage', '@joinezco/vault'],
+        exclude: ['@joinezco/codeblock', '@joinezco/storage', '@joinezco/vault', '@joinezco/config'],
         include: [
+            '@joinezco/config > yaml',
+            '@joinezco/config > zod',
+            // The settings file's schema support, loaded when one is opened.
+            'codemirror-json-schema',
+            'codemirror-json-schema/yaml',
             '@joinezco/codeblock > @codemirror/autocomplete',
             '@joinezco/codeblock > @codemirror/commands',
             '@joinezco/codeblock > @codemirror/lang-cpp',

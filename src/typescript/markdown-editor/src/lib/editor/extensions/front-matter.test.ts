@@ -52,7 +52,11 @@ describe('Front matter syntax', () => {
 })
 
 describe('Front matter view', () => {
-    afterEach(() => localStorage.removeItem('ezco-mde-front-matter'))
+    afterEach(() => {
+        for (const key of Object.keys(localStorage)) if (key === 'ezco-mde-front-matter' || key.startsWith('ezco-settings:')) localStorage.removeItem(key)
+    })
+    /** The fold as a setting (kept in this browser: these editors have no filesystem). */
+    const collapsed = (editor: MarkdownEditor) => (editor.storage as any).settings.get('frontMatter.collapsed') as boolean
     const line = (container: HTMLElement) => view(container).querySelector('.ezco-mde-front-matter-line') as HTMLButtonElement
     const code = (container: HTMLElement) => view(container).querySelector('.cm-content') as HTMLElement
     const open = (container: HTMLElement) => !view(container).classList.contains('is-collapsed')
@@ -99,7 +103,8 @@ describe('Front matter view', () => {
         fold().run({ editor, pos: 0, node: editor.state.doc.firstChild! })
         await waitFor(() => open(container), 2000)
         expect(fold().label).toBe('Collapse when not editing')
-        expect(localStorage.getItem('ezco-mde-front-matter')).toBe('open')
+        expect(collapsed(editor)).toBe(false)
+        await waitFor(() => Object.keys(localStorage).some((k) => k.startsWith('ezco-settings:') && localStorage.getItem(k)!.includes('collapsed: false')), 2000)
         // Leaving it leaves it open.
         editor.commands.editFrontMatter()
         await waitFor(() => document.activeElement === code(container), 2000)
@@ -112,7 +117,7 @@ describe('Front matter view', () => {
         expect(open(next.container)).toBe(true)
         fold().run({ editor, pos: 0, node: editor.state.doc.firstChild! })
         await waitFor(() => !open(container), 2000)
-        expect(localStorage.getItem('ezco-mde-front-matter')).toBeNull()
+        expect(collapsed(editor)).toBe(true)
     })
 
     it('offers the front matter its own actions, and goes on Backspace when empty', async () => {

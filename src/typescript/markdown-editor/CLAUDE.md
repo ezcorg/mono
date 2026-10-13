@@ -23,6 +23,12 @@ changing the editor's UI.
 - `pnpm shot out.png --eval "…"` (`scripts/shot.mjs`): a screenshot of the
   demo after running a snippet against `editor`, at a given width, dark or
   light. The way to look at what you changed.
+- `@joinezco/config` (`../config`) and `@joinezco/vault` are consumed from
+  their `dist`: after editing either, `pnpm build` there. The settings
+  file's schema support comes from `codemirror-json-schema`, a `file:`
+  dependency on the fork cloned beside the monorepo
+  (`~/dev/codemirror-json-schema`, its `dist` built) until it is
+  published; `pnpm install` picks up a rebuild of it.
 
 ## Verify UI work in a browser, before and after
 
@@ -76,6 +82,15 @@ demo. So, for any change that shows:
   delimiters); a marker typed at the start of an item retypes the item
   (`lists.ts`); Backspace in an empty item removes that item and nothing
   else (`ListItemBackspace`): taking items out of a list is ⇧Tab's job.
+- Settings (`settings.ts`, `docs/settings.md`): a feature that prefers one
+  of several reasonable behaviours declares a setting for it in
+  `EditorSettingsSchema` (a default and a line of description), reads it
+  where the choice is made (`settingsOf(editor)`: `get` for the editor's
+  own default, `chosen(path) ?? option` where the host's option is the
+  default), and never keeps a reader's choice in localStorage of its own.
+  What only a host can know stays an option. The schema is the toolbar's
+  settings mode, `schema.json` and the file's completion: nothing to add
+  elsewhere.
 
 ## Gotchas that cost a round each
 
@@ -128,3 +143,9 @@ demo. So, for any change that shows:
 - Comment ids in a mark's `data-comments` are in text order: on a line two
   comments start on, the one whose text starts first comes first, and is
   the one a toggle looks at.
+- Settings are read asynchronously (a file read): a feature built before
+  they arrive sees the defaults, then `subscribe` fires once they are in.
+  Tests `await settingsOf(editor).ready`, or `waitFor` the effect.
+- zod's `.parse({})` on the editor's schema throws (nested objects have no
+  default of their own); the defaults come from `defaultsOf` over the JSON
+  schema instead.

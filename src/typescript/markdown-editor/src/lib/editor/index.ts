@@ -14,6 +14,8 @@ import { ProseAI } from './extensions/prose-ai';
 import type { FileVersions } from '@joinezco/codeblock';
 import { styleModule } from './styles';
 import { ExtendedLink } from './extensions/link';
+import { Settings, settingsOf, type SettingsOptions } from './settings';
+import { settingsFileExtensions } from './settings-file';
 import { LinkMenu } from './extensions/link-menu';
 import { SlashCommands, SlashCommand } from './extensions/slash-commands';
 import { EmojiPicker } from './extensions/emoji-picker';
@@ -156,6 +158,12 @@ export type MarkdownSetupOptions = {
     /** Comment threads (the comments RFC). A note's threads are read and
      *  shown whatever is given here; `false` leaves them in the note unshown. */
     comments?: CommentsSetupOptions | false;
+    /** The reader's settings (`settings.ts`): files in the editor's
+     *  filesystem (`.settings/`), in scopes, the toolbar's `settings` mode
+     *  and the settings file as code to change them. On by default (in
+     *  memory when there is no filesystem); `false` leaves every choice the
+     *  editor's own. */
+    settings?: SettingsOptions | false;
     /** The notice over the note when a save was refused for a conflict
      *  (default on). `false` for an editor that only shows a document. */
     conflictNotice?: boolean;
@@ -361,6 +369,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             conflictNotice: false,
             fileTree: undefined,
             sidebar: undefined,
+            settings: false,
         });
     return [
         ...(given.owned ? [ownedVault(given.owned)] : []),
@@ -372,7 +381,21 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             versions: services.versions,
             follow: services.subscribe,
             bind: (storage) => (persistence = storage),
+            // A settings file opened as code is read with its schema.
+            extensionsFor: (path, editor) => {
+                const settings = settingsOf(editor);
+                return settings && settings.isSettingsFile(path) && !path.endsWith('/schema.json') ? settingsFileExtensions(path, settings.schema) : null;
+            },
         }),
+        // The reader's settings, over the editor's own (read where each
+        // choice is made). First: what follows may read them as it is made.
+        ...(options.settings !== false
+            ? [Settings.configure({
+                ...options.settings,
+                fs: options.settings?.fs ?? services.fs,
+                user: options.settings?.user ?? (options.comments !== false ? options.comments?.author : undefined),
+            })]
+            : []),
         ExtendedLink.configure({}),
         ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver }, embeds: { render: innerSetup } }),
         StarterKit.configure({
@@ -630,6 +653,8 @@ export { ProseAI, type ProseAIOptions } from './extensions/prose-ai';
 export { openDocuments, type OpenDocuments, type OpenDocument, type TextEdit, type TextRange, type TextPosition, type EditResult } from './extensions/edits';
 export type { FileSystemOptions, FileSystemStorage, FileEvent, LoadOptions } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';
+export { Settings, settingsOf, EditorSettingsSchema, editorSettingsJsonSchema } from './settings';
+export type { SettingsOptions, SettingsStorage, EditorSettings, SettingPath } from './settings';
 export { Wikilink, wikilinkLabel } from './extensions/wikilink';
 export { LinksPanel } from './extensions/links-panel';
 export { FrontMatter, FrontMatterDocument, documentId } from './extensions/front-matter';

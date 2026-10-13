@@ -11,7 +11,7 @@ import {
     type FileVersions,
 } from '@joinezco/codeblock'
 import { dirname, type VfsInterface } from '@joinezco/storage'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState, type Extension as CMExtension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { isDarkMode } from './codeblock'
 import { scrollContainerOf } from '../ui/layout'
@@ -87,6 +87,9 @@ export interface FileSystemOptions {
     /** Be told when files may have changed (a vault's `subscribe`): the open
      *  note is re-read when its file changed and nothing here is unsaved. */
     follow?: (listener: () => void) => () => void
+    /** More for the code view a non-prose file opens in (a settings file's
+     *  schema support, say), by the file's path; may come later. */
+    extensionsFor?: (path: string, editor: Editor) => Promise<CMExtension[]> | CMExtension[] | null | undefined
 }
 
 export interface FileSystemStorage {
@@ -380,11 +383,14 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             else editable.before(host)
             editable.style.display = 'none'
 
+            // What the host adds for this file (by its path), when it arrives.
+            const more = new Compartment()
             storage.codeView = new EditorView({
                 state: EditorState.create({
                     doc: content,
                     extensions: [
                         basicSetup,
+                        more.of([]),
                         EditorView.updateListener.of((update) => {
                             if (update.docChanged) storage.documentVersion++
                         }),
@@ -411,6 +417,14 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             storage.codeHost = host
             // The code view's lifecycle is the open file's.
             const codeView = storage.codeView
+            const extra = storage.options.extensionsFor?.(filepath, editor)
+            if (extra) {
+                Promise.resolve(extra)
+                    .then((extensions) => {
+                        if (storage.codeView === codeView) codeView.dispatch({ effects: more.reconfigure(extensions) })
+                    })
+                    .catch((error) => console.warn(`[Filesystem] Nothing more for ${filepath}:`, error))
+            }
             onFileEvent(codeView, (event) => {
                 if (storage.codeView === codeView) emit(event)
             })

@@ -21,6 +21,7 @@
  */
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
 import { readKept, writeKept } from '../ui/kept'
+import { settingsOf } from '../settings'
 import Document from '@tiptap/extension-document'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, Selection, TextSelection, type EditorState } from '@tiptap/pm/state'
@@ -240,13 +241,16 @@ export const FrontMatter = Node.create<FrontMatterOptions, FrontMatterStorage>({
                 () => {
                     if (storage.autoCollapse !== on) {
                         storage.autoCollapse = on
-                        keepAutoCollapse(on)
+                        const settings = settingsOf(this.editor)
+                        if (settings) void settings.set('frontMatter.collapsed', on)
+                        else keepAutoCollapse(on)
                         for (const refresh of storage.refresh) refresh()
                     }
                     return true
                 },
         }
     },
+
 
     addKeyboardShortcuts() {
         return {
@@ -264,6 +268,20 @@ export const FrontMatter = Node.create<FrontMatterOptions, FrontMatterStorage>({
     onCreate() {
         const { state, view } = this.editor
         if (inFrontMatter(state, this.type)) view.dispatch(state.tr.setSelection(bodyStart(state)).setMeta('addToHistory', false))
+        // The fold from the settings, when the editor has them (and as they
+        // change); this browser's kept choice without.
+        const settings = settingsOf(this.editor)
+        if (settings) {
+            const storage = this.storage
+            const sync = () => {
+                const on = settings.get('frontMatter.collapsed')
+                if (storage.autoCollapse === on) return
+                storage.autoCollapse = on
+                for (const refresh of storage.refresh) refresh()
+            }
+            sync()
+            settings.subscribe(sync)
+        }
         const assignId = this.options.assignId
         const persistence = (this.editor.storage as any).persistence as FileSystemStorage | undefined
         if (!assignId || !persistence) return

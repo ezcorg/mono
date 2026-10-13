@@ -243,6 +243,22 @@ in only when accepted.
 - ⌘⇧M / Ctrl+Shift+M: every comment in a panel beside the note, or the
   panel put away.
 
+## Settings
+
+What the editor does by default, a reader may want otherwise: where
+comments show, how far a card steps out, the face the note is set in,
+whether a note's properties fold. Those are settings, kept as files in
+the vault (`.settings/<user>/`, YAML; [docs/settings.md](docs/settings.md)
+has the design), in scopes: everywhere, this device, this editor
+instance (`settings: { instance: 'notes-pane' }`); a more specific scope
+wins. Type `settings` in the toolbar for them as switches and values (the
+scope a change goes to first, the file to open last); or open the file
+as code, with completion and checking from the schema; the panel's own
+switches write the same files. A file edited by hand, or by a sync from
+another device, reaches the editor as it changes. `settings: false`
+leaves every choice the editor's own, and the panel's choices in this
+browser as before.
+
 ## Type and theme
 
 The note is set in `--ezco-mde-font`, Source Serif 4 by default. The

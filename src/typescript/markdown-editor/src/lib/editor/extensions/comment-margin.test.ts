@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
-import { memoryVfs } from '@joinezco/storage'
+import { memoryVfs, type VfsInterface } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
 import { createEditor, MarkdownEditor } from '../index'
 import { cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
@@ -18,7 +18,7 @@ afterEach(() => {
         vault.close()
     })
     created.length = 0
-    for (const key of Object.keys(localStorage)) if (key.startsWith('ezco-mde-')) localStorage.removeItem(key)
+    for (const key of Object.keys(localStorage)) if (key.startsWith('ezco-mde-') || key.startsWith('ezco-settings:')) localStorage.removeItem(key)
     for (const left of document.querySelectorAll('.ezco-mde-comment-sheet')) left.remove()
 })
 
@@ -38,12 +38,18 @@ const FILES: Record<string, string> = Object.fromEntries([
 
 type Layout = 'float' | 'column' | 'panel'
 
-async function open(width: number, layout: Layout | undefined, files = FILES, author: string | null = 'theo', openOnClick = false) {
-    const vault = await Vault.open(memoryVfs(files), { watch: false, identity: author ?? undefined })
-    // Alice's fourth is resolved (by theo, whoever is looking).
-    const resolver = author === 'theo' ? vault : await Vault.open(vault.fs, { watch: false, identity: 'theo' })
-    await resolver.reactions.toggle({ doc: 'comments/Review/alice 2026-09-13 12.04.md', ref: 'Review#:~:text=Paragraph%2010%20says' }, '✅')
-    if (resolver !== vault) resolver.close()
+/** The settings of an editor: what it keeps its panel's choices in. */
+const settingsOf = (editor: MarkdownEditor) => (editor.storage as any).settings as { get: (p: string) => unknown; file: (s: string) => string | null; ready: Promise<void> }
+
+async function open(width: number, layout: Layout | undefined, files = FILES, author: string | null = 'theo', openOnClick = false, on?: VfsInterface) {
+    const vault = await Vault.open(on ?? memoryVfs(files), { watch: false, identity: author ?? undefined })
+    // Alice's fourth is resolved (by theo, whoever is looking). (On a
+    // filesystem opened before, it is already: a toggle would undo it.)
+    if (!on) {
+        const resolver = author === 'theo' ? vault : await Vault.open(vault.fs, { watch: false, identity: 'theo' })
+        await resolver.reactions.toggle({ doc: 'comments/Review/alice 2026-09-13 12.04.md', ref: 'Review#:~:text=Paragraph%2010%20says' }, '✅')
+        if (resolver !== vault) resolver.close()
+    }
     const container = document.createElement('div')
     container.style.cssText = `width: ${width}px; height: 700px; overflow-y: auto;`
     document.body.append(container)
@@ -344,16 +350,21 @@ describe('The panel, by default', () => {
         expect(tool(margin(wide.container), 'Hide comments panel')).toBeUndefined()
         await viaHeadMenu(wide.container, 'Hide comments panel')
         await waitFor(() => margin(wide.container).classList.contains('is-floating'), 3000)
-        expect(localStorage.getItem('ezco-mde-comments-panel')).toBe('float')
-        const again = await open(1100, undefined)
-        await frames()
-        expect(margin(again.container).classList.contains('is-floating')).toBe(true)
+        // The choice is a setting, in this device's file in the vault.
+        expect(settingsOf(wide.editor).get('comments.panel')).toBe(false)
+        const deviceFile = settingsOf(wide.editor).file('device')!
+        expect(deviceFile.startsWith('.settings/theo/devices/')).toBe(true)
+        await waitFor(async () => (await wide.vault.fs.exists(deviceFile)) && (await wide.vault.fs.readFile(deviceFile)).includes('panel: false'), 3000)
+        const again = await open(1100, undefined, FILES, 'theo', false, wide.vault.fs)
+        await waitFor(() => margin(again.container).classList.contains('is-floating'), 3000)
         // Asked for again, it is back, and the choice forgotten.
         const first = idOf(again.comments, 'First.')
         again.editor.commands.focusComment(first)
         await waitFor(() => !!card(again.container, first), 2000)
         await viaMenu(messageOf(card(again.container, first), first), 'Show in comments panel')
         await waitFor(() => margin(again.container).classList.contains('is-panel'), 3000)
+        expect(settingsOf(again.editor).get('comments.panel')).toBe(true)
+        // Nothing of the choice in this browser: the vault has it.
         expect(localStorage.getItem('ezco-mde-comments-panel')).toBeNull()
     })
 })
@@ -1032,7 +1043,7 @@ describe('What a comment shows', () => {
         // The commented paragraphs far enough down the note for it to scroll
         // any of them level with a bubble.
         const files = { ...FILES, 'Review.md': ['# Review', ...Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the longer part, nothing to say.`), ...paragraphs].join('\n\n') + '\n' }
-        const { editor, container, comments } = await open(1100, 'panel', files)
+        const { editor, container, comments, vault } = await open(1100, 'panel', files)
         await waitFor(() => margin(container).classList.contains('is-panel'), 2000)
         await frames()
         const third = idOf(comments, 'Third, same line.')
@@ -1069,18 +1080,21 @@ describe('What a comment shows', () => {
         await frames()
         expect(head.getBoundingClientRect().top).toBeCloseTo(container.getBoundingClientRect().top, 0)
         expect(margin(container).getBoundingClientRect().height).toBeGreaterThanOrEqual(editor.view.dom.getBoundingClientRect().height - 1)
-        // Kept: another editor opens anchored; the switch is on, and turns off.
-        expect(localStorage.getItem('ezco-mde-comments-anchored')).toBe('1')
-        const again = await open(1100, 'panel', files)
+        // Kept, as a setting in the vault: another editor on it opens
+        // anchored; the switch is on, and turns off.
+        expect(settingsOf(editor).get('comments.anchored')).toBe(true)
+        const deviceFile = settingsOf(editor).file('device')!
+        await waitFor(async () => (await vault.fs.exists(deviceFile)) && (await vault.fs.readFile(deviceFile)).includes('anchored: true'), 3000)
+        const again = await open(1100, 'panel', files, 'theo', false, vault.fs)
         await waitFor(() => again.container.querySelectorAll('.ezco-mde-comment-card').length === 3, 3000)
+        await waitFor(() => !margin(again.container).classList.contains('is-panel'), 3000)
         await frames()
-        expect(margin(again.container).classList.contains('is-panel')).toBe(false)
         for (const c of visibleCards(again.container)) expect(c.style.top).not.toBe('')
         const first = idOf(again.comments, 'First.')
         expect(Math.abs(card(again.container, first).getBoundingClientRect().top - anchorTop(again.editor, again.comments, first))).toBeLessThan(2)
         expect(await viaHeadMenu(again.container, 'Anchor comments to text')).toBe('true')
         await waitFor(() => margin(again.container).classList.contains('is-panel'), 2000)
-        expect(localStorage.getItem('ezco-mde-comments-anchored')).toBe('0')
+        expect(settingsOf(again.editor).get('comments.anchored')).toBe(false)
     })
 
     it('marks each comment’s first line with a bubble in the column beside the note, level with the line; beside a panel a click looks at the comment, or at each in turn', async () => {

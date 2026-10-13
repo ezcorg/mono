@@ -60,6 +60,7 @@ import { openReactionPicker, reactionGrid } from './emoji-picker'
 import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
 import { CHEVRON_DOWN_ICON, CLOSE_ICON, FACE_ICON, FILE_ICON, stroke, svg } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
+import { settingsOf, type SettingsStorage } from '../settings'
 import { scrollerOf, type Mount } from '../ui/layout'
 import type { FileSystemStorage } from './filesystem'
 
@@ -219,7 +220,8 @@ function count(c: CommentInfo): number {
 
 const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word.replace(/y$/, 'ie')}s`}`
 
-/** The layout the reader chose over the host's, if they did. */
+/** The layout the reader chose over the host's, if they did (kept in this
+ *  browser; an editor with settings keeps the choice there instead). */
 function keptLayout(): CommentLayout | null {
     const kept = readKept(PANEL_KEY)
     return kept === 'panel' || kept === 'float' || kept === 'column' ? kept : null
@@ -1065,6 +1067,10 @@ class Margin {
     /** Comments level with their text, scrolling with the note (a column),
      *  rather than a list beside it that scrolls on its own (a panel). */
     private anchored: boolean
+    /** The reader's settings, when the editor has them: where the panel's
+     *  choices (shown, anchored, the resolved ones) are kept, and read. */
+    private readonly settings: SettingsStorage | null
+    private unsubscribe: (() => void) | null = null
     /** The head's menu, while open. */
     private readonly holder: { menu: (() => void) | null } = { menu: null }
     /** The overlay's frame on the page, and its handle at the edge. */
@@ -1150,10 +1156,14 @@ class Margin {
         private readonly options: CommentMarginOptions,
         private readonly storage: CommentMarginStorage,
     ) {
-        this.anchored = keptAnchored() ?? this.base === 'column'
-        const kept = keptLayout()
+        this.settings = settingsOf(editor)
+        this.anchored = this.settings?.chosen('comments.anchored') ?? keptAnchored() ?? this.base === 'column'
+        const panel = this.settings?.chosen('comments.panel')
+        const kept = panel === undefined ? keptLayout() : panel ? this.shownKind() : 'float'
         this.layout = kept === 'float' ? 'float' : kept || this.base !== 'float' ? this.shownKind() : 'float'
+        this.wanted = panel === true
         this.floating = this.layout === 'float'
+        this.showResolved = this.settings?.get('comments.showResolved') ?? false
         this.dom = el('section', 'ezco-mde-comment-margin')
         this.dom.setAttribute('aria-label', 'Comments')
         this.head = el('header', 'ezco-mde-comment-margin-head')
@@ -1170,7 +1180,55 @@ class Margin {
         storage.sheet = null
         storage.togglePanel = () => this.togglePanel()
         storage.floating = () => this.floating
+        this.step()
+        this.unsubscribe = this.settings?.subscribe(() => this.settingsChanged()) ?? null
         this.update()
+    }
+
+    /** How far a card steps out, from the settings. */
+    private step() {
+        const px = this.settings?.get('comments.step')
+        this.dom.style.setProperty('--ezco-mde-comment-step', px === undefined ? '' : `${px}px`)
+    }
+
+    /** The settings changed (a file edited, the toolbar, another editor):
+     *  what the panel shows follows them. */
+    private settingsChanged() {
+        const settings = this.settings
+        if (!settings) return
+        this.step()
+        let changed = false
+        const anchored = settings.chosen('comments.anchored') ?? this.base === 'column'
+        if (anchored !== this.anchored) {
+            this.anchored = anchored
+            changed = true
+        }
+        const panel = settings.chosen('comments.panel')
+        const layout: CommentLayout = panel === false ? 'float' : panel === true || this.layout !== 'float' ? this.shownKind() : 'float'
+        if (layout !== this.layout) {
+            this.layout = layout
+            this.wanted = layout !== 'float'
+            changed = true
+        }
+        const showResolved = settings.get('comments.showResolved')
+        if (showResolved !== this.showResolved) {
+            this.showResolved = showResolved
+            this.headKey = ''
+            changed = true
+        }
+        if (changed) this.relayout()
+    }
+
+    /** The panel's choices, kept: in the settings when the editor has
+     *  them, else in this browser. */
+    private keep() {
+        if (this.settings) {
+            void this.settings.set('comments.panel', this.layout !== 'float')
+            void this.settings.set('comments.anchored', this.anchored)
+        } else {
+            keepLayout(this.switched ? this.layout : null)
+            keepAnchored(this.anchored)
+        }
     }
 
     /** The margin where its layout puts it: over the note, beside it, or
@@ -1299,7 +1357,7 @@ class Margin {
         const shown = this.layout !== 'float' && !this.decide().floating
         this.layout = shown ? 'float' : this.shownKind()
         this.wanted = !shown
-        keepLayout(this.switched ? this.layout : null)
+        this.keep()
         this.relayout()
         return true
     }
@@ -1308,10 +1366,9 @@ class Margin {
      *  the choice kept. */
     toggleAnchored(): boolean {
         this.anchored = !this.anchored
-        keepAnchored(this.anchored)
+        if (this.layout !== 'float') this.layout = this.shownKind()
+        this.keep()
         if (this.layout === 'float') return true
-        this.layout = this.shownKind()
-        keepLayout(this.switched ? this.layout : null)
         this.relayout()
         return true
     }
@@ -1341,6 +1398,7 @@ class Margin {
                 disabled: !resolved && !this.showResolved,
                 onSelect: () => {
                     this.showResolved = !this.showResolved
+                    void this.settings?.set('comments.showResolved', this.showResolved)
                     this.headKey = ''
                     this.update()
                 },
@@ -1868,6 +1926,7 @@ class Margin {
     destroy() {
         if (this.frame) cancelAnimationFrame(this.frame)
         if (this.spyFrame) cancelAnimationFrame(this.spyFrame)
+        this.unsubscribe?.()
         this.holder.menu?.()
         this.ungrow()
         this.scrollTarget?.removeEventListener('scroll', this.onScroll)

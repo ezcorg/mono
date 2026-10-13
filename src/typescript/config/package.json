@@ -1,0 +1,36 @@
+{
+  "name": "@joinezco/config",
+  "version": "0.0.1",
+  "description": "Settings as files: a schema (zod, or JSON Schema) with its defaults, overridden by YAML or JSON files in scopes (everywhere, this device, this editor instance) over any @joinezco/storage filesystem, read live; fields for a generated UI; a user's settings editable by another only when granted.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@joinezco/storage": "workspace:*",
+    "@types/node": "^25.9.5",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3",
+    "zod": "^4.5.4"
+  }
+}
