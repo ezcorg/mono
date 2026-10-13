@@ -21,6 +21,7 @@ import { FileType, basename, dirname, extname, isHidden, joinPath, normalizePath
 import type { SidebarMount } from './sidebar'
 import { openNotePath, persistenceOf } from './filesystem'
 import { mountInRail } from './rail'
+import { button, el, labelled } from '../ui/dom'
 
 export interface FileTreeOptions {
     /** Where to render (see `SidebarMount`); by default before the editor. */
@@ -84,29 +85,20 @@ class FileTreeView {
         private editor: Editor,
         private options: FileTreeOptions,
     ) {
-        this.dom = document.createElement('nav')
-        this.dom.className = 'ezco-mde-files'
+        this.dom = el('nav', 'ezco-mde-files')
         this.dom.setAttribute('aria-label', 'Files')
         for (const cls of (options.className ?? '').split(/\s+/).filter(Boolean)) this.dom.classList.add(cls)
 
-        const header = document.createElement('div')
-        header.className = 'ezco-mde-files-header'
-        this.toggle = document.createElement('button')
-        this.toggle.type = 'button'
-        this.toggle.className = 'ezco-mde-files-toggle'
+        const header = el('div', 'ezco-mde-files-header')
+        this.toggle = button('ezco-mde-files-toggle')
         this.toggle.title = 'Show or hide the files (⌘⇧E)'
-        const title = document.createElement('span')
-        title.className = 'ezco-mde-files-title'
-        title.textContent = options.title ?? 'Files'
-        this.toggle.append(title)
+        this.toggle.append(el('span', 'ezco-mde-files-title', options.title ?? 'Files'))
         this.toggle.addEventListener('mousedown', (e) => e.preventDefault())
         this.toggle.addEventListener('click', () => this.setShown(!this.shown))
-        this.actions = document.createElement('span')
-        this.actions.className = 'ezco-mde-files-actions'
-        this.actions.append(this.button(NEW_NOTE_ICON, 'New note', () => void this.createNote()), this.button(NEW_FOLDER_ICON, 'New folder', () => void this.createFolder()))
+        this.actions = el('span', 'ezco-mde-files-actions')
+        this.actions.append(this.tool(NEW_NOTE_ICON, 'New note', () => void this.createNote()), this.tool(NEW_FOLDER_ICON, 'New folder', () => void this.createFolder()))
         header.append(this.toggle, this.actions)
-        this.list = document.createElement('ul')
-        this.list.className = 'ezco-mde-files-list'
+        this.list = el('ul', 'ezco-mde-files-list')
         this.list.id = `ezco-mde-files-${++treeCount}`
         this.toggle.setAttribute('aria-controls', this.list.id)
         this.list.setAttribute('role', 'tree')
@@ -117,12 +109,11 @@ class FileTreeView {
             const path = (e.target as HTMLElement).closest<HTMLElement>('[role="treeitem"]')?.dataset.path
             if (!path || path === this.active) return
             this.active = path
-            for (const el of this.list.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
-                el.tabIndex = el.dataset.path === path ? 0 : -1
+            for (const row of this.list.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
+                row.tabIndex = row.dataset.path === path ? 0 : -1
             }
         })
-        this.status = document.createElement('div')
-        this.status.className = 'ezco-mde-files-status'
+        this.status = el('div', 'ezco-mde-files-status')
         this.status.setAttribute('role', 'status')
         this.dom.append(header, this.list, this.status)
         this.mount(options.mount)
@@ -179,13 +170,11 @@ class FileTreeView {
         return (this.options.ignore ?? isHidden)(path)
     }
 
-    private button(icon: string, label: string, onClick: () => void): HTMLElement {
-        const b = document.createElement('button')
-        b.type = 'button'
-        b.className = 'ezco-mde-files-action'
+    /** A tool in the head: `icon`, named `label`. The press keeps the
+     *  note's selection; the click bubbles on (not `pressable`). */
+    private tool(icon: string, label: string, onClick: () => void): HTMLElement {
+        const b = labelled(button('ezco-mde-files-action'), label)
         b.innerHTML = icon
-        b.title = label
-        b.setAttribute('aria-label', label)
         b.addEventListener('mousedown', (e) => e.preventDefault())
         b.addEventListener('click', onClick)
         return b
@@ -259,10 +248,7 @@ class FileTreeView {
         const hadFocus = this.list.contains(document.activeElement)
         this.list.replaceChildren(...rows)
         if (!rows.length) {
-            const empty = document.createElement('li')
-            empty.className = 'ezco-mde-files-empty'
-            empty.textContent = 'No files yet.'
-            this.list.append(empty)
+            this.list.append(el('li', 'ezco-mde-files-empty', 'No files yet.'))
         }
         const focusable = rows.find((r) => r.dataset.path === this.active) ?? rows[0]
         focusable?.setAttribute('tabindex', '0')
@@ -274,8 +260,7 @@ class FileTreeView {
     }
 
     private row(entry: Entry, depth: number, isCurrent: boolean): HTMLElement {
-        const li = document.createElement('li')
-        li.className = 'ezco-mde-files-item'
+        const li = el('li', 'ezco-mde-files-item')
         li.setAttribute('role', 'treeitem')
         li.dataset.path = entry.path
         li.style.setProperty('--depth', String(depth))
@@ -287,8 +272,7 @@ class FileTreeView {
         if (isCurrent) li.setAttribute('aria-current', 'page')
 
         if (this.renaming === entry.path) {
-            const input = document.createElement('input')
-            input.className = 'ezco-mde-files-rename'
+            const input = el('input', 'ezco-mde-files-rename')
             input.value = entry.name
             input.setAttribute('aria-label', `Rename ${entry.name}`)
             input.addEventListener('keydown', (e) => {
@@ -309,9 +293,7 @@ class FileTreeView {
             return li
         }
 
-        const label = document.createElement('span')
-        label.className = 'ezco-mde-files-name'
-        label.textContent = this.confirming === entry.path ? `Delete ${entry.name}? Enter / Esc` : entry.name
+        const label = el('span', 'ezco-mde-files-name', this.confirming === entry.path ? `Delete ${entry.name}? Enter / Esc` : entry.name)
         li.classList.toggle('is-confirming', this.confirming === entry.path)
         li.append(label)
         li.addEventListener('mousedown', (e) => e.preventDefault())
@@ -324,10 +306,10 @@ class FileTreeView {
 
     private focusRow(path: string) {
         this.active = path
-        for (const el of this.list.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
-            const mine = el.dataset.path === path
-            el.tabIndex = mine ? 0 : -1
-            if (mine) el.focus()
+        for (const row of this.list.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
+            const mine = row.dataset.path === path
+            row.tabIndex = mine ? 0 : -1
+            if (mine) row.focus()
         }
     }
 

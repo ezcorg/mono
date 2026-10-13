@@ -5,6 +5,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { caretRect, menuPopover, type Popover } from '../ui/popover'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
+import { button, el, labelled, pressable } from '../ui/dom'
 import { resolveMount, type Mount } from '../ui/layout'
 
 /** Where the block-action indicator should mount (same shape as the toolbar /
@@ -224,8 +225,8 @@ const LINE_BOXES = new Set(['block', 'list-item', 'flex', 'grid', 'flow-root', '
  *  nearest ancestor within `root` that makes line boxes (an inline, or an
  *  inline-block such as a chip, does not). */
 function blockOf(element: HTMLElement, root: HTMLElement): HTMLElement {
-    for (let el: HTMLElement | null = element; el; el = el.parentElement) {
-        if (el === root || LINE_BOXES.has(getComputedStyle(el).display)) return el
+    for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+        if (node === root || LINE_BOXES.has(getComputedStyle(node).display)) return node
     }
     return root
 }
@@ -678,27 +679,18 @@ class BlockActionsView {
         // sits at the top, and clicking anywhere on the column opens
         // the action menu. This makes the whole indicator hit-target
         // interactive rather than just the icon.
-        this.btn = document.createElement('button')
-        this.btn.type = 'button'
         // Just the component class — its variables live at `:root`, and the
         // bare `.ezco-mde` class would pull in content-layout rules.
-        this.btn.className = 'ezco-mde-block-action-btn'
+        this.btn = button('ezco-mde-block-action-btn')
         this.btn.style.position = 'absolute'
         this.btn.style.opacity = '0'
         this.btn.contentEditable = 'false'
         this.btn.setAttribute('aria-label', 'Block actions')
-        this.btnIcon = document.createElement('span')
-        this.btnIcon.className = 'ezco-mde-block-action-btn-icon'
-        this.btnIcon.textContent = '·'
+        this.btnIcon = el('span', 'ezco-mde-block-action-btn-icon', '·')
         this.btn.appendChild(this.btnIcon)
 
-        this.btn.addEventListener('mousedown', (e) => {
-            // Prevent ProseMirror from stealing focus before our click fires.
+        pressable(this.btn, (_, e) => {
             e.preventDefault()
-        })
-        this.btn.addEventListener('click', (e) => {
-            e.preventDefault()
-            e.stopPropagation()
             // Anchor the dropdown to the click's viewport Y so the menu
             // opens near where the user clicked, rather than always at
             // the icon at the top of the button. For tall blocks (long
@@ -789,16 +781,11 @@ class BlockActionsView {
         entries.forEach((entry, i) => {
             let icon = this.icons[i]
             if (!icon) {
-                icon = document.createElement('button')
-                icon.type = 'button'
-                icon.className = 'ezco-mde-block-icon'
-                icon.contentEditable = 'false'
-                icon.addEventListener('mousedown', (e) => e.preventDefault())
-                icon.addEventListener('click', (e) => {
+                icon = pressable(button('ezco-mde-block-icon'), (b, e) => {
                     e.preventDefault()
-                    e.stopPropagation()
-                    this.iconClicked(e.currentTarget as HTMLButtonElement)
+                    this.iconClicked(b)
                 })
+                icon.contentEditable = 'false'
                 this.wrapper.appendChild(icon)
                 this.icons.push(icon)
             }
@@ -810,10 +797,7 @@ class BlockActionsView {
                 else icon.textContent = entry.glyph
             }
             const title = entry.fold ? 'Unfold' : 'Block actions'
-            if (icon.title !== title) {
-                icon.title = title
-                icon.setAttribute('aria-label', title)
-            }
+            if (icon.title !== title) labelled(icon, title)
             // Where the line is, to the subpixel: a bullet rounded to the
             // pixel stood a hair under the list's own.
             const top = `${entry.top.toFixed(2)}px`

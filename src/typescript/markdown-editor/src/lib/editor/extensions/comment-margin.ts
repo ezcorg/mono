@@ -54,10 +54,11 @@ import type { FileOperations } from '@joinezco/storage'
 import { parseTextFragment, type Reaction, type Wikilink } from '@joinezco/vault'
 import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage } from './comments'
 import { Composer } from './comment-composer'
-import { clearDraft, draftKey, readDraft, renderReadOnly, when, writeDraft, type ReadOnlyView } from './comment-render'
+import { byline, clearDraft, draftKey, readDraft, renderReadOnly, when, writeDraft, type ReadOnlyView } from './comment-render'
 import { Sheet, frameOver } from './comment-sheet'
 import { openReactionPicker, reactionGrid } from './emoji-picker'
 import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
+import { button, el, glyph, labelled, pressable } from '../ui/dom'
 import { CHEVRON_DOWN_ICON, CLOSE_ICON, FACE_ICON, FILE_ICON, stroke, svg } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
 import { settingsOf, type SettingsStorage } from '../settings'
@@ -133,35 +134,12 @@ const MORPH = 220
 const EASE = 'cubic-bezier(0.2, 0.7, 0.2, 1)'
 const stillness = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] => {
-    const e = document.createElement(tag)
-    if (className) e.className = className
-    if (text !== undefined) e.textContent = text
-    return e
-}
-
-const button = (label: string, onClick: (b: HTMLButtonElement) => void, className = 'ezco-mde-comment-button', title?: string) => {
-    const b = el('button', className, label)
-    b.type = 'button'
-    if (title) {
-        b.title = title
-        b.setAttribute('aria-label', title)
-    }
-    // Clicking a control is not clicking the card, nor taking focus from
-    // whatever is being typed in.
-    b.addEventListener('mousedown', (e) => e.preventDefault())
-    b.addEventListener('click', (e) => {
-        e.stopPropagation()
-        onClick(b)
-    })
-    return b
-}
-
-/** A control drawn as a glyph. */
-const glyph = (icon: string, title: string, onClick: (b: HTMLButtonElement) => void, className = 'ezco-mde-comment-action is-icon') => {
-    const b = button('', onClick, className, title)
-    b.innerHTML = icon
-    return b
+/** A card's control: `label` in a button of `className`, acting on a press
+ *  (not a click on the card, nor focus taken from what is being typed in),
+ *  named `title` when given. */
+const control = (label: string, onPress: (b: HTMLButtonElement) => void, className = 'ezco-mde-comment-button', title?: string) => {
+    const b = pressable(button(className, label), onPress)
+    return title ? labelled(b, title) : b
 }
 
 /** The React control's glyph: a face, as reactions are drawn. */
@@ -206,11 +184,6 @@ function reactionsOf(c: CommentInfo): [string, Reaction[]][] {
     }
     // The most given first; among equals, the earliest.
     return [...by].sort((a, b) => b[1].length - a[1].length || a[1][0].at.localeCompare(b[1][0].at))
-}
-
-/** Who and when, as a bubble says it. */
-function byline(c: CommentInfo): [string, string] {
-    return c.time ? [`@${c.author}`, when(c.time)] : [c.author, '']
 }
 
 /** How many answers `c` has, at every depth. */
@@ -270,7 +243,7 @@ function openMenu(anchor: HTMLElement, items: ContextMenuEntry[], onClose: () =>
 /** The chevron in a bubble's corner, with `items` behind it (and `before`
  *  them, when given, the reactions to give). */
 function chevron(items: () => ContextMenuEntry[], holder: { menu: (() => void) | null }, before?: (close: () => void, anchor: HTMLElement) => HTMLElement): HTMLButtonElement {
-    const more = glyph(CHEVRON_ICON, 'Comment menu', (b) => {
+    const more = glyph(CHEVRON_ICON, 'Comment menu', 'ezco-mde-comment-menu-button', (b) => {
         if (holder.menu) {
             holder.menu()
             return
@@ -281,7 +254,7 @@ function chevron(items: () => ContextMenuEntry[], holder: { menu: (() => void) |
             holder.menu = null
             more.setAttribute('aria-expanded', 'false')
         }, before?.(close, b))
-    }, 'ezco-mde-comment-menu-button')
+    })
     more.setAttribute('aria-haspopup', 'menu')
     more.setAttribute('aria-expanded', 'false')
     return more
@@ -442,8 +415,7 @@ class Card {
         this.dom.classList.toggle('is-active', active)
         this.dom.classList.toggle('is-resolved', info.resolved)
         this.dom.classList.toggle('is-orphaned', info.target.orphaned)
-        const [who] = byline(info)
-        this.dom.setAttribute('aria-label', `Comment by ${who}`)
+        this.dom.setAttribute('aria-label', `Comment by ${byline(info)}`)
         if (!active) {
             this.stopEditing()
             this.stopReplying()
@@ -480,7 +452,7 @@ class Card {
         if (info.target.orphaned) {
             const orphan = el('div', 'ezco-mde-comment-orphan')
             orphan.append(el('span', 'ezco-mde-comment-quote', quoteOf(info.target.link.fragment)), el('span', undefined, ' is no longer in the note.'))
-            if (author) orphan.append(button('Anchor to selection', () => editor.commands.anchorComment(this.id), 'ezco-mde-comment-link', 'Point this at the selected text instead'))
+            if (author) orphan.append(control('Anchor to selection', () => editor.commands.anchorComment(this.id), 'ezco-mde-comment-link', 'Point this at the selected text instead'))
             context.push(orphan)
         }
         this.context.replaceChildren(...context)
@@ -544,9 +516,9 @@ class Card {
         if (!depth) bubble.classList.add('is-anchor')
 
         const head = el('div', 'ezco-mde-comment-head')
-        const [who, at] = byline(c)
-        head.append(el('span', 'ezco-mde-comment-author', who))
-        if (at) {
+        head.append(el('span', 'ezco-mde-comment-author', byline(c)))
+        if (c.time) {
+            const at = when(c.time)
             const time = el('time', 'ezco-mde-comment-time', at)
             time.dateTime = c.time
             time.title = at
@@ -555,7 +527,7 @@ class Card {
         // As threads fold on a news site: the message and everything under
         // it, to its byline.
         head.append(
-            button(collapsed ? '[+]' : '[–]', () => {
+            control(collapsed ? '[+]' : '[–]', () => {
                 if (collapsed) this.collapsed.delete(c.id)
                 else {
                     this.collapsed.add(c.id)
@@ -592,7 +564,7 @@ class Card {
             content.append(view.dom)
         }
         if (this.expanded.has(c.id)) content.classList.add('is-expanded')
-        const more = button(this.expanded.has(c.id) ? 'Show less' : 'Show more', () => {
+        const more = control(this.expanded.has(c.id) ? 'Show less' : 'Show more', () => {
             if (this.expanded.has(c.id)) this.expanded.delete(c.id)
             else this.expanded.add(c.id)
             this.render()
@@ -612,14 +584,14 @@ class Card {
             const all = this.allReactions.has(c.id)
             const shown = all || reactions.length <= REACTIONS_SHOWN ? reactions : reactions.slice(0, REACTIONS_SHOWN - 1)
             for (const [emoji, given] of shown) {
-                const chip = button(`${emoji} ${given.length}`, () => editor.commands.reactToComment(c.id, emoji), 'ezco-mde-comment-reaction', given.map((r) => `@${r.by}`).join(', '))
+                const chip = control(`${emoji} ${given.length}`, () => editor.commands.reactToComment(c.id, emoji), 'ezco-mde-comment-reaction', given.map((r) => `@${r.by}`).join(', '))
                 chip.setAttribute('aria-pressed', String(!!me && given.some((r) => r.by === me)))
                 chip.disabled = !me
                 row.append(chip)
             }
             if (reactions.length > REACTIONS_SHOWN) {
                 row.append(
-                    button(all ? 'fewer' : `+${reactions.length - shown.length}`, () => {
+                    control(all ? 'fewer' : `+${reactions.length - shown.length}`, () => {
                         if (all) this.allReactions.delete(c.id)
                         else this.allReactions.add(c.id)
                         this.render()
@@ -628,7 +600,7 @@ class Card {
             }
             // React: the common and recent reactions by the control, the
             // whole grid behind them.
-            if (me && !deleted) row.append(glyph(REACT_ICON, 'React', (b) => openReactionPicker(b, (emoji) => editor.commands.reactToComment(c.id, emoji), mineReactions()), 'ezco-mde-comment-action is-icon is-react'))
+            if (me && !deleted) row.append(glyph(REACT_ICON, 'React', 'ezco-mde-comment-action is-icon is-react', (b) => openReactionPicker(b, (emoji) => editor.commands.reactToComment(c.id, emoji), mineReactions())))
             // The reply count: it shows or hides the replies right under
             // this message (a reply's own answers stay behind their own
             // count); with nothing to show, it starts the first reply.
@@ -636,7 +608,7 @@ class Card {
             const open = this.threadOpen(c, depth)
             const replying = this.replying?.id === c.id
             const opened = open && (n > 0 || replying)
-            const replies = button(String(n), () => {
+            const replies = control(String(n), () => {
                 if (!n && !replying) {
                     if (author) this.reply(c)
                     return
@@ -675,11 +647,11 @@ class Card {
         } else if (this.confirming === c.id) {
             const foot = footWith(
                 el('span', 'ezco-mde-comment-question', 'Delete this comment?'),
-                button('Delete', () => {
+                control('Delete', () => {
                     this.confirming = null
                     editor.commands.deleteComment(c.id)
                 }, 'ezco-mde-comment-action is-danger', 'Delete this comment'),
-                button('Keep', () => {
+                control('Keep', () => {
                     this.confirming = null
                     this.render()
                 }, 'ezco-mde-comment-action', 'Keep it'),
@@ -1246,11 +1218,9 @@ class Margin {
         this.dom.classList.add('ezco-mde', 'is-entering')
         const theme = root.closest('[data-theme]')?.getAttribute('data-theme')
         if (theme) this.dom.dataset.theme = theme
-        this.handle = el('button', 'ezco-mde-comment-sheet-handle')
-        this.handle.type = 'button'
-        this.handle.title = 'Show the comments'
-        this.handle.setAttribute('aria-label', 'Show the comments')
+        this.handle = labelled(button('ezco-mde-comment-sheet-handle'), 'Show the comments')
         this.handle.append(el('span', 'ezco-mde-comment-sheet-handle-label', 'Comments'))
+        // The press keeps the note's selection; the click bubbles on (not `pressable`).
         this.handle.addEventListener('mousedown', (e) => e.preventDefault())
         this.handle.addEventListener('click', () => this.wake())
         this.dom.prepend(this.handle)
@@ -1683,9 +1653,7 @@ class Margin {
             const title = el('span', 'ezco-mde-comment-margin-title', plural(open, 'comment'))
             this.head.replaceChildren(title)
             if (!this.floating) {
-                const more = chevron(() => this.headItems(resolved), this.holder)
-                more.title = 'Comments panel menu'
-                more.setAttribute('aria-label', 'Comments panel menu')
+                const more = labelled(chevron(() => this.headItems(resolved), this.holder), 'Comments panel menu')
                 more.classList.add('ezco-mde-comment-tool', 'is-menu')
                 this.head.append(more)
             }

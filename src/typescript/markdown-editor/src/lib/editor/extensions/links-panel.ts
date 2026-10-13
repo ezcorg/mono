@@ -21,6 +21,7 @@ import { basename, dirname, normalizePath } from '@joinezco/storage'
 import { type LinkIndex, type LinkRef } from '@joinezco/vault'
 import type { SidebarMount } from './sidebar'
 import { openNotePath, persistenceOf } from './filesystem'
+import { button, el } from '../ui/dom'
 import { resolveMount } from '../ui/layout'
 import type { WikilinkStorage } from './wikilink'
 
@@ -75,19 +76,13 @@ class LinksPanelView {
         private index: LinkIndex,
         private options: LinksPanelOptions,
     ) {
-        const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string) => {
-            const node = document.createElement(tag)
-            node.className = className
-            return node
-        }
         this.dom = el('section', 'ezco-mde-links')
         this.dom.setAttribute('aria-label', 'Links')
         for (const cls of (options.className ?? '').split(/\s+/).filter(Boolean)) this.dom.classList.add(cls)
         this.backlinkTitle = el('div', 'ezco-mde-links-title')
         this.backlinkList = el('ul', 'ezco-mde-links-list')
         this.danglingSection = el('div', 'ezco-mde-links-dangling')
-        const danglingTitle = el('div', 'ezco-mde-links-title')
-        danglingTitle.textContent = 'Not written yet'
+        const danglingTitle = el('div', 'ezco-mde-links-title', 'Not written yet')
         this.danglingList = el('ul', 'ezco-mde-links-list')
         this.danglingSection.append(danglingTitle, this.danglingList)
         this.dom.append(this.backlinkTitle, this.backlinkList, this.danglingSection)
@@ -161,10 +156,7 @@ class LinksPanelView {
         }
         this.backlinkTitle.textContent = `${this.options.title ?? 'Linked from'}${bySource.size ? ` · ${bySource.size}` : ''}`
         if (bySource.size === 0) {
-            const empty = document.createElement('li')
-            empty.className = 'ezco-mde-links-empty'
-            empty.textContent = 'No notes link here yet.'
-            this.backlinkList.replaceChildren(empty)
+            this.backlinkList.replaceChildren(el('li', 'ezco-mde-links-empty', 'No notes link here yet.'))
             return
         }
         this.backlinkList.replaceChildren(
@@ -185,28 +177,15 @@ class LinksPanelView {
     }
 
     private row(name: string, folder: string, meta: string, activate: () => void): HTMLElement {
-        const li = document.createElement('li')
-        li.className = 'ezco-mde-links-item'
-        const button = document.createElement('button')
-        button.type = 'button'
-        button.className = 'ezco-mde-links-link'
-        const label = document.createElement('span')
-        label.className = 'ezco-mde-links-name'
-        label.textContent = name
-        button.append(label)
-        if (folder) {
-            const dir = document.createElement('span')
-            dir.className = 'ezco-mde-links-folder'
-            dir.textContent = folder
-            button.append(dir)
-        }
-        const info = document.createElement('span')
-        info.className = 'ezco-mde-links-meta'
-        info.textContent = meta
-        button.append(info)
-        button.addEventListener('mousedown', (e) => e.preventDefault())
-        button.addEventListener('click', activate)
-        li.append(button)
+        const li = el('li', 'ezco-mde-links-item')
+        const link = button('ezco-mde-links-link')
+        link.append(el('span', 'ezco-mde-links-name', name))
+        if (folder) link.append(el('span', 'ezco-mde-links-folder', folder))
+        link.append(el('span', 'ezco-mde-links-meta', meta))
+        // The press keeps the note's selection; the click bubbles on (not `pressable`).
+        link.addEventListener('mousedown', (e) => e.preventDefault())
+        link.addEventListener('click', activate)
+        li.append(link)
         return li
     }
 

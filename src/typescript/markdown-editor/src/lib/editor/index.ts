@@ -13,6 +13,7 @@ import { ConflictNotice } from './extensions/conflict-notice';
 import { ProseAI } from './extensions/prose-ai';
 import type { FileVersions } from '@joinezco/codeblock';
 import { styleModule } from './styles';
+import { el } from './ui/dom';
 import { ExtendedLink } from './extensions/link';
 import { Settings, settingsOf, type SettingsOptions } from './settings';
 import { settingsFileExtensions } from './settings-file';
@@ -545,36 +546,31 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
     let annotations: HTMLElement | undefined
     let commentsHost: HTMLElement | undefined
     if (userEl && typeof document !== 'undefined') {
-        const make = (cls: string) => {
-            const el = document.createElement('div')
-            el.className = cls
-            return el
-        }
-        const wrapper = make('ezco-mde')
-        toolbarSlot = make('ezco-mde-toolbar-slot')
-        const content = make('ezco-mde-content')
-        navHost = make('ezco-mde-nav')
+        const wrapper = el('div', 'ezco-mde')
+        toolbarSlot = el('div', 'ezco-mde-toolbar-slot')
+        const content = el('div', 'ezco-mde-content')
+        navHost = el('div', 'ezco-mde-nav')
         // The gutter exists only to hold the block-action indicator: with block
         // actions off there is nothing to hold, so the column isn't built at all
         // (a built one keeps its 48px even when empty).
-        if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
-        bodyHost = make('ezco-mde-body-host')
+        if (options.blockActions !== false) gutter = el('div', 'ezco-mde-gutter')
+        bodyHost = el('div', 'ezco-mde-body-host')
         // The annotation column right of the note (comment-gutter.ts): each
         // comment's mark on the line its text starts on.
-        if (options.comments !== false) annotations = make('ezco-mde-annotations')
+        if (options.comments !== false) annotations = el('div', 'ezco-mde-annotations')
         // A column for comments, right of that: the panel that scrolls on
         // its own (the default, when there is room past the note's text
         // column) or a column level with the text. With `layout: 'float'`
         // comments float over the note's edge and take no room.
         const layout = options.comments !== false && options.comments?.margin !== false ? options.comments?.margin?.layout ?? 'panel' : undefined
-        if (layout === 'column' || layout === 'panel') commentsHost = make('ezco-mde-comments')
-        content.append(...[navHost, gutter, bodyHost, annotations, commentsHost].filter((el): el is HTMLElement => !!el))
+        if (layout === 'column' || layout === 'panel') commentsHost = el('div', 'ezco-mde-comments')
+        content.append(...[navHost, gutter, bodyHost, annotations, commentsHost].filter((host): host is HTMLElement => !!host))
         wrapper.append(toolbarSlot, content)
         userEl.appendChild(wrapper)
     }
     /** A default `mount` for a piece of chrome → its slot (only when we built
      *  the wrapper). */
-    const slotMount = (el: HTMLElement | undefined) => (el ? () => el : undefined)
+    const slotMount = (slot: HTMLElement | undefined) => (slot ? () => slot : undefined)
 
     // Default the chrome into the wrapper's slots (unless the consumer passed its
     // own `mount`, or opted the piece out with `false`), then build the default

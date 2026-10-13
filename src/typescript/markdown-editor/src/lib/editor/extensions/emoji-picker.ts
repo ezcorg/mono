@@ -1,6 +1,7 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { popover, rangeRect, type Popover } from '../ui/popover'
+import { button, el, labelled, pressable } from '../ui/dom'
 import { FACE_ICON } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
 
@@ -152,14 +153,12 @@ export class EmojiMenu {
     private input: HTMLInputElement | null = null
 
     constructor(private readonly options: EmojiMenuOptions) {
-        this.dom = document.createElement('div')
-        this.dom.className = 'ezco-mde-emoji-menu'
+        this.dom = el('div', 'ezco-mde-emoji-menu')
         this.dom.setAttribute('role', 'listbox')
         this.dom.setAttribute('aria-label', 'Emoji')
         if (options.search) {
-            this.input = document.createElement('input')
+            this.input = el('input', 'ezco-mde-emoji-search')
             this.input.type = 'search'
-            this.input.className = 'ezco-mde-emoji-search'
             this.input.placeholder = 'Search emoji'
             this.input.setAttribute('aria-label', 'Search emoji')
             this.input.addEventListener('input', () => this.query(this.input!.value))
@@ -220,24 +219,15 @@ export class EmojiMenu {
     private render(loading: boolean, heading?: string, row?: { label: string; emoji: string[] }) {
         for (const child of [...this.dom.children]) if (child !== this.input) child.remove()
         if (loading || (this.results.length === 0 && !row)) {
-            const note = document.createElement('div')
-            note.className = 'ezco-mde-emoji-note'
-            note.textContent = loading ? 'Loading emoji…' : 'No emoji found'
-            this.dom.appendChild(note)
+            this.dom.appendChild(el('div', 'ezco-mde-emoji-note', loading ? 'Loading emoji…' : 'No emoji found'))
             return
         }
         // A row above the grid (recent picks): mouse and Tab, not the arrows.
         if (row) {
-            const label = document.createElement('div')
-            label.className = 'ezco-mde-emoji-heading'
-            label.textContent = row.label
-            const strip = document.createElement('div')
-            strip.className = 'ezco-mde-emoji-row'
+            const label = el('div', 'ezco-mde-emoji-heading', row.label)
+            const strip = el('div', 'ezco-mde-emoji-row')
             for (const emoji of row.emoji.slice(0, COLUMNS)) {
-                const cell = document.createElement('button')
-                cell.type = 'button'
-                cell.className = 'ezco-mde-emoji-cell'
-                cell.textContent = emoji
+                const cell = button('ezco-mde-emoji-cell', emoji)
                 cell.setAttribute('aria-label', emoji)
                 cell.addEventListener('mousedown', (ev) => ev.preventDefault())
                 cell.addEventListener('click', () => this.pick(emoji))
@@ -255,21 +245,12 @@ export class EmojiMenu {
             this.dom.append(label, strip)
         }
         if (heading) {
-            const label = document.createElement('div')
-            label.className = 'ezco-mde-emoji-heading'
-            label.textContent = heading
-            this.dom.appendChild(label)
+            this.dom.appendChild(el('div', 'ezco-mde-emoji-heading', heading))
         }
-        const grid = document.createElement('div')
-        grid.className = 'ezco-mde-emoji-grid'
+        const grid = el('div', 'ezco-mde-emoji-grid')
         this.results.forEach((e, i) => {
-            const cell = document.createElement('button')
-            cell.type = 'button'
-            cell.className = 'ezco-mde-emoji-cell' + (i === this.selectedIndex ? ' is-selected' : '')
-            cell.textContent = e.unicode
-            cell.title = e.label
+            const cell = labelled(button('ezco-mde-emoji-cell' + (i === this.selectedIndex ? ' is-selected' : ''), e.unicode), e.label)
             cell.setAttribute('role', 'option')
-            cell.setAttribute('aria-label', e.label)
             // `mousedown` (not click) so selecting never blurs what is being typed in.
             cell.addEventListener('mousedown', (ev) => {
                 ev.preventDefault()
@@ -283,16 +264,9 @@ export class EmojiMenu {
         })
         this.dom.appendChild(grid)
         // OS-picker style: a footer naming the focused emoji.
-        const footer = document.createElement('div')
-        footer.className = 'ezco-mde-emoji-footer'
+        const footer = el('div', 'ezco-mde-emoji-footer')
         const focused = this.results[this.selectedIndex]
-        const glyph = document.createElement('span')
-        glyph.className = 'ezco-mde-emoji-footer-glyph'
-        glyph.textContent = focused?.unicode ?? ''
-        const name = document.createElement('span')
-        name.className = 'ezco-mde-emoji-footer-name'
-        name.textContent = focused?.label ?? ''
-        footer.append(glyph, name)
+        footer.append(el('span', 'ezco-mde-emoji-footer-glyph', focused?.unicode ?? ''), el('span', 'ezco-mde-emoji-footer-name', focused?.label ?? ''))
         this.dom.appendChild(footer)
     }
 
@@ -443,24 +417,14 @@ export interface ReactionGridOptions {
  * the top of a bubble's menu and under its React button.
  */
 export function reactionGrid({ mine, onPick, anchor, close }: ReactionGridOptions): HTMLElement {
-    const grid = document.createElement('div')
-    grid.className = 'ezco-mde-reaction-grid'
+    const grid = el('div', 'ezco-mde-reaction-grid')
     grid.setAttribute('role', 'group')
     grid.setAttribute('aria-label', 'React')
     const seen = new Set<string>()
     const offered = [...recentEmoji(), ...QUICK_REACTIONS].filter((e) => !seen.has(e) && seen.add(e)).slice(0, REACTIONS_OFFERED)
     const cell = (label: string, pressed: boolean | null, pick: () => void) => {
-        const b = document.createElement('button')
-        b.type = 'button'
-        b.className = 'ezco-mde-emoji-cell'
-        b.title = label
-        b.setAttribute('aria-label', label)
+        const b = pressable(labelled(button('ezco-mde-emoji-cell'), label), pick)
         if (pressed !== null) b.setAttribute('aria-pressed', String(pressed))
-        b.addEventListener('mousedown', (e) => e.preventDefault())
-        b.addEventListener('click', (e) => {
-            e.stopPropagation()
-            pick()
-        })
         return b
     }
     for (const emoji of offered) {
@@ -491,8 +455,7 @@ export function reactionGrid({ mine, onPick, anchor, close }: ReactionGridOption
  * Escape or a click elsewhere. Returns the way to close it early.
  */
 export function openReactionPicker(anchor: HTMLElement, onPick: (emoji: string) => void, mine?: Set<string>): () => void {
-    const root = document.createElement('div')
-    root.className = 'ezco-mde-reactions'
+    const root = el('div', 'ezco-mde-reactions')
     let close = () => {}
     root.append(reactionGrid({ mine, anchor, close: () => close(), onPick }))
     const popup = emojiPopover(anchor, root, () => (root.querySelector('button') as HTMLButtonElement | null)?.focus())

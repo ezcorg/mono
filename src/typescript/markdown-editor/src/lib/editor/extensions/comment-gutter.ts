@@ -18,6 +18,8 @@ import { Extension, type Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { commentsKey, type CommentInfo } from './comments'
+import { byline } from './comment-render'
+import { button, labelled, pressable } from '../ui/dom'
 
 /** The mark: a speech bubble, filled by how much it is looked at (CSS). */
 const MARK_ICON =
@@ -79,17 +81,12 @@ class CommentGutter {
         lines.forEach((line, i) => {
             let mark = this.marks[i]
             if (!mark) {
-                mark = document.createElement('button')
-                mark.type = 'button'
-                mark.className = 'ezco-mde-comment-mark'
+                mark = pressable(button('ezco-mde-comment-mark'), (b, e) => {
+                    e.preventDefault()
+                    this.press(b)
+                })
                 mark.contentEditable = 'false'
                 mark.innerHTML = MARK_ICON
-                mark.addEventListener('mousedown', (e) => e.preventDefault())
-                mark.addEventListener('click', (e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    this.press(e.currentTarget as HTMLButtonElement)
-                })
                 column.appendChild(mark)
                 this.marks.push(mark)
             }
@@ -99,12 +96,9 @@ class CommentGutter {
             const [first] = line.comments
             const title =
                 line.comments.length === 1
-                    ? `${first.resolved ? 'Resolved comment' : 'Comment'} by ${first.time ? `@${first.author}` : first.author}`
+                    ? `${first.resolved ? 'Resolved comment' : 'Comment'} by ${byline(first)}`
                     : `${line.comments.length} comments`
-            if (mark.title !== title) {
-                mark.title = title
-                mark.setAttribute('aria-label', title)
-            }
+            if (mark.title !== title) labelled(mark, title)
             const top = `${line.top.toFixed(2)}px`
             const height = `${line.height.toFixed(2)}px`
             if (mark.style.top !== top) mark.style.top = top

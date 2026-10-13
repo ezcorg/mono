@@ -19,8 +19,9 @@ import { Fragment } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
 import type { VfsInterface } from '@joinezco/storage'
 import { referencesIn, type Wikilink } from '@joinezco/vault'
-import { fallbackExtensions, when } from './comment-render'
+import { byline, fallbackExtensions, when } from './comment-render'
 import { authorOf } from './comments'
+import { button, el, glyph, labelled } from '../ui/dom'
 import { CLOSE_ICON, FILE_ICON } from '../ui/icons'
 import { scrollerOf } from '../ui/layout'
 
@@ -45,27 +46,6 @@ export interface SheetOptions {
 const REST_AFTER = 350
 /** How long after a keystroke the document is written. */
 const SAVE_AFTER = 500
-
-const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
-    const e = document.createElement(tag)
-    e.className = className
-    if (text !== undefined) e.textContent = text
-    return e
-}
-
-const glyph = (icon: string, title: string, onClick: () => void): HTMLButtonElement => {
-    const b = el('button', 'ezco-mde-comment-tool')
-    b.type = 'button'
-    b.title = title
-    b.setAttribute('aria-label', title)
-    b.innerHTML = icon
-    b.addEventListener('mousedown', (e) => e.preventDefault())
-    b.addEventListener('click', (e) => {
-        e.stopPropagation()
-        onClick()
-    })
-    return b
-}
 
 /**
  * Put `clip` (fixed on the page) over the part of `root` in view: within
@@ -138,12 +118,9 @@ export class Sheet {
         if (theme) this.dom.dataset.theme = theme
         this.clip.append(this.dom)
 
-        const { author, time } = authorOf(path)
-        const handle = el('button', 'ezco-mde-comment-sheet-handle')
-        handle.type = 'button'
-        handle.title = 'Show the comment'
-        handle.setAttribute('aria-label', 'Show the comment')
-        handle.append(el('span', 'ezco-mde-comment-sheet-handle-label', time ? `@${author}` : author))
+        const by = authorOf(path)
+        const handle = labelled(button('ezco-mde-comment-sheet-handle'), 'Show the comment')
+        handle.append(el('span', 'ezco-mde-comment-sheet-handle-label', byline(by)))
         handle.addEventListener('click', () => {
             this.wake()
             this.editor.commands.focus()
@@ -151,14 +128,14 @@ export class Sheet {
 
         const head = el('header', 'ezco-mde-comment-sheet-head')
         const title = el('span', 'ezco-mde-comment-sheet-title')
-        title.append(el('span', 'ezco-mde-comment-author', time ? `@${author}` : author))
-        if (time) {
-            const at = el('time', 'ezco-mde-comment-time', when(time))
-            at.dateTime = time
+        title.append(el('span', 'ezco-mde-comment-author', byline(by)))
+        if (by.time) {
+            const at = el('time', 'ezco-mde-comment-time', when(by.time))
+            at.dateTime = by.time
             title.append(at)
         }
         const tools = el('span', 'ezco-mde-comment-sheet-tools')
-        tools.append(glyph(FILE_ICON, 'Open as file', () => options.openAsNote()), glyph(CLOSE_ICON, 'Close', () => void this.close()))
+        tools.append(glyph(FILE_ICON, 'Open as file', 'ezco-mde-comment-tool', () => options.openAsNote()), glyph(CLOSE_ICON, 'Close', 'ezco-mde-comment-tool', () => void this.close()))
         head.append(title, tools)
 
         const text = el('div', 'ezco-mde-comment-sheet-text')

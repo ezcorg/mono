@@ -2,6 +2,7 @@ import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection, AllSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { ContextMenu } from '../ui/context-menu'
+import { button, pressable } from '../ui/dom'
 import { menuPopover, type Popover } from '../ui/popover'
 
 /**
@@ -204,9 +205,7 @@ class SelectionMenuView {
         this.wrapper = (view.dom.parentElement as HTMLElement) ?? view.dom
         this.ensureWrapperPositioned()
 
-        this.btn = document.createElement('button')
-        this.btn.type = 'button'
-        this.btn.className = 'ezco-mde-selection-menu-btn'
+        this.btn = button('ezco-mde-selection-menu-btn')
         this.btn.style.position = 'absolute'
         this.btn.style.opacity = '0'
         this.btn.style.pointerEvents = 'none'
@@ -216,12 +215,8 @@ class SelectionMenuView {
         this.btn.setAttribute('aria-haspopup', 'menu')
         this.btn.innerHTML = SELECTION_MENU_ICON
 
-        // Don't let the button's own mousedown collapse the selection
-        // before the click handler runs.
-        this.btn.addEventListener('mousedown', (e) => e.preventDefault())
-        this.btn.addEventListener('click', (e) => {
+        pressable(this.btn, (_, e) => {
             e.preventDefault()
-            e.stopPropagation()
             this.toggleMenu()
         })
         this.btn.addEventListener('focus', () => {

@@ -61,6 +61,20 @@ suites around it and the demo looked at.
   walked the tokens. The seven `const esc = md.utils.escapeHtml` lines
   stay: `markdown-it` is tiptap-markdown's dependency, not importable
   here, and a one-line indirection would be no shorter.
+- **DOM helpers** (2026-10-13): `ui/dom.ts` has `el(tag, class, text)`
+  (typed by tag), `button(class, text)` (`type="button"`), `pressable(el,
+  onPress)` (the press keeps the note's selection, the click stops where
+  it is), `labelled(el, title)` (title and aria-label) and `glyph(icon,
+  title, class, onPress)` over them. The four `el`s, `make`, the six
+  press-builders and the margin's, sheet's, picker's, tree's, gutter's,
+  rail's, indicator's and selection button's own builders are gone; the
+  sites whose click must bubble on (the tree's tools, the rail's chevron,
+  the links panel's rows, the prose panel's buttons, the overlay handle)
+  keep their own listeners and say so. 80 `createElement` calls remain
+  (was 125), 60 of them bare pairs in fifteen files not touched.
+- **Bylines** (2026-10-13): `byline(by)` beside `when()` in
+  `comment-render.ts`, at the card, the bubble head, the sheet's handle
+  and title and the gutter mark.
 - **The persistence cast** (2026-10-13): `persistenceOf(editor)` and
   `openNotePath(editor)` in `extensions/filesystem.ts` (the two
   `openPath`s gone, the three sites that never normalised still read the
@@ -86,13 +100,7 @@ suites around it and the demo looked at.
 
 Worth doing, each a contained refactor with tests around it:
 
-1. **DOM helpers** (`ui/dom.ts`): `el(tag, class, text)` is written in four
-   files and `make(cls)` in `index.ts`, with about a hundred bare
-   `createElement` plus `className` pairs elsewhere; `button`/`glyph`
-   (label or SVG, title and aria-label, `mousedown` preventDefault,
-   `click` stopPropagation) is written six times under four names and the
-   `mousedown` preventDefault alone at some 25 sites. One `el`, one
-   `pressable(el, onPress)` and one `labelled(el, title)` would cover them.
+1. *DOM helpers: done, above.*
 2. *Popovers: done, above.*
 3. **Suggestion menus**: the slash menu, the emoji picker's typed trigger
    and the `[[` note menu each hand-roll "trigger character, range, tippy,
@@ -107,8 +115,7 @@ Worth doing, each a contained refactor with tests around it:
    overlaid panel's wake/rest/away logic with `REST_AFTER` in both.
 6. *markdown-it setup: done, above.*
 7. *The persistence cast: done, above.*
-8. **Bylines**: `@author` or the bare name is formatted in four places;
-   export `byline` from `comment-render.ts` beside `when()`.
+8. *Bylines: done, above.*
 9. *Hand positioning: done, with the popovers above.*
 
 ## Libraries doing the same job

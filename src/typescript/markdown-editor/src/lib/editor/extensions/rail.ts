@@ -14,6 +14,7 @@
  */
 import { Extension, type Editor } from '@tiptap/core'
 import type { SidebarMount } from './sidebar'
+import { button, labelled } from '../ui/dom'
 import { resolveMount, scrollerOf } from '../ui/layout'
 
 interface Joined {
@@ -88,12 +89,10 @@ export const isCollapsed = (rail: HTMLElement) => rail.classList.contains('is-co
 /** Fold `rail` away, or bring it back. */
 export function setCollapsed(rail: HTMLElement, folded: boolean): void {
     rail.classList.toggle('is-collapsed', folded)
-    const button = rail.querySelector<HTMLButtonElement>(':scope > .ezco-mde-rail-toggle')
-    if (!button) return
-    const title = folded ? 'Show the side panel (⌘⌥B)' : 'Hide the side panel (⌘⌥B)'
-    button.title = title
-    button.setAttribute('aria-label', title)
-    button.setAttribute('aria-expanded', String(!folded))
+    const chevron = rail.querySelector<HTMLButtonElement>(':scope > .ezco-mde-rail-toggle')
+    if (!chevron) return
+    labelled(chevron, folded ? 'Show the side panel (⌘⌥B)' : 'Hide the side panel (⌘⌥B)')
+    chevron.setAttribute('aria-expanded', String(!folded))
 }
 
 /** The rail the panels of `editor` are in, if any. */
@@ -105,13 +104,12 @@ export function railFor(editor: Editor): HTMLElement | null {
 
 /** The chevron that folds the rail and brings it back. */
 function toggle(rail: HTMLElement): () => void {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'ezco-mde-rail-toggle'
-    button.innerHTML = CHEVRON
-    button.addEventListener('mousedown', (e) => e.preventDefault())
-    button.addEventListener('click', () => setCollapsed(rail, !isCollapsed(rail)))
-    rail.appendChild(button)
+    const chevron = button('ezco-mde-rail-toggle')
+    chevron.innerHTML = CHEVRON
+    // The press keeps the note's selection; the click bubbles on (not `pressable`).
+    chevron.addEventListener('mousedown', (e) => e.preventDefault())
+    chevron.addEventListener('click', () => setCollapsed(rail, !isCollapsed(rail)))
+    rail.appendChild(chevron)
     setCollapsed(rail, false)
     // A panel shown while the rail is folded (⌘⇧E) brings the rail back.
     let observer: MutationObserver | null = null
@@ -120,14 +118,14 @@ function toggle(rail: HTMLElement): () => void {
             if (!isCollapsed(rail)) return
             for (const record of records) {
                 const target = record.target as HTMLElement
-                if (target.parentElement === rail && target !== button && !target.hidden) setCollapsed(rail, false)
+                if (target.parentElement === rail && target !== chevron && !target.hidden) setCollapsed(rail, false)
             }
         })
         observer.observe(rail, { attributes: true, attributeFilter: ['hidden'], subtree: true })
     }
     return () => {
         observer?.disconnect()
-        button.remove()
+        chevron.remove()
     }
 }
 

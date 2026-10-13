@@ -16,6 +16,7 @@ import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { PROSE_ACTIONS, completeText, type Inference, type ProseAction } from '../inference'
+import { button, el } from '../ui/dom'
 import { caretRect, popover, type Popover } from '../ui/popover'
 import { persistenceOf } from './filesystem'
 
@@ -105,9 +106,7 @@ export const ProseAI = Extension.create<ProseAIOptions, ProseAIStorage>({
                             target.from < target.to
                                 ? Decoration.inline(target.from, target.to, { class: 'ezco-mde-ai-target' })
                                 : Decoration.widget(target.from, () => {
-                                      const caret = document.createElement('span')
-                                      caret.className = 'ezco-mde-ai-caret'
-                                      return caret
+                                      return el('span', 'ezco-mde-ai-caret')
                                   })
                         return DecorationSet.create(state.doc, [mark])
                     },
@@ -147,11 +146,6 @@ class Session {
         private readonly editor: Editor,
         private readonly inference: Inference,
     ) {
-        const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string) => {
-            const node = document.createElement(tag)
-            node.className = className
-            return node
-        }
         this.dom = el('div', 'ezco-mde-ai')
         this.dom.setAttribute('role', 'dialog')
         this.title = el('div', 'ezco-mde-ai-title')
@@ -161,19 +155,18 @@ class Session {
         this.output.setAttribute('aria-live', 'polite')
         this.note = el('div', 'ezco-mde-ai-note')
         const actions = el('div', 'ezco-mde-ai-actions')
-        const button = (action: string, label: string, kind = '') => {
-            const b = el('button', kind ? `ezco-mde-ai-button ${kind}` : 'ezco-mde-ai-button')
-            b.type = 'button'
+        const control = (action: string, label: string, kind = '') => {
+            const b = button(kind ? `ezco-mde-ai-button ${kind}` : 'ezco-mde-ai-button', label)
             b.dataset.action = action
-            b.textContent = label
+            // The press keeps the note's selection; the click bubbles on (not `pressable`).
             b.addEventListener('mousedown', (e) => e.preventDefault())
             return b
         }
-        this.apply = button('apply', 'Replace', 'is-primary')
+        this.apply = control('apply', 'Replace', 'is-primary')
         this.apply.disabled = true
-        this.again = button('again', 'Try again')
+        this.again = control('again', 'Try again')
         this.again.disabled = true
-        this.discardButton = button('discard', 'Discard', 'is-quiet')
+        this.discardButton = control('discard', 'Discard', 'is-quiet')
         // Reading left to right: the way out, another try, then the one
         // filled button that puts the answer in the note.
         actions.append(this.discardButton, this.again, this.apply)

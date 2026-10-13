@@ -13,6 +13,7 @@ import { Editor, Extension, type AnyExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { minimalSetup } from '../minimal'
+import { el } from '../ui/dom'
 import { readKept, writeKept } from '../ui/kept'
 import { locateTextFragment } from './fragment'
 
@@ -67,8 +68,7 @@ const highlightOf = (fragment: string) =>
 
 /** `markdown`, shown read-only as the note would show it. */
 export function renderReadOnly(host: Editor, markdown: string, options: ReadOnlyOptions = {}): ReadOnlyView {
-    const dom = document.createElement('div')
-    dom.className = 'ezco-mde-readonly'
+    const dom = el('div', 'ezco-mde-readonly')
     const extensions = [...(options.extensions ?? fallbackExtensions(host))]
     if (options.highlight) extensions.push(highlightOf(options.highlight))
     const editor = new Editor({
@@ -96,6 +96,12 @@ export function when(time: string): string {
     if (Number.isNaN(date.getTime())) return time
     const thisYear = date.getFullYear() === new Date().getFullYear()
     return date.toLocaleString(undefined, { year: thisYear ? undefined : 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** Who wrote it, as a byline says it: `@alice` when the document's name
+ *  signs it with a time, the bare name (a document named by hand) when not. */
+export function byline(by: { author: string; time: string }): string {
+    return by.time ? `@${by.author}` : by.author
 }
 
 // ── Drafts ──────────────────────────────────────────────────────────────────
