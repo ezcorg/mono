@@ -2,7 +2,7 @@ import { Editor, Extension } from '@tiptap/core'
 import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
+import { caretRect, menuPopover, type Popover } from '../ui/popover'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
 import type { Mount } from '../ui/layout'
@@ -618,10 +618,8 @@ class BlockActionsView {
     private wrapper: HTMLElement
     private btn: HTMLButtonElement
     private btnIcon: HTMLSpanElement
-    private popup: TippyInstance | null = null
-    private activeMenu: ContextMenu | null = null
+    private popup: Popover | null = null
     private resizeObserver: ResizeObserver | null = null
-    private onDocumentMouseDown: ((e: MouseEvent) => void) | null = null
     // Local source-of-truth for whether the menu is currently open.
     // We can't reliably read `popup.state.isShown` synchronously after
     // calling `show()` (it flips at different times across Tippy
@@ -742,25 +740,6 @@ class BlockActionsView {
         this.onFocusChange = () => this.reposition()
         view.dom.addEventListener('focusin', this.onFocusChange)
         view.dom.addEventListener('focusout', this.onFocusChange)
-
-        // Close the menu when the user clicks anywhere outside it (we
-        // disabled Tippy's built-in `hideOnClick` to avoid spurious
-        // closes during the open keystroke; this re-implements it
-        // explicitly using `mousedown` so it only fires on real
-        // pointer interaction).
-        this.onDocumentMouseDown = (e: MouseEvent) => {
-            if (!this.isOpen) return
-            // Suppress the close that the same click which opened the
-            // menu would otherwise trigger (mousedown for the icon
-            // press happens before our open path runs).
-            if (Date.now() - this.lastOpenTime < 200) return
-            const target = e.target as Node | null
-            if (!target) return
-            if (this.activeMenu?.dom.contains(target)) return
-            if (this.btn.contains(target)) return
-            this.closeMenu()
-        }
-        document.addEventListener('mousedown', this.onDocumentMouseDown)
 
         // Initial position
         requestAnimationFrame(() => {
@@ -903,18 +882,12 @@ class BlockActionsView {
         if (this.iconsFrame) cancelAnimationFrame(this.iconsFrame)
         for (const icon of this.icons) icon.remove()
         this.icons = []
-        this.activeMenu?.destroy()
-        this.activeMenu = null
         this.popup?.destroy()
         this.popup = null
         this.btn.remove()
         this.resizeObserver?.disconnect()
         this.view.dom.removeEventListener('focusin', this.onFocusChange)
         this.view.dom.removeEventListener('focusout', this.onFocusChange)
-        if (this.onDocumentMouseDown) {
-            document.removeEventListener('mousedown', this.onDocumentMouseDown)
-            this.onDocumentMouseDown = null
-        }
         if (!this.wrapperHadRelative) {
             this.wrapper.style.position = ''
         }
@@ -1332,80 +1305,34 @@ class BlockActionsView {
             items,
             onClose: () => this.closeMenu({ restoreEditorFocus: true }),
         })
-        this.activeMenu = menu
 
-        if (this.popup) {
-            this.popup.destroy()
-            this.popup = null
-        }
-
-        this.popup = tippy(this.btn, {
-            content: menu.dom,
-            interactive: true,
-            trigger: 'manual',
+        this.popup?.destroy()
+        // Where it anchors:
+        //  - `'cursor'`: the editor's text cursor (a keyboard invocation),
+        //    where the user is looking.
+        //  - `'click-point'`: the click's own height in the icon's column,
+        //    so a tall block's menu opens by the click rather than hundreds
+        //    of pixels up at its icon, at the same x as every other.
+        //  - `'icon'`: the indicator icon at the top of the button.
+        const rect =
+            at === 'cursor'
+                ? () => this.getCursorRect()
+                : at === 'click-point' && clickPoint
+                  ? () => {
+                        const iconRect = this.btnIcon.getBoundingClientRect()
+                        return new DOMRect(iconRect.left, clickPoint.y, iconRect.width, 0)
+                    }
+                  : () => this.btnIcon.getBoundingClientRect()
+        // Escape, item selection (the menu) and a press outside (the
+        // popover) close it; `Mod-/` toggles through `openMenu`.
+        this.popup = menuPopover(this.btn, menu, {
             placement: 'bottom-start',
-            theme: 'ezco-mde-block-actions',
-            appendTo: () => document.body,
-            // Anchor selection:
-            //  - `'cursor'`  → editor's text cursor (keyboard invoke).
-            //  - `'click-point'` → click's viewport Y, horizontally
-            //    aligned with the icon column. This keeps the menu's
-            //    horizontal position consistent across clicks while
-            //    putting it vertically near where the user clicked,
-            //    rather than at the top of a tall block.
-            //  - `'icon'` (default) → the indicator icon at the top of
-            //    the button (used for non-click invocations).
-            getReferenceClientRect:
-                at === 'cursor'
-                    ? () => this.getCursorRect()
-                    : at === 'click-point' && clickPoint
-                        ? () => {
-                            const iconRect = this.btnIcon.getBoundingClientRect()
-                            // Zero-height rect at the click's Y, horizontally
-                            // matching the icon's column. With Tippy's
-                            // `placement: 'bottom-start'`, the menu opens
-                            // just below this point.
-                            return new DOMRect(
-                                iconRect.left,
-                                clickPoint.y,
-                                iconRect.width,
-                                0,
-                            )
-                        }
-                        : () => this.btnIcon.getBoundingClientRect(),
-            // Tippy's default `hideOnClick: true` registers a
-            // document-level pointerdown listener even when
-            // `trigger: 'manual'` is set, and that listener has been
-            // closing the popup on the same keystroke that opened it
-            // (the `Mod-/` keydown → mousedown synthesis on some
-            // browsers, or stray pointer events fired during focus
-            // movement). Disable it; we close explicitly via Escape
-            // (handled by `ContextMenu`), item selection, or click
-            // outside (handled by `documentMousedownToClose` below).
-            hideOnClick: false,
-            // Move focus onto the first item once Tippy has finished
-            // its open transition (the item needs to be in the DOM
-            // for `.focus()` to take effect). The keyboard listener
-            // is wired up below — *before* `show()` — so Escape and
-            // arrow keys work even during the open animation.
-            onShown: () => menu.focus(),
+            rect,
             onHide: () => {
                 this.isOpen = false
-                this.activeMenu?.disable()
-                setTimeout(() => {
-                    this.activeMenu?.destroy()
-                    this.activeMenu = null
-                    this.popup?.destroy()
-                    this.popup = null
-                }, 0)
+                this.popup = null
             },
-        }) as TippyInstance
-        // Attach the document keydown listener BEFORE show() so that
-        // Escape and arrow keys work the moment the menu starts to
-        // appear — not only after Tippy's open animation completes
-        // (which is when `onShown` fires, hundreds of ms later).
-        menu.enable()
-        this.popup.show()
+        })
     }
 
     /** Compute a DOMRect at the editor's current cursor position. Used
@@ -1413,14 +1340,7 @@ class BlockActionsView {
      *  keyboard shortcut. */
     private getCursorRect(): DOMRect {
         try {
-            const { from } = this.editor.state.selection
-            const coords = this.editor.view.coordsAtPos(from)
-            return new DOMRect(
-                coords.left,
-                coords.top,
-                1,
-                Math.max(1, coords.bottom - coords.top),
-            )
+            return caretRect(this.editor.view, this.editor.state.selection.from)
         } catch {
             return this.btnIcon.getBoundingClientRect()
         }

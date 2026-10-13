@@ -17,6 +17,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { basename, dirname, extname, joinPath, relativePath } from '@joinezco/storage'
 import { decodeDestination, encodeDestination } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 import { IMAGE_EXTENSIONS, altOf, isUrl, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
 
 export interface ImageOptions {
@@ -129,9 +130,7 @@ const ANGLED = '\uE000'
  * character that survives normalization; a core rule takes the mark off and
  * notes it on the image (`data-angled`), so it is written back the same way.
  */
-function rememberAngledDestinations(markdownit: any) {
-    if (markdownit.__ezcoAngled) return
-    markdownit.__ezcoAngled = true
+const rememberAngledDestinations = (markdownit: any) => setupOnce(markdownit, 'angledDestinations', () => {
     const parse = markdownit.helpers.parseLinkDestination
     markdownit.helpers.parseLinkDestination = (str: string, start: number, max: number) => {
         const result = parse(str, start, max)
@@ -155,7 +154,7 @@ function rememberAngledDestinations(markdownit: any) {
         }
         visit(state.tokens)
     })
-}
+})
 
 export const Image = Node.create<ImageOptions>({
     name: 'image',

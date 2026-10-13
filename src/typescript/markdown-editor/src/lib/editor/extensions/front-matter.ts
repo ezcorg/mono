@@ -31,6 +31,7 @@ import { basicSetup, codeblock } from '@joinezco/codeblock'
 import { memoryVfs, normalizePath } from '@joinezco/storage'
 import { isNote } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 import { codeblockRegistry, isDarkMode, measureBaseFontPx } from './codeblock'
 import type { FileSystemStorage } from './filesystem'
 
@@ -156,9 +157,7 @@ export const FrontMatter = Node.create<FrontMatterOptions, FrontMatterStorage>({
                     state.closeBlock(node)
                 },
                 parse: {
-                    setup(markdownit: any) {
-                        if (markdownit.__ezcoFrontMatter) return
-                        markdownit.__ezcoFrontMatter = true
+                    setup: (markdownit: any) => setupOnce(markdownit, 'frontMatter', () => {
                         markdownit.block.ruler.before(
                             'table',
                             'ezco_front_matter',
@@ -188,7 +187,7 @@ export const FrontMatter = Node.create<FrontMatterOptions, FrontMatterStorage>({
                         const esc = markdownit.utils.escapeHtml
                         markdownit.renderer.rules.ezco_front_matter = (tokens: any[], idx: number) =>
                             `<pre data-front-matter="" data-close="${esc(tokens[idx].meta.close)}" data-yaml="${esc(tokens[idx].content)}"></pre>`
-                    },
+                    }),
                 },
             } as MarkdownNodeSpec,
         }

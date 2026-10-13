@@ -2171,15 +2171,13 @@ export const styleModule: StyleModule = new StyleModule({
         outline: 'none',
     },
     // ─────────────────────────────────────────────────────────────
-    // Prose actions (extensions/prose-ai.ts): the answer's panel, floated
-    // under the text it is about in the chrome's look (the menus' surface,
-    // border and shadow), and that text lit in the accent while it is
-    // being worked on.
+    // Prose actions (extensions/prose-ai.ts): the answer's panel, a popover
+    // (ui/popover.ts places it) under the text it is about in the chrome's
+    // look (the menus' surface, border and shadow), and that text lit in
+    // the accent while it is being worked on.
     // ─────────────────────────────────────────────────────────────
     '.ezco-mde-ai': {
-        position: 'absolute',
-        'z-index': 20,
-        width: 'min(400px, 100%)',
+        width: 'min(400px, calc(100vw - 16px))',
         'box-sizing': 'border-box',
         padding: '10px 12px 12px',
         'border-radius': '8px',

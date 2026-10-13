@@ -1,7 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Plugin } from '@tiptap/pm/state'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
+import { popover, rangeRect, type Popover } from '../ui/popover'
 
 export interface SlashCommand {
     title: string
@@ -80,12 +80,11 @@ class SlashCommandsView {
     public allowSpaces: boolean
     public startOfLine: boolean
     public dropdown: HTMLElement | null = null
-    public popup: TippyInstance | null = null
+    public popup: Popover | null = null
     public range: any = null
     public query: string = ''
     public selectedIndex: number = 0
     public lastInputWasSlash: boolean = false
-    private outsideClickHandler: ((event: MouseEvent) => void) | null = null
 
     constructor({
         editor,
@@ -291,69 +290,21 @@ class SlashCommandsView {
         this.dropdown = this.createDropdown()
 
         if (this.popup) {
-            // Update existing popup content
-            this.popup.setContent(this.dropdown)
+            this.popup.instance.setContent(this.dropdown)
         } else {
-            // Create new popup. `tippy()` on a single element returns a
-            // single Instance (not an array) — capturing `instances[0]`
-            // left `this.popup` undefined, so every keystroke spawned a
-            // fresh, never-destroyed tippy. Normalize both shapes.
-            const created = tippy(document.body, {
-                getReferenceClientRect: () => {
-                    if (!this.range) {
-                        // Return a default rect if range is null
-                        return new DOMRect(0, 0, 0, 0)
-                    }
-                    const { view } = this.editor
-                    const { from } = this.range
-                    const start = view.coordsAtPos(from)
-                    const end = view.coordsAtPos(this.range.to)
-
-                    return {
-                        top: start.top,
-                        bottom: end.bottom,
-                        left: start.left,
-                        right: end.right,
-                        width: end.right - start.left,
-                        height: end.bottom - start.top,
-                        x: start.left,
-                        y: start.top,
-                        toJSON: () => ({
-                            top: start.top,
-                            bottom: end.bottom,
-                            left: start.left,
-                            right: end.right,
-                            width: end.right - start.left,
-                            height: end.bottom - start.top,
-                            x: start.left,
-                            y: start.top,
-                        })
-                    } as DOMRect
-                },
-                appendTo: () => document.body,
-                content: this.dropdown,
-                showOnCreate: true,
-                interactive: true,
-                trigger: 'manual',
-                placement: 'bottom-start',
+            // Under the typed `/query`. A press in the editor is the editor's
+            // (the selection then decides); one elsewhere closes it.
+            this.popup = popover(this.editor.view.dom, this.dropdown, {
+                rect: () => (this.range ? rangeRect(this.editor.view, this.range) : new DOMRect()),
                 theme: 'ezco-mde-slash',
                 maxWidth: 'none',
-                onShow: () => {
-                    // Add outside click handler when dropdown is shown
-                    this.addOutsideClickHandler()
-                },
-                onHide: () => {
-                    // Remove outside click handler when dropdown is hidden
-                    this.removeOutsideClickHandler()
-                }
-            }) as TippyInstance | TippyInstance[]
-            this.popup = Array.isArray(created) ? created[0] : created
+                onPressOutside: () => this.hideSuggestions(),
+            })
+            this.popup.show()
         }
     }
 
     hideSuggestions() {
-        this.removeOutsideClickHandler()
-
         if (this.popup) {
             this.popup.destroy()
             this.popup = null
@@ -379,33 +330,6 @@ class SlashCommandsView {
         this.lastInputWasSlash = false
     }
 
-    addOutsideClickHandler() {
-        if (this.outsideClickHandler) {
-            this.removeOutsideClickHandler()
-        }
-
-        this.outsideClickHandler = (event: MouseEvent) => {
-            const target = event.target as Element
-            // Check if click is outside the dropdown and editor
-            if (this.dropdown && !this.dropdown.contains(target) &&
-                !this.editor.view.dom.contains(target)) {
-                this.hideSuggestions()
-            }
-        }
-
-        // Add listener with a slight delay to avoid immediate closure
-        setTimeout(() => {
-            document.addEventListener('click', this.outsideClickHandler!, true)
-        }, 100)
-    }
-
-    removeOutsideClickHandler() {
-        if (this.outsideClickHandler) {
-            document.removeEventListener('click', this.outsideClickHandler, true)
-            this.outsideClickHandler = null
-        }
-    }
-
     getFilteredCommands(): SlashCommand[] {
         if (!this.query) {
             return this.commands
@@ -429,7 +353,6 @@ class SlashCommandsView {
     }
 
     destroy() {
-        this.removeOutsideClickHandler()
         this.hideSuggestions()
         this.editor.off('selectionUpdate', this.selectionUpdate)
         this.editor.off('update', this.selectionUpdate)

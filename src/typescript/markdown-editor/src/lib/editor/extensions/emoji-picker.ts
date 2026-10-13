@@ -1,6 +1,6 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
+import { popover, rangeRect, type Popover } from '../ui/popover'
 import { FACE_ICON } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
 
@@ -364,45 +364,26 @@ export class EmojiMenu {
 }
 
 /**
- * A popover beside `anchor` holding `content`, closed by Escape, a click
+ * A popover beside `anchor` holding `content`, closed by Escape, a press
  * elsewhere, or the returned function.
  */
-function popover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void): { close: () => void; update: () => void } {
-    let popup: TippyInstance | null = null
-    let outside: ((e: MouseEvent) => void) | null = null
+function emojiPopover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void): { close: () => void; update: () => void } {
     let keys: ((e: KeyboardEvent) => void) | null = null
     const close = () => {
-        if (outside) document.removeEventListener('mousedown', outside)
         if (keys) document.removeEventListener('keydown', keys, true)
-        outside = keys = null
-        popup?.destroy()
-        popup = null
+        keys = null
+        popup.destroy()
     }
-    const created = tippy(anchor, {
-        appendTo: () => document.body,
-        content,
-        showOnCreate: true,
-        interactive: true,
-        trigger: 'manual',
-        placement: 'bottom-start',
+    const popup = popover(anchor, content, {
         theme: 'ezco-mde-emoji',
         maxWidth: 'none',
-        // Kept on screen: shifted along either axis, or flipped above, when
-        // its place would overflow the viewport.
-        popperOptions: {
-            modifiers: [
-                { name: 'preventOverflow', options: { padding: 8, altAxis: true, tether: false } },
-                { name: 'flip', options: { padding: 8 } },
-            ],
-        },
-        // Once in the document (not after a transition, which the theme may
-        // not have).
+        // A grid is tall: shifted across as well as along, or flipped above.
+        shift: 'both',
+        onPressOutside: close,
+        // Once in the document and placed, a frame on.
         onMount: () => requestAnimationFrame(() => onMount?.()),
-    }) as TippyInstance | TippyInstance[]
-    popup = Array.isArray(created) ? created[0] : created
-    outside = (e: MouseEvent) => {
-        if (!content.contains(e.target as Node) && e.target !== anchor && !anchor.contains(e.target as Node)) close()
-    }
+    })
+    // Escape closes it from the grid, or from nowhere (focus on the body).
     keys = (e: KeyboardEvent) => {
         if (e.key === 'Escape' && (content.contains(document.activeElement) || !document.activeElement || document.activeElement === document.body)) {
             e.preventDefault()
@@ -411,14 +392,14 @@ function popover(anchor: HTMLElement, content: HTMLElement, onMount?: () => void
         }
     }
     setTimeout(() => {
-        if (outside) document.addEventListener('mousedown', outside)
         if (keys) document.addEventListener('keydown', keys, true)
     }, 0)
+    popup.show()
     return {
         close,
         // The content changed size (the whole grid took the row's place):
         // the popover is placed again for it.
-        update: () => void popup?.popperInstance?.update(),
+        update: () => popup.update(),
     }
 }
 
@@ -437,7 +418,7 @@ export function openEmojiPicker(anchor: HTMLElement, onPick: (emoji: string) => 
         onClose: () => close(),
     })
     menu.query('')
-    close = popover(anchor, menu.dom, () => menu.focus()).close
+    close = emojiPopover(anchor, menu.dom, () => menu.focus()).close
     return close
 }
 
@@ -514,7 +495,7 @@ export function openReactionPicker(anchor: HTMLElement, onPick: (emoji: string) 
     root.className = 'ezco-mde-reactions'
     let close = () => {}
     root.append(reactionGrid({ mine, anchor, close: () => close(), onPick }))
-    const popup = popover(anchor, root, () => (root.querySelector('button') as HTMLButtonElement | null)?.focus())
+    const popup = emojiPopover(anchor, root, () => (root.querySelector('button') as HTMLButtonElement | null)?.focus())
     close = popup.close
     return close
 }
@@ -555,9 +536,8 @@ class EmojiPickerView {
     public lastInputWasColon = false
     /** The menu while it is shown (the plugin gives it the keys). */
     public menu: EmojiMenu | null = null
-    private popup: TippyInstance | null = null
+    private popup: Popover | null = null
     private range: { from: number; to: number } | null = null
-    private outsideClick: ((e: MouseEvent) => void) | null = null
 
     constructor(
         private editor: Editor,
@@ -617,30 +597,15 @@ class EmojiPickerView {
                 onPick: (emoji) => this.selectEmoji(emoji),
                 onClose: () => this.hide(),
             })
-            const created = tippy(document.body, {
-                getReferenceClientRect: () => {
-                    const view = this.editor.view
-                    const r = this.range ?? { from: 0, to: 0 }
-                    const start = view.coordsAtPos(r.from)
-                    const end = view.coordsAtPos(r.to)
-                    return {
-                        top: start.top, bottom: end.bottom, left: start.left, right: end.right,
-                        width: end.right - start.left, height: end.bottom - start.top,
-                        x: start.left, y: start.top, toJSON() { return this },
-                    } as DOMRect
-                },
-                appendTo: () => document.body,
-                content: this.menu.dom,
-                showOnCreate: true,
-                interactive: true,
-                trigger: 'manual',
-                placement: 'bottom-start',
+            // Under the typed `:query`. A press in the editor is the editor's
+            // (the selection then decides); one elsewhere closes it.
+            this.popup = popover(this.editor.view.dom, this.menu.dom, {
+                rect: () => rangeRect(this.editor.view, this.range ?? { from: 0, to: 0 }),
                 theme: 'ezco-mde-emoji',
                 maxWidth: 'none',
-                onShow: () => this.addOutsideClick(),
-                onHide: () => this.removeOutsideClick(),
-            }) as TippyInstance | TippyInstance[]
-            this.popup = Array.isArray(created) ? created[0] : created
+                onPressOutside: () => this.hide(),
+            })
+            this.popup.show()
         }
         this.menu.query(query)
     }
@@ -652,29 +617,10 @@ class EmojiPickerView {
     }
 
     private hide() {
-        this.removeOutsideClick()
         this.popup?.destroy()
         this.popup = null
         this.menu = null
         this.range = null
-    }
-
-    private addOutsideClick() {
-        this.outsideClick = (e: MouseEvent) => {
-            const target = e.target as Node
-            if (this.menu && !this.menu.dom.contains(target) && !this.editor.view.dom.contains(target)) {
-                this.hide()
-            }
-        }
-        // Defer so the click that opened the menu doesn't immediately close it.
-        setTimeout(() => { if (this.outsideClick) document.addEventListener('mousedown', this.outsideClick) }, 0)
-    }
-
-    private removeOutsideClick() {
-        if (this.outsideClick) {
-            document.removeEventListener('mousedown', this.outsideClick)
-            this.outsideClick = null
-        }
     }
 
     destroy() {

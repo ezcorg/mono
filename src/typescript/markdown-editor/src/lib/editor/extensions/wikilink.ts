@@ -24,6 +24,7 @@ import tippy, { type Instance as TippyInstance } from 'tippy.js'
 import { normalizePath } from '@joinezco/storage'
 import { formatWikilink, isNote, matchWikilinkAt, parseWikilink, type LinkResolution, type LinkResolver, type LinkSuggestion, type LinkSyntax, type Wikilink as WikilinkParts } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 import { revealFragment } from './fragment'
 
 export interface WikilinkOptions {
@@ -162,9 +163,7 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
                     state.write(formatWikilink(attrsOf(node), { inTable: !!state.inTable }))
                 },
                 parse: {
-                    setup(markdownit: any) {
-                        if (markdownit.__ezcoWikilink) return
-                        markdownit.__ezcoWikilink = true
+                    setup: (markdownit: any) => setupOnce(markdownit, 'wikilink', () => {
                         markdownit.inline.ruler.before('link', 'ezco_wikilink', (state: any, silent: boolean) => {
                             if (state.src.charCodeAt(state.pos) !== 0x5b || state.src.charCodeAt(state.pos + 1) !== 0x5b) return false
                             const m = matchWikilinkAt(state.src, state.pos)
@@ -181,7 +180,7 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
                             if (link.alias !== null) attrs += ` data-alias="${esc(link.alias)}"`
                             return `<span${attrs}>${esc(wikilinkLabel(link))}</span>`
                         }
-                    },
+                    }),
                 },
             } as MarkdownNodeSpec,
             // Installed in onCreate, once the editor exists.

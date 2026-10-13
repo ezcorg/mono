@@ -25,6 +25,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { basename, extname } from '@joinezco/storage'
 import { findTextFragment, formatWikilink, frontMatterOf, isNote, matchWikilinkAt, parseTextFragment, type Wikilink as WikilinkParts } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 import { IMAGE_EXTENSIONS, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
 import { wikilinkLabel, type WikilinkStorage, attrsOf, optionalData } from './wikilink'
 import { slugify } from './slug-utils'
@@ -175,9 +176,7 @@ export const Embed = Node.create<EmbedOptions>({
                     state.write(formatWikilink(attrsOf(node), { embed: true, inTable: !!state.inTable }))
                 },
                 parse: {
-                    setup(markdownit: any) {
-                        if (markdownit.__ezcoEmbed) return
-                        markdownit.__ezcoEmbed = true
+                    setup: (markdownit: any) => setupOnce(markdownit, 'embed', () => {
                         markdownit.inline.ruler.before('image', 'ezco_embed', (state: any, silent: boolean) => {
                             if (state.src.charCodeAt(state.pos) !== 0x21 /* ! */) return false
                             const m = matchWikilinkAt(state.src, state.pos)
@@ -194,7 +193,7 @@ export const Embed = Node.create<EmbedOptions>({
                             if (link.alias !== null) attrs += ` data-alias="${esc(link.alias)}"`
                             return `<span${attrs}>${esc(wikilinkLabel(link))}</span>`
                         }
-                    },
+                    }),
                 },
             } as MarkdownNodeSpec,
         }

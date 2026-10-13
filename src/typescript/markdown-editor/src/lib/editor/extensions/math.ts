@@ -15,6 +15,7 @@
 import { Extension, InputRule, Node, mergeAttributes, textblockTypeInputRule } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 import { sourceViewDOM, sourceViewSpec } from './source-view'
 
 /** Typeset `tex` into `element`. May be asynchronous (load a renderer lazily). */
@@ -157,9 +158,7 @@ function mathBlockRule(state: any, startLine: number, endLine: number, silent: b
     return true
 }
 
-function setupMarkdownIt(markdownit: any) {
-    if (markdownit.__ezcoMath) return
-    markdownit.__ezcoMath = true
+const setupMarkdownIt = (markdownit: any) => setupOnce(markdownit, 'math', () => {
     markdownit.inline.ruler.after('escape', 'ezco_math_inline', mathInlineRule)
     markdownit.block.ruler.before('fence', 'ezco_math_block', mathBlockRule, {
         alt: ['paragraph', 'reference', 'blockquote', 'list'],
@@ -169,7 +168,7 @@ function setupMarkdownIt(markdownit: any) {
         `<span data-math-inline=""${tokens[idx].meta.display ? ' data-display=""' : ''}>${esc(tokens[idx].content)}</span>`
     markdownit.renderer.rules.ezco_math_block = (tokens: any[], idx: number) =>
         `<div data-math-block=""${tokens[idx].meta.oneLine ? ' data-one-line=""' : ''}>${esc(tokens[idx].content)}</div>`
-}
+})
 
 // ─── The nodes ───────────────────────────────────────────────────────────────
 

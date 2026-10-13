@@ -1,8 +1,8 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection, AllSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { ContextMenu } from '../ui/context-menu'
+import { menuPopover, type Popover } from '../ui/popover'
 
 /**
  * Selection menu.
@@ -186,7 +186,7 @@ class SelectionMenuView {
     private view: EditorView
     private wrapper: HTMLElement
     private btn: HTMLButtonElement
-    private popup: TippyInstance | null = null
+    private popup: Popover | null = null
     private activeMenu: ContextMenu | null = null
     private isOpen = false
     // Whether the button itself currently holds focus. Tracked explicitly
@@ -196,7 +196,6 @@ class SelectionMenuView {
     // intermittently saw `body` and hid the button right as it gained focus.
     private buttonFocused = false
     private onFocusChange: () => void
-    private onDocumentMouseDown: ((e: MouseEvent) => void) | null = null
 
     constructor(view: EditorView, editor: Editor) {
         this.view = view
@@ -241,16 +240,6 @@ class SelectionMenuView {
         this.onFocusChange = () => this.reposition()
         view.dom.addEventListener('focusout', this.onFocusChange)
         view.dom.addEventListener('focusin', this.onFocusChange)
-
-        this.onDocumentMouseDown = (e: MouseEvent) => {
-            if (!this.isOpen) return
-            const target = e.target as Node | null
-            if (!target) return
-            if (this.activeMenu?.dom.contains(target)) return
-            if (this.btn.contains(target)) return
-            this.closeMenu()
-        }
-        document.addEventListener('mousedown', this.onDocumentMouseDown)
     }
 
     update() {
@@ -263,16 +252,12 @@ class SelectionMenuView {
     }
 
     destroy() {
+        const popup = this.popup
         this.closeMenu()
-        this.activeMenu?.destroy()
-        this.popup?.destroy()
+        popup?.destroy()
         this.btn.remove()
         this.view.dom.removeEventListener('focusout', this.onFocusChange)
         this.view.dom.removeEventListener('focusin', this.onFocusChange)
-        if (this.onDocumentMouseDown) {
-            document.removeEventListener('mousedown', this.onDocumentMouseDown)
-            this.onDocumentMouseDown = null
-        }
         // Intentionally do NOT reset the wrapper's position here. The
         // wrapper is shared with other overlays (block actions), and a
         // leftover `position: relative` is harmless — whereas resetting it
@@ -421,38 +406,21 @@ class SelectionMenuView {
         this.activeMenu = menu
 
         this.popup?.destroy()
-        this.popup = tippy(this.btn, {
-            content: menu.dom,
-            interactive: true,
-            trigger: 'manual',
-            // Open to the *right* of the icon so the menu follows the
-            // natural left-to-right reading flow from where the selection
-            // ended. Tippy's flip modifier keeps it on-screen, falling back
-            // to the left only when there's no room on the right.
+        // To the *right* of the icon, following the reading flow from where
+        // the selection ended; to the left, under or above it only when
+        // there is no room on the right.
+        this.popup = menuPopover(this.btn, menu, {
             placement: 'right-start',
-            popperOptions: {
-                modifiers: [
-                    { name: 'flip', options: { fallbackPlacements: ['left-start', 'bottom-start', 'top-start'] } },
-                    { name: 'preventOverflow', options: { padding: 8 } },
-                ],
-            },
-            theme: 'ezco-mde-block-actions',
-            appendTo: () => document.body,
-            hideOnClick: false,
-            onShown: () => menu.focus(),
+            flip: ['left-start', 'bottom-start', 'top-start'],
             onHide: () => {
                 this.isOpen = false
-                this.activeMenu?.disable()
-                setTimeout(() => {
-                    this.activeMenu?.destroy()
-                    this.activeMenu = null
-                    this.popup?.destroy()
-                    this.popup = null
-                }, 0)
+                this.activeMenu = null
+                this.popup = null
+                // The menu held focus: the button stays only if the editor
+                // has it back (an action's chain, a dismissal) or gets it.
+                this.reposition()
             },
-        }) as TippyInstance
-        menu.enable()
-        this.popup.show()
+        })
     }
 
     private closeMenu(opts: { restoreEditorFocus?: boolean } = {}) {

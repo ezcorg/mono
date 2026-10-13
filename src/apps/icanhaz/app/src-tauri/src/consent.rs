@@ -607,6 +607,10 @@ pub fn clear_hosts(hosts: State<'_, Arc<Mutex<Hosts>>>) {
 /// Resolve a parked request. `allow=false` denies; otherwise approve with the optional
 /// attenuated `grant` (null ⇒ as-requested), the "remember this site" choice, and TTL.
 /// Returns whether a request matched (false ⇒ it already timed out / was resolved).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a Tauri command's parameters are its IPC interface: the consent dialog sends each of these by name"
+)]
 #[tauri::command]
 pub fn decide(
     pending: State<'_, PendingConsent>,

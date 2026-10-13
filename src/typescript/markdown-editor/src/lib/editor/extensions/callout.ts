@@ -16,6 +16,7 @@ import { InputRule, Node, mergeAttributes } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 
 /** Kinds by the name styles use, with the other names Obsidian accepts. */
 const KIND_ALIASES: Record<string, string> = {
@@ -96,9 +97,7 @@ function makeTitle(state: any, title: string, open: any): any[] {
     return [titleOpen, inline, titleClose]
 }
 
-function setupMarkdownIt(markdownit: any) {
-    if (markdownit.__ezcoCallouts) return
-    markdownit.__ezcoCallouts = true
+const setupMarkdownIt = (markdownit: any) => setupOnce(markdownit, 'callout', () => {
     markdownit.core.ruler.before('inline', 'ezco_callout', calloutCoreRule)
     const esc = markdownit.utils.escapeHtml
     markdownit.renderer.rules.ezco_callout_open = (tokens: any[], idx: number) => {
@@ -108,7 +107,7 @@ function setupMarkdownIt(markdownit: any) {
     markdownit.renderer.rules.ezco_callout_close = () => '</div>'
     markdownit.renderer.rules.ezco_callout_title_open = () => '<div data-callout-title="">'
     markdownit.renderer.rules.ezco_callout_title_close = () => '</div>'
-}
+})
 
 export const CalloutTitle = Node.create({
     name: 'calloutTitle',

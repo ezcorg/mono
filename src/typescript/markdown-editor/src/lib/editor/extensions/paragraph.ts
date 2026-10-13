@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { eachToken, setupOnce } from './markdown-it'
 
 /**
  * Paragraph with empty-paragraph round-tripping.
@@ -87,22 +88,18 @@ export const Paragraph = Node.create({
                     state.closeBlock(node)
                 },
                 parse: {
-                    setup(markdownit: any) {
-                        if (markdownit.__ezcoEmptyPara) return
-                        markdownit.__ezcoEmptyPara = true
+                    setup: (markdownit: any) => setupOnce(markdownit, 'emptyParagraph', () => {
                         // Reverse of the serializer: a paragraph that is just
                         // our NBSP marker becomes a truly empty paragraph. The
                         // separate block token still survives, so the blank line
                         // (the user's spacing) is preserved.
-                        markdownit.core.ruler.push('ezco_empty_paragraph', (state: any) => {
-                            for (const token of state.tokens) {
-                                if (token.type === 'inline' && token.content === '\u00A0') {
-                                    token.content = ''
-                                    token.children = []
-                                }
+                        eachToken(markdownit, 'ezco_empty_paragraph', 'inline', (token) => {
+                            if (token.content === '\u00A0') {
+                                token.content = ''
+                                token.children = []
                             }
                         })
-                    },
+                    }),
                 },
             } as MarkdownNodeSpec,
         }

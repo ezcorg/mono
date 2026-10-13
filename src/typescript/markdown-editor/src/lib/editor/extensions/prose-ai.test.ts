@@ -47,7 +47,8 @@ function select(editor: MarkdownEditor, text: string) {
     editor.commands.setTextSelection({ from, to: from + text.length })
 }
 
-const panel = (c: HTMLElement) => c.querySelector('.ezco-mde-ai') as HTMLElement | null
+// The panel is a popover under the body (one at a time), not in the container.
+const panel = (_c: HTMLElement) => document.querySelector('.ezco-mde-ai') as HTMLElement | null
 const output = (c: HTMLElement) => panel(c)?.querySelector('.ezco-mde-ai-output')?.textContent ?? ''
 const button = (c: HTMLElement, action: string) => panel(c)!.querySelector(`button[data-action="${action}"]`) as HTMLButtonElement
 
@@ -116,6 +117,33 @@ describe('Prose actions in the editor', () => {
         await waitFor(() => output(container) === 'NEW' && !button(container, 'apply').disabled, 3000)
         button(container, 'apply').click()
         expect(getMarkdownContent(editor)).toBe('Zero One NEW three.')
+    })
+
+    it('stays on screen, by its text, when the text is at the viewport\'s edge', async () => {
+        const { inference } = scripted('y'.repeat(400), 2)
+        const { editor, container } = make(`${'Words and more words. '.repeat(12)}The very end.`, inference)
+        // The note in the viewport's bottom-right corner, its last words at
+        // the edge: no room under them, and not 400px to their right.
+        container.style.cssText = 'position: fixed; right: 0; bottom: 0; width: 360px; margin: 0;'
+        select(editor, 'The very end.')
+        const end = editor.view.coordsAtPos(editor.state.selection.to)
+        expect(end.bottom).toBeGreaterThan(window.innerHeight - 60)
+        editor.commands.runProseAction('rewrite')
+        await waitFor(() => output(container).length > 0, 3000)
+        const box = () => panel(container)!.getBoundingClientRect()
+        await waitFor(() => box().right <= window.innerWidth && box().bottom <= window.innerHeight, 3000)
+        expect(box().left).toBeGreaterThanOrEqual(0)
+        expect(box().top).toBeGreaterThanOrEqual(0)
+        // Above the text, there being no room under it, and close by it.
+        expect(box().bottom).toBeLessThanOrEqual(end.top)
+        expect(end.top - box().bottom).toBeLessThan(40)
+        // Still there once the whole answer is in, and the same width as anywhere.
+        await waitFor(() => !button(container, 'apply').disabled, 3000)
+        expect(box().right).toBeLessThanOrEqual(window.innerWidth)
+        expect(box().bottom).toBeLessThanOrEqual(window.innerHeight)
+        expect(box().width).toBe(400)
+        button(container, 'discard').click()
+        expect(panel(container)).toBeNull()
     })
 
     it('is offered only when the host gives a model', async () => {

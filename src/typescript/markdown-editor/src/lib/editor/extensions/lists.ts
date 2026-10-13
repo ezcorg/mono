@@ -4,6 +4,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { findWrapping } from '@tiptap/pm/transform'
 import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { eachToken, setupOnce } from './markdown-it'
 
 /**
  * Lists: the bullet list with its marker kept (`-` or `*`), the ordered
@@ -237,17 +238,11 @@ export const BulletList = Node.create({
                     // so the resulting <ul> carries data-marker="dash", which
                     // `addAttributes` reads back. (`*`/`+` stay the default
                     // bullet marker.)
-                    setup(markdownit: any) {
-                        if (markdownit.__ezcoBulletMarker) return
-                        markdownit.__ezcoBulletMarker = true
-                        markdownit.core.ruler.push('ezco_bullet_marker', (state: any) => {
-                            for (const token of state.tokens) {
-                                if (token.type === 'bullet_list_open' && token.markup === '-') {
-                                    token.attrSet('data-marker', 'dash')
-                                }
-                            }
+                    setup: (markdownit: any) => setupOnce(markdownit, 'bulletMarker', () => {
+                        eachToken(markdownit, 'ezco_bullet_marker', 'bullet_list_open', (token) => {
+                            if (token.markup === '-') token.attrSet('data-marker', 'dash')
                         })
-                    },
+                    }),
                     updateDOM: splitMixedTaskLists,
                 },
             } as MarkdownNodeSpec,
@@ -480,17 +475,13 @@ export const OrderedList = Node.create({
                     state.renderList(node, state.repeat(' ', width + 1 + gap.length), (i) => state.repeat(' ', width - labels[i].length) + labels[i] + delimiter + gap)
                 },
                 parse: {
-                    setup(markdownit: any) {
-                        if (markdownit.__ezcoOrderedList) return
-                        markdownit.__ezcoOrderedList = true
+                    setup: (markdownit: any) => setupOnce(markdownit, 'orderedList', () => {
                         letteredListRule(markdownit)
                         // A list written `1)` keeps its delimiter.
-                        markdownit.core.ruler.push('ezco_ordered_delimiter', (state: any) => {
-                            for (const token of state.tokens) {
-                                if (token.type === 'ordered_list_open' && token.markup === ')') token.attrSet('data-delimiter', ')')
-                            }
+                        eachToken(markdownit, 'ezco_ordered_delimiter', 'ordered_list_open', (token) => {
+                            if (token.markup === ')') token.attrSet('data-delimiter', ')')
                         })
-                    },
+                    }),
                 },
             } as MarkdownNodeSpec,
         }

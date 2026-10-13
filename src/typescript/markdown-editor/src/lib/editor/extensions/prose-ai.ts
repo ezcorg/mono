@@ -6,15 +6,17 @@
  * arrive as `Inference`.
  *
  * An action is asked about the selection (or the caret) and the note
- * around it. Its answer streams into a panel under the text it is about,
- * and goes into the note only when accepted, as one change undo takes back.
- * The text it is about is followed through any edit made while the answer
- * comes, and discarding stops the answer.
+ * around it. Its answer streams into a panel under the text it is about
+ * (a popover, kept on screen: above the text when there is no room under
+ * it), and goes into the note only when accepted, as one change undo takes
+ * back. The text it is about is followed through any edit made while the
+ * answer comes, and discarding stops the answer.
  */
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { PROSE_ACTIONS, completeText, type Inference, type ProseAction } from '../inference'
+import { caretRect, popover, type Popover } from '../ui/popover'
 
 export interface ProseAIOptions {
     /** The model. Without one, no action is offered. */
@@ -126,6 +128,8 @@ export const ProseAI = Extension.create<ProseAIOptions, ProseAIStorage>({
 /** One action at a time, in a panel under the text it is about. */
 class Session {
     private readonly dom: HTMLElement
+    private readonly panel: Popover
+    private open = false
     private readonly title: HTMLElement
     private readonly ask: HTMLInputElement
     private readonly output: HTMLElement
@@ -149,7 +153,6 @@ class Session {
         }
         this.dom = el('div', 'ezco-mde-ai')
         this.dom.setAttribute('role', 'dialog')
-        this.dom.hidden = true
         this.title = el('div', 'ezco-mde-ai-title')
         this.ask = el('input', 'ezco-mde-ai-ask')
         this.ask.placeholder = 'What should it do?'
@@ -194,8 +197,19 @@ class Session {
                 this.discard()
             }
         })
-        const host = (editor.view.dom as HTMLElement).parentElement ?? document.body
-        host.append(this.dom)
+        // Under the end of the text it is about, following the note's
+        // scroll; shifted, or above the text, when there is no room; never
+        // closed by a press elsewhere (its answer is being read, or the
+        // note written to while it comes).
+        this.panel = popover(editor.view.dom, this.dom, {
+            placement: 'bottom-start',
+            offset: [0, 6],
+            maxWidth: 'none',
+            rect: () => {
+                const target = targetKey.getState(editor.state)
+                return target ? caretRect(editor.view, target.to) : new DOMRect()
+            },
+        })
     }
 
     start(action: ProseAction, instruction?: string) {
@@ -206,8 +220,8 @@ class Session {
         this.instruction = instruction
         this.title.textContent = action.label.replace(/…$/, '')
         this.apply.textContent = action.placement === 'replace' && target.from < target.to ? 'Replace' : 'Insert'
-        this.dom.hidden = false
-        this.place()
+        this.open = true
+        this.panel.show()
         if (action.instruction && !instruction) {
             this.ask.hidden = false
             this.ask.value = ''
@@ -215,7 +229,9 @@ class Session {
             this.note.textContent = ''
             this.apply.disabled = true
             this.again.disabled = true
-            this.ask.focus()
+            // The panel is placed a tick after it shows: focusing must not
+            // scroll to where it stands meanwhile.
+            this.ask.focus({ preventScroll: true })
             return
         }
         void this.run()
@@ -285,7 +301,7 @@ class Session {
 
     /** Stop and close; false when there was nothing to discard. */
     discard(): boolean {
-        if (this.dom.hidden) return false
+        if (!this.open) return false
         this.close()
         this.editor.commands.focus()
         return true
@@ -293,7 +309,8 @@ class Session {
 
     private close() {
         this.stop()
-        this.dom.hidden = true
+        this.open = false
+        this.panel.hide()
         this.action = null
         if (targetKey.getState(this.editor.state)) this.editor.view.dispatch(this.editor.state.tr.setMeta(targetKey, { target: null }))
     }
@@ -303,19 +320,13 @@ class Session {
         this.controller = null
     }
 
-    /** Under the text the action is about. */
+    /** Placed again: the answer changed the panel's size. */
     private place() {
-        const target = targetKey.getState(this.editor.state)
-        const host = this.dom.parentElement
-        if (!target || !host) return
-        const end = this.editor.view.coordsAtPos(target.to)
-        const box = host.getBoundingClientRect()
-        this.dom.style.top = `${end.bottom - box.top + host.scrollTop + 6}px`
-        this.dom.style.left = `${Math.max(0, Math.min(end.left - box.left, host.clientWidth - 360))}px`
+        if (this.open) this.panel.update()
     }
 
     destroy() {
         this.stop()
-        this.dom.remove()
+        this.panel.destroy()
     }
 }

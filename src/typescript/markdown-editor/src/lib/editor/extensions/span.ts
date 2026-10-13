@@ -7,6 +7,7 @@
 import { Mark, mergeAttributes } from '@tiptap/core'
 import type { Mark as PMMark } from '@tiptap/pm/model'
 import type { MarkdownMarkSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 
 export interface SpanAttributes {
     id: string | null
@@ -100,9 +101,7 @@ function spanRule(state: any, silent: boolean): boolean {
     return true
 }
 
-function setupMarkdownIt(markdownit: any) {
-    if (markdownit.__ezcoSpans) return
-    markdownit.__ezcoSpans = true
+const setupMarkdownIt = (markdownit: any) => setupOnce(markdownit, 'span', () => {
     markdownit.inline.ruler.before('link', 'ezco_span', spanRule)
     const esc = markdownit.utils.escapeHtml
     markdownit.renderer.rules.ezco_span_open = (tokens: any[], idx: number) => {
@@ -116,7 +115,7 @@ function setupMarkdownIt(markdownit: any) {
         return `<span data-md-span${data}>`
     }
     markdownit.renderer.rules.ezco_span_close = () => '</span>'
-}
+})
 
 export const Span = Mark.create({
     name: 'span',

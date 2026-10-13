@@ -49,7 +49,7 @@
 import { Extension, type AnyExtension, type Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import tippy, { type Instance as TippyInstance } from 'tippy.js'
+import { menuPopover } from '../ui/popover'
 import type { FileOperations } from '@joinezco/storage'
 import { parseTextFragment, type Reaction, type Wikilink } from '@joinezco/vault'
 import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage } from './comments'
@@ -242,21 +242,7 @@ const keepAnchored = (anchored: boolean) => writeKept(ANCHORED_KEY, anchored ? '
  * choice, Escape, or a click elsewhere; `onClose` hears when it is.
  */
 function openMenu(anchor: HTMLElement, items: ContextMenuEntry[], onClose: () => void, before?: HTMLElement): () => void {
-    let done = false
-    let popup: TippyInstance | null = null
-    const outside = (e: MouseEvent) => {
-        if (!menu.dom.contains(e.target as Node) && !anchor.contains(e.target as Node)) close()
-    }
-    const close = () => {
-        if (done) return
-        done = true
-        document.removeEventListener('mousedown', outside, true)
-        menu.disable()
-        popup?.destroy()
-        popup = null
-        menu.destroy()
-        onClose()
-    }
+    const close = () => popup.hide()
     const menu = new ContextMenu({
         className: 'ezco-mde-comment-menu',
         items: items.map((item) =>
@@ -270,29 +256,14 @@ function openMenu(anchor: HTMLElement, items: ContextMenuEntry[], onClose: () =>
                       },
                   },
         ),
-        onClose: () => close(),
+        onClose: close,
     })
     if (before) menu.dom.prepend(before)
-    const created = tippy(anchor, {
-        content: menu.dom,
-        showOnCreate: true,
-        interactive: true,
-        trigger: 'manual',
+    const popup = menuPopover(anchor, menu, {
         placement: 'bottom-end',
-        theme: 'ezco-mde-block-actions',
-        appendTo: () => document.body,
-        hideOnClick: false,
-        popperOptions: {
-            modifiers: [
-                { name: 'preventOverflow', options: { padding: 8 } },
-                { name: 'flip', options: { fallbackPlacements: ['top-end', 'bottom-start', 'top-start'] } },
-            ],
-        },
-        onShown: () => menu.focus(),
-    }) as TippyInstance | TippyInstance[]
-    popup = Array.isArray(created) ? created[0] : created
-    menu.enable()
-    document.addEventListener('mousedown', outside, true)
+        flip: ['top-end', 'bottom-start', 'top-start'],
+        onHide: onClose,
+    })
     return close
 }
 

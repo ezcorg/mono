@@ -16,6 +16,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { NodeSelection, Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { setupOnce } from './markdown-it'
 
 const isSpace = (c: number) => c === 0x20 || c === 0x09
 
@@ -90,9 +91,7 @@ function footnoteReferenceRule(state: any, silent: boolean): boolean {
     return true
 }
 
-function setupMarkdownIt(markdownit: any) {
-    if (markdownit.__ezcoFootnotes) return
-    markdownit.__ezcoFootnotes = true
+const setupMarkdownIt = (markdownit: any) => setupOnce(markdownit, 'footnote', () => {
     markdownit.block.ruler.before('reference', 'ezco_footnote_def', footnoteDefinitionRule, {
         alt: ['paragraph', 'reference'],
     })
@@ -103,7 +102,7 @@ function setupMarkdownIt(markdownit: any) {
     markdownit.renderer.rules.ezco_footnote_def_close = () => '</section>'
     markdownit.renderer.rules.ezco_footnote_ref = (tokens: any[], idx: number) =>
         `<sup data-footnote-ref="${esc(tokens[idx].meta.label)}">${esc(tokens[idx].meta.label)}</sup>`
-}
+})
 
 /** Where each label is referenced first and defined, in document order. */
 function footnoteMap(doc: PMNode) {
