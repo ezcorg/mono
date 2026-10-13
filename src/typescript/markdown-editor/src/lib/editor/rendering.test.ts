@@ -1,10 +1,7 @@
-import { describe, it, expect, afterEach, afterAll } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import { page, userEvent } from '@vitest/browser/context'
-import { memoryVfs } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, settingsOf, codeblockRegistry, type MarkdownEditor } from './index'
-import { cleanupEditor, waitFor } from '../../test/utils'
-import type { CommentsStorage } from './extensions/comments'
+import { settingsOf, codeblockRegistry, type MarkdownEditor } from './index'
+import { frames, rangeOf, trackEditors, waitFor } from '../../test/utils'
 
 /**
  * The note rendered: one note with every block kind the editor knows and a
@@ -19,17 +16,11 @@ import type { CommentsStorage } from './extensions/comments'
 
 type Theme = 'light' | 'dark'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement; vault: Vault }> = []
-afterEach(() => {
-    codeblockRegistry.setTheme({ dark: false })
-    document.documentElement.removeAttribute('data-theme')
-    created.forEach(({ editor, container, vault }) => {
-        cleanupEditor(editor, container)
-        vault.close()
-    })
-    created.length = 0
-    for (const key of Object.keys(localStorage)) if (key.startsWith('ezco-mde-') || key.startsWith('ezco-settings:')) localStorage.removeItem(key)
-    for (const left of document.querySelectorAll('.ezco-mde-comment-sheet, .ezco-mde-comment-overlay-frame')) left.remove()
+const { openVault } = trackEditors({
+    also: () => {
+        codeblockRegistry.setTheme({ dark: false })
+        document.documentElement.removeAttribute('data-theme')
+    },
 })
 afterAll(async () => {
     await page.viewport(1280, 720)
@@ -111,10 +102,6 @@ const FILES: Record<string, string | Uint8Array> = {
     'comments/Everything/alice 2026-09-13 12.01.md': '![[Everything#:~:text=review%20this%20sentence]]\n\nIs it right?\n',
 }
 
-const frames = async (n = 3) => {
-    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
-}
-
 /** The theme as the demo's screenshot script sets it: the attribute on the root, the code blocks told. */
 function setTheme(theme: Theme, editor?: MarkdownEditor) {
     document.documentElement.setAttribute('data-theme', theme)
@@ -123,23 +110,16 @@ function setTheme(theme: Theme, editor?: MarkdownEditor) {
 
 async function open(width: number, theme: Theme) {
     setTheme(theme)
-    const vault = await Vault.open(memoryVfs(FILES), { watch: false, identity: 'theo' })
-    const container = document.createElement('div')
-    container.style.cssText = `width: ${width}px; height: 700px; overflow-y: auto;`
-    document.body.append(container)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: 'Everything.md', autoSave: true },
-        links: { resolver: vault.links, index: vault.links },
-        search: vault.search,
-        files: vault.files,
-        comments: { author: 'theo', index: vault.comments, reactions: vault.reactions },
+    const made = await openVault(FILES, {
+        path: 'Everything.md',
+        identity: 'theo',
+        autoSave: true,
+        size: { width, height: 700, scroll: true },
+        services: ['resolver', 'index', 'search', 'files', 'comments'],
     })
-    created.push({ editor, container, vault })
+    const { editor, container } = made
     setTheme(theme, editor)
-    const comments = (editor.storage as any).comments as CommentsStorage
     await settingsOf(editor)?.ready
-    await waitFor(() => comments.comments().length === 1 && comments.comments()[0].target.range !== null, 5000)
     await waitFor(() => !!container.querySelector('.cm-editor') && !!container.querySelector('.ezco-mde-gutter .ezco-mde-block-icon'), 5000)
     // The picture arrives from the vault after the note: measured once it
     // has its size, so the blocks after it have their places.
@@ -147,19 +127,12 @@ async function open(width: number, theme: Theme) {
         const img = container.querySelector('img')
         return !!img && img.complete && img.naturalWidth > 0 && img.getBoundingClientRect().height > 10
     }, 5000)
-    await frames()
-    return { editor, container, comments, vault }
+    await frames(3)
+    return made
 }
 
 const margin = (c: HTMLElement) => c.querySelector('.ezco-mde-comment-margin') as HTMLElement
 const glyphs = (c: HTMLElement) => [...c.querySelectorAll<HTMLElement>('.ezco-mde-gutter .ezco-mde-block-icon')]
-const posOf = (editor: MarkdownEditor, text: string) => {
-    let from = -1
-    editor.state.doc.descendants((node, pos) => {
-        if (from < 0 && node.isText && node.text!.includes(text)) from = pos + node.text!.indexOf(text)
-    })
-    return { from, to: from + text.length }
-}
 /** `a` within `b`, to the pixel. */
 const inside = (a: DOMRect, b: DOMRect) => a.left >= b.left - 1 && a.right <= b.right + 1 && a.top >= b.top - 1 && a.bottom <= b.bottom + 1
 const describeEl = (el: Element) => `${el.tagName.toLowerCase()}${[...el.classList].map((c) => `.${c}`).join('')}`
@@ -290,7 +263,7 @@ describe('The note rendered, every block kind and a comment', () => {
             expect(annotations.left).toBeGreaterThanOrEqual(noteBox.right - 1)
             if (beside) {
                 await waitFor(() => margin(container).classList.contains('is-panel') && !margin(container).hidden, 3000)
-                await frames()
+                await frames(3)
                 const panel = margin(container).getBoundingClientRect()
                 expect(annotations.right).toBeLessThanOrEqual(panel.left + 1)
                 expect(panel.left).toBeGreaterThanOrEqual(noteBox.right)
@@ -314,7 +287,7 @@ describe('The note rendered, every block kind and a comment', () => {
             expect(pastTheSides(container)).toEqual([])
 
             // ── The composer: its buttons in its bubble ──
-            const { from, to } = posOf(editor, 'review this sentence')
+            const { from, to } = rangeOf(editor, 'review this sentence')
             editor.commands.setTextSelection({ from, to })
             editor.commands.startComment()
             await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 3000)

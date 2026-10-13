@@ -1,8 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { memoryVfs, type VfsInterface } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor, MarkdownEditorOptions } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { drop, frames, getMarkdownContent, posOf, trackEditors, waitFor } from '../../../test/utils'
 
 // A 1×1 PNG.
 const PNG = Uint8Array.from(
@@ -10,26 +9,15 @@ const PNG = Uint8Array.from(
     (c) => c.charCodeAt(0),
 )
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { make, openVault } = trackEditors()
 
-function make(options: MarkdownEditorOptions) {
-    const container = createTestContainer(`img-${created.length}`)
-    const editor = createEditor({ element: container, ...options })
-    created.push({ editor, container })
-    return { editor, container }
-}
-
-async function inVault(files: Record<string, string | Uint8Array>, open: string, autoSave = false) {
-    const fs = memoryVfs(files)
-    const vault = await Vault.open(fs, { watch: false })
-    const made = make({ fs: { fs: vault.fs, filepath: open, autoSave }, links: { resolver: vault.links } })
-    await waitFor(() => made.editor.getText().length > 0 || made.editor.state.doc.firstChild?.childCount === 1, 3000)
-    return { ...made, fs: vault.fs as VfsInterface, vault }
-}
+const inVault = (files: Record<string, string | Uint8Array>, open: string, autoSave = false) =>
+    openVault(files, {
+        path: open,
+        autoSave,
+        services: ['resolver'],
+        until: (editor) => editor.getText().length > 0 || editor.state.doc.firstChild?.childCount === 1,
+    })
 
 describe('Image syntax', () => {
     const roundTrips = [
@@ -121,35 +109,9 @@ describe('Images in a vault', () => {
 })
 
 describe('Images dropped on a note', () => {
-    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-
-    const posOf = (editor: MarkdownEditor, text: string) => {
-        let at = -1
-        editor.state.doc.descendants((node, pos) => {
-            if (at < 0 && node.isText && node.text!.includes(text)) at = pos + node.text!.indexOf(text)
-            return at < 0
-        })
-        return at
-    }
-
-    /**
-     * A drop on the note at the position `at`, as the browser delivers one:
-     * a `DragEvent` with the files (or text) on its `dataTransfer` and the
-     * pointer's coordinates, those of the position.
-     */
-    function drop(editor: MarkdownEditor, payload: { files?: File[]; text?: string }, at: number) {
-        const data = new DataTransfer()
-        for (const file of payload.files ?? []) data.items.add(file)
-        if (payload.text !== undefined) data.setData('text/plain', payload.text)
-        const { left, top, bottom } = editor.view.coordsAtPos(at)
-        const event = new DragEvent('drop', { dataTransfer: data, clientX: left, clientY: (top + bottom) / 2, bubbles: true, cancelable: true })
-        editor.view.dom.dispatchEvent(event)
-        return event
-    }
-
     it('stores a dropped image in attachments and puts it where it was dropped, not at the caret', async () => {
         const { editor, fs } = await inVault({ 'notes/n.md': 'Before. After.\n\nSecond.' }, 'notes/n.md')
-        await frame()
+        await frames(1)
         // The caret is elsewhere: the image goes under the pointer.
         editor.commands.setTextSelection(posOf(editor, 'Second') + 'Second.'.length)
         const event = drop(editor, { files: [new File([PNG], 'shot.png', { type: 'image/png' })] }, posOf(editor, ' After'))
@@ -167,7 +129,7 @@ describe('Images dropped on a note', () => {
 
     it('drops several images in order, each stored once', async () => {
         const { editor, fs } = await inVault({ 'n.md': 'A\n\nB' }, 'n.md')
-        await frame()
+        await frames(1)
         const other = Uint8Array.from([...PNG, 0])
         const event = drop(editor, {
             files: [new File([PNG], 'one.png', { type: 'image/png' }), new File([other], 'two.png', { type: 'image/png' }), new File([PNG], 'one.png', { type: 'image/png' })],
@@ -181,7 +143,7 @@ describe('Images dropped on a note', () => {
 
     it('leaves a dropped Markdown file alone: no node, no file, the browser’s default kept', async () => {
         const { editor, fs } = await inVault({ 'n.md': 'Only text.' }, 'n.md')
-        await frame()
+        await frames(1)
         const event = drop(editor, { files: [new File(['# Other\n\nNote.'], 'other.md', { type: 'text/markdown' })] }, posOf(editor, 'text'))
         expect(event.defaultPrevented).toBe(false)
         await new Promise((resolve) => setTimeout(resolve, 150))
@@ -191,7 +153,7 @@ describe('Images dropped on a note', () => {
 
     it('drops text from elsewhere as Markdown, at the drop point', async () => {
         const { editor } = await inVault({ 'n.md': 'Start end.' }, 'n.md')
-        await frame()
+        await frames(1)
         const event = drop(editor, { text: '**dragged** ' }, posOf(editor, 'end'))
         expect(event.defaultPrevented).toBe(true)
         expect(getMarkdownContent(editor)).toBe('Start **dragged** end.')

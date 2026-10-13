@@ -1,19 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import { getMarkdownContent, trackEditors } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-function make(content: string) {
-    const container = createTestContainer(`para-${created.length}`)
-    const editor = createEditor({ element: container, content })
-    created.push({ editor, container })
-    return editor
-}
+const editors = trackEditors()
+const make = (content: string) => editors.make(content).editor
 
 describe('Paragraph spacing', () => {
     it('keeps empty paragraphs between blocks across a save and load', () => {

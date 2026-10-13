@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent } from '../../../test/utils'
+import { createTestContainer, cleanupEditor, getMarkdownContent, posOf } from '../../../test/utils'
 
 /**
  * Block-level markdown paste. tiptap-markdown's bundled clipboard
@@ -117,7 +117,7 @@ describe('Markdown block-level paste', () => {
     // ("twoend.") and an empty paragraph is left behind.
     it('pastes block Markdown into the middle of a paragraph: the first line joins it, the rest follow as blocks, the text after the caret a paragraph of its own', () => {
         editor.commands.setContent('Start end.')
-        editor.commands.setTextSelection(posOf('end'))
+        editor.commands.setTextSelection(posOf(editor, 'end'))
         expect(pasteText('here\n\n* one\n* two\n\n')).toBe(true)
         expect(kinds()).toEqual(['paragraph', 'bulletList', 'paragraph'])
         expect(editor.state.doc.lastChild!.textContent).toBe('end.')
@@ -173,13 +173,4 @@ describe('Markdown block-level paste', () => {
         }
         expect(ourHandlerReturn).toBe(false)
     })
-
-    function posOf(text: string) {
-        let at = -1
-        editor.state.doc.descendants((node, pos) => {
-            if (at < 0 && node.isText && node.text!.includes(text)) at = pos + node.text!.indexOf(text)
-            return at < 0
-        })
-        return at
-    }
 })

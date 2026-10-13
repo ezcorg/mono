@@ -1,20 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import { MarkdownEditor } from '../index'
+import { getMarkdownContent, trackEditors } from '../../../test/utils'
 import { formatSpanAttributes, parseSpanAttributes } from './span'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-function open(content: string) {
-    const container = createTestContainer(`span-${created.length}`)
-    const editor = createEditor({ element: container, content })
-    created.push({ editor, container })
-    return { editor }
-}
+const { make: open } = trackEditors()
 
 describe('A bracketed span’s attributes', () => {
     it('are read and written as Pandoc writes them', () => {

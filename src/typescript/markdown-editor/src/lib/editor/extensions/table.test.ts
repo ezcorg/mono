@@ -1,13 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent } from '../../../test/utils'
+import { createTestContainer, frames, getMarkdownContent, trackEditors } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { created } = trackEditors()
 
 describe('Tables', () => {
     // Cells whose only content is a node with no text of its own.
@@ -56,9 +52,6 @@ describe('Tables', () => {
 
 describe('Keys in a table', () => {
     const TABLE = 'Before.\n\n| a | b |\n| --- | --- |\n| x | y |\n\nAfter.'
-    const frames = async (n = 2) => {
-        for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
-    }
     /** An editor on the table, mounted (Tiptap mounts after a tick) and focused, the caret at the end of `text`. */
     async function caretAfter(text: string) {
         const container = createTestContainer(`table-keys-${created.length}`)

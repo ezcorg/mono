@@ -1,18 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs, type VfsInterface } from '@joinezco/storage'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
+import { mod, tick, trackEditors, waitFor } from '../../../test/utils'
 
-const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
-/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere). */
-const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
-
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { make } = trackEditors()
 
 /** Every write, in order, on top of a memory vault. */
 function recorded(files: Record<string, string | Uint8Array>) {
@@ -27,14 +18,12 @@ function recorded(files: Record<string, string | Uint8Array>) {
 }
 
 function open(fs: VfsInterface, filepath: string) {
-    const container = createTestContainer(`code-${created.length}`)
-    const editor = createEditor({ element: container, fs: { fs, filepath, autoSave: true } })
-    created.push({ editor, container })
+    const { editor, container } = make({ fs: { fs, filepath, autoSave: true } })
     return { editor, container, persistence: (editor.storage as any).persistence }
 }
 
 /** Past the 500 ms autosave debounce. */
-const autosave = () => new Promise((r) => setTimeout(r, 700))
+const autosave = () => tick(700)
 
 // A PDF's head: text, then bytes that are not UTF-8, and NULs.
 const PDF = new Uint8Array([...new TextEncoder().encode('%PDF-1.7\n'), 0xe2, 0xe3, 0xcf, 0xd3, 0, 0, 10, 0xff])

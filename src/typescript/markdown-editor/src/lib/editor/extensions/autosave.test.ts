@@ -3,6 +3,7 @@ import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from 'tiptap-markdown'
 import { FileSystem } from './filesystem'
+import { tick } from '../../../test/utils'
 
 /**
  * Autosave + file-navigation race.
@@ -36,8 +37,6 @@ function makeMockFs(initial: Files) {
     }
     return { fs, files, writes }
 }
-
-const tick = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 function makeEditor(fs: any, filepath: string, autoSave: boolean) {
     const el = document.createElement('div')

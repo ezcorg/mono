@@ -1,10 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { AllSelection, TextSelection } from '@tiptap/pm/state'
-import { memoryVfs, type VfsInterface } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor, MarkdownEditorOptions } from './index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../test/utils'
+import { MarkdownEditor, MarkdownEditorOptions } from './index'
+import { clip as clipOn, type ClipPayload, frames, getMarkdownContent, posOf, trackEditors, waitFor } from '../../test/utils'
 
 /**
  * The clipboard, through the events themselves (`copy`, `cut`, `paste` with
@@ -23,65 +21,28 @@ const PNG = Uint8Array.from(
     (c) => c.charCodeAt(0),
 )
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-
-function open(content: string, options: Partial<MarkdownEditorOptions> = {}) {
-    const container = createTestContainer(`clip-${created.length}`)
-    const editor = createEditor({ element: container, content, ...options })
-    created.push({ editor, container })
-    return editor
-}
+const editors = trackEditors()
+const open = (content: string, options: Partial<MarkdownEditorOptions> = {}) => editors.make(content, options).editor
 
 /** An editor mounted (Tiptap mounts after a tick) with the caret at its end. */
 async function opened(content: string) {
     const editor = open(content)
-    await frame()
+    await frames(1)
     editor.commands.focus('end')
     return editor
 }
 
 async function inVault(files: Record<string, string | Uint8Array>, path: string) {
-    const vault = await Vault.open(memoryVfs(files), { watch: false })
-    const editor = open('', { fs: { fs: vault.fs, filepath: path, autoSave: false }, links: { resolver: vault.links } })
-    await waitFor(() => editor.getText().length > 0, 3000)
-    await frame()
-    return { editor, fs: vault.fs as VfsInterface }
+    const { editor, fs } = await editors.openVault(files, { path, content: '', services: ['resolver'] })
+    await frames(1)
+    return { editor, fs }
 }
 
-type Payload = { text?: string; html?: string; files?: File[] }
-
-/**
- * A clipboard event of `kind` with `payload` on it, dispatched on `target`
- * (the editable unless given), and what is on the clipboard after: for a
- * copy or cut, what the editor put there.
- */
-function clip(editor: MarkdownEditor, kind: 'copy' | 'cut' | 'paste', payload: Payload = {}, target: Element = editor.view.dom) {
-    const data = new DataTransfer()
-    if (payload.text !== undefined) data.setData('text/plain', payload.text)
-    if (payload.html !== undefined) data.setData('text/html', payload.html)
-    for (const file of payload.files ?? []) data.items.add(file)
-    const event = new ClipboardEvent(kind, { clipboardData: data, bubbles: true, cancelable: true })
-    target.dispatchEvent(event)
-    return { handled: event.defaultPrevented, text: data.getData('text/plain'), html: data.getData('text/html') }
-}
+/** A clipboard event on the editable (`target` unless given), and what is on the clipboard after. */
+const clip = (editor: MarkdownEditor, kind: 'copy' | 'cut' | 'paste', payload: ClipPayload = {}, target: Element = editor.view.dom) => clipOn(target, kind, payload)
 
 /** What a copy of the current selection puts on the clipboard. */
 const copied = (editor: MarkdownEditor) => clip(editor, 'copy')
-
-const posOf = (editor: MarkdownEditor, text: string) => {
-    let at = -1
-    editor.state.doc.descendants((node, pos) => {
-        if (at < 0 && node.isText && node.text!.includes(text)) at = pos + node.text!.indexOf(text)
-        return at < 0
-    })
-    return at
-}
 
 const select = (editor: MarkdownEditor, from: number, to: number) =>
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, from, to)))
@@ -355,7 +316,7 @@ describe('Paste', () => {
         const editor = await opened('No vault.')
         const { handled } = clip(editor, 'paste', { files: [new File([PNG], 'shot.png', { type: 'image/png' })] })
         expect(handled).toBe(false)
-        await frame()
+        await frames(1)
         expect(getMarkdownContent(editor)).toBe('No vault.')
     })
 })

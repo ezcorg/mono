@@ -1,10 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { EditorView } from '@codemirror/view'
 import { memoryVfs, type VfsInterface } from '@joinezco/storage'
 import { fenceFor } from './codeblock'
-import { createEditor, MarkdownEditor } from '../index'
-import { cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { clip, getMarkdownContent, mod, trackEditors, waitFor } from '../../../test/utils'
 
 /**
  * The fence a code block is written with. A closing fence is backticks and
@@ -37,34 +36,20 @@ describe('A code block’s fence', () => {
  * written, kept out of the note's own list spacing; and used as a person
  * uses one (real keys, the clipboard, undo, the theme).
  */
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-    document.documentElement.removeAttribute('data-theme')
-})
-
-const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
-/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere). */
-const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
+const { make } = trackEditors({ also: () => document.documentElement.removeAttribute('data-theme') })
 
 const FENCE = '# Code\n\n```js\nfunction a() {\n  return 1\n}\n```\n\n* one\n* two\n'
 /** A one-line fence with a paragraph after it: what the keys below act on. */
 const USED = '# Code\n\n```js\nlet a = 1\n```\n\nAfter the code.\n'
 
 function openNote(options: { editable?: boolean; content?: string; fs?: VfsInterface } = {}) {
-    const container = document.createElement('div')
-    container.style.cssText = 'width: 800px; height: 500px; overflow-y: auto;'
-    document.body.append(container)
     const { editable, content = FENCE, fs } = options
-    const editor = createEditor({
-        element: container,
+    return make({
+        size: { width: 800, height: 500, scroll: true },
         ...(fs ? { fs: { fs, filepath: 'note.md', autoSave: false } } : { content }),
         // Only when given: `editable: undefined` would make every block read-only.
         ...(editable === undefined ? {} : { editable }),
     })
-    created.push({ editor, container })
-    return { editor, container }
 }
 
 /** Where a line's first character that is not a space is drawn. */
@@ -95,13 +80,6 @@ async function into(c: HTMLElement) {
     const view = EditorView.findFromDOM(cmOf(c))!
     await waitFor(() => view.hasFocus, 2000)
     return view
-}
-/** What a copy or a cut from `target` puts on the clipboard as text. */
-function clip(target: HTMLElement, type: 'copy' | 'cut') {
-    const data = new DataTransfer()
-    const event = new ClipboardEvent(type, { clipboardData: data, bubbles: true, cancelable: true })
-    target.dispatchEvent(event)
-    return { handled: event.defaultPrevented, text: data.getData('text/plain') }
 }
 /** `color` as the browser computes it (`#1e1e1e` as `rgb(30, 30, 30)`). */
 function computed(color: string) {

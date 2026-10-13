@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import type { JSONContent } from '@tiptap/core'
 import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor } from '../../../test/utils'
+import { md, startOf, trackEditors } from '../../../test/utils'
 
 /**
  * Tasks as a person makes them: `- [ ] ` typed on a line, `[ ] ` at the
@@ -10,26 +10,7 @@ import { createTestContainer, cleanupEditor } from '../../../test/utils'
  * typed together, which the editor keeps as lists of each kind, in order.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-const frames = async (n = 2) => {
-    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
-}
-/** An editor to type in: made, mounted (Tiptap mounts after a tick), focused. */
-async function typing(content = '') {
-    const container = createTestContainer(`task-${created.length}`)
-    const editor = createEditor({ element: container, content })
-    created.push({ editor, container })
-    await frames()
-    editor.commands.focus()
-    await frames()
-    return { editor, container }
-}
-const md = (editor: MarkdownEditor) => editor.storage.markdown.getMarkdown() as string
+const { typing } = trackEditors()
 /** The kinds of the top-level blocks, lists with their kind in brackets
  *  (the empty paragraph the editor keeps after a list left out). */
 const shape = (editor: MarkdownEditor) => {
@@ -44,14 +25,6 @@ const shape = (editor: MarkdownEditor) => {
 }
 const items = (editor: MarkdownEditor) => [...editor.view.dom.querySelectorAll('li')].map((li) => li.textContent)
 const checked = (editor: MarkdownEditor) => [...editor.view.dom.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].map((box) => box.checked)
-/** The caret at the start of the text node `text`. */
-const startOf = (editor: MarkdownEditor, text: string) => {
-    let at = -1
-    editor.state.doc.descendants((n, pos) => {
-        if (at < 0 && n.isText && n.text === text) at = pos
-    })
-    return at
-}
 /** What `written` reads back as: its shape, and what that writes again. */
 const reread = (written: string) => {
     const again = createEditor({ content: written }) as MarkdownEditor

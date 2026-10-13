@@ -1,24 +1,13 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import { getMarkdownContent, trackEditors } from '../../../test/utils'
 
 /**
  * Text stays text: what is typed as prose is written as it was typed, and
  * only what would read back as syntax is escaped.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-function open(content: string) {
-    const container = createTestContainer(`text-${created.length}`)
-    const editor = createEditor({ element: container, content })
-    created.push({ editor, container })
-    return editor
-}
+const editors = trackEditors()
+const open = (content: string) => editors.make(content).editor
 
 describe('Angle brackets', () => {
     it.each(['a -> b, and x < y > z', 'Use <T> for a type, or <div> as text', 'a <= b >= c'])('round-trips %j as written', (md) => {

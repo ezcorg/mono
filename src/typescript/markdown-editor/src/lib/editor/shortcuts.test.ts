@@ -1,9 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
-import { memoryVfs } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor, MarkdownEditorOptions } from './index'
-import { cleanupEditor, getMarkdownContent, waitFor } from '../../test/utils'
+import { MarkdownEditor, MarkdownEditorOptions } from './index'
+import { filepath, findNode, focusNote, frames, getMarkdownContent, mod, rangeOf, trackEditors, waitFor } from '../../test/utils'
 import type { CommentsStorage } from './extensions/comments'
 
 /**
@@ -13,20 +11,7 @@ import type { CommentsStorage } from './extensions/comments'
  * read from what shows, never from the command's return.
  */
 
-const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
-/** `keys` with Mod held: `mod('{Shift>}e{/Shift}')` is ⌘⇧E on a Mac, Ctrl+Shift+E elsewhere. */
-const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
-
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement; vault: Vault }> = []
-afterEach(() => {
-    created.forEach(({ editor, container, vault }) => {
-        cleanupEditor(editor, container)
-        vault.close()
-    })
-    created.length = 0
-    // The comments panel keeps its choice; not for the next test.
-    for (const key of Object.keys(localStorage)) if (key.startsWith('ezco-mde-') || key.startsWith('ezco-settings:')) localStorage.removeItem(key)
-})
+const { openVault } = trackEditors()
 
 const NOTE = '# Index\n\nStart here, then [[plan]] or [the plan](plan.md).\n\nA paragraph to comment on.\n'
 const FILES: Record<string, string> = {
@@ -39,50 +24,26 @@ const FILES: Record<string, string> = {
 
 /** An editor over a vault of a few notes, with every panel a key can ask for. */
 async function open(options: Partial<MarkdownEditorOptions> = {}) {
-    const vault = await Vault.open(memoryVfs(FILES), { watch: false, identity: 'theo' })
-    const container = document.createElement('div')
-    // Inside the 1280px viewport, and wide enough for a comments panel beside the note.
-    container.style.cssText = 'width: 1200px; height: 700px; overflow-y: auto;'
-    document.body.append(container)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: 'index.md', autoSave: false },
-        links: { resolver: vault.links, index: vault.links },
-        search: vault.search,
-        files: vault.files,
-        comments: { author: 'theo', index: vault.comments, reactions: vault.reactions },
+    const made = await openVault(FILES, {
+        path: 'index.md',
+        identity: 'theo',
+        // Inside the 1280px viewport, and wide enough for a comments panel beside the note.
+        size: { width: 1200, height: 700, scroll: true },
+        services: ['resolver', 'index', 'search', 'files', 'comments'],
         fileTree: {},
+        until: (editor) => editor.getText().includes('Start here'),
         ...options,
     })
-    created.push({ editor, container, vault })
-    await waitFor(() => editor.getText().includes('Start here'), 3000)
     // Tiptap mounts after a tick.
-    await new Promise((r) => requestAnimationFrame(r))
-    return { editor, container, vault }
-}
-
-/** Real focus in the note, on its heading (nothing there follows a click). */
-const focusNote = async (container: HTMLElement) => {
-    await userEvent.click(container.querySelector('.ezco-mde-body h1') as HTMLElement)
-    await waitFor(() => document.activeElement === container.querySelector('.ProseMirror'), 2000)
+    await frames(1)
+    return made
 }
 const input = (c: HTMLElement) => c.querySelector('.cm-toolbar-input') as HTMLInputElement
 const results = (c: HTMLElement) => [...c.querySelectorAll('.cm-search-result')] as HTMLElement[]
-const filepath = (editor: MarkdownEditor) => (editor.storage as any).persistence.options.filepath as string | undefined
-const posOf = (editor: MarkdownEditor, text: string) => {
-    let from = -1
-    editor.state.doc.descendants((node, pos) => {
-        if (from < 0 && node.isText && node.text!.includes(text)) from = pos + node.text!.indexOf(text)
-    })
-    return { from, to: from + text.length }
-}
 /** The position just after the note's first wikilink. */
 const afterWikilink = (editor: MarkdownEditor) => {
-    let at = -1
-    editor.state.doc.descendants((node, pos) => {
-        if (at < 0 && node.type.name === 'wikilink') at = pos + node.nodeSize
-    })
-    return at
+    const link = findNode(editor, 'wikilink')
+    return link ? link.pos + link.node.nodeSize : -1
 }
 const wikilinks = (editor: MarkdownEditor) => editor.view.dom.querySelectorAll('.ezco-mde-wikilink').length
 
@@ -130,7 +91,7 @@ describe('Links', () => {
     it('⌘Enter in a Markdown link’s text opens the note it links to', async () => {
         const { editor, container } = await open()
         await focusNote(container)
-        editor.commands.setTextSelection(posOf(editor, 'the plan').from + 2)
+        editor.commands.setTextSelection(rangeOf(editor, 'the plan').from + 2)
         expect(editor.isActive('link')).toBe(true)
         await userEvent.keyboard(mod('{Enter}'))
         await waitFor(() => filepath(editor) === 'plan.md', 3000)
@@ -249,7 +210,7 @@ describe('Comments', () => {
     it('⌘⌥M writes a comment on the selection, over the note by its text; Escape cancels it', async () => {
         const { editor, container } = await open()
         await focusNote(container)
-        editor.commands.setTextSelection(posOf(editor, 'paragraph to comment'))
+        editor.commands.setTextSelection(rangeOf(editor, 'paragraph to comment'))
         await userEvent.keyboard(mod('{Alt>}m{/Alt}'))
         await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
         const draft = container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement
@@ -268,7 +229,7 @@ describe('Marks', () => {
     it('⌘B makes the selection bold, ⌘I italic', async () => {
         const { editor, container } = await open()
         await focusNote(container)
-        editor.commands.setTextSelection(posOf(editor, 'Start here'))
+        editor.commands.setTextSelection(rangeOf(editor, 'Start here'))
         await userEvent.keyboard(mod('b'))
         await waitFor(() => getMarkdownContent(editor).includes('**Start here**'), 2000)
         expect(editor.isActive('bold')).toBe(true)

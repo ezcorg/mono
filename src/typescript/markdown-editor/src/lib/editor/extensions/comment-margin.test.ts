@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs, type VfsInterface } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { createEditor, MarkdownEditor, settingsOf as settingsOfEditor } from '../index'
+import { frames as raf, getMarkdownContent, rangeOf, tool, trackEditors, viaMenu as choose, waitFor } from '../../../test/utils'
 import { authorOf, type CommentsStorage } from './comments'
 
 /**
@@ -11,16 +11,7 @@ import { authorOf, type CommentsStorage } from './comments'
  * its text or covers another is caught; real keys into the composers.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement; vault: Vault }> = []
-afterEach(() => {
-    created.forEach(({ editor, container, vault }) => {
-        cleanupEditor(editor, container)
-        vault.close()
-    })
-    created.length = 0
-    for (const key of Object.keys(localStorage)) if (key.startsWith('ezco-mde-') || key.startsWith('ezco-settings:')) localStorage.removeItem(key)
-    for (const left of document.querySelectorAll('.ezco-mde-comment-sheet')) left.remove()
-})
+const { created, openVault } = trackEditors()
 
 const paragraphs = Array.from({ length: 12 }, (_, i) => `Paragraph ${i + 1} says something worth a comment, number ${i + 1}.`)
 const NOTE = ['# Review', ...paragraphs].join('\n\n') + '\n'
@@ -39,7 +30,7 @@ const FILES: Record<string, string> = Object.fromEntries([
 type Layout = 'float' | 'column' | 'panel'
 
 /** The settings of an editor: what it keeps its panel's choices in. */
-const settingsOf = (editor: MarkdownEditor) => (editor.storage as any).settings as { get: (p: string) => unknown; file: (s: string) => string | null; ready: Promise<void> }
+const settingsOf = (editor: MarkdownEditor) => settingsOfEditor(editor)!
 
 async function open(width: number, layout: Layout | undefined, files = FILES, author: string | null = 'theo', openOnClick = false, on?: VfsInterface) {
     const vault = await Vault.open(on ?? memoryVfs(files), { watch: false, identity: author ?? undefined })
@@ -50,29 +41,22 @@ async function open(width: number, layout: Layout | undefined, files = FILES, au
         await resolver.reactions.toggle({ doc: 'comments/Review/alice 2026-09-13 12.04.md', ref: 'Review#:~:text=Paragraph%2010%20says' }, '✅')
         if (resolver !== vault) resolver.close()
     }
-    const container = document.createElement('div')
-    container.style.cssText = `width: ${width}px; height: 700px; overflow-y: auto;`
-    document.body.append(container)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: 'Review.md', autoSave: true },
-        links: { resolver: vault.links, index: vault.links },
-        search: vault.search,
-        files: vault.files,
-        comments: { author: author ?? undefined, index: vault.comments, reactions: vault.reactions, openOnClick, margin: layout ? { layout } : {} },
+    const made = await openVault(files, {
+        vault,
+        path: 'Review.md',
+        autoSave: true,
+        size: { width, height: 700, scroll: true },
+        services: ['resolver', 'index', 'search', 'files', 'comments'],
+        comments: { author: author ?? undefined, openOnClick, margin: layout ? { layout } : {} },
     })
-    created.push({ editor, container, vault })
-    const comments = (editor.storage as any).comments as CommentsStorage
-    // Every comment on the note (the documents referencing it), at its text.
-    const expected = Object.values(files).filter((text) => text.startsWith('![[Review#')).length
-    await waitFor(() => comments.comments().length === expected && comments.comments().every((c) => c.target.range !== null), 5000)
-    await waitFor(() => comments.comments().some((c) => c.resolved), 3000)
+    await waitFor(() => made.comments.comments().some((c) => c.resolved), 3000)
     await frames()
-    return { editor, container, comments, vault }
+    return made
 }
 
+/** Three frames, and every animation in the cards ended. */
 const frames = async (n = 3) => {
-    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
+    await raf(n)
     const moving = [...document.querySelectorAll('.ezco-mde-comment-card')].flatMap((c) => c.getAnimations({ subtree: true }))
     await Promise.all(moving.map((a) => a.finished.catch(() => {})))
 }
@@ -84,8 +68,6 @@ const card = (c: HTMLElement, id: string) => within(c).querySelector(`.ezco-mde-
 const visibleCards = (c: HTMLElement) => [...within(c).querySelectorAll<HTMLElement>('.ezco-mde-comment-card')].filter((e) => !e.hidden && !margin(c).hidden)
 const anchorTop = (editor: MarkdownEditor, comments: CommentsStorage, id: string) => editor.view.coordsAtPos(comments.comments().find((c) => c.id === id)!.anchor!).top
 const overlap = (a: DOMRect, b: DOMRect) => a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5
-const tool = (el: HTMLElement, label: string) =>
-    [...el.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === label || b.textContent === label) as HTMLButtonElement
 const messageOf = (el: HTMLElement, id: string) => el.querySelector(`.ezco-mde-comment-message[data-comment="${id}"]`) as HTMLElement
 /** The field of a reply being written in the thread of `message`, or of the edit in its bubble. */
 const composerIn = (message: HTMLElement) =>
@@ -101,34 +83,12 @@ const composerBlockIn = (el: HTMLElement) => el.querySelector('.ezco-mde-comment
 const sheet = () => document.querySelector('.ezco-mde-comment-sheet') as HTMLElement | null
 const sheetText = () => sheet()?.querySelector('.ezco-mde-comment-sheet-body') as HTMLElement | null
 const sheetPath = (editor: MarkdownEditor) => ((editor.storage as any).commentMargin.sheet as { path: string } | null)?.path ?? null
-const posOf = (editor: MarkdownEditor, text: string) => {
-    let from = -1
-    editor.state.doc.descendants((node, pos) => {
-        if (from < 0 && node.isText && node.text!.includes(text)) from = pos + node.text!.indexOf(text)
-    })
-    return { from, to: from + text.length }
-}
 /** Choose `label` from a message's chevron menu. */
-const viaMenu = async (message: HTMLElement, label: string) => {
-    tool(message, 'Comment menu').click()
-    await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
-    const item = [...document.querySelectorAll<HTMLElement>('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].find((b) => b.textContent?.trim() === label)
-    if (!item) throw new Error(`No "${label}" in the menu: ${[...document.querySelectorAll('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].map((b) => b.textContent).join(', ')}`)
-    item.click()
-    await waitFor(() => !document.querySelector('.ezco-mde-comment-menu'), 2000)
-}
+const viaMenu = (message: HTMLElement, label: string) => choose(tool(message, 'Comment menu'), label, '.ezco-mde-comment-menu')
 /** Choose `label` from the panel head's chevron menu; a setting's state
  *  (its switch) as it was before the choice, else null. */
-const viaHeadMenu = async (container: HTMLElement, label: string) => {
-    tool(margin(container).querySelector('.ezco-mde-comment-margin-head') as HTMLElement, 'Comments panel menu').click()
-    await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
-    const item = [...document.querySelectorAll<HTMLElement>('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].find((b) => b.textContent?.trim() === label)
-    if (!item) throw new Error(`No "${label}" in the panel menu: ${[...document.querySelectorAll('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].map((b) => b.textContent).join(', ')}`)
-    const was = item.getAttribute('aria-checked')
-    item.click()
-    await waitFor(() => !document.querySelector('.ezco-mde-comment-menu'), 2000)
-    return was
-}
+const viaHeadMenu = (container: HTMLElement, label: string) =>
+    choose(tool(margin(container).querySelector('.ezco-mde-comment-margin-head') as HTMLElement, 'Comments panel menu'), label, '.ezco-mde-comment-menu')
 /** How far a card beside the note has stepped out towards the text (negative: left). */
 const shift = (el: HTMLElement) => new DOMMatrix(getComputedStyle(el).transform).m41
 const menuLabels = async (message: HTMLElement) => {
@@ -459,7 +419,7 @@ describe('Writing', () => {
         const { editor, container, comments } = await open(1100, 'panel')
         await waitFor(() => margin(container).classList.contains('is-panel'), 2000)
         await frames()
-        const { from, to } = posOf(editor, 'number 7')
+        const { from, to } = rangeOf(editor, 'number 7')
         editor.commands.setTextSelection({ from, to })
         editor.commands.startComment()
         await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
@@ -549,7 +509,7 @@ describe('Writing', () => {
         expect(sheet()!.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-content')?.textContent?.trim()).toBe('First.')
         expect(sheet()!.querySelector('.ezco-mde-embed-meta')?.textContent).toBe('@alice · line 3')
         // More of the note, selected and asked for a comment, is quoted into the sheet.
-        editor.commands.setTextSelection(posOf(editor, 'number 9'))
+        editor.commands.setTextSelection(rangeOf(editor, 'number 9'))
         editor.commands.startComment()
         await waitFor(() => sheet()!.querySelectorAll('.ezco-mde-embed--passage').length === 2, 3000)
         expect(container.querySelector('.ezco-mde-comment-card.is-draft')).toBeNull()
@@ -795,7 +755,7 @@ describe('Writing', () => {
 
     it('opens an unwritten comment in the sheet with somewhere to write, saving it as it is typed', async () => {
         const { editor, container, comments, vault } = await open(900, 'float')
-        editor.commands.setTextSelection(posOf(editor, 'number 7'))
+        editor.commands.setTextSelection(rangeOf(editor, 'number 7'))
         editor.commands.startComment()
         await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
         // Nothing typed yet: the composer's menu offers both long forms; the

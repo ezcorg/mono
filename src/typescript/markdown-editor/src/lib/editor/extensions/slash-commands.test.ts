@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { MarkdownEditor } from '../index'
+import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 
 /**
  * The slash menu as a person uses it: `/` typed on a word boundary opens
@@ -9,20 +9,17 @@ import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from 
  * Enter and a press run the command over the typed range, Escape and a
  * press elsewhere close it.
  */
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
 let outside: HTMLButtonElement | null = null
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-    outside?.remove()
-    outside = null
+const { make } = trackEditors({
+    also: () => {
+        outside?.remove()
+        outside = null
+    },
 })
 
 /** An editor with the default commands, the caret at the end of `content`. */
 async function typing(content: string): Promise<MarkdownEditor> {
-    const container = createTestContainer(`slash-${created.length}`)
-    const editor = createEditor({ element: container, content })
-    created.push({ editor, container })
+    const { editor } = make(content)
     await userEvent.click(editor.view.dom)
     editor.commands.focus('end')
     return editor

@@ -1,14 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { createEditor, MarkdownEditor } from '../index'
-import { cleanupEditor, waitFor } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import { createEditor } from '../index'
+import { trackEditors, waitFor } from '../../../test/utils'
 
 /** The outline follows the reader, and a click on it is believed. */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { created } = trackEditors()
 
 const NOTE = ['# Start', ...Array.from({ length: 14 }, (_, i) => `Paragraph ${i + 1} of the first part.`), '## Middle', 'A line.', '## End', 'The last line.'].join('\n\n')
 

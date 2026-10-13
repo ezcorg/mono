@@ -1,41 +1,23 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
-import { memoryVfs } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { MarkdownEditor } from '../index'
+import { filepath, getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const editors = trackEditors()
 
 /** An editor with no vault: syntax only. */
-function bare(content: string): MarkdownEditor {
-    const container = createTestContainer(`wl-${created.length}`)
-    const editor = createEditor({ element: container, content })
-    created.push({ editor, container })
-    return editor
-}
+const bare = (content: string): MarkdownEditor => editors.make(content).editor
 
 /** An editor on `index.md` of an in-memory vault, links resolved by it. */
-async function inVault(files: Record<string, string>, open = 'index.md') {
-    const vault = await Vault.open(memoryVfs(files), { watch: false })
-    const container = createTestContainer(`wlv-${created.length}`)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: open, autoSave: false },
-        links: { resolver: vault.links },
+const inVault = (files: Record<string, string>, open = 'index.md') =>
+    editors.openVault(files, {
+        path: open,
+        services: ['resolver'],
+        until: (editor) => editor.getText().includes(files[open].replace(/[#[\]]/g, '').trim().split('\n')[0].trim()),
     })
-    created.push({ editor, container })
-    await waitFor(() => editor.getText().includes(files[open].replace(/[#[\]]/g, '').trim().split('\n')[0].trim()), 3000)
-    return { editor, vault, container }
-}
 
 const links = (editor: MarkdownEditor) =>
     Array.from(editor.view.dom.querySelectorAll('.ezco-mde-wikilink')) as HTMLElement[]
-const filepath = (editor: MarkdownEditor) => (editor.storage as any).persistence.options.filepath as string
 
 describe('Wikilink syntax', () => {
     const roundTrips = [

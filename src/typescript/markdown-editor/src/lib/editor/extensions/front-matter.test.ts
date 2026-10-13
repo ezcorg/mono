@@ -1,22 +1,11 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs, type VfsInterface } from '@joinezco/storage'
-import { createEditor, documentId, MarkdownEditor, MarkdownEditorOptions } from '../index'
+import { documentId, MarkdownEditor } from '../index'
 import { actionsForNode } from './block-actions'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-function make(options: MarkdownEditorOptions): { editor: MarkdownEditor; container: HTMLElement } {
-    const container = createTestContainer(`fm-${created.length}`)
-    const editor = createEditor({ element: container, ...options })
-    created.push({ editor, container })
-    return { editor, container }
-}
+const { make } = trackEditors()
 
 const view = (container: HTMLElement) => container.querySelector('.ezco-mde-front-matter') as HTMLElement
 
@@ -52,9 +41,6 @@ describe('Front matter syntax', () => {
 })
 
 describe('Front matter view', () => {
-    afterEach(() => {
-        for (const key of Object.keys(localStorage)) if (key === 'ezco-mde-front-matter' || key.startsWith('ezco-settings:')) localStorage.removeItem(key)
-    })
     /** The fold as a setting (kept in this browser: these editors have no filesystem). */
     const collapsed = (editor: MarkdownEditor) => (editor.storage as any).settings.get('frontMatter.collapsed') as boolean
     const line = (container: HTMLElement) => view(container).querySelector('.ezco-mde-front-matter-line') as HTMLButtonElement

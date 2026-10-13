@@ -1,11 +1,6 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { MarkdownEditor } from '../index'
-import {
-    createTestContainer,
-    createTestEditor,
-    cleanupEditor,
-    getMarkdownContent,
-} from '../../../test/utils'
+import { createTestContainer, createTestEditor, getMarkdownContent, trackEditors } from '../../../test/utils'
 
 /**
  * `WrapSelection`: typing a wrapping character over a non-empty selection
@@ -14,12 +9,7 @@ import {
  * exercise the real handler path.
  */
 describe('Smart selection wrap', () => {
-    const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-
-    afterEach(() => {
-        created.forEach((c) => cleanupEditor(c.editor, c.container))
-        created.length = 0
-    })
+    const { created } = trackEditors()
 
     async function make(content: string): Promise<MarkdownEditor> {
         const container = createTestContainer(`wrap-${created.length}`)

@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { cleanupEditor, waitFor } from '../../../test/utils'
+import { createEditor } from '../index'
+import { trackEditors, waitFor } from '../../../test/utils'
 
 /**
  * The left column (the outline and the file tree) as laid out in a real
@@ -11,11 +11,7 @@ import { cleanupEditor, waitFor } from '../../../test/utils'
  * the page scrolls is caught.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { created, openVault } = trackEditors()
 
 const NOTE = Array.from({ length: 30 }, (_, i) => `## Section ${i + 1}\n\nA paragraph of text for section ${i + 1}.`).join('\n\n')
 
@@ -55,23 +51,15 @@ async function openInHostColumn() {
 async function open(fileTree: { open?: boolean }) {
     const files: Record<string, string> = { 'index.md': NOTE }
     for (let i = 0; i < 12; i++) files[`notes/note-${i}.md`] = `# Note ${i}`
-    const vault = await Vault.open(memoryVfs(files), { watch: false })
     // A page that scrolls, as an app's window does.
-    const container = document.createElement('div')
-    container.style.cssText = 'width: 1000px; height: 500px; overflow-y: auto;'
-    document.body.append(container)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: 'index.md' },
-        links: { resolver: vault.links },
-        search: vault.search,
-        files: vault.files,
+    return openVault(files, {
+        path: 'index.md',
+        size: { width: 1000, height: 500, scroll: true },
+        services: ['resolver', 'search', 'files'],
         sidebar: { title: 'Document' },
         fileTree,
+        until: (editor) => editor.getText().includes('Section 30'),
     })
-    created.push({ editor, container })
-    await waitFor(() => editor.getText().includes('Section 30'), 3000)
-    return { editor, container }
 }
 
 const box = (c: HTMLElement, selector: string) => (c.querySelector(selector) as HTMLElement).getBoundingClientRect()

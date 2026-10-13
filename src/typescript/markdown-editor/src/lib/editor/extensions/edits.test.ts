@@ -1,25 +1,19 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { memoryVfs } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, openDocuments, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import { openDocuments, MarkdownEditor } from '../index'
+import { md, trackEditors } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { openVault } = trackEditors()
 
 const NOTE = '# Title\n\nFirst paragraph.\n\nSecond paragraph.'
 
 async function open(files: Record<string, string>, filepath: string) {
-    const vault = await Vault.open(memoryVfs(files), { watch: false })
-    const container = createTestContainer(`edits-${created.length}`)
-    const editor = createEditor({ element: container, fs: { fs: vault.fs, filepath, autoSave: true }, versions: vault.versions })
-    created.push({ editor, container })
-    const persistence = (editor.storage as any).persistence
-    await waitFor(() => persistence.options.filepath === filepath && editor.getText().length > 0, 3000)
-    return { editor, vault, persistence, docs: openDocuments(editor), markdown: () => (editor.storage as any).markdown.getMarkdown() as string }
+    const { editor, vault, persistence } = await openVault(files, {
+        path: filepath,
+        autoSave: true,
+        services: ['versions'],
+        until: (editor, { persistence }) => persistence.options.filepath === filepath && editor.getText().length > 0,
+    })
+    return { editor, vault, persistence, docs: openDocuments(editor), markdown: () => md(editor) }
 }
 
 /** The caret, as the text just before it. */
@@ -95,7 +89,7 @@ describe('Edits into an open document', () => {
     it('edits a code file in the code view, keeping its caret', async () => {
         const { vault, persistence, docs } = await open({ 'a.md': NOTE, 'main.ts': 'export const a = 1\nexport const b = 2\n' }, 'a.md')
         await persistence.loadFile('main.ts')
-        const code = persistence.codeView
+        const code = persistence.codeView!
         code.dispatch({ selection: { anchor: code.state.doc.line(2).from + 6 } })
         const doc = (await docs.read('main.ts'))!
         expect(doc.text).toBe('export const a = 1\nexport const b = 2\n')

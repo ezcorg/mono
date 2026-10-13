@@ -1,32 +1,17 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { memoryVfs, type VfsInterface } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import type { VfsInterface } from '@joinezco/storage'
+import { md, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { openVault } = trackEditors()
 
 async function open(files: Record<string, string>, filepath: string) {
-    const vault = await Vault.open(memoryVfs(files), { watch: false })
-    const container = createTestContainer(`versions-${created.length}`)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath, autoSave: true },
-        links: { resolver: vault.links },
-        search: vault.search,
-        files: vault.files,
-        versions: vault.versions,
+    const { editor, vault, persistence, events } = await openVault(files, {
+        path: filepath,
+        autoSave: true,
+        services: ['resolver', 'search', 'files', 'versions'],
+        until: (_, { events }) => events.some((e) => e.type === 'load'),
     })
-    created.push({ editor, container })
-    const persistence = (editor.storage as any).persistence
-    const events: Array<{ type: string; path: string; copy?: string }> = []
-    persistence.subscribe((event: any) => events.push(event))
-    await waitFor(() => events.some((e) => e.type === 'load'), 3000)
-    return { editor, vault, persistence, events, markdown: () => (editor.storage as any).markdown.getMarkdown() as string }
+    return { editor, vault, persistence, events, markdown: () => md(editor) }
 }
 
 describe('Notes and their versions', () => {
@@ -92,7 +77,7 @@ describe('Notes and their versions', () => {
         const { vault, persistence, events } = await open({ 'a.md': '# A', 'main.ts': 'export {}\n' }, 'a.md')
         await persistence.loadFile('main.ts')
         await vault.fs.writeFile('main.ts', 'export const changed = 1\n')
-        persistence.codeView.dispatch({ changes: { from: 0, insert: '// mine\n' }, userEvent: 'input.type' })
+        persistence.codeView!.dispatch({ changes: { from: 0, insert: '// mine\n' }, userEvent: 'input.type' })
         await waitFor(() => events.some((e) => e.type === 'conflict' && e.path === 'main.ts'), 3000)
         expect(await vault.fs.readFile('main.ts')).toBe('export const changed = 1\n')
     })

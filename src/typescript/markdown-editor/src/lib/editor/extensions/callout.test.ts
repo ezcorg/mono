@@ -1,20 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-function make(content: string, options: { callouts?: boolean } = {}) {
-    const container = createTestContainer(`co-${created.length}`)
-    const editor = createEditor({ element: container, content, ...options })
-    created.push({ editor, container })
-    return { editor, container }
-}
+const { make } = trackEditors()
 
 const callouts = (c: HTMLElement) => [...c.querySelectorAll('.ezco-mde-callout')] as HTMLElement[]
 

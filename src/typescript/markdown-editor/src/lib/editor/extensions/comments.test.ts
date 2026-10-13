@@ -1,8 +1,6 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { memoryVfs, type VfsInterface } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import { MarkdownEditor } from '../index'
+import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 import { RESOLVED, type CommentsStorage } from './comments'
 
 /**
@@ -12,14 +10,7 @@ import { RESOLVED, type CommentsStorage } from './comments'
  * state. Through a vault, as a host gives them.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement; vault: Vault }> = []
-afterEach(() => {
-    created.forEach(({ editor, container, vault }) => {
-        cleanupEditor(editor, container)
-        vault.close()
-    })
-    created.length = 0
-})
+const { openVault } = trackEditors()
 
 const NOTE = '# Animals\n\nThe quick brown fox jumps over the [lazy dog]{#c-01J9K}.\n'
 const COMMENT = '![[Animals#:~:text=brown%20fox]]\nAre both of these the same animal? See [[Zoology]].\n'
@@ -34,21 +25,16 @@ const FILES: Record<string, string> = {
     'comments/Animals/theo 2026-09-13 12.12.md': REPLY,
 }
 
-async function open(files = FILES, path = 'Animals.md', author: string | null = 'theo', expect = (editor: MarkdownEditor, comments: CommentsStorage) => editor.getText().includes('fox') && comments.comments().length > 0) {
-    const vault = await Vault.open(memoryVfs(files), { watch: false, identity: author ?? undefined })
-    const container = createTestContainer(`comments-${created.length}`)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: path, autoSave: true },
-        links: { resolver: vault.links, index: vault.links },
-        search: vault.search,
-        files: vault.files,
-        comments: { author: author ?? undefined, index: vault.comments, reactions: vault.reactions, margin: false },
+function open(files = FILES, path = 'Animals.md', author: string | null = 'theo', expect = (editor: MarkdownEditor, comments: CommentsStorage) => editor.getText().includes('fox') && comments.comments().length > 0) {
+    return openVault(files, {
+        path,
+        identity: author ?? undefined,
+        autoSave: true,
+        services: ['resolver', 'index', 'search', 'files', 'comments'],
+        comments: { author: author ?? undefined, margin: false },
+        until: (editor, { comments }) => expect(editor, comments),
+        timeout: 4000,
     })
-    created.push({ editor, container, vault })
-    const comments = (editor.storage as any).comments as CommentsStorage
-    await waitFor(() => expect(editor, comments), 4000)
-    return { editor, container, vault, comments, fs: vault.fs as VfsInterface }
 }
 
 const textAt = (editor: MarkdownEditor, r: { from: number; to: number } | null) => (r ? editor.state.doc.textBetween(r.from, r.to) : null)

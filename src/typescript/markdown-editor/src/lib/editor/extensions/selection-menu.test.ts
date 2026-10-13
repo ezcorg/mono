@@ -1,11 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import type { JSONContent } from '@tiptap/core'
 import { AllSelection } from '@tiptap/pm/state'
 import { MarkdownEditor, MarkdownEditorOptions } from '../index'
-import { createTestContainer, createTestEditor, cleanupEditor, getMarkdownContent, menuItem, menuLabels, waitFor } from '../../../test/utils'
-
-const tick = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+import { createTestContainer, createTestEditor, getMarkdownContent, menuItem, menuLabels, tick, trackEditors, waitFor } from '../../../test/utils'
 
 /**
  * The contextual selection menu surfaces a button (`.ezco-mde-selection-menu-btn`,
@@ -18,12 +16,7 @@ const tick = (ms = 60) => new Promise((r) => setTimeout(r, ms))
  * note.
  */
 describe('Selection menu', () => {
-    const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-
-    afterEach(() => {
-        created.forEach((c) => cleanupEditor(c.editor, c.container))
-        created.length = 0
-    })
+    const { created } = trackEditors()
 
     async function make(content: string, options: Partial<MarkdownEditorOptions> = {}): Promise<{ editor: MarkdownEditor; container: HTMLElement }> {
         const container = createTestContainer(`sel-${created.length}`)
@@ -71,7 +64,7 @@ describe('Selection menu', () => {
         editor.view.focus()
         // Exactly what the Mod-a baseKeymap binding produces.
         editor.view.dispatch(editor.state.tr.setSelection(new AllSelection(editor.state.doc)))
-        await tick()
+        await tick(60)
         expect(btnOpacity(container)).toBe('1')
     })
 
@@ -79,7 +72,7 @@ describe('Selection menu', () => {
         const { editor, container } = await make('# Title\n\nHello world paragraph.')
         editor.view.focus()
         editor.commands.setTextSelection({ from: 2, to: 6 })
-        await tick()
+        await tick(60)
         expect(btnOpacity(container)).toBe('1')
     })
 
@@ -87,7 +80,7 @@ describe('Selection menu', () => {
         const { editor, container } = await make('# Title\n\nHello world paragraph.')
         editor.view.focus()
         editor.commands.setTextSelection(3)
-        await tick()
+        await tick(60)
         expect(btnOpacity(container)).toBe('0')
     })
 
@@ -332,7 +325,7 @@ describe('Selection menu', () => {
         const { editor, container } = await make('# Title\n\nThe last line of text.\n\n---')
         editor.view.focus()
         editor.view.dispatch(editor.state.tr.setSelection(new AllSelection(editor.state.doc)))
-        await tick()
+        await tick(60)
 
         const btn = container.querySelector('.ezco-mde-selection-menu-btn') as HTMLElement
         expect(btn?.style.opacity).toBe('1')

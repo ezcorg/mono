@@ -1,10 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
 import { getJSONSchema } from '@joinezco/codemirror-json-schema'
-import { createEditor, settingsOf, MarkdownEditor } from './index'
-import { createTestContainer, cleanupEditor, waitFor } from '../../test/utils'
+import { createEditor, settingsOf, MarkdownEditor, MarkdownEditorOptions } from './index'
+import { createTestContainer, trackEditors, waitFor } from '../../test/utils'
 
 /**
  * The reader's settings: files in the vault over the editor's own
@@ -12,38 +12,26 @@ import { createTestContainer, cleanupEditor, waitFor } from '../../test/utils'
  * schema; the file opened as code with the schema's help.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement; vault: Vault }> = []
-afterEach(() => {
-    created.forEach(({ editor, container, vault }) => {
-        cleanupEditor(editor, container)
-        vault.close()
-    })
-    created.length = 0
-    for (const key of Object.keys(localStorage)) if (key.startsWith('ezco-mde-') || key.startsWith('ezco-settings:')) localStorage.removeItem(key)
-})
+const { created, openVault } = trackEditors()
 
 const NOTE = '# Note\n\nSome text to comment on, and more of it after.\n'
 const COMMENT = ['comments/Note/alice 2026-09-13 12.01.md', '![[Note#:~:text=text%20to%20comment]]\n\nA comment.\n'] as const
 
-async function open(files: Record<string, string>, extra: Record<string, unknown> = {}) {
-    const vault = await Vault.open(memoryVfs(files), { identity: 'theo' })
-    const container = createTestContainer(`settings-${created.length}`)
-    container.style.width = '1100px'
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: 'Note.md', autoSave: true },
-        links: { resolver: vault.links, index: vault.links },
-        search: vault.search,
-        files: vault.files,
-        comments: { author: 'theo', index: vault.comments, reactions: vault.reactions },
+async function open(files: Record<string, string>, extra: Partial<MarkdownEditorOptions> = {}) {
+    const made = await openVault(files, {
+        path: 'Note.md',
+        identity: 'theo',
+        autoSave: true,
+        watch: true,
+        size: { width: 1100 },
+        services: ['resolver', 'index', 'search', 'files', 'comments'],
         settings: { instance: 'test' },
+        until: (editor) => editor.getText().includes('Some text'),
         ...extra,
     })
-    created.push({ editor, container, vault })
-    await waitFor(() => editor.getText().includes('Some text'), 3000)
-    const settings = settingsOf(editor)!
+    const settings = made.settings!
     await settings.ready
-    return { editor, container, vault, settings }
+    return { ...made, settings }
 }
 
 const root = (editor: MarkdownEditor) => editor.view.dom.closest('.ezco-mde') as HTMLElement

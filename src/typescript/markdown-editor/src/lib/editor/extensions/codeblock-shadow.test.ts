@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { EditorView } from '@codemirror/view'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { createEditor } from '../index'
+import { createTestContainer, getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 
 /**
  * An unnamed fence (```` ```ts ````) gets a stand-in file for its language
@@ -11,29 +11,17 @@ import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from 
  * the note.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { created, openVault } = trackEditors()
 
 const NOTE = ['# Code', '', '```ts', 'const a = 1', '```', '', 'Between.', '', '```ts', 'const b = 2', '```', '', '```sh', 'ls', '```', '', '```src/lib.ts', 'export {}', '```'].join('\n')
 
-async function open() {
-    const vault = await Vault.open(memoryVfs({ 'notes/plan.md': NOTE, 'src/lib.ts': 'export {}\n' }), { watch: false })
-    const container = createTestContainer(`shadow-${created.length}`)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: 'notes/plan.md', autoSave: true },
-        links: { resolver: vault.links, index: vault.links },
-        search: vault.search,
-        files: vault.files,
+const open = () =>
+    openVault({ 'notes/plan.md': NOTE, 'src/lib.ts': 'export {}\n' }, {
+        path: 'notes/plan.md',
+        autoSave: true,
         codeblock: { standIns: true },
+        until: (editor) => editor.getText().includes('Between'),
     })
-    created.push({ editor, container })
-    await waitFor(() => editor.getText().includes('Between'), 3000)
-    return { editor, vault, container }
-}
 
 describe('An unnamed code fence', () => {
     it('is opened as a hidden stand-in file beside the note, one per fence, and stays unnamed', async () => {

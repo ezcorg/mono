@@ -1,22 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor, MarkdownEditorOptions } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { filepath, focusNote, getMarkdownContent, mod, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-function make(options: MarkdownEditorOptions) {
-    const container = createTestContainer(`tb-${created.length}`)
-    const editor = createEditor({ element: container, ...options })
-    created.push({ editor, container })
-    return { editor, container }
-}
+const { make } = trackEditors()
 
 const FILES = {
     'index.md': '# Index\n\nStart here.',
@@ -24,18 +12,8 @@ const FILES = {
     'notes/plan.md': '# Plan\n\nNothing about foxes.',
 }
 
-const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
-/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere). */
-const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
-/** Real focus in the note, on its heading. */
-const focusNote = async (c: HTMLElement) => {
-    await userEvent.click(c.querySelector('.ezco-mde-body h1') as HTMLElement)
-    await waitFor(() => document.activeElement === c.querySelector('.ProseMirror'), 2000)
-}
-
 const input = (c: HTMLElement) => c.querySelector('.cm-toolbar-input') as HTMLInputElement
 const results = (c: HTMLElement) => [...c.querySelectorAll('.cm-search-result')] as HTMLElement[]
-const filepath = (editor: MarkdownEditor) => (editor.storage as any).persistence.options.filepath as string
 
 describe('The toolbar as a command palette', () => {
     it('finds notes by their text, shows where, and opens them at the match', async () => {

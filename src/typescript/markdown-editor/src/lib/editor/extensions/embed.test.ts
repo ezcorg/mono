@@ -1,8 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { memoryVfs } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor, MarkdownEditorOptions } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { describe, it, expect } from 'vitest'
+import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 import { sectionOf } from './embed'
 
 const PNG = Uint8Array.from(
@@ -10,18 +7,7 @@ const PNG = Uint8Array.from(
     (c) => c.charCodeAt(0),
 )
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
-
-function make(options: MarkdownEditorOptions) {
-    const container = createTestContainer(`emb-${created.length}`)
-    const editor = createEditor({ element: container, ...options })
-    created.push({ editor, container })
-    return { editor, container }
-}
+const { make, openVault } = trackEditors()
 
 describe('Embed syntax', () => {
     const roundTrips = [
@@ -46,12 +32,7 @@ describe('Embed syntax', () => {
 })
 
 describe('Embeds in a vault', () => {
-    async function open(files: Record<string, string | Uint8Array>) {
-        const vault = await Vault.open(memoryVfs(files), { watch: false })
-        const made = make({ fs: { fs: vault.fs, filepath: 'index.md', autoSave: false }, links: { resolver: vault.links } })
-        await waitFor(() => made.editor.getText().length > 0, 3000)
-        return { ...made, vault }
-    }
+    const open = (files: Record<string, string | Uint8Array>) => openVault(files, { path: 'index.md', services: ['resolver'] })
     const embeds = (c: HTMLElement) => [...c.querySelectorAll('.ezco-mde-embed')] as HTMLElement[]
 
     it('shows an image found by name, a note, a section, and a card for anything else', async () => {

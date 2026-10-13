@@ -107,8 +107,8 @@ inside it included). Under the text, in the bubble, are its reactions,
 React (the common and recent reactions by the control, the whole grid
 behind them) and, at the row's end, the reply count. The chevron in the
 bubble's corner opens on the reactions to give too, and then the actions
-in groups: Edit and Reply, Resolve, Composer panel (one's own comments
-only) and Open as file, Delete, Show in comments panel and Close. Long
+in groups: Edit and Reply, Resolve, Open as file, Delete, Show in comments
+panel and Close. Long
 text folds after a few lines, with "Show more" under it. The reply count is
 the handle of the comment's thread: pressed, its pill grows into a frame
 around the row and the replies under it, each a bubble of its own, and
@@ -134,7 +134,7 @@ frame (the choice is kept), "Show resolved" brings the resolved ones back,
 and "Hide comments panel" puts the panel away, as ⌘⇧M does; it
 stays away, across notes and sessions, until "Show in comments panel" (or
 ⌘⇧M) brings it back; asked for where there is no room beside the note, it
-slides over the note's right edge instead, as the composer panel does, and
+slides over the note's right edge instead, and
 rests at the edge, with a handle, when the pointer leaves it. A host can
 keep comments over the note (`comments: { margin: { layout: 'float' } }`) or
 start anchored (`layout: 'column'`). Quotes
@@ -153,18 +153,14 @@ in the field when it is opened again. Posting makes the comment's document,
 `comments/<note>/<author> <date> <time>.md`, whose name is read back as
 who and when.
 
-A comment written in full goes to the **composer panel** (in a bubble's
-menu, or ⌘⇧↩ in a composer): the comment's document in an editor beside
-the note, over its right edge, saved as it is typed. The note stays in
-view: select text in it and press ⌘⌥M (or Comment) and the selection is
-quoted into the sheet, where the answer goes under it, so one comment can
-take up several passages. When the pointer leaves the sheet it fades and
-slides to the edge, leaving a handle that brings it back; Escape closes it,
-and a document closed with nothing written under its reference is removed
-again. Open as file loads the document in the editor itself instead.
+A comment written at length is a document like any other: Open as file
+(in a bubble's menu, or a composer's) loads it in the editor itself, where
+the reference at its top is an embed of the passage and the text goes
+under it; a document left with nothing written under its reference is
+removed again.
 
-A quoted passage, wherever it is shown (the composer panel, a comment document
-opened as a note, a reply's reference), is a portal into the other
+A quoted passage, wherever it is shown (a comment document opened as a
+note, a reply's reference), is a portal into the other
 document: the words in full, their paragraph around them in the muted
 colour when the passage sits in plain prose, named over them with who
 wrote the document (a comment's) and the lines they are on; its header
@@ -235,9 +231,9 @@ in only when accepted.
   to rename, Delete (asks first), Escape to close it and return to the note.
 - ⌘⇧L / Ctrl+Shift+L: show or hide the backlinks under the note (`links:
   { panel: { open: true } }` starts them open).
-- ⌘⌥M / Ctrl+Alt+M: comment on the selection (while a sheet is open, quote
-  it there). In a comment box, ⌘/Ctrl+Enter posts, ⌘⇧↩ opens the sheet and
-  Escape cancels; in an open comment, Escape closes it.
+- ⌘⌥M / Ctrl+Alt+M: comment on the selection. In a comment box,
+  ⌘/Ctrl+Enter posts and Escape cancels; in an open comment, Escape closes
+  it.
 - ⌘⌥B / Ctrl+Alt+B: fold the column beside the note (the outline, the file
   tree) away, or bring it back.
 - ⌘⇧M / Ctrl+Shift+M: every comment in a panel beside the note, or the

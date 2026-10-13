@@ -1,10 +1,9 @@
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import type { JSONContent } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
 import { actionsForNode } from './block-actions'
 import { MarkdownEditor } from '../index'
-import { createTestContainer, createTestEditor, cleanupEditor, getMarkdownContent, menuItem, menuLabels, waitFor } from '../../../test/utils'
+import { createTestContainer, createTestEditor, findNode, frames, getMarkdownContent, menuItem, menuLabels, trackEditors, waitFor } from '../../../test/utils'
 
 /**
  * Exercises every block-action a node type offers (run via `actionsForNode`),
@@ -13,28 +12,7 @@ import { createTestContainer, createTestEditor, cleanupEditor, getMarkdownConten
  * glyph pressed in the gutter, an item pressed or chosen with the keys.
  */
 describe('Block actions', () => {
-    const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-
-    afterEach(() => {
-        created.forEach((c) => cleanupEditor(c.editor, c.container))
-        created.length = 0
-    })
-
-    function findNode(
-        editor: MarkdownEditor,
-        typeName: string,
-    ): { node: PMNode; pos: number } | null {
-        let res: { node: PMNode; pos: number } | null = null
-        editor.state.doc.descendants((node, pos) => {
-            if (res) return false
-            if (node.type.name === typeName) {
-                res = { node, pos }
-                return false
-            }
-            return true
-        })
-        return res
-    }
+    const { created } = trackEditors()
 
     /** Place the cursor inside (or onto) the node so selection-based actions
      *  have a valid target, then run the named action. */
@@ -390,9 +368,6 @@ describe('Block actions', () => {
     })
 
     // ── The gutter ───────────────────────────────────────────────
-    const frames = async (n = 2) => {
-        for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
-    }
     const glyphs = (container: HTMLElement) => [...container.querySelectorAll<HTMLButtonElement>('.ezco-mde-gutter .ezco-mde-block-icon')]
 
     it('shows a glyph for every block in the gutter, soft, the active block’s strong beside the indicator’s line; a glyph opens its block’s menu', async () => {

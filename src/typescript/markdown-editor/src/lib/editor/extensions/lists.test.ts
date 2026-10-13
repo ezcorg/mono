@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import type { JSONContent } from '@tiptap/core'
-import { createEditor, MarkdownEditor } from '../index'
+import { MarkdownEditor } from '../index'
 import { actionsForNode } from './block-actions'
-import { createTestContainer, cleanupEditor } from '../../../test/utils'
+import { endOf, frames, md, trackEditors } from '../../../test/utils'
 
 /**
  * Lists of every kind, and the ways between them: what is read and written
@@ -11,23 +11,8 @@ import { createTestContainer, cleanupEditor } from '../../../test/utils'
  * marker makes of the item it is typed in, and how lists sit together.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { make: open, typing } = trackEditors()
 
-function open(content = '') {
-    const container = createTestContainer(`lists-${created.length}`)
-    const editor = createEditor({ element: container, content })
-    created.push({ editor, container })
-    return { editor, container }
-}
-
-const md = (editor: MarkdownEditor) => editor.storage.markdown.getMarkdown() as string
-const frames = async (n = 2) => {
-    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
-}
 /** The kinds of the top-level blocks, lists with their kind in brackets
  *  (the empty paragraph the editor keeps after a list left out). */
 const shape = (editor: MarkdownEditor) => {
@@ -39,14 +24,6 @@ const shape = (editor: MarkdownEditor) => {
     const last = editor.state.doc.lastChild
     if (blocks.length > 1 && last?.type.name === 'paragraph' && !last.content.size) blocks.pop()
     return blocks
-}
-/** An editor to type in: made, mounted (Tiptap mounts after a tick), focused. */
-async function typing(content = '') {
-    const made = open(content)
-    await frames()
-    made.editor.commands.focus()
-    await frames()
-    return made
 }
 
 describe('Lists as written', () => {
@@ -157,14 +134,6 @@ describe('Typing list markers', () => {
 })
 
 describe('Backspace in an empty item', () => {
-    /** The caret at the end of the text node `text`. */
-    const endOf = (editor: MarkdownEditor, text: string) => {
-        let at = -1
-        editor.state.doc.descendants((n, pos) => {
-            if (at < 0 && n.isText && n.text === text) at = pos + n.nodeSize
-        })
-        return at
-    }
     /** The Markdown as lines, an empty item's trailing space left off. */
     const lines = (editor: MarkdownEditor) => md(editor).split('\n').map((l) => l.replace(/\s+$/, ''))
 

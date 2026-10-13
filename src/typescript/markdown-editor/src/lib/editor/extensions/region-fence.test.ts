@@ -1,10 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { EditorView } from '@codemirror/view'
 import { persistFile, regionField } from '@joinezco/codeblock'
-import { memoryVfs } from '@joinezco/storage'
-import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 
 /**
  * A region of a file in a note: a fence whose info string names the file and
@@ -13,35 +10,27 @@ import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from 
  * into the file where they are.
  */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { openVault } = trackEditors()
 
 const LIB = ['fn one() {}', 'fn two() {}', 'fn three() {}', 'fn four() {}', 'fn five() {}'].join('\n') + '\n'
 
 const fence = (info: string, body: string) => '```' + info + '\n' + body + '\n```'
 
+/** The region's CodeMirror view in `container`, once there is one. */
+const regionIn = (container: HTMLElement) => {
+    const dom = container.querySelector<HTMLElement>('.ProseMirror .cm-editor')
+    return dom ? EditorView.findFromDOM(dom) : null
+}
+
 async function open(note: string, options: { lib?: string; versions?: boolean } = {}) {
-    const vault = await Vault.open(memoryVfs({ 'src/lib.rs': options.lib ?? LIB, 'n.md': note }), { watch: false })
-    const container = createTestContainer(`region-${created.length}`)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: 'n.md', autoSave: true },
-        links: { resolver: vault.links },
-        search: vault.search,
-        files: vault.files,
-        ...(options.versions === false ? {} : { versions: vault.versions }),
+    const made = await openVault({ 'src/lib.rs': options.lib ?? LIB, 'n.md': note }, {
+        path: 'n.md',
+        autoSave: true,
+        services: options.versions === false ? ['resolver', 'search', 'files'] : ['resolver', 'search', 'files', 'versions'],
+        // Loaded: the region knows where its lines are.
+        until: (_, { container }) => !!regionIn(container)?.state.field(regionField, false),
     })
-    created.push({ editor, container })
-    const region = () => {
-        const dom = container.querySelector<HTMLElement>('.ProseMirror .cm-editor')
-        return dom ? EditorView.findFromDOM(dom) : null
-    }
-    // Loaded: the region knows where its lines are.
-    await waitFor(() => !!region()?.state.field(regionField, false), 3000)
-    return { editor, vault, container, region: () => region()! }
+    return { ...made, region: () => regionIn(made.container)! }
 }
 
 const numbers = (view: EditorView) =>

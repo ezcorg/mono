@@ -67,7 +67,52 @@ conditionally); `editor.test.ts` "copy and paste" (no throw only);
 throw); `toolbar.test.ts` "opens on ⌘P" (fires ⌘⇧P); `layout.test.ts`
 spinner and `codeblock.test.ts` search results (measure injected DOM).
 
-## The plan, in order
+## Done, 2026-10-13
+
+The plan below was carried out in one day, items 1 to 8, each suite
+driven by real input and measuring what it claims; the counts at the end
+of this file are the suite after it.
+
+- **Rendering** (`rendering.test.ts`): one note with every block kind and
+  an open comment, light and dark at 1400 and 1000, measuring the glyphs
+  on their lines, the columns in order, the panel beside or floating,
+  nothing wider than the host, the composer's buttons in the bubble, and
+  every computed colour of the note, the chrome, the cards and the menus
+  being one of the theme's tokens.
+- **Menus by real input**: the selection menu's every action
+  (`selection-menu.test.ts`), the block menu clicked and keyed
+  (`block-actions.test.ts`), the context menu alone
+  (`ui/context-menu.test.ts`), the slash menu (`slash-commands.test.ts`),
+  the `[[` menu (`wikilink.test.ts`). `menuItem` and `menuLabels` in
+  `src/test/utils`.
+- **Shortcuts** (`shortcuts.test.ts`): every key in the README's list,
+  Mod resolved per platform; the two Control-only suites resolve it too.
+- **Code blocks as used** (`codeblock.test.ts`, `code-files.test.ts`):
+  typing, arrows out and back, Backspace on an empty fence, the language
+  through the toolbar, copy, cut and paste inside CodeMirror, undo across
+  the boundary, the theme flipped.
+- **Tables and tasks** (`table.test.ts`, `bullet-to-task.test.ts`): Tab,
+  Shift-Tab, Enter and the arrows in a table; tasks typed, clicked, mixed.
+- **Clipboard and drop** (`clipboard.test.ts`, `markdown-paste.test.ts`,
+  `image.test.ts`): real events for every payload, image paste and drop.
+- **The hollow tests** listed above all assert now, or are deleted in
+  favour of the suite that covers them.
+- **Shared utilities** (`src/test/utils/`): editors and vaults, frames,
+  tools and menus, positions, keys, clipboard events, in one place.
+
+What the new tests found, each fixed the same day: a list converted from
+its menu lost the caret; block Markdown pasted mid-paragraph swallowed the
+text after the caret into its last item; `- [x] ` typed on a line made an
+unchecked task; a task list was written back with the wrong marker and
+blank lines; ⌘Enter just after a wikilink inserted a hard break; the `[[`
+menu opened off the page in the demo (found by the dedup pass). The tests
+were worth writing.
+
+Still untested: the demo app (resizing, its theme toggle), viewport
+changes while panels are open, touch, IME composition, LSP in code blocks,
+the outline following edited headings.
+
+## The plan, in order (as written on 2026-10-12)
 
 1. **A rendering smoke suite** (`rendering.test.ts`): one long note with
    every block kind and an open comment, rendered light and dark at 1400

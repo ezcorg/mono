@@ -1,23 +1,12 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { cleanupEditor, waitFor } from '../../../test/utils'
+import { createEditor } from '../index'
+import { frames, trackEditors, waitFor } from '../../../test/utils'
 
 /** The rail beside the note folds away and comes back. */
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement; vault: Vault }> = []
-afterEach(() => {
-    created.forEach(({ editor, container, vault }) => {
-        cleanupEditor(editor, container)
-        vault.close()
-    })
-    created.length = 0
-})
-
-const frames = async (n = 3) => {
-    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r))
-}
+const { created } = trackEditors()
 
 describe('The rail', () => {
     it('folds away on its chevron, comes back on it, and for a panel asked for while folded', async () => {
@@ -45,7 +34,7 @@ describe('The rail', () => {
         // Folded: nothing of the rail but the chevron, turned the other way.
         toggle.click()
         await waitFor(() => rail.classList.contains('is-collapsed'), 2000)
-        await frames()
+        await frames(3)
         expect(toggle.getAttribute('aria-expanded')).toBe('false')
         expect(rail.getBoundingClientRect().width).toBeLessThan(30)
         expect(getComputedStyle(rail.querySelector('.ezco-mde-sidebar') as HTMLElement).display).toBe('none')
@@ -55,7 +44,7 @@ describe('The rail', () => {
         // Back, from the keyboard's command.
         expect(editor.commands.toggleRail()).toBe(true)
         await waitFor(() => !rail.classList.contains('is-collapsed'), 2000)
-        await frames()
+        await frames(3)
         expect(rail.getBoundingClientRect().width).toBe(open)
         // Folded again, a panel asked for (the file tree) brings it back.
         toggle.click()

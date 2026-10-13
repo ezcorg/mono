@@ -1,15 +1,11 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
+import { createEditor } from '../index'
+import { createTestContainer, filepath, mod, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { created, openVault } = trackEditors()
 
 const FILES = {
     'index.md': '# Index\n\nSee [[plan]].',
@@ -19,30 +15,11 @@ const FILES = {
     'zebra.md': '# Z',
 }
 
-async function open(path = 'index.md') {
-    const vault = await Vault.open(memoryVfs(FILES), { watch: false })
-    const container = createTestContainer(`ft-${created.length}`)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: path, autoSave: true },
-        links: { resolver: vault.links, index: vault.links },
-        search: vault.search,
-        files: vault.files,
-        fileTree: { open: true },
-    })
-    created.push({ editor, container })
-    await waitFor(() => editor.getText().length > 0, 3000)
-    return { editor, vault, container }
-}
-
-const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
-/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere, as `Mod-` resolves). */
-const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
+const open = (path = 'index.md') => openVault(FILES, { path, autoSave: true, fileTree: { open: true } })
 
 const rows = (c: HTMLElement) => [...c.querySelectorAll('.ezco-mde-files-item')] as HTMLElement[]
 const shown = (c: HTMLElement) => rows(c).map((r) => r.dataset.path)
 const row = (c: HTMLElement, path: string) => rows(c).find((r) => r.dataset.path === path)!
-const filepath = (editor: MarkdownEditor) => (editor.storage as any).persistence.options.filepath as string
 
 describe('File tree', () => {
     it('shows nothing of itself until asked for, and goes away on Escape', async () => {

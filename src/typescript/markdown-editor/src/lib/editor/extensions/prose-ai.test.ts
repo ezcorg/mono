@@ -1,13 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import type { CompletionRequest, Inference } from '../inference'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, getMarkdownContent, waitFor } from '../../../test/utils'
+import { MarkdownEditor } from '../index'
+import { getMarkdownContent, rangeOf, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const editors = trackEditors()
 
 /** A model that answers with `reply`, a few characters at a time, and
  *  remembers what it was asked and whether it was stopped. */
@@ -31,21 +27,10 @@ function scripted(reply: string, pause = 5) {
     return { inference, asked, stopped }
 }
 
-function make(content: string, inference?: Inference) {
-    const container = createTestContainer(`ai-${created.length}`)
-    const editor = createEditor({ element: container, content, inference })
-    created.push({ editor, container })
-    return { editor, container }
-}
+const make = (content: string, inference?: Inference) => editors.make(content, { inference })
 
 /** Select the first occurrence of `text`. */
-function select(editor: MarkdownEditor, text: string) {
-    let from = -1
-    editor.state.doc.descendants((node, pos) => {
-        if (from < 0 && node.isText && node.text!.includes(text)) from = pos + node.text!.indexOf(text)
-    })
-    editor.commands.setTextSelection({ from, to: from + text.length })
-}
+const select = (editor: MarkdownEditor, text: string) => editor.commands.setTextSelection(rangeOf(editor, text))
 
 // The panel is a popover under the body (one at a time), not in the container.
 const panel = (_c: HTMLElement) => document.querySelector('.ezco-mde-ai') as HTMLElement | null

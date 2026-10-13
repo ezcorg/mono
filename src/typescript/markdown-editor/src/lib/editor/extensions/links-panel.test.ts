@@ -1,15 +1,11 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { memoryVfs } from '@joinezco/storage'
 import { Vault, type LinkIndex, type LinkRef } from '@joinezco/vault'
-import { createEditor, MarkdownEditor } from '../index'
-import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
+import { createEditor } from '../index'
+import { createTestContainer, filepath, mod, trackEditors, waitFor } from '../../../test/utils'
 
-const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
-afterEach(() => {
-    created.forEach(({ editor, container }) => cleanupEditor(editor, container))
-    created.length = 0
-})
+const { created, openVault } = trackEditors()
 
 const FILES = {
     'index.md': '# Index\n\nSee [[plan]].',
@@ -17,22 +13,8 @@ const FILES = {
     'projects/roadmap.md': '# Roadmap\n\nFirst [[plan]], then [the index](../index.md).',
 }
 
-async function open(path: string, files: Record<string, string> = FILES) {
-    const vault = await Vault.open(memoryVfs(files), { watch: false })
-    const container = createTestContainer(`lp-${created.length}`)
-    const editor = createEditor({
-        element: container,
-        fs: { fs: vault.fs, filepath: path, autoSave: true },
-        links: { resolver: vault.links, index: vault.links, panel: { open: true } },
-    })
-    created.push({ editor, container })
-    await waitFor(() => editor.getText().length > 0, 3000)
-    return { editor, vault, container }
-}
-
-const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
-/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere, as `Mod-` resolves). */
-const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
+const open = (path: string, files: Record<string, string> = FILES) =>
+    openVault(files, { path, autoSave: true, services: ['resolver', 'index'], links: { panel: { open: true } } })
 
 const panel = (container: HTMLElement) => container.querySelector('.ezco-mde-links') as HTMLElement
 const rows = (container: HTMLElement, section: 'back' | 'dangling') =>
@@ -42,7 +24,6 @@ const rows = (container: HTMLElement, section: 'back' | 'dangling') =>
         ) ?? [],
     ) as HTMLElement[]
 const names = (els: HTMLElement[]) => els.map((el) => el.querySelector('.ezco-mde-links-name')?.textContent)
-const filepath = (editor: MarkdownEditor) => (editor.storage as any).persistence.options.filepath as string
 
 describe('Links panel', () => {
     it('lists the notes linking to the open note, and its links to notes not written yet', async () => {
