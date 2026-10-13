@@ -112,7 +112,7 @@ export function trackEditors(hooks: { also?: () => void } = {}) {
         })
         created.length = 0
         wipeStorage()
-        for (const left of document.querySelectorAll('.ezco-mde-comment-sheet, .ezco-mde-comment-overlay-frame')) left.remove()
+        for (const left of document.querySelectorAll('.ezco-mde-comment-overlay-frame')) left.remove()
     }
     afterEach(cleanup)
 

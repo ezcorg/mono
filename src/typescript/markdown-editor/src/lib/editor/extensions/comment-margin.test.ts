@@ -80,9 +80,6 @@ const threadOf = (message: HTMLElement) => footOf(message)?.querySelector(':scop
 /** Resolves when every animation running in `el` has ended. */
 const settled = (el: HTMLElement) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => undefined)))
 const composerBlockIn = (el: HTMLElement) => el.querySelector('.ezco-mde-comment-message.is-composer') as HTMLElement | null
-const sheet = () => document.querySelector('.ezco-mde-comment-sheet') as HTMLElement | null
-const sheetText = () => sheet()?.querySelector('.ezco-mde-comment-sheet-body') as HTMLElement | null
-const sheetPath = (editor: MarkdownEditor) => ((editor.storage as any).commentMargin.sheet as { path: string } | null)?.path ?? null
 /** Choose `label` from a message's chevron menu. */
 const viaMenu = (message: HTMLElement, label: string) => choose(tool(message, 'Comment menu'), label, '.ezco-mde-comment-menu')
 /** Choose `label` from the panel head's chevron menu; a setting's state
@@ -488,7 +485,7 @@ describe('Writing', () => {
         expect(tool(card(container, first), 'Hide replies').textContent).toBe('1')
     })
 
-    it('writes a reply in full in the sheet, quotes more of the note into it, and opens it as a note', async () => {
+    it('writes a reply at length as a file: the editor becomes the reply’s, its reference a portal to the passage', async () => {
         const { editor, container, comments, vault } = await open(900, 'float')
         const first = idOf(comments, 'First.')
         editor.commands.focusComment(first)
@@ -496,29 +493,20 @@ describe('Writing', () => {
         tool(messageOf(card(container, first), first), 'Reply').click()
         await waitFor(() => document.activeElement === composerIn(messageOf(card(container, first), first)), 2000)
         await userEvent.keyboard('Started here')
-        await viaMenu(composerBlockIn(card(container, first))!, 'Composer panel')
-        // The reply's document, in the sheet beside the note; the note stays.
-        await waitFor(() => !!sheet(), 4000)
-        await waitFor(() => comments.comments().find((c) => c.id === first)!.replies.length === 1, 4000)
-        const reply = comments.comments().find((c) => c.id === first)!.replies[0]
-        expect(reply.body).toBe('Started here')
-        expect((editor.storage as any).persistence.options.filepath).toBe('Review.md')
-        await waitFor(() => !!sheetText()?.textContent?.includes('Started here'), 3000)
+        // The composer's menu offers the one long way: the document as the note.
+        expect(await menuLabels(composerBlockIn(card(container, first))!)).toEqual(['Open as file'])
+        await viaMenu(composerBlockIn(card(container, first))!, 'Open as file')
+        // The reply's document, loaded as the note (the comments shown are
+        // then the reply's own): its reference quotes the comment it answers,
+        // and what was typed is under it.
+        await waitFor(() => /^comments\/Review\/theo /.test((editor.storage as any).persistence.options.filepath ?? ''), 4000)
+        const path = (editor.storage as any).persistence.options.filepath as string
+        expect(await vault.fs.readFile(path)).toMatch(/^!\[\[comments\/Review\/alice 2026-09-13 12\.01#:~:text=First\.\]\]\n\nStarted here\n$/)
         // Its reference is a portal: the quoted words, who wrote them, the line.
-        await waitFor(() => !!sheet()!.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-body'), 3000)
-        expect(sheet()!.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-content')?.textContent?.trim()).toBe('First.')
-        expect(sheet()!.querySelector('.ezco-mde-embed-meta')?.textContent).toBe('@alice · line 3')
-        // More of the note, selected and asked for a comment, is quoted into the sheet.
-        editor.commands.setTextSelection(rangeOf(editor, 'number 9'))
-        editor.commands.startComment()
-        await waitFor(() => sheet()!.querySelectorAll('.ezco-mde-embed--passage').length === 2, 3000)
-        expect(container.querySelector('.ezco-mde-comment-card.is-draft')).toBeNull()
-        await waitFor(async () => (await vault.fs.readFile(reply.ref.source)).includes('![[Review#:~:text=number%209]]'), 4000)
-        // Opened as a note: the editor is the editor of the reply.
-        tool(sheet()!, 'Open as file').click()
-        await waitFor(() => (editor.storage as any).persistence.options.filepath === reply.ref.source, 4000)
-        await waitFor(() => !sheet(), 2000)
-        await waitFor(() => !!editor.view.dom.querySelector('.ezco-mde-embed--passage'), 3000)
+        await waitFor(() => !!editor.view.dom.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-body'), 3000)
+        expect(editor.view.dom.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-content')?.textContent?.trim()).toBe('First.')
+        expect(editor.view.dom.querySelector('.ezco-mde-embed-meta')?.textContent).toBe('@alice · line 3')
+        expect(editor.getText()).toContain('Started here')
     })
 
     it('reacts through the quick row and the full grid, resolves and closes, and shows the four most given reactions', async () => {
@@ -753,48 +741,42 @@ describe('Writing', () => {
         expect(card(container, first).querySelector('.ezco-mde-reaction-grid')).toBeNull()
     })
 
-    it('opens an unwritten comment in the sheet with somewhere to write, saving it as it is typed', async () => {
+    it('opens an unwritten comment as a file with somewhere to write, saving it as it is typed', async () => {
         const { editor, container, comments, vault } = await open(900, 'float')
         editor.commands.setTextSelection(rangeOf(editor, 'number 7'))
         editor.commands.startComment()
         await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
-        // Nothing typed yet: the composer's menu offers both long forms; the
-        // sheet makes the document and opens it there.
-        expect(await menuLabels(container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement)).toEqual(['Composer panel', 'Open as file'])
-        await viaMenu(container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement, 'Composer panel')
-        await waitFor(() => !!sheet(), 4000)
+        // Nothing typed yet: the composer's menu offers the long way; the
+        // document is made and loaded as the note.
+        expect(await menuLabels(container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement)).toEqual(['Open as file'])
+        await viaMenu(container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement, 'Open as file')
+        await waitFor(() => /^comments\/Review\/theo /.test((editor.storage as any).persistence.options.filepath ?? ''), 4000)
+        const path = (editor.storage as any).persistence.options.filepath as string
         // The document exists, holding only its reference: not a comment until
         // something is written under it.
-        const path = sheetPath(editor)!
-        expect(path).toMatch(/^comments\/Review\/theo /)
         expect(await vault.fs.readFile(path)).toBe('![[Review#:~:text=number%207]]\n')
         expect(comments.comments().some((c) => c.author === 'theo')).toBe(false)
-        expect((editor.storage as any).persistence.options.filepath).toBe('Review.md')
         // The caret is in a paragraph of its own under the reference, ready for the text.
-        await waitFor(() => !!sheet()!.contains(document.activeElement), 2000)
-        await userEvent.keyboard('Written in the sheet.')
-        await waitFor(async () => (await vault.fs.readFile(path)).includes('![[Review#:~:text=number%207]]\n\nWritten in the sheet.'), 4000)
-        await waitFor(() => comments.comments().find((c) => c.ref.source === path)?.body === 'Written in the sheet.', 4000)
-        // Escape closes the sheet; the document stays.
-        await userEvent.keyboard('{Escape}')
-        await waitFor(() => !sheet(), 3000)
+        await waitFor(() => editor.isFocused && editor.state.selection.$from.parent.type.name === 'paragraph', 2000)
+        await userEvent.keyboard('Written as a file.')
+        await waitFor(async () => (await vault.fs.readFile(path)).includes('![[Review#:~:text=number%207]]\n\nWritten as a file.'), 4000)
         expect(await vault.fs.exists(path)).toBe(true)
     })
 
-    it('drops a reply opened in the sheet and closed with nothing written', async () => {
+    it('drops a reply opened as a file and left with nothing written', async () => {
         const { editor, container, comments, vault } = await open(900, 'float')
         const first = idOf(comments, 'First.')
         editor.commands.focusComment(first)
         await waitFor(() => !!card(container, first), 2000)
         tool(messageOf(card(container, first), first), 'Reply').click()
         await waitFor(() => document.activeElement === composerIn(messageOf(card(container, first), first)), 2000)
-        await userEvent.keyboard('{Control>}{Shift>}{Enter}{/Shift}{/Control}')
-        await waitFor(() => !!sheet(), 4000)
-        const path = sheetPath(editor)!
-        expect(path).toMatch(/^comments\/Review\/theo /)
+        await viaMenu(composerBlockIn(card(container, first))!, 'Open as file')
+        await waitFor(() => /^comments\/Review\/theo /.test((editor.storage as any).persistence.options.filepath ?? ''), 4000)
+        const path = (editor.storage as any).persistence.options.filepath as string
         expect(await vault.fs.exists(path)).toBe(true)
-        tool(sheet()!, 'Close').click()
-        await waitFor(() => !sheet(), 3000)
+        // Left with nothing under its reference and put down (the note loaded
+        // again), the document goes.
+        await (editor.storage as any).persistence.loadFile('Review.md')
         await waitFor(async () => !(await vault.fs.exists(path)), 4000)
         await waitFor(() => comments.comments().find((c) => c.id === first)!.replies.length === 0, 3000)
     })

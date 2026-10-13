@@ -4,7 +4,7 @@
  * the same files, the same links), so what a card or an embed shows is
  * exactly what the editor would show, a fence inside a fence included.
  * Nothing in it runs: the schema is the sanitizer, and raw HTML is text to
- * the note's parser. Shared by the margin's cards, the sheet and the embed.
+ * the note's parser. Shared by the margin's cards and the embed.
  *
  * A view knows the editor it is shown in (`hostEditor` on its storage), so
  * a link followed inside it opens in the note's editor, not in the view.

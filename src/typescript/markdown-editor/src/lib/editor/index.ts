@@ -338,8 +338,8 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         ...base,
         ...(options.inference ? proseSlashCommands : []),
     ];
-    // What every editor inside this one (a comment's text in a card, the
-    // sheet, an embedded note) is built from: this setup without the chrome
+    // What every editor inside this one (a comment's text in a card, an
+    // embedded note) is built from: this setup without the chrome
     // around the note. A link followed inside opens in the note's editor.
     const hostOf = (inner: Editor): Editor | undefined => (inner.storage as any).hostEditor as Editor | undefined;
     const openInHost = async (resolution: LinkResolution, fragment: string | null, inner: Editor) => {

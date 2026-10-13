@@ -14,11 +14,9 @@
  * at its text as the note is edited here (rewritten where the comment lives
  * when the note is saved); and has the commands. Creating a comment makes a
  * document, `comments/<note>/<author> <time>.md`, whose first line is the
- * reference and whose body is the comment; "open" puts that document in a
- * sheet beside the note (`comment-sheet.ts`), where a longer comment is
- * written and other passages of the note are quoted into it, or loads it
- * in the editor itself. What is typed and not yet posted is a draft, kept
- * in this browser on its own.
+ * reference and whose body is the comment; "open" loads that document in
+ * the editor itself, where a longer comment is written. What is typed and
+ * not yet posted is a draft, kept in this browser on its own.
  */
 import { Extension, type Editor } from '@tiptap/core'
 import { settingsOf } from '../settings'
@@ -402,17 +400,17 @@ declare module '@tiptap/core' {
     interface Commands<ReturnType> {
         comments: {
             /** Choose the selection for a comment (the margin opens a composer
-             *  by it); while a sheet is open, quote the selection into it. */
+             *  by it). */
             startComment: () => ReturnType
             cancelComment: () => ReturnType
             /** A new comment document about `ranges` (the selection when none
              *  are given; none, and no selection, is a comment on the note),
-             *  with `body`; `open` opens it to write in full: in the sheet
-             *  (`true`), or as the note in the editor (`'note'`). */
-            addComment: (options: { body: string; ranges?: Range[]; open?: boolean | 'note' }) => ReturnType
+             *  with `body`; `open` loads it as the note in the editor, to
+             *  write at length. */
+            addComment: (options: { body: string; ranges?: Range[]; open?: boolean }) => ReturnType
             /** A new document answering comment `id` (its text is what the
              *  reply references); `open` opens it as `addComment` does. */
-            replyToComment: (id: string, body: string, options?: { open?: boolean | 'note' }) => ReturnType
+            replyToComment: (id: string, body: string, options?: { open?: boolean }) => ReturnType
             editComment: (id: string, body: string) => ReturnType
             /** Delete a comment. One others have answered stays as a
              *  tombstone so the replies keep their place. */
@@ -422,9 +420,6 @@ declare module '@tiptap/core' {
             reopenComment: (id: string) => ReturnType
             /** Add the identity's `emoji` to a comment, or take it away. */
             reactToComment: (id: string, emoji: string) => ReturnType
-            /** Open the comment's document in the sheet beside the note, to
-             *  write in full (in the editor itself where there is no margin). */
-            openComment: (id: string) => ReturnType
             /** Load the comment's document as the note in the editor. */
             openCommentAsNote: (id: string) => ReturnType
             /** Point comment `id` at `range` (the selection by default): how
@@ -535,15 +530,6 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             await ops.create(path, formatReference(link, body) + '\n')
             return path
         }
-        /** The margin, when there is one: it holds the sheet. */
-        const margin = () => (editor.storage as any).commentMargin as { open?: (path: string) => void; sheet?: { quote(link: Wikilink): void } | null } | undefined
-        /** Write the comment in full: in the sheet; without a margin, as the
-         *  note in the editor (one left with nothing written goes again). */
-        const openInFull = async (path: string, body: string) => {
-            const m = margin()
-            if (m?.open) return m.open(path)
-            await openAsNote(path, body)
-        }
         /** The document as the note in the editor; one left with nothing written goes again. */
         const openAsNote = async (path: string, body: string) => {
             await openForWriting(path)
@@ -553,11 +539,10 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                 if (ops && fs) discardIfLeftEmpty(path, ops, fs)
             }
         }
-        const write = async (folder: string, link: Wikilink, body: string, open: boolean | 'note') => {
+        const write = async (folder: string, link: Wikilink, body: string, open: boolean) => {
             const path = await writeDocument(folder, link, body)
             await refresh()
-            if (open === 'note') await openAsNote(path, body)
-            else if (open) await openInFull(path, body)
+            if (open) await openAsNote(path, body)
             return path
         }
 
@@ -599,19 +584,6 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                 ({ state, tr, dispatch }) => {
                     if (!author() || state.selection.empty) return false
                     const { from, to } = state.selection
-                    const sheet = margin()?.sheet
-                    const note = openNotePath(editor)
-                    if (sheet && note) {
-                        // A comment is being written in full: the selection
-                        // is quoted into it (a pin, if one is needed, saved
-                        // with the note before the quote refers to it).
-                        if (!dispatch) return true
-                        const link = anchorFor(tr, { from, to }, linkTarget(note), docText(tr.doc), pinIds(tr.doc))
-                        dispatch(tr)
-                        void persistence()?.save()
-                        sheet.quote(link)
-                        return true
-                    }
                     dispatch?.(tr.setMeta(commentsKey, { draft: { ranges: [{ from, to }] }, active: null } satisfies CommentsMeta))
                     return true
                 },
@@ -659,14 +631,6 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             resolveComment: (id) => react(id, RESOLVED),
             reopenComment: (id) => react(id, RESOLVED),
             reactToComment: (id, emoji) => react(id, emoji),
-            openComment:
-                (id) =>
-                ({ state, dispatch }) => {
-                    const c = find(state, id)
-                    if (!c) return false
-                    if (dispatch) void openInFull(c.ref.source, c.body)
-                    return true
-                },
             openCommentAsNote:
                 (id) =>
                 ({ state, dispatch }) => {

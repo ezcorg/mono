@@ -5,8 +5,8 @@
  * scrolls on its own, when there is room past the note's text column
  * (`layout: 'panel'`); the reader can put it away from its head's menu or
  * ⌘⇧M, and ask for it again from a bubble's menu. With no room beside the note, the
- * panel asked for slides over the note's right edge instead, as the sheet
- * does, and rests at the edge when the pointer leaves it. Otherwise nothing
+ * panel asked for slides over the note's right edge instead, and rests at
+ * the edge when the pointer leaves it. Otherwise nothing
  * shows beside the note: commented text is marked, and the comment's mark
  * in the annotation column (comment-gutter.ts) opens its comments over the
  * note's edge, under their text (above it when there is no room under),
@@ -22,7 +22,7 @@
  * count. A chevron in the bubble's corner holds the rest: first the
  * reactions to give (the common and recent ones, and the whole grid behind
  * the last), then the actions in groups: Edit and Reply, Resolve, the
- * composer panel and the file, Delete, the comments panel and Close.
+ * file, Delete, the comments panel and Close.
  * Long text folds after a few lines, with the fold to open it. [−] after
  * a byline collapses that message and everything under it to the byline;
  * [+] brings it back. The reply count is the handle of the thread: pressed,
@@ -43,26 +43,24 @@
  * in; the composer's Cancel and its one filled button stand in the
  * bubble's foot. What is typed is a draft,
  * kept in this browser until posted; nothing has to be asked for. A comment
- * written in full goes to the sheet (`comment-sheet.ts`), beside the note,
- * from the composer's menu or ⌘⇧↩.
+ * written at length is a document like any other: Open as file loads it
+ * in the editor itself.
  */
 import { Extension, type AnyExtension, type Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { menuPopover } from '../ui/popover'
-import type { FileOperations } from '@joinezco/storage'
-import { parseTextFragment, type Reaction, type Wikilink } from '@joinezco/vault'
+import { parseTextFragment, type Reaction } from '@joinezco/vault'
 import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage } from './comments'
 import { Composer } from './comment-composer'
 import { byline, clearDraft, draftKey, readDraft, renderReadOnly, when, writeDraft, type ReadOnlyView } from './comment-render'
-import { Sheet, frameOver } from './comment-sheet'
 import { openReactionPicker, reactionGrid } from './emoji-picker'
 import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
 import { button, el, glyph, labelled, pressable } from '../ui/dom'
 import { CHEVRON_DOWN_ICON, CLOSE_ICON, FACE_ICON, FILE_ICON, stroke, svg } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
 import { settingsOf, type SettingsStorage } from '../settings'
-import { followPage, rafThrottle, resolveMount, restable, scrollerOf, sizeObserver, type Mount, type Restable } from '../ui/layout'
+import { frameOver, followPage, rafThrottle, resolveMount, restable, scrollerOf, sizeObserver, type Mount, type Restable } from '../ui/layout'
 import { persistenceOf } from './filesystem'
 
 export type CommentLayout = 'float' | 'column' | 'panel'
@@ -84,10 +82,6 @@ export interface CommentMarginOptions {
 }
 
 export interface CommentMarginStorage {
-    /** Open the comment document at `path` in the sheet beside the note. */
-    open: (path: string) => void
-    /** The sheet, while one is open: where a quoted selection goes. */
-    sheet: { readonly path: string; quote(link: Wikilink): void } | null
     /** Every comment in a panel beside the note, or back to how the host
      *  had them. */
     togglePanel: () => boolean
@@ -151,7 +145,6 @@ const REPLY_ICON = svg(`<path ${stroke} d="M6.5 4.5 3 8l3.5 3.5M3 8h6a4 4 0 0 1 
 const RESOLVE_ICON = svg(`<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path ${stroke} d="m5.5 8 1.8 1.8L10.8 6"/>`)
 const REOPEN_ICON = svg(`<path ${stroke} d="M13 8a5 5 0 1 1-1.5-3.6M13 3v2.5h-2.5"/>`)
 const EDIT_ICON = svg(`<path ${stroke} d="M3 13h3l7-7-3-3-7 7zM9 4l3 3"/>`)
-const SHEET_ICON = svg(`<rect x="2.5" y="3" width="11" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path stroke="currentColor" stroke-width="1.5" d="M9.5 3v10"/>`)
 const DELETE_ICON = svg(`<path ${stroke} d="M3 4.5h10M6.5 4.5v-1h3v1M4.5 4.5l.6 8.5h5.8l.6-8.5M6.8 7v4M9.2 7v4"/>`)
 const PANEL_ICON = svg(`<path ${stroke} d="M3 4.5h10M3 8h10M3 11.5h6"/>`)
 /** The head's menu: anchored, comments stand level with their text. */
@@ -159,7 +152,6 @@ const ANCHOR_ICON = svg(`<path ${stroke} d="M2.5 8h3M10.5 8h3"/><circle cx="8" c
 const RESOLVED_ICON = RESOLVE_ICON
 
 /** The words for the two ways to write at length. */
-const SHEET_LABEL = 'Composer panel'
 const FILE_LABEL = 'Open as file'
 const SEPARATOR: ContextMenuEntry = { type: 'separator' }
 
@@ -271,7 +263,7 @@ function footWith(...controls: Node[]): HTMLElement {
 
 /**
  * A composer as a bubble of its own: who is writing over the field, a
- * chevron with the way to the sheet, and the composer's buttons in the
+ * chevron with the way to the file, and the composer's buttons in the
  * bubble's foot. A reply right under the comment it answers, and a new
  * comment.
  */
@@ -540,7 +532,7 @@ class Card {
         if (collapsed && count(c)) head.append(el('span', 'ezco-mde-comment-folded-hint', plural(count(c), 'reply')))
         const mine = author !== null && c.author === author
         const me = this.margin.identity()
-        const items = () => (editing ? this.sheetItems(c) : this.menuFor(c, depth, author, mine, deleted))
+        const items = () => (editing ? this.editingItems(c) : this.menuFor(c, depth, author, mine, deleted))
         const mineReactions = () => new Set(c.reactions.filter((r) => r.by === me).map((r) => r.emoji))
         const reactions = me && !editing && !deleted ? (close: () => void, anchor: HTMLElement) => reactionGrid({ mine: mineReactions(), anchor, close, onPick: (emoji) => editor.commands.reactToComment(c.id, emoji) }) : undefined
         if (items().length || reactions) head.append(chevron(items, this.holder, reactions))
@@ -629,7 +621,7 @@ class Card {
                 for (const r of c.replies) thread.append(this.message(r, depth + 1, author))
                 if (replying && author) {
                     const composer = this.replying!.composer
-                    thread.append(composerBlock(composer, author, () => this.longForms(() => this.replyInFull(c, true), () => this.replyInFull(c, 'note')), this.holder))
+                    thread.append(composerBlock(composer, author, () => this.longForms(() => this.replyInFull(c)), this.holder))
                 }
                 foot.append(thread, el('div', 'ezco-mde-comment-thread-frame'))
                 this.folds.add(c.id)
@@ -756,10 +748,7 @@ class Card {
                       },
             ])
         }
-        groups.push([
-            ...(author && mine && !deleted ? [{ label: SHEET_LABEL, icon: SHEET_ICON, onSelect: () => editor.commands.openComment(c.id) }] : []),
-            { label: FILE_LABEL, icon: FILE_ICON, onSelect: () => editor.commands.openCommentAsNote(c.id) },
-        ])
+        groups.push([{ label: FILE_LABEL, icon: FILE_ICON, onSelect: () => editor.commands.openCommentAsNote(c.id) }])
         if (author && !deleted) {
             groups.push([
                 {
@@ -782,42 +771,29 @@ class Card {
         return groups.flatMap((group, i) => (i ? [SEPARATOR, ...group] : group))
     }
 
-    /** What the chevron offers while `c` is being edited: the long ways. */
-    private sheetItems(c: CommentInfo): ContextMenuEntry[] {
+    /** What the chevron offers while `c` is being edited: the long way. */
+    private editingItems(c: CommentInfo): ContextMenuEntry[] {
         const { editor } = this.margin
-        return [
-            {
-                label: SHEET_LABEL,
-                icon: SHEET_ICON,
-                onSelect: () => {
-                    this.stopEditing()
-                    editor.commands.openComment(c.id)
-                },
-            },
-            { label: FILE_LABEL, icon: FILE_ICON, onSelect: () => editor.commands.openCommentAsNote(c.id) },
-        ]
+        return [{ label: FILE_LABEL, icon: FILE_ICON, onSelect: () => editor.commands.openCommentAsNote(c.id) }]
     }
 
     private draftKey(id: string) {
         return draftKey(this.margin.notePath(), id, 'reply')
     }
 
-    /** The reply's document, made with what was written, where a longer
-     *  one is written: the sheet, or the editor itself. */
-    private replyInFull(c: CommentInfo, open: true | 'note') {
+    /** The reply's document, made with what was written, opened in the
+     *  editor itself to write at length. */
+    private replyInFull(c: CommentInfo) {
         const body = this.replying?.composer.value() ?? ''
-        if (this.margin.editor.commands.replyToComment(c.id, body, { open })) {
+        if (this.margin.editor.commands.replyToComment(c.id, body, { open: true })) {
             clearDraft(this.draftKey(c.id))
             this.stopReplying()
         }
     }
 
-    /** What a composer's chevron offers: the two ways to write at length. */
-    private longForms(inSheet: () => void, asNote: () => void): ContextMenuEntry[] {
-        return [
-            { label: SHEET_LABEL, icon: SHEET_ICON, onSelect: inSheet },
-            { label: FILE_LABEL, icon: FILE_ICON, onSelect: asNote },
-        ]
+    /** What a composer's chevron offers: the way to write at length. */
+    private longForms(asNote: () => void): ContextMenuEntry[] {
+        return [{ label: FILE_LABEL, icon: FILE_ICON, onSelect: asNote }]
     }
 
     /** Write a reply under comment `c`, from its draft if one was kept. */
@@ -852,7 +828,6 @@ class Card {
             onSubmit: (body) => {
                 if (editor.commands.replyToComment(c.id, body)) posted()
             },
-            onExpand: () => this.replyInFull(c, true),
             // Done for now: the draft is kept, the card closes.
             onCancel: () => {
                 this.stopReplying()
@@ -893,11 +868,6 @@ class Card {
                 this.stopEditing()
                 this.render()
                 this.dom.focus()
-            },
-            // The comment's own document, in the sheet.
-            onExpand: () => {
-                this.stopEditing()
-                editor.commands.openComment(c.id)
             },
         })
         this.editing = { id: c.id, composer }
@@ -941,8 +911,8 @@ class NewComment {
         this.dom.setAttribute('aria-label', 'New comment')
         const key = draftKey(margin.notePath(), 'new', '')
         const ranges = () => ((editor.storage as any).comments.draft() as { ranges: { from: number; to: number }[] } | null)?.ranges ?? []
-        const inFull = (open: true | 'note') => () => {
-            if (editor.commands.addComment({ body: this.composer.value(), ranges: ranges(), open })) clearDraft(key)
+        const inFull = () => {
+            if (editor.commands.addComment({ body: this.composer.value(), ranges: ranges(), open: true })) clearDraft(key)
         }
         this.composer = new Composer({
             editor,
@@ -958,15 +928,9 @@ class NewComment {
                 editor.commands.cancelComment()
                 editor.commands.focus()
             },
-            onExpand: inFull(true),
         })
         const inside = el('div', 'ezco-mde-comment-inside')
-        inside.append(
-            composerBlock(this.composer, author, () => [
-                { label: SHEET_LABEL, icon: SHEET_ICON, onSelect: inFull(true) },
-                { label: FILE_LABEL, icon: FILE_ICON, onSelect: inFull('note') },
-            ], this.holder),
-        )
+        inside.append(composerBlock(this.composer, author, () => [{ label: FILE_LABEL, icon: FILE_ICON, onSelect: inFull }], this.holder))
         this.dom.append(inside)
         this.composer.focus()
     }
@@ -989,7 +953,6 @@ class Margin {
     private readonly over: HTMLElement
     private readonly cards = new Map<string, Card>()
     private draft: NewComment | null = null
-    private sheet: Sheet | null = null
     private showResolved = false
     /** How comments are shown now: the host's choice, or the reader's. */
     private layout: CommentLayout
@@ -1112,8 +1075,6 @@ class Margin {
         this.observer = sizeObserver(this.schedule)
         this.observer?.observe(view.dom)
         if (view.dom.parentElement) this.observer?.observe(view.dom.parentElement)
-        storage.open = (path) => this.openSheet(path)
-        storage.sheet = null
         storage.togglePanel = () => this.togglePanel()
         storage.floating = () => this.floating
         this.step()
@@ -1211,8 +1172,8 @@ class Margin {
         this.dom.classList.add('ezco-mde', 'is-entering')
         const theme = root.closest('[data-theme]')?.getAttribute('data-theme')
         if (theme) this.dom.dataset.theme = theme
-        this.handle = labelled(button('ezco-mde-comment-sheet-handle'), 'Show the comments')
-        this.handle.append(el('span', 'ezco-mde-comment-sheet-handle-label', 'Comments'))
+        this.handle = labelled(button('ezco-mde-comment-overlay-handle'), 'Show the comments')
+        this.handle.append(el('span', 'ezco-mde-comment-overlay-handle-label', 'Comments'))
         // The press keeps the note's selection; the click bubbles on (not `pressable`).
         this.handle.addEventListener('mousedown', (e) => e.preventDefault())
         this.handle.addEventListener('click', () => this.resting?.wake())
@@ -1528,58 +1489,11 @@ class Margin {
         return persistenceOf(this.editor)?.options.filepath ?? null
     }
 
-    private files(): FileOperations | undefined {
-        const codeblock = this.editor.extensionManager.extensions.find((e) => e.name === 'ezcodeBlock')
-        return (codeblock?.options as { files?: FileOperations } | undefined)?.files
-    }
 
     /** What a comment is written and shown with; the host's list, made once. */
     composerExtensions(): AnyExtension[] | undefined {
         if (!this.options.composer) return undefined
         return (this.extensions ??= this.options.composer())
-    }
-
-    // ── The sheet ────────────────────────────────────────────────────────
-
-    /** The document at `path`, in the sheet beside the note. */
-    openSheet(path: string) {
-        if (this.sheet?.path === path) {
-            this.sheet.editor.commands.focus()
-            return
-        }
-        void this.closeSheet()
-        const fs = persistenceOf(this.editor)?.options.fs
-        if (!fs) return
-        const sheet = new Sheet({
-            host: this.editor,
-            path,
-            fs,
-            extensions: this.composerExtensions(),
-            openAsNote: () => {
-                void this.closeSheet()
-                const c = this.comments.comments().find((x) => x.ref.source === path)
-                if (c) this.editor.commands.openCommentAsNote(c.id)
-                else void persistenceOf(this.editor)?.loadFile(path)
-            },
-            remove: async () => {
-                await this.files()?.remove(path)
-            },
-            onClose: () => {
-                if (this.sheet === sheet) {
-                    this.sheet = null
-                    this.storage.sheet = null
-                }
-            },
-        })
-        this.sheet = sheet
-        this.storage.sheet = sheet
-    }
-
-    private closeSheet(): Promise<void> {
-        const sheet = this.sheet
-        this.sheet = null
-        this.storage.sheet = null
-        return sheet ? sheet.close() : Promise.resolve()
     }
 
     // ── The cards ────────────────────────────────────────────────────────
@@ -1834,13 +1748,6 @@ class Margin {
         for (const card of this.cards.values()) card.destroy()
         this.cards.clear()
         this.draft?.destroy()
-        if (this.sheet) {
-            void this.sheet.save()
-            this.sheet.destroy()
-            this.sheet = null
-        }
-        this.storage.sheet = null
-        this.storage.open = () => {}
         this.storage.togglePanel = () => false
         this.storage.floating = () => true
         this.dom.remove()
@@ -1857,7 +1764,7 @@ export const CommentMargin = Extension.create<CommentMarginOptions, CommentMargi
     },
 
     addStorage() {
-        return { open: () => {}, sheet: null, togglePanel: () => false, floating: () => true }
+        return { togglePanel: () => false, floating: () => true }
     },
 
     addCommands() {

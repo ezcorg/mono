@@ -112,7 +112,7 @@ describe('Writing comments', () => {
         expect(await fs.readFile(reply.ref.source)).toBe('![[comments/Animals/bob 2026-09-13 12.10#:~:text=A%20cat%2C%20surely.]]\n\nNot a cat.\n')
         // Opened: the editor is the editor of that document, its reference an
         // embed that quotes the passage it answers.
-        editor.commands.openComment(reply.id)
+        editor.commands.openCommentAsNote(reply.id)
         await waitFor(() => (editor.storage as any).persistence.options.filepath === reply.ref.source, 4000)
         await waitFor(() => !!editor.view.dom.querySelector('.ezco-mde-embed--passage'), 4000)
         expect(editor.view.dom.querySelector('.ezco-mde-embed--passage .ezco-mde-embed-content')?.textContent?.trim()).toBe('A cat, surely.')

@@ -6,9 +6,8 @@
  * `:emoji:` and slash commands work; `minimalSetup` when a host gives
  * none), with the note's content styles, so what is typed is Markdown
  * authored as in the note and what is posted is the Markdown the editor
- * would write. ⌘/Ctrl+Enter posts, Escape cancels, ⌘/Ctrl+Shift+Enter hands
- * what was written to the sheet. What is typed is reported as it changes,
- * so a host can keep it as a draft.
+ * would write. ⌘/Ctrl+Enter posts, Escape cancels. What is typed is
+ * reported as it changes, so a host can keep it as a draft.
  *
  * The composer is two pieces its host places: the `field` (the small
  * editor) and its `actions` (Cancel and the one filled button), so a card
@@ -32,8 +31,6 @@ export interface ComposerOptions {
     onCancel: () => void
     /** What is typed, as it changes. */
     onChange?: (markdown: string) => void
-    /** ⌘/Ctrl+Shift+Enter: the comment written in full, in the sheet. */
-    onExpand?: () => void
 }
 
 /** A hint in an empty composer, as the styles show it. */
@@ -67,11 +64,6 @@ export class Composer {
             addKeyboardShortcuts() {
                 return {
                     'Mod-Enter': () => (submit(), true),
-                    'Mod-Shift-Enter': () => {
-                        if (!options.onExpand) return false
-                        options.onExpand()
-                        return true
-                    },
                     Escape: () => (options.onCancel(), true),
                 }
             },

@@ -2785,7 +2785,7 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-fg)',
         'margin-right': '4px',
     },
-    // A glyph among the chrome's tools (the sheet's head).
+    // A glyph among the chrome's tools.
     '.ezco-mde-comment-tool': {
         display: 'inline-flex',
         'align-items': 'center',
@@ -2999,9 +2999,9 @@ export const styleModule: StyleModule = new StyleModule({
         'max-height': 'none',
     },
     // The panel with no room beside the note: over the note's right edge
-    // instead, as the sheet is, in a frame the size of the note's own that
-    // clips it as it slides in; away to the edge, faded, with a handle, when
-    // the pointer leaves it (comment-margin.ts).
+    // instead, in a frame the size of the note's own that clips it as it
+    // slides in; away to the edge, faded, with a handle, when the pointer
+    // leaves it (comment-margin.ts).
     '.ezco-mde-comment-overlay-frame': {
         position: 'fixed',
         'z-index': 600,
@@ -3030,49 +3030,16 @@ export const styleModule: StyleModule = new StyleModule({
         opacity: 0.55,
         transform: 'translateX(calc(100% - 30px))',
     },
-    '.ezco-mde-comment-margin.is-overlay.is-away > .ezco-mde-comment-sheet-handle': {
+    '.ezco-mde-comment-margin.is-overlay.is-away > .ezco-mde-comment-overlay-handle': {
         opacity: 1,
         'pointer-events': 'auto',
     },
     '.ezco-mde-comment-margin.is-overlay > .ezco-mde-comment-margin-head': {
         'padding-top': '10px',
     },
-    // ─────────────────────────────────────────────────────────────
-    // The sheet (extensions/comment-sheet.ts): a comment written in full,
-    // over the note's right edge, as tall as the note's frame; away to the
-    // edge, faded, with its handle, when the pointer leaves it.
-    // ─────────────────────────────────────────────────────────────
-    '.ezco-mde-comment-sheet-frame': {
-        position: 'fixed',
-        'z-index': 600,
-        overflow: 'hidden',
-        'pointer-events': 'none',
-    },
-    '.ezco-mde-comment-sheet': {
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        height: '100%',
-        'pointer-events': 'auto',
-        display: 'flex',
-        'flex-direction': 'column',
-        'box-sizing': 'border-box',
-        border: '1px solid var(--ezco-mde-context-menu-border)',
-        'border-right': 0,
-        'border-radius': '10px 0 0 10px',
-        background: 'var(--ezco-mde-context-menu-bg)',
-        color: 'var(--ezco-mde-fg)',
-        'box-shadow': 'var(--ezco-mde-chrome-shadow)',
-        'font-family': 'var(--ezco-mde-chrome-font)',
-        'font-size': '13px',
-        '--ezco-mde-text-base': '16px',
-        transition: 'transform 220ms ease, opacity 220ms ease',
-    },
-    '.ezco-mde-comment-sheet.is-away': {
-        opacity: 0.55,
-        transform: 'translateX(calc(100% - 30px))',
-    },
-    '.ezco-mde-comment-sheet-handle': {
+    // The overlaid panel's handle (comment-margin.ts): at its edge, shown
+    // when the panel has gone away to it.
+    '.ezco-mde-comment-overlay-handle': {
         position: 'absolute',
         left: 0,
         top: 0,
@@ -3090,63 +3057,13 @@ export const styleModule: StyleModule = new StyleModule({
         'pointer-events': 'none',
         transition: 'opacity 160ms ease',
     },
-    '.ezco-mde-comment-sheet.is-away .ezco-mde-comment-sheet-handle': {
-        opacity: 1,
-        'pointer-events': 'auto',
-    },
-    '.ezco-mde-comment-sheet-handle-label': {
+    '.ezco-mde-comment-overlay-handle-label': {
         'writing-mode': 'vertical-rl',
         transform: 'rotate(180deg)',
         'font-size': '11px',
         'font-weight': 600,
         'letter-spacing': '0.06em',
         'text-transform': 'uppercase',
-    },
-    '.ezco-mde-comment-sheet-head': {
-        display: 'flex',
-        'align-items': 'center',
-        gap: '8px',
-        padding: '8px 8px 8px 16px',
-        'border-bottom': '1px solid var(--ezco-mde-divider)',
-    },
-    '.ezco-mde-comment-sheet-title': {
-        display: 'flex',
-        'align-items': 'baseline',
-        gap: '6px',
-        'min-width': 0,
-        'font-size': '12px',
-    },
-    '.ezco-mde-comment-sheet-tools': {
-        'margin-left': 'auto',
-        display: 'flex',
-        gap: '2px',
-    },
-    '.ezco-mde-comment-sheet-tools > .ezco-mde-comment-tool': {
-        width: '24px',
-        height: '24px',
-    },
-    '.ezco-mde-comment-sheet-text': {
-        flex: '1 1 auto',
-        'min-height': 0,
-        display: 'flex',
-        'flex-direction': 'column',
-        'overflow-y': 'auto',
-        padding: '10px 16px',
-    },
-    '.ezco-mde-comment-sheet .ezco-mde-comment-sheet-text .ezco-mde-body': {
-        flex: '1 0 auto',
-        'min-height': 0,
-        padding: 0,
-        margin: 0,
-        'max-width': 'none',
-        outline: 'none',
-        'font-size': 'var(--ezco-mde-text-base)',
-    },
-    '.ezco-mde-comment-sheet-hint': {
-        padding: '6px 16px 10px',
-        'border-top': '1px solid var(--ezco-mde-divider)',
-        'font-size': '11.5px',
-        color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
     // ─────────────────────────────────────────────────────────────
     // File tree (extensions/file-tree.ts): the vault's folders and files,

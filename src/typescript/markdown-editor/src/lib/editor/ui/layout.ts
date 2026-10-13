@@ -101,7 +101,7 @@ export interface Restable {
     stop(): void
 }
 
-/** What stands over the note's edge (the sheet, the overlaid panel) rests
+/** What stands over the note's edge (the overlaid comments panel) rests
  *  there when left alone: `is-away` once the pointer has been gone
  *  `REST_AFTER` and nothing in it has focus; back on the pointer's return,
  *  on focus, or on `wake()`. */
@@ -136,4 +136,37 @@ export function restable(dom: HTMLElement): Restable {
             dom.classList.remove('is-away')
         },
     }
+}
+
+/**
+ * `clip` as a fixed frame over the note's root, within the window and the
+ * root's scroller: what slides over the note's edge (the comments panel
+ * with no room beside the note) lives in such a frame, which clips it as
+ * it slides. Returns the frame's size.
+ */
+export function frameOver(clip: HTMLElement, root: HTMLElement): { width: number; height: number } {
+    const r = root.getBoundingClientRect()
+    const scroller = scrollerOf(root)
+    let top = r.top
+    let bottom = r.bottom
+    let left = r.left
+    let right = r.right
+    if (scroller) {
+        const s = scroller.getBoundingClientRect()
+        top = Math.max(top, s.top)
+        bottom = Math.min(bottom, s.bottom)
+        left = Math.max(left, s.left)
+        right = Math.min(right, s.right)
+    }
+    top = Math.max(top, 0)
+    bottom = Math.min(bottom, window.innerHeight)
+    left = Math.max(left, 0)
+    right = Math.min(right, window.innerWidth)
+    const width = Math.max(0, right - left)
+    const height = Math.max(0, bottom - top)
+    clip.style.top = `${Math.round(top)}px`
+    clip.style.left = `${Math.round(left)}px`
+    clip.style.width = `${Math.round(width)}px`
+    clip.style.height = `${Math.round(height)}px`
+    return { width, height }
 }

@@ -139,6 +139,11 @@ demo. So, for any change that shows:
 - The demo's `App.css` once zeroed the note's 4px left padding, so spacing
   judged in the demo differed from the library's. Measure in the demo and
   in a test, and keep the demo on the library's paddings.
+- `region-fence.test.ts`'s file-search case times out under the whole
+  suite's load (it passes alone every time): re-run the file alone before
+  calling it a regression. A vitest run can also wedge on a cold cache's
+  "optimized dependencies changed. reloading" mid-run; if a run is silent
+  for minutes with idle Chromium processes, kill it and run again.
 - Comment ids in a mark's `data-comments` are in text order: on a line two
   comments start on, the one whose text starts first comes first, and is
   the one a toggle looks at.
