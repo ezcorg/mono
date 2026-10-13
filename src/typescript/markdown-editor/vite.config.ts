@@ -46,7 +46,7 @@ export default defineConfig({
   },
   plugins: [
     snapshot({
-      exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo'],
+      exclude: ['.git', 'dist', 'build', 'coverage', 'static', 'node_modules', 'public/snapshot.bin', '.vite', '.turbo', 'fonts'],
       output: './public/snapshot.bin'
     }),
     react()

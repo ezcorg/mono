@@ -17,7 +17,7 @@
 import { Editor, Extension, type AnyExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { minimalSetup } from '../minimal'
+import { fallbackExtensions } from './comment-render'
 
 export interface ComposerOptions {
     /** The note's editor: the composer resolves and follows wikilinks as it does. */
@@ -79,15 +79,7 @@ export class Composer {
                 return [placeholderPlugin(options.placeholder)]
             },
         })
-        const wikilink = options.editor.extensionManager.extensions.find((e) => e.name === 'wikilink')
-        const base =
-            options.extensions ??
-            minimalSetup({
-                links: { resolver: wikilink?.options.resolver, open: wikilink?.options.open },
-                frontMatter: false,
-                footnotes: false,
-                callouts: false,
-            })
+        const base = options.extensions ?? fallbackExtensions(options.editor)
         this.editor = new Editor({
             element: this.field,
             // The keys last: an open menu (emoji, slash) takes Enter and Escape first.

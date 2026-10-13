@@ -13,6 +13,7 @@ import { Editor, Extension, type AnyExtension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { minimalSetup } from '../minimal'
+import { readKept, writeKept } from '../ui/kept'
 import { locateTextFragment } from './fragment'
 
 export interface ReadOnlyView {
@@ -107,26 +108,13 @@ const DRAFT_PREFIX = 'ezco-mde-comment-draft:'
 export const draftKey = (note: string | null, thread: string, path: string) => `${DRAFT_PREFIX}${note ?? ''}:${thread}:${path}`
 
 export function readDraft(key: string): string | null {
-    try {
-        return localStorage.getItem(key)
-    } catch {
-        return null
-    }
+    return readKept(key)
 }
 
 export function writeDraft(key: string, markdown: string): void {
-    try {
-        if (markdown.trim()) localStorage.setItem(key, markdown)
-        else localStorage.removeItem(key)
-    } catch {
-        // Nothing to keep it in: the composer still has it while open.
-    }
+    writeKept(key, markdown.trim() ? markdown : null)
 }
 
 export function clearDraft(key: string): void {
-    try {
-        localStorage.removeItem(key)
-    } catch {
-        // As above.
-    }
+    writeKept(key, null)
 }

@@ -26,7 +26,7 @@ import { basename, extname } from '@joinezco/storage'
 import { findTextFragment, formatWikilink, frontMatterOf, isNote, matchWikilinkAt, parseTextFragment, type Wikilink as WikilinkParts } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { IMAGE_EXTENSIONS, objectUrlFor, resolveAsset, sizeOf, vaultOf } from './assets'
-import { wikilinkLabel, type WikilinkStorage } from './wikilink'
+import { wikilinkLabel, type WikilinkStorage, attrsOf, optionalData } from './wikilink'
 import { slugify } from './slug-utils'
 import { lineRange } from '@joinezco/codeblock'
 import { authorOf } from './comments'
@@ -37,19 +37,6 @@ export interface EmbedOptions {
      *  own, without its chrome; a lean set otherwise. */
     render?: () => AnyExtension[]
 }
-
-const attrsOf = (node: PMNode): WikilinkParts => ({
-    target: node.attrs.target ?? '',
-    fragment: node.attrs.fragment ?? null,
-    alias: node.attrs.alias ?? null,
-})
-
-const optionalData = (name: string) => ({
-    default: null,
-    parseHTML: (el: HTMLElement) => el.getAttribute(`data-${name}`),
-    renderHTML: (attrs: Record<string, unknown>) =>
-        attrs[name] === null || attrs[name] === undefined ? {} : { [`data-${name}`]: attrs[name] },
-})
 
 /** Where the passage a range names is in a note's text: a text fragment
  *  found in it, or a pinned span `[…]{#id}`; null when it is not there. */

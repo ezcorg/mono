@@ -88,8 +88,14 @@ the overlap is marked deeper, and clicking it looks at each in turn. A
 comment on the whole of a document (a reply quotes the whole of the comment
 it answers) highlights nothing and sits at the top.
 
-Clicking a highlight opens the comment as a bubble over the note's edge,
-under its text (above it when there is no room under): who and when, and
+Each comment is marked in the gutter too: a speech bubble in the comment
+colour on the first line of its text, in the glyph column (the block's own
+glyph gives it the line; empty and grey for a resolved comment, whose text
+reads as text again; a click on it looks at the comment, or at each in turn
+where two start on one line). Clicking a
+highlight opens the comment as a bubble over the note's edge, under its
+text (the note scrolls to show the whole bubble, its end extended for one
+under the last lines; the bubble never moves off its text): who and when, and
 its text shown exactly as the note shows text (a read-only editor of the
 note's make, so a fence named by a file holds the file's lines, fences
 inside it included). Under the text, in the bubble, are its reactions,
@@ -97,7 +103,7 @@ React (the common and recent reactions by the control, the whole grid
 behind them) and, at the row's end, the reply count. The chevron in the
 bubble's corner opens on the reactions to give too, and then the actions
 in groups: Edit and Reply, Resolve, Composer panel (one's own comments
-only) and Open as file, Delete, Show in comments panel and Dismiss. Long
+only) and Open as file, Delete, Show in comments panel and Close. Long
 text folds after a few lines, with "Show more" under it. The reply count is
 the handle of the comment's thread: pressed, its pill grows into a frame
 around the row and the replies under it, each a bubble of its own, and
@@ -106,29 +112,35 @@ written goes last in the frame. A reply's own answers stay behind its own
 count. [−] after any byline collapses that message and everything under it
 to the byline; [+] brings it back. Nothing holds the bubbles: they stand on
 the note, and a bubble never runs past the note's frame (what is more
-scrolls inside it). Escape, Dismiss or a click elsewhere closes it. With
+scrolls inside it). Escape, Close or a click elsewhere closes it. With
 room past the note's text column, every comment shows from the start in a
 panel beside the note, a list that scrolls on its own under a fixed head.
-There a bubble is the way to its text: a click takes the note to it, the
-text's first line level with the top of the bubble (the list meeting it
-where the note cannot), and as the note is read past commented text that
-comment's bubble is the current one, stepped out a little from the others
-with the accent's hairline. The panel's × (or ⌘⇧M) puts it away, and it
+There a bubble is the way to its text: a click on it (its text included)
+takes the note to it, the text's first line level with the top of the
+bubble (the list meeting it where the note cannot). As the note scrolls,
+each bubble steps out towards the text by how near the reading line is to
+its lines, and the one nearest is the current one, with the accent's
+hairline. The chevron in the panel's head holds its settings, as switches:
+"Anchor comments to text" keeps every bubble level with its lines instead,
+still, scrolling with the note under a head that stays at the top of the
+frame (the choice is kept), "Show resolved" brings the resolved ones back,
+and "Hide comments panel" puts the panel away, as ⌘⇧M does; it
 stays away, across notes and sessions, until "Show in comments panel" (or
 ⌘⇧M) brings it back; asked for where there is no room beside the note, it
 slides over the note's right edge instead, as the composer panel does, and
 rests at the edge, with a handle, when the pointer leaves it. A host can
 keep comments over the note (`comments: { margin: { layout: 'float' } }`) or
-have a column, each bubble level with its text (`layout: 'column'`). Quotes
+start anchored (`layout: 'column'`). Quotes
 keep up with editing: words changed here are re-quoted where the comment
 lives when the note is saved; text no quote can tell apart is pinned instead.
 
 Given `comments: { author, index, reactions }` (a vault's `comments` and
 `reactions`; the editor's own vault's with `fs` alone), comments are
 written as `author`: select text, then Comment or ⌘⌥M, and a composer opens
-by the end of the selection. A comment, a reply (right under the comment it
+over the note by the end of the selection, whatever the layout (a panel
+beside the note shows the comments, never the composer). A comment, a reply (right under the comment it
 answers) or an edit is typed in a bubble, in the editor's own syntax, its
-Cancel and its one filled button under the bubble; ⌘/Ctrl+Enter posts. What is
+Cancel and its one filled button in the bubble's foot; ⌘/Ctrl+Enter posts. What is
 typed and not posted is a draft, kept in this browser on its own and back
 in the field when it is opened again. Posting makes the comment's document,
 `comments/<note>/<author> <date> <time>.md`, whose name is read back as
@@ -157,7 +169,8 @@ documents; a ✅ resolves. `editor.storage.comments` has the comments and
 
 | Syntax | Notes |
 |---|---|
-| CommonMark + GFM | headings, lists (marker kept), task lists, tables (a cell's blocks on one line, a table without a header row under an empty one: never a marker in place of the table), quotes, code fences (CodeMirror, real LSP; a fence named by a file writes through to it). `<` and `>` are text, escaped only where `<` would open an autolink |
+| CommonMark + GFM | headings, lists (the marker kept: `-` or `*`, `1.` or `1)`), task lists, tables (a cell's blocks on one line, a table without a header row under an empty one: never a marker in place of the table), quotes, code fences (CodeMirror, real LSP; a fence named by a file writes through to it). `<` and `>` are text, escaped only where `<` would open an autolink |
+| Lettered lists `a.`, `a)` | Pandoc's fancy lists: `a.` or `a)` (and `A)`, or `A.` with two spaces after it, so an initial is not a list), kept as written, numbered on from the letter typed. Lists of one kind nest in another; a marker typed at the start of an item (`1. `, `a) `, `- `, `* `, `- [ ] `) makes the item one of that kind, in a list of its own |
 | Unnamed fences ```` ```ts ```` | with `codeblock: { standIns: true }` (off by default: it writes into the host's filesystem), a fence of a language with language services (`ts`, `js`, `py`, `rs`, `go`) is opened as a hidden stand-in file beside the note (`.plan.1.ts` for the first `ts` fence of `plan.md`), so completions and diagnostics work without naming a file; the note stays as written, and the block's toolbar names the language, not the file |
 | File regions ```` ```src/lib.rs#L40-L80 ```` | some lines of a file, numbered as the file numbers them. A block's toolbar takes `path#L2-L3` to open those lines; its menu has "Show only these lines", "Show the whole file" and "Copy link to lines" (the `path#L…` a fence or an embed takes). The file is the source of truth: the fence's body is the lines as last seen, taken from the file when the note opens (found where they moved to, if they did); an edit goes back into the file where the lines are then, and the range follows the lines it holds. A save whose lines changed in the file meanwhile is kept as a conflict copy |
 | Wikilinks `[[note]]`, `[[note\|text]]`, `[[note#heading]]`, `[[#heading]]` | resolved by the host; a dangling link is dimmed and creates its note when followed; `[[` offers the vault's notes |
@@ -215,6 +228,18 @@ in only when accepted.
   tree) away, or bring it back.
 - ⌘⇧M / Ctrl+Shift+M: every comment in a panel beside the note, or the
   panel put away.
+
+## Type and theme
+
+The note is set in `--ezco-mde-font`, Source Serif 4 by default. The
+package ships the face (`import '@joinezco/markdown-editor/fonts.css'`,
+the two variable files under `fonts/`, OFL licensed); without that import
+the system serif stands in. A host sets the token to use its own face,
+and a browser fetches a face only once text is set in it, so one that
+does never downloads ours. The chrome around the note (menus, panels,
+cards) is set in `--ezco-mde-chrome-font`. Colours follow `data-theme`
+(`light`, `dark`) on the root or the editor, or the system when there is
+none; every colour is a `--ezco-mde-*` custom property.
 
 ## Develop
 

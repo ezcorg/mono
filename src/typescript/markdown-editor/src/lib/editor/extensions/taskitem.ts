@@ -1,5 +1,5 @@
 import { TaskItem } from '@tiptap/extension-task-item';
-import { wrappingInputRule } from '@tiptap/core';
+import { taskListRules } from './lists';
 
 /**
  * Extended TaskItem extension with configurable input regex rules.
@@ -23,19 +23,9 @@ export const ExtendedTaskItem = TaskItem.extend<ExtendedTaskItemOptions>({
     },
 
     addInputRules() {
-        const { inputRegex } = this.options;
-
-        return [
-            wrappingInputRule({
-                find: inputRegex!,
-                type: this.type,
-                getAttributes: (match) => {
-                    return {
-                        checked: match[1] === 'x' || match[1] === 'X',
-                    };
-                },
-            })
-        ];
+        // `- [ ] ` wraps a paragraph in a task list, or makes the list item
+        // it is typed in a task (as `[ ] ` alone does in an item): lists.ts.
+        return taskListRules(this.options.inputRegex!);
     },
 
     addNodeView() {

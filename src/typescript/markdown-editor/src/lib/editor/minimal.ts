@@ -15,7 +15,7 @@ import { ExtendedLink } from './extensions/link';
 import { InlineCodeExit } from './extensions/inline-code';
 import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
-import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
+import { BulletList, OrderedList, OrderedListStart, DashListKeymap } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import { Wikilink, WikilinkOptions } from './extensions/wikilink';
@@ -83,6 +83,7 @@ export function minimalSetup(
         StarterKit.configure({
             // Keep StarterKit's lightweight code block here (no CodeMirror).
             bulletList: false,
+            orderedList: false,
             paragraph: false,
             link: false,
             document: false,
@@ -90,6 +91,7 @@ export function minimalSetup(
         }),
         Paragraph,
         BulletList,
+        OrderedList,
         OrderedListStart,
         DashListKeymap,
         HeadingAnchors,

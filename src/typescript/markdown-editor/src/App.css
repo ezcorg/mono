@@ -1,30 +1,19 @@
-@font-face {
-  font-family: "Source Serif 4";
-  src: url("/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf") format("truetype-variations");
-  font-weight: 200 900;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: "Source Serif 4";
-  src: url("/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf") format("truetype-variations");
-  font-weight: 200 900;
-  font-style: italic;
-}
-
 /* ──────────────────────────────────────────────────────────────
-   Dev preview page: a neutral "desktop" so the simulated windows
-   read as floating app windows. Two variants are shown one at a
-   time via the toggle: the DEFAULT (out-of-the-box library look)
-   and a CUSTOM theme (showing how far a consumer can take it).
+   Dev preview page: a neutral "desktop" so the simulated window
+   reads as a floating app window around the editor as it ships.
    ────────────────────────────────────────────────────────────── */
+/* Both may shrink below their content's widest part (the page's body is a
+   flex row): without `min-width: 0` the editor's row would widen the window
+   past the viewport instead of the comments panel giving way to the note. */
 #root {
   display: flex;
   flex: 1;
+  min-width: 0;
 }
 
 .dev-page {
   min-height: 100vh;
+  min-width: 0;
   box-sizing: border-box;
   padding: 20px 20px 96px;
   font-family: system-ui, -apple-system, Avenir, Helvetica, Arial, sans-serif;
@@ -34,7 +23,6 @@
 }
 
 .dev-header,
-.dev-note,
 .mac-window,
 .dev-output {
   width: 100%;
@@ -48,7 +36,7 @@
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 4px;
+  margin-bottom: 20px;
 }
 
 .dev-title {
@@ -69,41 +57,6 @@
   color: rgba(0, 0, 0, 0.45);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-}
-
-/* macOS-style segmented control */
-.variant-toggle {
-  display: inline-flex;
-  padding: 2px;
-  background: rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 9px;
-}
-
-.variant-toggle button {
-  appearance: none;
-  border: none;
-  background: transparent;
-  padding: 5px 16px;
-  font: inherit;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.6);
-  border-radius: 7px;
-  cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.variant-toggle button.is-active {
-  background: #fff;
-  color: #000;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-}
-
-.dev-note {
-  margin: 0 auto 20px;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.5);
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -290,33 +243,13 @@
   overflow-y: auto;
 }
 
-/* Flex row INSIDE the scroller. It grows to the editor's full (scroll) height,
-   so the sticky sidebar column stays pinned while the document scrolls — a flex
-   item placed directly in the scroller is instead clipped to the scroller's
-   client box (one viewport) and scrolls out of view. */
-.mac-body-row {
-  display: flex;
-  flex-direction: row;
-  min-height: 100%;
-}
-
-/* Left outline column. Stretches to the row's full height (default
-   `align-items: stretch`) so the sidebar's sticky <nav> can stay pinned. */
-.mac-sidebar {
-  flex: none;
-}
-
-.mac-sidebar:has(.ezco-mde-sidebar--empty) {
-  display: none;
-}
-
-/* Editor column. The library's `.ezco-mde` wrapper — which now owns the
-   block-action gutter and the editable — renders inside it; `display: flex`
-   lets that wrapper fill the column's height. A small right inset balances the
-   layout. */
+/* Editor column. The library's `.ezco-mde` wrapper — its rail, the
+   block-action gutter, the editable and the comments — renders inside it;
+   `display: flex` lets that wrapper fill the column's height. */
 .mac-editor {
   flex: 1;
   min-width: 0;
+  min-height: 100%;
   display: flex;
 }
 
@@ -326,18 +259,6 @@
 .mac-body .ezco-mde-body {
   padding: 10px 0;
   outline: none;
-}
-
-.mac-window--custom .mac-body .ezco-mde-body {
-  font-family: "Source Serif 4", system-ui, Georgia, serif;
-}
-
-/* In the Custom variant the outline adopts the document's serif, so the table
-   of contents reads in the same voice as the prose it maps. The library's
-   `.ezco-mde-sidebar` sets its own `font-family` (Inter), so override it on the
-   nav itself (an ancestor font-family wouldn't win against that explicit rule). */
-.mac-window--custom .mac-sidebar .ezco-mde-sidebar {
-  font-family: "Source Serif 4", system-ui, Georgia, serif;
 }
 
 /* The window's resizable edges: a strip at each side, the pointer an

@@ -13,6 +13,8 @@ import {
 import { dirname, type VfsInterface } from '@joinezco/storage'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { isDarkMode } from './codeblock'
+import { scrollContainerOf } from '../ui/layout'
 
 // File extensions that open as prose (the normal Markdown editor). Everything
 // else opens in a standalone code editor (a @joinezco/codeblock instance that
@@ -38,35 +40,13 @@ function isProseFile(path: string): boolean {
  * the scroll container.
  */
 function scrollEditorToTop(el: HTMLElement | null): void {
-    let node = el?.parentElement ?? null
-    while (node && node !== document.body) {
-        const oy = getComputedStyle(node).overflowY
-        if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') {
-            node.scrollTo({ top: 0 })
-            return
-        }
-        node = node.parentElement
-    }
-    const doc = (document.scrollingElement as HTMLElement | null) ?? document.documentElement
-    doc?.scrollTo({ top: 0 })
+    scrollContainerOf(el).scrollTo({ top: 0 })
 }
 
 /** CodeMirror language id for a (non-prose) file path. */
 function languageForPath(path: string): string {
     const ext = path.split('.').pop()?.toLowerCase() ?? ''
     return extOrLanguageToLanguageId[ext as ExtensionOrLanguage] ?? ext ?? 'plaintext'
-}
-
-/** Resolve the light/dark mode at `reference` (an explicit `data-theme` wins,
- *  otherwise the OS preference) so the swapped-in code editor matches the UI. */
-function isDarkContext(reference: Element | null): boolean {
-    const themed = reference?.closest?.('[data-theme]') as HTMLElement | null
-    const explicit = themed?.getAttribute('data-theme')
-    if (explicit === 'dark') return true
-    if (explicit === 'light') return false
-    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-        ? window.matchMedia('(prefers-color-scheme: dark)').matches
-        : false
 }
 
 /** Current Markdown serialization of the rich-text document. */
@@ -385,7 +365,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             if (themeAttr === 'dark' || themeAttr === 'light') {
                 host.setAttribute('data-theme', themeAttr)
             }
-            const dark = isDarkContext(editable)
+            const dark = isDarkMode(editable)
             // Match the embedded codeblocks' defaults: soft-wrap on, and the code
             // font nudged 2px below the prose size (monospace reads larger at an
             // equal px). Measured before the editable is hidden, below.

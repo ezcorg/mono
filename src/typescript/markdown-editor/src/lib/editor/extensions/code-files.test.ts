@@ -57,6 +57,12 @@ describe('Files that are not Markdown', () => {
         // Resolves with the file in the code view.
         await persistence.loadFile('main.ts')
         expect(persistence.codeView.state.doc.toString()).toBe('export const x = 1;\n')
+        // Shown as code, the file takes the editor's whole width: no gutter
+        // beside it, and no measure (the note's text column) to keep to.
+        const row = container.querySelector('.ezco-mde-content') as HTMLElement
+        const host = container.querySelector('.ezco-mde-body-host') as HTMLElement
+        expect(getComputedStyle(container.querySelector('.ezco-mde-gutter') as HTMLElement).display).toBe('none')
+        expect(Math.abs(host.getBoundingClientRect().width - row.getBoundingClientRect().width)).toBeLessThan(1)
         await autosave()
         expect(writes).toEqual([])
         persistence.codeView.dispatch({ changes: { from: 0, insert: '// edited\n' }, userEvent: 'input.type' })

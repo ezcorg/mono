@@ -10,6 +10,7 @@
  * and whether it auto-hides are all configurable.
  */
 import { Extension } from '@tiptap/core'
+import { isPageScroller, scrollContainerOf, type Mount } from '../ui/layout'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { ToolbarCore, type ToolbarHost, type HostCommand } from '@joinezco/codeblock'
 import type { FileOperations, FileSearch, VfsInterface } from '@joinezco/storage'
@@ -17,9 +18,7 @@ import type { SlashCommand } from './slash-commands'
 import { revealFragment } from './fragment'
 
 /** Where the toolbar DOM should be placed. */
-export type ToolbarMount =
-    | HTMLElement
-    | ((editorRoot: HTMLElement) => HTMLElement | null | void)
+export type ToolbarMount = Mount
 
 export interface ToolbarOptions {
     /** Virtual filesystem — enables browsing, opening and creating files. */
@@ -74,36 +73,16 @@ function matchCommands(commands: SlashCommand[], query: string, run: (command: S
 
 const RETRACTED_CLASS = 'ezco-mde-toolbar-retracted'
 
-/** Nearest scrollable ancestor of `el` (falls back to the document scroller). */
-function findScrollContainer(el: HTMLElement | null): HTMLElement {
-    let node = el?.parentElement ?? null
-    while (node && node !== document.body) {
-        // Match on overflow alone (not current scrollability) — this runs at
-        // editor-setup time, before content has made the container scrollable.
-        const oy = getComputedStyle(node).overflowY
-        if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') {
-            return node
-        }
-        node = node.parentElement
-    }
-    return (document.scrollingElement as HTMLElement | null) ?? document.documentElement
-}
-
 /**
  * Wire up the scroll/hover auto-hide for `panel` against the editor's scroll
  * container. Returns a cleanup function.
  */
 function setupAutoHide(panel: HTMLElement, editorRoot: HTMLElement | null, editableDom: HTMLElement): () => void {
-    const scroller = findScrollContainer(editorRoot ?? editableDom)
+    const scroller = scrollContainerOf(editorRoot ?? editableDom)
     const REVEAL_ZONE = 56 // px from the top of the scroller that reveals it
 
-    let lastTop = scroller === document.documentElement || scroller === document.scrollingElement
-        ? window.scrollY
-        : scroller.scrollTop
-    const scrollTopOf = () =>
-        scroller === document.documentElement || scroller === document.scrollingElement
-            ? window.scrollY
-            : scroller.scrollTop
+    const scrollTopOf = () => (isPageScroller(scroller) ? window.scrollY : scroller.scrollTop)
+    let lastTop = scrollTopOf()
 
     // Keep visible while the toolbar is being used (focused / showing results).
     const isActive = () => {
@@ -135,7 +114,7 @@ function setupAutoHide(panel: HTMLElement, editorRoot: HTMLElement | null, edita
     const onBlur = () => window.setTimeout(() => { if (scrollTopOf() > 6) retract() }, 120)
 
     const scrollTarget: EventTarget =
-        scroller === document.documentElement || scroller === document.scrollingElement ? window : scroller
+        isPageScroller(scroller) ? window : scroller
     scrollTarget.addEventListener('scroll', onScroll, { passive: true })
     scroller.addEventListener('mousemove', onMove)
     const input = panel.querySelector('.cm-toolbar-input')

@@ -25,7 +25,7 @@ import { BlockActions, BlockActionsOptions } from './extensions/block-actions';
 import { Folding } from './extensions/folding';
 import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
-import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
+import { BulletList, OrderedList, OrderedListStart, DashListKeymap } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import type { WikilinkOptions } from './extensions/wikilink';
@@ -35,6 +35,7 @@ import type { MathOptions } from './extensions/math';
 import type { ImageOptions } from './extensions/image';
 import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { Comments } from './extensions/comments';
+import { CommentMarks } from './extensions/comment-gutter';
 import { CommentMargin, type CommentLayout } from './extensions/comment-margin';
 import { RailToggle } from './extensions/rail';
 import { revealFragment } from './extensions/fragment';
@@ -371,14 +372,15 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         ExtendedLink.configure({}),
         ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver }, embeds: { render: innerSetup } }),
         StarterKit.configure({
-            // Our own code block (extensions/codeblock.ts), bullet list
-            // (extensions/lists.ts, disambiguated dash input), paragraph
+            // Our own code block (extensions/codeblock.ts), lists
+            // (extensions/lists.ts: markers, letters, kinds switched), paragraph
             // (survives blank-line runs across a Markdown round-trip), link
             // (extensions/link.ts, click-to-follow + inline editor), document
             // (room for front matter) and text (escaping) replace StarterKit's —
             // disable those so there are no duplicate-name clashes.
             codeBlock: false,
             bulletList: false,
+            orderedList: false,
             paragraph: false,
             link: false,
             document: false,
@@ -386,6 +388,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         }),
         Paragraph,
         BulletList,
+        OrderedList,
         OrderedListStart,
         DashListKeymap,
         // Real header anchors: each heading gets a slug `id` (DOM-only, via
@@ -456,6 +459,8 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         ...(options.comments !== false
             ? [
                 Comments.configure({ author: options.comments?.author, index: services.comments, reactions: services.reactions }),
+                // Each comment's mark in the gutter, when there is a gutter.
+                ...(blockActions !== false ? [CommentMarks] : []),
                 ...(options.comments?.margin !== false
                     ? [
                         CommentMargin.configure({
@@ -627,6 +632,7 @@ export { Span, parseSpanAttributes, formatSpanAttributes, type SpanAttributes } 
 export { Comments, commentsKey, commentAt, authorOf, commentFileName, commentsFolderFor, RESOLVED, DELETED_BODY } from './extensions/comments';
 export type { CommentsOptions, CommentsStorage, CommentTarget, CommentInfo, WebAnnotation } from './extensions/comments';
 export { CommentMargin, type CommentMarginOptions } from './extensions/comment-margin';
+export { CommentMarks } from './extensions/comment-gutter';
 export { Callout, CalloutTitle, calloutType } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';
@@ -643,7 +649,8 @@ export type { ExtendedCodeblockOptions } from './extensions/codeblock';
 export { ExtendedTaskItem } from './extensions/taskitem';
 export type { ExtendedTaskItemOptions } from './extensions/taskitem';
 export { Paragraph } from './extensions/paragraph';
-export { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
+export { BulletList, OrderedList, OrderedListStart, DashListKeymap, retypeListItem, orderedLabel, letterIndex } from './extensions/lists';
+export type { ListTarget } from './extensions/lists';
 export { HeadingAnchors } from './extensions/heading-anchors';
 export { InlineCodeExit } from './extensions/inline-code';
 export { WrapSelection } from './extensions/wrap-selection';

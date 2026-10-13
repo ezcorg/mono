@@ -106,8 +106,10 @@ class SlashCommandsView {
         this.allowSpaces = allowSpaces
         this.startOfLine = startOfLine
 
-        this.editor.on('selectionUpdate', this.selectionUpdate.bind(this))
-        this.editor.on('update', this.selectionUpdate.bind(this))
+        // Bound once: what `destroy` takes off must be what went on.
+        this.selectionUpdate = this.selectionUpdate.bind(this)
+        this.editor.on('selectionUpdate', this.selectionUpdate)
+        this.editor.on('update', this.selectionUpdate)
     }
 
     selectionUpdate() {

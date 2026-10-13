@@ -5,12 +5,12 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
+import { coverGlyphs } from './comment-gutter'
+import type { Mount } from '../ui/layout'
 
 /** Where the block-action indicator should mount (same shape as the toolbar /
  *  sidebar `mount`). */
-export type BlockActionsMount =
-    | HTMLElement
-    | ((editorRoot: HTMLElement) => HTMLElement | null | void)
+export type BlockActionsMount = Mount
 
 export interface BlockActionsOptions {
     /**
@@ -65,12 +65,66 @@ const TYPE_ICONS: Record<string, string> = {
     image: '🖼',
 }
 
-function iconForNode(node: PMNode): string {
-    if (node.type.name === 'heading') {
-        const level = (node.attrs as { level?: number }).level ?? 1
-        return `H${level}`
+/** A task list's glyph in the gutter: a box the size of its checkboxes
+ *  (`--ezco-mde-checkbox-size`, an em of the list's text, which the glyph
+ *  is set in). */
+const TASK_ICON =
+    '<svg class="ezco-mde-block-icon-box" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'
+
+/** A paragraph's glyph in the gutter: a pilcrow drawn as tall as the
+ *  text's capitals (`--ezco-mde-block-icon-cap`, measured from the face),
+ *  standing on the text's baseline: it is set inline on a line of the
+ *  text's own, which the glyph's font makes. The face's own ¶ would hang
+ *  below the line, as a descender does. */
+const PARA_ICON =
+    '<span class="ezco-mde-block-icon-line"><svg viewBox="1.5 0 10.5 16" aria-hidden="true"><path d="M12 0v16h-2V2H8v14H6V9a4.5 4.5 0 1 1 0-9z"/></svg></span>'
+
+/** How tall the capitals of text set in `font` are, from the face itself.
+ *  Measured once per font; again once the faces have loaded. */
+const caps = new Map<string, number>()
+let capsCanvas: CanvasRenderingContext2D | null | undefined
+if (typeof document !== 'undefined') document.fonts?.addEventListener('loadingdone', () => caps.clear())
+function capHeight(font: string): number {
+    let cap = caps.get(font)
+    if (cap === undefined) {
+        capsCanvas ??= document.createElement('canvas').getContext('2d')
+        if (capsCanvas) {
+            capsCanvas.font = font
+            cap = capsCanvas.measureText('H').actualBoundingBoxAscent
+        }
+        if (!cap || !Number.isFinite(cap)) cap = (parseFloat(font) || 16) * 0.7
+        caps.set(font, cap)
     }
-    return TYPE_ICONS[node.type.name] ?? '·'
+    return cap
+}
+
+/** The types whose glyph is the block's own first marker (or its text's
+ *  pilcrow), set in the text's face and size so the two read as one. */
+const TEXTUAL = new Set(['paragraph', 'bulletList', 'orderedList', 'taskList', 'blockquote'])
+
+/** What stands for `node` in the gutter: a heading's level, a list's first
+ *  marker as the list draws it (`•`, `–`, `3.`, `b)`), a box for a task
+ *  list, the type's glyph otherwise. */
+function iconForNode(node: PMNode): string {
+    const attrs = node.attrs as { level?: number; marker?: string; start?: number; type?: string; delimiter?: string }
+    switch (node.type.name) {
+        case 'heading':
+            return `H${attrs.level ?? 1}`
+        case 'bulletList':
+            return attrs.marker === 'dash' ? '–' : '•'
+        case 'orderedList':
+            return `${orderedMarker(attrs.start ?? 1, attrs.type ?? null)}${attrs.delimiter ?? '.'}`
+        default:
+            return TYPE_ICONS[node.type.name] ?? '·'
+    }
+}
+
+/** `n` as an ordered list of `type` counts it: `3`, `c`, `C`. */
+function orderedMarker(n: number, type: string | null): string {
+    if (type !== 'a' && type !== 'A') return String(n)
+    let s = ''
+    for (let k = Math.max(1, n); k > 0; k = Math.floor((k - 1) / 26)) s = String.fromCharCode(97 + ((k - 1) % 26)) + s
+    return type === 'A' ? s.toUpperCase() : s
 }
 
 /**
@@ -125,6 +179,12 @@ function computeIconOffsetY(dom: HTMLElement): number {
  * (e.g. an empty block, an `<hr>`, an image).
  */
 function firstTextLineRect(root: HTMLElement): DOMRect | null {
+    return firstTextLine(root)?.rect ?? null
+}
+
+/** The first character of the first text in `root`: its rect, and the
+ *  element it is set in. */
+function firstTextLine(root: HTMLElement): { rect: DOMRect; element: HTMLElement } | null {
     if (typeof document === 'undefined') return null
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
@@ -134,7 +194,7 @@ function firstTextLineRect(root: HTMLElement): DOMRect | null {
         },
     } as NodeFilter)
     const textNode = walker.nextNode() as Text | null
-    if (!textNode || !textNode.textContent) return null
+    if (!textNode || !textNode.textContent || !textNode.parentElement) return null
     try {
         const range = document.createRange()
         range.setStart(textNode, 0)
@@ -142,11 +202,51 @@ function firstTextLineRect(root: HTMLElement): DOMRect | null {
         // Prefer the first client rect over the union bounding box so
         // we don't pick up a wrapped second line's height.
         const rects = range.getClientRects()
-        if (rects.length > 0) return rects[0] as DOMRect
-        return range.getBoundingClientRect()
+        const rect = rects.length > 0 ? (rects[0] as DOMRect) : range.getBoundingClientRect()
+        return { rect, element: textNode.parentElement }
     } catch {
         return null
     }
+}
+
+/** The box of a block's first line: where it is and how tall (the line
+ *  box, leading included), and the face it is set in: those of the block
+ *  the first text is laid out in (a `p`, not the `strong` the text may
+ *  start with), whose first line starts at the top of its content. Not
+ *  the first character's box: an engine splits a line's leading to the
+ *  pixel, so the character can stand half a pixel off the line's middle,
+ *  and a glyph centred on it stood that much off the text. Null for a
+ *  block with no text. */
+function firstLineBox(dom: HTMLElement): { top: number; height: number; font: string } | null {
+    const line = firstTextLine(dom)
+    const element = line?.element ?? (dom.matches('p, h1, h2, h3, h4, h5, h6, li, blockquote, ul, ol') ? findFirstTextElement(dom) : null)
+    if (!element) return null
+    const block = blockOf(element, dom)
+    const computed = getComputedStyle(block)
+    const fontSize = parseFloat(computed.fontSize) || 16
+    let lineHeight = parseFloat(computed.lineHeight)
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) lineHeight = fontSize * 1.2
+    const top = block.getBoundingClientRect().top + (parseFloat(computed.borderTopWidth) || 0) + (parseFloat(computed.paddingTop) || 0)
+    return { top, height: lineHeight, font: `${fontSize}px/${lineHeight}px ${computed.fontFamily}` }
+}
+
+/** The displays that lay their text out in lines of their own. */
+const LINE_BOXES = new Set(['block', 'list-item', 'flex', 'grid', 'flow-root', 'table-cell', 'table-caption'])
+
+/** The element whose lines `element` is laid out in: itself, or the
+ *  nearest ancestor within `root` that makes line boxes (an inline, or an
+ *  inline-block such as a chip, does not). */
+function blockOf(element: HTMLElement, root: HTMLElement): HTMLElement {
+    for (let el: HTMLElement | null = element; el; el = el.parentElement) {
+        if (el === root || LINE_BOXES.has(getComputedStyle(el).display)) return el
+    }
+    return root
+}
+
+/** How big a task list draws its checkboxes, to draw the box the same. */
+function checkboxSize(dom: HTMLElement): number | null {
+    const box = dom.querySelector<HTMLElement>(':scope > li > label > input')?.getBoundingClientRect()
+    return box?.height ? box.height : null
 }
 
 function findFirstTextElement(root: HTMLElement): HTMLElement | null {
@@ -345,7 +445,8 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
                 { label: 'Heading 3', icon: 'H3', run: ({ editor }) => editor.chain().focus().setHeading({ level: 3 }).run() },
                 { label: 'Bullet list', icon: '•', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run() },
                 { label: 'Dashed list', icon: '–', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run() },
-                { label: 'Ordered list', icon: '1.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().run() },
+                { label: 'Numbered list', icon: '1.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: null }).run() },
+                { label: 'Lettered list', icon: 'a.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: 'a' }).run() },
                 { label: 'Task list', icon: '☐', run: ({ editor }) => editor.chain().focus().toggleTaskList().run() },
                 { label: 'Quote', icon: '"', run: ({ editor }) => editor.chain().focus().toggleBlockquote().run() },
                 remove,
@@ -374,25 +475,34 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
                 : { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) }
             return [
                 markerSwap,
-                { label: 'Ordered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' }) },
                 { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
                 { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
         }
-        case 'orderedList':
+        case 'orderedList': {
+            // Numbers or letters: the other is offered.
+            const lettered = (node.attrs as { type?: string | null }).type === 'a' || (node.attrs as { type?: string | null }).type === 'A'
+            const countSwap: BlockAction = lettered
+                ? { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: null }) }
+                : { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: 'a' }) }
             return [
+                countSwap,
                 { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
                 { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
                 { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
                 { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
+        }
         case 'taskList':
             return [
                 { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
                 { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
-                { label: 'Ordered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' }) },
                 {
                     label: 'Mark all complete',
                     icon: '☑',
@@ -557,6 +667,9 @@ class BlockActionsView {
     // instead), and the handle to its menu. A fold's glyph opens the fold.
     private icons: HTMLButtonElement[] = []
     private iconsFrame = 0
+    /** The blocks a selection spans (positions of its first and last), while
+     *  the indicator stands for them all: their own glyphs fold into its star. */
+    private span: { from: number; to: number } | null = null
 
     constructor(view: EditorView, editor: Editor, options: BlockActionsOptions) {
         this.view = view
@@ -672,15 +785,20 @@ class BlockActionsView {
         })
     }
 
-    /** A glyph level with the first line of each top-level block (one for a
-     *  fold, at its line), the active block's hidden behind the indicator. */
+    /** A glyph for each top-level block (one for a fold, at its line), the
+     *  box of its first line: as tall as the line, centred on it, and, for
+     *  a paragraph, a list or a quote, in the line's own face and size, so
+     *  a pilcrow stands as the text does and a bullet as the list's first
+     *  bullet. A heading's level and a code block's `</>` keep the chrome's
+     *  small label. The active block's glyph stands beside the indicator;
+     *  the blocks a selection spans fold their glyphs into its star. */
     private layoutIcons() {
         if (!this.view.dom.isConnected) return
         const { doc } = this.view.state
         const folds = foldsOf(this.view.state)
         const wrapperRect = this.wrapper.getBoundingClientRect()
         const base = this.wrapper.scrollTop - wrapperRect.top
-        type Entry = { glyph: string; top: number; pos: number; type: string; fold: Fold | null }
+        type Entry = { glyph: string; top: number; height: number; font: string; pos: number; type: string; fold: Fold | null }
         const entries: Entry[] = []
         doc.forEach((node, offset) => {
             const fold = folds.find((f) => offset >= f.from && offset < f.to)
@@ -689,17 +807,22 @@ class BlockActionsView {
                 const line = this.view.dom.querySelector<HTMLElement>(`.ezco-mde-fold[data-from="${fold.from}"]`)
                 if (!line) return
                 const rect = line.getBoundingClientRect()
-                entries.push({ glyph: FOLD_ICON, top: rect.top + base + Math.max(0, Math.round(rect.height / 2 - 6.5)), pos: offset, type: 'fold', fold })
+                entries.push({ glyph: FOLD_ICON, top: rect.top + base, height: rect.height, font: '', pos: offset, type: 'fold', fold })
                 return
             }
             const dom = this.view.nodeDOM(offset) as HTMLElement | null
             if (!dom || typeof dom.getBoundingClientRect !== 'function') return
             const rect = dom.getBoundingClientRect()
             if (!rect.height) return
-            entries.push({ glyph: iconForNode(node), top: rect.top + base + computeIconOffsetY(dom), pos: offset, type: node.type.name, fold: null })
+            const type = node.type.name
+            const line = firstLineBox(dom)
+            const glyph = type === 'taskList' ? TASK_ICON : type === 'paragraph' ? PARA_ICON : iconForNode(node)
+            if (line) entries.push({ glyph, top: line.top + base, height: line.height, font: TEXTUAL.has(type) ? line.font : '', pos: offset, type, fold: null })
+            else entries.push({ glyph, top: rect.top + base + computeIconOffsetY(dom) - 3, height: 20, font: '', pos: offset, type, fold: null })
         })
         while (this.icons.length > entries.length) this.icons.pop()!.remove()
         const activeShown = this.btn.style.opacity === '1' && this.activePos >= 0
+        const span = this.btn.style.opacity === '1' ? this.span : null
         entries.forEach((entry, i) => {
             let icon = this.icons[i]
             if (!icon) {
@@ -718,23 +841,40 @@ class BlockActionsView {
             }
             icon.dataset.pos = String(entry.pos)
             icon.dataset.blockType = entry.type
-            if (icon.textContent !== entry.glyph) icon.textContent = entry.glyph
+            if (icon.dataset.glyph !== entry.glyph) {
+                icon.dataset.glyph = entry.glyph
+                if (entry.glyph.startsWith('<')) icon.innerHTML = entry.glyph
+                else icon.textContent = entry.glyph
+            }
             const title = entry.fold ? 'Unfold' : 'Block actions'
             if (icon.title !== title) {
                 icon.title = title
                 icon.setAttribute('aria-label', title)
             }
-            const top = `${Math.round(entry.top)}px`
+            // Where the line is, to the subpixel: a bullet rounded to the
+            // pixel stood a hair under the list's own.
+            const top = `${entry.top.toFixed(2)}px`
             if (icon.style.top !== top) icon.style.top = top
+            const height = `${entry.height.toFixed(2)}px`
+            if (icon.style.height !== height) icon.style.height = height
+            if (icon.style.font !== entry.font) icon.style.font = entry.font
+            const box = entry.type === 'taskList' ? checkboxSize(this.view.nodeDOM(entry.pos) as HTMLElement) : null
+            const size = box ? `${box}px` : ''
+            if (icon.style.getPropertyValue('--ezco-mde-block-icon-size') !== size) icon.style.setProperty('--ezco-mde-block-icon-size', size)
+            const cap = entry.type === 'paragraph' && entry.font ? `${capHeight(entry.font).toFixed(2)}px` : ''
+            if (icon.style.getPropertyValue('--ezco-mde-block-icon-cap') !== cap) icon.style.setProperty('--ezco-mde-block-icon-cap', cap)
             icon.classList.toggle('is-fold', !!entry.fold)
             icon.classList.toggle('is-active', !entry.fold && activeShown && entry.pos === this.activePos)
+            icon.classList.toggle('is-spanned', !!span && entry.pos >= span.from && entry.pos <= span.to)
             if (this.columnMode) {
-                if (icon.style.right !== '16px') {
-                    icon.style.right = '16px'
+                if (icon.style.right !== '14px') {
+                    icon.style.right = '14px'
                     icon.style.left = 'auto'
                 }
-            } else if (icon.style.left !== '-40px') icon.style.left = '-40px'
+            } else if (icon.style.left !== '-42px') icon.style.left = '-42px'
         })
+        // A glyph on a line a comment's mark stands on gives way to it.
+        coverGlyphs(this.wrapper)
     }
 
     /** A glyph clicked: a fold's opens the fold; a block's makes the block
@@ -910,6 +1050,17 @@ class BlockActionsView {
 
         this.activeNode = null
         this.activePos = -1
+        if (this.span?.from !== span.fromBlockPos || this.span.to !== span.toBlockPos) {
+            this.span = { from: span.fromBlockPos, to: span.toBlockPos }
+            this.scheduleIcons()
+        }
+    }
+
+    /** The indicator stands for one block (or none): the spanned glyphs come back. */
+    private unspan() {
+        if (!this.span) return
+        this.span = null
+        this.scheduleIcons()
     }
 
     /** Build the menu for a multi-block selection: only the block
@@ -941,7 +1092,8 @@ class BlockActionsView {
         add('Paragraph', '¶', editor.can().setParagraph(), () => editor.chain().focus().setParagraph().run())
         add('Bullet list', '•', editor.can().toggleBulletList(), () => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run())
         add('Dashed list', '–', editor.can().toggleBulletList(), () => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run())
-        add('Ordered list', '1.', editor.can().toggleOrderedList(), () => editor.chain().focus().toggleOrderedList().run())
+        add('Numbered list', '1.', editor.can().toggleOrderedList(), () => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: null }).run())
+        add('Lettered list', 'a.', editor.can().toggleOrderedList(), () => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: 'a' }).run())
         add('Task list', '☐', editor.can().toggleTaskList(), () => editor.chain().focus().toggleTaskList().run())
         add('Quote', '"', editor.can().toggleBlockquote(), () => editor.chain().focus().toggleBlockquote().run())
 
@@ -1008,6 +1160,7 @@ class BlockActionsView {
                 this.btn.style.opacity = '0'
                 this.scheduleIcons()
             }
+            this.unspan()
             return
         }
 
@@ -1019,6 +1172,7 @@ class BlockActionsView {
             this.positionSpanning(span)
             return
         }
+        this.unspan()
 
         const resolved = this.resolveActiveBlock()
         if (!resolved) {

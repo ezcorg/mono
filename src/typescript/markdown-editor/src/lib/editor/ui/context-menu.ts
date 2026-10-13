@@ -17,6 +17,9 @@ export interface ContextMenuItem {
     label: string
     icon?: string
     disabled?: boolean
+    /** A setting rather than an action: on or off, shown as a switch at
+     *  the item's end (`role="menuitemcheckbox"`); `onSelect` turns it. */
+    checked?: boolean
     onSelect: () => void
 }
 
@@ -141,6 +144,14 @@ export class ContextMenu {
             label.className = 'ezco-mde-context-menu-item-label'
             label.textContent = item.label
             btn.appendChild(label)
+            if (item.checked !== undefined) {
+                btn.setAttribute('role', 'menuitemcheckbox')
+                btn.setAttribute('aria-checked', String(item.checked))
+                const state = document.createElement('span')
+                state.className = 'ezco-mde-context-menu-switch'
+                state.setAttribute('aria-hidden', 'true')
+                btn.appendChild(state)
+            }
 
             // macOS-style single highlight: pointing at a row *selects* it
             // (moves DOM focus to it) rather than lighting up a second row

@@ -57,17 +57,17 @@ the dangling links a set kept as resolutions change.
 ## Comments
 
 A comment is a document that references a range of another document. Any
-note may hold **references**: a line of a top-level paragraph that is
-exactly one embed, `![[Plan#:~:text=ship%20it]]`, whose fragment is a text
-fragment (the anchor `textFragmentFor` makes and `findTextFragment` finds),
-a pin (`c-…`), a block id (`^abc`), a heading, or absent for the whole
-document. The Markdown under the embed, up to the next reference, the next
-top-level heading or the end, is the comment's **body**; an embed with no
-body is a transclusion, not a comment. Written back, a blank line separates
-the two (the embed is a paragraph of its own in any Markdown editor); read,
-the blank line is optional. Code never starts or ends a reference, nor
-does an embed or a heading inside a quote or a list: the parse is the
-editor's.
+note may hold **references**: an embed at the start of a line of a
+top-level paragraph, `![[Plan#:~:text=ship%20it]]`, whose fragment is a
+text fragment (the anchor `textFragmentFor` makes and `findTextFragment`
+finds), a pin (`c-…`), a block id (`^abc`), a heading, or absent for the
+whole document. Everything after the embed, the rest of its line and the
+Markdown under it up to the next reference or the end, is the comment's
+**body**; an embed with no body is a transclusion, not a comment. Written
+back, a blank line separates the two (the embed is a paragraph of its own
+in any Markdown editor); read, nothing has to: the body may follow on the
+embed's own line. Code never starts a reference, nor does an embed inside
+a quote or a list: the parse is the editor's.
 
 ```markdown
 ![[Plan#:~:text=ship%20it]]

@@ -21,11 +21,10 @@ import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { computeHeadingSlugs } from './slug-utils'
 import { mountInRail } from './rail'
+import { isPageScroller, scrollContainerOf, scrollerOf, type Mount } from '../ui/layout'
 
 /** Where the sidebar DOM should be placed (same shape as `ToolbarMount`). */
-export type SidebarMount =
-    | HTMLElement
-    | ((editorRoot: HTMLElement) => HTMLElement | null | void)
+export type SidebarMount = Mount
 
 export interface SidebarOptions {
     /**
@@ -114,17 +113,6 @@ function outlineSignature(
         .join('\n')
 }
 
-/** Nearest scrollable ancestor of `el` (falls back to the document scroller). */
-function findScrollContainer(el: HTMLElement | null): HTMLElement {
-    let node = el?.parentElement ?? null
-    while (node && node !== document.body) {
-        const oy = getComputedStyle(node).overflowY
-        if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') return node
-        node = node.parentElement
-    }
-    return (document.scrollingElement as HTMLElement | null) ?? document.documentElement
-}
-
 class SidebarView {
     private nav: HTMLElement
     private unmount: () => void = () => {}
@@ -168,12 +156,8 @@ class SidebarView {
         this.mount(options.mount)
 
         // Active-section tracking follows the editor's scroll container.
-        this.scroller = findScrollContainer(
-            (view.dom.parentElement as HTMLElement | null) ?? (view.dom as HTMLElement),
-        )
-        const docScroller = this.scroller === document.documentElement ||
-            this.scroller === document.scrollingElement
-        this.scrollTarget = docScroller ? window : this.scroller
+        this.scroller = scrollContainerOf((view.dom.parentElement as HTMLElement | null) ?? (view.dom as HTMLElement))
+        this.scrollTarget = isPageScroller(this.scroller) ? window : this.scroller
         this.onScroll = () => {
             if (this.pinned !== null && Date.now() >= this.pinUntil) this.scrolledSincePin = true
             if (this.rafPending) return
@@ -308,10 +292,7 @@ class SidebarView {
             }
             this.pinned = null
         }
-        const scrollerTop = this.scroller === document.documentElement ||
-            this.scroller === document.scrollingElement
-            ? 0
-            : this.scroller.getBoundingClientRect().top
+        const scrollerTop = isPageScroller(this.scroller) ? 0 : this.scroller.getBoundingClientRect().top
         // The "top of the readable area" sits below any sticky chrome the consumer
         // pins over the scroll start — which is exactly the headings'
         // `scroll-margin-top` (where a clicked anchor lands). Use it so the
@@ -352,13 +333,7 @@ class SidebarView {
     /** The lit entry in view in the outline's own scroller (the rail), when
      *  the outline is longer than it: never by moving the note. */
     private keepInView(row: HTMLElement) {
-        let scroller: HTMLElement | null = null
-        for (let node = this.nav.parentElement; node && node !== document.body; node = node.parentElement) {
-            if (/(auto|scroll|overlay)/.test(getComputedStyle(node).overflowY)) {
-                scroller = node
-                break
-            }
-        }
+        const scroller = scrollerOf(this.nav)
         if (!scroller || scroller === this.scroller || scroller.scrollHeight <= scroller.clientHeight) return
         const frame = scroller.getBoundingClientRect()
         const box = row.getBoundingClientRect()

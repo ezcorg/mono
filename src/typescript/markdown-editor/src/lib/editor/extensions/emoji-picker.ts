@@ -1,6 +1,8 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
+import { FACE_ICON } from '../ui/icons'
+import { readKept, writeKept } from '../ui/kept'
 
 /**
  * Emoji picker.
@@ -85,7 +87,7 @@ const RECENT_MAX = 27 // 3 rows
 /** The emoji picked most recently, newest first (this browser's). */
 export function recentEmoji(): string[] {
     try {
-        const raw = localStorage.getItem(RECENT_KEY)
+        const raw = readKept(RECENT_KEY)
         const list = raw ? (JSON.parse(raw) as unknown) : []
         return Array.isArray(list) ? list.filter((e): e is string => typeof e === 'string').slice(0, RECENT_MAX) : []
     } catch {
@@ -95,11 +97,7 @@ export function recentEmoji(): string[] {
 
 /** Note that `emoji` was picked, so it comes first next time. */
 export function rememberEmoji(emoji: string): void {
-    try {
-        localStorage.setItem(RECENT_KEY, JSON.stringify([emoji, ...recentEmoji().filter((e) => e !== emoji)].slice(0, RECENT_MAX)))
-    } catch {
-        // Nothing to remember with: the picker works the same.
-    }
+    writeKept(RECENT_KEY, JSON.stringify([emoji, ...recentEmoji().filter((e) => e !== emoji)].slice(0, RECENT_MAX)))
 }
 
 /** The reactions a conversation reaches for first (GitHub's set). */
@@ -443,57 +441,80 @@ export function openEmojiPicker(anchor: HTMLElement, onPick: (emoji: string) => 
     return close
 }
 
+/** Reactions offered in a grid, before the whole picker. */
+const REACTIONS_OFFERED = 9
+
+export interface ReactionGridOptions {
+    /** The reader's own reactions, marked. */
+    mine?: Set<string>
+    /** One picked (what held the grid is closed first). */
+    onPick: (emoji: string) => void
+    /** What the whole picker opens by when the last cell is pressed. */
+    anchor: HTMLElement
+    /** Closes what holds the grid (a menu, a popover). */
+    close: () => void
+}
+
 /**
- * What a reaction is picked from: the common reactions and the ones picked
- * recently, one row, and "More" for the whole grid with search (recents
- * first there too). Picking closes it.
+ * The reactions to give, as a grid: the ones given recently and the common
+ * ones, two rows of them, the last cell opening the whole picker (with
+ * search) by `anchor`. The reader's own are marked. The same grid stands at
+ * the top of a bubble's menu and under its React button.
  */
-export function openReactionPicker(anchor: HTMLElement, onPick: (emoji: string) => void): () => void {
+export function reactionGrid({ mine, onPick, anchor, close }: ReactionGridOptions): HTMLElement {
+    const grid = document.createElement('div')
+    grid.className = 'ezco-mde-reaction-grid'
+    grid.setAttribute('role', 'group')
+    grid.setAttribute('aria-label', 'React')
+    const seen = new Set<string>()
+    const offered = [...recentEmoji(), ...QUICK_REACTIONS].filter((e) => !seen.has(e) && seen.add(e)).slice(0, REACTIONS_OFFERED)
+    const cell = (label: string, pressed: boolean | null, pick: () => void) => {
+        const b = document.createElement('button')
+        b.type = 'button'
+        b.className = 'ezco-mde-emoji-cell'
+        b.title = label
+        b.setAttribute('aria-label', label)
+        if (pressed !== null) b.setAttribute('aria-pressed', String(pressed))
+        b.addEventListener('mousedown', (e) => e.preventDefault())
+        b.addEventListener('click', (e) => {
+            e.stopPropagation()
+            pick()
+        })
+        return b
+    }
+    for (const emoji of offered) {
+        const b = cell(`React ${emoji}`, !!mine?.has(emoji), () => {
+            close()
+            rememberEmoji(emoji)
+            onPick(emoji)
+        })
+        b.textContent = emoji
+        grid.append(b)
+    }
+    const more = cell('More emoji', null, () => {
+        close()
+        openEmojiPicker(anchor, (emoji) => {
+            rememberEmoji(emoji)
+            onPick(emoji)
+        })
+    })
+    more.classList.add('is-more')
+    more.innerHTML = FACE_ICON
+    grid.append(more)
+    return grid
+}
+
+/**
+ * The reaction grid as a popover by `anchor` (the React button): the same
+ * grid as the menu's, on the chrome's surface. Picking closes it; so does
+ * Escape or a click elsewhere. Returns the way to close it early.
+ */
+export function openReactionPicker(anchor: HTMLElement, onPick: (emoji: string) => void, mine?: Set<string>): () => void {
     const root = document.createElement('div')
     root.className = 'ezco-mde-reactions'
-    root.setAttribute('role', 'listbox')
-    root.setAttribute('aria-label', 'React')
-    const seen = new Set<string>()
-    const quick = [...QUICK_REACTIONS, ...recentEmoji()].filter((e) => !seen.has(e) && seen.add(e)).slice(0, QUICK_REACTIONS.length + 4)
     let close = () => {}
-    const done = (emoji: string) => {
-        close()
-        rememberEmoji(emoji)
-        onPick(emoji)
-    }
-    for (const emoji of quick) {
-        const cell = document.createElement('button')
-        cell.type = 'button'
-        cell.className = 'ezco-mde-emoji-cell'
-        cell.textContent = emoji
-        cell.setAttribute('role', 'option')
-        cell.setAttribute('aria-label', `React ${emoji}`)
-        cell.addEventListener('mousedown', (e) => e.preventDefault())
-        cell.addEventListener('click', () => done(emoji))
-        root.append(cell)
-    }
-    const more = document.createElement('button')
-    more.type = 'button'
-    more.className = 'ezco-mde-emoji-more'
-    more.textContent = '…'
-    more.title = 'More emoji'
-    more.setAttribute('aria-label', 'More emoji')
-    more.addEventListener('mousedown', (e) => e.preventDefault())
-    more.addEventListener('click', () => {
-        // The whole grid takes the popover's place: recents, then a search.
-        const menu = new EmojiMenu({ search: true, onPick: done, onClose: () => close() })
-        menu.query('')
-        root.replaceChildren(menu.dom)
-        root.classList.add('is-full')
-        popup.update()
-        menu.focus()
-    })
-    root.append(more)
-    // The first reaction takes focus once shown, unless the whole grid was
-    // asked for meanwhile (its search field has it then).
-    const popup = popover(anchor, root, () => {
-        if (!root.classList.contains('is-full')) (root.querySelector('button') as HTMLButtonElement | null)?.focus()
-    })
+    root.append(reactionGrid({ mine, anchor, close: () => close(), onPick }))
+    const popup = popover(anchor, root, () => (root.querySelector('button') as HTMLButtonElement | null)?.focus())
     close = popup.close
     return close
 }

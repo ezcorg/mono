@@ -21,7 +21,8 @@ import type { VfsInterface } from '@joinezco/storage'
 import { referencesIn, type Wikilink } from '@joinezco/vault'
 import { fallbackExtensions, when } from './comment-render'
 import { authorOf } from './comments'
-import { scrollerOf } from './rail'
+import { CLOSE_ICON, FILE_ICON } from '../ui/icons'
+import { scrollerOf } from '../ui/layout'
 
 export interface SheetOptions {
     /** The note's editor: the sheet sits over its edge, and links followed
@@ -39,11 +40,6 @@ export interface SheetOptions {
     onClose: () => void
 }
 
-const CLOSE_ICON =
-    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4 4l8 8M12 4l-8 8"/></svg>'
-/** The comment's file, opened as the note: a document. */
-const FILE_ICON =
-    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M4 2.5h5l3 3v8H4zM9 2.5v3h3M6 8.5h4M6 11h4"/></svg>'
 
 /** How long the pointer is gone before the sheet moves aside. */
 const REST_AFTER = 350

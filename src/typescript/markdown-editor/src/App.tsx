@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
 import { browserVfs } from '@joinezco/storage/browser';
 import { Vault } from '@joinezco/vault';
+import '../fonts/source-serif-4.css'
 import './App.css'
 import { file } from './example';
-
-type Variant = 'custom' | 'default';
 
 /** Where the window's width is kept between reloads. */
 const WIDTH_KEY = 'ezco-demo-window-width';
@@ -55,17 +54,15 @@ function useResizableWidth() {
 }
 
 /** A simulated macOS window — the editor renders inside it as the
- *  fullscreen input component. The variant drives the chrome's styling.
- *  The library's file-search toolbar is mounted into the titlebar (in place
- *  of a window title) via `toolbarMountRef`. */
+ *  fullscreen input component. The library's file-search toolbar is
+ *  mounted into the titlebar (in place of a window title) via
+ *  `toolbarMountRef`. */
 function MacWindow({
-  variant,
   toolbarMountRef,
   titlebarExtra,
   size,
   children,
 }: {
-  variant: Variant;
   toolbarMountRef: React.Ref<HTMLDivElement>;
   titlebarExtra?: React.ReactNode;
   size: ReturnType<typeof useResizableWidth>;
@@ -84,7 +81,7 @@ function MacWindow({
   );
   return (
     <div
-      className={`mac-window mac-window--${variant}`}
+      className="mac-window"
       style={size.width === null ? undefined : ({ '--mac-window-width': `${size.width}px` } as React.CSSProperties)}
     >
       {edge('left')}
@@ -179,13 +176,11 @@ function hashOf(text: string): string {
 
 function App() {
   const [markdownContent, setMarkdownContent] = useState('');
-  const [variant, setVariant] = useState<Variant>('default');
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
   const size = useResizableWidth();
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MarkdownEditor | null>(null);
   const toolbarMountRef = useRef<HTMLDivElement>(null);
-  const sidebarMountRef = useRef<HTMLDivElement>(null);
 
   // The demo's files (the package's own source, as a snapshot) as a vault:
   // one index behind the palette's search, wikilinks, backlinks and renames.
@@ -193,9 +188,7 @@ function App() {
     return new Vault(await browserVfs('codeblock', { snapshot: '/snapshot.bin' }), { identity: 'theo' });
   }
 
-  // Create the editor once. The custom/default distinction is purely
-  // presentational (CSS scoped to the window's variant class), so toggling
-  // variants doesn't recreate the editor.
+  // Create the editor once.
   useEffect(() => {
     let cancelled = false;
     let ed: MarkdownEditor | null = null;
@@ -239,12 +232,10 @@ function App() {
           autoHide: false,
           className: 'mac-titlebar-search',
         },
-        // The vault's files and the document's outline, in the window's left column.
-        fileTree: { mount: () => sidebarMountRef.current },
-        sidebar: {
-          mount: () => sidebarMountRef.current,
-          title: 'Document',
-        },
+        // The vault's files and the document's outline, in the editor's own
+        // column beside the note (the rail), so they sit against the text.
+        fileTree: {},
+        sidebar: { title: 'Document' },
         // Unnamed fences get a stand-in file in the demo's own vault.
         codeblock: { standIns: true },
         // Threads in the note, and in other notes of the vault, in the margin.
@@ -284,34 +275,9 @@ function App() {
           <code>@joinezco/markdown-editor</code>
           <span className="dev-subtitle">live preview</span>
         </div>
-        <div className="variant-toggle" role="tablist" aria-label="Editor styling">
-          <button
-            role="tab"
-            aria-selected={variant === 'custom'}
-            className={variant === 'custom' ? 'is-active' : ''}
-            onClick={() => setVariant('custom')}
-          >
-            Custom
-          </button>
-          <button
-            role="tab"
-            aria-selected={variant === 'default'}
-            className={variant === 'default' ? 'is-active' : ''}
-            onClick={() => setVariant('default')}
-          >
-            Default
-          </button>
-        </div>
       </header>
 
-      <p className="dev-note">
-        {variant === 'custom'
-          ? 'A heavily-themed instance — how far the editor can be styled inside a native window.'
-          : 'The unstyled, out-of-the-box editor.'}
-      </p>
-
       <MacWindow
-        variant={variant}
         toolbarMountRef={toolbarMountRef}
         titlebarExtra={<ThemeToggle mode={themeMode} onChange={setThemeMode} />}
         size={size}
@@ -321,15 +287,9 @@ function App() {
             (which sits to the left of the editor element) has room. The
             search toolbar lives up in the titlebar (see MacWindow). */}
         <div className="mac-body">
-          {/* A flex row INSIDE the scroller, so the sticky sidebar column spans
-              the editor's full scroll height (a flex item placed directly in
-              the scroller is clipped to one viewport and scrolls away). */}
-          <div className="mac-body-row">
-            <div className="mac-sidebar" ref={sidebarMountRef} />
-            {/* The block-action gutter is now a default *inside* the editor —
-                the library's `.ezco-mde` wrapper owns it. */}
-            <div className="mac-editor" ref={editorBodyRef} />
-          </div>
+          {/* The editor owns the row inside: its rail (the outline, the file
+              tree), the block-action gutter, the note and the comments. */}
+          <div className="mac-editor" ref={editorBodyRef} />
         </div>
       </MacWindow>
 

@@ -120,8 +120,9 @@ export const styleModule: StyleModule = new StyleModule({
         'align-self': 'flex-start',
         position: 'sticky',
         top: 0,
-        // Over the gutter beside it, so its fold's chevron can be reached.
-        'z-index': 3,
+        // Over the gutter beside it (its glyphs are at 4, the indicator at
+        // 5), so its fold's chevron can be reached when it hangs over them.
+        'z-index': 6,
         'box-sizing': 'border-box',
         'max-height': 'var(--ezco-mde-rail-height, 100vh)',
         'overflow-y': 'auto',
@@ -200,6 +201,11 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde--code-file .ezco-mde-gutter': {
         display: 'none',
     },
+    // A file shown as code has nothing beside it (no gutter, no comments)
+    // and no measure to keep: it takes the editor's whole width.
+    '.ezco-mde--code-file .ezco-mde-body-host': {
+        'max-width': 'none',
+    },
     // Frame the embedded/standalone codeblock tooltips (LSP hover, autocomplete,
     // diagnostics) like the editor's own dropdowns (block-action / slash menus)
     // rather than the codeblock's default 2px-border look: a 1px themed border,
@@ -274,6 +280,12 @@ export const styleModule: StyleModule = new StyleModule({
         '--ezco-mde-accent-fg': '#ffffff',
         '--ezco-mde-link-color': '#2490e9',
         '--ezco-mde-link-color-hover': '#1a6fbf',
+        // The note's face: Source Serif 4 when the page has it (the package
+        // ships it: import `@joinezco/markdown-editor/fonts.css`), the
+        // system serif otherwise. A host sets this to use its own; a face
+        // is fetched only once text is set in it, so one that does never
+        // downloads ours.
+        '--ezco-mde-font': '"Source Serif 4", system-ui, Georgia, serif',
         // The chrome's type and shadow: every panel, menu, card and popover
         // the editor draws around the note shares them, so a host retheming
         // one rethemes all.
@@ -380,6 +392,7 @@ export const styleModule: StyleModule = new StyleModule({
         // — otherwise dark mode would be near-black text on a dark surface.
         'background': 'transparent',
         'color': 'var(--ezco-mde-fg)',
+        'font-family': 'var(--ezco-mde-font)',
 
         // `break-spaces` preserves trailing whitespace at the end of a
         // line, where PM's default `pre-wrap` would otherwise collapse
@@ -647,6 +660,24 @@ export const styleModule: StyleModule = new StyleModule({
         '& ol > li::before': {
             content: 'counter(ezco-mde-ol) "."',
         },
+        // Letters, and the `)` delimiter, as the list was written. (On
+        // `data-list-type`, not `type`: HTML matches `type` without regard
+        // to case, so `[type="A"]` would take the lowercase lists too.)
+        '& ol[data-list-type="a"] > li::before': {
+            content: 'counter(ezco-mde-ol, lower-alpha) "."',
+        },
+        '& ol[data-list-type="A"] > li::before': {
+            content: 'counter(ezco-mde-ol, upper-alpha) "."',
+        },
+        '& ol[data-delimiter=")"] > li::before': {
+            content: 'counter(ezco-mde-ol) ")"',
+        },
+        '& ol[data-list-type="a"][data-delimiter=")"] > li::before': {
+            content: 'counter(ezco-mde-ol, lower-alpha) ")"',
+        },
+        '& ol[data-list-type="A"][data-delimiter=")"] > li::before': {
+            content: 'counter(ezco-mde-ol, upper-alpha) ")"',
+        },
         // Task lists: the checkbox is the decoration. Suppress the bullet
         // `::before` and park the checkbox at the item's left edge (same
         // start-x as the other decorations), centred on the first line.
@@ -747,6 +778,10 @@ export const styleModule: StyleModule = new StyleModule({
         // between its paragraphs without blank lines typed in for it (a
         // blank line typed in is an empty paragraph, and adds its own).
         '&.ezco-mde-body > * + *': { 'margin-top': '1em' },
+        // Two lists of different kinds, one after the other (a task list
+        // after bullets, letters after numbers), are items apart, no more
+        // than items of one list are (0,2,2: over the base).
+        '&.ezco-mde-body > :is(ul, ol) + :is(ul, ol)': { 'margin-top': '0.35em' },
         // A heading owns what follows it: its body sits close under it.
         // Scoped to non-heading followers so a sub-heading after a heading
         // still gets its full top margin from the `* + h*` rules below.
@@ -855,14 +890,18 @@ export const styleModule: StyleModule = new StyleModule({
         position: 'sticky',
         top: '6px',
     },
-    // A glyph for every block (block-actions.ts), level with its first
-    // line in the gutter: what the block is, soft until pointed at, the
-    // active block's at full strength. A fold's glyph (folding.ts) stands a
-    // little stronger: it is the way back.
+    // A glyph for every block (block-actions.ts) in the gutter, in the box
+    // of the block's first line (its top, height and, for text-like blocks,
+    // its face are set by script): a pilcrow stands as the paragraph's text
+    // does, a bullet as the list's first bullet, a box as a task's checkbox.
+    // A heading's level, a code block's `</>` and the rest keep the chrome's
+    // small label, centred on the same line. All share one column, soft
+    // until pointed at, the active block's at full strength. A fold's glyph
+    // (folding.ts) stands a little stronger: it is the way back.
     '.ezco-mde-block-icon': {
         position: 'absolute',
-        width: '24px',
-        height: '14px',
+        width: '28px',
+        'box-sizing': 'border-box',
         display: 'flex',
         'align-items': 'center',
         'justify-content': 'center',
@@ -876,9 +915,36 @@ export const styleModule: StyleModule = new StyleModule({
         'line-height': 1,
         opacity: 0.35,
         cursor: 'pointer',
+        'user-select': 'none',
         // Only its strength moves: the glyph is where its block is, at once.
         transition: 'opacity 120ms ease-out',
         'z-index': 4,
+    },
+    // A task list's box: the size of the list's checkboxes (an em of the
+    // glyph's font, which is the list's).
+    '.ezco-mde-block-icon > .ezco-mde-block-icon-box': {
+        display: 'block',
+        width: 'var(--ezco-mde-block-icon-size, var(--ezco-mde-checkbox-size))',
+        height: 'var(--ezco-mde-block-icon-size, var(--ezco-mde-checkbox-size))',
+    },
+    // A paragraph's pilcrow: drawn as tall as the text's capitals, on the
+    // text's baseline (the face's own ¶ hangs below the line). The drawing
+    // stands inline on a line of the text's own, which the glyph's font makes.
+    '.ezco-mde-block-icon > .ezco-mde-block-icon-line': {
+        display: 'block',
+    },
+    '.ezco-mde-block-icon-line > svg': {
+        display: 'inline-block',
+        'vertical-align': 'baseline',
+        height: 'var(--ezco-mde-block-icon-cap, 0.7em)',
+        width: 'auto',
+        fill: 'currentColor',
+    },
+    // A block among those a selection spans: its glyph folds into the
+    // indicator's star, which stands for them all.
+    '.ezco-mde-block-icon.is-spanned': {
+        opacity: 0,
+        'pointer-events': 'none',
     },
     '.ezco-mde-block-icon:hover, .ezco-mde-block-icon:focus-visible': {
         opacity: 0.9,
@@ -892,6 +958,12 @@ export const styleModule: StyleModule = new StyleModule({
     // own glyph would slide between lines as the caret moves).
     '.ezco-mde-block-icon.is-active': {
         opacity: 0.9,
+    },
+    // A block whose first line a comment's mark stands on (comment-gutter.ts)
+    // gives the line to the mark, active or not.
+    '.ezco-mde-block-icon.is-marked, .ezco-mde-block-icon.is-marked.is-active': {
+        opacity: 0,
+        'pointer-events': 'none',
     },
     '.ezco-mde-block-action-btn:not([data-block-type="spanning"]) > .ezco-mde-block-action-btn-icon': {
         visibility: 'hidden',
@@ -1002,32 +1074,37 @@ export const styleModule: StyleModule = new StyleModule({
         margin: '4px 6px',
         background: 'var(--ezco-mde-context-menu-border)',
     },
-    // A bubble's menu opens on the reactions to give: two rows of them, the
-    // last cell the whole grid; the reader's own lit.
-    '.ezco-mde-comment-menu-reactions': {
+    // The reactions to give (emoji-picker.ts `reactionGrid`): two rows of
+    // them, the last cell the whole picker; the reader's own lit. The same
+    // grid at the top of a bubble's menu, ruled off from the actions under
+    // it, and on its own in the popover under the React button.
+    '.ezco-mde-reaction-grid': {
         display: 'grid',
-        'grid-template-columns': 'repeat(5, 1fr)',
+        'grid-template-columns': 'repeat(5, 36px)',
         gap: '2px',
-        padding: '2px 2px 4px',
+        padding: '2px',
+    },
+    '.ezco-mde-context-menu > .ezco-mde-reaction-grid': {
+        'padding-bottom': '4px',
         'margin-bottom': '4px',
         'border-bottom': '1px solid var(--ezco-mde-context-menu-border)',
     },
-    '.ezco-mde-comment-menu-reactions > .ezco-mde-emoji-cell': {
+    '.ezco-mde-reaction-grid > .ezco-mde-emoji-cell': {
         width: 'auto',
         height: '30px',
         'font-size': '18px',
     },
-    '.ezco-mde-comment-menu-reactions > .ezco-mde-emoji-cell:hover, .ezco-mde-comment-menu-reactions > .ezco-mde-emoji-cell:focus-visible': {
+    '.ezco-mde-reaction-grid > .ezco-mde-emoji-cell:hover, .ezco-mde-reaction-grid > .ezco-mde-emoji-cell:focus-visible': {
         background: 'var(--ezco-mde-context-menu-item-bg-hover)',
         outline: 'none',
     },
-    '.ezco-mde-comment-menu-reactions > .ezco-mde-emoji-cell[aria-pressed="true"]': {
+    '.ezco-mde-reaction-grid > .ezco-mde-emoji-cell[aria-pressed="true"]': {
         background: 'color-mix(in srgb, var(--ezco-mde-accent) 18%, transparent)',
     },
-    '.ezco-mde-comment-menu-reactions > .ezco-mde-emoji-cell.is-more': {
+    '.ezco-mde-reaction-grid > .ezco-mde-emoji-cell.is-more': {
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
-    '.ezco-mde-comment-menu-reactions > .ezco-mde-emoji-cell.is-more > svg': {
+    '.ezco-mde-reaction-grid > .ezco-mde-emoji-cell.is-more > svg': {
         display: 'block',
     },
     '.ezco-mde-context-menu-item-icon': {
@@ -1047,6 +1124,47 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde-context-menu-item-label': {
         flex: 1,
+    },
+    // A setting's state at its item's end: a switch, filled with the accent
+    // when the setting is on. On the focused row (the accent) the track is
+    // the row's text colour and the knob the accent, so it still reads.
+    '.ezco-mde-context-menu-switch': {
+        flex: 'none',
+        position: 'relative',
+        width: '26px',
+        height: '14px',
+        'border-radius': '7px',
+        background: 'var(--ezco-mde-context-menu-item-color-muted)',
+        opacity: 0.55,
+        transition: 'background-color 120ms ease-out, opacity 120ms ease-out',
+    },
+    '.ezco-mde-context-menu-switch::after': {
+        content: '""',
+        position: 'absolute',
+        top: '2px',
+        left: '2px',
+        width: '10px',
+        height: '10px',
+        'border-radius': '50%',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        transition: 'transform 120ms ease-out',
+    },
+    '.ezco-mde-context-menu-item[aria-checked="true"] > .ezco-mde-context-menu-switch': {
+        background: 'var(--ezco-mde-accent)',
+        opacity: 1,
+    },
+    '.ezco-mde-context-menu-item[aria-checked="true"] > .ezco-mde-context-menu-switch::after': {
+        transform: 'translateX(12px)',
+    },
+    '.ezco-mde-context-menu-item:focus > .ezco-mde-context-menu-switch, .ezco-mde-context-menu-item:focus-visible > .ezco-mde-context-menu-switch': {
+        background: 'var(--ezco-mde-accent-fg)',
+        opacity: 0.45,
+    },
+    '.ezco-mde-context-menu-item[aria-checked="true"]:focus > .ezco-mde-context-menu-switch, .ezco-mde-context-menu-item[aria-checked="true"]:focus-visible > .ezco-mde-context-menu-switch': {
+        opacity: 1,
+    },
+    '.ezco-mde-context-menu-item:focus > .ezco-mde-context-menu-switch::after, .ezco-mde-context-menu-item:focus-visible > .ezco-mde-context-menu-switch::after': {
+        background: 'var(--ezco-mde-accent)',
     },
     '.tippy-box[data-theme~="ezco-mde-block-actions"]': {
         background: 'transparent',
@@ -1145,48 +1263,22 @@ export const styleModule: StyleModule = new StyleModule({
         'text-overflow': 'ellipsis',
         'white-space': 'nowrap',
     },
-    // A reaction is picked from one row: the common ones, the recent ones,
-    // and "…" for the whole grid, which then takes the popover's place.
+    // The reaction grid under the React button: the menus' surface around it.
     '.ezco-mde-reactions': {
-        display: 'flex',
-        'flex-wrap': 'wrap',
-        'align-items': 'center',
-        gap: '2px',
-        'max-width': '320px',
-        padding: '4px',
+        width: 'max-content',
+        padding: '2px',
         background: 'var(--ezco-mde-context-menu-bg)',
         color: 'var(--ezco-mde-context-menu-color)',
         border: '1px solid var(--ezco-mde-context-menu-border)',
         'border-radius': '8px',
         'box-shadow': 'var(--ezco-mde-chrome-shadow)',
-    },
-    '.ezco-mde-reactions.is-full': {
-        display: 'block',
-        padding: 0,
-        border: 0,
-        background: 'transparent',
-        'box-shadow': 'none',
+        'font-family': 'var(--ezco-mde-chrome-font)',
     },
     '.ezco-mde-emoji-row': {
         display: 'flex',
         'flex-wrap': 'wrap',
         gap: '2px',
         'margin-bottom': '4px',
-    },
-    '.ezco-mde-emoji-more': {
-        font: 'inherit',
-        padding: '0 8px',
-        height: '28px',
-        border: 0,
-        'border-radius': '4px',
-        background: 'transparent',
-        color: 'var(--ezco-mde-context-menu-item-color-muted)',
-        cursor: 'pointer',
-    },
-    '.ezco-mde-emoji-more:hover, .ezco-mde-emoji-more:focus-visible': {
-        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
-        color: 'var(--ezco-mde-fg)',
-        outline: 'none',
     },
     '.ezco-mde-emoji-heading': {
         'font-size': '11px',
@@ -1582,7 +1674,7 @@ export const styleModule: StyleModule = new StyleModule({
         'max-height': '100vh',
         'overflow-y': 'auto',
         padding: '0.5rem 0 0.5rem 0.7rem',
-        'font-family': 'var(--ezco-mde-chrome-font)',
+        'font-family': 'var(--ezco-mde-font)',
         'font-size': 'var(--ezco-mde-text-xs, 13px)',
         color: 'var(--ezco-mde-fg)',
         'user-select': 'none',
@@ -2203,10 +2295,55 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment.is-active.ezco-mde-comment-stack': {
         background: 'color-mix(in srgb, var(--ezco-mde-comment-color) 60%, transparent)',
     },
-    // A resolved comment keeps a quiet mark, so it can be found and reopened.
+    // A resolved comment's text reads as text again: its mark in the gutter
+    // (comment-gutter.ts) is what keeps it findable, and the panel's "Show
+    // resolved".
     '.ezco-mde-comment.is-resolved:not(.is-active)': {
         background: 'transparent',
-        'border-bottom': '1px dotted var(--ezco-mde-context-menu-item-color-muted)',
+        'border-bottom': 'none',
+    },
+    // A comment's mark in the gutter (comment-gutter.ts): a speech bubble in
+    // the comment colour, in the glyph column (the block's glyph gives the
+    // line to it), on the first line of the comment's text. The comment
+    // looked at has the fuller bubble, a resolved one an empty, grey one.
+    '.ezco-mde-comment-mark': {
+        position: 'absolute',
+        right: '14px',
+        width: '28px',
+        'box-sizing': 'border-box',
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        padding: 0,
+        border: 0,
+        'border-radius': '3px',
+        background: 'transparent',
+        color: 'var(--ezco-mde-comment-color)',
+        cursor: 'pointer',
+        opacity: 0.85,
+        transition: 'opacity 120ms ease-out, color 120ms ease-out',
+        'z-index': 4,
+    },
+    '.ezco-mde-comment-mark > svg': {
+        display: 'block',
+        width: '16px',
+        height: '16px',
+        fill: 'color-mix(in srgb, var(--ezco-mde-comment-color) 22%, transparent)',
+        transition: 'fill 120ms ease-out',
+    },
+    '.ezco-mde-comment-mark:hover, .ezco-mde-comment-mark:focus-visible, .ezco-mde-comment-mark.is-active': {
+        opacity: 1,
+        outline: 'none',
+    },
+    '.ezco-mde-comment-mark.is-active > svg': {
+        fill: 'color-mix(in srgb, var(--ezco-mde-comment-color) 55%, transparent)',
+    },
+    '.ezco-mde-comment-mark.is-resolved:not(.is-active)': {
+        color: 'var(--ezco-mde-block-action-btn-color)',
+        opacity: 0.5,
+    },
+    '.ezco-mde-comment-mark.is-resolved:not(.is-active) > svg': {
+        fill: 'transparent',
     },
     // Text a comment is being written about: the accent. A draft's, the
     // accent dashed: only this browser has it.
@@ -2219,15 +2356,18 @@ export const styleModule: StyleModule = new StyleModule({
         'min-width': 0,
         position: 'relative',
     },
+    // The margin, and the composer's layer over the note: the chrome's type.
+    '.ezco-mde-comment-margin, .ezco-mde-comment-over': {
+        'font-family': 'var(--ezco-mde-chrome-font)',
+        'font-size': '13px',
+        'line-height': 1.5,
+        color: 'var(--ezco-mde-fg)',
+    },
     '.ezco-mde-comment-margin': {
         position: 'relative',
         width: '360px',
         'box-sizing': 'border-box',
         padding: '0 12px 24px 8px',
-        'font-family': 'var(--ezco-mde-chrome-font)',
-        'font-size': '13px',
-        'line-height': 1.5,
-        color: 'var(--ezco-mde-fg)',
         // Clear: the bubbles are what shows, on the note or beside it.
         background: 'transparent',
     },
@@ -2251,12 +2391,30 @@ export const styleModule: StyleModule = new StyleModule({
         'letter-spacing': '0.06em',
         opacity: 0.5,
     },
-    '.ezco-mde-comment-margin-head .ezco-mde-comment-link': {
-        'font-size': '12px',
-        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+    // The head's tools at its end: the menu's chevron, then ×.
+    '.ezco-mde-comment-margin-head > .ezco-mde-comment-tool': {
+        width: '22px',
+        height: '22px',
+        'align-self': 'center',
     },
-    '.ezco-mde-comment-margin-head .ezco-mde-comment-link:hover': {
+    '.ezco-mde-comment-margin-head > .ezco-mde-comment-tool.is-menu': {
+        'margin-left': 'auto',
+    },
+    '.ezco-mde-comment-margin-head > .ezco-mde-comment-tool.is-menu[aria-expanded="true"]': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
         color: 'var(--ezco-mde-fg)',
+    },
+    // Anchored beside the note (a column, as tall as the note), the head
+    // stays at the top of the frame as the note scrolls, the cards passing
+    // under it.
+    '.ezco-mde-comments > .ezco-mde-comment-margin:not(.is-panel):not(.is-floating)': {
+        'min-height': '100%',
+    },
+    '.ezco-mde-comment-margin:not(.is-panel):not(.is-floating) > .ezco-mde-comment-margin-head': {
+        position: 'sticky',
+        top: 0,
+        'z-index': 3,
+        background: 'var(--ezco-mde-bg)',
     },
     '.ezco-mde-comment-list': {
         position: 'relative',
@@ -2296,19 +2454,22 @@ export const styleModule: StyleModule = new StyleModule({
         opacity: 0.7,
     },
     // Beside the note, a comment's bubble is the way to its text: a click
-    // takes the note there, level with the bubble. The current one (the one
-    // looked at, or the one whose text is being read past) stands out a
-    // little from the others, its hairline the accent's.
+    // takes the note there, level with the bubble. In a panel (a list of
+    // its own) each card steps out towards the text by how near the note's
+    // reading line is to its text (`--ezco-mde-comment-near`, 0 to 1, set
+    // as the note scrolls; the one looked at all the way), and the current
+    // one (the one looked at, or the one whose text is being read past)
+    // takes the accent's hairline. Anchored to their text, the cards are
+    // still: they stand where their text is.
     '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-bubble.is-anchor': {
         cursor: 'pointer',
     },
-    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card': {
-        transition: 'transform 160ms ease-out',
+    // (The classes in this order: the panel's own card rule, further on,
+    // has them the other way round, and the two keys must differ.)
+    '.is-panel.ezco-mde-comment-margin .ezco-mde-comment-card': {
+        transform: 'translateX(calc(-8px * var(--ezco-mde-comment-near, 0)))',
     },
-    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card.is-current': {
-        transform: 'translateX(-4px)',
-    },
-    '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card.is-current .ezco-mde-comment-bubble.is-anchor': {
+    '.ezco-mde-comment-margin.is-panel .ezco-mde-comment-card.is-current .ezco-mde-comment-bubble.is-anchor': {
         'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 45%, transparent)',
     },
     '.ezco-mde-comment-card:focus-visible .ezco-mde-comment-bubble.is-anchor': {
@@ -2488,25 +2649,25 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-link-color)',
         cursor: 'pointer',
     },
-    // Under the bubble, standing on their own: a composer's buttons, or a
-    // deletion asked about, each a chip with a surface of its own (they
-    // stand on the note).
-    '.ezco-mde-comment-under': {
-        display: 'flex',
-        'align-items': 'center',
-        'flex-wrap': 'wrap',
-        gap: '4px',
-        margin: '5px 0 0',
-        'font-size': '12.5px',
-    },
-    '.ezco-mde-comment-under:empty': {
-        display: 'none',
-    },
-    '.ezco-mde-comment-under > .ezco-mde-comment-composer-actions': {
+    // A composer's buttons stand in its bubble's foot, at the row's end,
+    // as pills like the row's other chips; so does a deletion asked about.
+    '.ezco-mde-comment-foot-row > .ezco-mde-comment-composer-actions': {
         'margin-left': 'auto',
     },
-    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-under :is(.ezco-mde-comment-action, .ezco-mde-comment-reaction, .ezco-mde-comment-button)': {
-        'box-shadow': 'var(--ezco-mde-bubble-shadow)',
+    '.ezco-mde-comment-foot .ezco-mde-comment-button': {
+        height: '24px',
+        padding: '0 10px',
+        'border-radius': '999px',
+        'font-size': '12.5px',
+    },
+    '.ezco-mde-comment-foot .ezco-mde-comment-button:not(.is-primary)': {
+        border: '1px solid var(--ezco-mde-context-menu-border)',
+        background: 'var(--ezco-mde-context-menu-bg)',
+        color: 'var(--ezco-mde-context-menu-item-color-muted)',
+    },
+    '.ezco-mde-comment-foot .ezco-mde-comment-button:not(.is-primary):hover': {
+        background: 'var(--ezco-mde-context-menu-item-bg-hover)',
+        color: 'var(--ezco-mde-fg)',
     },
     // In the bubble, under the text: the reactions, React at their right,
     // and at the row's end the reply count, the handle of the thread. The
@@ -2564,13 +2725,6 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde-comment-thread > .ezco-mde-comment-message + .ezco-mde-comment-message, .ezco-mde-comment-thread > .ezco-mde-comment-message.is-composer': {
         'margin-top': 0,
-    },
-    '.ezco-mde-comment-under .ezco-mde-comment-button': {
-        'border-radius': '999px',
-    },
-    '.ezco-mde-comment-under .ezco-mde-comment-button:not(.is-primary)': {
-        background: 'var(--ezco-mde-context-menu-bg)',
-        border: '1px solid var(--ezco-mde-context-menu-border)',
     },
     '.ezco-mde-comment-action': {
         display: 'inline-flex',
@@ -2684,8 +2838,11 @@ export const styleModule: StyleModule = new StyleModule({
         outline: 'none',
     },
     '@media (prefers-reduced-motion: reduce)': {
-        '.ezco-mde-comment-replies-caret, .ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-card': {
+        '.ezco-mde-comment-replies-caret': {
             transition: 'none',
+        },
+        '.ezco-mde-comment-margin.is-panel .ezco-mde-comment-card': {
+            transform: 'none',
         },
     },
     // A reaction: a small pill, filled with the accent when it is the reader's.
@@ -2802,8 +2959,28 @@ export const styleModule: StyleModule = new StyleModule({
         right: 0,
         width: 'min(400px, 100%)',
     },
-    '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-card.is-draft': {
+    // The composer for a new comment: over the note, by the end of the text
+    // it is about, whatever the layout (a panel beside the note shows the
+    // comments, never the composer). Nothing but the bubble takes clicks.
+    '.ezco-mde-comment-over': {
+        position: 'absolute',
+        top: 0,
+        left: '8px',
+        right: '8px',
+        'z-index': 500,
+        'pointer-events': 'none',
+    },
+    '.ezco-mde-comment-over[hidden]': {
+        display: 'none !important',
+    },
+    '.ezco-mde-comment-over > .ezco-mde-comment-card': {
+        'pointer-events': 'auto',
+        left: 'auto',
+        right: 0,
         width: 'min(340px, 100%)',
+    },
+    '.ezco-mde-comment-over .ezco-mde-comment-bubble': {
+        'box-shadow': 'var(--ezco-mde-bubble-shadow)',
     },
     // A panel: the list beside the note, scrolling on its own within the
     // note's frame, the cards in the note's order.

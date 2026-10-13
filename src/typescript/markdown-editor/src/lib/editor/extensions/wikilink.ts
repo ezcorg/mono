@@ -77,7 +77,8 @@ function openPath(editor: Editor): string | null {
     return path ? normalizePath(path) : null
 }
 
-const attrsOf = (node: PMNode): WikilinkParts => ({
+/** The parts of a link node's link (an embed's too). */
+export const attrsOf = (node: PMNode): WikilinkParts => ({
     target: node.attrs.target ?? '',
     fragment: node.attrs.fragment ?? null,
     alias: node.attrs.alias ?? null,
@@ -85,7 +86,7 @@ const attrsOf = (node: PMNode): WikilinkParts => ({
 
 /** A nullable string attribute carried in a `data-*` attribute, where absent
  *  and empty differ (`[[a|]]` is not `[[a]]`). */
-const optionalData = (name: string) => ({
+export const optionalData = (name: string) => ({
     default: null,
     parseHTML: (el: HTMLElement) => el.getAttribute(`data-${name}`),
     renderHTML: (attrs: Record<string, unknown>) =>

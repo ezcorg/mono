@@ -84,7 +84,7 @@ describe('Block actions', () => {
             ['Heading 3', (b) => expect(b).toMatchObject({ type: 'heading', attrs: { level: 3 } })],
             ['Bullet list', (b) => expect(b).toMatchObject({ type: 'bulletList', attrs: { marker: 'bullet' } })],
             ['Dashed list', (b) => expect(b).toMatchObject({ type: 'bulletList', attrs: { marker: 'dash' } })],
-            ['Ordered list', (b) => expect(b.type).toBe('orderedList')],
+            ['Numbered list', (b) => expect(b.type).toBe('orderedList')],
             ['Task list', (b) => expect(b.type).toBe('taskList')],
             ['Quote', (b) => expect(b.type).toBe('blockquote')],
         ]
@@ -120,7 +120,7 @@ describe('Block actions', () => {
         expect(firstBlock(editor)).toMatchObject({ type: 'bulletList', attrs: { marker: 'dash' } })
 
         editor = await makeEditor('* one\n* two')
-        runAction(editor, 'bulletList', 'Ordered list')
+        runAction(editor, 'bulletList', 'Numbered list')
         expect(firstBlock(editor)?.type).toBe('orderedList')
 
         editor = await makeEditor('* one\n* two')
@@ -178,7 +178,7 @@ describe('Block actions', () => {
         expect(firstBlock(editor)).toMatchObject({ type: 'bulletList', attrs: { marker: 'dash' } })
 
         editor = await makeEditor('- [ ] one\n- [ ] two')
-        runAction(editor, 'taskList', 'Ordered list')
+        runAction(editor, 'taskList', 'Numbered list')
         expect(firstBlock(editor)?.type).toBe('orderedList')
 
         editor = await makeEditor('- [ ] one\n- [x] two')
@@ -315,6 +315,16 @@ describe('Block actions', () => {
         const icon = document
             .querySelector('.ezco-mde-block-action-btn-icon')
         expect(icon?.textContent).toBe('✳')
+        // The spanned blocks' own glyphs fold into the star; the others stay.
+        const container = created[created.length - 1].container
+        const spanned = [...container.querySelectorAll<HTMLElement>('.ezco-mde-gutter .ezco-mde-block-icon')]
+        expect(spanned.map((g) => g.classList.contains('is-spanned'))).toEqual([true, true])
+        await waitFor(() => spanned.every((g) => getComputedStyle(g).opacity === '0'), 2000)
+        editor.commands.setTextSelection(firstPara.pos + 2)
+        view.update(editor.view)
+        await new Promise((r) => requestAnimationFrame(() => r(null)))
+        await new Promise((r) => requestAnimationFrame(() => r(null)))
+        expect(spanned.some((g) => g.classList.contains('is-spanned'))).toBe(false)
     })
 
     it('applies a block conversion across every block in a multi-block selection', async () => {
@@ -349,7 +359,7 @@ describe('Block actions', () => {
         await frames()
         // One per block (the editor may keep a paragraph after the list).
         expect(glyphs(container).length).toBe(editor.state.doc.childCount)
-        expect(glyphs(container).slice(0, 3).map((g) => g.textContent)).toEqual(['H1', '¶', '•'])
+        expect(glyphs(container).slice(0, 3).map((g) => g.querySelector('svg') ? 'drawn' : g.textContent)).toEqual(['H1', 'drawn', '•'])
         // Soft, all but the active block's (the note takes focus as it is made).
         expect(glyphs(container).filter((g) => !g.classList.contains('is-active')).every((g) => parseFloat(getComputedStyle(g).opacity) < 0.5)).toBe(true)
         // A glyph stays where its block is: nothing of it slides between lines.
@@ -362,6 +372,48 @@ describe('Block actions', () => {
             expect(top).toBeGreaterThanOrEqual(blocks[i].top - 1)
             expect(top).toBeLessThan(blocks[i].top + Math.max(blocks[i].height, 20))
         })
+        // A paragraph's pilcrow is set as its text is (face, size, line), the
+        // bullet as the list's first bullet: the glyph's box is the line's box.
+        const p = editor.view.dom.querySelector('p') as HTMLElement
+        const pilcrow = glyphs(container)[1]
+        expect(getComputedStyle(pilcrow).fontSize).toBe(getComputedStyle(p).fontSize)
+        expect(getComputedStyle(pilcrow).fontFamily).toBe(getComputedStyle(p).fontFamily)
+        expect(Math.abs(pilcrow.getBoundingClientRect().top - p.getBoundingClientRect().top)).toBeLessThan(0.1)
+        expect(Math.abs(pilcrow.getBoundingClientRect().height - parseFloat(getComputedStyle(p).lineHeight))).toBeLessThan(1)
+        // The pilcrow is drawn as tall as the text's capitals, on the text's
+        // baseline: its bottom where the text's is, its top at the cap line
+        // (the face's own ¶ would hang under the baseline).
+        const charRect = (root: HTMLElement) => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+            let text: Text | null
+            while ((text = walker.nextNode() as Text | null)) if (text.textContent!.trim()) break
+            const range = document.createRange()
+            range.setStart(text!, 0)
+            range.setEnd(text!, 1)
+            return range.getClientRects()[0]
+        }
+        const measure = document.createElement('canvas').getContext('2d')!
+        measure.font = `${getComputedStyle(p).fontSize} ${getComputedStyle(p).fontFamily}`
+        const metrics = measure.measureText('H')
+        const text = charRect(p)
+        const baseline = text.top + metrics.fontBoundingBoxAscent
+        const drawing = (pilcrow.querySelector('svg') as SVGElement).getBoundingClientRect()
+        expect(Math.abs(drawing.bottom - baseline)).toBeLessThan(1)
+        expect(Math.abs(drawing.height - metrics.actualBoundingBoxAscent)).toBeLessThan(1)
+        expect(drawing.bottom).toBeLessThan(text.bottom)
+        const li = editor.view.dom.querySelector('ul > li') as HTMLElement
+        const bullet = glyphs(container)[2]
+        expect(getComputedStyle(bullet).fontSize).toBe(getComputedStyle(li, '::before').fontSize)
+        // To the subpixel: the two bullets stand on one line, so they are
+        // drawn alike.
+        expect(Math.abs(bullet.getBoundingClientRect().top - li.getBoundingClientRect().top)).toBeLessThan(0.05)
+        expect(Math.abs(charRect(bullet).top - charRect(li).top)).toBeLessThan(0.05)
+        // A heading's level keeps the chrome's small label, centred on its line.
+        const h1 = editor.view.dom.querySelector('h1') as HTMLElement
+        const level = glyphs(container)[0]
+        expect(parseFloat(getComputedStyle(level).fontSize)).toBeLessThan(parseFloat(getComputedStyle(h1).fontSize) / 2)
+        const centre = (el: HTMLElement) => el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2
+        expect(Math.abs(centre(level) - centre(h1))).toBeLessThan(2)
         // The active block's glyph stands at full strength; the indicator
         // beside it is its line alone, its own glyph not shown.
         editor.commands.focus()
@@ -377,7 +429,7 @@ describe('Block actions', () => {
         const menu = document.querySelector('.ezco-mde-block-action-menu')
         // (An item's text is its glyph and its label.)
         const labels = [...menu!.querySelectorAll('.ezco-mde-context-menu-item')].map((i) => i.textContent?.trim() ?? '')
-        expect(labels.some((l) => l.endsWith('Ordered list'))).toBe(true)
+        expect(labels.some((l) => l.endsWith('Numbered list'))).toBe(true)
         expect(labels.some((l) => l.endsWith('Fold'))).toBe(true)
         ;(editor.storage as any).blockActions.blockActionsView.closeMenu()
     })
@@ -397,7 +449,7 @@ describe('Block actions', () => {
         expect(fold()?.querySelector('.ezco-mde-fold-text')?.textContent).toBe('First paragraph here.')
         expect(fold()?.querySelector('.ezco-mde-fold-count')?.textContent).toBe('1 block')
         expect(editor.state.selection.$from.parent.textContent).toBe('Second.')
-        expect(glyphs(container).map((g) => g.textContent)).toEqual(['H1', '▸', '¶', '¶'])
+        expect(glyphs(container).map((g) => (g.querySelector('svg') ? 'drawn' : g.textContent))).toEqual(['H1', '▸', 'drawn', 'drawn'])
         fold()!.click()
         await frames()
         expect(fold()).toBeNull()

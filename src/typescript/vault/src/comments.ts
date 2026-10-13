@@ -3,25 +3,25 @@
  * another document. Any note may hold **references**, and everything is a
  * document; the vault's index gathers them (`CommentIndex`).
  *
- * A reference is a line of a top-level paragraph that is exactly one embed,
- * `![[target#fragment]]` (the wikilink grammar: the fragment may be a text
- * fragment `:~:text=…`, a pin `c-…`, a block id `^abc`, a heading, or
- * absent for the whole document), and its **body** is the Markdown after
- * it, up to the next reference, the next top-level heading, or the end of
- * the document. Written, a blank line separates the embed from its body;
- * read, it is optional, so the embed may share a paragraph with its body:
+ * A reference is an embed, `![[target#fragment]]` (the wikilink grammar:
+ * the fragment may be a text fragment `:~:text=…`, a pin `c-…`, a block id
+ * `^abc`, a heading, or absent for the whole document), at the start of a
+ * line of a top-level paragraph, and its **body** is everything after it:
+ * the rest of its line and the lines under it, up to the next reference or
+ * the end of the document. Written, a blank line separates the embed from
+ * its body; read, nothing has to, so the body may follow on the same line
+ * or share a paragraph with the embed:
  *
- *     ![[Plan#:~:text=ship%20it]]
- *     Which release?
+ *     ![[Plan#:~:text=ship%20it]] Which release?
  *
  *     ![[Plan#^abc]]
  *     Done, I think.
  *
- * A bare embed with no body is a transclusion, not a comment. Code never
- * starts or ends a reference (a body may hold a code block), nor does an
- * embed or a heading inside a quote or a list; front matter is skipped.
- * What is a paragraph, a heading or code is the one parse every index
- * reads (`parseNote`), so the editor and the index agree.
+ * A bare embed with nothing after it is a transclusion, not a comment (it
+ * still ends the body before it). Code never starts a reference (a body
+ * may hold a code block), nor does an embed inside a quote or a list;
+ * front matter is skipped. What is a paragraph or code is the one parse
+ * every index reads (`parseNote`), so the editor and the index agree.
  */
 import { formatWikilink, matchWikilinkAt, type Wikilink } from './links/syntax.js'
 import { parseNote, type ParsedNote } from './parse.js'
@@ -43,12 +43,16 @@ export interface Reference {
     text: string
 }
 
-/** The link of a line that is exactly one embed (trailing whitespace
- *  allowed), or null. */
-function embedLine(line: string): Wikilink | null {
+/** The link of a line that starts with an embed, and what follows the
+ *  embed on the line (its body's first words, or nothing); null when the
+ *  line does not start with one, or runs on from it without a space. */
+function embedStart(line: string): { link: Wikilink; rest: string } | null {
     if (!line.startsWith('![[')) return null
     const m = matchWikilinkAt(line, 0)
-    return m && m.embed && !line.slice(m.end).trim() ? m.link : null
+    if (!m || !m.embed) return null
+    const rest = line.slice(m.end)
+    if (rest && !/^\s/.test(rest)) return null
+    return { link: m.link, rest: rest.trim() }
 }
 
 function trimBlankLines(lines: string[]): { from: number; to: number } {
@@ -60,9 +64,9 @@ function trimBlankLines(lines: string[]): { from: number; to: number } {
 }
 
 /**
- * Every reference in `markdown`, in order: each embed-only paragraph with
- * the Markdown under it. CRLF line ends are tolerated (`text` keeps them;
- * `body` does not).
+ * Every reference in `markdown`, in order: each paragraph line that starts
+ * with an embed, with the Markdown after it. CRLF line ends are tolerated
+ * (`text` keeps them; `body` does not).
  */
 export function referencesIn(markdown: string): Reference[] {
     return referencesOf(parseNote(markdown))
@@ -72,27 +76,25 @@ export function referencesIn(markdown: string): Reference[] {
  *  the parse). */
 export function referencesOf(note: ParsedNote): Reference[] {
     const { lines, offsets, text: markdown } = note
-    // Where a body stops short of the next reference: a top-level heading.
-    const stops = note.headings.filter((h) => h.depth === 0).map((h) => h.from)
-    const opens: { link: Wikilink; at: number }[] = []
+    const opens: { link: Wikilink; at: number; rest: string }[] = []
     for (const paragraph of note.paragraphs) {
         for (let at = paragraph.from; at < paragraph.to; at++) {
-            const link = embedLine(lines[at])
-            if (link) opens.push({ link, at })
+            const open = embedStart(lines[at])
+            if (open) opens.push({ ...open, at })
         }
     }
     const out: Reference[] = []
-    let stop = 0
     for (let k = 0; k < opens.length; k++) {
-        const { link, at } = opens[k]
-        while (stop < stops.length && stops[stop] <= at) stop++
-        let end = opens[k + 1]?.at ?? lines.length
-        if (stop < stops.length && stops[stop] < end) end = stops[stop]
-        const body = lines.slice(at + 1, end)
+        const { link, at, rest } = opens[k]
+        const end = opens[k + 1]?.at ?? lines.length
+        // The body's lines: what follows the embed on its own line, then the
+        // lines under it; line i of them is line `first + i` of the note.
+        const first = rest ? at : at + 1
+        const body = rest ? [rest, ...lines.slice(at + 1, end)] : lines.slice(at + 1, end)
         const { from, to } = trimBlankLines(body)
         if (to <= from) continue
         const start = offsets[at]
-        const last = at + to
+        const last = first + to - 1
         const finish = offsets[last] + lines[last].length
         out.push({ link, body: body.slice(from, to).join('\n'), start, end: finish, line: at + 1, text: markdown.slice(start, finish) })
     }

@@ -7,8 +7,8 @@ import { basename, dirname, joinPath, type FileOperations, type FileSearch, type
 import { browserVfs } from '@joinezco/storage/browser'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
 import { EditorState, Transaction } from "@codemirror/state";
-import { exitCode } from "prosemirror-commands";
-import { redo, undo } from "prosemirror-history"
+import { exitCode } from '@tiptap/pm/commands';
+import { redo, undo } from '@tiptap/pm/history'
 import { MarkdownNodeSpec } from 'tiptap-markdown';
 
 // Function to reassign z-index values to all codeblocks in DOM order

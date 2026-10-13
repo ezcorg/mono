@@ -14,6 +14,7 @@
  */
 import { Extension, type Editor } from '@tiptap/core'
 import type { SidebarMount } from './sidebar'
+import { scrollerOf } from '../ui/layout'
 
 interface Joined {
     panels: number
@@ -150,13 +151,7 @@ function fit(rail: HTMLElement): () => void {
     }
 }
 
-/** The nearest ancestor that scrolls, or null for the page itself. */
-export function scrollerOf(el: HTMLElement): HTMLElement | null {
-    for (let node = el.parentElement; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
-        if (/(auto|scroll|overlay)/.test(getComputedStyle(node).overflowY)) return node
-    }
-    return null
-}
+export { scrollerOf }
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {

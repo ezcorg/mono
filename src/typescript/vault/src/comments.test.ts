@@ -43,7 +43,7 @@ describe('referencesIn', () => {
         const refs = referencesIn(NOTE)
         expect(refs.map((r) => [r.link, r.body, r.line])).toEqual([
             [{ target: 'Plan', fragment: ':~:text=ship%20it', alias: null }, 'Which release?\n\nAnd is it the one we agreed on?', 9],
-            [{ target: 'Plan', fragment: '^abc', alias: null }, 'Done, I think:\n\n```md\n![[Not#a-reference]]\n# not a heading either\n```', 14],
+            [{ target: 'Plan', fragment: '^abc', alias: null }, 'Done, I think:\n\n```md\n![[Not#a-reference]]\n# not a heading either\n```\n\n\n## Later', 14],
             [{ target: 'Plan', fragment: 'Goals', alias: null }, '- a list as a body\n- of two items', 26],
             [{ target: 'Other', fragment: null, alias: null }, 'About the whole of Other.', 32],
         ])
@@ -59,18 +59,30 @@ describe('referencesIn', () => {
         expect(first.text).toBe('![[Plan#:~:text=ship%20it]]\nWhich release?\n\nAnd is it the one we agreed on?')
     })
 
-    it('ends a body at the next reference, the next heading, or the end', () => {
+    it('ends a body at the next reference, or the end', () => {
         expect(referencesIn('![[A]]\none\n![[B]]\ntwo').map((r) => r.body)).toEqual(['one', 'two'])
-        expect(referencesIn('![[A]]\none\n\n# H\n\nnot a body').map((r) => r.body)).toEqual(['one'])
-        // A setext heading is a heading too, as it is to the editor.
-        expect(referencesIn('![[A]]\none\n\nLater\n=====\nnot a body').map((r) => r.body)).toEqual(['one'])
-        // A heading inside a quote or a list is not at the top level: the body goes on.
+        // A heading is part of the body: nothing but another reference ends it.
+        expect(referencesIn('![[A]]\none\n\n# H\n\nstill the body').map((r) => r.body)).toEqual(['one\n\n# H\n\nstill the body'])
         expect(referencesIn('![[A]]\none\n> # quoted\ntwo').map((r) => r.body)).toEqual(['one\n> # quoted\ntwo'])
         expect(referencesIn('![[A]]\none\n\n\n').map((r) => r.body)).toEqual(['one'])
-        // A bare embed (a transclusion) still ends the body before it.
-        expect(referencesIn('![[A]]\none\n\n![[img.png]]\n\n# H\ntwo').map((r) => r.body)).toEqual(['one'])
+        // A bare embed (a transclusion) still ends the body before it; one
+        // with text under it is a reference of its own.
+        expect(referencesIn('![[A]]\none\n\n![[img.png]]\n').map((r) => r.body)).toEqual(['one'])
+        expect(referencesIn('![[A]]\none\n\n![[img.png]]\n\n# H\ntwo').map((r) => [r.link.target, r.body])).toEqual([['A', 'one'], ['img.png', '# H\ntwo']])
         // What follows an embed, blank lines between or not, is its body.
         expect(referencesIn('![[A]]\n\n\ntwo\n').map((r) => r.body)).toEqual(['two'])
+    })
+
+    it('takes a body that starts on the embed’s own line', () => {
+        expect(referencesIn('![[A]] one\ntwo\n\n![[B]]   three').map((r) => [r.body, r.line])).toEqual([['one\ntwo', 1], ['three', 4]])
+        // The text as written runs from the embed to the body's end.
+        const [first, second] = referencesIn('![[A]] one\ntwo\n\n![[B]]   three\n')
+        expect(first.text).toBe('![[A]] one\ntwo')
+        expect(second.text).toBe('![[B]]   three')
+        // A space must follow the brackets: run on, the embed is text.
+        expect(referencesIn('![[A]]one')).toEqual([])
+        // Blank lines between the first words and the rest stay in the body.
+        expect(referencesIn('![[A]] one\n\ntwo').map((r) => r.body)).toEqual(['one\n\ntwo'])
     })
 
     it('leaves out a bare embed, an embed inside a line, and an embed in code', () => {

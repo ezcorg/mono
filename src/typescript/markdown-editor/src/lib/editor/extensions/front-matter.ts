@@ -20,6 +20,7 @@
  * policy, not the editor's: a viewer that must not write leaves it unset.
  */
 import { Editor, Node, mergeAttributes } from '@tiptap/core'
+import { readKept, writeKept } from '../ui/kept'
 import Document from '@tiptap/extension-document'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, Selection, TextSelection, type EditorState } from '@tiptap/pm/state'
@@ -62,20 +63,11 @@ export const frontMatterKey = new PluginKey('frontMatter')
 const COLLAPSE_KEY = 'ezco-mde-front-matter'
 
 function keptAutoCollapse(): boolean {
-    try {
-        return localStorage.getItem(COLLAPSE_KEY) !== 'open'
-    } catch {
-        return true
-    }
+    return readKept(COLLAPSE_KEY) !== 'open'
 }
 
 function keepAutoCollapse(on: boolean) {
-    try {
-        if (on) localStorage.removeItem(COLLAPSE_KEY)
-        else localStorage.setItem(COLLAPSE_KEY, 'open')
-    } catch {
-        // Not kept: folding again next time.
-    }
+    writeKept(COLLAPSE_KEY, on ? null : 'open')
 }
 
 /** The document, with room for front matter before its blocks. */

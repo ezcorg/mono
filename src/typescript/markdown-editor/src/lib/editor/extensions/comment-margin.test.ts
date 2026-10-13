@@ -111,6 +111,20 @@ const viaMenu = async (message: HTMLElement, label: string) => {
     item.click()
     await waitFor(() => !document.querySelector('.ezco-mde-comment-menu'), 2000)
 }
+/** Choose `label` from the panel head's chevron menu; a setting's state
+ *  (its switch) as it was before the choice, else null. */
+const viaHeadMenu = async (container: HTMLElement, label: string) => {
+    tool(margin(container).querySelector('.ezco-mde-comment-margin-head') as HTMLElement, 'Comments panel menu').click()
+    await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
+    const item = [...document.querySelectorAll<HTMLElement>('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].find((b) => b.textContent?.trim() === label)
+    if (!item) throw new Error(`No "${label}" in the panel menu: ${[...document.querySelectorAll('.ezco-mde-comment-menu .ezco-mde-context-menu-item')].map((b) => b.textContent).join(', ')}`)
+    const was = item.getAttribute('aria-checked')
+    item.click()
+    await waitFor(() => !document.querySelector('.ezco-mde-comment-menu'), 2000)
+    return was
+}
+/** How far a card beside the note has stepped out towards the text (negative: left). */
+const shift = (el: HTMLElement) => new DOMMatrix(getComputedStyle(el).transform).m41
 const menuLabels = async (message: HTMLElement) => {
     tool(message, 'Comment menu').click()
     await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu'), 2000)
@@ -168,10 +182,10 @@ describe('Comments float over the note', () => {
         expect(bubble.querySelector('.ezco-mde-comment-under')).toBeNull()
         expect(visibleCards(container)[0].querySelector('.ezco-mde-comment-under')).toBeNull()
         expect([...foot.querySelectorAll(':scope > .ezco-mde-comment-foot-row > button')].map((b) => b.getAttribute('aria-label'))).toEqual(['React', 'Hide replies'])
-        // There is no close button: the chevron's menu has Dismiss, in the
+        // There is no close button: the chevron's menu has Close, in the
         // last of its groups; another's comment offers no composer panel.
         expect(tool(visibleCards(container)[0], 'Close')).toBeUndefined()
-        expect(await menuLabels(visibleCards(container)[0])).toEqual(['Reply', 'Edit', 'Resolve', 'Open as file', 'Delete', 'Show in comments panel', 'Dismiss'])
+        expect(await menuLabels(visibleCards(container)[0])).toEqual(['Reply', 'Edit', 'Resolve', 'Open as file', 'Delete', 'Show in comments panel', 'Close'])
         expect(menuGroups).toBe(5)
         // The byline: who, when, then the fold; the chevron at the right.
         const head = visibleCards(container)[0].querySelector('.ezco-mde-comment-head') as HTMLElement
@@ -284,11 +298,13 @@ describe('The panel, by default', () => {
         expect(over.left).toBeGreaterThan(frame.left + 100)
         expect(margin(narrow.container).closest('.ezco-mde-comment-overlay-frame')).not.toBeNull()
         expect(tool(margin(narrow.container), 'Show the comments')).not.toBeUndefined()
-        tool(margin(narrow.container), 'Hide comments panel').click()
+        await viaHeadMenu(narrow.container, 'Hide comments panel')
         await waitFor(() => margin(narrow.container).classList.contains('is-floating'), 3000)
         expect(document.querySelector('.ezco-mde-comment-overlay-frame')).toBeNull()
         // Put away, it stays away: in this note, and in the next opened.
-        tool(margin(wide.container), 'Hide comments panel').click()
+        // (From the head's menu: the head has no × of its own.)
+        expect(tool(margin(wide.container), 'Hide comments panel')).toBeUndefined()
+        await viaHeadMenu(wide.container, 'Hide comments panel')
         await waitFor(() => margin(wide.container).classList.contains('is-floating'), 3000)
         expect(localStorage.getItem('ezco-mde-comments-panel')).toBe('float')
         const again = await open(1100, undefined)
@@ -332,12 +348,16 @@ describe('A column of comments', () => {
     })
 
     it('folds resolved comments away until asked for', async () => {
-        const { container, comments } = await open(1100, 'column')
+        const { editor, container, comments } = await open(1100, 'column')
         const done = idOf(comments, 'Done already.')
         expect(card(container, done)).toBeNull()
-        tool(container, 'Show resolved (1)').click()
+        await viaHeadMenu(container, 'Show resolved (1)')
         await waitFor(() => !!card(container, done), 2000)
         expect(card(container, done).classList.contains('is-resolved')).toBe(true)
+        // Its text in the note reads as text: no mark of its own under it.
+        const text = editor.view.dom.querySelector('.ezco-mde-comment.is-resolved') as HTMLElement
+        expect(getComputedStyle(text).borderBottomStyle).toBe('none')
+        expect(getComputedStyle(text).backgroundColor).toBe('rgba(0, 0, 0, 0)')
     })
 
     it('floats after all where there is no room beside the note', async () => {
@@ -379,6 +399,44 @@ describe('Writing', () => {
         const shown = card(container, mine.id).querySelector('.ezco-mde-comment-body') as HTMLElement
         expect(shown.querySelector('em')?.textContent).toBe('five')
         expect(getComputedStyle(shown).fontSize).toBe(typedSize)
+    })
+
+    it('writes a new comment over the note, by its text, with the panel beside the note', async () => {
+        const { editor, container, comments } = await open(1100, 'panel')
+        await waitFor(() => margin(container).classList.contains('is-panel'), 2000)
+        await frames()
+        const { from, to } = posOf(editor, 'number 7')
+        editor.commands.setTextSelection({ from, to })
+        editor.commands.startComment()
+        await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
+        // (Placed in the next frame.)
+        await waitFor(() => (container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement).style.top !== '', 2000)
+        const draft = container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement
+        // Over the note, not in the panel: under the end of its text, by it.
+        expect(margin(container).contains(draft)).toBe(false)
+        expect(editor.view.dom.parentElement!.contains(draft)).toBe(true)
+        expect(visibleCards(container).length).toBe(3)
+        const end = editor.view.coordsAtPos(to, -1)
+        const box = draft.getBoundingClientRect()
+        expect(box.top).toBeGreaterThanOrEqual(end.bottom)
+        expect(box.top).toBeLessThan(end.bottom + 16)
+        expect(box.left).toBeLessThanOrEqual(end.left)
+        expect(box.right).toBeLessThanOrEqual(editor.view.dom.getBoundingClientRect().right + 1)
+        const field = draft.querySelector('.ezco-mde-comment-text') as HTMLElement
+        await waitFor(() => document.activeElement === field, 2000)
+        await userEvent.keyboard('Seven.')
+        await userEvent.keyboard('{Control>}{Enter}{/Control}')
+        await waitFor(() => comments.comments().length === 5, 4000)
+        await waitFor(() => !container.querySelector('.ezco-mde-comment-card.is-draft'), 2000)
+        // Posted, it is in the panel with the rest.
+        await waitFor(() => visibleCards(container).length === 4, 3000)
+        // Cancel puts the composer away without a comment.
+        editor.commands.setTextSelection({ from, to })
+        editor.commands.startComment()
+        await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft'), 2000)
+        tool(container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement, 'Cancel').click()
+        await waitFor(() => !container.querySelector('.ezco-mde-comment-card.is-draft'), 2000)
+        expect(comments.comments().length).toBe(5)
     })
 
     it('writes a reply under its comment, keeps the draft, and closes on Cancel', async () => {
@@ -456,8 +514,8 @@ describe('Writing', () => {
         await waitFor(() => card(container, third)?.classList.contains('is-active'), 2000)
         // The menu opens on the reactions to give: the common ones, two rows.
         tool(messageOf(card(container, third), third), 'Comment menu').click()
-        await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu .ezco-mde-comment-menu-reactions'), 2000)
-        const block = document.querySelector('.ezco-mde-comment-menu-reactions') as HTMLElement
+        await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu .ezco-mde-reaction-grid'), 2000)
+        const block = document.querySelector('.ezco-mde-reaction-grid') as HTMLElement
         const quick = [...block.querySelectorAll<HTMLElement>('.ezco-mde-emoji-cell:not(.is-more)')].map((c) => c.textContent)
         expect(quick.slice(0, 8)).toEqual(['👍', '👎', '😄', '🎉', '😕', '❤️', '🚀', '👀'])
         expect(block.getBoundingClientRect().height).toBeGreaterThan(55)
@@ -470,9 +528,9 @@ describe('Writing', () => {
         // The reaction given is lit; the last cell opens the full grid, which
         // opens on the recent row, then the first category, never blank.
         tool(messageOf(card(container, third), third), 'Comment menu').click()
-        await waitFor(() => !!document.querySelector('.ezco-mde-comment-menu-reactions'), 2000)
-        expect(tool(document.querySelector('.ezco-mde-comment-menu-reactions') as HTMLElement, 'React 👍').getAttribute('aria-pressed')).toBe('true')
-        tool(document.querySelector('.ezco-mde-comment-menu-reactions') as HTMLElement, 'More emoji').click()
+        await waitFor(() => !!document.querySelector('.ezco-mde-reaction-grid'), 2000)
+        expect(tool(document.querySelector('.ezco-mde-reaction-grid') as HTMLElement, 'React 👍').getAttribute('aria-pressed')).toBe('true')
+        tool(document.querySelector('.ezco-mde-reaction-grid') as HTMLElement, 'More emoji').click()
         await waitFor(() => !!document.querySelector('.ezco-mde-emoji-grid .ezco-mde-emoji-cell'), 3000)
         // The grid opens by the chevron it came from, not somewhere under the card.
         const chevron = tool(messageOf(card(container, third), third), 'Comment menu').getBoundingClientRect()
@@ -660,7 +718,7 @@ describe('Writing', () => {
         await frames()
         expect(visibleCards(container).length).toBe(3)
         expect(container.querySelector('.ezco-mde-comments .ezco-mde-comment-margin')).not.toBeNull()
-        tool(margin(container), 'Hide comments panel').click()
+        await viaHeadMenu(container, 'Hide comments panel')
         await waitFor(() => margin(container).classList.contains('is-floating'), 3000)
         expect(container.querySelector('.ezco-mde-comments')).toBeNull()
         // Back over the note, as wide as the note: the card by its text again.
@@ -677,8 +735,8 @@ describe('Writing', () => {
         const { container, comments } = await open(1100, 'column', FILES, null)
         const first = idOf(comments, 'First.')
         expect([...card(container, first).querySelectorAll('.ezco-mde-comment-action')].map((b) => b.getAttribute('aria-label'))).toEqual(['No replies'])
-        expect(await menuLabels(messageOf(card(container, first), first))).toEqual(['Open as file'])
-        expect(card(container, first).querySelector('.ezco-mde-comment-menu-reactions')).toBeNull()
+        expect(await menuLabels(messageOf(card(container, first), first))).toEqual(['Open as file', 'Hide comments panel'])
+        expect(card(container, first).querySelector('.ezco-mde-reaction-grid')).toBeNull()
     })
 
     it('opens an unwritten comment in the sheet with somewhere to write, saving it as it is typed', async () => {
@@ -822,13 +880,45 @@ describe('What a comment shows', () => {
         await waitFor(() => !tool(messageOf(visibleCards(container)[0], reply), 'Show the whole text').hidden, 3000)
         tool(messageOf(visibleCards(container)[0], reply), 'Show the whole text').click()
         await frames()
-        const box = visibleCards(container)[0].getBoundingClientRect()
         const frame = container.getBoundingClientRect()
-        expect(box.height).toBeLessThanOrEqual(frame.height - 15)
-        expect(box.top).toBeGreaterThanOrEqual(frame.top)
-        expect(box.bottom).toBeLessThanOrEqual(frame.bottom)
+        expect(visibleCards(container)[0].getBoundingClientRect().height).toBeLessThanOrEqual(frame.height - 15)
+        // Grown, the card stays under its text; the note is scrolled so the
+        // whole of it is in the frame.
+        await waitFor(() => {
+            const box = visibleCards(container)[0].getBoundingClientRect()
+            return box.top >= frame.top && box.bottom <= frame.bottom
+        }, 4000)
         const inside = visibleCards(container)[0].querySelector('.ezco-mde-comment-inside') as HTMLElement
         expect(inside.scrollHeight).toBeGreaterThan(inside.clientHeight)
+    })
+
+    it('scrolls a card under the last lines into view, growing the note’s end for it, and gives the end back', async () => {
+        // A comment on the last paragraph: its card has nowhere to be but
+        // under the note's end.
+        const longer = ['# Review', ...Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the longer part, nothing to say.`), ...paragraphs].join('\n\n') + '\n'
+        const files = { ...FILES, 'Review.md': longer, ...Object.fromEntries([comment('erin', '08', 'Paragraph 12 says', 'At the end.')]) }
+        const { editor, container, comments } = await openWith(files, 'float', 900)
+        await waitFor(() => comments.comments().some((c) => c.body === 'At the end.'), 4000)
+        const scroller = container
+        const last = comments.comments().find((c) => c.body === 'At the end.')!
+        scroller.scrollTop = scroller.scrollHeight
+        const before = scroller.scrollHeight
+        editor.commands.focusComment(last.id)
+        await waitFor(() => !!card(container, last.id), 2000)
+        const host = editor.view.dom.parentElement as HTMLElement
+        await waitFor(() => parseFloat(host.style.paddingBottom || '0') > 0, 3000)
+        expect(scroller.scrollHeight).toBeGreaterThan(before)
+        await waitFor(() => {
+            const box = card(container, last.id).getBoundingClientRect()
+            const frame = scroller.getBoundingClientRect()
+            return box.bottom <= frame.bottom + 1 && box.top >= editor.view.coordsAtPos(last.target.range!.to, -1).bottom - 1
+        }, 4000)
+        // Under its text still, not moved above it.
+        expect(card(container, last.id).getBoundingClientRect().top).toBeGreaterThanOrEqual(editor.view.coordsAtPos(last.target.range!.to, -1).bottom)
+        // Closed, the note's end is given back.
+        editor.commands.focusComment(null)
+        await waitFor(() => comments.active() === null, 2000)
+        await waitFor(() => !host.style.paddingBottom, 2000)
     })
 
     it('lists every comment in a panel, in the note’s order, marks the one being read past, and takes the note to one clicked, level with its bubble', async () => {
@@ -854,13 +944,14 @@ describe('What a comment shows', () => {
         // The head stays while the list scrolls.
         expect(getComputedStyle(margin(container).querySelector('.ezco-mde-comment-list') as HTMLElement).overflowY).toBe('auto')
         expect(getComputedStyle(margin(container)).overflowY).not.toBe('auto')
-        // The comment looked at is the current one, stepped out a little from the others.
+        // The comment looked at is the current one, stepped out all the way
+        // from the others.
         expect(card(container, third).classList.contains('is-current')).toBe(true)
-        expect(getComputedStyle(card(container, third)).transform).not.toBe('none')
-        expect(getComputedStyle(card(container, idOf(comments, 'First.'))).transform).toBe('none')
+        await waitFor(() => shift(card(container, third)) < -7, 2000)
+        expect(shift(card(container, idOf(comments, 'First.')))).toBeGreaterThanOrEqual(shift(card(container, third)))
         // As the note is read past commented text, that comment is the current one.
         const done = idOf(comments, 'Done already.')
-        tool(container, 'Show resolved (1)').click()
+        await viaHeadMenu(container, 'Show resolved (1)')
         await waitFor(() => !!card(container, done), 2000)
         const textTop = (id: string) => editor.view.coordsAtPos(comments.comments().find((c) => c.id === id)!.target.range!.from, 1).top
         const frame = container.getBoundingClientRect()
@@ -868,10 +959,17 @@ describe('What a comment shows', () => {
         container.dispatchEvent(new Event('scroll'))
         await waitFor(() => card(container, done).classList.contains('is-current'), 2000)
         expect(container.querySelectorAll('.ezco-mde-comment-card.is-current').length).toBe(1)
+        // Its text at the reading line, the card has stepped out all the way;
+        // the note scrolled on, it steps back in by how far the text is.
+        await waitFor(() => shift(card(container, done)) < -7, 2000)
+        container.scrollTop -= frame.height * 0.2
+        container.dispatchEvent(new Event('scroll'))
+        await waitFor(() => shift(card(container, done)) > -7 && shift(card(container, done)) < -1, 2000)
         container.scrollTop = 0
         container.dispatchEvent(new Event('scroll'))
         await waitFor(() => !card(container, done).classList.contains('is-current'), 2000)
         expect(container.querySelectorAll('.ezco-mde-comment-card.is-current').length).toBe(1)
+        await waitFor(() => shift(card(container, done)) === 0, 2000)
         // A click on a comment's bubble takes the note to its text, level
         // with the top of the bubble, and lights the comment.
         // (The card is drawn again as it becomes the one looked at: its bubble is found again.)
@@ -882,6 +980,105 @@ describe('What a comment shows', () => {
         await waitFor(() => Math.abs(textTop(done) - bubble().getBoundingClientRect().top) < 2, 4000)
         expect(card(container, done).classList.contains('is-current')).toBe(true)
         expect(getComputedStyle(bubble()).borderTopColor).not.toBe(getComputedStyle(card(container, idOf(comments, 'First.')).querySelector('.ezco-mde-comment-bubble.is-anchor') as HTMLElement).borderTopColor)
+    })
+
+    it('takes the note to a comment clicked on its text, and anchors the cards to their text from the head’s menu, keeping the choice', async () => {
+        // The commented paragraphs far enough down the note for it to scroll
+        // any of them level with a bubble.
+        const files = { ...FILES, 'Review.md': ['# Review', ...Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the longer part, nothing to say.`), ...paragraphs].join('\n\n') + '\n' }
+        const { editor, container, comments } = await open(1100, 'panel', files)
+        await waitFor(() => margin(container).classList.contains('is-panel'), 2000)
+        await frames()
+        const third = idOf(comments, 'Third, same line.')
+        const textTop = () => editor.view.coordsAtPos(comments.comments().find((c) => c.id === third)!.target.range!.from, 1).top
+        // A click on the comment's own text (most of the bubble), not only
+        // on the bubble's edge, takes the note there.
+        const body = () => card(container, third).querySelector('.ezco-mde-comment-body') as HTMLElement
+        await userEvent.click(body())
+        await waitFor(() => comments.active() === third, 2000)
+        const bubble = () => card(container, third).querySelector('.ezco-mde-comment-bubble.is-anchor') as HTMLElement
+        await waitFor(() => Math.abs(textTop() - bubble().getBoundingClientRect().top) < 2, 4000)
+        // From the head's menu, a switch that was off: the cards anchored
+        // to their text, level with it, scrolling with the note (a column),
+        // rather than a list of their own.
+        expect(await viaHeadMenu(container, 'Anchor comments to text')).toBe('false')
+        await waitFor(() => !margin(container).classList.contains('is-panel') && !margin(container).classList.contains('is-floating'), 2000)
+        await frames()
+        for (const c of visibleCards(container)) expect(c.style.top).not.toBe('')
+        expect(getComputedStyle(margin(container)).position).not.toBe('sticky')
+        // The one looked at exactly at its text (the others make way for it).
+        expect(Math.abs(card(container, third).getBoundingClientRect().top - anchorTop(editor, comments, third))).toBeLessThan(2)
+        // Anchored, the cards are still: none steps out as the note scrolls.
+        container.scrollTop += 120
+        container.dispatchEvent(new Event('scroll'))
+        await frames()
+        for (const c of visibleCards(container)) expect(shift(c)).toBe(0)
+        expect(container.querySelectorAll('.ezco-mde-comment-card.is-current').length).toBeLessThanOrEqual(1)
+        // The head stays at the top of the frame as the note scrolls, over
+        // the cards passing under it.
+        const head = margin(container).querySelector('.ezco-mde-comment-margin-head') as HTMLElement
+        expect(getComputedStyle(head).position).toBe('sticky')
+        container.scrollTop = 600
+        container.dispatchEvent(new Event('scroll'))
+        await frames()
+        expect(head.getBoundingClientRect().top).toBeCloseTo(container.getBoundingClientRect().top, 0)
+        expect(margin(container).getBoundingClientRect().height).toBeGreaterThanOrEqual(editor.view.dom.getBoundingClientRect().height - 1)
+        // Kept: another editor opens anchored; the switch is on, and turns off.
+        expect(localStorage.getItem('ezco-mde-comments-anchored')).toBe('1')
+        const again = await open(1100, 'panel', files)
+        await waitFor(() => again.container.querySelectorAll('.ezco-mde-comment-card').length === 3, 3000)
+        await frames()
+        expect(margin(again.container).classList.contains('is-panel')).toBe(false)
+        for (const c of visibleCards(again.container)) expect(c.style.top).not.toBe('')
+        const first = idOf(again.comments, 'First.')
+        expect(Math.abs(card(again.container, first).getBoundingClientRect().top - anchorTop(again.editor, again.comments, first))).toBeLessThan(2)
+        expect(await viaHeadMenu(again.container, 'Anchor comments to text')).toBe('true')
+        await waitFor(() => margin(again.container).classList.contains('is-panel'), 2000)
+        expect(localStorage.getItem('ezco-mde-comments-anchored')).toBe('0')
+    })
+
+    it('marks each comment’s first line in the gutter with a bubble the block’s glyph gives way to; a click looks at the comment, or at each in turn', async () => {
+        const { editor, container, comments } = await open(1100, 'panel')
+        await waitFor(() => margin(container).classList.contains('is-panel'), 2000)
+        const gutter = container.querySelector('.ezco-mde-gutter') as HTMLElement
+        const marks = () => [...gutter.querySelectorAll<HTMLElement>('.ezco-mde-comment-mark')]
+        // Four comments on three lines: the second and third start on the
+        // same paragraph (one mark for both); the fourth is resolved, and
+        // marked still, its text no longer highlighted.
+        await waitFor(() => marks().length === 3, 3000)
+        const first = idOf(comments, 'First.')
+        const second = idOf(comments, 'Second, a longer comment that wraps onto a few lines in the margin to take room.')
+        const third = idOf(comments, 'Third, same line.')
+        const done = idOf(comments, 'Done already.')
+        const markOf = (id: string) => marks().find((m) => (JSON.parse(m.dataset.comments!) as string[]).includes(id))!
+        expect(markOf(third)).toBeDefined()
+        expect(markOf(third)).toBe(markOf(second))
+        expect(markOf(done).classList.contains('is-resolved')).toBe(true)
+        expect(markOf(first).classList.contains('is-resolved')).toBe(false)
+        expect(markOf(first).querySelector('svg')).not.toBeNull()
+        // On the first line of its text, in the glyph column, the glyph of
+        // the paragraph (whose first line it is) gone from under it.
+        const lineOf = (id: string) => editor.view.coordsAtPos(comments.comments().find((c) => c.id === id)!.target.range!.from, 1)
+        const box = markOf(first).getBoundingClientRect()
+        expect(box.top + box.height / 2).toBeGreaterThan(lineOf(first).top)
+        expect(box.top + box.height / 2).toBeLessThan(lineOf(first).bottom)
+        const glyphs = [...gutter.querySelectorAll<HTMLElement>('.ezco-mde-block-icon')]
+        const covered = glyphs.filter((g) => g.classList.contains('is-marked'))
+        expect(covered.length).toBe(3)
+        expect(covered.every((g) => parseFloat(getComputedStyle(g).opacity) === 0)).toBe(true)
+        const paragraph = glyphs.find((g) => Math.abs(g.getBoundingClientRect().top + g.getBoundingClientRect().height / 2 - (box.top + box.height / 2)) < 2)!
+        expect(paragraph.classList.contains('is-marked')).toBe(true)
+        expect(box.left + box.width / 2).toBeCloseTo(paragraph.getBoundingClientRect().left + paragraph.getBoundingClientRect().width / 2, 0)
+        // A click looks at the comment; on a line two start on, at each in turn.
+        markOf(first).click()
+        await waitFor(() => comments.active() === first, 2000)
+        await waitFor(() => markOf(first).classList.contains('is-active'), 2000)
+        markOf(third).click()
+        await waitFor(() => comments.active() === third, 2000)
+        markOf(third).click()
+        await waitFor(() => comments.active() === second, 2000)
+        markOf(third).click()
+        await waitFor(() => comments.active() === third, 2000)
     })
 
     it('shows a quoted passage as a portal: its paragraph around it, the words marked, and where they are', async () => {
