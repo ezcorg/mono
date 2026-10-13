@@ -20,9 +20,10 @@
 import { Editor, InputRule, Node, mergeAttributes } from '@tiptap/core'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import tippy, { type Instance as TippyInstance } from 'tippy.js'
+import type { EditorView } from '@tiptap/pm/view'
 import { formatWikilink, isNote, matchWikilinkAt, parseWikilink, type LinkResolution, type LinkResolver, type LinkSuggestion, type LinkSyntax, type Wikilink as WikilinkParts } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { SuggestionMenu, type SuggestionItem } from '../ui/suggestion-menu'
 import { setupOnce } from './markdown-it'
 import { revealFragment } from './fragment'
 import { openNotePath, persistenceOf } from './filesystem'
@@ -372,7 +373,7 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
         return [
             new Plugin({
                 key: new PluginKey('wikilinkSuggest'),
-                view: () => (view = new SuggestView(editor, resolver, type)),
+                view: (editorView) => (view = new SuggestView(editor, editorView, resolver, type)),
                 props: {
                     handleKeyDown: (_, event) => view?.handleKeyDown(event) ?? false,
                 },
@@ -390,25 +391,38 @@ interface Row {
 
 /**
  * The `[[` menu: the vault's notes matching what follows the brackets, best
- * first, and a row to link a note that does not exist yet.
+ * first, and a row to link a note that does not exist yet. The list itself
+ * (rows, keys, the popover, a press elsewhere closing it) is a
+ * `SuggestionMenu`; this finds the brackets, asks the vault and puts the
+ * chosen note in as a link.
  */
 class SuggestView {
     /** Set when an edit leaves the caret just after a new `[[`; landing the
      *  caret after an existing one does not open the menu. */
     private armed = false
-    private menu: HTMLElement | null = null
-    private popup: TippyInstance | null = null
+    private menu: SuggestionMenu
     private range: { from: number; to: number } | null = null
-    private rows: Row[] = []
-    private selected = 0
     private token = 0
     private query: string | null = null
 
     constructor(
         private editor: Editor,
+        view: EditorView,
         private resolver: LinkResolver,
         private type: PMNode['type'],
     ) {
+        // Tab chooses as Enter does; the arrows wrap both ways.
+        this.menu = new SuggestionMenu({
+            view,
+            range: () => this.range,
+            className: 'ezco-mde-wikilink-menu',
+            label: 'Link to a note',
+            tabSelects: true,
+            onClose: () => {
+                this.armed = false
+                this.hide()
+            },
+        })
         this.onSelectionUpdate = this.onSelectionUpdate.bind(this)
         editor.on('selectionUpdate', this.onSelectionUpdate)
     }
@@ -428,9 +442,8 @@ class SuggestView {
         if (transaction.docChanged && m[1] === '') this.armed = true
         if (!this.armed) return
         this.range = { from: $from.pos - m[0].length, to: $from.pos }
-        if (m[1] === this.query && this.menu) return
+        if (m[1] === this.query && this.menu.isOpen) return
         this.query = m[1]
-        this.selected = 0
         const mine = ++this.token
         const from = openNotePath(this.editor)
         void this.resolver
@@ -440,44 +453,18 @@ class SuggestView {
                 if (mine !== this.token || !this.range) return
                 const typed = m[1].trim()
                 const exact = suggestions.some((s) => s.link.toLowerCase() === typed.toLowerCase())
-                this.rows = suggestions.map((suggestion) => ({ suggestion, isNew: false }))
-                if (typed && !exact) this.rows.push({ suggestion: { path: '', link: typed, title: typed }, isNew: true })
-                this.render()
+                const rows: Row[] = suggestions.map((suggestion) => ({ suggestion, isNew: false }))
+                if (typed && !exact) rows.push({ suggestion: { path: '', link: typed, title: typed }, isNew: true })
+                this.render(rows)
             })
     }
 
     handleKeyDown(event: KeyboardEvent): boolean {
-        if (!this.menu || this.rows.length === 0) {
-            if (this.menu && event.key === 'Escape') {
-                this.hide()
-                return true
-            }
-            return false
-        }
-        switch (event.key) {
-            case 'ArrowDown':
-                this.selected = (this.selected + 1) % this.rows.length
-                this.highlight()
-                return true
-            case 'ArrowUp':
-                this.selected = (this.selected - 1 + this.rows.length) % this.rows.length
-                this.highlight()
-                return true
-            case 'Enter':
-            case 'Tab':
-                this.choose(this.rows[this.selected])
-                return true
-            case 'Escape':
-                this.armed = false
-                this.hide()
-                return true
-            default:
-                return false
-        }
+        return this.menu.handleKeyDown(event)
     }
 
-    private choose(row: Row | undefined) {
-        if (!row || !this.range) return
+    private choose(row: Row) {
+        if (!this.range) return
         const { from, to } = this.range
         const { state } = this.editor
         // Swallow closing brackets already typed after the caret.
@@ -492,85 +479,19 @@ class SuggestView {
         this.hide()
     }
 
-    private render() {
-        const menu = document.createElement('div')
-        // Its own root class: the slash menu sweeps away any popover holding
-        // `.ezco-mde-slash-menu` on every selection change. (It shares the
-        // slash menu's look; the row classes are the slash menu's own.)
-        menu.className = 'ezco-mde-wikilink-menu'
-        menu.setAttribute('role', 'listbox')
-        menu.setAttribute('aria-label', 'Link to a note')
-        if (this.rows.length === 0) {
-            const empty = document.createElement('div')
-            empty.className = 'ezco-mde-slash-empty'
-            empty.textContent = 'Type a note name'
-            menu.append(empty)
-        }
-        this.rows.forEach((row, i) => {
-            const item = document.createElement('button')
-            item.type = 'button'
-            item.className = 'ezco-mde-slash-item'
-            item.setAttribute('role', 'option')
-            const body = document.createElement('span')
-            body.className = 'ezco-mde-slash-item-body'
-            const title = document.createElement('span')
-            title.className = 'ezco-mde-slash-item-title'
-            title.textContent = row.isNew ? `New note “${row.suggestion.link}”` : row.suggestion.title ?? row.suggestion.link
-            const desc = document.createElement('span')
-            desc.className = 'ezco-mde-slash-item-desc'
-            desc.textContent = row.isNew ? 'created when you follow the link' : row.suggestion.path
-            body.append(title, desc)
-            item.append(body)
-            item.addEventListener('mousedown', (e) => {
-                e.preventDefault()
-                this.choose(row)
-            })
-            item.addEventListener('mouseenter', () => {
-                this.selected = i
-                this.highlight()
-            })
-            menu.append(item)
-        })
-        this.menu = menu
-        this.highlight()
-        if (this.popup) {
-            this.popup.setContent(menu)
-            return
-        }
-        const created = tippy(document.body, {
-            getReferenceClientRect: () => {
-                const r = this.range ?? { from: 0, to: 0 }
-                const start = this.editor.view.coordsAtPos(r.from)
-                const end = this.editor.view.coordsAtPos(r.to)
-                return new DOMRect(start.left, start.top, Math.max(1, end.right - start.left), end.bottom - start.top)
-            },
-            appendTo: () => document.body,
-            content: menu,
-            showOnCreate: true,
-            interactive: true,
-            trigger: 'manual',
-            placement: 'bottom-start',
-            theme: 'ezco-mde-slash',
-            maxWidth: 'none',
-        }) as TippyInstance | TippyInstance[]
-        this.popup = Array.isArray(created) ? created[0] : created
-    }
-
-    private highlight() {
-        this.menu?.querySelectorAll('.ezco-mde-slash-item').forEach((el, i) => {
-            el.classList.toggle('is-selected', i === this.selected)
-            el.setAttribute('aria-selected', String(i === this.selected))
-            if (i === this.selected) (el as HTMLElement).scrollIntoView?.({ block: 'nearest' })
-        })
+    private render(rows: Row[]) {
+        const items: SuggestionItem[] = rows.map((row) => ({
+            title: row.isNew ? `New note “${row.suggestion.link}”` : row.suggestion.title ?? row.suggestion.link,
+            description: row.isNew ? 'created when you follow the link' : row.suggestion.path,
+            onSelect: () => this.choose(row),
+        }))
+        this.menu.show(items, 'Type a note name')
     }
 
     private hide() {
         this.token++
-        this.popup?.destroy()
-        this.popup = null
-        this.menu = null
+        this.menu.hide()
         this.range = null
-        this.rows = []
         this.query = null
     }
 

@@ -1,6 +1,8 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { popover, rangeRect, type Popover } from '../ui/popover'
+import type { EditorView } from '@tiptap/pm/view'
+import { popover, type Popover } from '../ui/popover'
+import { popoverUnderTyped } from '../ui/suggestion-menu'
 import { button, el, labelled, pressable } from '../ui/dom'
 import { FACE_ICON } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
@@ -11,8 +13,9 @@ import { readKept, writeKept } from '../ui/kept'
  * Typing `:` followed by at least two characters opens a searchable, OS-style
  * emoji grid (`:smi` → 😄 😊 …); arrow keys move through the grid, Enter inserts
  * the focused emoji in place of the `:query`. Mirrors the slash-command trigger
- * mechanics (a ProseMirror plugin + a tippy popup) but presents a grid with a
- * name footer rather than a flat menu.
+ * mechanics (a ProseMirror plugin, a popover under the typed text through
+ * `ui/suggestion-menu.ts`'s `popoverUnderTyped`) but presents a grid with a
+ * name footer rather than a flat menu, so its rows and keys are its own.
  *
  * The ~550KB emoji dataset is **lazy-loaded** via a dynamic import — the cost is
  * paid on the first `:`-trigger, not at editor load (a consumer can warm it
@@ -475,8 +478,8 @@ export const EmojiPicker = Extension.create<EmojiPickerOptions>({
         return [
             new Plugin({
                 key: new PluginKey('emojiPicker'),
-                view: () => {
-                    view = new EmojiPickerView(this.editor, this.options)
+                view: (editorView) => {
+                    view = new EmojiPickerView(this.editor, editorView, this.options)
                     return view
                 },
                 props: {
@@ -504,6 +507,7 @@ class EmojiPickerView {
 
     constructor(
         private editor: Editor,
+        private view: EditorView,
         private options: EmojiPickerOptions,
     ) {
         this.onSelectionUpdate = this.onSelectionUpdate.bind(this)
@@ -560,15 +564,9 @@ class EmojiPickerView {
                 onPick: (emoji) => this.selectEmoji(emoji),
                 onClose: () => this.hide(),
             })
-            // Under the typed `:query`. A press in the editor is the editor's
-            // (the selection then decides); one elsewhere closes it.
-            this.popup = popover(this.editor.view.dom, this.menu.dom, {
-                rect: () => rangeRect(this.editor.view, this.range ?? { from: 0, to: 0 }),
-                theme: 'ezco-mde-emoji',
-                maxWidth: 'none',
-                onPressOutside: () => this.hide(),
-            })
-            this.popup.show()
+            // Under the typed `:query`, as the slash and `[[` menus are; the
+            // grid, its keys and its empty line are the menu's own.
+            this.popup = popoverUnderTyped(this.view, () => this.range, this.menu.dom, { theme: 'ezco-mde-emoji', onPressOutside: () => this.hide() })
         }
         this.menu.query(query)
     }

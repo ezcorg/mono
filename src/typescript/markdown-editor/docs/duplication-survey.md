@@ -82,6 +82,17 @@ suites around it and the demo looked at.
   `restable(dom)` (the wake/rest/away of the sheet and the overlaid panel,
   one `REST_AFTER`). Six throttles, six guards, both follow pairs and both
   rest copies are on them.
+- **Suggestion menus** (2026-10-13): `ui/suggestion-menu.ts` draws the
+  rows and the empty line, keeps the selection in view, takes the keys
+  (arrows that wrap, Enter, Tab where it chose, Escape) and opens under
+  the typed text through the popover; the slash and `[[` menus delegate
+  all of it and keep their triggers, filters and choices, the `:` trigger
+  only the popover (its grid and two-way arrows serve the searching
+  picker too). The `[[` menu closes on a press outside now, and stands
+  under its brackets: referenced on `document.body`, it had opened off
+  the page in the demo. Three identical tippy theme rules are one.
+  `slash-commands.test.ts` (new) and a `[[` case in `wikilink.test.ts`
+  drive both with real keys.
 - **The persistence cast** (2026-10-13): `persistenceOf(editor)` and
   `openNotePath(editor)` in `extensions/filesystem.ts` (the two
   `openPath`s gone, the three sites that never normalised still read the
@@ -105,20 +116,35 @@ suites around it and the demo looked at.
 
 ## Left for discussion
 
-Worth doing, each a contained refactor with tests around it:
+Every item below was done on 2026-10-13 (see above); the list is kept as
+the record of what was found. What remains is smaller and listed at the
+end.
 
 1. *DOM helpers: done, above.*
 2. *Popovers: done, above.*
-3. **Suggestion menus**: the slash menu, the emoji picker's typed trigger
-   and the `[[` note menu each hand-roll "trigger character, range, tippy,
-   arrow keys", and the slash and wikilink menus build identical rows and
-   empty states. One `ui/suggestion-menu.ts` would hold them.
+3. *Suggestion menus: done, above.*
 4. *Mount resolution: done, above.*
 5. *Layout passes: done, above.*
 6. *markdown-it setup: done, above.*
 7. *The persistence cast: done, above.*
 8. *Bylines: done, above.*
 9. *Hand positioning: done, with the popovers above.*
+
+## Still duplicated, for a later pass
+
+- 60 bare `createElement` + `className` pairs in fifteen files not
+  touched by the DOM pass (`slash-commands`, `wikilink`, `embed`,
+  `sidebar`, `ui/context-menu`, `ui/link-popover`, `callout`,
+  `comment-composer`, `conflict-notice`, `footnote`, `front-matter`,
+  `folding`, `image`, `filesystem`, `source-view`).
+- The storage casts other than `persistence` (`comments`, `markdown`,
+  `blockActions`, `settings`, `commentMargin`, …): each wants a helper of
+  its own, as `settingsOf` and `persistenceOf` are.
+- Seven `const esc = md.utils.escapeHtml` lines, and the
+  `(tokens, idx) => tokens[idx]` renderer preamble, which a
+  `renderers(md, …)` helper could take if the renderer signature may
+  change.
+- Test files still cast `(editor.storage as any).persistence` (30 sites).
 
 ## Libraries doing the same job
 

@@ -1177,42 +1177,19 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-context-menu-item:focus > .ezco-mde-context-menu-switch::after, .ezco-mde-context-menu-item:focus-visible > .ezco-mde-context-menu-switch::after': {
         background: 'var(--ezco-mde-accent)',
     },
-    '.tippy-box[data-theme~="ezco-mde-block-actions"]': {
+    // The menus' popovers (the block, selection and comment menus; the
+    // slash command menu and the `[[` note menu, `ui/suggestion-menu.ts`;
+    // the emoji grid): a transparent tippy box, each menu drawing its own
+    // surface from the context-menu variables, so they read as one family.
+    '.tippy-box[data-theme~="ezco-mde-block-actions"], .tippy-box[data-theme~="ezco-mde-slash"], .tippy-box[data-theme~="ezco-mde-emoji"]': {
         background: 'transparent',
         'box-shadow': 'none',
         padding: 0,
     },
-    '.tippy-box[data-theme~="ezco-mde-block-actions"] .tippy-content': {
-        padding: 0,
-    },
-    // ─────────────────────────────────────────────────────────────
-    // Slash command menu ("/" in the editor).
-    //
-    // Shares the rich-text context-menu palette (dark surface, light
-    // sans-serif text) so it reads as part of the same family as the
-    // block-action menu — and, unlike the previous hand-rolled CSS that
-    // only lived in the dev app's App.css, it now ships with the library
-    // so consumers get a styled, visible menu out of the box.
-    // ─────────────────────────────────────────────────────────────
-    '.tippy-box[data-theme~="ezco-mde-slash"]': {
-        background: 'transparent',
-        'box-shadow': 'none',
-        padding: 0,
-    },
-    '.tippy-box[data-theme~="ezco-mde-slash"] .tippy-content': {
+    '.tippy-box[data-theme~="ezco-mde-block-actions"] .tippy-content, .tippy-box[data-theme~="ezco-mde-slash"] .tippy-content, .tippy-box[data-theme~="ezco-mde-emoji"] .tippy-content': {
         padding: 0,
     },
     // ── Emoji picker (`:` trigger) — an OS-style searchable grid ──
-    // Transparent tippy box so our surface shows through; the surface + accent
-    // use the same context-menu vars as the other menus.
-    '.tippy-box[data-theme~="ezco-mde-emoji"]': {
-        background: 'transparent',
-        'box-shadow': 'none',
-        padding: 0,
-    },
-    '.tippy-box[data-theme~="ezco-mde-emoji"] .tippy-content': {
-        padding: 0,
-    },
     '.ezco-mde-emoji-menu': {
         width: 'max-content',
         padding: '6px',
@@ -1354,7 +1331,7 @@ export const styleModule: StyleModule = new StyleModule({
     // macOS-style single highlight: only `.is-selected` is coloured, with the
     // same solid accent blue as the other dropdowns (block-action menu, search
     // toolbar). Hovering doesn't get its own `:hover` rule — the menu sets
-    // `selectedIndex` to the hovered row on `mouseenter` (see slash-commands.ts),
+    // the selected row to the one under the pointer on `mouseenter` (`ui/suggestion-menu.ts`),
     // so the keyboard and the pointer drive the *same* single highlight.
     // Because the row is two-line (title + description + an icon chip), the
     // selected state recolours each part to read on the blue fill.

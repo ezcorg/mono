@@ -223,4 +223,62 @@ describe('Editing wikilinks', () => {
         expect(md).toMatch(/\nsee \[\[2025\/plan\]\]$/)
         expect(md).not.toContain('[[pla\n')
     })
+
+    it('the `[[` menu with real keys: Escape and a press elsewhere close it, the arrows wrap, Enter puts the link in', async () => {
+        const { editor } = await inVault({
+            'index.md': '# Index',
+            'projects/plan.md': '# Plan',
+            'archive/2025/plan.md': '# Old plan',
+        })
+        const away = document.createElement('button')
+        away.type = 'button'
+        away.style.cssText = 'position: fixed; right: 8px; bottom: 8px;'
+        document.body.append(away)
+        try {
+            const menu = () => document.querySelector<HTMLElement>('.ezco-mde-wikilink-menu')
+            const rows = () => Array.from(document.querySelectorAll<HTMLElement>('.ezco-mde-wikilink-menu .ezco-mde-slash-item'))
+            const selected = () => menu()?.querySelector('.ezco-mde-slash-item.is-selected .ezco-mde-slash-item-desc')?.textContent
+            await userEvent.click(editor.view.dom)
+            editor.commands.focus('end')
+            // `[[` alone offers the vault's notes; Escape closes, the brackets stay.
+            await userEvent.keyboard('{Enter}see [[[[')
+            await waitFor(() => rows().length >= 2, 3000)
+            expect(menu()?.getAttribute('aria-label')).toBe('Link to a note')
+            const brackets = editor.view.coordsAtPos(editor.state.selection.from - 2)
+            const box = menu()!.getBoundingClientRect()
+            expect(box.top).toBeGreaterThanOrEqual(brackets.bottom)
+            expect(Math.abs(box.left - brackets.left)).toBeLessThan(2)
+            await userEvent.keyboard('{Escape}')
+            expect(menu()).toBeNull()
+            expect(editor.getText()).toMatch(/see \[\[$/)
+            // A press elsewhere closes it too.
+            await userEvent.keyboard('{Backspace}{Backspace}[[[[')
+            await waitFor(() => rows().length >= 2, 3000)
+            await userEvent.click(away)
+            await waitFor(() => !menu(), 2000)
+            expect(editor.getText()).toMatch(/see \[\[$/)
+            // Back in the note (the press took the focus): typing filters, the
+            // arrows wrap both ways, Enter links the row selected.
+            await userEvent.click(editor.view.dom)
+            editor.commands.focus('end')
+            await userEvent.keyboard('{Backspace}{Backspace}[[[[pla')
+            await waitFor(() => rows().length === 3, 3000)
+            expect(selected()).toBe('projects/plan.md')
+            await userEvent.keyboard('{ArrowUp}')
+            expect(selected()).toBe('created when you follow the link')
+            await userEvent.keyboard('{ArrowDown}')
+            expect(selected()).toBe('projects/plan.md')
+            await userEvent.keyboard('{ArrowDown}')
+            expect(selected()).toBe('archive/2025/plan.md')
+            await userEvent.keyboard('{ArrowUp}')
+            expect(selected()).toBe('projects/plan.md')
+            expect(document.querySelectorAll('.ezco-mde-wikilink-menu .is-selected')).toHaveLength(1)
+            await userEvent.keyboard('{Enter}')
+            await waitFor(() => links(editor).length === 1, 2000)
+            expect(menu()).toBeNull()
+            expect(getMarkdownContent(editor)).toMatch(/\nsee \[\[plan\]\]$/)
+        } finally {
+            away.remove()
+        }
+    })
 })
