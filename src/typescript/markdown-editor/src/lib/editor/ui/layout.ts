@@ -1,6 +1,9 @@
 /**
  * What the chrome needs to know about where it stands: where a piece of it
- * is mounted, and what scrolls the note.
+ * is mounted, and what scrolls the note; and how it keeps up when that
+ * changes: a layout pass a frame at a time, a watch on an element's size,
+ * the page moving under a fixed overlay, and an overlay resting at the
+ * edge when left alone.
  */
 
 /** Where a piece of chrome goes: an element to put it in, or a function
@@ -41,4 +44,96 @@ export function scrollContainerOf(el: HTMLElement | null): HTMLElement {
 /** Whether `scroller` is the page itself, whose scroll events come from `window`. */
 export function isPageScroller(scroller: HTMLElement): boolean {
     return scroller === document.documentElement || scroller === document.scrollingElement
+}
+
+/** `fn` in the next frame, once, however often `schedule` is called before
+ *  it runs; `cancel` on destroy, so no frame outlives its owner. */
+export function rafThrottle(fn: () => void): { schedule: () => void; cancel: () => void } {
+    let frame = 0
+    return {
+        schedule: () => {
+            if (frame) return
+            frame = requestAnimationFrame(() => {
+                frame = 0
+                fn()
+            })
+        },
+        cancel: () => {
+            if (frame) cancelAnimationFrame(frame)
+            frame = 0
+        },
+    }
+}
+
+/** A `ResizeObserver` calling `fn`, or null where the platform has none:
+ *  for what observes and unobserves as it goes (`?.observe`). */
+export function sizeObserver(fn: () => void): ResizeObserver | null {
+    return typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => fn())
+}
+
+/** `fn` whenever `target` changes size; returns what stops watching. */
+export function observeResize(target: Element, fn: () => void): () => void {
+    const observer = sizeObserver(fn)
+    observer?.observe(target)
+    return () => observer?.disconnect()
+}
+
+/** `fn` whenever the page moves under something fixed on it: any scroll
+ *  (heard in capture, so a scroller's too) and the window's resize.
+ *  Returns what stops following. */
+export function followPage(fn: () => void): () => void {
+    window.addEventListener('scroll', fn, true)
+    window.addEventListener('resize', fn)
+    return () => {
+        window.removeEventListener('scroll', fn, true)
+        window.removeEventListener('resize', fn)
+    }
+}
+
+/** How long the pointer is gone before what stands over the note's edge
+ *  rests at the edge. */
+const REST_AFTER = 350
+
+export interface Restable {
+    /** Back from the edge (the handle, a comment looked at, a quote). */
+    wake(): void
+    /** The listeners and the timer taken away, and the class. */
+    stop(): void
+}
+
+/** What stands over the note's edge (the sheet, the overlaid panel) rests
+ *  there when left alone: `is-away` once the pointer has been gone
+ *  `REST_AFTER` and nothing in it has focus; back on the pointer's return,
+ *  on focus, or on `wake()`. */
+export function restable(dom: HTMLElement): Restable {
+    let timer = 0
+    const wake = () => {
+        clearTimeout(timer)
+        dom.classList.remove('is-away')
+    }
+    const rest = () => {
+        clearTimeout(timer)
+        timer = window.setTimeout(() => {
+            if (!dom.matches(':hover') && !dom.contains(document.activeElement)) dom.classList.add('is-away')
+        }, REST_AFTER)
+    }
+    // Focus moving elsewhere within it has not left.
+    const left = (e: FocusEvent) => {
+        if (!dom.contains(e.relatedTarget as Node | null) && !dom.matches(':hover')) rest()
+    }
+    dom.addEventListener('pointerenter', wake)
+    dom.addEventListener('pointerleave', rest)
+    dom.addEventListener('focusin', wake)
+    dom.addEventListener('focusout', left)
+    return {
+        wake,
+        stop: () => {
+            clearTimeout(timer)
+            dom.removeEventListener('pointerenter', wake)
+            dom.removeEventListener('pointerleave', rest)
+            dom.removeEventListener('focusin', wake)
+            dom.removeEventListener('focusout', left)
+            dom.classList.remove('is-away')
+        },
+    }
 }

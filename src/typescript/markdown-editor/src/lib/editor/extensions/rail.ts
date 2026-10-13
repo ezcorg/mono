@@ -15,7 +15,7 @@
 import { Extension, type Editor } from '@tiptap/core'
 import type { SidebarMount } from './sidebar'
 import { button, labelled } from '../ui/dom'
-import { resolveMount, scrollerOf } from '../ui/layout'
+import { observeResize, resolveMount, scrollerOf } from '../ui/layout'
 
 interface Joined {
     panels: number
@@ -137,12 +137,10 @@ function fit(rail: HTMLElement): () => void {
         if (height > 0) rail.style.setProperty('--ezco-mde-rail-height', `${height}px`)
     }
     update()
-    if (typeof ResizeObserver === 'undefined') return () => {}
-    const observer = new ResizeObserver(update)
-    observer.observe(scroller ?? document.documentElement)
+    const unobserve = observeResize(scroller ?? document.documentElement, update)
     if (!scroller) window.addEventListener('resize', update)
     return () => {
-        observer.disconnect()
+        unobserve()
         window.removeEventListener('resize', update)
     }
 }

@@ -23,7 +23,7 @@ import { byline, fallbackExtensions, when } from './comment-render'
 import { authorOf } from './comments'
 import { button, el, glyph, labelled } from '../ui/dom'
 import { CLOSE_ICON, FILE_ICON } from '../ui/icons'
-import { scrollerOf } from '../ui/layout'
+import { followPage, observeResize, rafThrottle, restable, scrollerOf, type Restable } from '../ui/layout'
 
 export interface SheetOptions {
     /** The note's editor: the sheet sits over its edge, and links followed
@@ -41,9 +41,6 @@ export interface SheetOptions {
     onClose: () => void
 }
 
-
-/** How long the pointer is gone before the sheet moves aside. */
-const REST_AFTER = 350
 /** How long after a keystroke the document is written. */
 const SAVE_AFTER = 500
 
@@ -92,17 +89,12 @@ export class Sheet {
     private dirty = false
     private saving: Promise<void> = Promise.resolve()
     private saveTimer = 0
-    private restTimer = 0
-    private frame = 0
     private closed = false
-    private readonly observer: ResizeObserver | null
-    private readonly place = () => {
-        if (this.frame) return
-        this.frame = requestAnimationFrame(() => {
-            this.frame = 0
-            this.fit()
-        })
-    }
+    /** Aside when left alone, back on the pointer, focus or the handle. */
+    private readonly resting: Restable
+    private readonly placing = rafThrottle(() => this.fit())
+    private readonly unfollow: () => void
+    private readonly unobserve: () => void
 
     constructor(private readonly options: SheetOptions) {
         const { host, path } = options
@@ -122,7 +114,7 @@ export class Sheet {
         const handle = labelled(button('ezco-mde-comment-sheet-handle'), 'Show the comment')
         handle.append(el('span', 'ezco-mde-comment-sheet-handle-label', byline(by)))
         handle.addEventListener('click', () => {
-            this.wake()
+            this.resting.wake()
             this.editor.commands.focus()
         })
 
@@ -158,22 +150,13 @@ export class Sheet {
         const hint = el('div', 'ezco-mde-comment-sheet-hint', 'Select text in the note and press ⌘⌥M (Ctrl+Alt+M) to quote it here.')
         this.dom.append(handle, head, text, hint)
 
-        // Away when the pointer leaves and nothing in it has focus; back on
-        // the pointer's return, focus, or the handle.
-        this.dom.addEventListener('pointerenter', () => this.wake())
-        this.dom.addEventListener('pointerleave', () => this.rest())
-        this.dom.addEventListener('focusin', () => this.wake())
-        this.dom.addEventListener('focusout', (e) => {
-            if (!this.dom.contains(e.relatedTarget as Node | null) && !this.dom.matches(':hover')) this.rest()
-        })
+        this.resting = restable(this.dom)
         // The sheet's keys and clicks are its own, not the note's.
         for (const type of ['mousedown', 'click', 'keydown'] as const) this.dom.addEventListener(type, (e) => e.stopPropagation())
 
         document.body.append(this.clip)
-        window.addEventListener('scroll', this.place, true)
-        window.addEventListener('resize', this.place)
-        this.observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(this.place)
-        this.observer?.observe(this.root)
+        this.unfollow = followPage(this.placing.schedule)
+        this.unobserve = observeResize(this.root, this.placing.schedule)
         this.fit()
         void this.load()
     }
@@ -192,7 +175,7 @@ export class Sheet {
         if (!last || !last.isTextblock || reference) tr.insert(state.doc.content.size, state.schema.nodes.paragraph.create())
         tr.setSelection(TextSelection.atEnd(tr.doc)).setMeta('addToHistory', false).scrollIntoView()
         view.dispatch(tr)
-        this.wake()
+        this.resting.wake()
         view.focus()
     }
 
@@ -214,7 +197,7 @@ export class Sheet {
         tr = tr.insert(at, Fragment.from([reference, answer]))
         tr.setSelection(TextSelection.atEnd(tr.doc)).scrollIntoView()
         view.dispatch(tr)
-        this.wake()
+        this.resting.wake()
         view.focus()
     }
 
@@ -241,18 +224,6 @@ export class Sheet {
         return this.saving
     }
 
-    private wake() {
-        clearTimeout(this.restTimer)
-        this.dom.classList.remove('is-away')
-    }
-
-    private rest() {
-        clearTimeout(this.restTimer)
-        this.restTimer = window.setTimeout(() => {
-            if (!this.dom.matches(':hover') && !this.dom.contains(document.activeElement)) this.dom.classList.add('is-away')
-        }, REST_AFTER)
-    }
-
     /** The frame over the note's frame: the part of the editor in view,
      *  within the area it scrolls in. The sheet stands at its right edge. */
     private fit() {
@@ -274,11 +245,10 @@ export class Sheet {
     destroy() {
         this.closed = true
         clearTimeout(this.saveTimer)
-        clearTimeout(this.restTimer)
-        if (this.frame) cancelAnimationFrame(this.frame)
-        window.removeEventListener('scroll', this.place, true)
-        window.removeEventListener('resize', this.place)
-        this.observer?.disconnect()
+        this.resting.stop()
+        this.placing.cancel()
+        this.unfollow()
+        this.unobserve()
         this.editor.destroy()
         this.clip.remove()
     }

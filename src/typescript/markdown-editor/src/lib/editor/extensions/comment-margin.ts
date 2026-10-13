@@ -62,7 +62,7 @@ import { button, el, glyph, labelled, pressable } from '../ui/dom'
 import { CHEVRON_DOWN_ICON, CLOSE_ICON, FACE_ICON, FILE_ICON, stroke, svg } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
 import { settingsOf, type SettingsStorage } from '../settings'
-import { resolveMount, scrollerOf, type Mount } from '../ui/layout'
+import { followPage, rafThrottle, resolveMount, restable, scrollerOf, sizeObserver, type Mount, type Restable } from '../ui/layout'
 import { persistenceOf } from './filesystem'
 
 export type CommentLayout = 'float' | 'column' | 'panel'
@@ -127,8 +127,6 @@ const READING = 0.3
 const REACH = 0.5
 /** How long after an alignment the scroll is the editor's, not the reader's. */
 const QUIET = 1500
-/** How long the pointer is gone before the overlaid panel rests at the edge. */
-const REST_AFTER = 350
 /** How long a thread's frame takes to grow out of its count, or back. */
 const MORPH = 220
 const EASE = 'cubic-bezier(0.2, 0.7, 0.2, 1)'
@@ -323,7 +321,7 @@ class Card {
     /** The read-only views showing the texts, gone with the next render. */
     private views: ReadOnlyView[] = []
     /** Watches the texts for growth, to fold them again. */
-    private readonly sizes: ResizeObserver | null = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.clamp())
+    private readonly sizes = sizeObserver(() => this.clamp())
     private key = ''
     /** How near the note's reading line is to the text, 0 to 1 (the card
      *  steps out by it). */
@@ -1019,7 +1017,9 @@ class Margin {
     /** The overlay's frame on the page, and its handle at the edge. */
     private clip: HTMLElement | null = null
     private handle: HTMLButtonElement | null = null
-    private restTimer = 0
+    /** Over the note's edge: aside when left alone, and following the page. */
+    private resting: Restable | null = null
+    private unfollow: (() => void) | null = null
     /** A panel: a list beside the note (or over its edge) that scrolls on its own. */
     get panel() {
         return this.layout === 'panel' && !this.floating
@@ -1030,15 +1030,8 @@ class Margin {
     private lastActive: string | null = null
     /** Until when the scroll is the editor's (an alignment), not the reader's. */
     private quietUntil = 0
-    private spyFrame = 0
     private scrollTarget: EventTarget | null = null
-    private readonly onScroll = () => {
-        if (this.spyFrame) return
-        this.spyFrame = requestAnimationFrame(() => {
-            this.spyFrame = 0
-            this.spy()
-        })
-    }
+    private readonly spying = rafThrottle(() => this.spy())
     /** The host's layout: the panel, unless it said otherwise. */
     private get base(): CommentLayout {
         return this.options.layout ?? 'panel'
@@ -1080,7 +1073,7 @@ class Margin {
         if (room - SIDE_MIN >= noteMin) return { floating: false, overlay: false, width: `${Math.round(Math.min(SIDE_WIDTH, Math.max(SIDE_MIN, room - noteMin)))}px` }
         return this.layout === 'panel' && this.wanted ? { floating: false, overlay: true, width: '' } : { floating: true, overlay: false, width: '' }
     }
-    private frame = 0
+    private readonly pass = rafThrottle(() => this.layout_())
     private headKey = ''
     /** The comment the panel last scrolled to. */
     private scrolledTo: string | null = null
@@ -1116,7 +1109,7 @@ class Margin {
         this.over.hidden = true
         view.dom.after(this.over)
         this.place()
-        this.observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.schedule())
+        this.observer = sizeObserver(this.schedule)
         this.observer?.observe(view.dom)
         if (view.dom.parentElement) this.observer?.observe(view.dom.parentElement)
         storage.open = (path) => this.openSheet(path)
@@ -1222,16 +1215,12 @@ class Margin {
         this.handle.append(el('span', 'ezco-mde-comment-sheet-handle-label', 'Comments'))
         // The press keeps the note's selection; the click bubbles on (not `pressable`).
         this.handle.addEventListener('mousedown', (e) => e.preventDefault())
-        this.handle.addEventListener('click', () => this.wake())
+        this.handle.addEventListener('click', () => this.resting?.wake())
         this.dom.prepend(this.handle)
-        this.dom.addEventListener('pointerenter', this.wake)
-        this.dom.addEventListener('pointerleave', this.rest)
-        this.dom.addEventListener('focusin', this.wake)
-        this.dom.addEventListener('focusout', this.restIfLeft)
+        this.resting = restable(this.dom)
         this.clip.append(this.dom)
         document.body.append(this.clip)
-        window.addEventListener('scroll', this.schedule, true)
-        window.addEventListener('resize', this.schedule)
+        this.unfollow = followPage(this.schedule)
         if (this.column) {
             this.column.remove()
             this.column = null
@@ -1243,16 +1232,13 @@ class Margin {
 
     private unplaceOver() {
         if (!this.clip) return
-        clearTimeout(this.restTimer)
-        this.dom.removeEventListener('pointerenter', this.wake)
-        this.dom.removeEventListener('pointerleave', this.rest)
-        this.dom.removeEventListener('focusin', this.wake)
-        this.dom.removeEventListener('focusout', this.restIfLeft)
-        window.removeEventListener('scroll', this.schedule, true)
-        window.removeEventListener('resize', this.schedule)
+        this.resting?.stop()
+        this.resting = null
+        this.unfollow?.()
+        this.unfollow = null
         this.handle?.remove()
         this.handle = null
-        this.dom.classList.remove('ezco-mde', 'is-entering', 'is-away')
+        this.dom.classList.remove('ezco-mde', 'is-entering')
         delete this.dom.dataset.theme
         this.dom.remove()
         this.clip.remove()
@@ -1265,22 +1251,6 @@ class Margin {
         const root = (this.view.dom.closest('.ezco-mde') as HTMLElement | null) ?? this.view.dom
         const { width } = frameOver(this.clip, root)
         this.dom.style.width = `${Math.round(Math.min(width, Math.max(SIDE_MIN, Math.min(SIDE_WIDTH, width * 0.85))))}px`
-    }
-
-    private readonly wake = () => {
-        clearTimeout(this.restTimer)
-        this.dom.classList.remove('is-away')
-    }
-
-    private readonly rest = () => {
-        clearTimeout(this.restTimer)
-        this.restTimer = window.setTimeout(() => {
-            if (this.overlay && !this.dom.matches(':hover') && !this.dom.contains(document.activeElement)) this.dom.classList.add('is-away')
-        }, REST_AFTER)
-    }
-
-    private readonly restIfLeft = (e: FocusEvent) => {
-        if (!this.dom.contains(e.relatedTarget as Node | null) && !this.dom.matches(':hover')) this.rest()
     }
 
     /** How comments are shown when shown beside the note: anchored to
@@ -1540,9 +1510,9 @@ class Margin {
     private listen() {
         const target: EventTarget = scrollerOf(this.view.dom) ?? window
         if (target === this.scrollTarget) return
-        this.scrollTarget?.removeEventListener('scroll', this.onScroll)
+        this.scrollTarget?.removeEventListener('scroll', this.spying.schedule)
         this.scrollTarget = target
-        target.addEventListener('scroll', this.onScroll, { passive: true })
+        target.addEventListener('scroll', this.spying.schedule, { passive: true })
     }
 
     /** Done looking: the card closed (`id`, over the note), or every one;
@@ -1677,7 +1647,7 @@ class Margin {
             this.lastActive = state.active
             if (state.active) {
                 this.setCurrent(state.active)
-                if (this.overlay) this.wake()
+                this.resting?.wake()
             }
         }
         for (const [id, card] of this.cards) {
@@ -1689,13 +1659,8 @@ class Margin {
         this.schedule()
     }
 
-    readonly schedule = () => {
-        if (this.frame) return
-        this.frame = requestAnimationFrame(() => {
-            this.frame = 0
-            this.layout_()
-        })
-    }
+    /** The cards laid out in the next frame, once, however often asked. */
+    readonly schedule = this.pass.schedule
 
     /** Where each card goes. The composer for a new comment: over the
      *  note, under the end of its text, in every layout. Over the note: a
@@ -1858,12 +1823,12 @@ class Margin {
     }
 
     destroy() {
-        if (this.frame) cancelAnimationFrame(this.frame)
-        if (this.spyFrame) cancelAnimationFrame(this.spyFrame)
+        this.pass.cancel()
+        this.spying.cancel()
         this.unsubscribe?.()
         this.holder.menu?.()
         this.ungrow()
-        this.scrollTarget?.removeEventListener('scroll', this.onScroll)
+        this.scrollTarget?.removeEventListener('scroll', this.spying.schedule)
         this.unplaceOver()
         this.observer?.disconnect()
         for (const card of this.cards.values()) card.destroy()

@@ -6,7 +6,7 @@ import { caretRect, menuPopover, type Popover } from '../ui/popover'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
 import { button, el, labelled, pressable } from '../ui/dom'
-import { resolveMount, type Mount } from '../ui/layout'
+import { observeResize, rafThrottle, resolveMount, type Mount } from '../ui/layout'
 
 /** Where the block-action indicator should mount (same shape as the toolbar /
  *  sidebar `mount`). */
@@ -608,7 +608,7 @@ class BlockActionsView {
     private btn: HTMLButtonElement
     private btnIcon: HTMLSpanElement
     private popup: Popover | null = null
-    private resizeObserver: ResizeObserver | null = null
+    private readonly unobserve: () => void
     // Local source-of-truth for whether the menu is currently open.
     // We can't reliably read `popup.state.isShown` synchronously after
     // calling `show()` (it flips at different times across Tippy
@@ -652,7 +652,8 @@ class BlockActionsView {
     // block is, soft until it is the active one (which the indicator shows
     // instead), and the handle to its menu. A fold's glyph opens the fold.
     private icons: HTMLButtonElement[] = []
-    private iconsFrame = 0
+    /** The glyphs laid out again, once, in the next frame. */
+    private readonly iconPass = rafThrottle(() => this.layoutIcons())
     /** The blocks a selection spans (positions of its first and last), while
      *  the indicator stands for them all: their own glyphs fold into its star. */
     private span: { from: number; to: number } | null = null
@@ -702,13 +703,10 @@ class BlockActionsView {
 
         this.wrapper.appendChild(this.btn)
 
-        if (typeof ResizeObserver !== 'undefined') {
-            this.resizeObserver = new ResizeObserver(() => {
-                this.reposition()
-                this.scheduleIcons()
-            })
-            this.resizeObserver.observe(view.dom)
-        }
+        this.unobserve = observeResize(view.dom, () => {
+            this.reposition()
+            this.iconPass.schedule()
+        })
 
         // Track focus moving into/out of nested editors (CodeMirror inside
         // the codeblock NodeView). These don't trigger ProseMirror state
@@ -721,23 +719,14 @@ class BlockActionsView {
         // Initial position
         requestAnimationFrame(() => {
             this.reposition()
-            this.scheduleIcons()
+            this.iconPass.schedule()
         })
     }
 
     update(view: EditorView) {
         this.view = view
         this.reposition()
-        this.scheduleIcons()
-    }
-
-    /** The glyphs laid out again, once, in the next frame. */
-    private scheduleIcons() {
-        if (this.iconsFrame) return
-        this.iconsFrame = requestAnimationFrame(() => {
-            this.iconsFrame = 0
-            this.layoutIcons()
-        })
+        this.iconPass.schedule()
     }
 
     /** A glyph for each top-level block (one for a fold, at its line), the
@@ -848,13 +837,13 @@ class BlockActionsView {
     }
 
     destroy() {
-        if (this.iconsFrame) cancelAnimationFrame(this.iconsFrame)
+        this.iconPass.cancel()
         for (const icon of this.icons) icon.remove()
         this.icons = []
         this.popup?.destroy()
         this.popup = null
         this.btn.remove()
-        this.resizeObserver?.disconnect()
+        this.unobserve()
         this.view.dom.removeEventListener('focusin', this.onFocusChange)
         this.view.dom.removeEventListener('focusout', this.onFocusChange)
         if (!this.wrapperHadRelative) {
@@ -994,7 +983,7 @@ class BlockActionsView {
         this.activePos = -1
         if (this.span?.from !== span.fromBlockPos || this.span.to !== span.toBlockPos) {
             this.span = { from: span.fromBlockPos, to: span.toBlockPos }
-            this.scheduleIcons()
+            this.iconPass.schedule()
         }
     }
 
@@ -1002,7 +991,7 @@ class BlockActionsView {
     private unspan() {
         if (!this.span) return
         this.span = null
-        this.scheduleIcons()
+        this.iconPass.schedule()
     }
 
     /** Build the menu for a multi-block selection: only the block
@@ -1100,7 +1089,7 @@ class BlockActionsView {
         if (!this.hasFocusInside()) {
             if (wasShown) {
                 this.btn.style.opacity = '0'
-                this.scheduleIcons()
+                this.iconPass.schedule()
             }
             this.unspan()
             return
@@ -1184,7 +1173,7 @@ class BlockActionsView {
         }
 
         // The glyphs follow: the active block's hides behind the indicator.
-        if (!wasShown || this.activePos !== blockPos) this.scheduleIcons()
+        if (!wasShown || this.activePos !== blockPos) this.iconPass.schedule()
         this.activeNode = blockNode
         this.activePos = blockPos
     }

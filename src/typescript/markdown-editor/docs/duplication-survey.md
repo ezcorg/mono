@@ -75,6 +75,13 @@ suites around it and the demo looked at.
 - **Bylines** (2026-10-13): `byline(by)` beside `when()` in
   `comment-render.ts`, at the card, the bubble head, the sheet's handle
   and title and the gutter mark.
+- **Layout passes** (2026-10-13): `ui/layout.ts` has `rafThrottle(fn)`
+  (one pending frame, `schedule` and `cancel` as closures), `sizeObserver`
+  and `observeResize` (null-safe where `ResizeObserver` is missing),
+  `followPage(fn)` (scroll in capture and resize, for a fixed overlay) and
+  `restable(dom)` (the wake/rest/away of the sheet and the overlaid panel,
+  one `REST_AFTER`). Six throttles, six guards, both follow pairs and both
+  rest copies are on them.
 - **The persistence cast** (2026-10-13): `persistenceOf(editor)` and
   `openNotePath(editor)` in `extensions/filesystem.ts` (the two
   `openPath`s gone, the three sites that never normalised still read the
@@ -107,12 +114,7 @@ Worth doing, each a contained refactor with tests around it:
    arrow keys", and the slash and wikilink menus build identical rows and
    empty states. One `ui/suggestion-menu.ts` would hold them.
 4. *Mount resolution: done, above.*
-5. **rAF throttling**: six "schedule a layout pass" copies with their
-   cancel-on-destroy; a `rafThrottle(fn)` returning `{ schedule, cancel }`.
-   Likewise the `ResizeObserver` presence guard (six sites) and the
-   fixed-overlay "follow the page on scroll and resize" pair
-   (`comment-sheet.ts`, `comment-margin.ts`), and the sheet and the
-   overlaid panel's wake/rest/away logic with `REST_AFTER` in both.
+5. *Layout passes: done, above.*
 6. *markdown-it setup: done, above.*
 7. *The persistence cast: done, above.*
 8. *Bylines: done, above.*

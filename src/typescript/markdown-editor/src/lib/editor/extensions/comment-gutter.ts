@@ -20,6 +20,7 @@ import type { EditorView } from '@tiptap/pm/view'
 import { commentsKey, type CommentInfo } from './comments'
 import { byline } from './comment-render'
 import { button, labelled, pressable } from '../ui/dom'
+import { observeResize, rafThrottle } from '../ui/layout'
 
 /** The mark: a speech bubble, filled by how much it is looked at (CSS). */
 const MARK_ICON =
@@ -27,13 +28,12 @@ const MARK_ICON =
 
 class CommentGutter {
     private readonly marks: HTMLButtonElement[] = []
-    private frame = 0
-    private readonly observer: ResizeObserver | null
+    private readonly pass = rafThrottle(() => this.layout())
+    private readonly unobserve: () => void
 
     constructor(private readonly view: EditorView, private readonly editor: Editor) {
-        this.observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.schedule())
-        this.observer?.observe(view.dom)
-        this.schedule()
+        this.unobserve = observeResize(view.dom, this.pass.schedule)
+        this.pass.schedule()
     }
 
     /** The column beside the note, when the layout has one. */
@@ -43,15 +43,7 @@ class CommentGutter {
     }
 
     update() {
-        this.schedule()
-    }
-
-    private schedule() {
-        if (this.frame) return
-        this.frame = requestAnimationFrame(() => {
-            this.frame = 0
-            this.layout()
-        })
+        this.pass.schedule()
     }
 
     private layout() {
@@ -130,8 +122,8 @@ class CommentGutter {
     }
 
     destroy() {
-        if (this.frame) cancelAnimationFrame(this.frame)
-        this.observer?.disconnect()
+        this.pass.cancel()
+        this.unobserve()
         for (const mark of this.marks) mark.remove()
         this.marks.length = 0
     }

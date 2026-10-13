@@ -21,7 +21,7 @@ import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { computeHeadingSlugs } from './slug-utils'
 import { mountInRail } from './rail'
-import { isPageScroller, scrollContainerOf, scrollerOf, type Mount } from '../ui/layout'
+import { isPageScroller, rafThrottle, scrollContainerOf, scrollerOf, type Mount } from '../ui/layout'
 
 /** Where the sidebar DOM should be placed (same shape as `ToolbarMount`). */
 export type SidebarMount = Mount
@@ -127,8 +127,8 @@ class SidebarView {
     private pinUntil = 0
     /** Whether the reader scrolled after the click's own scroll ended. */
     private scrolledSincePin = false
-    private rafPending = false
-    private destroyed = false
+    /** The active heading followed a frame at a time as the note scrolls. */
+    private readonly following = rafThrottle(() => this.updateActive())
     private onScroll: () => void
 
     constructor(
@@ -160,13 +160,7 @@ class SidebarView {
         this.scrollTarget = isPageScroller(this.scroller) ? window : this.scroller
         this.onScroll = () => {
             if (this.pinned !== null && Date.now() >= this.pinUntil) this.scrolledSincePin = true
-            if (this.rafPending) return
-            this.rafPending = true
-            requestAnimationFrame(() => {
-                this.rafPending = false
-                // A scroll's frame may come after the editor is gone.
-                if (!this.destroyed) this.updateActive()
-            })
+            this.following.schedule()
         }
         this.scrollTarget.addEventListener('scroll', this.onScroll, { passive: true })
 
@@ -348,7 +342,7 @@ class SidebarView {
     }
 
     destroy() {
-        this.destroyed = true
+        this.following.cancel()
         this.scrollTarget.removeEventListener('scroll', this.onScroll)
         this.unmount()
     }
