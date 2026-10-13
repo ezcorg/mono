@@ -57,9 +57,15 @@ access:
   editors: [theo]   # or "*"
 ```
 
-`access` is a reserved setting the schema gets for free. (Enforcing this
-in a shared vault is the storage layer's: a signed write under
-`.settings/alice/` from anyone else is refused there.)
+`access` is a reserved setting the schema gets for free. This is a
+convention for well-behaved clients, not a security boundary: the check
+and the `user` name live in the client, and no filesystem behind the
+store knows what a user is. Enforcing it against a client that does not
+cooperate is the storage or sync layer's: a server that authenticates
+writers, or replicas that verify each version's signature against the
+owner's key and the keys the owner's own file grants. The user, device,
+instance and folder names are checked to be plain names, so a host that
+takes one from a URL cannot reach past the folder.
 
 ## For a UI
 

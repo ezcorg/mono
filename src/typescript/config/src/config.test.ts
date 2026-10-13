@@ -123,6 +123,22 @@ describe('Settings in files', () => {
         config.close()
     })
 
+    it('refuses a user, device, instance or folder that is not one plain name', async () => {
+        const fs = memoryVfs()
+        for (const bad of ['', '..', '.', 'a/b', 'a\\b', '../theo', 'x\u0000y']) {
+            await expect(Config.open({ fs, schema, user: bad })).rejects.toThrow('Not a name for user')
+            await expect(Config.open({ fs, schema, user: 'theo', device: bad })).rejects.toThrow('Not a name for device')
+            await expect(Config.open({ fs, schema, user: 'theo', instance: bad })).rejects.toThrow('Not a name for instance')
+            await expect(Config.open({ fs, schema, user: 'theo', of: bad })).rejects.toThrow('Not a name for of')
+        }
+        for (const bad of ['', '/', '..', 'a/../b', 'a//b']) await expect(Config.open({ fs, schema, root: bad })).rejects.toThrow('Not a folder')
+        // A nested folder, and a leading or trailing slash, are fine.
+        const nested = await Config.open({ fs, schema, root: '/.config/editor/' })
+        expect(nested.root).toBe('.config/editor')
+        expect(nested.file('global')).toBe('.config/editor/global.yaml')
+        nested.close()
+    })
+
     it('lets a user change another’s settings only where that user says so', async () => {
         const fs = memoryVfs()
         const alice = await Config.open({ fs, schema, user: 'alice' })

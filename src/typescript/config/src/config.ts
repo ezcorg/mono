@@ -114,11 +114,11 @@ export class Config<T extends Values = Values> {
         this.fs = options.fs
         this.schema = withAccess(options.schema)
         this.defaults = defaultsOf(this.schema) as T
-        this.root = (options.root ?? '.settings').replace(/\/+$/, '')
-        this.user = options.user
-        this.of = options.of ?? options.user
-        this.device = options.device
-        this.instance = options.instance
+        this.root = folder(options.root ?? '.settings')
+        this.user = segment('user', options.user)
+        this.of = segment('of', options.of) ?? this.user
+        this.device = segment('device', options.device)
+        this.instance = segment('instance', options.instance)
         this.format = options.format ?? 'yaml'
         this.merged = this.defaults
     }
@@ -412,6 +412,22 @@ export class Config<T extends Values = Values> {
             void this.reload()
         }, 30)
     }
+}
+
+/** A name that is one path segment and nothing more: a host may take a
+ *  user, a device or an instance name from somewhere it does not control
+ *  (a URL, say), and `..` or a `/` in one would reach past the folder. */
+function segment(what: string, name: string | undefined): string | undefined {
+    if (name === undefined) return undefined
+    if (!name || name === '.' || name === '..' || /[/\\\u0000-\u001f]/.test(name)) throw new Error(`Not a name for ${what}: ${JSON.stringify(name)}`)
+    return name
+}
+
+/** The folder, vault-relative, without a trailing slash or a `..` in it. */
+function folder(root: string): string {
+    const clean = root.replace(/^\/+|\/+$/g, '')
+    if (!clean || clean.split('/').some((part) => !part || part === '.' || part === '..') || /[\\\u0000-\u001f]/.test(clean)) throw new Error(`Not a folder for settings: ${JSON.stringify(root)}`)
+    return clean
 }
 
 /** `schema` with the reserved `access` setting among its properties. */

@@ -87,14 +87,48 @@ an option. What a reader might reasonably want otherwise is a setting.
 ## Several users, one vault
 
 Settings are per user: `.settings/<user>/`. One user's `Config` only ever
-derives paths under that user's folder, and `Config.open({ of: 'alice' })`
+derives paths under that user's folder (the user, device, instance and
+folder names are checked to be plain names, so a host passing one from a
+URL cannot reach past the folder), and `Config.open({ of: 'alice' })`
 reads another's; writing them is refused (`NotPermitted`) unless alice's
-own global file says `access: { editors: ['theo'] }` (or `'*'`). That is
-the editor's side of it. In a vault shared between people, the storage
-layer is where it is enforced: the version log signs each write
-(`Signer` in `@joinezco/storage`), and a peer or server applying a write
-under `.settings/<user>/` checks the signer is that user, or one the
-user's own global file lists.
+own global file says `access: { editors: ['theo'] }` (or `'*'`).
+
+That is a convention, and it is worth being plain about what it is not.
+Against a malicious or non-compliant client it guarantees nothing: the
+check and the `user` string live in the client, which can name itself
+`alice` or write `.settings/alice/global.yaml` through the filesystem
+directly, and no filesystem behind `VfsInterface` knows what a user is
+(OPFS is the origin's, the disk is the machine's). What the check buys
+is that a well-behaved editor cannot change another person's settings
+by accident, never offers the UI for it, and that the intent is written
+in the owner's own file.
+
+A real guarantee can only come from something the writer does not
+control, and that is the storage or sync layer, not this package:
+
+- A mediating server or daemon (the icanhaz daemon, a hosted vault) that
+  authenticates each client to an identity and refuses a write under
+  `.settings/<user>/` unless the writer is that user or one the owner's
+  file, as the server holds it, lists. This holds while every replica
+  takes data only from that server.
+- Peer-to-peer: every version signed (`Signer` and parents in the
+  `VersionLog`), identities as public keys, and every honest replica
+  verifying a version before taking it: a write under `.settings/<user>/`
+  must be signed by that user's key or one the owner's latest accepted
+  grant names. A malicious peer still writes what it likes into its own
+  replica, which only changes its own screen.
+
+Even then: an old, validly signed version can be replayed (replicas must
+require a version to descend from their head, or keep it as a conflict
+copy, which the store never reads as settings since it reads exact
+names); a grantee's write can arrive after the grant was taken away (the
+grant has to be evaluated at the version's causal position, or
+revocation simply applies once seen); `schema.json` is shared and
+unprotected (the editor never reads it for behaviour, and rewrites it on
+its next write); and settings are untrusted data to their reader (the
+checker drops wrong types and ranges, strings reach CSS only through
+`style.setProperty`, and a future setting that reaches HTML, a URL or a
+shell needs its own care).
 
 ## Devices in sync
 
